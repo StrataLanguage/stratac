@@ -82,19 +82,11 @@ extern "C"
             }
             else
             {
-                auto backend = strata::CreateLlvmBackend();
-                if (!backend)
+                auto result = strata::GenerateLlvmIr(*mod);
+                out = result.output;
+                if (!result.ok)
                 {
-                    diag.Error({}, "LLVM back-end unavailable (built without LLVM linkage)");
-                }
-                else
-                {
-                    auto result = backend->Generate(*mod);
-                    out = result.output;
-                    if (!result.ok)
-                    {
-                        diag.Error({}, "code generation failed");
-                    }
+                    diag.Error({}, "code generation failed");
                 }
             }
         }

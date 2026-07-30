@@ -25,7 +25,7 @@ CodegenResult GenLlvm(std::string_view src)
 {
     DiagnosticEngine diag;
     auto mod = ParseAndResolve(src, diag);
-    return CreateLlvmBackend()->Generate(*mod);
+    return GenerateLlvmIr(*mod);
 }
 } // namespace
 

@@ -16,7 +16,7 @@ setlocal
 
 set "ROOT=%~dp0.."
 set "STRATAC=%ROOT%\build\default\bin\stratac.exe"
-set "CLANG=C:\Users\andre\llvm-x64\bin\clang.exe"
+set "CLANG=clang"
 set "SCRIPT=%ROOT%\samples\engine_demo.strata"
 set "HOST=%ROOT%\samples\hosts\engine_demo_host.c"
 set "OBJ=%TEMP%\engine_demo.o"

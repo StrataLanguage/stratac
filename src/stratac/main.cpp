@@ -254,14 +254,12 @@ int main(int argc, char** argv)
     }
     else
     {
-        auto backend = strata::CreateLlvmBackend();
-        if (!backend)
+        auto res = strata::GenerateLlvmIr(*mod);
+        if (!res.ok)
         {
-            std::fprintf(stderr, "error: LLVM back-end unavailable (built without LLVM linkage)\n");
+            std::fprintf(stderr, "error: LLVM IR generation failed\n");
             return 1;
         }
-
-        auto res = backend->Generate(*mod);
         output = res.output;
     }
 

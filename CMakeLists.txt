@@ -15,8 +15,8 @@ endif()
 # Options
 # ---------------------------------------------------------------------------
 option(STRATA_ENABLE_LLVM "Link the in-process LLVM C API back-end" ON)
-set(LLVM_C_DIR "C:/Users/andre/llvm-x64" CACHE PATH
-    "Directory of the x64 LLVM distribution (must contain lib/LLVM-C.* and bin/LLVM-C.dll)")
+set(LLVM_C_DIR "" CACHE PATH
+    "Directory of the x64 LLVM distribution (must contain lib/LLVM-C.* and bin/LLVM-C.dll). Provide via CMakePresets.json or -DLLVM_C_DIR=<path>")
 
 # ---------------------------------------------------------------------------
 # Strata core library

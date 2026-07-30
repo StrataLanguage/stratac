@@ -3,8 +3,8 @@
 Example programs that exercise the language feature by feature, with notes on
 which back-end each one uses. Build the compiler first
 (`cmake --preset default && cmake --build --preset default`); the driver is at
-`build/default/bin/stratac`, and a native assembler/linker at
-`C:/Users/andre/llvm-x64/bin/clang` (or any x64 `clang`/`gcc`).
+`build/default/bin/stratac`, and a native assembler/linker — any x64 `clang` or
+`gcc` on PATH (or matching `LLVM_C_DIR` in `CMakePresets.json`).
 
 ## Samples
 

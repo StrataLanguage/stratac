@@ -67,7 +67,7 @@ STRATA_TEST(llvm_emits_distinct_overload_symbols)
                        "float entry_f() { return add(2.0, 3.0); }\n",
                        diag);
     STRATA_CHECK(!diag.HasErrors());
-    auto res = CreateLlvmBackend()->Generate(*mod);
+    auto res = GenerateLlvmIr(*mod);
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, R"(define i32 @"add$int$int")"));
     STRATA_CHECK(Contains(res.output, R"(define float @"add$float$float")"));

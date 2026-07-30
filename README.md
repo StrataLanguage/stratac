@@ -364,6 +364,6 @@ third_party/      (reserved for vendored deps)
 ## A note on the toolchain on this machine
 
 The pre-existing LLVM at `C:\llvm` is an **ARM64** build that cannot run on this
-**x86_64** host. A matching **x64 LLVM 22.1.0** was installed to
-`C:\Users\andre\llvm-x64` (its `clang` runs, and `LLVM-C.dll`/`LLVM-C.lib` are
-used for linking). The preset defaults reflect this.
+**x86_64** host. A matching **x64 LLVM 22.1.0** was installed at the path set as
+`LLVM_C_DIR` in `CMakePresets.json` (its `clang` runs, and
+`LLVM-C.dll`/`LLVM-C.lib` are used for linking). The preset reflects this.

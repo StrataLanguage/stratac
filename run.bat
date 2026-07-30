@@ -31,16 +31,12 @@ if not "%~2"=="" (
   )
 )
 
-REM --- locate tools (env override, else default repo / install paths) -------
+REM --- locate tools (env override, else defaults) -------------------------
 if "%STRATAC%"=="" set "STRATAC=%~dp0build\default\bin\stratac.exe"
-if "%CLANG%"==""   set "CLANG=C:\Users\andre\llvm-x64\bin\clang.exe"
+if "%CLANG%"==""   set "CLANG=clang"
 
 if not exist "%STRATAC%" (
   echo error: stratac not found: "%STRATAC%"  ^(set STRATAC to override^)
-  exit /b 1
-)
-if not exist "%CLANG%" (
-  echo error: clang not found: "%CLANG%"  ^(set CLANG to override^)
   exit /b 1
 )
 

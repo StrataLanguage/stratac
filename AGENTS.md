@@ -7,9 +7,8 @@ Commands and conventions for any agent (or human) editing the Strata compiler.
 - Host is **x86_64** Windows. C++ compiler: **MinGW GCC 16** (`g++`, on PATH).
 - Generators: **CMake 4.2** + **Ninja**.
 - **Do not** use the LLVM at `C:\llvm` — it is **ARM64** and will not run here.
-  The working x64 LLVM is at `C:\Users\andre\llvm-x64` (provides `clang`,
-  `LLVM-C.dll`, `LLVM-C.lib`). `CMakePresets.json` already points `LLVM_C_DIR`
-  there.
+  The working x64 LLVM path is set as `LLVM_C_DIR` in `CMakePresets.json`
+  (provides `clang`, `LLVM-C.dll`, `LLVM-C.lib`).
 
 ## Build / test
 
@@ -25,11 +24,12 @@ tree.
 
 Run tests directly for full output: `build/default/bin/strata_tests.exe`.
 
-Validate emitted IR with the real LLVM after changes to the back-end:
+Validate emitted IR with the real LLVM after changes to the back-end
+(the x64 clang is at `<LLVM_C_DIR>/bin/clang.exe`; see `CMakePresets.json`):
 
 ```sh
 stratac --emit ir samples/hello.strata -o build/default/hello.ll
-C:/Users/andre/llvm-x64/bin/clang.exe -c build/default/hello.ll -o build/default/hello.o
+<LLVM_C_DIR>/bin/clang.exe -c build/default/hello.ll -o build/default/hello.o
 ```
 
 `clang -c` must exit 0 (a `-Woverride-module` warning about the target triple is
