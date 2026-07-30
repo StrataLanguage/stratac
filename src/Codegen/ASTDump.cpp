@@ -140,6 +140,17 @@ void dump(Node* n, int indent, std::ostringstream& out) {
             dump(w->body.get(), indent + 2, out);
             return;
         }
+        case NodeKind::For: {
+            auto fs = static_cast<ForStmt*>(n);
+            out << "for (";
+            if (fs->init) dump(fs->init.get(), 0, out); else out << "; ";
+            if (fs->condition) dump(fs->condition.get(), 0, out);
+            out << "; ";
+            if (fs->update) dump(fs->update.get(), 0, out);
+            out << ")\n";
+            dump(fs->body.get(), indent + 2, out);
+            return;
+        }
         case NodeKind::VarDecl: {
             auto v = static_cast<VarDeclStmt*>(n);
             out << v->type.name << " " << v->name;

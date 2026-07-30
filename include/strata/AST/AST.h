@@ -29,6 +29,7 @@ enum class NodeKind : std::uint8_t {
     Return,
     If,
     While,
+    For,
     VarDecl,
     ExprStmt,
     Break,
@@ -151,6 +152,14 @@ struct WhileStmt : Node {
     NodePtr condition;
     NodePtr body;
     explicit WhileStmt(SourceRange r) : Node(NodeKind::While, r) {}
+};
+
+struct ForStmt : Node {
+    NodePtr init;   // a VarDecl, an expression, or null
+    NodePtr condition; // expression or null (empty -> always true)
+    NodePtr update; // expression or null
+    NodePtr body;
+    explicit ForStmt(SourceRange r) : Node(NodeKind::For, r) {}
 };
 
 struct VarDeclStmt : Node {

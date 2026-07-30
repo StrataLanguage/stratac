@@ -115,6 +115,13 @@ Overloads: two functions may share a name with different parameter types.
 functions keep the base name, so host-callable entries like `main`/`entry` must
 not be overloaded). Extern functions cannot be overloaded.
 
+Statement lowering (both back-ends, in `emitStmt`): `out`/`inout` parameters are
+lowered to pointers -- the callee's symbol for such a param *is* the incoming
+pointer, and call sites pass the argument's address (`&var`, via `emitLValue`).
+Control flow (`if`/`else`, `while`, `for`, `break`, `continue`) uses basic
+blocks + `br`/`cond br`; a loop stack tracks break/continue targets (continue
+targets the `for` update block, not the condition).
+
 ## CTest wiring
 
 A single test target `strata_tests` runs all unit tests. `STRATA_SAMPLE_DIR` is

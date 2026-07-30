@@ -1,11 +1,13 @@
-// control_flow.strata -- if/else, while, break/continue, and recursion.
+// control_flow.strata -- control flow and out/inout parameters.
 //
-// The native (JIT/AOT) back-end does not lower control flow yet, so use the
-// text IR back-end to inspect this one:
+// Now lowers through BOTH back-ends (the native back-end handles if/else,
+// while, for, break/continue, recursion, and out/inout). Run it natively:
+//   stratac --emit obj control_flow.strata -o control_flow.o
+//   clang control_flow.o -o control_flow.exe && ./control_flow.exe ; echo $?
+// Or inspect as text IR:
 //   stratac --no-llvm --emit ir control_flow.strata
-//   stratac --emit ast control_flow.strata
 
-// Iterative factorial.
+// Iterative factorial with a while loop.
 int factorial(int n) {
     int result = 1;
     int i = 1;
@@ -16,7 +18,16 @@ int factorial(int n) {
     return result;
 }
 
-// Recursive Fibonacci (a function may call itself).
+// A for loop: sum of squares 1*1 + 2*2 + ... + n*n.
+int sum_squares(int n) {
+    int total = 0;
+    for (int i = 1; i <= n; i = i + 1) {
+        total = total + i * i;
+    }
+    return total;
+}
+
+// Recursive Fibonacci.
 int fibonacci(int n) {
     if (n < 2) {
         return n;
@@ -24,27 +35,32 @@ int fibonacci(int n) {
     return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-// Loop with break and continue: sum of 1..n, skipping 5.
-int sum_skipping_five(int n) {
+// break and continue: sum of 1..n, skipping multiples of 5.
+int sum_skipping_fives(int n) {
     int total = 0;
     int i = 0;
     while (true) {
         i = i + 1;
         if (i > n) { break; }
-        if (i == 5) { continue; }
+        if (i == 5 || i == 10) { continue; }
         total = total + i;
     }
     return total;
 }
 
-// 'out' parameters let a function hand values back to its caller. (Syntax is
-// parsed; full by-reference lowering is in progress -- see samples/README.md.)
-void describe(int n, out int doubled, out int negated) {
-    doubled = n + n;
-    negated = 0 - n;
+// out parameters hand values back to the caller (there are no pointers in
+// Strata; out/inout are lowered to pointers internally).
+void minmax(int a, int b, out int lo, out int hi) {
+    if (a < b) { lo = a; hi = b; } else { lo = b; hi = a; }
 }
 
 int main() {
-    // factorial(5) = 120, fibonacci(10) = 55, sum_skipping_five(10) = 50
-    return factorial(5) + fibonacci(10) + sum_skipping_five(10);   // 225
+    int f = factorial(5);          // 120
+    int s = sum_squares(4);        // 30
+    int fib = fibonacci(10);       // 55
+    int skip = sum_skipping_fives(10); // 1..10 minus 5,10 = 40
+    int lo;
+    int hi;
+    minmax(7, 3, lo, hi);          // lo = 3, hi = 7
+    return f + s + fib + skip + lo + hi;  // 120 + 30 + 55 + 40 + 3 + 7 = 255
 }

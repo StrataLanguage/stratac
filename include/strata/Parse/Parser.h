@@ -64,6 +64,7 @@ private:
     NodePtr parseReturn();
     NodePtr parseIf();
     NodePtr parseWhile();
+    NodePtr parseFor();
 
     NodePtr parseExpr();
     NodePtr parseAssign();

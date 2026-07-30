@@ -101,6 +101,9 @@ void LLVMPositionBuilderAtEnd(LLVMBuilderRef B, LLVMBasicBlockRef Block);
 
 LLVMValueRef LLVMBuildRet(LLVMBuilderRef B, LLVMValueRef V);
 LLVMValueRef LLVMBuildRetVoid(LLVMBuilderRef B);
+LLVMValueRef LLVMBuildBr(LLVMBuilderRef B, LLVMBasicBlockRef Dest);
+LLVMValueRef LLVMBuildCondBr(LLVMBuilderRef B, LLVMValueRef If, LLVMBasicBlockRef Then,
+                             LLVMBasicBlockRef Else);
 LLVMValueRef LLVMBuildAdd(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
 LLVMValueRef LLVMBuildSub(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
 LLVMValueRef LLVMBuildMul(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);

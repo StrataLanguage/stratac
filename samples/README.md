@@ -11,7 +11,7 @@ which back-end each one uses. Build the compiler first
 | File | Demonstrates | Back-end |
 |------|--------------|----------|
 | `hello.strata` | functions, arithmetic, calls | text **and** native |
-| `control_flow.strata` | `if`/`else`, `while`, `break`/`continue`, recursion, `out` params | text (IR inspection) |
+| `control_flow.strata` | `if`/`else`, `while`, `for`, `break`/`continue`, recursion, `out`/`inout` params | text **and** native |
 | `structs.strata` | structs, member access, positional construction, nested structs, by-value | native |
 | `overloads.strata` | type-based overload resolution (int / float / struct) | native |
 | `extern_math.strata` + `hosts/extern_math_host.c` | `extern` host functions, AOT link-and-run | native |
@@ -28,12 +28,13 @@ clang hello.o -o hello.exe && ./hello.exe ; echo $? # runs; exit code 25
 
 ### control_flow.strata
 
-The native back-end doesn't lower control flow yet, so inspect it as text IR
-(or the AST):
+`if`/`else`, `while`, `for`, `break`/`continue`, recursion, and `out`/`inout`
+parameters. Both back-ends lower it:
 
 ```sh
-stratac --no-llvm --emit ir samples/control_flow.strata
-stratac --emit ast samples/control_flow.strata
+stratac --no-llvm --emit ir samples/control_flow.strata     # text IR
+stratac --emit obj samples/control_flow.strata -o control_flow.o
+clang control_flow.o -o control_flow.exe && ./control_flow.exe ; echo $?   # 255
 ```
 
 ### structs.strata
@@ -75,12 +76,11 @@ clang samples/hosts/engine_api_host.c engine_api.o -o engine_api.exe
 
 ## Status notes
 
-- **Control flow** (`if`/`else`, `while`, `for`, `break`, `continue`) is lowered
-  by the text IR back-end only; the native (JIT/AOT) back-end lowers straight-
-  line code and is gaining control flow next. Samples that need it are tagged
-  "text" above.
-- **`out`/`inout` parameters** are parsed (see `control_flow.strata`); full
-  by-reference lowering is in progress.
+- **Control flow** (`if`/`else`, `while`, `for`, `break`, `continue`) and
+  **recursion** are lowered by both the text and the native (JIT/AOT) back-ends.
+- **`out`/`inout` parameters** are lowered to pointers: the callee writes through
+  them, and the caller's variable is updated. They cross the host<->JIT boundary
+  as pointers (the host passes `&var`).
 - **Vector types** (`float4`, `int3`, ...) are recognized by the type system and
   lower to LLVM vectors, but construction/per-component arithmetic aren't
   lowered yet (`vectors.strata` is a structural preview).

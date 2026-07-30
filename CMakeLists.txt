@@ -90,6 +90,7 @@ add_executable(strata_tests
     tests/unit/JitTests.cpp
     tests/unit/StructTests.cpp
     tests/unit/OverloadTests.cpp
+    tests/unit/ControlFlowTests.cpp
 )
 target_link_libraries(strata_tests PRIVATE strata)
 target_compile_definitions(strata_tests PRIVATE

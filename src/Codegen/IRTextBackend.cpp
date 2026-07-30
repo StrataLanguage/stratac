@@ -38,6 +38,10 @@ public:
         res.moduleName = mod.name;
         out_ << "; Strata module '" << mod.name << "'\n";
 
+        // Collect signatures first so call sites (in any order) know each
+        // callee's return type and which parameters are out/inout (by pointer).
+        for (const auto& f : mod.functions) collectSignature(*f);
+
         // Emit body-less prototypes as 'declare', then definitions as 'define'.
         // A function may not be both declared and defined; calls to functions
         // defined later in the module resolve through LLVM forward references.
@@ -56,7 +60,8 @@ private:
     std::ostringstream out_;
     std::ostringstream body_;
     std::map<std::string, Symbol> symbols_;
-    std::map<std::string, detail::MappedType> retOf_; // mangled name -> return type
+    std::map<std::string, detail::MappedType> retOf_;        // mangled name -> return type
+    std::map<std::string, std::vector<ParamMod>> paramModsOf_; // mangled name -> param mods
     std::vector<std::string> paramRegs_;
     detail::MappedType retType_;
     int tmp_ = 0;
@@ -64,6 +69,15 @@ private:
     bool terminated_ = false;
     struct Loop { std::string cont; std::string end; };
     std::vector<Loop> loops_;
+
+    static bool byRef(ParamMod m) { return m == ParamMod::Out || m == ParamMod::InOut; }
+
+    void collectSignature(const FunctionDecl& f) {
+        retOf_[f.mangledName] = mappedOr(f.returnType, "void");
+        auto& mods = paramModsOf_[f.mangledName];
+        mods.clear();
+        for (const auto& p : f.params) mods.push_back(p->mod);
+    }
 
     std::string newReg() { return "%t" + std::to_string(tmp_++); }
     std::string newLabel() { return std::string("L") + std::to_string(label_++); }
@@ -86,18 +100,16 @@ private:
 
     void emitDeclare(const FunctionDecl& f) {
         retType_ = mappedOr(f.returnType, "void");
-        retOf_[f.mangledName] = retType_;
         out_ << "declare " << retType_.ir << " @" << f.mangledName << "(";
         for (std::size_t i = 0; i < f.params.size(); ++i) {
             if (i) out_ << ", ";
-            out_ << mappedOr(f.params[i]->type, "ptr").ir;
+            out_ << (byRef(f.params[i]->mod) ? "ptr" : mappedOr(f.params[i]->type, "ptr").ir);
         }
         out_ << ")\n";
     }
 
     void emitFunction(const FunctionDecl& f) {
         retType_ = mappedOr(f.returnType, "void");
-        retOf_[f.mangledName] = retType_;
         std::vector<detail::MappedType> ptypes;
         out_ << "define " << retType_.ir << " @" << f.mangledName << "(";
         paramRegs_.clear();
@@ -105,7 +117,7 @@ private:
             ptypes.push_back(mappedOr(f.params[i]->type, "ptr"));
             paramRegs_.push_back("%p" + std::to_string(i));
             if (i) out_ << ", ";
-            out_ << ptypes.back().ir << " " << paramRegs_.back();
+            out_ << (byRef(f.params[i]->mod) ? "ptr" : ptypes.back().ir) << " " << paramRegs_.back();
         }
         out_ << ") {\n";
 
@@ -117,12 +129,17 @@ private:
         terminated_ = false;
         loops_.clear();
 
-        // Materialize each parameter into an addressable slot.
+        // Materialize each parameter. By-value params get an alloca; out/inout
+        // params are already pointers to the caller's storage (read/write through).
         for (std::size_t i = 0; i < f.params.size(); ++i) {
-            std::string slot = newReg();
-            body_ << "  " << slot << " = alloca " << ptypes[i].ir << "\n";
-            body_ << "  store " << ptypes[i].ir << " " << paramRegs_[i] << ", ptr " << slot << "\n";
-            symbols_[f.params[i]->name] = {ptypes[i], slot};
+            if (byRef(f.params[i]->mod)) {
+                symbols_[f.params[i]->name] = {ptypes[i], paramRegs_[i]};
+            } else {
+                std::string slot = newReg();
+                body_ << "  " << slot << " = alloca " << ptypes[i].ir << "\n";
+                body_ << "  store " << ptypes[i].ir << " " << paramRegs_[i] << ", ptr " << slot << "\n";
+                symbols_[f.params[i]->name] = {ptypes[i], slot};
+            }
         }
 
         if (f.body) {
@@ -206,6 +223,9 @@ private:
             case NodeKind::While:
                 emitWhile(static_cast<WhileStmt*>(n));
                 return;
+            case NodeKind::For:
+                emitFor(static_cast<ForStmt*>(n));
+                return;
             case NodeKind::Break:
                 if (!loops_.empty()) emitBr(loops_.back().end);
                 return;
@@ -254,6 +274,32 @@ private:
         loops_.push_back({condL, endL});
         emitStmt(n->body.get());
         loops_.pop_back();
+        emitBr(condL);
+        emitLabel(endL);
+    }
+
+    void emitFor(ForStmt* n) {
+        if (n->init) emitStmt(n->init.get()); // var decl or expression
+        std::string condL = newLabel();
+        std::string bodyL = newLabel();
+        std::string updL = newLabel();
+        std::string endL = newLabel();
+        emitBr(condL);
+        emitLabel(condL);
+        if (n->condition) {
+            Eval cond = emitExpr(n->condition.get());
+            body_ << "  br i1 " << cond.val << ", label %" << bodyL << ", label %" << endL << "\n";
+        } else {
+            body_ << "  br label %" << bodyL << "\n";
+        }
+        terminated_ = true;
+        emitLabel(bodyL);
+        loops_.push_back({updL, endL}); // continue runs the update
+        emitStmt(n->body.get());
+        loops_.pop_back();
+        emitBr(updL);
+        emitLabel(updL);
+        if (n->update) (void)emitExpr(n->update.get());
         emitBr(condL);
         emitLabel(endL);
     }
@@ -385,17 +431,37 @@ private:
         return v;
     }
 
+    // Address to pass for an out/inout argument: the lvalue's slot if there is
+    // one, otherwise a temporary.
+    std::string emitArgAddress(Node* arg) {
+        if (arg && arg->kind == NodeKind::Ident) {
+            auto it = symbols_.find(static_cast<IdentExpr*>(arg)->name);
+            if (it != symbols_.end()) return it->second.ptr;
+        }
+        Eval v = emitExpr(arg);
+        std::string slot = newReg();
+        body_ << "  " << slot << " = alloca " << v.type.ir << "\n";
+        body_ << "  store " << v.type.ir << " " << v.val << ", ptr " << slot << "\n";
+        return slot;
+    }
+
     Eval emitCall(CallExpr* n) {
         // Return type of the callee (resolved by overload resolution). Falls
         // back to i32 when unknown (e.g. an unresolved host call).
         detail::MappedType ret = detail::mapType({"int"});
         auto rit = retOf_.find(n->callee);
         if (rit != retOf_.end()) ret = rit->second;
+        const auto& mods = paramModsOf_[n->callee];
         std::ostringstream args;
         for (std::size_t i = 0; i < n->args.size(); ++i) {
-            Eval a = emitExpr(n->args[i].get());
+            bool isOut = i < mods.size() && byRef(mods[i]);
             if (i) args << ", ";
-            args << a.type.ir << " " << a.val;
+            if (isOut) {
+                args << "ptr " << emitArgAddress(n->args[i].get());
+            } else {
+                Eval a = emitExpr(n->args[i].get());
+                args << a.type.ir << " " << a.val;
+            }
         }
         std::string r = newReg();
         body_ << "  " << r << " = call " << ret.ir << " @" << n->callee << "(" << args.str()

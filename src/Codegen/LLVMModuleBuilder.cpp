@@ -51,6 +51,7 @@ struct FuncInfo {
     LLVMValueRef fn = nullptr;
     LLVMTypeRef ty = nullptr;
     TypeDesc ret;
+    std::vector<ParamMod> paramMods; // for call sites (out/inout are passed by pointer)
 };
 
 struct LValue {
@@ -124,9 +125,23 @@ private:
     bool terminated_ = false;
     bool jitMode_ = false;
     std::ostringstream* notesSink_ = nullptr;
+    LLVMValueRef curFn_ = nullptr;
+    struct Loop { LLVMBasicBlockRef cont; LLVMBasicBlockRef end; };
+    std::vector<Loop> loops_;
 
     LLVMTypeRef i32Ty() const { return LLVMInt32TypeInContext(ctx_); }
     LLVMTypeRef i1Ty() const { return LLVMInt1TypeInContext(ctx_); }
+
+    LLVMBasicBlockRef newBB(const char* name) {
+        return LLVMAppendBasicBlockInContext(ctx_, curFn_, name);
+    }
+    void positionAtEnd(LLVMBasicBlockRef bb) {
+        LLVMPositionBuilderAtEnd(builder_, bb);
+        terminated_ = false;
+    }
+    void br(LLVMBasicBlockRef dest) {
+        if (!terminated_) { LLVMBuildBr(builder_, dest); terminated_ = true; }
+    }
     LLVMValueRef idxConst(unsigned i) const { return LLVMConstInt(i32Ty(), i, 1); }
 
     void note(const std::string& s) { if (notesSink_) *notesSink_ << s; }
@@ -170,7 +185,13 @@ private:
         FuncInfo info;
         info.ret = resolve(f.returnType);
         std::vector<LLVMTypeRef> params;
-        for (const auto& p : f.params) params.push_back(resolve(p->type).ty);
+        for (const auto& p : f.params) {
+            // `out`/`inout` parameters are passed by pointer so the callee can
+            // write back to the caller's storage.
+            bool byRef = p->mod == ParamMod::Out || p->mod == ParamMod::InOut;
+            params.push_back(byRef ? ptrTy_ : resolve(p->type).ty);
+            info.paramMods.push_back(p->mod);
+        }
         info.ty = LLVMFunctionType(info.ret.ty, params.data(),
                                    static_cast<unsigned>(params.size()), 0);
         if (jitMode_ && f.isExtern) {
@@ -191,16 +212,24 @@ private:
         symbols_.clear();
         terminated_ = false;
         curRet_ = resolve(f.returnType);
+        loops_.clear();
 
-        LLVMValueRef fn = funcs_[f.mangledName].fn;
-        LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx_, fn, "entry");
+        curFn_ = funcs_[f.mangledName].fn;
+        LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx_, curFn_, "entry");
         LLVMPositionBuilderAtEnd(builder_, entry);
 
         for (unsigned i = 0; i < f.params.size(); ++i) {
+            ParamMod mod = f.params[i]->mod;
             TypeDesc td = resolve(f.params[i]->type);
-            LLVMValueRef slot = LLVMBuildAlloca(builder_, td.ty, "arg");
-            LLVMBuildStore(builder_, LLVMGetParam(fn, i), slot);
-            symbols_[f.params[i]->name] = {slot, td};
+            if (mod == ParamMod::Out || mod == ParamMod::InOut) {
+                // The incoming argument is already a pointer to the caller's
+                // storage; reads/writes go directly through it.
+                symbols_[f.params[i]->name] = {LLVMGetParam(curFn_, i), td};
+            } else {
+                LLVMValueRef slot = LLVMBuildAlloca(builder_, td.ty, "arg");
+                LLVMBuildStore(builder_, LLVMGetParam(curFn_, i), slot);
+                symbols_[f.params[i]->name] = {slot, td};
+            }
         }
 
         for (const auto& s : static_cast<Block*>(f.body.get())->statements) {
@@ -243,10 +272,92 @@ private:
                 symbols_[vd->name] = {slot, td};
                 return;
             }
+            case NodeKind::Block:
+                for (auto& s : static_cast<Block*>(n)->statements) emitStmt(s.get());
+                return;
+            case NodeKind::If: {
+                auto i = static_cast<IfStmt*>(n);
+                LLVMValueRef cond = toI1(emitExpr(i->condition.get()));
+                LLVMBasicBlockRef thenBB = newBB("if.then");
+                LLVMBasicBlockRef endBB = newBB("if.end");
+                LLVMBasicBlockRef elseBB = i->elseBranch ? newBB("if.else") : endBB;
+                LLVMBuildCondBr(builder_, cond, thenBB, elseBB);
+                terminated_ = true;
+                positionAtEnd(thenBB);
+                emitStmt(i->thenBranch.get());
+                br(endBB);
+                if (i->elseBranch) {
+                    positionAtEnd(elseBB);
+                    emitStmt(i->elseBranch.get());
+                    br(endBB);
+                }
+                positionAtEnd(endBB);
+                return;
+            }
+            case NodeKind::While: {
+                auto w = static_cast<WhileStmt*>(n);
+                LLVMBasicBlockRef condBB = newBB("while.cond");
+                LLVMBasicBlockRef bodyBB = newBB("while.body");
+                LLVMBasicBlockRef endBB = newBB("while.end");
+                LLVMBuildBr(builder_, condBB);
+                terminated_ = true;
+                positionAtEnd(condBB);
+                LLVMValueRef cond = toI1(emitExpr(w->condition.get()));
+                LLVMBuildCondBr(builder_, cond, bodyBB, endBB);
+                terminated_ = true;
+                positionAtEnd(bodyBB);
+                loops_.push_back({condBB, endBB});
+                emitStmt(w->body.get());
+                loops_.pop_back();
+                br(condBB);
+                positionAtEnd(endBB);
+                return;
+            }
+            case NodeKind::For: {
+                auto fs = static_cast<ForStmt*>(n);
+                if (fs->init) emitStmt(fs->init.get()); // var decl or expression
+                LLVMBasicBlockRef condBB = newBB("for.cond");
+                LLVMBasicBlockRef bodyBB = newBB("for.body");
+                LLVMBasicBlockRef updBB = newBB("for.update");
+                LLVMBasicBlockRef endBB = newBB("for.end");
+                br(condBB);
+                positionAtEnd(condBB);
+                if (fs->condition) {
+                    LLVMBuildCondBr(builder_, toI1(emitExpr(fs->condition.get())), bodyBB, endBB);
+                } else {
+                    LLVMBuildBr(builder_, bodyBB);
+                }
+                terminated_ = true;
+                positionAtEnd(bodyBB);
+                loops_.push_back({updBB, endBB}); // continue runs the update
+                emitStmt(fs->body.get());
+                loops_.pop_back();
+                br(updBB);
+                positionAtEnd(updBB);
+                if (fs->update) (void)emitExpr(fs->update.get());
+                br(condBB);
+                positionAtEnd(endBB);
+                return;
+            }
+            case NodeKind::Break:
+                if (!loops_.empty()) br(loops_.back().end);
+                return;
+            case NodeKind::Continue:
+                if (!loops_.empty()) br(loops_.back().cont);
+                return;
             default:
                 (void)emitExpr(n); // expression-shaped statement
                 return;
         }
+    }
+
+    // Coerce a value to i1 for use as a branch condition.
+    LLVMValueRef toI1(Value v) {
+        if (v.td.ty == i1Ty()) return v.v;
+        if (v.td.isFloat)
+            return LLVMBuildFCmp(builder_, "one", v.v, LLVMConstNull(v.td.ty), "tobool");
+        return LLVMBuildICmp(builder_, v.td.isUnsigned ? LLVMIntNE : LLVMIntNE, v.v,
+                             LLVMConstNull(v.td.ty), "tobool");
     }
 
     Value emitExpr(Node* n) {
@@ -464,13 +575,16 @@ private:
         }
 
         auto it = funcs_.find(n->callee);
-        std::vector<LLVMValueRef> args;
-        for (const auto& a : n->args) {
-            args.push_back(emitExpr(a.get()).v);
-        }
         if (it == funcs_.end()) {
             note("; TODO: call to unknown function '" + n->callee + "'\n");
             return zeroInt();
+        }
+        const auto& mods = it->second.paramMods;
+        std::vector<LLVMValueRef> args;
+        for (std::size_t k = 0; k < n->args.size(); ++k) {
+            bool byRef = k < mods.size() &&
+                         (mods[k] == ParamMod::Out || mods[k] == ParamMod::InOut);
+            args.push_back(byRef ? argAddress(n->args[k].get()) : emitExpr(n->args[k].get()).v);
         }
         LLVMValueRef callee = it->second.fn;
         if (jitMode_) {
@@ -483,6 +597,17 @@ private:
         LLVMValueRef call = LLVMBuildCall2(builder_, it->second.ty, callee,
                                            args.data(), static_cast<unsigned>(args.size()), "call");
         return {call, it->second.ret};
+    }
+
+    // Address to pass for an out/inout argument: the lvalue's storage if there
+    // is one, otherwise a temporary (writes discarded).
+    LLVMValueRef argAddress(Node* arg) {
+        LValue lv = emitLValue(arg);
+        if (lv.ok) return lv.ptr;
+        Value v = emitExpr(arg);
+        LLVMValueRef slot = LLVMBuildAlloca(builder_, v.td.ty, "outarg");
+        LLVMBuildStore(builder_, v.v, slot);
+        return slot;
     }
 };
 

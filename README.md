@@ -24,7 +24,7 @@ are passed by value, optionally with `in` / `out` / `inout` modifiers.
 - Scalar types: `void bool int uint half float double`, plus HLSL-style vector
   types (`float4`, `int3`, ...).
 - Functions with `in` / `out` / `inout` parameters.
-- Statements: `return`, `if`/`else`, `while`, `break`, `continue`, `var` decls,
+- Statements: `return`, `if`/`else`, `while`, `for`, `break`, `continue`, `var` decls,
   expression statements, blocks.
 - Expressions: literals, identifiers, calls, unary/binary operators with C
   precedence, assignment (`= += -= *= /= %=`), member access (parsed).
@@ -35,11 +35,13 @@ are passed by value, optionally with `in` / `out` / `inout` modifiers.
 
 ### Known limitations (intentional, for follow-up)
 
-- The **LLVM back-end** lowers a focused subset (params, returns, locals,
-  arithmetic `+ - *`, calls). Control flow and `out` mutation are handled by the
-  text back-end and are next on the list for the LLVM back-end.
+- The **LLVM back-end** lowers the full statement surface (control flow,
+  recursion, `out`/`inout`, structs, overloads); what remains is vector
+  construction/per-component arithmetic and passing a struct by value across the
+  host<->JIT boundary (see below).
 - `&&`/`||` are non-short-circuit; `half` constants are not fully lowered.
-- No semantic analysis / type checking yet — types are mapped at code-gen time.
+- Semantic analysis is currently overload resolution + argument-type inference
+  only; broader type checking is still ahead.
 
 ## Building
 
@@ -186,15 +188,17 @@ clang host.c ai.o -o ai        # host.c defines engine_get_hp, engine_set_positi
 
 ### What the JIT / AOT paths lower today
 
-The native paths (JIT and AOT) share one IR builder and currently lower: scalar
-int/float functions, parameters, returns, locals, arithmetic (with int/float
-promotion), calls between Strata functions, `extern` calls into the host,
-**user-defined structs** (member access, positional construction, by-value use
-within Strata), and **opaque engine handle types**. Control flow and
-`out`/`inout` mutation are handled by the text IR back-end and are next on the
-list for the native paths; `out`/`inout` also need an ABI decision (likely
-lowered to pointers in the host signature) before they are callable through a C
-function pointer.
+The native paths (JIT and AOT) share one IR builder and lower: scalar int/float
+functions, parameters (including **`out`/`inout`**, lowered to pointers),
+returns, locals, arithmetic (with int/float promotion), **control flow**
+(`if`/`else`, `while`, `for`, `break`, `continue`), recursion, calls between
+Strata functions, `extern` calls into the host, **user-defined structs** (member
+access, positional construction, by-value use within Strata), **opaque engine
+handle types**, and **type-based overloads**. The text IR back-end covers the
+same surface.
+
+The remaining gaps are narrower: vector construction/per-component arithmetic,
+and passing a struct *by value* across the host<->JIT boundary (see below).
 
 ## User-defined types
 

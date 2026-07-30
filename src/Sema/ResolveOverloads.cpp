@@ -101,6 +101,17 @@ private:
                 walkStmt(w->body.get(), scope);
                 return;
             }
+            case NodeKind::For: {
+                auto fs = static_cast<ForStmt*>(n);
+                if (fs->init) {
+                    if (fs->init->kind == NodeKind::VarDecl) walkStmt(fs->init.get(), scope);
+                    else resolveExpr(fs->init.get(), scope);
+                }
+                if (fs->condition) resolveExpr(fs->condition.get(), scope);
+                if (fs->update) resolveExpr(fs->update.get(), scope);
+                walkStmt(fs->body.get(), scope);
+                return;
+            }
             default: return;
         }
     }

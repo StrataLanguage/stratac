@@ -331,6 +331,7 @@ NodePtr Parser::parseStatement() {
         case TokKind::Kw_return:  return parseReturn();
         case TokKind::Kw_if:      return parseIf();
         case TokKind::Kw_while:   return parseWhile();
+        case TokKind::Kw_for:     return parseFor();
         case TokKind::Kw_break: {
             Token t = cur_; advance();
             expect(TokKind::Semicolon, "';'");
@@ -406,6 +407,46 @@ NodePtr Parser::parseWhile() {
     expect(TokKind::RParen, "')'");
     auto n = std::make_unique<WhileStmt>(t.range);
     n->condition = std::move(cond);
+    n->body = parseStatement();
+    return n;
+}
+
+NodePtr Parser::parseFor() {
+    Token t = cur_; advance(); // 'for'
+    if (!expect(TokKind::LParen, "'('").is(TokKind::LParen)) return nullptr;
+
+    // init: optional var decl or expression
+    NodePtr init;
+    if (!cur_.is(TokKind::Semicolon)) {
+        if (looksLikeVarDecl()) {
+            TypeName type;
+            if (!tryParseType(type)) return nullptr;
+            if (!cur_.is(TokKind::Ident)) {
+                diag_.error(cur_.range, "expected a variable name");
+                return nullptr;
+            }
+            Token nameTok = cur_; advance();
+            auto vd = std::make_unique<VarDeclStmt>(spanFrom(t, nameTok), type, toString(identText(nameTok)));
+            if (consume(TokKind::Assign)) vd->init = parseExpr();
+            init = std::move(vd);
+        } else {
+            init = parseExpr();
+        }
+    }
+    expect(TokKind::Semicolon, "';'");
+
+    NodePtr cond;
+    if (!cur_.is(TokKind::Semicolon)) cond = parseExpr();
+    expect(TokKind::Semicolon, "';'");
+
+    NodePtr update;
+    if (!cur_.is(TokKind::RParen)) update = parseExpr();
+    expect(TokKind::RParen, "')'");
+
+    auto n = std::make_unique<ForStmt>(t.range);
+    n->init = std::move(init);
+    n->condition = std::move(cond);
+    n->update = std::move(update);
     n->body = parseStatement();
     return n;
 }
