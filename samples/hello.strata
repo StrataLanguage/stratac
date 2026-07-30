@@ -1,0 +1,50 @@
+// samples/hello.strata
+// A small Strata program exercising the bootstrap subset: scalar functions,
+// in/out parameters, arithmetic, control flow, and calls.
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int square(int x) {
+    return x * x;
+}
+
+// 'out' parameters write back to the caller (there are no pointers/references
+// in Strata; out/inout are the only ways to return multiple values).
+void sum_and_count(in int a, in int b, out int sum, out int count) {
+    sum = a + b;
+    count = 2;
+}
+
+float lerp(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+int clamp(int v, int lo, int hi) {
+    int result = v;
+    if (result < lo) {
+        result = lo;
+    } else {
+        if (result > hi) {
+            result = hi;
+        }
+    }
+    return result;
+}
+
+int first_sum_up_to(int n) {
+    int total = 0;
+    int i = 1;
+    while (i <= n) {
+        total = total + i;
+        i = i + 1;
+    }
+    return total;
+}
+
+int entry() {
+    int x = add(3, 4);
+    int y = square(x);
+    return add(x, y);
+}

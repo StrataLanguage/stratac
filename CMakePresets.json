@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "MinGW GCC + Ninja (Release, with LLVM)",
+      "description": "Uses the MinGW g++ toolchain on PATH with the Ninja generator. Links the x64 LLVM-C DLL.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/default",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_COMPILER": "g++",
+        "STRATA_ENABLE_LLVM": "ON",
+        "LLVM_C_DIR": "C:/Users/andre/llvm-x64"
+      }
+    },
+    {
+      "name": "no-llvm",
+      "displayName": "MinGW GCC + Ninja (no LLVM)",
+      "inherits": "default",
+      "binaryDir": "${sourceDir}/build/no-llvm",
+      "cacheVariables": {
+        "STRATA_ENABLE_LLVM": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "default", "configurePreset": "default" },
+    { "name": "no-llvm", "configurePreset": "no-llvm" }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

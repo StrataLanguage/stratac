@@ -1,0 +1,26 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE / tooling
+.vscode/
+.idea/
+.cache/
+*.user
+
+# Compiler / object artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.dll
+*.exe
+*.pdb
+*.ilk
+
+# Downloaded installer kept outside the repo (not versioned)
+LLVM-*.exe
+
+
+.vs/
