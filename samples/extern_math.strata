@@ -4,7 +4,7 @@
 // hosts/extern_math_host.c). This is the "script calls into the engine" pattern.
 //
 // Build and run the whole thing (AOT object linked against the host):
-//   stratac --emit obj extern_math.strata -o extern_math.o
+//   stratac extern_math.strata -o extern_math.o
 //   clang hosts/extern_math_host.c extern_math.o -o extern_math.exe
 //   ./extern_math.exe
 

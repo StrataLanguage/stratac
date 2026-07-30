@@ -2,7 +2,7 @@
 //
 // The engine owns the Entity layout. Strata sees `Entity` as an opaque,
 // pointer-sized handle, which matches the C `Entity` (a pointer) below.
-//   stratac --emit obj engine_api.strata -o engine_api.o
+//   stratac engine_api.strata -o engine_api.o
 //   clang hosts/engine_api_host.c engine_api.o -o engine_api.exe
 //   ./engine_api.exe
 #include <stdio.h>

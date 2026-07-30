@@ -99,7 +99,7 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
     // Stamp the module with the target triple and data layout so the IR matches
     // the chosen ABI (pointer width, alignment, etc.). The TargetMachine would
     // override these during emission anyway, but setting them explicitly avoids
-    // verifier warnings and makes --emit ir consistent with --emit obj.
+    // verifier warnings.
     LLVMSetTarget(bm.mod, triple);
 
     LLVMTargetDataRef dataLayout = LLVMCreateTargetDataLayout(targetMachine);

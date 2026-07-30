@@ -4,7 +4,7 @@
 // struct fields / parameter types, and they lower to LLVM vector types
 // (<4 x float>, <3 x i32>). Construction and per-component arithmetic are not
 // lowered yet, so this is a structural preview rather than a runnable program.
-//   stratac --emit ast vectors.strata
+//   stratac --ast vectors.strata
 
 struct Material {
     float4 color;        // RGBA

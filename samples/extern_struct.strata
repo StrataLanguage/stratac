@@ -3,7 +3,7 @@
 // On extern functions a struct parameter must declare a direction (in/out/inout),
 // which lowers it to a pointer -- ABI-stable across the boundary. See
 // hosts/extern_struct_host.c.
-//   stratac --emit obj extern_struct.strata -o extern_struct.o
+//   stratac extern_struct.strata -o extern_struct.o
 //   clang hosts/extern_struct_host.c extern_struct.o -o extern_struct.exe
 //   ./extern_struct.exe
 

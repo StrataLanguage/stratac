@@ -5,7 +5,7 @@
 // objects without the language knowing anything about them. See
 // hosts/engine_api_host.c.
 //
-//   stratac --emit obj engine_api.strata -o engine_api.o
+//   stratac engine_api.strata -o engine_api.o
 //   clang hosts/engine_api_host.c engine_api.o -o engine_api.exe
 //   ./engine_api.exe
 

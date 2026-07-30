@@ -46,7 +46,7 @@ set "EXE=%TEMP%\strata_%BASE%.exe"
 set "LOG=%TEMP%\strata_%BASE%.log"
 
 echo [1/3] compile  %SRC% -^> %OBJ%
-"%STRATAC%" --emit obj "%SRC%" -o "%OBJ%" > "%LOG%" 2>&1
+"%STRATAC%" "%SRC%" -o "%OBJ%" > "%LOG%" 2>&1
 if errorlevel 1 goto fail_compile
 
 if defined HOST (

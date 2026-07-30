@@ -70,20 +70,20 @@ build/default/bin/strata_tests # directly
 ### Using the compiler
 
 ```sh
-# Emit LLVM IR (uses the in-process LLVM back-end)
-stratac --emit ir samples/hello.strata
+# Emit a native object file (default)
+stratac samples/hello.strata -o hello.o
 
-# Write IR to a file
-stratac --emit ir samples/hello.strata -o hello.ll
+# Also emit assembly
+stratac --asm samples/hello.strata -o hello.o
 
-# Pretty-print the AST
-stratac --emit ast samples/hello.strata
+# Also print the AST to stderr
+stratac --ast samples/hello.strata -o hello.o
 ```
 
-The emitted IR can be assembled to native code by an external LLVM toolchain:
+The emitted object links like any other:
 
 ```sh
-clang -c hello.ll -o hello.o
+clang hello.o -o hello.exe && ./hello.exe
 ```
 
 ### Compile and run in one step (Windows)
@@ -131,18 +131,18 @@ The suite verifies this end-to-end: it JITs `add`, `answer()` (which calls
 
 ### 2. AOT — emit native object / assembly to disk (the shipping / cache path)
 
-`stratac` lowers the IR to a relocatable object (`.o`) or assembly (`.s`) in
-process via LLVM's `TargetMachine`:
+`stratac` lowers the IR to a relocatable object (`.o`) in process via LLVM's
+`TargetMachine`:
 
 ```sh
-stratac --emit obj run.strata -o run.o    # native object
-stratac --emit asm run.strata -o run.s    # native assembly
+stratac run.strata -o run.o         # native object (default)
+stratac --asm run.strata -o run.o   # also write run.s (assembly)
 ```
 
 The emitted object uses the host's x64 ABI and links like any other:
 
 ```sh
-# host.c references int add(int,int); produced by stratac --emit obj
+# host.c references int add(int,int); produced by stratac
 clang host.c run.o -o run.exe && ./run.exe
 ```
 
@@ -192,7 +192,7 @@ fills. This sidesteps MCJIT symbol resolution, which isn't exposed by this
 host provides it at link time:
 
 ```sh
-stratac --emit obj ai.strata -o ai.o
+stratac ai.strata -o ai.o
 clang host.c ai.o -o ai        # host.c defines engine_get_hp, engine_set_position, ...
 ```
 
@@ -328,18 +328,17 @@ drivers you can build and run:
 
 ```sh
 # hello: runs as a standalone program (exit code 25)
-stratac --emit obj samples/hello.strata -o hello.o
+stratac samples/hello.strata -o hello.o
 clang hello.o -o hello.exe && ./hello.exe ; echo $?
 
-# structs: native IR + object
-stratac --emit ir  samples/structs.strata
-stratac --emit obj samples/structs.strata -o structs.o
+# structs: native object
+stratac samples/structs.strata -o structs.o
 
 # script calls host externs, then opaque engine handles (AOT link + run)
-stratac --emit obj samples/extern_math.strata -o extern_math.o
+stratac samples/extern_math.strata -o extern_math.o
 clang samples/hosts/extern_math_host.c extern_math.o -o extern_math.exe && ./extern_math.exe
 
-stratac --emit obj samples/engine_api.strata -o engine_api.o
+stratac samples/engine_api.strata -o engine_api.o
 clang samples/hosts/engine_api_host.c engine_api.o -o engine_api.exe && ./engine_api.exe
 ```
 

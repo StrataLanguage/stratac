@@ -4,8 +4,8 @@
 // parameter types best match the arguments (exact match preferred; numeric
 // conversions allowed with lower priority). Straight-line code, so it runs
 // through the native back-end:
-//   stratac --emit ir  overloads.strata            # see the mangled symbols
-//   stratac --emit obj overloads.strata -o overloads.o
+//   stratac overloads.strata -o overloads.o
+//   stratac --ast overloads.strata  # see mangled symbols in the AST
 //   clang overloads.o -o overloads.exe && ./overloads.exe ; echo $?   # 15
 
 struct Vec3 {

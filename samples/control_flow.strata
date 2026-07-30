@@ -2,10 +2,10 @@
 //
 // The LLVM back-end handles if/else, while, for, break/continue, recursion,
 // and out/inout. Run it natively:
-//   stratac --emit obj control_flow.strata -o control_flow.o
+//   stratac control_flow.strata -o control_flow.o
 //   clang control_flow.o -o control_flow.exe && ./control_flow.exe ; echo $?
-// Or inspect as LLVM IR:
-//   stratac --emit ir control_flow.strata
+// Or inspect the AST:
+//   stratac --ast control_flow.strata
 
 // Iterative factorial with a while loop.
 int factorial(int n) {

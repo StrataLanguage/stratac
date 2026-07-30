@@ -3,7 +3,7 @@
 // The host implements the `extern` functions Strata declares. Structs arrive as
 // pointers (Strata's in/out/inout lowering), and the layout matches Strata's
 // Vec3 { float, float, float }.
-//   stratac --emit obj extern_struct.strata -o extern_struct.o
+//   stratac extern_struct.strata -o extern_struct.o
 //   clang hosts/extern_struct_host.c extern_struct.o -o extern_struct.exe
 //   ./extern_struct.exe
 #include <stdio.h>

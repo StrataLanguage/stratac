@@ -24,16 +24,15 @@ tree.
 
 Run tests directly for full output: `build/default/bin/strata_tests.exe`.
 
-Validate emitted IR with the real LLVM after changes to the back-end
-(the x64 clang is at `<LLVM_C_DIR>/bin/clang.exe`; see `CMakePresets.json`):
+Validate the emitted object after changes to the back-end:
 
 ```sh
-stratac --emit ir samples/hello.strata -o build/default/hello.ll
-<LLVM_C_DIR>/bin/clang.exe -c build/default/hello.ll -o build/default/hello.o
+stratac samples/hello.strata -o build/default/hello.o
+<LLVM_C_DIR>/bin/clang.exe build/default/hello.o -o build/default/hello.exe
 ```
 
-`clang -c` must exit 0 (a `-Woverride-module` warning about the target triple is
-fine; the IR carries no triple by design).
+The object must link cleanly (`clang` exit 0); `hello.exe` should print exit
+code 25.
 
 ## Running Strata code (execution)
 
@@ -43,7 +42,7 @@ Two paths, both via LLVM:
   returns native function pointers. Implemented in `src/Codegen/LLVMJit.*` (MCJIT
   via the ExecutionEngine C API). ORC v2 (`LLVMOrc*`) is also exported by
   LLVM-C.dll for future hot-reload.
-- **AOT (disk):** `stratac --emit obj|asm`, implemented in `src/Codegen/LLVMAot.*`
+- **AOT (disk):** `stratac` (default: emits `.o`), implemented in `src/Codegen/LLVMAot.*`
   via `LLVMTargetMachineEmitToFile`. Emits the host x64 ABI; the object links
   like any COFF object.
 

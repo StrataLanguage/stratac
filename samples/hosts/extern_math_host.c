@@ -2,7 +2,7 @@
 //
 // Provides the `extern` functions Strata declares, plus a C main that calls the
 // Strata-defined `lucky_number`. Link together with the AOT object:
-//   stratac --emit obj extern_math.strata -o extern_math.o
+//   stratac extern_math.strata -o extern_math.o
 //   clang hosts/extern_math_host.c extern_math.o -o extern_math.exe
 //   ./extern_math.exe
 #include <stdio.h>

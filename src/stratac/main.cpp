@@ -1,14 +1,5 @@
-// stratac: the Strata compiler driver.
-//
-// Usage:
-//   stratac [options] <file.strata>
-//
-// Options:
-//   --emit {ir|ast|obj|asm}  output kind (default: ir)
-//   -o <file>                write output to <file>
-//   --target <arch>          x86_64 (default), aarch64, arm64
-//   --version                print version and exit
-//   -h, --help               show this help
+// The Strata compiler driver.
+
 #include "strata/Codegen/CodegenBackend.h"
 #include "strata/Core/Diagnostics.h"
 #include "strata/Core/SourceLocation.h"
@@ -25,9 +16,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <iostream>
 #include <sstream>
 #include <string>
+#include <optional>
 #include <string_view>
 
 namespace
@@ -37,41 +28,54 @@ void PrintHelp()
 {
     std::fprintf(stderr, "stratac - Strata compiler\n"
                          "Usage: stratac [options] <file.strata>\n"
+                         "Emits a relocatable object file (.o) by default.\n"
                          "Options:\n"
-                         "  --emit {ir|ast|obj|asm}  output kind (default: ir)\n"
-                         "      ir  = textual LLVM IR (default)\n"
-                         "      ast = pretty-printed AST\n"
-                         "      obj = native relocatable object (.o)  [requires LLVM + -o]\n"
-                         "      asm = native assembly (.s)            [requires LLVM + -o]\n"
-                         "  -o <file>        write output to <file> (required for obj/asm)\n"
-                         "  --target <arch>  target architecture: x86_64 (default), aarch64, arm64\n"
+                         "  -o <file>        output object file (default: <input>.o)\n"
+                         "  --asm            also emit assembly (<output>.s)\n"
+                         "  --ast            also print the AST to stderr\n"
+                         "  --target <arch>  target: x86_64 (default), aarch64, arm64\n"
                          "  --version        print version and exit\n"
                          "  -h, --help       show this help\n");
 }
 
-std::string ReadFile(const std::string& path, bool& ok)
+std::optional<std::string> ReadFile(const std::string& path)
 {
     std::ifstream in(path, std::ios::binary);
+
     if (!in)
     {
-        ok = false;
         return {};
     }
 
     std::ostringstream ss;
     ss << in.rdbuf();
-    ok = true;
+
     return ss.str();
+}
+
+// Replaces the file extension of `path` with `ext`.
+std::string ReplaceExt(const std::string& path, std::string_view ext)
+{
+    auto slash = path.find_last_of("/\\");
+    auto dot = path.find_last_of('.');
+
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
+    {
+        return path.substr(0, dot) + std::string(ext);
+    }
+
+    return path + std::string(ext);
 }
 
 } // namespace
 
 int main(int argc, char** argv)
 {
-    std::string emit = "ir";
     std::string outFile;
     std::string inputFile;
     std::string targetArch;
+    bool emitAsm = false;
+    bool printAst = false;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -96,22 +100,7 @@ int main(int argc, char** argv)
             return 0;
         }
 
-        if (a == "--emit")
-        {
-            if (i + 1 >= argc)
-            {
-                std::fprintf(stderr, "error: --emit needs an argument\n");
-                return 2;
-            }
-
-            emit = argv[++i];
-            if (emit != "ir" && emit != "ast" && emit != "obj" && emit != "asm")
-            {
-                std::fprintf(stderr, "error: --emit must be 'ir', 'ast', 'obj' or 'asm'\n");
-                return 2;
-            }
-        }
-        else if (a == "-o")
+        if (a == "-o")
         {
             if (i + 1 >= argc)
             {
@@ -120,6 +109,14 @@ int main(int argc, char** argv)
             }
 
             outFile = argv[++i];
+        }
+        else if (a == "--asm")
+        {
+            emitAsm = true;
+        }
+        else if (a == "--ast")
+        {
+            printAst = true;
         }
         else if (a == "--target")
         {
@@ -160,16 +157,16 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    bool ok = false;
-    std::string source = ReadFile(inputFile, ok);
-    if (!ok)
+    std::optional<std::string> source = ReadFile(inputFile);
+
+    if (!source.has_value())
     {
         std::fprintf(stderr, "error: cannot open file '%s'\n", inputFile.c_str());
         return 1;
     }
 
     strata::SourceManager src;
-    src.SetSource(std::move(source), inputFile);
+    src.SetSource(std::move(*source), inputFile);
 
     strata::DiagnosticEngine diag;
     strata::Lexer lex(src.Source(), diag);
@@ -189,99 +186,79 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::string output;
-    if (emit == "obj" || emit == "asm")
+    if (printAst)
     {
+        std::string ast = strata::DumpAst(*mod);
+        std::fwrite(ast.data(), 1, ast.size(), stderr);
+    }
+
 #ifdef STRATA_ENABLE_LLVM
-        if (outFile.empty())
+    std::string notes;
+    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes);
+
+    if (!notes.empty())
+    {
+        std::fwrite(notes.data(), 1, notes.size(), stderr);
+    }
+
+    if (diag.HasErrors())
+    {
+        std::string d = diag.Format(src);
+        std::fwrite(d.data(), 1, d.size(), stderr);
+        std::fprintf(stderr, "%u error(s).\n", diag.ErrorCount());
+        return 1;
+    }
+
+    // Build the full target triple when cross-compiling.
+    std::string triple;
+    if (!targetArch.empty() && targetArch != "x86_64")
+    {
+        char* hostTriple = LLVMGetDefaultTargetTriple();
+        std::string_view host(hostTriple);
+        auto firstDash = host.find('-');
+        if (firstDash != std::string_view::npos)
         {
-            std::fprintf(stderr, "error: --emit %s requires -o <file>\n", emit.c_str());
-            return 2;
+            triple = targetArch + std::string(host.substr(firstDash));
         }
-
-        std::string notes;
-        std::string err;
-
-        // Build the full target triple when cross-compiling. On Windows the
-        // host default is x86_64-pc-windows-msvc; for AArch64 we substitute
-        // the architecture prefix while keeping the host's OS/environment.
-        std::string triple;
-        if (!targetArch.empty() && targetArch != "x86_64")
+        else
         {
-            char* hostTriple = LLVMGetDefaultTargetTriple();
-            std::string_view host(hostTriple);
-            auto firstDash = host.find('-');
-            if (firstDash != std::string_view::npos)
-            {
-                triple = targetArch + std::string(host.substr(firstDash));
-            }
-            else
-            {
-                // Fallback if the host triple is malformed.
-                triple = targetArch + "-pc-windows-msvc";
-            }
-            LLVMDisposeMessage(hostTriple);
+            triple = targetArch + "-pc-windows-msvc";
         }
+        LLVMDisposeMessage(hostTriple);
+    }
 
-        strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes);
+    // Derive output path from input if -o was not given.
+    if (outFile.empty())
+    {
+        outFile = ReplaceExt(inputFile, ".o");
+    }
 
-        if (diag.HasErrors())
-        {
-            std::string d = diag.Format(src);
-            std::fwrite(d.data(), 1, d.size(), stderr);
-            std::fprintf(stderr, "%u error(s).\n", diag.ErrorCount());
-            return 1;
-        }
+    std::string err;
 
-        bool ok = strata::EmitNativeFile(bm, outFile, emit == "asm", err, triple);
-        if (!ok)
+    if (!strata::EmitNativeFile(bm, outFile, false, err, triple))
+    {
+        std::fprintf(stderr, "error: %s\n", err.c_str());
+        return 1;
+    }
+
+    std::fprintf(stderr, "wrote object: %s\n", outFile.c_str());
+
+    if (emitAsm)
+    {
+        std::string asmFile = ReplaceExt(outFile, ".s");
+
+        if (!strata::EmitNativeFile(bm, asmFile, true, err, triple))
         {
             std::fprintf(stderr, "error: %s\n", err.c_str());
             return 1;
         }
 
-        std::fprintf(stderr, "wrote native %s: %s\n", emit == "asm" ? "assembly" : "object", outFile.c_str());
-        return 0;
-#else
-        std::fprintf(stderr, "error: --emit %s requires LLVM linkage\n", emit.c_str());
-        return 2;
-#endif
-    }
-
-    if (emit == "ast")
-    {
-        output = strata::DumpAst(*mod);
-    }
-    else
-    {
-        auto res = strata::GenerateLlvmIr(*mod);
-        if (!res.ok)
-        {
-            std::fprintf(stderr, "error: LLVM IR generation failed\n");
-            return 1;
-        }
-        output = res.output;
-    }
-
-    if (outFile.empty())
-    {
-        std::fwrite(output.data(), 1, output.size(), stdout);
-        if (!output.empty() && output.back() != '\n')
-        {
-            std::fputc('\n', stdout);
-        }
-    }
-    else
-    {
-        std::ofstream of(outFile, std::ios::binary);
-        if (!of)
-        {
-            std::fprintf(stderr, "error: cannot write output file '%s'\n", outFile.c_str());
-            return 1;
-        }
-
-        of.write(output.data(), static_cast<std::streamsize>(output.size()));
+        std::fprintf(stderr, "wrote assembly: %s\n", asmFile.c_str());
     }
 
     return 0;
+#else
+    std::fprintf(stderr, "error: object emission requires LLVM linkage\n");
+    return 1;
+#endif
 }

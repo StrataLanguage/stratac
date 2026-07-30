@@ -12,7 +12,7 @@
 //   cmake --build --preset default --target engine_demo
 //
 // Build AOT mode (run_engine_demo.bat does this):
-//   stratac --emit obj engine_demo.strata -o engine_demo.o
+//   stratac engine_demo.strata -o engine_demo.o
 //   clang engine_demo_host.c engine_demo.o -o engine_demo_aot.exe
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
 }
 
 #else
-/* AOT mode: the script was pre-compiled (stratac --emit obj) and linked.   */
+/* AOT mode: the script was pre-compiled (stratac) and linked.             */
 /* ======================================================================== */
 extern int chase(Entity* attacker, Entity* target, int step);
 
