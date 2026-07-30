@@ -24,7 +24,8 @@ int fibonacci(int n) {
 }
 
 // Entry the host calls. seed=7 -> entity_get=7 -> set to 10 -> fibonacci(10)=55.
-int run(int seed) {
+int run(int seed)
+{
     Entity e = entity_create(seed);
     int v = entity_get(e);
     entity_set(e, v + 3);                 // engine mutates the handle's value

@@ -114,6 +114,26 @@ STRATA_TEST(no_matching_overload_is_an_error)
     STRATA_CHECK(diag.HasErrors());
 }
 
+STRATA_TEST(undefined_function_is_an_error)
+{
+    DiagnosticEngine diag;
+    auto mod = Resolve("int entry() { return foofdofdofd(); }\n", diag);
+    STRATA_CHECK(diag.HasErrors());
+    std::string d = diag.Format(SourceManager{});
+    STRATA_CHECK(Contains(d, "unknown function 'foofdofdofd'"));
+}
+
+STRATA_TEST(constructor_call_is_not_unknown)
+{
+    // Vec3(1,2,3) is a constructor, not a function call -- must not trigger
+    // the "unknown function" diagnostic.
+    DiagnosticEngine diag;
+    auto mod = Resolve("struct Vec3 { float x; float y; float z; };\n"
+                       "int entry() { Vec3 v = Vec3(1, 2, 3); return 0; }\n",
+                       diag);
+    STRATA_CHECK(!diag.HasErrors());
+}
+
 STRATA_TEST(extern_struct_param_requires_direction)
 {
     // A bare struct param (extern or not) must declare in/out/inout -- structs

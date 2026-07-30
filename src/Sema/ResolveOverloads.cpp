@@ -296,10 +296,17 @@ class Resolver
 
     void ResolveCall(CallExpr& c, VarScope& scope)
     {
+        // Constructor calls (e.g. Vec3(1,2,3)) are lowered by codegen, not resolved here.
+        if (m_registry.IsUserType(c.callee))
+        {
+            return;
+        }
+
         auto iterator = m_byName.find(c.callee);
         if (iterator == m_byName.end() || iterator->second.empty())
         {
-            return; // unknown -> codegen reports
+            m_diag.Error(c.range, "unknown function '" + c.callee + "'");
+            return;
         }
 
         std::vector<std::string> argTypes;
