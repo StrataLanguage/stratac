@@ -1,90 +1,43 @@
 #pragma once
 
 #include "strata/Core/SourceLocation.h"
+#include "strata/Core/Util.h"
 
-#include <cstdint>
-#include <functional>
-#include <string>
-#include <vector>
+typedef enum {
+    SevError,
+    SevWarning,
+    SevNote,
+} DiagSeverity;
 
-namespace strata
-{
+typedef struct {
+    DiagSeverity severity;
+    SourceRange range;
+    const char* message;
+} Diagnostic;
 
-enum class DiagSeverity : std::uint8_t
-{
-    Error,
-    Warning,
-    Note,
-};
+typedef struct {
+    Arena m_arena;
+    Diagnostic* m_diagnostics;
+    size_t m_count;
+    size_t m_cap;
+    uint32_t m_errorCount;
+} DiagnosticEngine;
 
-struct Diagnostic
-{
-    DiagSeverity severity = DiagSeverity::Error;
-    SourceRange range{};
-    std::string message;
-};
+void DiagnosticEngineInit(DiagnosticEngine* diag);
+void DiagnosticEngineFree(DiagnosticEngine* diag);
 
-class DiagnosticEngine
-{
-  public:
-    void Report(DiagSeverity severity, SourceRange range, std::string message)
-    {
-        if (severity == DiagSeverity::Error)
-        {
-            m_errorCount++;
-        }
+void DiagReport(DiagnosticEngine* diag, DiagSeverity severity, SourceRange range, const char* message);
+void DiagReportFmt(DiagnosticEngine* diag, DiagSeverity severity, SourceRange range, const char* fmt, ...);
 
-        m_diagnostics.push_back({.severity = severity, .range = range, .message = std::move(message)});
-    }
+void DiagError(DiagnosticEngine* diag, SourceRange range, const char* message);
+void DiagWarning(DiagnosticEngine* diag, SourceRange range, const char* message);
+void DiagNote(DiagnosticEngine* diag, SourceRange range, const char* message);
 
-    void Error(SourceRange range, std::string message)
-    {
-        Report(DiagSeverity::Error, range, std::move(message));
-    }
+void DiagErrorFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...);
 
-    void Warning(SourceRange range, std::string message)
-    {
-        Report(DiagSeverity::Warning, range, std::move(message));
-    }
+uint32_t DiagErrorCount(const DiagnosticEngine* diag);
+bool DiagHasErrors(const DiagnosticEngine* diag);
+size_t DiagCount(const DiagnosticEngine* diag);
 
-    void Note(SourceRange range, std::string message)
-    {
-        Report(DiagSeverity::Note, range, std::move(message));
-    }
-
-    std::uint32_t ErrorCount() const noexcept
-    {
-        return m_errorCount;
-    }
-
-    bool HasErrors() const noexcept
-    {
-        return m_errorCount > 0;
-    }
-
-    std::size_t Count() const noexcept
-    {
-        return m_diagnostics.size();
-    }
-
-    const std::vector<Diagnostic>& Diagnostics() const noexcept
-    {
-        return m_diagnostics;
-    }
-
-    void Clear() noexcept
-    {
-        m_diagnostics.clear();
-        m_errorCount = 0;
-    }
-
-    // Renders all diagnostics to text, one per line, in the form:
-    //   <file>(<line>,<col>): error: <message>
-    std::string Format(const SourceManager& src) const;
-
-  private:
-    std::vector<Diagnostic> m_diagnostics;
-    std::uint32_t m_errorCount = 0;
-};
-
-} // namespace strata
+void DiagClear(DiagnosticEngine* diag);
+char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* src, Arena* arena);

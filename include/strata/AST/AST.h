@@ -1,415 +1,275 @@
 #pragma once
 
 #include "strata/Core/SourceLocation.h"
+#include "strata/Core/Util.h"
 
-#include <cstdint>
-#include <memory>
-#include <string>
-#include <vector>
+#include <stdint.h>
+#include <string.h>
 
-namespace strata
-{
+typedef enum {
+    NodeModule,
+    NodeStruct,
+    NodeHandle,
+    NodeFunction,
+    NodeParam,
+    NodeBlock,
+    NodeReturn,
+    NodeIf,
+    NodeWhile,
+    NodeFor,
+    NodeVarDecl,
+    NodeExprStmt,
+    NodeBreak,
+    NodeContinue,
+    NodeIntLiteral,
+    NodeFloatLiteral,
+    NodeBoolLiteral,
+    NodeIdent,
+    NodeUnary,
+    NodeBinary,
+    NodeAssign,
+    NodeCall,
+    NodeMember,
+    NodeStructInit,
+} NodeKind;
 
-enum class NodeKind : std::uint8_t
-{
-    // Declarations
-    Module,
-    Struct,
-    Handle,
-    Function,
-    Param,
-    // Statements
-    Block,
-    Return,
-    If,
-    While,
-    For,
-    VarDecl,
-    ExprStmt,
-    Break,
-    Continue,
-    // Expressions
-    IntLiteral,
-    FloatLiteral,
-    BoolLiteral,
-    Ident,
-    Unary,
-    Binary,
-    Assign,
-    Call,
-    Member,
-    StructInit,
-};
-
-struct Node
-{
+typedef struct {
     NodeKind kind;
     SourceRange range;
+} Node;
 
-    explicit Node(NodeKind k, SourceRange r = {}) noexcept : kind(k), range(r)
-    {
-    }
+#define AST_NEW(arena, type) ((type*)memset(arena_alloc((arena), sizeof(type)), 0, sizeof(type)))
+#define AsNode(type, node) ((type*)(node))
 
-    virtual ~Node() = default;
-};
+typedef struct {
+    char* name;
+    SourceRange range;
+    bool isConst;
+} TypeName;
 
-using NodePtr = std::unique_ptr<Node>;
-
-// ---- Types (textual) ----
-
-struct TypeName
+static inline bool TypeNameValid(const TypeName* t)
 {
-    std::string name; // e.g. "int", "float4", "MyStruct"
-    SourceRange range{};
-    bool isConst = false;
-
-    bool Valid() const noexcept
-    {
-        return !name.empty();
-    }
-};
-
-enum class ParamMod : std::uint8_t
-{
-    None,
-    In,
-    Out,
-    InOut
-};
-
-// Determine if we need write-back (by ref)
-constexpr inline bool ByRef(ParamMod m)
-{
-    // Handles In, Out, InOut.
-    // these all indicate pass by-ref
-    return m != ParamMod::None;
+    return t->name != NULL && t->name[0] != '\0';
 }
 
-inline std::string_view ParamModSpelling(ParamMod m) noexcept
+typedef enum {
+    ModNone,
+    ModIn,
+    ModOut,
+    ModInOut,
+} ParamMod;
+
+static inline bool ByRef(ParamMod m)
+{
+    return m != ModNone;
+}
+
+static inline const char* ParamModSpelling(ParamMod m)
 {
     switch (m)
     {
-    case ParamMod::In:
+    case ModIn:
         return "in";
-    case ParamMod::Out:
+    case ModOut:
         return "out";
-    case ParamMod::InOut:
+    case ModInOut:
         return "inout";
-    case ParamMod::None:
+    case ModNone:
         return "";
     }
-
     return "";
 }
 
-// ---- Declarations ----
-
-struct ParamDecl : Node
-{
-    ParamMod mod = ParamMod::None;
+typedef struct {
+    Node base;
+    ParamMod mod;
     TypeName type;
-    std::string name;
+    char* name;
+} ParamDecl;
 
-    ParamDecl(SourceRange r, ParamMod m, TypeName t, std::string n)
-        : Node(NodeKind::Param, r), mod(m), type(std::move(t)), name(std::move(n))
-    {
-    }
-};
-
-// A named field of a struct.
-struct FieldDecl
-{
+typedef struct {
     TypeName type;
-    std::string name;
-};
+    char* name;
+} FieldDecl;
 
-// A user-defined aggregate type.
-struct StructDecl : Node
-{
-    std::string name;
-    std::vector<FieldDecl> fields;
+typedef struct {
+    Node base;
+    char* name;
+    Vec fields;
+} StructDecl;
 
-    explicit StructDecl(SourceRange r, std::string n) : Node(NodeKind::Struct, r), name(std::move(n))
-    {
-    }
-};
+typedef struct {
+    Node base;
+    char* name;
+} HandleDecl;
 
-// An opaque, pointer-sized handle whose layout Strata never sees. Engine
-// objects (Entity, Texture, ...) are exposed this way; they can be held, passed
-// to `extern` functions, and returned, but never have their fields accessed.
-struct HandleDecl : Node
-{
-    std::string name;
-
-    explicit HandleDecl(SourceRange r, std::string n) : Node(NodeKind::Handle, r), name(std::move(n))
-    {
-    }
-};
-
-struct FunctionDecl : Node
-{
+typedef struct {
+    Node base;
     TypeName returnType;
-    std::string name;
-    std::vector<std::unique_ptr<ParamDecl>> params; // owned
-    NodePtr body;                                   // a Block, or nullptr for a declaration
-    bool isExtern = false;                          // provided by the host runtime
-    std::string mangledName;                        // unique IR symbol (set by overload resolution)
+    char* name;
+    Vec params;
+    Node* body;
+    bool isExtern;
+    char* mangledName;
+} FunctionDecl;
 
-    FunctionDecl(SourceRange r, TypeName ret, std::string n)
-        : Node(NodeKind::Function, r), returnType(std::move(ret)), name(std::move(n)), mangledName(name)
-    {
-    }
-};
+typedef struct {
+    Node base;
+    char* name;
+    Vec structs;
+    Vec handles;
+    Vec functions;
+} Module;
 
-struct Module : Node
-{
-    std::string name;
-    std::vector<std::unique_ptr<StructDecl>> structs;
-    std::vector<std::unique_ptr<HandleDecl>> handles;
-    std::vector<std::unique_ptr<FunctionDecl>> functions;
+typedef struct {
+    Node base;
+    Vec statements;
+} Block;
 
-    explicit Module(std::string n) : Node(NodeKind::Module), name(std::move(n))
-    {
-    }
-};
+typedef struct {
+    Node base;
+    Node* value;
+} ReturnStmt;
 
-// ---- Statements ----
+typedef struct {
+    Node base;
+    Node* condition;
+    Node* thenBranch;
+    Node* elseBranch;
+} IfStmt;
 
-struct Block : Node
-{
-    std::vector<NodePtr> statements;
-    explicit Block(SourceRange r) : Node(NodeKind::Block, r)
-    {
-    }
-};
+typedef struct {
+    Node base;
+    Node* condition;
+    Node* body;
+} WhileStmt;
 
-struct ReturnStmt : Node
-{
-    NodePtr value; // optional
-    explicit ReturnStmt(SourceRange r) : Node(NodeKind::Return, r)
-    {
-    }
-};
+typedef struct {
+    Node base;
+    Node* init;
+    Node* condition;
+    Node* update;
+    Node* body;
+} ForStmt;
 
-struct IfStmt : Node
-{
-    NodePtr condition;
-    NodePtr thenBranch;
-    NodePtr elseBranch; // optional
-    explicit IfStmt(SourceRange r) : Node(NodeKind::If, r)
-    {
-    }
-};
-
-struct WhileStmt : Node
-{
-    NodePtr condition;
-    NodePtr body;
-    explicit WhileStmt(SourceRange r) : Node(NodeKind::While, r)
-    {
-    }
-};
-
-struct ForStmt : Node
-{
-    NodePtr init;      // a VarDecl, an expression, or null
-    NodePtr condition; // expression or null (empty -> always true)
-    NodePtr update;    // expression or null
-    NodePtr body;
-    explicit ForStmt(SourceRange r) : Node(NodeKind::For, r)
-    {
-    }
-};
-
-struct VarDeclStmt : Node
-{
+typedef struct {
+    Node base;
     TypeName type;
-    std::string name;
-    NodePtr init; // optional initializer
-    VarDeclStmt(SourceRange r, TypeName t, std::string n)
-        : Node(NodeKind::VarDecl, r), type(std::move(t)), name(std::move(n))
-    {
-    }
-};
+    char* name;
+    Node* init;
+} VarDeclStmt;
 
-struct ExprStmt : Node
-{
-    NodePtr expr;
-    explicit ExprStmt(SourceRange r, NodePtr e) : Node(NodeKind::ExprStmt, r), expr(std::move(e))
-    {
-    }
-};
+typedef struct {
+    Node base;
+    Node* expr;
+} ExprStmt;
 
-struct BreakStmt : Node
-{
-    explicit BreakStmt(SourceRange r) : Node(NodeKind::Break, r)
-    {
-    }
-};
+typedef struct {
+    Node base;
+} BreakStmt;
 
-struct ContinueStmt : Node
-{
-    explicit ContinueStmt(SourceRange r) : Node(NodeKind::Continue, r)
-    {
-    }
-};
+typedef struct {
+    Node base;
+} ContinueStmt;
 
-// ---- Expressions ----
+typedef enum {
+    UnNeg,
+    UnPos,
+    UnNot,
+    UnBitNot,
+} UnaryOp;
 
-enum class UnaryOp : std::uint8_t
-{
-    Neg,
-    Pos,
-    Not,
-    BitNot
-};
-
-struct UnaryExpr : Node
-{
+typedef struct {
+    Node base;
     UnaryOp op;
-    NodePtr operand;
-    UnaryExpr(SourceRange r, UnaryOp o, NodePtr e) : Node(NodeKind::Unary, r), op(o), operand(std::move(e))
-    {
-    }
-};
+    Node* operand;
+} UnaryExpr;
 
-enum class BinaryOp : std::uint8_t
-{
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    BitAnd,
-    BitOr,
-    BitXor,
-    Shl,
-    Shr,
-    EqEq,
-    NotEq,
-    Lt,
-    LtEq,
-    Gt,
-    GtEq,
-    LogicAnd,
-    LogicOr,
-};
+typedef enum {
+    BinAdd,
+    BinSub,
+    BinMul,
+    BinDiv,
+    BinMod,
+    BinBitAnd,
+    BinBitOr,
+    BinBitXor,
+    BinShl,
+    BinShr,
+    BinEqEq,
+    BinNotEq,
+    BinLt,
+    BinLtEq,
+    BinGt,
+    BinGtEq,
+    BinLogicAnd,
+    BinLogicOr,
+} BinaryOp;
 
-struct BinaryExpr : Node
-{
+typedef struct {
+    Node base;
     BinaryOp op;
-    NodePtr lhs;
-    NodePtr rhs;
+    Node* lhs;
+    Node* rhs;
+} BinaryExpr;
 
-    BinaryExpr(SourceRange r, BinaryOp o, NodePtr l, NodePtr rhs)
-        : Node(NodeKind::Binary, r), op(o), lhs(std::move(l)), rhs(std::move(rhs))
-    {
-    }
-};
+typedef enum {
+    AssignSet,
+    AssignAdd,
+    AssignSub,
+    AssignMul,
+    AssignDiv,
+    AssignMod,
+} AssignOp;
 
-enum class AssignOp : std::uint8_t
-{
-    Assign,
-    PlusEq,
-    MinusEq,
-    StarEq,
-    SlashEq,
-    PercentEq
-};
-
-struct AssignExpr : Node
-{
+typedef struct {
+    Node base;
     AssignOp op;
-    NodePtr target; // an lvalue (Ident/Member for now)
-    NodePtr value;
+    Node* target;
+    Node* value;
+} AssignExpr;
 
-    AssignExpr(SourceRange r, AssignOp o, NodePtr t, NodePtr v)
-        : Node(NodeKind::Assign, r), op(o), target(std::move(t)), value(std::move(v))
-    {
-    }
-};
+typedef struct {
+    Node base;
+    uint64_t value;
+    bool isUnsigned;
+} IntLiteral;
 
-struct IntLiteral : Node
-{
-    std::uint64_t value = 0;
-    bool isUnsigned = false;
+typedef struct {
+    Node base;
+    double value;
+} FloatLiteral;
 
-    IntLiteral(SourceRange r, std::uint64_t v, bool u) : Node(NodeKind::IntLiteral, r), value(v), isUnsigned(u)
-    {
-    }
-};
+typedef struct {
+    Node base;
+    bool value;
+} BoolLiteral;
 
-struct FloatLiteral : Node
-{
-    double value = 0.0;
+typedef struct {
+    Node base;
+    char* name;
+} IdentExpr;
 
-    explicit FloatLiteral(SourceRange r, double v) : Node(NodeKind::FloatLiteral, r), value(v)
-    {
-    }
-};
+typedef struct {
+    Node base;
+    char* callee;
+    const FunctionDecl* resolvedDecl;
+    Vec args;
+} CallExpr;
 
-struct BoolLiteral : Node
-{
-    bool value = false;
+typedef struct {
+    Node base;
+    Node* base_node;
+    char* member;
+} MemberExpr;
 
-    BoolLiteral(SourceRange r, bool v) : Node(NodeKind::BoolLiteral, r), value(v)
-    {
-    }
-};
+typedef struct {
+    char* name;
+    Node* value;
+} StructInitField;
 
-struct IdentExpr : Node
-{
-    std::string name;
-
-    IdentExpr(SourceRange r, std::string n) : Node(NodeKind::Ident, r), name(std::move(n))
-    {
-    }
-};
-
-struct CallExpr : Node
-{
-    std::string callee;
-    const FunctionDecl* resolvedDecl = nullptr; // set by overload resolution
-    std::vector<NodePtr> args;
-
-    CallExpr(SourceRange r, std::string c) : Node(NodeKind::Call, r), callee(std::move(c))
-    {
-    }
-};
-
-struct MemberExpr : Node
-{
-    NodePtr base;
-    std::string member;
-
-    MemberExpr(SourceRange r, NodePtr b, std::string m)
-        : Node(NodeKind::Member, r), base(std::move(b)), member(std::move(m))
-    {
-    }
-};
-
-// Braced struct initializer.
-// Each entry has an optional field name (empty = positional) and a value expression.
-struct StructInitField
-{
-    std::string name; // empty for positional
-    NodePtr value;
-};
-
-struct StructInitExpr : Node
-{
-    std::string typeName;
-    std::vector<StructInitField> fields;
-
-    StructInitExpr(SourceRange r, std::string tn) : Node(NodeKind::StructInit, r), typeName(std::move(tn))
-    {
-    }
-};
-
-// Typed downcast helpers (checked in debug).
-template <typename T> T* AsNode(Node* n) noexcept
-{
-    return n ? static_cast<T*>(n) : nullptr;
-}
-
-} // namespace strata
+typedef struct {
+    Node base;
+    char* typeName;
+    Vec fields;
+} StructInitExpr;

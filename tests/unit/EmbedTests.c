@@ -1,18 +1,17 @@
-// Public C embedding API round-trip tests.
-#include "strata/Test.hpp"
+#include "strata/Test.h"
 #include "strata/strata.h"
 
-#include <cstring>
+#include <string.h>
 
 STRATA_TEST(embed_compile_string_ok)
 {
     StrataCompiler* c = strataCompilerCreate();
-    STRATA_CHECK(c != nullptr);
+    STRATA_CHECK(c != NULL);
     StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_LLVM_IR);
     STRATA_CHECK_EQ(r.ok, 1);
     STRATA_CHECK_EQ(r.error_count, (unsigned)0);
-    STRATA_CHECK(r.output != nullptr);
-    STRATA_CHECK(std::strstr(r.output, "define") != nullptr);
+    STRATA_CHECK(r.output != NULL);
+    STRATA_CHECK(strstr(r.output, "define") != NULL);
     strataResultFree(&r);
     strataCompilerDestroy(c);
 }
@@ -23,8 +22,8 @@ STRATA_TEST(embed_compile_string_reports_errors)
     StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_LLVM_IR);
     STRATA_CHECK_EQ(r.ok, 0);
     STRATA_CHECK(r.error_count > 0);
-    STRATA_CHECK(r.diagnostics != nullptr);
-    STRATA_CHECK(std::strstr(r.diagnostics, "error") != nullptr);
+    STRATA_CHECK(r.diagnostics != NULL);
+    STRATA_CHECK(strstr(r.diagnostics, "error") != NULL);
     strataResultFree(&r);
     strataCompilerDestroy(c);
 }
@@ -34,7 +33,7 @@ STRATA_TEST(embed_ast_emit)
     StrataCompiler* c = strataCompilerCreate();
     StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_AST);
     STRATA_CHECK_EQ(r.ok, 1);
-    STRATA_CHECK(std::strstr(r.output, "fn int f") != nullptr);
+    STRATA_CHECK(strstr(r.output, "fn int f") != NULL);
     strataResultFree(&r);
     strataCompilerDestroy(c);
 }
@@ -42,6 +41,6 @@ STRATA_TEST(embed_ast_emit)
 STRATA_TEST(embed_version_is_reported)
 {
     const char* v = strataLLVMVersion();
-    STRATA_CHECK(v != nullptr);
+    STRATA_CHECK(v != NULL);
     STRATA_CHECK(v[0] != '\0');
 }

@@ -1,37 +1,34 @@
-// Code generation unit tests.
-#include "Util.hpp"
+#include "Util.h"
 #include "strata/Codegen/CodegenBackend.h"
-#include "strata/Test.hpp"
+#include "strata/Test.h"
 
 #ifdef STRATA_ENABLE_LLVM
 #include "strata/Codegen/LLVMCApi.h"
 #endif
 
-#include <string>
+#include <string.h>
 
-using namespace strata;
-using namespace strata::test_util;
+static bool Contains(const char* hay, const char* needle)
+{
+    return strstr(hay, needle) != NULL;
+}
 
 #ifdef STRATA_ENABLE_LLVM
 
-namespace
+static CodegenResult GenLlvm(const char* src)
 {
-bool Contains(const std::string& hay, const std::string& needle)
-{
-    return hay.find(needle) != std::string::npos;
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    CodegenResult res = GenerateLlvmIr(mod);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    return res;
 }
-
-CodegenResult GenLlvm(std::string_view src)
-{
-    DiagnosticEngine diag;
-    auto mod = ParseAndResolve(src, diag);
-    return GenerateLlvmIr(*mod);
-}
-} // namespace
 
 STRATA_TEST(llvm_emits_function_signature)
 {
-    auto res = GenLlvm("int f() { return 7; }");
+    CodegenResult res = GenLlvm("int f() { return 7; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define i32 @f"));
     STRATA_CHECK(Contains(res.output, "ret i32 7"));
@@ -39,14 +36,14 @@ STRATA_TEST(llvm_emits_function_signature)
 
 STRATA_TEST(llvm_emits_arithmetic)
 {
-    auto res = GenLlvm("int add(int a, int b) { return a + b; }");
+    CodegenResult res = GenLlvm("int add(int a, int b) { return a + b; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "= add i32"));
 }
 
 STRATA_TEST(llvm_emits_float_arithmetic)
 {
-    auto res = GenLlvm("float f(float a, float b) { return a + b; }");
+    CodegenResult res = GenLlvm("float f(float a, float b) { return a + b; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define float @f"));
     STRATA_CHECK(Contains(res.output, "= fadd float"));
@@ -54,7 +51,7 @@ STRATA_TEST(llvm_emits_float_arithmetic)
 
 STRATA_TEST(llvm_emits_control_flow)
 {
-    auto res = GenLlvm("int g(int n) { int x = 0; while (x < n) { x = x + 1; } return x; }");
+    CodegenResult res = GenLlvm("int g(int n) { int x = 0; while (x < n) { x = x + 1; } return x; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "br label"));
     STRATA_CHECK(Contains(res.output, "icmp slt"));
@@ -62,7 +59,7 @@ STRATA_TEST(llvm_emits_control_flow)
 
 STRATA_TEST(llvm_forward_call_resolves)
 {
-    auto res = GenLlvm("int main() { return f(); } int f() { return 1; }");
+    CodegenResult res = GenLlvm("int main() { return f(); } int f() { return 1; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "call i32 @f"));
     STRATA_CHECK(Contains(res.output, "define i32 @f"));
@@ -71,7 +68,7 @@ STRATA_TEST(llvm_forward_call_resolves)
 
 STRATA_TEST(llvm_in_scalar_param_is_by_reference)
 {
-    auto res = GenLlvm("int foo(in int x) { return x; }");
+    CodegenResult res = GenLlvm("int foo(in int x) { return x; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define i32 @foo(ptr"));
     STRATA_CHECK(Contains(res.output, "load i32, ptr"));
@@ -79,7 +76,7 @@ STRATA_TEST(llvm_in_scalar_param_is_by_reference)
 
 STRATA_TEST(llvm_plain_scalar_param_is_by_value)
 {
-    auto res = GenLlvm("int foo(int x) { return x; }");
+    CodegenResult res = GenLlvm("int foo(int x) { return x; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define i32 @foo(i32"));
     STRATA_CHECK(!Contains(res.output, "define i32 @foo(ptr"));
@@ -87,15 +84,15 @@ STRATA_TEST(llvm_plain_scalar_param_is_by_value)
 
 STRATA_TEST(llvm_in_scalar_call_site_passes_address)
 {
-    auto res = GenLlvm("int foo(in int x) { return x; }\n"
-                       "int entry() { int v = 5; return foo(v); }\n");
+    CodegenResult res = GenLlvm("int foo(in int x) { return x; }\n"
+                                "int entry() { int v = 5; return foo(v); }\n");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "call i32 @foo(ptr"));
 }
 
 STRATA_TEST(llvm_in_float_param_is_by_reference)
 {
-    auto res = GenLlvm("float foo(in float x) { return x; }");
+    CodegenResult res = GenLlvm("float foo(in float x) { return x; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define float @foo(ptr"));
     STRATA_CHECK(Contains(res.output, "load float, ptr"));
@@ -103,8 +100,8 @@ STRATA_TEST(llvm_in_float_param_is_by_reference)
 
 STRATA_TEST(llvm_inout_and_out_remain_by_reference)
 {
-    auto res = GenLlvm("void foo(out int x) { x = 1; }\n"
-                       "void bar(inout int y) { y = y + 1; }\n");
+    CodegenResult res = GenLlvm("void foo(out int x) { x = 1; }\n"
+                                "void bar(inout int y) { y = y + 1; }\n");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define void @foo(ptr"));
     STRATA_CHECK(Contains(res.output, "define void @bar(ptr"));
@@ -112,7 +109,7 @@ STRATA_TEST(llvm_inout_and_out_remain_by_reference)
 
 STRATA_TEST(llvm_backend_builds_module)
 {
-    auto res = GenLlvm("int add(int a, int b) { return a + b; }");
+    CodegenResult res = GenLlvm("int add(int a, int b) { return a + b; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define"));
     STRATA_CHECK(Contains(res.output, "add"));
@@ -130,9 +127,9 @@ STRATA_TEST(llvm_reports_version)
 
 STRATA_TEST(llvm_overloaded_in_struct_param)
 {
-    auto res = GenLlvm("struct Vec3 { float x; float y; float z; };\n"
-                       "float foo(float a, float b) { return a; }\n"
-                       "float foo(in Vec3 v) { return foo(v.x, v.y); }\n");
+    CodegenResult res = GenLlvm("struct Vec3 { float x; float y; float z; };\n"
+                                "float foo(float a, float b) { return a; }\n"
+                                "float foo(in Vec3 v) { return foo(v.x, v.y); }\n");
     STRATA_CHECK(res.ok);
 }
 

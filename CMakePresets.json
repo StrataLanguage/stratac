@@ -5,13 +5,12 @@
     {
       "name": "default",
       "displayName": "MinGW GCC + Ninja (Release, with LLVM)",
-      "description": "Uses the MinGW g++ toolchain on PATH with the Ninja generator. Links the x64 LLVM-C DLL.",
+      "description": "Uses the MinGW GCC toolchain on PATH with the Ninja generator. Links the x64 LLVM-C DLL.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
         "STRATA_ENABLE_LLVM": "ON",
         "LLVM_C_DIR": "C:/Users/andre/llvm-x64"
       }

@@ -1,131 +1,95 @@
 #pragma once
 
 #include "strata/Core/SourceLocation.h"
+#include "strata/Core/Util.h"
 
-#include <cstdint>
-#include <string_view>
+#include <stdint.h>
 
-namespace strata
+typedef enum {
+    TokEof,
+    TokUnknown,
+
+    TokIdent,
+    TokIntLit,
+    TokFloatLit,
+    TokBoolLit,
+
+    TokKwVoid,
+    TokKwBool,
+    TokKwInt,
+    TokKwUint,
+    TokKwFloat,
+    TokKwDouble,
+    TokKwString,
+    TokKwIn,
+    TokKwOut,
+    TokKwInout,
+    TokKwConst,
+    TokKwStatic,
+    TokKwExtern,
+    TokKwReturn,
+    TokKwIf,
+    TokKwElse,
+    TokKwWhile,
+    TokKwFor,
+    TokKwBreak,
+    TokKwContinue,
+    TokKwTrue,
+    TokKwFalse,
+    TokKwStruct,
+    TokKwHandle,
+    TokKwNamespace,
+
+    TokLParen,
+    TokRParen,
+    TokLBrace,
+    TokRBrace,
+    TokLBracket,
+    TokRBracket,
+    TokComma,
+    TokSemicolon,
+    TokColon,
+    TokDot,
+    TokArrow,
+
+    TokAssign,
+    TokPlus,
+    TokMinus,
+    TokStar,
+    TokSlash,
+    TokPercent,
+    TokAmp,
+    TokPipe,
+    TokCaret,
+    TokTilde,
+    TokBang,
+    TokLt,
+    TokGt,
+    TokLtEq,
+    TokGtEq,
+    TokEqEq,
+    TokNotEq,
+    TokAmpAmp,
+    TokPipePipe,
+    TokShl,
+    TokShr,
+    TokPlusEq,
+    TokMinusEq,
+    TokStarEq,
+    TokSlashEq,
+    TokPercentEq,
+} TokKind;
+
+const char* TokSpelling(TokKind kind);
+const char* TokName(TokKind kind);
+TokKind ClassifyKeyword(Str ident);
+
+typedef struct {
+    TokKind kind;
+    SourceRange range;
+} Token;
+
+static inline bool TokenIs(const Token* t, TokKind k)
 {
-
-enum class TokKind : std::uint8_t
-{
-    // --- Special ---
-    Eof,     // end of input
-    Unknown, // unrecognized character
-
-    // --- Literals & identifiers ---
-    Ident,
-    IntLit,   // 123, 0x1F, 42u
-    FloatLit, // 1.0, 1.5e10, 2.0f
-    BoolLit,  // true, false
-
-    // --- Keywords ---
-    KwVoid,
-    KwBool,
-    KwInt,
-    KwUint,
-    KwFloat,
-    KwDouble,
-    KwString, // reserved
-    KwIn,
-    KwOut,
-    KwInout,
-    KwConst,
-    KwStatic,
-    KwExtern,
-    KwReturn,
-    KwIf,
-    KwElse,
-    KwWhile,
-    KwFor,
-    KwBreak,
-    KwContinue,
-    KwTrue,
-    KwFalse,
-    KwStruct,
-    KwHandle,
-    KwNamespace, // reserved
-
-    // --- Punctuation ---
-    LParen,    // (
-    RParen,    // )
-    LBrace,    // {
-    RBrace,    // }
-    LBracket,  // [
-    RBracket,  // ]
-    Comma,     // ,
-    Semicolon, // ;
-    Colon,     // :
-    Dot,       // .
-    Arrow,     // ->
-
-    // --- Operators ---
-    Assign,    // =
-    Plus,      // +
-    Minus,     // -
-    Star,      // *
-    Slash,     // /
-    Percent,   // %
-    Amp,       // &
-    Pipe,      // |
-    Caret,     // ^
-    Tilde,     // ~
-    Bang,      // !
-    Lt,        // <
-    Gt,        // >
-    LtEq,      // <=
-    GtEq,      // >=
-    EqEq,      // ==
-    NotEq,     // !=
-    AmpAmp,    // &&
-    PipePipe,  // ||
-    Shl,       // <<
-    Shr,       // >>
-    PlusEq,    // +=
-    MinusEq,   // -=
-    StarEq,    // *=
-    SlashEq,   // /=
-    PercentEq, // %=
-};
-
-// Canonical spelling for a token kind, where one exists. Used by the parser to
-// emit messages like "expected ';' but found ','" and by diagnostics.
-std::string_view TokSpelling(TokKind kind) noexcept;
-
-// Human-readable name, e.g. "identifier", "'+'", "keyword 'return'".
-std::string_view TokName(TokKind kind) noexcept;
-
-// Maps an identifier spelling to a keyword token kind, or TokKind::Ident if it is not a reserved word.
-TokKind ClassifyKeyword(std::string_view ident) noexcept;
-
-struct Token
-{
-    TokKind kind = TokKind::Eof;
-    SourceRange range{};
-
-    constexpr Token() = default;
-    constexpr Token(TokKind k, SourceRange r)
-        : kind(k),
-          range(r)
-    {
-    }
-
-    constexpr bool Is(TokKind otherKind) const noexcept
-    {
-        return kind == otherKind;
-    }
-
-    constexpr bool IsOneOf(TokKind aKind, TokKind bKind) const noexcept
-    {
-        return Is(aKind) || Is(bKind);
-    }
-
-    template <typename... Rest>
-    constexpr bool IsOneOf(TokKind aKind, TokKind bKind, Rest... rest) const noexcept
-    {
-        return Is(aKind) || IsOneOf(bKind, rest...);
-    }
-};
-
-} // namespace strata
+    return t->kind == k;
+}
