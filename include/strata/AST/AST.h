@@ -302,6 +302,7 @@ struct BinaryExpr : Node
     BinaryOp op;
     NodePtr lhs;
     NodePtr rhs;
+
     BinaryExpr(SourceRange r, BinaryOp o, NodePtr l, NodePtr rhs)
         : Node(NodeKind::Binary, r), op(o), lhs(std::move(l)), rhs(std::move(rhs))
     {
@@ -323,6 +324,7 @@ struct AssignExpr : Node
     AssignOp op;
     NodePtr target; // an lvalue (Ident/Member for now)
     NodePtr value;
+
     AssignExpr(SourceRange r, AssignOp o, NodePtr t, NodePtr v)
         : Node(NodeKind::Assign, r), op(o), target(std::move(t)), value(std::move(v))
     {
@@ -333,6 +335,7 @@ struct IntLiteral : Node
 {
     std::uint64_t value = 0;
     bool isUnsigned = false;
+
     IntLiteral(SourceRange r, std::uint64_t v, bool u) : Node(NodeKind::IntLiteral, r), value(v), isUnsigned(u)
     {
     }
@@ -341,6 +344,7 @@ struct IntLiteral : Node
 struct FloatLiteral : Node
 {
     double value = 0.0;
+
     explicit FloatLiteral(SourceRange r, double v) : Node(NodeKind::FloatLiteral, r), value(v)
     {
     }
@@ -349,6 +353,7 @@ struct FloatLiteral : Node
 struct BoolLiteral : Node
 {
     bool value = false;
+
     BoolLiteral(SourceRange r, bool v) : Node(NodeKind::BoolLiteral, r), value(v)
     {
     }
@@ -357,6 +362,7 @@ struct BoolLiteral : Node
 struct IdentExpr : Node
 {
     std::string name;
+
     IdentExpr(SourceRange r, std::string n) : Node(NodeKind::Ident, r), name(std::move(n))
     {
     }
@@ -367,6 +373,7 @@ struct CallExpr : Node
     std::string callee;
     const FunctionDecl* resolvedDecl = nullptr; // set by overload resolution
     std::vector<NodePtr> args;
+
     CallExpr(SourceRange r, std::string c) : Node(NodeKind::Call, r), callee(std::move(c))
     {
     }
@@ -376,6 +383,7 @@ struct MemberExpr : Node
 {
     NodePtr base;
     std::string member;
+
     MemberExpr(SourceRange r, NodePtr b, std::string m)
         : Node(NodeKind::Member, r), base(std::move(b)), member(std::move(m))
     {

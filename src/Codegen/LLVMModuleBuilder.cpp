@@ -100,6 +100,7 @@ class Builder
     BuiltModule Build(const Module& module, std::string& notes, bool jitMode)
     {
         notes = "; LLVM C API back-end\n";
+
         m_jitMode = jitMode;
         m_ctx = LLVMContextCreate();
         m_mod = LLVMModuleCreateWithNameInContext(module.name.c_str(), m_ctx);
@@ -145,6 +146,7 @@ class Builder
 
         std::ostringstream bodyNotes;
         m_notesSink = &bodyNotes;
+
         for (const auto& f : module.functions)
         {
             DefineFunction(*f);
@@ -170,8 +172,10 @@ class Builder
 
         BuiltModule out(m_ctx, m_mod);
         out.externSymbols = std::move(m_externNames);
+        
         m_ctx = nullptr;
         m_mod = nullptr;
+
         return out;
     }
 
@@ -180,22 +184,31 @@ class Builder
     LLVMModuleRef m_mod = nullptr;
     LLVMBuilderRef m_builder = nullptr;
     LLVMTypeRef m_ptrTy = nullptr;
+    
     TypeRegistry m_registry;
+
     std::map<std::string, LLVMTypeRef> m_structTypes;
     std::map<std::string, FuncInfo> m_funcs;
     std::map<std::string, Value> m_symbols; // v = alloca slot
     std::map<std::string, LLVMValueRef> m_externSlots;
+
     std::vector<std::string> m_externNames;
+    
     TypeDesc m_curRet;
+    
     bool m_terminated = false;
     bool m_jitMode = false;
+    
     std::ostringstream* m_notesSink = nullptr;
+    
     LLVMValueRef m_curFn = nullptr;
+    
     struct Loop
     {
         LLVMBasicBlockRef cont;
         LLVMBasicBlockRef end;
     };
+    
     std::vector<Loop> m_loops;
 
     LLVMTypeRef I32Ty() const
@@ -254,12 +267,14 @@ class Builder
         }
 
         auto it = m_structTypes.find(t.name);
+
         if (it != m_structTypes.end())
         {
             return {.ty = it->second, .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = t.name};
         }
 
         Note("; TODO: unknown type '" + t.name + "' lowered as ptr\n");
+
         return {.ty = m_ptrTy, .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""};
     }
 
@@ -314,7 +329,9 @@ class Builder
     {
         FuncInfo info;
         info.ret = Resolve(f.returnType);
+        
         std::vector<LLVMTypeRef> params;
+
         for (const auto& p : f.params)
         {
             // Structs are always passed by reference (out/inout for write-back,
@@ -327,6 +344,7 @@ class Builder
         }
 
         info.ty = LLVMFunctionType(info.ret.ty, params.data(), static_cast<unsigned>(params.size()), 0);
+
         if (m_jitMode && f.isExtern)
         {
             // Externs are not overloadable, so mangledName == name; the host
@@ -357,6 +375,7 @@ class Builder
         m_loops.clear();
 
         m_curFn = m_funcs[f.mangledName].fn;
+
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(m_ctx, m_curFn, "entry");
         LLVMPositionBuilderAtEnd(m_builder, entry);
 
@@ -364,8 +383,8 @@ class Builder
         {
             ParamMod mod = f.params[i]->mod;
             TypeDesc td = Resolve(f.params[i]->type);
-            bool structVal =
-                m_registry.IsUserType(f.params[i]->type.name) && !m_registry.IsOpaque(f.params[i]->type.name);
+            bool structVal = m_registry.IsUserType(f.params[i]->type.name) && !m_registry.IsOpaque(f.params[i]->type.name);
+
             // out/inout (write-back) and all struct params arrive as pointers to
             // the caller's storage; reads/writes go through them directly.
             if (mod == ParamMod::Out || mod == ParamMod::InOut || structVal)
@@ -376,6 +395,7 @@ class Builder
             {
                 LLVMValueRef slot = LLVMBuildAlloca(m_builder, td.ty, "arg");
                 LLVMBuildStore(m_builder, LLVMGetParam(m_curFn, i), slot);
+
                 m_symbols[f.params[i]->name] = {.v = slot, .td = td};
             }
         }
@@ -383,6 +403,7 @@ class Builder
         for (const auto& s : static_cast<Block*>(f.body.get())->statements)
         {
             EmitStmt(s.get());
+
             if (m_terminated)
             {
                 break;
@@ -414,6 +435,7 @@ class Builder
         case NodeKind::Return:
         {
             auto* r = static_cast<ReturnStmt*>(n);
+
             if (r->value)
             {
                 Value v = Coerce(EmitExpr(r->value.get()), m_curRet);
@@ -438,8 +460,11 @@ class Builder
         case NodeKind::VarDecl:
         {
             auto* vd = static_cast<VarDeclStmt*>(n);
+            
             TypeDesc td = Resolve(vd->type);
+            
             LLVMValueRef slot = LLVMBuildAlloca(m_builder, td.ty, "v");
+
             if (vd->init)
             {
                 Value v = Coerce(EmitExpr(vd->init.get()), td);
@@ -451,6 +476,7 @@ class Builder
             }
 
             m_symbols[vd->name] = {.v = slot, .td = td};
+
             return;
         }
 
@@ -464,44 +490,69 @@ class Builder
         case NodeKind::If:
         {
             auto* i = static_cast<IfStmt*>(n);
+            
             LLVMValueRef cond = ToI1(EmitExpr(i->condition.get()));
+            
             LLVMBasicBlockRef thenBB = NewBb("if.then");
             LLVMBasicBlockRef endBB = NewBb("if.end");
             LLVMBasicBlockRef elseBB = i->elseBranch ? NewBb("if.else") : endBB;
+
             LLVMBuildCondBr(m_builder, cond, thenBB, elseBB);
+
             m_terminated = true;
+            
             PositionAtEnd(thenBB);
+            
             EmitStmt(i->thenBranch.get());
+
             Br(endBB);
+            
             if (i->elseBranch)
             {
                 PositionAtEnd(elseBB);
+                
                 EmitStmt(i->elseBranch.get());
+
                 Br(endBB);
             }
 
             PositionAtEnd(endBB);
+
             return;
         }
 
         case NodeKind::While:
         {
             auto* w = static_cast<WhileStmt*>(n);
+            
             LLVMBasicBlockRef condBB = NewBb("while.cond");
             LLVMBasicBlockRef bodyBB = NewBb("while.body");
             LLVMBasicBlockRef endBB = NewBb("while.end");
+
             LLVMBuildBr(m_builder, condBB);
+            
             m_terminated = true;
+            
             PositionAtEnd(condBB);
+            
             LLVMValueRef cond = ToI1(EmitExpr(w->condition.get()));
+            
             LLVMBuildCondBr(m_builder, cond, bodyBB, endBB);
+            
             m_terminated = true;
+            
             PositionAtEnd(bodyBB);
+            
             m_loops.push_back({.cont = condBB, .end = endBB});
+            
             EmitStmt(w->body.get());
+            
             m_loops.pop_back();
+            
             Br(condBB);
+            
             PositionAtEnd(endBB);
+            
             return;
         }
 
@@ -517,8 +568,12 @@ class Builder
             LLVMBasicBlockRef bodyBB = NewBb("for.body");
             LLVMBasicBlockRef updBB = NewBb("for.update");
             LLVMBasicBlockRef endBB = NewBb("for.end");
+
+            
             Br(condBB);
+            
             PositionAtEnd(condBB);
+            
             if (fs->condition)
             {
                 LLVMBuildCondBr(m_builder, ToI1(EmitExpr(fs->condition.get())), bodyBB, endBB);
@@ -529,19 +584,28 @@ class Builder
             }
 
             m_terminated = true;
+            
             PositionAtEnd(bodyBB);
+
             m_loops.push_back({.cont = updBB, .end = endBB}); // continue runs the update
+            
             EmitStmt(fs->body.get());
+            
             m_loops.pop_back();
+            
             Br(updBB);
+            
             PositionAtEnd(updBB);
+            
             if (fs->update)
             {
                 (void)EmitExpr(fs->update.get());
             }
 
             Br(condBB);
+
             PositionAtEnd(endBB);
+
             return;
         }
 
@@ -593,25 +657,43 @@ class Builder
         case NodeKind::IntLiteral:
         {
             auto* l = static_cast<IntLiteral*>(n);
+
             TypeDesc td{
-                .ty = I32Ty(), .isFloat = false, .isUnsigned = l->isUnsigned, .isVoid = false, .structName = ""};
+                .ty = I32Ty(),
+                .isFloat = false,
+                .isUnsigned = l->isUnsigned,
+                .isVoid = false,
+                .structName = ""
+            };
+
             return {.v = LLVMConstInt(I32Ty(), l->value, 1), .td = td};
         }
 
         case NodeKind::FloatLiteral:
         {
             auto* l = static_cast<FloatLiteral*>(n);
-            TypeDesc td{.ty = LLVMFloatTypeInContext(m_ctx),
-                        .isFloat = true,
-                        .isUnsigned = false,
-                        .isVoid = false,
-                        .structName = ""};
+            TypeDesc td{
+                .ty = LLVMFloatTypeInContext(m_ctx),
+                .isFloat = true,
+                .isUnsigned = false,
+                .isVoid = false,
+                .structName = ""
+            };
+
             return {.v = LLVMConstReal(LLVMFloatTypeInContext(m_ctx), l->value), .td = td};
         }
 
         case NodeKind::BoolLiteral:
-            return {.v = LLVMConstInt(I1Ty(), static_cast<unsigned long long>(static_cast<BoolLiteral*>(n)->value), 0),
-                    .td = {.ty = I1Ty(), .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""}};
+            return {
+                .v = LLVMConstInt(I1Ty(), static_cast<unsigned long long>(static_cast<BoolLiteral*>(n)->value), 0),
+                .td = {
+                    .ty = I1Ty(),
+                    .isFloat = false,
+                    .isUnsigned = false,
+                    .isVoid = false,
+                    .structName = ""
+                }
+            };
         case NodeKind::Ident:
             return EmitIdent(static_cast<IdentExpr*>(n));
         case NodeKind::Unary:
@@ -633,13 +715,16 @@ class Builder
     Value EmitIdent(IdentExpr* n)
     {
         auto it = m_symbols.find(n->name);
+
         if (it == m_symbols.end())
         {
             Note("; TODO: unknown identifier '" + n->name + "'\n");
+
             return ZeroInt();
         }
 
         LLVMValueRef v = LLVMBuildLoad2(m_builder, it->second.td.ty, it->second.v, "id");
+
         return {.v = v, .td = it->second.td};
     }
 
@@ -648,6 +733,7 @@ class Builder
     LValue EmitLValue(Node* n)
     {
         LValue none;
+
         if (!n)
         {
             return none;
@@ -656,13 +742,19 @@ class Builder
         if (n->kind == NodeKind::Ident)
         {
             auto* id = static_cast<IdentExpr*>(n);
+
             auto it = m_symbols.find(id->name);
+
             if (it == m_symbols.end())
             {
                 return none;
             }
 
-            return {.ok = true, .ptr = it->second.v, .td = it->second.td};
+            return {
+                .ok = true,
+                .ptr = it->second.v,
+                .td = it->second.td
+            };
         }
 
         if (n->kind == NodeKind::Member)
@@ -681,10 +773,17 @@ class Builder
             }
 
             const auto* st = m_registry.Find(base.td.structName);
+            
             TypeDesc fieldTd = Resolve(st->fields[static_cast<std::size_t>(idx)].type);
+            
             LLVMValueRef idxs[2] = {IdxConst(0), IdxConst(static_cast<unsigned>(idx))};
             LLVMValueRef ptr = LLVMBuildGEP2(m_builder, base.td.ty, base.ptr, idxs, 2, "f");
-            return {.ok = true, .ptr = ptr, .td = fieldTd};
+
+            return {
+                .ok = true,
+                .ptr = ptr,
+                .td = fieldTd
+            };
         }
 
         return none;
@@ -693,27 +792,41 @@ class Builder
     Value EmitMember(MemberExpr* n)
     {
         LValue lv = EmitLValue(n);
+        
         if (lv.ok)
         {
             LLVMValueRef v = LLVMBuildLoad2(m_builder, lv.td.ty, lv.ptr, "m");
-            return {.v = v, .td = lv.td};
+
+            return {
+                .v = v,
+                .td = lv.td
+            };
         }
 
         // Rvalue member access on a struct value (e.g. getVec().x).
         Value base = EmitExpr(n->base.get());
+
         if (!base.td.structName.empty())
         {
             int idx = m_registry.FieldIndex(base.td.structName, n->member);
+
             if (idx >= 0)
             {
                 const auto* st = m_registry.Find(base.td.structName);
+                
                 TypeDesc fieldTd = Resolve(st->fields[static_cast<std::size_t>(idx)].type);
+                
                 LLVMValueRef v = LLVMBuildExtractValue(m_builder, base.v, static_cast<unsigned>(idx), "m");
-                return {.v = v, .td = fieldTd};
+
+                return {
+                    .v = v,
+                    .td = fieldTd
+                };
             }
         }
 
         Note("; TODO: cannot access member '" + n->member + "'\n");
+
         return ZeroInt();
     }
 
@@ -727,20 +840,37 @@ class Builder
         case UnaryOp::Neg:
         {
             LLVMValueRef r = e.td.isFloat ? LLVMBuildFNeg(m_builder, e.v, "neg") : LLVMBuildNeg(m_builder, e.v, "neg");
-            return {.v = r, .td = e.td};
+
+            return {
+                .v = r,
+                .td = e.td
+            };
         }
 
         case UnaryOp::Not:
         {
             LLVMValueRef r = LLVMBuildXor(m_builder, e.v, LLVMConstInt(I1Ty(), 1, 0), "not");
-            return {.v = r,
-                    .td = {.ty = I1Ty(), .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""}};
+
+            return {
+                .v = r,
+                .td = {
+                    .ty = I1Ty(),
+                    .isFloat = false,
+                    .isUnsigned = false,
+                    .isVoid = false,
+                    .structName = ""
+                }
+            };
         }
 
         case UnaryOp::BitNot:
         {
             LLVMValueRef r = LLVMBuildNot(m_builder, e.v, "bnot");
-            return {.v = r, .td = e.td};
+
+            return {
+                .v = r,
+                .td = e.td
+            };
         }
         }
 
@@ -751,8 +881,10 @@ class Builder
     {
         Value l = EmitExpr(n->lhs.get());
         Value r = EmitExpr(n->rhs.get());
+
         // Promote mixed int/float operands to float so arithmetic is well-typed.
         TypeDesc td = l.td;
+
         if (l.td.isFloat && !r.td.isFloat)
         {
             r = Coerce(r, l.td);
@@ -769,24 +901,36 @@ class Builder
         if (n->op == BinaryOp::LogicAnd || n->op == BinaryOp::LogicOr)
         {
             const char* op = (n->op == BinaryOp::LogicAnd) ? "and" : "or";
+
             // non-short-circuit on i1
             out = (n->op == BinaryOp::LogicAnd) ? LLVMBuildAnd(m_builder, l.v, r.v, "and")
                                                 : LLVMBuildOr(m_builder, l.v, r.v, "or");
             (void)op;
-            return {.v = out,
-                    .td = {.ty = I1Ty(), .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""}};
+
+            return {
+                .v = out,
+                .td = {
+                    .ty = I1Ty(),
+                    .isFloat = false,
+                    .isUnsigned = false,
+                    .isVoid = false,
+                    .structName = ""
+                }
+            };
         }
 
         auto icmp = [&](const char* pred)
         {
             out = LLVMBuildICmp(m_builder, PredNameToPredicate(pred, td.isUnsigned), l.v, r.v, "cmp");
         };
+
         auto fcmp = [&](const char* pred)
         {
             out = LLVMBuildFCmp(m_builder, pred, l.v, r.v, "cmp");
         };
 
         TypeDesc boolTd{.ty = I1Ty(), .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""};
+
         switch (n->op)
         {
         case BinaryOp::Add:
@@ -947,8 +1091,8 @@ class Builder
             }
         }
 
-        LLVMValueRef call =
-            LLVMBuildCall2(m_builder, it->second.ty, callee, args.data(), static_cast<unsigned>(args.size()), "call");
+        LLVMValueRef call = LLVMBuildCall2(m_builder, it->second.ty, callee, args.data(), static_cast<unsigned>(args.size()), "call");
+
         return {.v = call, .td = it->second.ret};
     }
 
