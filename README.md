@@ -6,16 +6,15 @@ inspired by HLSL: C-style, simple, with no pointers or references — parameters
 are passed by value, optionally with `in` / `out` / `inout` modifiers.
 
 > Status: early bootstrap. The front-end (lexer, parser, AST, diagnostics) and
-> two code-generation back-ends are in place; see **What works** below.
+> LLVM code-generation back-end are in place; see **What works** below.
 
 ## What's here
 
 - A recursive-descent **lexer + parser** producing a typed AST, with a
   source-range-aware diagnostic engine and error recovery.
-- A **text back-end** (`llvm-ir-text`) that emits valid LLVM IR; the IR has been
-  verified by assembling it to an object file with `clang`.
 - An **in-process LLVM back-end** (`llvm-c`) that builds the IR through the
-  linked **LLVM C API** (`LLVM-C.dll`) — the path that produces native code.
+  linked **LLVM C API** (`LLVM-C.dll`) — the path that produces native code
+  (IR text, object files, assembly, and JIT execution).
 - A **C embedding API** (`include/strata/strata.h`) for host applications.
 - A CLI driver, **`stratac`**.
 
@@ -59,10 +58,6 @@ back-end uses a curated set of `llvm-c` declarations
 # Configure + build (MinGW + Ninja, with LLVM)
 cmake --preset default
 cmake --build --preset default
-
-# Build without LLVM (text IR only)
-cmake --preset no-llvm
-cmake --build --preset no-llvm
 ```
 
 ### Running the tests
@@ -75,11 +70,11 @@ build/default/bin/strata_tests # directly
 ### Using the compiler
 
 ```sh
-# Emit LLVM IR (uses the in-process LLVM back-end by default)
+# Emit LLVM IR (uses the in-process LLVM back-end)
 stratac --emit ir samples/hello.strata
 
-# Emit text IR without LLVM linkage, write to a file
-stratac --no-llvm --emit ir samples/hello.strata -o hello.ll
+# Write IR to a file
+stratac --emit ir samples/hello.strata -o hello.ll
 
 # Pretty-print the AST
 stratac --emit ast samples/hello.strata
@@ -210,7 +205,7 @@ returns, locals, arithmetic (with int/float promotion), **control flow**
 Strata functions, `extern` calls into the host (structs cross the boundary by
 pointer), **user-defined structs** (member access, positional construction,
 by-value use within Strata), **opaque engine handle types**, and **type-based
-overloads**. The text IR back-end covers the same surface.
+overloads**.
 
 The remaining gaps are narrower: vector construction/per-component arithmetic,
 and passing a struct *by value* across the host<->JIT boundary (see below).
@@ -263,8 +258,7 @@ a.x = 5.0;               // then set fields individually
 ```
 
 Every variable declaration without an initializer is zero-initialized (scalars
-to `0`, floats to `0.0`, structs and vectors to all-zero fields), in both
-back-ends.
+to `0`, floats to `0.0`, structs and vectors to all-zero fields).
 
 ### Opaque engine handles
 
@@ -358,7 +352,7 @@ include/strata/   public headers (Core, Lex, AST, Parse, Codegen, strata.h)
 src/Core          SourceManager, Diagnostics
 src/Lex           Token kinds, Lexer
 src/Parse         recursive-descent Parser
-src/Codegen       AST dump, back-end interface, text + LLVM-C back-ends,
+src/Codegen       AST dump, back-end interface, LLVM-C back-end,
                   shared IR builder, AOT object emitter, and JIT engine
 src/Embed.cpp     implementation of the C embedding API
 src/stratac       the stratac CLI driver

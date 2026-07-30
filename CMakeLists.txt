@@ -30,7 +30,6 @@ set(STRATA_SOURCES
     src/Sema/ResolveOverloads.cpp
     src/Codegen/ASTDump.cpp
     src/Codegen/CodegenBackend.cpp
-    src/Codegen/IRTextBackend.cpp
     src/Embed.cpp
 )
 

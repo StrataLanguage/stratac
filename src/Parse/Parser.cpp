@@ -231,7 +231,9 @@ bool Parser::LooksLikeVarDecl() const noexcept
 bool Parser::TryParseType(TypeName& out)
 {
     bool isConst = false;
+    
     SourceRange constRange = m_cur.range;
+
     if (m_cur.Is(TokKind::KwConst))
     {
         isConst = true;
@@ -239,7 +241,9 @@ bool Parser::TryParseType(TypeName& out)
     }
 
     SourceRange range = m_cur.range;
+    
     std::string name;
+
     switch (m_cur.kind)
     {
     case TokKind::KwVoid:
@@ -276,13 +280,16 @@ bool Parser::TryParseType(TypeName& out)
     }
 
     Advance();
+
     out.name = std::move(name);
     out.range = {
         .start = constRange.start,
         .length = static_cast<std::uint16_t>(m_cur.range.start - constRange.start),
     };
     out.isConst = isConst;
+
     (void)range;
+    
     return true;
 }
 

@@ -32,10 +32,10 @@ clang hello.o -o hello.exe && ./hello.exe ; echo $? # runs; exit code 25
 ### control_flow.strata
 
 `if`/`else`, `while`, `for`, `break`/`continue`, recursion, and `out`/`inout`
-parameters. Both back-ends lower it:
+parameters. The LLVM back-end lowers it:
 
 ```sh
-stratac --no-llvm --emit ir samples/control_flow.strata     # text IR
+stratac --emit ir samples/control_flow.strata     # LLVM IR
 stratac --emit obj samples/control_flow.strata -o control_flow.o
 clang control_flow.o -o control_flow.exe && ./control_flow.exe ; echo $?   # 255
 ```
@@ -142,7 +142,7 @@ clang samples/hosts/engine_api_host.c engine_api.o -o engine_api.exe
 ## Status notes
 
 - **Control flow** (`if`/`else`, `while`, `for`, `break`, `continue`) and
-  **recursion** are lowered by both the text and the native (JIT/AOT) back-ends.
+  **recursion** are lowered by the native (JIT/AOT) back-end.
 - **`out`/`inout` parameters** are lowered to pointers: the callee writes through
   them, and the caller's variable is updated. They cross the host<->JIT boundary
   as pointers (the host passes `&var`).

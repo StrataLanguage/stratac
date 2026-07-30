@@ -80,11 +80,6 @@ StrataResult strataCompileString(StrataCompiler* c, const char* source,
 StrataResult strataCompileFile(StrataCompiler* c, const char* path,
                                StrataEmitKind emit);
 
-// Selects which back-end produces IR. Pass 1 to use the in-process LLVM
-// back-end (if the library was built with LLVM linkage), 0 to emit text IR.
-// Defaults to LLVM when available.
-void strataCompilerUseLLVM(StrataCompiler* c, int enabled);
-
 void strataResultFree(StrataResult* r);
 
 // Frees a string returned by the API (e.g. an errOut from strataJitCompile*).

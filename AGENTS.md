@@ -21,14 +21,14 @@ ctest --preset default          # run tests
 
 Binaries land in `build/default/bin/` (`stratac.exe`, `strata_tests.exe`).
 `LLVM-C.dll` is copied next to them automatically so they run from the build
-tree. To rebuild without LLVM: preset `no-llvm`.
+tree.
 
 Run tests directly for full output: `build/default/bin/strata_tests.exe`.
 
-Validate emitted IR with the real LLVM after changes to either back-end:
+Validate emitted IR with the real LLVM after changes to the back-end:
 
 ```sh
-stratac --no-llvm --emit ir samples/hello.strata -o build/default/hello.ll
+stratac --emit ir samples/hello.strata -o build/default/hello.ll
 C:/Users/andre/llvm-x64/bin/clang.exe -c build/default/hello.ll -o build/default/hello.o
 ```
 
@@ -60,9 +60,9 @@ are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
   `LLVMGetGlobalValueAddress` and writes the host pointer. (MCJIT's
   `LLVMAddGlobalMapping` is not consulted by this build, so we don't rely on it.)
   The builder only creates slots in `jitMode` (true for the JIT, false for
-  AOT/text).
+  AOT/IR).
 
-**User-defined types** (`src/Codegen/TypeRegistry.h` is shared by both back-ends):
+**User-defined types** (`src/Codegen/TypeRegistry.h` is shared by all codegen paths):
 - `struct Name { ... }` -> `%struct.Name = type { ... }` (a defined value type; a
   body-less `struct` is an error). `handle Name;` -> a distinct opaque type
   lowered as `ptr` (engine objects; member access is a compile error).
@@ -93,7 +93,7 @@ functions and asserts results).
 - AST nodes derive from `Node` (kind enum + `SourceRange`); children are owned by
   `std::unique_ptr`. Use `asNode<T>`/`static_cast<T*>` by `NodeKind`.
 - The front-end has **no semantic analysis** yet. Type mapping happens in
-  `src/Codegen/TypeUtil.h` (`detail::mapType`) and is shared by both back-ends —
+  `src/Codegen/TypeUtil.h` (`detail::mapType`) and is shared by all codegen paths —
   change type representation there.
 - The LLVM back-end uses a **curated forward-declaration** of the LLVM C API in
   `include/strata/Codegen/LLVMCApi.h`. When adding LLVM functions, declare them
@@ -112,9 +112,9 @@ functions and asserts results).
    codegen (in `stratac` and `Embed.cpp`). It infers argument types, resolves
    overloads, and sets `FunctionDecl::mangledName` + `CallExpr::callee`
    (mangled) + `CallExpr::resolvedDecl`. Anything type-related belongs here.
-6. Codegen: both `src/Codegen/IRTextBackend.cpp` and
-   `src/Codegen/LLVMModuleBuilder.cpp` (note: LLVMModuleBuilder feeds the printer,
-   AOT emitter, and JIT). Both emit functions/calls by `mangledName`.
+6. Codegen: `src/Codegen/LLVMModuleBuilder.cpp` (note: LLVMModuleBuilder feeds
+   the IR printer, AOT emitter, and JIT). It emits functions/calls by
+   `mangledName`.
 7. Tests: `tests/unit/` (framework is `include/strata/Test.hpp`), then re-run
    `ctest --preset default` and the `clang -c` IR check above.
 
@@ -123,7 +123,7 @@ Overloads: two functions may share a name with different parameter types.
 functions keep the base name, so host-callable entries like `main`/`entry` must
 not be overloaded). Extern functions cannot be overloaded.
 
-Statement lowering (both back-ends, in `emitStmt`): `out`/`inout` parameters are
+Statement lowering (in `emitStmt`): `out`/`inout` parameters are
 lowered to pointers -- the callee's symbol for such a param *is* the incoming
 pointer, and call sites pass the argument's address (`&var`, via `emitLValue`).
 Control flow (`if`/`else`, `while`, `for`, `break`, `continue`) uses basic

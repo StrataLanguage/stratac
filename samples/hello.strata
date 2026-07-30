@@ -1,8 +1,7 @@
 // hello.strata -- Strata in a nutshell.
 //
-// No control flow, so this compiles and runs through *every* path:
-//   stratac --emit ir  hello.strata                 # in-process LLVM IR
-//   stratac --no-llvm --emit ir  hello.strata       # text IR
+// No control flow, so this compiles and runs through every path:
+//   stratac --emit ir  hello.strata                 # LLVM IR
 //   stratac --emit obj hello.strata -o hello.o      # native object
 //   clang hello.o -o hello.exe && ./hello.exe ; echo $?   # runs, exit code 25
 

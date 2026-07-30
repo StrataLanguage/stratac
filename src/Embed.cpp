@@ -26,7 +26,6 @@
 
 struct StrataCompiler
 {
-    bool useLLVM = true;
 };
 
 extern "C"
@@ -39,14 +38,6 @@ extern "C"
     void strataCompilerDestroy(StrataCompiler* c)
     {
         delete c;
-    }
-
-    void strataCompilerUseLLVM(StrataCompiler* c, int enabled)
-    {
-        if (c)
-        {
-            c->useLLVM = enabled != 0;
-        }
     }
 
     static char* DupCString(const std::string& s)
@@ -91,22 +82,19 @@ extern "C"
             }
             else
             {
-                std::unique_ptr<strata::CodegenBackend> backend;
-                if (c && c->useLLVM)
-                {
-                    backend = strata::CreateLlvmBackend();
-                }
-
+                auto backend = strata::CreateLlvmBackend();
                 if (!backend)
                 {
-                    backend = strata::CreateTextBackend();
+                    diag.Error({}, "LLVM back-end unavailable (built without LLVM linkage)");
                 }
-
-                auto result = backend->Generate(*mod);
-                out = result.output;
-                if (!result.ok)
+                else
                 {
-                    diag.Error({}, "code generation failed");
+                    auto result = backend->Generate(*mod);
+                    out = result.output;
+                    if (!result.ok)
+                    {
+                        diag.Error({}, "code generation failed");
+                    }
                 }
             }
         }

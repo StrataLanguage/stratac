@@ -31,9 +31,8 @@ class CodegenBackend
     virtual CodegenResult Generate(const Module& mod) = 0;
 };
 
-// Factories. createTextBackend() always succeeds. createLLVMBackend() returns
-// nullptr if Strata was built without LLVM linkage.
-std::unique_ptr<CodegenBackend> CreateTextBackend();
+// Factory. CreateLlvmBackend() returns nullptr if Strata was built without
+// LLVM linkage.
 std::unique_ptr<CodegenBackend> CreateLlvmBackend();
 
 // Pretty-prints the AST as a human-readable tree (used by the AST emitter and

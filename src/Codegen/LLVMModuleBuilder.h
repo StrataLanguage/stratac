@@ -87,7 +87,7 @@ class BuiltModule
 // `extern` calls are lowered as indirect calls through a writable per-extern
 // pointer slot (named "__strata_ext_<name>") that the host fills at runtime;
 // this avoids relying on MCJIT symbol resolution, which is unavailable through
-// this LLVM-C.dll. In AOT/text mode, externs are ordinary declarations the
+// this LLVM-C.dll. In AOT/IR mode, externs are ordinary declarations the
 // downstream linker resolves.
 BuiltModule BuildLlvmModule(const Module& ast, DiagnosticEngine& diag, std::string& notes, bool jitMode = false);
 

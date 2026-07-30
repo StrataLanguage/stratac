@@ -57,7 +57,8 @@ STRATA_TEST(overloads_get_mangled_names_and_resolve)
     STRATA_CHECK(static_cast<CallExpr*>(retF->value.get())->callee == "add$float$float");
 }
 
-STRATA_TEST(text_emits_distinct_overload_symbols)
+#ifdef STRATA_ENABLE_LLVM
+STRATA_TEST(llvm_emits_distinct_overload_symbols)
 {
     DiagnosticEngine diag;
     auto mod = Resolve("int add(int a, int b) { return a + b; }\n"
@@ -66,13 +67,15 @@ STRATA_TEST(text_emits_distinct_overload_symbols)
                        "float entry_f() { return add(2.0, 3.0); }\n",
                        diag);
     STRATA_CHECK(!diag.HasErrors());
-    auto res = CreateTextBackend()->Generate(*mod);
+    auto res = CreateLlvmBackend()->Generate(*mod);
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "define i32 @add$int$int"));
-    STRATA_CHECK(Contains(res.output, "define float @add$float$float"));
-    STRATA_CHECK(Contains(res.output, "call i32 @add$int$int"));
-    STRATA_CHECK(Contains(res.output, "call float @add$float$float"));
+    STRATA_CHECK(Contains(res.output, R"(define i32 @"add$int$int")"));
+    STRATA_CHECK(Contains(res.output, R"(define float @"add$float$float")"));
+    STRATA_CHECK(Contains(res.output, R"(call i32 @"add$int$int")"));
+    STRATA_CHECK(Contains(res.output, R"(call float @"add$float$float")"));
 }
+
+#endif
 
 STRATA_TEST(struct_vs_scalar_overload_resolves)
 {

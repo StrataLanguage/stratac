@@ -7,7 +7,6 @@
 //   --emit {ir|ast|obj|asm}  output kind (default: ir)
 //   -o <file>                write output to <file>
 //   --target <arch>          x86_64 (default), aarch64, arm64
-//   --no-llvm                use the text IR back-end
 //   --version                print version and exit
 //   -h, --help               show this help
 #include "strata/Codegen/CodegenBackend.h"
@@ -46,7 +45,6 @@ void PrintHelp()
                          "      asm = native assembly (.s)            [requires LLVM + -o]\n"
                          "  -o <file>        write output to <file> (required for obj/asm)\n"
                          "  --target <arch>  target architecture: x86_64 (default), aarch64, arm64\n"
-                         "  --no-llvm        use the text IR back-end\n"
                          "  --version        print version and exit\n"
                          "  -h, --help       show this help\n");
 }
@@ -74,7 +72,6 @@ int main(int argc, char** argv)
     std::string outFile;
     std::string inputFile;
     std::string targetArch;
-    bool useLLVM = true;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -123,14 +120,6 @@ int main(int argc, char** argv)
             }
 
             outFile = argv[++i];
-        }
-        else if (a == "--no-llvm")
-        {
-            useLLVM = false;
-        }
-        else if (a == "--llvm")
-        {
-            useLLVM = true;
         }
         else if (a == "--target")
         {
@@ -265,23 +254,13 @@ int main(int argc, char** argv)
     }
     else
     {
-        std::unique_ptr<strata::CodegenBackend> backend;
-        if (useLLVM)
-        {
-            backend = strata::CreateLlvmBackend();
-        }
-
+        auto backend = strata::CreateLlvmBackend();
         if (!backend)
         {
-            if (useLLVM)
-            {
-                std::fprintf(stderr, "note: LLVM back-end unavailable, using text IR\n");
-            }
-
-            backend = strata::CreateTextBackend();
+            std::fprintf(stderr, "error: LLVM back-end unavailable (built without LLVM linkage)\n");
+            return 1;
         }
 
-        std::fprintf(stderr, "using back-end: %s\n", backend->Name().data());
         auto res = backend->Generate(*mod);
         output = res.output;
     }
