@@ -179,6 +179,43 @@ STRATA_TEST(jit_opaque_engine_handle) {
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer) {
+    // Structs cross the Strata->host boundary by pointer (in/out/inout), so the
+    // host reads/writes through them. The host's Vec3 layout must match Strata's.
+    struct HostVec3 { float x, y, z; };
+    StrataJit* jit = compileJit(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "extern float length_sq(in Vec3 v);\n"                          // host reads
+        "extern void scale_into(in Vec3 src, float s, out Vec3 dst);\n" // host reads + writes
+        "float entry() {\n"
+        "  Vec3 v = Vec3(3.0, 4.0, 0.0);\n"
+        "  Vec3 r;\n"
+        "  scale_into(v, 2.0, r);\n"            // r = v * 2 = (6, 8, 0)
+        "  return length_sq(v) + length_sq(r);\n" // 25 + 100 = 125
+        "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (!jit) return;
+
+    auto length_sq = +[](const HostVec3* v) -> float {
+        return v->x * v->x + v->y * v->y + v->z * v->z;
+    };
+    auto scale_into = +[](const HostVec3* src, float s, HostVec3* dst) {
+        dst->x = src->x * s;
+        dst->y = src->y * s;
+        dst->z = src->z * s;
+    };
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "length_sq", (void*)length_sq), 1);
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "scale_into", (void*)scale_into), 1);
+
+    auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+    STRATA_CHECK(f != nullptr);
+    if (f) {
+        float r = f();
+        STRATA_CHECK(r > 124.9f && r < 125.1f);   // 125
+    }
+    strataJitDestroy(jit);
+}
+
 #include "Codegen/LLVMModuleBuilder.h"
 #include "Codegen/LLVMAot.h"
 #include <fstream>

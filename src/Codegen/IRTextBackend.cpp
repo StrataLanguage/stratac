@@ -9,6 +9,7 @@
 // follow-up work.
 #include "strata/Codegen/CodegenBackend.h"
 #include "TypeUtil.h"
+#include "TypeRegistry.h"
 #include "strata/AST/AST.h"
 
 #include <cstdio>
@@ -37,9 +38,10 @@ public:
         CodegenResult res;
         res.moduleName = mod.name;
         out_ << "; Strata module '" << mod.name << "'\n";
+        registry_.build(mod);
 
         // Collect signatures first so call sites (in any order) know each
-        // callee's return type and which parameters are out/inout (by pointer).
+        // callee's return type and which parameters are passed by pointer.
         for (const auto& f : mod.functions) collectSignature(*f);
 
         // Emit body-less prototypes as 'declare', then definitions as 'define'.
@@ -60,8 +62,9 @@ private:
     std::ostringstream out_;
     std::ostringstream body_;
     std::map<std::string, Symbol> symbols_;
+    TypeRegistry registry_;
     std::map<std::string, detail::MappedType> retOf_;        // mangled name -> return type
-    std::map<std::string, std::vector<ParamMod>> paramModsOf_; // mangled name -> param mods
+    std::map<std::string, std::vector<bool>> paramByPtrOf_;  // mangled name -> pass-by-pointer
     std::vector<std::string> paramRegs_;
     detail::MappedType retType_;
     int tmp_ = 0;
@@ -74,9 +77,13 @@ private:
 
     void collectSignature(const FunctionDecl& f) {
         retOf_[f.mangledName] = mappedOr(f.returnType, "void");
-        auto& mods = paramModsOf_[f.mangledName];
-        mods.clear();
-        for (const auto& p : f.params) mods.push_back(p->mod);
+        auto& bp = paramByPtrOf_[f.mangledName];
+        bp.clear();
+        for (const auto& p : f.params) {
+            bool structVal = registry_.isUserType(p->type.name) && !registry_.isOpaque(p->type.name);
+            bool byPtr = byRef(p->mod) || (f.isExtern && structVal);
+            bp.push_back(byPtr);
+        }
     }
 
     std::string newReg() { return "%t" + std::to_string(tmp_++); }
@@ -100,16 +107,18 @@ private:
 
     void emitDeclare(const FunctionDecl& f) {
         retType_ = mappedOr(f.returnType, "void");
+        const auto& bp = paramByPtrOf_[f.mangledName];
         out_ << "declare " << retType_.ir << " @" << f.mangledName << "(";
         for (std::size_t i = 0; i < f.params.size(); ++i) {
             if (i) out_ << ", ";
-            out_ << (byRef(f.params[i]->mod) ? "ptr" : mappedOr(f.params[i]->type, "ptr").ir);
+            out_ << (bp[i] ? "ptr" : mappedOr(f.params[i]->type, "ptr").ir);
         }
         out_ << ")\n";
     }
 
     void emitFunction(const FunctionDecl& f) {
         retType_ = mappedOr(f.returnType, "void");
+        const auto& bp = paramByPtrOf_[f.mangledName];
         std::vector<detail::MappedType> ptypes;
         out_ << "define " << retType_.ir << " @" << f.mangledName << "(";
         paramRegs_.clear();
@@ -117,7 +126,7 @@ private:
             ptypes.push_back(mappedOr(f.params[i]->type, "ptr"));
             paramRegs_.push_back("%p" + std::to_string(i));
             if (i) out_ << ", ";
-            out_ << (byRef(f.params[i]->mod) ? "ptr" : ptypes.back().ir) << " " << paramRegs_.back();
+            out_ << (bp[i] ? "ptr" : ptypes.back().ir) << " " << paramRegs_.back();
         }
         out_ << ") {\n";
 
@@ -129,10 +138,10 @@ private:
         terminated_ = false;
         loops_.clear();
 
-        // Materialize each parameter. By-value params get an alloca; out/inout
-        // params are already pointers to the caller's storage (read/write through).
+        // Materialize each parameter. By-value params get an alloca; by-pointer
+        // params (out/inout) are already pointers to the caller's storage.
         for (std::size_t i = 0; i < f.params.size(); ++i) {
-            if (byRef(f.params[i]->mod)) {
+            if (bp[i]) {
                 symbols_[f.params[i]->name] = {ptypes[i], paramRegs_[i]};
             } else {
                 std::string slot = newReg();
@@ -451,12 +460,12 @@ private:
         detail::MappedType ret = detail::mapType({"int"});
         auto rit = retOf_.find(n->callee);
         if (rit != retOf_.end()) ret = rit->second;
-        const auto& mods = paramModsOf_[n->callee];
+        const auto& bp = paramByPtrOf_[n->callee];
         std::ostringstream args;
         for (std::size_t i = 0; i < n->args.size(); ++i) {
-            bool isOut = i < mods.size() && byRef(mods[i]);
+            bool passAddr = i < bp.size() && bp[i];
             if (i) args << ", ";
-            if (isOut) {
+            if (passAddr) {
                 args << "ptr " << emitArgAddress(n->args[i].get());
             } else {
                 Eval a = emitExpr(n->args[i].get());

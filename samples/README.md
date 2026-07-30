@@ -14,6 +14,7 @@ which back-end each one uses. Build the compiler first
 | `control_flow.strata` | `if`/`else`, `while`, `for`, `break`/`continue`, recursion, `out`/`inout` params | text **and** native |
 | `structs.strata` | structs, member access, positional construction, nested structs, by-value | native |
 | `overloads.strata` | type-based overload resolution (int / float / struct) | native |
+| `extern_struct.strata` + `hosts/extern_struct_host.c` | structs cross the host boundary by pointer (`in`/`out`) | native |
 | `extern_math.strata` + `hosts/extern_math_host.c` | `extern` host functions, AOT link-and-run | native |
 | `engine_api.strata` + `hosts/engine_api_host.c` | opaque engine handles (`extern struct`), AOT link-and-run | native |
 | `vectors.strata` | HLSL-style vector types (structural preview) | AST/type check |
@@ -58,6 +59,18 @@ stratac --emit obj samples/overloads.strata -o overloads.o
 clang overloads.o -o overloads.exe && ./overloads.exe ; echo $?   # 15
 ```
 
+### extern_struct.strata -- structs cross the host boundary by pointer
+
+On `extern` functions, a struct parameter declares `in`/`out`/`inout` and is
+lowered to a pointer (by-value struct passing is ABI-fragile). The host
+implements the matching pointer signature.
+
+```sh
+stratac --emit obj samples/extern_struct.strata -o extern_struct.o
+clang samples/hosts/extern_struct_host.c extern_struct.o -o extern_struct.exe
+./extern_struct.exe        # entry() = 125
+```
+
 ### extern_math.strata -- script calls the host
 
 ```sh
@@ -85,6 +98,9 @@ clang samples/hosts/engine_api_host.c engine_api.o -o engine_api.exe
   lower to LLVM vectors, but construction/per-component arithmetic aren't
   lowered yet (`vectors.strata` is a structural preview).
 - **Aggregates across the host boundary**: structs are value types *within*
-  Strata. Crossing the host<->JIT boundary with a struct by value is
-  ABI-sensitive on Windows; use scalars or opaque handles there. See the main
-  README's "A note on aggregates across the host/JIT boundary".
+  Strata. Across the Strata->host boundary they always go by pointer -- an
+  `extern` struct parameter must declare `in`/`out`/`inout` (see
+  `extern_struct.strata`); opaque handles are pointer-sized already. Only a host
+  calling *into* a Strata entry point that takes/returns a struct by value is
+  ABI-sensitive -- prefer scalar/handle entry points. See the main README's
+  "A note on aggregates across the host/JIT boundary".

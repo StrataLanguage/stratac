@@ -36,9 +36,10 @@ are passed by value, optionally with `in` / `out` / `inout` modifiers.
 ### Known limitations (intentional, for follow-up)
 
 - The **LLVM back-end** lowers the full statement surface (control flow,
-  recursion, `out`/`inout`, structs, overloads); what remains is vector
-  construction/per-component arithmetic and passing a struct by value across the
-  host<->JIT boundary (see below).
+  recursion, `out`/`inout`, structs, overloads). Extern struct parameters cross
+  the host boundary by pointer (`in`/`out`/`inout`). What remains is vector
+  construction/per-component arithmetic and a host *calling into* a Strata entry
+  point that takes/returns a struct by value (see below).
 - `&&`/`||` are non-short-circuit; `half` constants are not fully lowered.
 - Semantic analysis is currently overload resolution + argument-type inference
   only; broader type checking is still ahead.
@@ -89,6 +90,18 @@ The emitted IR can be assembled to native code by an external LLVM toolchain:
 ```sh
 clang -c hello.ll -o hello.o
 ```
+
+### Compile and run in one step (Windows)
+
+`run.bat` AOT-compiles a `.strata` program to a native executable and runs it
+(the file must define `int main()`):
+
+```bat
+run.bat samples\hello.strata          :: exit code 25
+run.bat samples\control_flow.strata   :: exit code 255
+```
+
+Tools can be overridden with the `STRATAC` and `CLANG` environment variables.
 
 ## Running Strata code
 
@@ -192,10 +205,10 @@ The native paths (JIT and AOT) share one IR builder and lower: scalar int/float
 functions, parameters (including **`out`/`inout`**, lowered to pointers),
 returns, locals, arithmetic (with int/float promotion), **control flow**
 (`if`/`else`, `while`, `for`, `break`, `continue`), recursion, calls between
-Strata functions, `extern` calls into the host, **user-defined structs** (member
-access, positional construction, by-value use within Strata), **opaque engine
-handle types**, and **type-based overloads**. The text IR back-end covers the
-same surface.
+Strata functions, `extern` calls into the host (structs cross the boundary by
+pointer), **user-defined structs** (member access, positional construction,
+by-value use within Strata), **opaque engine handle types**, and **type-based
+overloads**. The text IR back-end covers the same surface.
 
 The remaining gaps are narrower: vector construction/per-component arithmetic,
 and passing a struct *by value* across the host<->JIT boundary (see below).
@@ -243,14 +256,27 @@ way to expose engine objects to scripts.
 
 ### A note on aggregates across the host/JIT boundary
 
-Passing a **struct by value** directly between host code and a JIT'd Strata
-function depends on the platform's aggregate ABI, which the JIT can't always be
-retargeted to (on this box `LLVMSetTarget` isn't exported by `LLVM-C.dll`, and
-LLVM's default `windows-msvc` codegen and MinGW's host disagree on small
-aggregates). It is reliable when the host toolchain matches LLVM's target. For
-engine-agnostic portability, cross the boundary with **scalars** or **opaque
-handles**, and keep struct values inside Strata (observed via scalar entry
-points) -- which is exactly what the tests above do.
+By value, passing a struct between host code and a JIT'd function depends on the
+platform's aggregate ABI, which the JIT can't always be retargeted to on this box
+(`LLVMSetTarget` isn't exported by `LLVM-C.dll`, and LLVM's `windows-msvc`
+codegen and the MinGW host disagree on small aggregates).
+
+Strata avoids the problem by **never passing structs by value across the Strata
+→host boundary**. On `extern` functions, a struct parameter *must* declare a
+direction (`in`/`out`/`inout`) and is lowered to a **pointer**, which is a single
+register and ABI-stable. An `extern` may also not *return* a struct by value
+(use an `out` parameter). The host then implements the natural pointer signature:
+
+```strata
+extern float length_sq(in Vec3 v);                          // host: float(const Vec3*)
+extern void  scale_into(in Vec3 src, float s, out Vec3 dst); // host: void(const Vec3*, float, Vec3*)
+```
+
+(Opaque handle types like `extern struct Entity;` are already pointer-sized, so
+they cross the boundary as-is.) Within Strata, structs remain value types passed
+by value between Strata functions. The remaining caveat is only for a host
+*calling into* a Strata entry point that takes/returns a struct by value --
+prefer scalar/handle entry points there.
 
 
 

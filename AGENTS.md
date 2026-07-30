@@ -68,10 +68,12 @@ are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
 - Member access uses `LLVMBuildGEP2` on an alloca (`emitLValue` in
   LLVMModuleBuilder.cpp); positional construction (`Vec3(a,b,c)`) uses
   `insertvalue`. Structs are passed/returned by value *within* Strata only.
-- Aggregate-ABI caveat: passing structs by value across the host<->JIT boundary
-  is ABI-sensitive on Windows (the JIT defaults to `windows-msvc`; the host here
-  is MinGW). Cross-boundary interfaces should use scalars or opaque handles.
-  See README "A note on aggregates across the host/JIT boundary".
+- Aggregate-ABI caveat: structs are value types *within* Strata but cross the
+  host boundary by pointer. An `extern` struct parameter must declare
+  `in`/`out`/`inout` (enforced by `resolveOverloads`); it lowers to `ptr`. An
+  `extern` may not return a struct by value. Opaque handles (`extern struct`)
+  are pointer-sized already. See README "A note on aggregates across the
+  host/JIT boundary".
 
 The JIT is demonstrated in `tests/unit/JitTests.cpp` (it actually calls JIT'd
 functions and asserts results).

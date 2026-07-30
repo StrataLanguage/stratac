@@ -100,6 +100,46 @@ STRATA_TEST(no_matching_overload_is_an_error) {
     STRATA_CHECK(diag.hasErrors());
 }
 
+STRATA_TEST(extern_struct_param_requires_direction) {
+    // A bare struct param on an extern must declare in/out/inout (it crosses
+    // the host boundary by pointer).
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "struct V { float x; };\n"
+        "extern void take(V v);\n", diag);
+    STRATA_CHECK(diag.hasErrors());
+    auto ok = resolve(
+        "struct V { float x; };\n"
+        "extern void take(in V v);\n", diag);
+    (void)ok;
+}
+
+STRATA_TEST(extern_struct_param_with_in_is_ok) {
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "struct V { float x; };\n"
+        "extern void take(in V v);\n"
+        "extern void fill(out V v);\n", diag);
+    STRATA_CHECK(!diag.hasErrors());
+}
+
+STRATA_TEST(extern_cannot_return_struct_by_value) {
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "struct V { float x; };\n"
+        "extern V make();\n", diag);
+    STRATA_CHECK(diag.hasErrors());
+}
+
+STRATA_TEST(opaque_handle_extern_does_not_need_direction) {
+    // Opaque handles are already pointer-sized, so they're fine without a mod.
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "extern struct Entity;\n"
+        "extern int id_of(Entity e);\n", diag);
+    STRATA_CHECK(!diag.hasErrors());
+}
+
 #if defined(STRATA_ENABLE_LLVM)
 STRATA_TEST(jit_runs_resolved_overloads) {
     StrataCompiler* c = strataCompilerCreate();

@@ -1,0 +1,27 @@
+// extern_struct.strata -- structs cross the Strata->host boundary by pointer.
+//
+// On extern functions a struct parameter must declare a direction (in/out/inout),
+// which lowers it to a pointer -- ABI-stable across the boundary. See
+// hosts/extern_struct_host.c.
+//   stratac --emit obj extern_struct.strata -o extern_struct.o
+//   clang hosts/extern_struct_host.c extern_struct.o -o extern_struct.exe
+//   ./extern_struct.exe
+
+struct Vec3 {
+    float x;
+    float y;
+    float z;
+};
+
+// `in` (host reads) and `out` (host writes) become pointers at the boundary:
+// the host implements `float length_sq(const Vec3*)` and
+// `void scale_into(const Vec3*, float, Vec3*)`.
+extern float length_sq(in Vec3 v);
+extern void  scale_into(in Vec3 src, float s, out Vec3 dst);
+
+float entry() {
+    Vec3 v = Vec3(3.0, 4.0, 0.0);
+    Vec3 d;
+    scale_into(v, 2.0, d);               // d = (6, 8, 0)
+    return length_sq(v) + length_sq(d);  // 25 + 100 = 125
+}

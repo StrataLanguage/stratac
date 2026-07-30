@@ -51,7 +51,7 @@ struct FuncInfo {
     LLVMValueRef fn = nullptr;
     LLVMTypeRef ty = nullptr;
     TypeDesc ret;
-    std::vector<ParamMod> paramMods; // for call sites (out/inout are passed by pointer)
+    std::vector<bool> paramByPtr; // params passed by address (out/inout, or extern structs)
 };
 
 struct LValue {
@@ -186,11 +186,14 @@ private:
         info.ret = resolve(f.returnType);
         std::vector<LLVMTypeRef> params;
         for (const auto& p : f.params) {
-            // `out`/`inout` parameters are passed by pointer so the callee can
-            // write back to the caller's storage.
-            bool byRef = p->mod == ParamMod::Out || p->mod == ParamMod::InOut;
-            params.push_back(byRef ? ptrTy_ : resolve(p->type).ty);
-            info.paramMods.push_back(p->mod);
+            // By pointer when writing back (out/inout), and whenever a struct
+            // crosses the host boundary (extern) -- by-value struct passing is
+            // ABI-fragile, so externs always take structs by pointer.
+            bool structVal = registry_.isUserType(p->type.name) && !registry_.isOpaque(p->type.name);
+            bool byPtr = (p->mod == ParamMod::Out || p->mod == ParamMod::InOut) ||
+                         (f.isExtern && structVal);
+            info.paramByPtr.push_back(byPtr);
+            params.push_back(byPtr ? ptrTy_ : resolve(p->type).ty);
         }
         info.ty = LLVMFunctionType(info.ret.ty, params.data(),
                                    static_cast<unsigned>(params.size()), 0);
@@ -579,12 +582,12 @@ private:
             note("; TODO: call to unknown function '" + n->callee + "'\n");
             return zeroInt();
         }
-        const auto& mods = it->second.paramMods;
+        const auto& byPtr = it->second.paramByPtr;
         std::vector<LLVMValueRef> args;
         for (std::size_t k = 0; k < n->args.size(); ++k) {
-            bool byRef = k < mods.size() &&
-                         (mods[k] == ParamMod::Out || mods[k] == ParamMod::InOut);
-            args.push_back(byRef ? argAddress(n->args[k].get()) : emitExpr(n->args[k].get()).v);
+            bool passAddr = k < byPtr.size() && byPtr[k];
+            args.push_back(passAddr ? argAddress(n->args[k].get())
+                                    : emitExpr(n->args[k].get()).v);
         }
         LLVMValueRef callee = it->second.fn;
         if (jitMode_) {

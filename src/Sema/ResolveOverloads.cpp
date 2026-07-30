@@ -52,6 +52,27 @@ public:
             for (auto& p : f->params) scope[p->name] = p->type.name;
             walkBlock(*static_cast<Block*>(f->body.get()), scope);
         }
+
+        // Extern functions cross the host boundary. Structs must cross by
+        // pointer (by-value struct passing is ABI-fragile), so an extern struct
+        // parameter must declare in/out/inout, and an extern may not return a
+        // struct by value (use an out parameter instead).
+        for (auto& f : mod_.functions) {
+            if (!f->isExtern) continue;
+            for (auto& p : f->params) {
+                if (isDefinedStruct(p->type.name) && p->mod == ParamMod::None) {
+                    diag_.error(p->range,
+                                "extern struct parameter '" + p->name +
+                                    "' must be declared in/out/inout (it crosses the host "
+                                    "boundary by pointer)");
+                }
+            }
+            if (isDefinedStruct(f->returnType.name)) {
+                diag_.error(f->range,
+                            "extern function cannot return a struct by value; use an out "
+                            "parameter");
+            }
+        }
     }
 
 private:
@@ -65,6 +86,11 @@ private:
         std::string s = f.name;
         for (auto& p : f.params) { s += '$'; s += p->type.name; }
         return s;
+    }
+
+    // A user-defined struct with a known layout (not an opaque handle).
+    bool isDefinedStruct(std::string_view name) const {
+        return registry_.isUserType(name) && !registry_.isOpaque(name);
     }
 
     void walkBlock(Block& b, VarScope& scope) {
