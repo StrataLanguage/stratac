@@ -56,10 +56,12 @@ class Parser
     {
         return m_cur;
     }
+
     bool Check(TokKind k) const noexcept
     {
         return m_cur.Is(k);
     }
+
     bool Consume(TokKind k) noexcept;
     Token Expect(TokKind k, std::string_view what);
     void Advance();

@@ -26,6 +26,7 @@ class LLVMCBackend : public CodegenBackend
     {
         return "llvm-c";
     }
+
     CodegenResult Generate(const Module& mod) override
     {
         CodegenResult res;

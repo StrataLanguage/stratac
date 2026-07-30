@@ -25,6 +25,7 @@ STRATA_TEST(jit_runs_int_addition)
         STRATA_CHECK(false);
         return;
     }
+
     STRATA_CHECK(jit != nullptr);
 
     auto add = reinterpret_cast<int (*)(int, int)>(strataJitGetFunction(jit, "add"));
@@ -35,6 +36,7 @@ STRATA_TEST(jit_runs_int_addition)
         STRATA_CHECK_EQ(add(-1, 1), 0);
         STRATA_CHECK_EQ(add(100, 23), 123);
     }
+
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
@@ -52,7 +54,10 @@ STRATA_TEST(jit_runs_noarg_function_and_calls)
     {
         auto answer = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "answer"));
         STRATA_CHECK(answer != nullptr);
-        if (answer) STRATA_CHECK_EQ(answer(), 49);
+        if (answer)
+        {
+            STRATA_CHECK_EQ(answer(), 49);
+        }
 
         auto* missing = strataJitGetFunction(jit, "does_not_exist");
         STRATA_CHECK(missing == nullptr);
@@ -63,6 +68,7 @@ STRATA_TEST(jit_runs_noarg_function_and_calls)
     {
         strataFree(const_cast<char*>(err));
     }
+
     strataCompilerDestroy(c);
 }
 
@@ -81,12 +87,14 @@ STRATA_TEST(jit_runs_float_function)
             float r = twice(21.0F);
             STRATA_CHECK(r > 41.999F && r < 42.001F);
         }
+
         strataJitDestroy(jit);
     }
     else
     {
         strataFree(const_cast<char*>(err));
     }
+
     strataCompilerDestroy(c);
 }
 
@@ -101,7 +109,11 @@ STRATA_TEST(aot_emits_native_object_file)
     strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
     std::string path = "strata_aot_test.o";
     bool ok = strata::EmitNativeFile(bm, path, /*assembly=*/false, err);
-    if (!ok) std::printf("  AOT emission failed: %s\n", err.c_str());
+    if (!ok)
+    {
+        std::printf("  AOT emission failed: %s\n", err.c_str());
+    }
+
     STRATA_CHECK(ok);
 
     std::ifstream in(path, std::ios::binary);
@@ -121,7 +133,11 @@ STRATA_TEST(aot_emits_assembly_file)
     strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
     std::string path = "strata_aot_test.s";
     bool ok = strata::EmitNativeFile(bm, path, /*assembly=*/true, err);
-    if (!ok) std::printf("  AOT asm emission failed: %s\n", err.c_str());
+    if (!ok)
+    {
+        std::printf("  AOT asm emission failed: %s\n", err.c_str());
+    }
+
     STRATA_CHECK(ok);
 
     std::ifstream in(path, std::ios::binary);
@@ -138,6 +154,7 @@ static int HostDouble(int x)
 {
     return x * 2;
 }
+
 static int HostAdd(int a, int b)
 {
     return a + b;
@@ -176,6 +193,7 @@ STRATA_TEST(jit_calls_host_extern_function)
         STRATA_CHECK_EQ(entry(5), 11);
         STRATA_CHECK_EQ(entry(0), 1);
     }
+
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }

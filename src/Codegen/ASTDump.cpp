@@ -22,6 +22,7 @@ const char* UnaryOpSpelling(UnaryOp op) noexcept
     case UnaryOp::BitNot:
         return "~";
     }
+
     return "?";
 }
 
@@ -66,6 +67,7 @@ const char* BinaryOpSpelling(BinaryOp op) noexcept
     case BinaryOp::LogicOr:
         return "||";
     }
+
     return "?";
 }
 
@@ -86,6 +88,7 @@ const char* AssignOpSpelling(AssignOp op) noexcept
     case AssignOp::PercentEq:
         return "%=";
     }
+
     return "=";
 }
 
@@ -93,7 +96,10 @@ void Dump(Node* n, int indent, std::ostringstream& out);
 
 void Pad(int indent, std::ostringstream& out)
 {
-    for (int i = 0; i < indent; ++i) out.put(' ');
+    for (int i = 0; i < indent; ++i)
+    {
+        out.put(' ');
+    }
 }
 
 void Dump(Node* n, int indent, std::ostringstream& out)
@@ -103,6 +109,7 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         out << "(null)";
         return;
     }
+
     Pad(indent, out);
     switch (n->kind)
     {
@@ -110,17 +117,31 @@ void Dump(Node* n, int indent, std::ostringstream& out)
     {
         auto* m = static_cast<Module*>(n);
         out << "module " << m->name << "\n";
-        for (auto& s : m->structs) Dump(s.get(), indent + 2, out);
-        for (auto& h : m->handles) Dump(h.get(), indent + 2, out);
-        for (auto& f : m->functions) Dump(f.get(), indent + 2, out);
+        for (auto& s : m->structs)
+        {
+            Dump(s.get(), indent + 2, out);
+        }
+
+        for (auto& h : m->handles)
+        {
+            Dump(h.get(), indent + 2, out);
+        }
+
+        for (auto& f : m->functions)
+        {
+            Dump(f.get(), indent + 2, out);
+        }
+
         return;
     }
+
     case NodeKind::Handle:
     {
         auto* h = static_cast<HandleDecl*>(n);
         out << "handle " << h->name << "  ; opaque\n";
         return;
     }
+
     case NodeKind::Struct:
     {
         auto* s = static_cast<StructDecl*>(n);
@@ -130,43 +151,65 @@ void Dump(Node* n, int indent, std::ostringstream& out)
             Pad(indent + 4, out);
             out << f.type.name << " " << f.name << "\n";
         }
+
         Pad(indent + 2, out);
         out << "}\n";
         return;
     }
+
     case NodeKind::Function:
     {
         auto* f = static_cast<FunctionDecl*>(n);
         out << "fn ";
-        if (f->isExtern) out << "extern ";
+        if (f->isExtern)
+        {
+            out << "extern ";
+        }
+
         out << f->returnType.name << " " << f->name << "(";
         for (std::size_t i = 0; i < f->params.size(); ++i)
         {
-            if (i) out << ", ";
+            if (i)
+            {
+                out << ", ";
+            }
+
             auto& p = f->params[i];
             out << ParamModSpelling(p->mod);
-            if (p->mod != ParamMod::None) out << " ";
+            if (p->mod != ParamMod::None)
+            {
+                out << " ";
+            }
+
             out << p->type.name << " " << p->name;
         }
+
         out << ")";
         if (!f->body)
         {
             out << ";\n";
             return;
         }
+
         out << "\n";
         Dump(f->body.get(), indent + 2, out);
         return;
     }
+
     case NodeKind::Block:
     {
         auto* b = static_cast<Block*>(n);
         out << "{\n";
-        for (auto& s : b->statements) Dump(s.get(), indent + 2, out);
+        for (auto& s : b->statements)
+        {
+            Dump(s.get(), indent + 2, out);
+        }
+
         Pad(indent, out);
         out << "}\n";
         return;
     }
+
     case NodeKind::Return:
     {
         auto* r = static_cast<ReturnStmt*>(n);
@@ -180,8 +223,10 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         {
             out << "\n";
         }
+
         return;
     }
+
     case NodeKind::If:
     {
         auto* i = static_cast<IfStmt*>(n);
@@ -195,8 +240,10 @@ void Dump(Node* n, int indent, std::ostringstream& out)
             out << "else\n";
             Dump(i->elseBranch.get(), indent + 2, out);
         }
+
         return;
     }
+
     case NodeKind::While:
     {
         auto* w = static_cast<WhileStmt*>(n);
@@ -206,21 +253,36 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         Dump(w->body.get(), indent + 2, out);
         return;
     }
+
     case NodeKind::For:
     {
         auto* fs = static_cast<ForStmt*>(n);
         out << "for (";
         if (fs->init)
+        {
             Dump(fs->init.get(), 0, out);
+        }
         else
+        {
             out << "; ";
-        if (fs->condition) Dump(fs->condition.get(), 0, out);
+        }
+
+        if (fs->condition)
+        {
+            Dump(fs->condition.get(), 0, out);
+        }
+
         out << "; ";
-        if (fs->update) Dump(fs->update.get(), 0, out);
+        if (fs->update)
+        {
+            Dump(fs->update.get(), 0, out);
+        }
+
         out << ")\n";
         Dump(fs->body.get(), indent + 2, out);
         return;
     }
+
     case NodeKind::VarDecl:
     {
         auto* v = static_cast<VarDeclStmt*>(n);
@@ -234,17 +296,25 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         {
             out << "\n";
         }
+
         return;
     }
+
     case NodeKind::ExprStmt:
     {
         auto* e = static_cast<ExprStmt*>(n);
         if (e->expr)
+        {
             Dump(e->expr.get(), 0, out);
+        }
         else
+        {
             out << ";\n";
+        }
+
         return;
     }
+
     case NodeKind::Break:
         out << "break\n";
         return;
@@ -254,10 +324,15 @@ void Dump(Node* n, int indent, std::ostringstream& out)
     case NodeKind::IntLiteral:
     {
         out << static_cast<IntLiteral*>(n)->value;
-        if (static_cast<IntLiteral*>(n)->isUnsigned) out << "u";
+        if (static_cast<IntLiteral*>(n)->isUnsigned)
+        {
+            out << "u";
+        }
+
         out << "\n";
         return;
     }
+
     case NodeKind::FloatLiteral:
         out << static_cast<FloatLiteral*>(n)->value << "\n";
         return;
@@ -274,6 +349,7 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         Dump(u->operand.get(), 0, out);
         return; // operand's trailing newline closes the paren-line
     }
+
     case NodeKind::Binary:
     {
         auto* b = static_cast<BinaryExpr*>(n);
@@ -283,6 +359,7 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         Dump(b->rhs.get(), 0, out);
         return;
     }
+
     case NodeKind::Assign:
     {
         auto* a = static_cast<AssignExpr*>(n);
@@ -291,6 +368,7 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         Dump(a->value.get(), 0, out);
         return;
     }
+
     case NodeKind::Call:
     {
         auto* c = static_cast<CallExpr*>(n);
@@ -300,8 +378,10 @@ void Dump(Node* n, int indent, std::ostringstream& out)
             out << " ";
             Dump(a.get(), 0, out);
         }
+
         return;
     }
+
     case NodeKind::Member:
     {
         auto* mem = static_cast<MemberExpr*>(n);
@@ -309,10 +389,12 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         Dump(mem->base.get(), 0, out);
         return;
     }
+
     case NodeKind::Param:
         out << "(param)\n";
         return;
     }
+
     out << "(unknown node)\n";
 }
 

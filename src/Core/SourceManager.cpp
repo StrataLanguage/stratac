@@ -23,6 +23,7 @@ void SourceManager::ComputeLineStarts()
             {
                 continue; // handled by the '\n' on the next iteration
             }
+
             m_lineStarts.push_back(static_cast<std::uint32_t>(i + 1));
         }
     }
@@ -30,7 +31,11 @@ void SourceManager::ComputeLineStarts()
 
 std::string_view SourceManager::Slice(SourceRange r) const noexcept
 {
-    if (r.start >= m_text.size()) return {};
+    if (r.start >= m_text.size())
+    {
+        return {};
+    }
+
     auto end = std::min<std::size_t>(r.End(), m_text.size());
     return std::string_view(m_text.data() + r.start, end - r.start);
 }
@@ -45,7 +50,11 @@ LineCol SourceManager::LineCol(std::uint32_t offset) const noexcept
 
 std::string_view SourceManager::LineText(std::uint32_t line) const noexcept
 {
-    if (line == 0 || line > m_lineStarts.size()) return {};
+    if (line == 0 || line > m_lineStarts.size())
+    {
+        return {};
+    }
+
     std::size_t start = m_lineStarts[line - 1];
     std::size_t end = line < m_lineStarts.size() ? m_lineStarts[line] : m_text.size();
     // Trim a trailing newline/CR so the caret lines up.
@@ -53,6 +62,7 @@ std::string_view SourceManager::LineText(std::uint32_t line) const noexcept
     {
         --end;
     }
+
     return std::string_view(m_text.data() + start, end - start);
 }
 

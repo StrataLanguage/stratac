@@ -56,6 +56,7 @@ std::string ReadFile(const std::string& path, bool& ok)
         ok = false;
         return {};
     }
+
     std::ostringstream ss;
     ss << in.rdbuf();
     ok = true;
@@ -79,6 +80,7 @@ int main(int argc, char** argv)
             PrintHelp();
             return 0;
         }
+
         if (a == "--version")
         {
 #ifdef STRATA_ENABLE_LLVM
@@ -92,6 +94,7 @@ int main(int argc, char** argv)
 #endif
             return 0;
         }
+
         if (a == "--emit")
         {
             if (i + 1 >= argc)
@@ -99,6 +102,7 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "error: --emit needs an argument\n");
                 return 2;
             }
+
             emit = argv[++i];
             if (emit != "ir" && emit != "ast" && emit != "obj" && emit != "asm")
             {
@@ -113,6 +117,7 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "error: -o needs an argument\n");
                 return 2;
             }
+
             outFile = argv[++i];
         }
         else if (a == "--no-llvm")
@@ -180,6 +185,7 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "error: --emit %s requires -o <file>\n", emit.c_str());
             return 2;
         }
+
         std::string notes;
         std::string err;
         strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
@@ -189,6 +195,7 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "error: %s\n", err.c_str());
             return 1;
         }
+
         std::fprintf(stderr, "wrote native %s: %s\n", emit == "asm" ? "assembly" : "object", outFile.c_str());
         return 0;
 #else
@@ -196,6 +203,7 @@ int main(int argc, char** argv)
         return 2;
 #endif
     }
+
     if (emit == "ast")
     {
         output = strata::DumpAst(*mod);
@@ -203,15 +211,21 @@ int main(int argc, char** argv)
     else
     {
         std::unique_ptr<strata::CodegenBackend> backend;
-        if (useLLVM) backend = strata::CreateLlvmBackend();
+        if (useLLVM)
+        {
+            backend = strata::CreateLlvmBackend();
+        }
+
         if (!backend)
         {
             if (useLLVM)
             {
                 std::fprintf(stderr, "note: LLVM back-end unavailable, using text IR\n");
             }
+
             backend = strata::CreateTextBackend();
         }
+
         std::fprintf(stderr, "using back-end: %s\n", backend->Name().data());
         auto res = backend->Generate(*mod);
         output = res.output;
@@ -220,7 +234,10 @@ int main(int argc, char** argv)
     if (outFile.empty())
     {
         std::fwrite(output.data(), 1, output.size(), stdout);
-        if (!output.empty() && output.back() != '\n') std::fputc('\n', stdout);
+        if (!output.empty() && output.back() != '\n')
+        {
+            std::fputc('\n', stdout);
+        }
     }
     else
     {
@@ -230,6 +247,7 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "error: cannot write output file '%s'\n", outFile.c_str());
             return 1;
         }
+
         of.write(output.data(), static_cast<std::streamsize>(output.size()));
     }
 

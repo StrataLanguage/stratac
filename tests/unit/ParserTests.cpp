@@ -10,11 +10,23 @@ namespace
 ReturnStmt* SingleReturn(Module* m)
 {
     STRATA_CHECK(m != nullptr);
-    if (m->functions.empty()) return nullptr;
+    if (m->functions.empty())
+    {
+        return nullptr;
+    }
+
     auto& fn = m->functions.front();
-    if (!fn->body) return nullptr;
+    if (!fn->body)
+    {
+        return nullptr;
+    }
+
     auto* block = static_cast<Block*>(fn->body.get());
-    if (block->statements.empty()) return nullptr;
+    if (block->statements.empty())
+    {
+        return nullptr;
+    }
+
     return static_cast<ReturnStmt*>(block->statements.front().get());
 }
 } // namespace

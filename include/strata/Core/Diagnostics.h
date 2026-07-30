@@ -39,6 +39,7 @@ class DiagnosticEngine
         {
             m_errorCount++;
         }
+
         m_diagnostics.push_back({.severity = severity, .range = range, .message = std::move(message)});
     }
 
@@ -46,10 +47,12 @@ class DiagnosticEngine
     {
         Report(DiagSeverity::Error, range, std::move(message));
     }
+
     void Warning(SourceRange range, std::string message)
     {
         Report(DiagSeverity::Warning, range, std::move(message));
     }
+
     void Note(SourceRange range, std::string message)
     {
         Report(DiagSeverity::Note, range, std::move(message));
@@ -59,18 +62,22 @@ class DiagnosticEngine
     {
         return m_errorCount;
     }
+
     bool HasErrors() const noexcept
     {
         return m_errorCount > 0;
     }
+
     std::size_t Count() const noexcept
     {
         return m_diagnostics.size();
     }
+
     const std::vector<Diagnostic>& Diagnostics() const noexcept
     {
         return m_diagnostics;
     }
+
     void Clear() noexcept
     {
         m_diagnostics.clear();

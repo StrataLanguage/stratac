@@ -35,6 +35,7 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
         errorMessage = "no module to emit";
         return false;
     }
+
     EnsureX86Initialized();
 
     char* triple = LLVMGetDefaultTargetTriple();
@@ -43,7 +44,11 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
     if (LLVMGetTargetFromTriple(triple, &target, &err))
     {
         errorMessage = std::string("unknown target triple '") + triple + "': " + (err ? err : "(no message)");
-        if (err) LLVMDisposeMessage(err);
+        if (err)
+        {
+            LLVMDisposeMessage(err);
+        }
+
         LLVMDisposeMessage(triple);
         return false;
     }
@@ -64,7 +69,12 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
     {
         errorMessage = std::string("emission failed: ") + (emitErr ? emitErr : "(no message)");
     }
-    if (emitErr) LLVMDisposeMessage(emitErr);
+
+    if (emitErr)
+    {
+        LLVMDisposeMessage(emitErr);
+    }
+
     LLVMDisposeTargetMachine(tm);
     return ok;
 }

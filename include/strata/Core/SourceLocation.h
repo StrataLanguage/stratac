@@ -23,6 +23,7 @@ struct SourceRange
     {
         return start + length;
     }
+
     constexpr bool Valid() const noexcept
     {
         return length != 0 || start != 0;
@@ -52,10 +53,12 @@ class SourceManager
     {
         return m_text;
     }
+
     std::string_view Name() const noexcept
     {
         return m_name;
     }
+
     std::size_t Size() const noexcept
     {
         return m_text.size();

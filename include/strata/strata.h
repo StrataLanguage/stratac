@@ -95,6 +95,7 @@ const char* strataLLVMVersion(void);
 
 #ifdef __cplusplus
 }
+
 #endif
 
 // clang-format on

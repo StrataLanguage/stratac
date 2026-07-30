@@ -40,6 +40,7 @@ LLVMJit::~LLVMJit()
         LLVMDisposeExecutionEngine(m_ee);
         m_ee = nullptr;
     }
+
     if (m_ctx)
     {
         LLVMContextDispose(m_ctx);
@@ -66,7 +67,11 @@ bool LLVMJit::Load(BuiltModule bm, std::string& errorMessage)
     if (LLVMCreateExecutionEngineForModule(&m_ee, m, &err))
     {
         errorMessage = std::string("could not create execution engine: ") + (err ? err : "(no message)");
-        if (err) LLVMDisposeMessage(err);
+        if (err)
+        {
+            LLVMDisposeMessage(err);
+        }
+
         // On failure the engine did not take ownership; free the module/context.
         LLVMDisposeModule(m);
         m_ee = nullptr;
@@ -74,25 +79,38 @@ bool LLVMJit::Load(BuiltModule bm, std::string& errorMessage)
         m_ctx = nullptr;
         return false;
     }
+
     m_mod = m; // engine owns it; keep a non-owning ref for symbol lookups
     return true;
 }
 
 bool LLVMJit::AddSymbol(const char* name, void* addr)
 {
-    if (!m_ee || !name || !addr) return false;
+    if (!m_ee || !name || !addr)
+    {
+        return false;
+    }
+
     // In JIT mode the builder emitted a writable per-extern slot named
     // "__strata_ext_<name>"; resolve its address and store the host pointer.
     std::string slot = std::string("__strata_ext_") + name;
     uint64_t slotAddr = LLVMGetGlobalValueAddress(m_ee, slot.c_str());
-    if (slotAddr == 0) return false;
+    if (slotAddr == 0)
+    {
+        return false;
+    }
+
     *reinterpret_cast<void**>(slotAddr) = addr;
     return true;
 }
 
 std::uint64_t LLVMJit::GetAddress(const char* name) const
 {
-    if (!m_ee || !name) return 0;
+    if (!m_ee || !name)
+    {
+        return 0;
+    }
+
     return LLVMGetFunctionAddress(m_ee, name);
 }
 

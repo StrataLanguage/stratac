@@ -58,7 +58,11 @@ static StrataJit* CompileJit(const char* src)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = nullptr;
     StrataJit* jit = strataJitCompileString(c, src, "structs", &err);
-    if (err) strataFree(const_cast<char*>(err));
+    if (err)
+    {
+        strataFree(const_cast<char*>(err));
+    }
+
     // NOTE: leaks the compiler for the test's lifetime; the JIT keeps no
     // reference to it after compile, so this is harmless in a test.
     return jit;
@@ -84,6 +88,7 @@ STRATA_TEST(jit_struct_member_read_write)
             float r = f(); // 1 + 2 + 3 = 6
             STRATA_CHECK(r > 5.9f && r < 6.1f);
         }
+
         strataJitDestroy(jit);
     }
 }
@@ -106,6 +111,7 @@ STRATA_TEST(jit_struct_constructor_and_return)
             float r = f(); // 10 + 20 + 30 = 60
             STRATA_CHECK(r > 59.9f && r < 60.1f);
         }
+
         strataJitDestroy(jit);
     }
 }
@@ -129,6 +135,7 @@ STRATA_TEST(jit_struct_passed_between_strata_functions)
             float r = f();
             STRATA_CHECK(r > 31.9f && r < 32.1f);
         }
+
         strataJitDestroy(jit);
     }
 }
@@ -153,6 +160,7 @@ STRATA_TEST(jit_struct_nested_and_mixed_fields)
             float r = f();
             STRATA_CHECK(r > 12.9f && r < 13.1f);
         }
+
         strataJitDestroy(jit);
     }
 }
@@ -173,7 +181,10 @@ STRATA_TEST(jit_opaque_engine_handle)
                                 "  return i;\n"
                                 "}\n");
     STRATA_CHECK(jit != nullptr);
-    if (!jit) return;
+    if (!jit)
+    {
+        return;
+    }
 
     auto spawn = +[]() -> void*
     {
@@ -190,7 +201,11 @@ STRATA_TEST(jit_opaque_engine_handle)
 
     auto run = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "run"));
     STRATA_CHECK(run != nullptr);
-    if (run) STRATA_CHECK_EQ(run(), 0xC0FFEE);
+    if (run)
+    {
+        STRATA_CHECK_EQ(run(), 0xC0FFEE);
+    }
+
     strataJitDestroy(jit);
 }
 
@@ -212,6 +227,7 @@ STRATA_TEST(jit_struct_zero_initialized_by_default)
             float r = f();
             STRATA_CHECK(r > 6.9f && r < 7.1f); // unwritten fields are zero
         }
+
         strataJitDestroy(jit);
     }
 }
@@ -237,6 +253,7 @@ STRATA_TEST(jit_struct_inout_param_is_by_reference)
             float r = f();
             STRATA_CHECK(r > 35.9f && r < 36.1f); // write-back through the reference
         }
+
         strataJitDestroy(jit);
     }
 }
@@ -259,7 +276,10 @@ STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
                                 "  return length_sq(v) + length_sq(r);\n" // 25 + 100 = 125
                                 "}\n");
     STRATA_CHECK(jit != nullptr);
-    if (!jit) return;
+    if (!jit)
+    {
+        return;
+    }
 
     auto lengthSq = +[](const HostVec3* v) -> float
     {
@@ -281,6 +301,7 @@ STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
         float r = f();
         STRATA_CHECK(r > 124.9f && r < 125.1f); // 125
     }
+
     strataJitDestroy(jit);
 }
 
@@ -300,7 +321,11 @@ STRATA_TEST(aot_emits_struct_object)
     strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
     std::string path = "strata_struct_test.o";
     bool ok = strata::EmitNativeFile(bm, path, false, err);
-    if (!ok) std::printf("  AOT struct emission failed: %s\n", err.c_str());
+    if (!ok)
+    {
+        std::printf("  AOT struct emission failed: %s\n", err.c_str());
+    }
+
     STRATA_CHECK(ok);
     std::ifstream in(path, std::ios::binary);
     STRATA_CHECK(in.good());

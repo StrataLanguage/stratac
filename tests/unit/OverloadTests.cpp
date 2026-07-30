@@ -24,7 +24,11 @@ bool Contains(const std::string& h, const std::string& n)
 std::unique_ptr<Module> Resolve(std::string_view src, DiagnosticEngine& diag)
 {
     auto mod = ParseModule(src, diag);
-    if (mod) ResolveOverloads(*mod, diag);
+    if (mod)
+    {
+        ResolveOverloads(*mod, diag);
+    }
+
     return mod;
 }
 } // namespace
@@ -206,7 +210,11 @@ STRATA_TEST(jit_runs_resolved_overloads)
     auto ef = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry_f"));
     STRATA_CHECK(ei != nullptr);
     STRATA_CHECK(ef != nullptr);
-    if (ei) STRATA_CHECK_EQ(ei(), 23);
+    if (ei)
+    {
+        STRATA_CHECK_EQ(ei(), 23);
+    }
+
     if (ef)
     {
         float r = ef();
@@ -216,4 +224,5 @@ STRATA_TEST(jit_runs_resolved_overloads)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
+
 #endif

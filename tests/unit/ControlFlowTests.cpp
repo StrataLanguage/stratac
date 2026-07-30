@@ -12,7 +12,11 @@ static StrataJit* CompileJit(const char* src)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = nullptr;
     StrataJit* jit = strataJitCompileString(c, src, "cfg", &err);
-    if (err) strataFree(const_cast<char*>(err));
+    if (err)
+    {
+        strataFree(const_cast<char*>(err));
+    }
+
     return jit; // compiler intentionally leaked for the test's lifetime
 }
 
@@ -25,7 +29,11 @@ STRATA_TEST(jit_inout_param_writes_back)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 11); // n written back through the inout pointer
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 11); // n written back through the inout pointer
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -44,7 +52,11 @@ STRATA_TEST(jit_out_params_return_values)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 302);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 302);
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -59,7 +71,11 @@ STRATA_TEST(jit_if_else_branch)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), -2);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), -2);
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -78,7 +94,11 @@ STRATA_TEST(jit_while_loop)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 5050);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 5050);
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -102,7 +122,11 @@ STRATA_TEST(jit_break_and_continue)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 50);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 50);
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -116,7 +140,11 @@ STRATA_TEST(jit_recursion)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 55);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 55);
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -139,7 +167,11 @@ STRATA_TEST(jit_for_loop)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 150);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 150);
+        }
+
         strataJitDestroy(jit);
     }
 }
@@ -160,7 +192,11 @@ STRATA_TEST(jit_for_loop_with_continue)
     {
         auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
         STRATA_CHECK(f != nullptr);
-        if (f) STRATA_CHECK_EQ(f(), 9);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 9);
+        }
+
         strataJitDestroy(jit);
     }
 }

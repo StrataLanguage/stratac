@@ -57,6 +57,7 @@ struct Node
     explicit Node(NodeKind k, SourceRange r = {}) noexcept : kind(k), range(r)
     {
     }
+
     virtual ~Node() = default;
 };
 
@@ -99,6 +100,7 @@ inline std::string_view ParamModSpelling(ParamMod m) noexcept
     case ParamMod::None:
         return "";
     }
+
     return "";
 }
 

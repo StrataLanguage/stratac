@@ -12,14 +12,17 @@ bool IsIdentStart(char c) noexcept
 {
     return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
 }
+
 bool IsIdentCont(char c) noexcept
 {
     return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
 }
+
 bool IsDigit(char c) noexcept
 {
     return c >= '0' && c <= '9';
 }
+
 bool IsHexDigit(char c) noexcept
 {
     return IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
@@ -39,7 +42,10 @@ void Lexer::SkipWhitespaceAndComments()
         else if (c == '/' && Peek(1) == '/')
         {
             // line comment
-            while (m_pos < m_source.size() && m_source[m_pos] != '\n') ++m_pos;
+            while (m_pos < m_source.size() && m_source[m_pos] != '\n')
+            {
+                ++m_pos;
+            }
         }
         else if (c == '/' && Peek(1) == '*')
         {
@@ -63,6 +69,7 @@ void Lexer::SkipWhitespaceAndComments()
                     ++m_pos;
                 }
             }
+
             if (depth > 0)
             {
                 m_diag.Error({static_cast<std::uint32_t>(m_pos), 1}, "unterminated block comment");
@@ -85,12 +92,17 @@ Token Lexer::NextToken()
         m_peeked = {};
         return t;
     }
+
     return LexToken();
 }
 
 Token Lexer::PeekToken()
 {
-    if (m_hasPeek) return m_peeked;
+    if (m_hasPeek)
+    {
+        return m_peeked;
+    }
+
     m_peeked = LexToken();
     m_hasPeek = true;
     return m_peeked;
@@ -100,13 +112,27 @@ Token Lexer::LexToken()
 {
     SkipWhitespaceAndComments();
     std::size_t start = m_pos;
-    if (m_pos >= m_source.size()) return {TokKind::Eof, {.start = static_cast<std::uint32_t>(m_pos), .length = 0}};
+    if (m_pos >= m_source.size())
+    {
+        return {TokKind::Eof, {.start = static_cast<std::uint32_t>(m_pos), .length = 0}};
+    }
 
     char c = m_source[m_pos];
 
-    if (IsIdentStart(c)) return LexIdentOrKeyword();
-    if (IsDigit(c)) return LexNumber();
-    if (c == '.' && IsDigit(Peek(1))) return LexNumber(); // leading-dot float
+    if (IsIdentStart(c))
+    {
+        return LexIdentOrKeyword();
+    }
+
+    if (IsDigit(c))
+    {
+        return LexNumber();
+    }
+
+    if (c == '.' && IsDigit(Peek(1)))
+    {
+        return LexNumber(); // leading-dot float
+    }
 
     // Punctuation / operators
     ++m_pos;
@@ -142,11 +168,13 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::Arrow, start);
         }
+
         if (Peek() == '=')
         {
             ++m_pos;
             return Make(TokKind::MinusEq, start);
         }
+
         return Make(TokKind::Minus, start);
     case '=':
         if (Peek() == '=')
@@ -154,6 +182,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::EqEq, start);
         }
+
         return Make(TokKind::Assign, start);
     case '!':
         if (Peek() == '=')
@@ -161,6 +190,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::NotEq, start);
         }
+
         return Make(TokKind::Bang, start);
     case '+':
         if (Peek() == '=')
@@ -168,6 +198,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::PlusEq, start);
         }
+
         return Make(TokKind::Plus, start);
     case '*':
         if (Peek() == '=')
@@ -175,6 +206,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::StarEq, start);
         }
+
         return Make(TokKind::Star, start);
     case '/':
         if (Peek() == '=')
@@ -182,6 +214,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::SlashEq, start);
         }
+
         return Make(TokKind::Slash, start);
     case '%':
         if (Peek() == '=')
@@ -189,6 +222,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::PercentEq, start);
         }
+
         return Make(TokKind::Percent, start);
     case '&':
         if (Peek() == '&')
@@ -196,6 +230,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::AmpAmp, start);
         }
+
         return Make(TokKind::Amp, start);
     case '|':
         if (Peek() == '|')
@@ -203,6 +238,7 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::PipePipe, start);
         }
+
         return Make(TokKind::Pipe, start);
     case '<':
         if (Peek() == '<')
@@ -210,11 +246,13 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::Shl, start);
         }
+
         if (Peek() == '=')
         {
             ++m_pos;
             return Make(TokKind::LtEq, start);
         }
+
         return Make(TokKind::Lt, start);
     case '>':
         if (Peek() == '>')
@@ -222,11 +260,13 @@ Token Lexer::LexToken()
             ++m_pos;
             return Make(TokKind::Shr, start);
         }
+
         if (Peek() == '=')
         {
             ++m_pos;
             return Make(TokKind::GtEq, start);
         }
+
         return Make(TokKind::Gt, start);
     default:
         m_diag.Error({static_cast<std::uint32_t>(start), 1}, std::string("unexpected character '") + c + "'");
@@ -237,7 +277,11 @@ Token Lexer::LexToken()
 Token Lexer::LexIdentOrKeyword()
 {
     std::size_t start = m_pos;
-    while (m_pos < m_source.size() && IsIdentCont(m_source[m_pos])) ++m_pos;
+    while (m_pos < m_source.size() && IsIdentCont(m_source[m_pos]))
+    {
+        ++m_pos;
+    }
+
     std::string_view text(m_source.data() + start, m_pos - start);
 
     TokKind kw = ClassifyKeyword(text);
@@ -245,10 +289,12 @@ Token Lexer::LexIdentOrKeyword()
     {
         return Make(TokKind::BoolLit, start);
     }
+
     if (kw != TokKind::Ident)
     {
         return Make(kw, start);
     }
+
     return Make(TokKind::Ident, start);
 }
 
@@ -261,8 +307,16 @@ Token Lexer::LexNumber()
     {
         // hexadecimal integer
         m_pos += 2;
-        while (m_pos < m_source.size() && IsHexDigit(m_source[m_pos])) ++m_pos;
-        if (Peek() == 'u' || Peek() == 'U') ++m_pos;
+        while (m_pos < m_source.size() && IsHexDigit(m_source[m_pos]))
+        {
+            ++m_pos;
+        }
+
+        if (Peek() == 'u' || Peek() == 'U')
+        {
+            ++m_pos;
+        }
+
         return Make(TokKind::IntLit, start);
     }
 
@@ -270,16 +324,26 @@ Token Lexer::LexNumber()
     {
         isFloat = true;
         ++m_pos;
-        while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
+        while (m_pos < m_source.size() && IsDigit(m_source[m_pos]))
+        {
+            ++m_pos;
+        }
     }
     else
     {
-        while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
+        while (m_pos < m_source.size() && IsDigit(m_source[m_pos]))
+        {
+            ++m_pos;
+        }
+
         if (Peek() == '.')
         {
             isFloat = true;
             ++m_pos;
-            while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
+            while (m_pos < m_source.size() && IsDigit(m_source[m_pos]))
+            {
+                ++m_pos;
+            }
         }
     }
 
@@ -288,8 +352,14 @@ Token Lexer::LexNumber()
     {
         isFloat = true;
         ++m_pos;
-        if (Peek() == '+' || Peek() == '-') ++m_pos;
-        while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
+        if (Peek() == '+' || Peek() == '-')
+        {
+            ++m_pos;
+        }
+        while (m_pos < m_source.size() && IsDigit(m_source[m_pos]))
+        {
+            ++m_pos;
+        }
     }
 
     // optional numeric suffix

@@ -53,6 +53,7 @@ STRATA_TEST(sample_structs_compile_with_native_backend)
     STRATA_CHECK(std::strstr(res.output.c_str(), "%struct.Vec3") != nullptr);
     STRATA_CHECK(std::strstr(res.output.c_str(), "%struct.Particle") != nullptr);
 }
+
 #endif
 
 STRATA_TEST(sample_control_flow_lowers_in_text_backend)

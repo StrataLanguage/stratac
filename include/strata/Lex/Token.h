@@ -121,10 +121,12 @@ struct Token
     {
         return kind == k;
     }
+
     constexpr bool IsOneOf(TokKind a, TokKind b) const noexcept
     {
         return Is(a) || Is(b);
     }
+
     template <typename... Rest> constexpr bool IsOneOf(TokKind a, TokKind b, Rest... rest) const noexcept
     {
         return Is(a) || IsOneOf(b, rest...);

@@ -18,6 +18,7 @@ const char* SeverityName(DiagSeverity s) noexcept
     case DiagSeverity::Note:
         return "note";
     }
+
     return "error";
 }
 } // namespace
@@ -31,7 +32,11 @@ std::string DiagnosticEngine::Format(const SourceManager& src) const
         LineCol lc = src.LineCol(d.range.start);
         int n = std::snprintf(line, sizeof(line), "%s(%u,%u): %s: ", std::string(src.Name()).c_str(), lc.line,
                               lc.column, SeverityName(d.severity));
-        if (n > 0) out.append(line, static_cast<std::size_t>(n));
+        if (n > 0)
+        {
+            out.append(line, static_cast<std::size_t>(n));
+        }
+
         out.append(d.message);
         out.push_back('\n');
 
@@ -51,6 +56,7 @@ std::string DiagnosticEngine::Format(const SourceManager& src) const
             }
         }
     }
+
     return out;
 }
 

@@ -51,13 +51,20 @@ extern "C"
 
     void strataCompilerUseLLVM(StrataCompiler* c, int enabled)
     {
-        if (c) c->useLLVM = enabled != 0;
+        if (c)
+        {
+            c->useLLVM = enabled != 0;
+        }
     }
 
     static char* DupCString(const std::string& s)
     {
         char* p = new (std::nothrow) char[s.size() + 1];
-        if (!p) return nullptr;
+        if (!p)
+        {
+            return nullptr;
+        }
+
         std::memcpy(p, s.c_str(), s.size() + 1);
         return p;
     }
@@ -91,8 +98,16 @@ extern "C"
             else
             {
                 std::unique_ptr<strata::CodegenBackend> backend;
-                if (c && c->useLLVM) backend = strata::CreateLlvmBackend();
-                if (!backend) backend = strata::CreateTextBackend();
+                if (c && c->useLLVM)
+                {
+                    backend = strata::CreateLlvmBackend();
+                }
+
+                if (!backend)
+                {
+                    backend = strata::CreateTextBackend();
+                }
+
                 auto result = backend->Generate(*mod);
                 out = result.output;
                 if (!result.ok)
@@ -121,6 +136,7 @@ extern "C"
             r.diagnostics = DupCString("null compiler or source");
             return r;
         }
+
         return CompileSource(c, std::string(source),
                              moduleName ? std::string(moduleName) : std::string("strata_module"), emit);
     }
@@ -135,6 +151,7 @@ extern "C"
             r.diagnostics = DupCString("null compiler or path");
             return r;
         }
+
         std::ifstream in(path, std::ios::binary);
         if (!in)
         {
@@ -146,6 +163,7 @@ extern "C"
             r.error_count = 1;
             return r;
         }
+
         std::ostringstream ss;
         ss << in.rdbuf();
         std::string base = path;
@@ -157,7 +175,11 @@ extern "C"
 
     void strataResultFree(StrataResult* r)
     {
-        if (!r) return;
+        if (!r)
+        {
+            return;
+        }
+
         delete[] r->output;
         delete[] r->diagnostics;
         r->output = nullptr;
@@ -204,7 +226,11 @@ extern "C"
 
         if (diag.HasErrors() || !mod)
         {
-            if (errOut) *errOut = DupCString("parse errors:\n" + diagText);
+            if (errOut)
+            {
+                *errOut = DupCString("parse errors:\n" + diagText);
+            }
+
             return nullptr;
         }
 
@@ -215,7 +241,11 @@ extern "C"
         std::string err;
         if (!jit->Load(std::move(bm), err))
         {
-            if (errOut) *errOut = DupCString("JIT error: " + err);
+            if (errOut)
+            {
+                *errOut = DupCString("JIT error: " + err);
+            }
+
             return nullptr;
         }
 
@@ -224,22 +254,36 @@ extern "C"
         handle->diagnostics = diagText + notes;
         return handle;
     }
+
 #endif
 
     StrataJit* strataJitCompileString(StrataCompiler* c, const char* source, const char* moduleName,
                                       const char** errOut)
     {
 #ifdef STRATA_ENABLE_LLVM
-        if (errOut) *errOut = nullptr;
+        if (errOut)
+        {
+            *errOut = nullptr;
+        }
+
         if (!c || !source)
         {
-            if (errOut) *errOut = DupCString("null compiler or source");
+            if (errOut)
+            {
+                *errOut = DupCString("null compiler or source");
+            }
+
             return nullptr;
         }
+
         return JitCompile(c, std::string(source), moduleName ? std::string(moduleName) : std::string("strata_module"),
                           errOut);
 #else
-        if (errOut) *errOut = DupCString("JIT unavailable: strata built without LLVM");
+        if (errOut)
+        {
+            *errOut = DupCString("JIT unavailable: strata built without LLVM");
+        }
+
         return nullptr;
 #endif
     }
@@ -247,18 +291,32 @@ extern "C"
     StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut)
     {
 #ifdef STRATA_ENABLE_LLVM
-        if (errOut) *errOut = nullptr;
+        if (errOut)
+        {
+            *errOut = nullptr;
+        }
+
         if (!c || !path)
         {
-            if (errOut) *errOut = DupCString("null compiler or path");
+            if (errOut)
+            {
+                *errOut = DupCString("null compiler or path");
+            }
+
             return nullptr;
         }
+
         std::ifstream in(path, std::ios::binary);
         if (!in)
         {
-            if (errOut) *errOut = DupCString(std::string("cannot open file: ") + path);
+            if (errOut)
+            {
+                *errOut = DupCString(std::string("cannot open file: ") + path);
+            }
+
             return nullptr;
         }
+
         std::ostringstream ss;
         ss << in.rdbuf();
         std::string base = path;
@@ -266,7 +324,11 @@ extern "C"
         std::string moduleName = (slash != std::string::npos) ? base.substr(slash + 1) : base;
         return JitCompile(c, ss.str(), moduleName, errOut);
 #else
-        if (errOut) *errOut = DupCString("JIT unavailable: strata built without LLVM");
+        if (errOut)
+        {
+            *errOut = DupCString("JIT unavailable: strata built without LLVM");
+        }
+
         return nullptr;
 #endif
     }
@@ -274,7 +336,11 @@ extern "C"
     void* strataJitGetFunction(StrataJit* jit, const char* name)
     {
 #ifdef STRATA_ENABLE_LLVM
-        if (!jit || !jit->jit || !name) return nullptr;
+        if (!jit || !jit->jit || !name)
+        {
+            return nullptr;
+        }
+
         std::uint64_t addr = jit->jit->GetAddress(name);
         return addr ? reinterpret_cast<void*>(addr) : nullptr;
 #else
@@ -287,7 +353,11 @@ extern "C"
     int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
     {
 #ifdef STRATA_ENABLE_LLVM
-        if (!jit || !jit->jit || !name || !fn) return 0;
+        if (!jit || !jit->jit || !name || !fn)
+        {
+            return 0;
+        }
+
         return jit->jit->AddSymbol(name, fn) ? 1 : 0;
 #else
         (void)jit;
@@ -300,7 +370,11 @@ extern "C"
     size_t strataJitGetExternSymbolCount(StrataJit* jit)
     {
 #ifdef STRATA_ENABLE_LLVM
-        if (!jit || !jit->jit) return 0;
+        if (!jit || !jit->jit)
+        {
+            return 0;
+        }
+
         return jit->jit->ExternSymbols().size();
 #else
         (void)jit;
@@ -311,9 +385,17 @@ extern "C"
     const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
     {
 #ifdef STRATA_ENABLE_LLVM
-        if (!jit || !jit->jit) return nullptr;
+        if (!jit || !jit->jit)
+        {
+            return nullptr;
+        }
+
         const auto& v = jit->jit->ExternSymbols();
-        if (index >= v.size()) return nullptr;
+        if (index >= v.size())
+        {
+            return nullptr;
+        }
+
         return v[index].c_str();
 #else
         (void)jit;
@@ -324,7 +406,11 @@ extern "C"
 
     const char* strataJitDiagnostics(StrataJit* jit)
     {
-        if (!jit) return "";
+        if (!jit)
+        {
+            return "";
+        }
+
         return jit->diagnostics.c_str();
     }
 

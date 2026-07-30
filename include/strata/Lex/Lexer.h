@@ -35,6 +35,7 @@ class Lexer
     {
         return m_pos;
     }
+
     bool AtEnd() const noexcept
     {
         return m_pos >= m_source.size();
@@ -57,6 +58,7 @@ class Lexer
         std::size_t i = m_pos + ahead;
         return i < m_source.size() ? m_source[i] : '\0';
     }
+
     bool Bump() noexcept
     {
         if (m_pos < m_source.size())
@@ -64,8 +66,10 @@ class Lexer
             ++m_pos;
             return true;
         }
+
         return false;
     }
+
     void SkipWhitespaceAndComments();
 
     Token Make(TokKind k, std::size_t start) const noexcept

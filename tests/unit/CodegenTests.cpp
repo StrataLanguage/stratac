@@ -93,4 +93,5 @@ STRATA_TEST(llvm_reports_version)
     LLVMGetVersion(&maj, &min, &pat);
     STRATA_CHECK(maj > 0);
 }
+
 #endif
