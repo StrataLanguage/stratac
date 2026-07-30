@@ -1,0 +1,34 @@
+// jit_demo.strata -- loaded and JIT-compiled in-process by hosts/jit_demo_host.c
+//
+// This exercises the full embedding loop from the host's side:
+//   1. load the script file,
+//   2. bind the `extern` engine functions it declares,
+//   3. compile it to native code in-process (JIT),
+//   4. grab the `run` entry as a plain function pointer and call it.
+//
+// It uses an opaque engine handle, host-provided functions, recursion, and an
+// if -- all native after the JIT compile.
+
+handle Entity;
+
+// Engine API the host provides (resolved by name when the JIT binds externs).
+extern Entity entity_create(int value);
+extern int    entity_get(Entity e);
+extern void   entity_set(Entity e, int value);
+extern void   entity_destroy(Entity e);
+
+// Plain Strata code: recursive Fibonacci.
+int fibonacci(int n) {
+    if (n < 2) { return n; }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// Entry the host calls. seed=7 -> entity_get=7 -> set to 10 -> fibonacci(10)=55.
+int run(int seed) {
+    Entity e = entity_create(seed);
+    int v = entity_get(e);
+    entity_set(e, v + 3);                 // engine mutates the handle's value
+    int result = fibonacci(entity_get(e)); // strata computes on the new value
+    entity_destroy(e);
+    return result;
+}

@@ -15,6 +15,8 @@ which back-end each one uses. Build the compiler first
 | `structs.strata` | structs, member access, positional construction, nested structs, by-value | native |
 | `overloads.strata` | type-based overload resolution (int / float / struct) | native |
 | `extern_struct.strata` + `hosts/extern_struct_host.c` | structs cross the host boundary by pointer (`in`/`out`) | native |
+| `jit_demo.strata` + `hosts/jit_demo_host.c` | **JIT embedding**: load a file, bind externs, compile, call in-process | native (JIT) |
+| `engine_demo.strata` + `hosts/engine_demo_host.c` | **dual mode**: same script, JIT (develop) or AOT-linked (ship) | native (both) |
 | `extern_math.strata` + `hosts/extern_math_host.c` | `extern` host functions, AOT link-and-run | native |
 | `engine_api.strata` + `hosts/engine_api_host.c` | opaque engine handles (`handle`), AOT link-and-run | native |
 | `vectors.strata` | HLSL-style vector types (structural preview) | AST/type check |
@@ -69,6 +71,56 @@ implements the matching pointer signature.
 stratac --emit obj samples/extern_struct.strata -o extern_struct.o
 clang samples/hosts/extern_struct_host.c extern_struct.o -o extern_struct.exe
 ./extern_struct.exe        # entry() = 125
+```
+
+### jit_demo -- load, compile, and run in-process (JIT embedding)
+
+A host program that uses the Strata C API to load a `.strata` file, bind the
+`extern` functions it declares, JIT-compile it to native code, and call the
+entry point through a function pointer -- no on-disk object, no link step.
+
+```sh
+cmake --build --preset default --target jit_demo
+build\default\bin\jit_demo.exe                              # loads samples/jit_demo.strata
+build\default\bin\jit_demo.exe path\to\your.strata          # or any .strata file
+```
+
+Output:
+```
+== Strata JIT demo ==
+loading samples/jit_demo.strata
+script declared 4 extern symbol(s); binding...
+  bound entity_create    -> 0x...
+  bound entity_get       -> 0x...
+  bound entity_set       -> 0x...
+  bound entity_destroy   -> 0x...
+run(7) = 55  (expected fibonacci(10) = 55)
+```
+
+### engine_demo -- same script, two shipping strategies
+
+One script and one host file (gated by `#ifdef USE_JIT`) demonstrate the
+dual-mode workflow a game engine can use:
+
+- **AOT (ship)**: `stratac --emit obj` pre-compiles the script to an object;
+  `clang` links it with the host. No Strata library at runtime.
+- **JIT (develop)**: the host loads the `.strata` at runtime via the JIT API,
+  compiles it in-process, and calls through a function pointer.
+
+```sh
+cmake --build --preset default --target engine_demo   # builds the JIT variant
+samples\run_engine_demo.bat                           # builds AOT + runs both
+```
+
+Output:
+```
+==================== AOT mode (pre-compiled, linked) ====================
+[AOT] script pre-compiled and linked
+chase(attacker, target, 2) = 26
+
+==================== JIT mode (loaded at runtime) =======================
+[JIT] loading samples/engine_demo.strata
+chase(attacker, target, 2) = 26
 ```
 
 ### extern_math.strata -- script calls the host

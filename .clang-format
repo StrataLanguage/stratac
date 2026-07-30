@@ -34,9 +34,10 @@ AllowShortBlocksOnASingleLine:      Empty
 AllowShortEnumsOnASingleLine:       false
 AllowShortLambdasOnASingleLine:     Empty
 
-# ---- Braceless one-liners (kept as the existing code uses them) ----
-AllowShortIfStatementsOnASingleLine: WithoutElse
-AllowShortLoopsOnASingleLine:        true
+# ---- Braces required on all control statements ----
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine:        false
+InsertBraces:                        true
 
 # ---- switch / case: labels flush with the switch ----
 IndentCaseLabels:   false

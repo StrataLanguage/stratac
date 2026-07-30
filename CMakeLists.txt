@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(strata LANGUAGES CXX VERSION 0.1.0 DESCRIPTION "Strata scripting language")
+project(strata LANGUAGES C CXX VERSION 0.1.0 DESCRIPTION "Strata scripting language")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -77,6 +77,27 @@ target_link_libraries(stratac PRIVATE strata)
 strata_stage_dll(stratac)
 
 # ---------------------------------------------------------------------------
+# JIT embedding demo: a host that loads + JIT-compiles + runs a .strata file.
+# ---------------------------------------------------------------------------
+add_executable(jit_demo samples/hosts/jit_demo_host.c)
+target_link_libraries(jit_demo PRIVATE strata)
+target_compile_definitions(jit_demo PRIVATE
+    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
+strata_stage_dll(jit_demo)
+
+# ---------------------------------------------------------------------------
+# Dual-mode engine demo: same script, JIT (runtime load) or AOT (pre-linked).
+# The CMake target builds the JIT variant; run_engine_demo.bat builds the AOT
+# variant via stratac + clang and runs both side by side.
+# ---------------------------------------------------------------------------
+add_executable(engine_demo samples/hosts/engine_demo_host.c)
+target_link_libraries(engine_demo PRIVATE strata)
+target_compile_definitions(engine_demo PRIVATE
+    USE_JIT
+    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
+strata_stage_dll(engine_demo)
+
+# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 enable_testing()
@@ -99,5 +120,5 @@ target_compile_definitions(strata_tests PRIVATE
 strata_stage_dll(strata_tests)
 add_test(NAME strata_tests COMMAND strata_tests)
 
-set_target_properties(stratac strata_tests PROPERTIES
+set_target_properties(stratac strata_tests jit_demo engine_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

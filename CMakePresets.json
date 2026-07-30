@@ -10,6 +10,7 @@
       "binaryDir": "${sourceDir}/build/default",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
         "STRATA_ENABLE_LLVM": "ON",
         "LLVM_C_DIR": "C:/Users/andre/llvm-x64"
