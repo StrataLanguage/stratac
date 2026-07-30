@@ -1,66 +1,74 @@
 // Lexer unit tests.
-#include "strata/Test.hpp"
 #include "Util.hpp"
+#include "strata/Test.hpp"
 
 #include <algorithm>
 
 using namespace strata;
 using namespace strata::test_util;
 
-STRATA_TEST(lexer_keywords_and_idents) {
-    auto t = lexAll("int float4 MyType inout return");
-    auto k = kinds(t);
-    STRATA_CHECK(k[0] == TokKind::Kw_int);
-    STRATA_CHECK(k[1] == TokKind::Ident);     // float4 is an identifier
-    STRATA_CHECK(k[2] == TokKind::Ident);     // MyType
-    STRATA_CHECK(k[3] == TokKind::Kw_inout);
-    STRATA_CHECK(k[4] == TokKind::Kw_return);
+STRATA_TEST(lexer_keywords_and_idents)
+{
+    auto t = LexAll("int float4 MyType inout return");
+    auto k = Kinds(t);
+    STRATA_CHECK(k[0] == TokKind::KwInt);
+    STRATA_CHECK(k[1] == TokKind::Ident); // float4 is an identifier
+    STRATA_CHECK(k[2] == TokKind::Ident); // MyType
+    STRATA_CHECK(k[3] == TokKind::KwInout);
+    STRATA_CHECK(k[4] == TokKind::KwReturn);
     STRATA_CHECK(k.back() == TokKind::Eof);
 }
 
-STRATA_TEST(lexer_line_comment_skipped) {
-    auto t = lexAll("// a comment\n42 // trailing\n");
-    auto k = kinds(t);
+STRATA_TEST(lexer_line_comment_skipped)
+{
+    auto t = LexAll("// a comment\n42 // trailing\n");
+    auto k = Kinds(t);
     STRATA_CHECK_EQ(k.size(), (std::size_t)2); // IntLit, Eof
     STRATA_CHECK(k[0] == TokKind::IntLit);
 }
 
-STRATA_TEST(lexer_block_comment_nests) {
-    auto t = lexAll("/* outer /* inner */ still outer */ 1");
-    auto k = kinds(t);
+STRATA_TEST(lexer_block_comment_nests)
+{
+    auto t = LexAll("/* outer /* inner */ still outer */ 1");
+    auto k = Kinds(t);
     STRATA_CHECK(k[0] == TokKind::IntLit);
     STRATA_CHECK(k[1] == TokKind::Eof);
 }
 
-STRATA_TEST(lexer_integer_literal_kinds) {
-    auto t = lexAll("123 0xFF 42u");
-    auto k = kinds(t);
+STRATA_TEST(lexer_integer_literal_kinds)
+{
+    auto t = LexAll("123 0xFF 42u");
+    auto k = Kinds(t);
     STRATA_CHECK(k[0] == TokKind::IntLit);
     STRATA_CHECK(k[1] == TokKind::IntLit);
     STRATA_CHECK(k[2] == TokKind::IntLit);
     std::string_view src = "123 0xFF 42u";
-    STRATA_CHECK_EQ(textOf(src, t[0]), std::string_view("123"));
-    STRATA_CHECK_EQ(textOf(src, t[1]), std::string_view("0xFF"));
-    STRATA_CHECK_EQ(textOf(src, t[2]), std::string_view("42u"));
+    STRATA_CHECK_EQ(TextOf(src, t[0]), std::string_view("123"));
+    STRATA_CHECK_EQ(TextOf(src, t[1]), std::string_view("0xFF"));
+    STRATA_CHECK_EQ(TextOf(src, t[2]), std::string_view("42u"));
 }
 
-STRATA_TEST(lexer_float_literals) {
-    auto t = lexAll("1.0 1.5e3 .5f 10.0h");
-    auto k = kinds(t);
-    for (std::size_t i = 0; i < 4; ++i) {
+STRATA_TEST(lexer_float_literals)
+{
+    auto t = LexAll("1.0 1.5e3 .5f 10.0h");
+    auto k = Kinds(t);
+    for (std::size_t i = 0; i < 4; ++i)
+    {
         STRATA_CHECK(k[i] == TokKind::FloatLit);
     }
 }
 
-STRATA_TEST(lexer_bool_literals) {
-    auto t = lexAll("true false");
-    STRATA_CHECK(t[0].is(TokKind::BoolLit));
-    STRATA_CHECK(t[1].is(TokKind::BoolLit));
+STRATA_TEST(lexer_bool_literals)
+{
+    auto t = LexAll("true false");
+    STRATA_CHECK(t[0].Is(TokKind::BoolLit));
+    STRATA_CHECK(t[1].Is(TokKind::BoolLit));
 }
 
-STRATA_TEST(lexer_multi_char_operators) {
-    auto t = lexAll("<= >= == != && || << >> += ->");
-    auto k = kinds(t);
+STRATA_TEST(lexer_multi_char_operators)
+{
+    auto t = LexAll("<= >= == != && || << >> += ->");
+    auto k = Kinds(t);
     STRATA_CHECK(k[0] == TokKind::LtEq);
     STRATA_CHECK(k[1] == TokKind::GtEq);
     STRATA_CHECK(k[2] == TokKind::EqEq);

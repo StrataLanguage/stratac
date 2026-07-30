@@ -14,52 +14,71 @@
 #include <cstddef>
 #include <string_view>
 
-namespace strata {
+namespace strata
+{
 
-class Lexer {
-public:
-    Lexer(std::string_view source, DiagnosticEngine& diag) noexcept
-        : source_(source), diag_(diag) {}
+class Lexer
+{
+  public:
+    Lexer(std::string_view source, DiagnosticEngine& diag) noexcept : m_source(source), m_diag(diag)
+    {
+    }
 
     // Returns the next token and advances.
-    Token nextToken();
+    Token NextToken();
 
     // Returns the next token without consuming it. Only one token of lookahead
     // is supported; calling peekToken() twice in a row returns the same token.
-    Token peekToken();
+    Token PeekToken();
 
-    std::size_t position() const noexcept { return pos_; }
-    bool atEnd() const noexcept { return pos_ >= source_.size(); }
-
-    std::string_view sourceText() const noexcept { return source_; }
-
-private:
-    Token lexToken();
-    Token lexIdentOrKeyword();
-    Token lexNumber();
-    Token lexLineComment();
-    Token lexBlockComment();
-
-    char peek(std::size_t ahead = 0) const noexcept {
-        std::size_t i = pos_ + ahead;
-        return i < source_.size() ? source_[i] : '\0';
+    std::size_t Position() const noexcept
+    {
+        return m_pos;
     }
-    bool bump() noexcept {
-        if (pos_ < source_.size()) { ++pos_; return true; }
+    bool AtEnd() const noexcept
+    {
+        return m_pos >= m_source.size();
+    }
+
+    std::string_view SourceText() const noexcept
+    {
+        return m_source;
+    }
+
+  private:
+    Token LexToken();
+    Token LexIdentOrKeyword();
+    Token LexNumber();
+    Token LexLineComment();
+    Token LexBlockComment();
+
+    char Peek(std::size_t ahead = 0) const noexcept
+    {
+        std::size_t i = m_pos + ahead;
+        return i < m_source.size() ? m_source[i] : '\0';
+    }
+    bool Bump() noexcept
+    {
+        if (m_pos < m_source.size())
+        {
+            ++m_pos;
+            return true;
+        }
         return false;
     }
-    void skipWhitespaceAndComments();
+    void SkipWhitespaceAndComments();
 
-    Token make(TokKind k, std::size_t start) const noexcept {
-        return Token{k, {static_cast<std::uint32_t>(start),
-                         static_cast<std::uint16_t>(pos_ - start)}};
+    Token Make(TokKind k, std::size_t start) const noexcept
+    {
+        return Token{k,
+                     {.start = static_cast<std::uint32_t>(start), .length = static_cast<std::uint16_t>(m_pos - start)}};
     }
 
-    std::string_view source_;
-    DiagnosticEngine& diag_;
-    std::size_t pos_ = 0;
-    bool hasPeek_ = false;
-    Token peeked_{};
+    std::string_view m_source;
+    DiagnosticEngine& m_diag;
+    std::size_t m_pos = 0;
+    bool m_hasPeek = false;
+    Token m_peeked;
 };
 
 } // namespace strata

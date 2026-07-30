@@ -2,194 +2,309 @@
 
 #include <cctype>
 
-namespace strata {
+namespace strata
+{
 
-namespace {
+namespace
+{
 
-bool isIdentStart(char c) noexcept { return std::isalpha(static_cast<unsigned char>(c)) || c == '_'; }
-bool isIdentCont(char c) noexcept { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; }
-bool isDigit(char c) noexcept { return c >= '0' && c <= '9'; }
-bool isHexDigit(char c) noexcept {
-    return isDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+bool IsIdentStart(char c) noexcept
+{
+    return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
+}
+bool IsIdentCont(char c) noexcept
+{
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+}
+bool IsDigit(char c) noexcept
+{
+    return c >= '0' && c <= '9';
+}
+bool IsHexDigit(char c) noexcept
+{
+    return IsDigit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
 }
 
 } // namespace
 
-void Lexer::skipWhitespaceAndComments() {
-    while (pos_ < source_.size()) {
-        char c = source_[pos_];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v') {
-            ++pos_;
-        } else if (c == '/' && peek(1) == '/') {
+void Lexer::SkipWhitespaceAndComments()
+{
+    while (m_pos < m_source.size())
+    {
+        char c = m_source[m_pos];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v')
+        {
+            ++m_pos;
+        }
+        else if (c == '/' && Peek(1) == '/')
+        {
             // line comment
-            while (pos_ < source_.size() && source_[pos_] != '\n') ++pos_;
-        } else if (c == '/' && peek(1) == '*') {
+            while (m_pos < m_source.size() && m_source[m_pos] != '\n') ++m_pos;
+        }
+        else if (c == '/' && Peek(1) == '*')
+        {
             // block comment (HLSL nests block comments)
             int depth = 1;
-            pos_ += 2;
-            while (pos_ < source_.size() && depth > 0) {
-                if (source_[pos_] == '/' && peek(1) == '*') {
-                    depth++; pos_ += 2;
-                } else if (source_[pos_] == '*' && peek(1) == '/') {
-                    depth--; pos_ += 2;
-                } else {
-                    ++pos_;
+            m_pos += 2;
+            while (m_pos < m_source.size() && depth > 0)
+            {
+                if (m_source[m_pos] == '/' && Peek(1) == '*')
+                {
+                    depth++;
+                    m_pos += 2;
+                }
+                else if (m_source[m_pos] == '*' && Peek(1) == '/')
+                {
+                    depth--;
+                    m_pos += 2;
+                }
+                else
+                {
+                    ++m_pos;
                 }
             }
-            if (depth > 0) {
-                diag_.error({static_cast<std::uint32_t>(pos_), 1}, "unterminated block comment");
+            if (depth > 0)
+            {
+                m_diag.Error({static_cast<std::uint32_t>(m_pos), 1}, "unterminated block comment");
                 return;
             }
-        } else {
+        }
+        else
+        {
             break;
         }
     }
 }
 
-Token Lexer::nextToken() {
-    if (hasPeek_) {
-        hasPeek_ = false;
-        Token t = peeked_;
-        peeked_ = {};
+Token Lexer::NextToken()
+{
+    if (m_hasPeek)
+    {
+        m_hasPeek = false;
+        Token t = m_peeked;
+        m_peeked = {};
         return t;
     }
-    return lexToken();
+    return LexToken();
 }
 
-Token Lexer::peekToken() {
-    if (hasPeek_) return peeked_;
-    peeked_ = lexToken();
-    hasPeek_ = true;
-    return peeked_;
+Token Lexer::PeekToken()
+{
+    if (m_hasPeek) return m_peeked;
+    m_peeked = LexToken();
+    m_hasPeek = true;
+    return m_peeked;
 }
 
-Token Lexer::lexToken() {
-    skipWhitespaceAndComments();
-    std::size_t start = pos_;
-    if (pos_ >= source_.size()) return {TokKind::Eof, {static_cast<std::uint32_t>(pos_), 0}};
+Token Lexer::LexToken()
+{
+    SkipWhitespaceAndComments();
+    std::size_t start = m_pos;
+    if (m_pos >= m_source.size()) return {TokKind::Eof, {.start = static_cast<std::uint32_t>(m_pos), .length = 0}};
 
-    char c = source_[pos_];
+    char c = m_source[m_pos];
 
-    if (isIdentStart(c)) return lexIdentOrKeyword();
-    if (isDigit(c)) return lexNumber();
-    if (c == '.' && isDigit(peek(1))) return lexNumber(); // leading-dot float
+    if (IsIdentStart(c)) return LexIdentOrKeyword();
+    if (IsDigit(c)) return LexNumber();
+    if (c == '.' && IsDigit(Peek(1))) return LexNumber(); // leading-dot float
 
     // Punctuation / operators
-    ++pos_;
-    switch (c) {
-        case '(': return make(TokKind::LParen, start);
-        case ')': return make(TokKind::RParen, start);
-        case '{': return make(TokKind::LBrace, start);
-        case '}': return make(TokKind::RBrace, start);
-        case '[': return make(TokKind::LBracket, start);
-        case ']': return make(TokKind::RBracket, start);
-        case ',': return make(TokKind::Comma, start);
-        case ';': return make(TokKind::Semicolon, start);
-        case ':': return make(TokKind::Colon, start);
-        case '~': return make(TokKind::Tilde, start);
-        case '^': return make(TokKind::Caret, start);
-        case '.': return make(TokKind::Dot, start);
-        case '-':
-            if (peek() == '>') { ++pos_; return make(TokKind::Arrow, start); }
-            if (peek() == '=') { ++pos_; return make(TokKind::MinusEq, start); }
-            return make(TokKind::Minus, start);
-        case '=':
-            if (peek() == '=') { ++pos_; return make(TokKind::EqEq, start); }
-            return make(TokKind::Assign, start);
-        case '!':
-            if (peek() == '=') { ++pos_; return make(TokKind::NotEq, start); }
-            return make(TokKind::Bang, start);
-        case '+':
-            if (peek() == '=') { ++pos_; return make(TokKind::PlusEq, start); }
-            return make(TokKind::Plus, start);
-        case '*':
-            if (peek() == '=') { ++pos_; return make(TokKind::StarEq, start); }
-            return make(TokKind::Star, start);
-        case '/':
-            if (peek() == '=') { ++pos_; return make(TokKind::SlashEq, start); }
-            return make(TokKind::Slash, start);
-        case '%':
-            if (peek() == '=') { ++pos_; return make(TokKind::PercentEq, start); }
-            return make(TokKind::Percent, start);
-        case '&':
-            if (peek() == '&') { ++pos_; return make(TokKind::AmpAmp, start); }
-            return make(TokKind::Amp, start);
-        case '|':
-            if (peek() == '|') { ++pos_; return make(TokKind::PipePipe, start); }
-            return make(TokKind::Pipe, start);
-        case '<':
-            if (peek() == '<') { ++pos_; return make(TokKind::Shl, start); }
-            if (peek() == '=') { ++pos_; return make(TokKind::LtEq, start); }
-            return make(TokKind::Lt, start);
-        case '>':
-            if (peek() == '>') { ++pos_; return make(TokKind::Shr, start); }
-            if (peek() == '=') { ++pos_; return make(TokKind::GtEq, start); }
-            return make(TokKind::Gt, start);
-        default:
-            diag_.error({static_cast<std::uint32_t>(start), 1},
-                        std::string("unexpected character '") + c + "'");
-            return make(TokKind::Unknown, start);
+    ++m_pos;
+    switch (c)
+    {
+    case '(':
+        return Make(TokKind::LParen, start);
+    case ')':
+        return Make(TokKind::RParen, start);
+    case '{':
+        return Make(TokKind::LBrace, start);
+    case '}':
+        return Make(TokKind::RBrace, start);
+    case '[':
+        return Make(TokKind::LBracket, start);
+    case ']':
+        return Make(TokKind::RBracket, start);
+    case ',':
+        return Make(TokKind::Comma, start);
+    case ';':
+        return Make(TokKind::Semicolon, start);
+    case ':':
+        return Make(TokKind::Colon, start);
+    case '~':
+        return Make(TokKind::Tilde, start);
+    case '^':
+        return Make(TokKind::Caret, start);
+    case '.':
+        return Make(TokKind::Dot, start);
+    case '-':
+        if (Peek() == '>')
+        {
+            ++m_pos;
+            return Make(TokKind::Arrow, start);
+        }
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::MinusEq, start);
+        }
+        return Make(TokKind::Minus, start);
+    case '=':
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::EqEq, start);
+        }
+        return Make(TokKind::Assign, start);
+    case '!':
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::NotEq, start);
+        }
+        return Make(TokKind::Bang, start);
+    case '+':
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::PlusEq, start);
+        }
+        return Make(TokKind::Plus, start);
+    case '*':
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::StarEq, start);
+        }
+        return Make(TokKind::Star, start);
+    case '/':
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::SlashEq, start);
+        }
+        return Make(TokKind::Slash, start);
+    case '%':
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::PercentEq, start);
+        }
+        return Make(TokKind::Percent, start);
+    case '&':
+        if (Peek() == '&')
+        {
+            ++m_pos;
+            return Make(TokKind::AmpAmp, start);
+        }
+        return Make(TokKind::Amp, start);
+    case '|':
+        if (Peek() == '|')
+        {
+            ++m_pos;
+            return Make(TokKind::PipePipe, start);
+        }
+        return Make(TokKind::Pipe, start);
+    case '<':
+        if (Peek() == '<')
+        {
+            ++m_pos;
+            return Make(TokKind::Shl, start);
+        }
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::LtEq, start);
+        }
+        return Make(TokKind::Lt, start);
+    case '>':
+        if (Peek() == '>')
+        {
+            ++m_pos;
+            return Make(TokKind::Shr, start);
+        }
+        if (Peek() == '=')
+        {
+            ++m_pos;
+            return Make(TokKind::GtEq, start);
+        }
+        return Make(TokKind::Gt, start);
+    default:
+        m_diag.Error({static_cast<std::uint32_t>(start), 1}, std::string("unexpected character '") + c + "'");
+        return Make(TokKind::Unknown, start);
     }
 }
 
-Token Lexer::lexIdentOrKeyword() {
-    std::size_t start = pos_;
-    while (pos_ < source_.size() && isIdentCont(source_[pos_])) ++pos_;
-    std::string_view text(source_.data() + start, pos_ - start);
+Token Lexer::LexIdentOrKeyword()
+{
+    std::size_t start = m_pos;
+    while (m_pos < m_source.size() && IsIdentCont(m_source[m_pos])) ++m_pos;
+    std::string_view text(m_source.data() + start, m_pos - start);
 
-    TokKind kw = classifyKeyword(text);
-    if (kw == TokKind::Kw_true || kw == TokKind::Kw_false) {
-        return make(TokKind::BoolLit, start);
+    TokKind kw = ClassifyKeyword(text);
+    if (kw == TokKind::KwTrue || kw == TokKind::KwFalse)
+    {
+        return Make(TokKind::BoolLit, start);
     }
-    if (kw != TokKind::Ident) {
-        return make(kw, start);
+    if (kw != TokKind::Ident)
+    {
+        return Make(kw, start);
     }
-    return make(TokKind::Ident, start);
+    return Make(TokKind::Ident, start);
 }
 
-Token Lexer::lexNumber() {
-    std::size_t start = pos_;
+Token Lexer::LexNumber()
+{
+    std::size_t start = m_pos;
     bool isFloat = false;
 
-    if (source_[pos_] == '0' && (peek(1) == 'x' || peek(1) == 'X')) {
+    if (m_source[m_pos] == '0' && (Peek(1) == 'x' || Peek(1) == 'X'))
+    {
         // hexadecimal integer
-        pos_ += 2;
-        while (pos_ < source_.size() && isHexDigit(source_[pos_])) ++pos_;
-        if (peek() == 'u' || peek() == 'U') ++pos_;
-        return make(TokKind::IntLit, start);
+        m_pos += 2;
+        while (m_pos < m_source.size() && IsHexDigit(m_source[m_pos])) ++m_pos;
+        if (Peek() == 'u' || Peek() == 'U') ++m_pos;
+        return Make(TokKind::IntLit, start);
     }
 
-    if (source_[pos_] == '.') {
+    if (m_source[m_pos] == '.')
+    {
         isFloat = true;
-        ++pos_;
-        while (pos_ < source_.size() && isDigit(source_[pos_])) ++pos_;
-    } else {
-        while (pos_ < source_.size() && isDigit(source_[pos_])) ++pos_;
-        if (peek() == '.') {
+        ++m_pos;
+        while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
+    }
+    else
+    {
+        while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
+        if (Peek() == '.')
+        {
             isFloat = true;
-            ++pos_;
-            while (pos_ < source_.size() && isDigit(source_[pos_])) ++pos_;
+            ++m_pos;
+            while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
         }
     }
 
     // optional exponent
-    if (peek() == 'e' || peek() == 'E') {
+    if (Peek() == 'e' || Peek() == 'E')
+    {
         isFloat = true;
-        ++pos_;
-        if (peek() == '+' || peek() == '-') ++pos_;
-        while (pos_ < source_.size() && isDigit(source_[pos_])) ++pos_;
+        ++m_pos;
+        if (Peek() == '+' || Peek() == '-') ++m_pos;
+        while (m_pos < m_source.size() && IsDigit(m_source[m_pos])) ++m_pos;
     }
 
     // optional numeric suffix
-    char sfx = peek();
-    if (sfx == 'f' || sfx == 'F' || sfx == 'h' || sfx == 'H') {
+    char sfx = Peek();
+    if (sfx == 'f' || sfx == 'F' || sfx == 'h' || sfx == 'H')
+    {
         isFloat = true;
-        ++pos_;
-    } else if (sfx == 'u' || sfx == 'U') {
-        ++pos_;
+        ++m_pos;
+    }
+    else if (sfx == 'u' || sfx == 'U')
+    {
+        ++m_pos;
     }
 
-    return make(isFloat ? TokKind::FloatLit : TokKind::IntLit, start);
+    return Make(isFloat ? TokKind::FloatLit : TokKind::IntLit, start);
 }
 
 } // namespace strata

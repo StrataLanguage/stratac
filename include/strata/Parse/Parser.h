@@ -29,61 +29,73 @@
 #include <memory>
 #include <string>
 
-namespace strata {
+namespace strata
+{
 
-class Parser {
-public:
+class Parser
+{
+  public:
     Parser(Lexer& lex, DiagnosticEngine& diag, std::string moduleName = "strata_module")
-        : lex_(lex), diag_(diag), moduleName_(std::move(moduleName)) {
-        advance();  // prime the current token
+        : m_lex(lex), m_diag(diag), m_moduleName(std::move(moduleName))
+    {
+        Advance(); // prime the current token
     }
 
     // Parses the whole translation unit. Returns the module even if errors
     // occurred; callers should check diag_.hasErrors() before using it.
-    std::unique_ptr<Module> parseModule();
+    std::unique_ptr<Module> ParseModule();
 
-    DiagnosticEngine& diagnostics() noexcept { return diag_; }
+    DiagnosticEngine& Diagnostics() noexcept
+    {
+        return m_diag;
+    }
 
-private:
+  private:
     // --- token helpers ---
-    const Token& current() const noexcept { return cur_; }
-    bool check(TokKind k) const noexcept { return cur_.is(k); }
-    bool consume(TokKind k) noexcept;
-    Token expect(TokKind k, std::string_view what);
-    void advance();
-    void synchronize();
-    bool looksLikeVarDecl() const noexcept;
+    const Token& Current() const noexcept
+    {
+        return m_cur;
+    }
+    bool Check(TokKind k) const noexcept
+    {
+        return m_cur.Is(k);
+    }
+    bool Consume(TokKind k) noexcept;
+    Token Expect(TokKind k, std::string_view what);
+    void Advance();
+    void Synchronize();
+    bool LooksLikeVarDecl() const noexcept;
 
     // --- grammar ---
-    std::unique_ptr<StructDecl> parseStructDecl();
-    std::unique_ptr<HandleDecl> parseHandleDecl();
-    std::unique_ptr<FunctionDecl> parseFunction();
-    std::unique_ptr<ParamDecl> parseParam();
-    NodePtr parseBlock();
-    NodePtr parseStatement();
-    NodePtr parseVarDeclOrExprStmt();
-    NodePtr parseReturn();
-    NodePtr parseIf();
-    NodePtr parseWhile();
-    NodePtr parseFor();
+    std::unique_ptr<StructDecl> ParseStructDecl();
+    std::unique_ptr<HandleDecl> ParseHandleDecl();
+    std::unique_ptr<FunctionDecl> ParseFunction();
+    std::unique_ptr<ParamDecl> ParseParam();
+    NodePtr ParseBlock();
+    NodePtr ParseStatement();
+    NodePtr ParseVarDeclOrExprStmt();
+    NodePtr ParseReturn();
+    NodePtr ParseIf();
+    NodePtr ParseWhile();
+    NodePtr ParseFor();
 
-    NodePtr parseExpr();
-    NodePtr parseAssign();
-    NodePtr parseBinary(int minPrec);
-    NodePtr parseUnary();
-    NodePtr parsePostfix();
-    NodePtr parsePrimary();
+    NodePtr ParseExpr();
+    NodePtr ParseAssign();
+    NodePtr ParseBinary(int minPrec);
+    NodePtr ParseUnary();
+    NodePtr ParsePostfix();
+    NodePtr ParsePrimary();
 
     // --- type helpers ---
-    bool tryParseType(TypeName& out);
-    bool isTypeStart() const noexcept;
+    bool TryParseType(TypeName& out);
+    bool IsTypeStart() const noexcept;
 
-    std::string_view identText(const Token& t) const noexcept;
+    std::string_view IdentText(const Token& t) const noexcept;
 
-    Lexer& lex_;
-    DiagnosticEngine& diag_;
-    std::string moduleName_;
-    Token cur_{};
+    Lexer& m_lex;
+    DiagnosticEngine& m_diag;
+    std::string m_moduleName;
+    Token m_cur;
 };
 
 } // namespace strata

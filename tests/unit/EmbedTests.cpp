@@ -4,7 +4,8 @@
 
 #include <cstring>
 
-STRATA_TEST(embed_compile_string_ok) {
+STRATA_TEST(embed_compile_string_ok)
+{
     StrataCompiler* c = strataCompilerCreate();
     STRATA_CHECK(c != nullptr);
     StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_LLVM_IR);
@@ -16,7 +17,8 @@ STRATA_TEST(embed_compile_string_ok) {
     strataCompilerDestroy(c);
 }
 
-STRATA_TEST(embed_compile_string_reports_errors) {
+STRATA_TEST(embed_compile_string_reports_errors)
+{
     StrataCompiler* c = strataCompilerCreate();
     StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_LLVM_IR);
     STRATA_CHECK_EQ(r.ok, 0);
@@ -27,7 +29,8 @@ STRATA_TEST(embed_compile_string_reports_errors) {
     strataCompilerDestroy(c);
 }
 
-STRATA_TEST(embed_ast_emit) {
+STRATA_TEST(embed_ast_emit)
+{
     StrataCompiler* c = strataCompilerCreate();
     StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_AST);
     STRATA_CHECK_EQ(r.ok, 1);
@@ -36,7 +39,8 @@ STRATA_TEST(embed_ast_emit) {
     strataCompilerDestroy(c);
 }
 
-STRATA_TEST(embed_version_is_reported) {
+STRATA_TEST(embed_version_is_reported)
+{
     const char* v = strataLLVMVersion();
     STRATA_CHECK(v != nullptr);
     STRATA_CHECK(v[0] != '\0');

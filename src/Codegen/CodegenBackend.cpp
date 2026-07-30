@@ -6,9 +6,11 @@
 // STRATA_ENABLE_LLVM is defined by CMake.
 #include "strata/Codegen/CodegenBackend.h"
 
-#if !defined(STRATA_ENABLE_LLVM)
-namespace strata {
-std::unique_ptr<CodegenBackend> createLLVMBackend() {
+#ifndef STRATA_ENABLE_LLVM
+namespace strata
+{
+std::unique_ptr<CodegenBackend> CreateLlvmBackend()
+{
     return nullptr; // built without LLVM linkage
 }
 } // namespace strata

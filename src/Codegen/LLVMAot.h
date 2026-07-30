@@ -11,13 +11,13 @@
 
 #include <string>
 
-namespace strata {
+namespace strata
+{
 
 // Writes native code for `bm` to `path`.
 //   assembly = true  -> assembly source (.s)
 //   assembly = false -> relocatable object (.o / .obj)
 // Returns true on success; `errorMessage` is set on failure.
-bool emitNativeFile(const BuiltModule& bm, const std::string& path,
-                    bool assembly, std::string& errorMessage);
+bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembly, std::string& errorMessage);
 
 } // namespace strata

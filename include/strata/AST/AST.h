@@ -16,9 +16,11 @@
 #include <string>
 #include <vector>
 
-namespace strata {
+namespace strata
+{
 
-enum class NodeKind : std::uint8_t {
+enum class NodeKind : std::uint8_t
+{
     // Declarations
     Module,
     Struct,
@@ -47,11 +49,14 @@ enum class NodeKind : std::uint8_t {
     Member,
 };
 
-struct Node {
+struct Node
+{
     NodeKind kind;
     SourceRange range;
 
-    explicit Node(NodeKind k, SourceRange r = {}) noexcept : kind(k), range(r) {}
+    explicit Node(NodeKind k, SourceRange r = {}) noexcept : kind(k), range(r)
+    {
+    }
     virtual ~Node() = default;
 };
 
@@ -59,216 +64,325 @@ using NodePtr = std::unique_ptr<Node>;
 
 // ---- Types (textual) ----
 
-struct TypeName {
-    std::string name;        // e.g. "int", "float4", "MyStruct"
+struct TypeName
+{
+    std::string name; // e.g. "int", "float4", "MyStruct"
     SourceRange range{};
     bool isConst = false;
 
-    bool valid() const noexcept { return !name.empty(); }
+    bool Valid() const noexcept
+    {
+        return !name.empty();
+    }
 };
 
 // ---- Parameter modifiers (HLSL-style; no pointers/references) ----
 
-enum class ParamMod : std::uint8_t { None, In, Out, InOut };
+enum class ParamMod : std::uint8_t
+{
+    None,
+    In,
+    Out,
+    InOut
+};
 
-inline std::string_view paramModSpelling(ParamMod m) noexcept {
-    switch (m) {
-        case ParamMod::In: return "in";
-        case ParamMod::Out: return "out";
-        case ParamMod::InOut: return "inout";
-        case ParamMod::None: return "";
+inline std::string_view ParamModSpelling(ParamMod m) noexcept
+{
+    switch (m)
+    {
+    case ParamMod::In:
+        return "in";
+    case ParamMod::Out:
+        return "out";
+    case ParamMod::InOut:
+        return "inout";
+    case ParamMod::None:
+        return "";
     }
     return "";
 }
 
 // ---- Declarations ----
 
-struct ParamDecl : Node {
+struct ParamDecl : Node
+{
     ParamMod mod = ParamMod::None;
     TypeName type;
     std::string name;
 
     ParamDecl(SourceRange r, ParamMod m, TypeName t, std::string n)
-        : Node(NodeKind::Param, r), mod(m), type(std::move(t)), name(std::move(n)) {}
+        : Node(NodeKind::Param, r), mod(m), type(std::move(t)), name(std::move(n))
+    {
+    }
 };
 
 // A named field of a struct.
-struct FieldDecl {
+struct FieldDecl
+{
     TypeName type;
     std::string name;
 };
 
 // A user-defined aggregate type (a value type -- no pointers in Strata).
-struct StructDecl : Node {
+struct StructDecl : Node
+{
     std::string name;
     std::vector<FieldDecl> fields;
 
-    explicit StructDecl(SourceRange r, std::string n)
-        : Node(NodeKind::Struct, r), name(std::move(n)) {}
+    explicit StructDecl(SourceRange r, std::string n) : Node(NodeKind::Struct, r), name(std::move(n))
+    {
+    }
 };
 
 // An opaque, pointer-sized handle whose layout Strata never sees. Engine
 // objects (Entity, Texture, ...) are exposed this way; they can be held, passed
 // to `extern` functions, and returned, but never have their fields accessed.
-struct HandleDecl : Node {
+struct HandleDecl : Node
+{
     std::string name;
 
-    explicit HandleDecl(SourceRange r, std::string n)
-        : Node(NodeKind::Handle, r), name(std::move(n)) {}
+    explicit HandleDecl(SourceRange r, std::string n) : Node(NodeKind::Handle, r), name(std::move(n))
+    {
+    }
 };
 
-struct FunctionDecl : Node {
+struct FunctionDecl : Node
+{
     TypeName returnType;
     std::string name;
-    std::vector<std::unique_ptr<ParamDecl>> params;  // owned
-    NodePtr body;                                     // a Block, or nullptr for a declaration
-    bool isExtern = false;                            // provided by the host runtime
-    std::string mangledName;                          // unique IR symbol (set by overload resolution)
+    std::vector<std::unique_ptr<ParamDecl>> params; // owned
+    NodePtr body;                                   // a Block, or nullptr for a declaration
+    bool isExtern = false;                          // provided by the host runtime
+    std::string mangledName;                        // unique IR symbol (set by overload resolution)
 
     FunctionDecl(SourceRange r, TypeName ret, std::string n)
-        : Node(NodeKind::Function, r), returnType(std::move(ret)), name(std::move(n)),
-          mangledName(name) {}
+        : Node(NodeKind::Function, r), returnType(std::move(ret)), name(std::move(n)), mangledName(name)
+    {
+    }
 };
 
-struct Module : Node {
+struct Module : Node
+{
     std::string name;
     std::vector<std::unique_ptr<StructDecl>> structs;
     std::vector<std::unique_ptr<HandleDecl>> handles;
     std::vector<std::unique_ptr<FunctionDecl>> functions;
 
-    explicit Module(std::string n) : Node(NodeKind::Module), name(std::move(n)) {}
+    explicit Module(std::string n) : Node(NodeKind::Module), name(std::move(n))
+    {
+    }
 };
 
 // ---- Statements ----
 
-struct Block : Node {
+struct Block : Node
+{
     std::vector<NodePtr> statements;
-    explicit Block(SourceRange r) : Node(NodeKind::Block, r) {}
+    explicit Block(SourceRange r) : Node(NodeKind::Block, r)
+    {
+    }
 };
 
-struct ReturnStmt : Node {
-    NodePtr value;  // optional
-    explicit ReturnStmt(SourceRange r) : Node(NodeKind::Return, r) {}
+struct ReturnStmt : Node
+{
+    NodePtr value; // optional
+    explicit ReturnStmt(SourceRange r) : Node(NodeKind::Return, r)
+    {
+    }
 };
 
-struct IfStmt : Node {
+struct IfStmt : Node
+{
     NodePtr condition;
     NodePtr thenBranch;
-    NodePtr elseBranch;  // optional
-    explicit IfStmt(SourceRange r) : Node(NodeKind::If, r) {}
+    NodePtr elseBranch; // optional
+    explicit IfStmt(SourceRange r) : Node(NodeKind::If, r)
+    {
+    }
 };
 
-struct WhileStmt : Node {
+struct WhileStmt : Node
+{
     NodePtr condition;
     NodePtr body;
-    explicit WhileStmt(SourceRange r) : Node(NodeKind::While, r) {}
+    explicit WhileStmt(SourceRange r) : Node(NodeKind::While, r)
+    {
+    }
 };
 
-struct ForStmt : Node {
-    NodePtr init;   // a VarDecl, an expression, or null
+struct ForStmt : Node
+{
+    NodePtr init;      // a VarDecl, an expression, or null
     NodePtr condition; // expression or null (empty -> always true)
-    NodePtr update; // expression or null
+    NodePtr update;    // expression or null
     NodePtr body;
-    explicit ForStmt(SourceRange r) : Node(NodeKind::For, r) {}
+    explicit ForStmt(SourceRange r) : Node(NodeKind::For, r)
+    {
+    }
 };
 
-struct VarDeclStmt : Node {
+struct VarDeclStmt : Node
+{
     TypeName type;
     std::string name;
-    NodePtr init;  // optional initializer
+    NodePtr init; // optional initializer
     VarDeclStmt(SourceRange r, TypeName t, std::string n)
-        : Node(NodeKind::VarDecl, r), type(std::move(t)), name(std::move(n)) {}
+        : Node(NodeKind::VarDecl, r), type(std::move(t)), name(std::move(n))
+    {
+    }
 };
 
-struct ExprStmt : Node {
+struct ExprStmt : Node
+{
     NodePtr expr;
-    explicit ExprStmt(SourceRange r, NodePtr e)
-        : Node(NodeKind::ExprStmt, r), expr(std::move(e)) {}
+    explicit ExprStmt(SourceRange r, NodePtr e) : Node(NodeKind::ExprStmt, r), expr(std::move(e))
+    {
+    }
 };
 
-struct BreakStmt : Node {
-    explicit BreakStmt(SourceRange r) : Node(NodeKind::Break, r) {}
+struct BreakStmt : Node
+{
+    explicit BreakStmt(SourceRange r) : Node(NodeKind::Break, r)
+    {
+    }
 };
 
-struct ContinueStmt : Node {
-    explicit ContinueStmt(SourceRange r) : Node(NodeKind::Continue, r) {}
+struct ContinueStmt : Node
+{
+    explicit ContinueStmt(SourceRange r) : Node(NodeKind::Continue, r)
+    {
+    }
 };
 
 // ---- Expressions ----
 
-enum class UnaryOp : std::uint8_t { Neg, Pos, Not, BitNot };
+enum class UnaryOp : std::uint8_t
+{
+    Neg,
+    Pos,
+    Not,
+    BitNot
+};
 
-struct UnaryExpr : Node {
+struct UnaryExpr : Node
+{
     UnaryOp op;
     NodePtr operand;
-    UnaryExpr(SourceRange r, UnaryOp o, NodePtr e)
-        : Node(NodeKind::Unary, r), op(o), operand(std::move(e)) {}
+    UnaryExpr(SourceRange r, UnaryOp o, NodePtr e) : Node(NodeKind::Unary, r), op(o), operand(std::move(e))
+    {
+    }
 };
 
-enum class BinaryOp : std::uint8_t {
-    Add, Sub, Mul, Div, Mod,
-    BitAnd, BitOr, BitXor, Shl, Shr,
-    EqEq, NotEq, Lt, LtEq, Gt, GtEq,
-    LogicAnd, LogicOr,
+enum class BinaryOp : std::uint8_t
+{
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    EqEq,
+    NotEq,
+    Lt,
+    LtEq,
+    Gt,
+    GtEq,
+    LogicAnd,
+    LogicOr,
 };
 
-struct BinaryExpr : Node {
+struct BinaryExpr : Node
+{
     BinaryOp op;
     NodePtr lhs;
     NodePtr rhs;
     BinaryExpr(SourceRange r, BinaryOp o, NodePtr l, NodePtr rhs)
-        : Node(NodeKind::Binary, r), op(o), lhs(std::move(l)), rhs(std::move(rhs)) {}
+        : Node(NodeKind::Binary, r), op(o), lhs(std::move(l)), rhs(std::move(rhs))
+    {
+    }
 };
 
-enum class AssignOp : std::uint8_t { Assign, PlusEq, MinusEq, StarEq, SlashEq, PercentEq };
+enum class AssignOp : std::uint8_t
+{
+    Assign,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq
+};
 
-struct AssignExpr : Node {
+struct AssignExpr : Node
+{
     AssignOp op;
-    NodePtr target;  // an lvalue (Ident/Member for now)
+    NodePtr target; // an lvalue (Ident/Member for now)
     NodePtr value;
     AssignExpr(SourceRange r, AssignOp o, NodePtr t, NodePtr v)
-        : Node(NodeKind::Assign, r), op(o), target(std::move(t)), value(std::move(v)) {}
+        : Node(NodeKind::Assign, r), op(o), target(std::move(t)), value(std::move(v))
+    {
+    }
 };
 
-struct IntLiteral : Node {
+struct IntLiteral : Node
+{
     std::uint64_t value = 0;
     bool isUnsigned = false;
-    IntLiteral(SourceRange r, std::uint64_t v, bool u)
-        : Node(NodeKind::IntLiteral, r), value(v), isUnsigned(u) {}
+    IntLiteral(SourceRange r, std::uint64_t v, bool u) : Node(NodeKind::IntLiteral, r), value(v), isUnsigned(u)
+    {
+    }
 };
 
-struct FloatLiteral : Node {
+struct FloatLiteral : Node
+{
     double value = 0.0;
-    explicit FloatLiteral(SourceRange r, double v) : Node(NodeKind::FloatLiteral, r), value(v) {}
+    explicit FloatLiteral(SourceRange r, double v) : Node(NodeKind::FloatLiteral, r), value(v)
+    {
+    }
 };
 
-struct BoolLiteral : Node {
+struct BoolLiteral : Node
+{
     bool value = false;
-    BoolLiteral(SourceRange r, bool v) : Node(NodeKind::BoolLiteral, r), value(v) {}
+    BoolLiteral(SourceRange r, bool v) : Node(NodeKind::BoolLiteral, r), value(v)
+    {
+    }
 };
 
-struct IdentExpr : Node {
+struct IdentExpr : Node
+{
     std::string name;
-    IdentExpr(SourceRange r, std::string n) : Node(NodeKind::Ident, r), name(std::move(n)) {}
+    IdentExpr(SourceRange r, std::string n) : Node(NodeKind::Ident, r), name(std::move(n))
+    {
+    }
 };
 
-struct CallExpr : Node {
+struct CallExpr : Node
+{
     std::string callee;
     const FunctionDecl* resolvedDecl = nullptr; // set by overload resolution
     std::vector<NodePtr> args;
-    CallExpr(SourceRange r, std::string c) : Node(NodeKind::Call, r), callee(std::move(c)) {}
+    CallExpr(SourceRange r, std::string c) : Node(NodeKind::Call, r), callee(std::move(c))
+    {
+    }
 };
 
-struct MemberExpr : Node {
+struct MemberExpr : Node
+{
     NodePtr base;
     std::string member;
     MemberExpr(SourceRange r, NodePtr b, std::string m)
-        : Node(NodeKind::Member, r), base(std::move(b)), member(std::move(m)) {}
+        : Node(NodeKind::Member, r), base(std::move(b)), member(std::move(m))
+    {
+    }
 };
 
 // Typed downcast helpers (checked in debug).
-template <typename T>
-T* asNode(Node* n) noexcept {
+template <typename T> T* AsNode(Node* n) noexcept
+{
     return n ? static_cast<T*>(n) : nullptr;
 }
 

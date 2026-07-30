@@ -14,50 +14,68 @@
 #include <string_view>
 #include <vector>
 
-namespace strata {
+namespace strata
+{
 
-struct StructType {
+struct StructType
+{
     std::string name;
     bool opaque = false; // a `handle` (pointer-sized; layout unknown)
     std::vector<FieldDecl> fields;
 };
 
-class TypeRegistry {
-public:
-    void build(const Module& m) {
-        types_.clear();
-        for (const auto& s : m.structs) {
-            types_.push_back({s->name, false, s->fields}); // structs are defined value types
+class TypeRegistry
+{
+  public:
+    void Build(const Module& m)
+    {
+        m_types.clear();
+        for (const auto& s : m.structs)
+        {
+            m_types.push_back(
+                {.name = s->name, .opaque = false, .fields = s->fields}); // structs are defined value types
         }
-        for (const auto& h : m.handles) {
-            types_.push_back({h->name, true, {}}); // handles are opaque
+        for (const auto& h : m.handles)
+        {
+            m_types.push_back({.name = h->name, .opaque = true, .fields = {}}); // handles are opaque
         }
     }
 
-    const StructType* find(std::string_view name) const noexcept {
-        for (const auto& t : types_) if (t.name == name) return &t;
+    const StructType* Find(std::string_view name) const noexcept
+    {
+        for (const auto& t : m_types)
+            if (t.name == name) return &t;
         return nullptr;
     }
-    bool isUserType(std::string_view name) const noexcept { return find(name) != nullptr; }
-    bool isOpaque(std::string_view name) const noexcept {
-        const auto* t = find(name);
+    bool IsUserType(std::string_view name) const noexcept
+    {
+        return Find(name) != nullptr;
+    }
+    bool IsOpaque(std::string_view name) const noexcept
+    {
+        const auto* t = Find(name);
         return t && t->opaque;
     }
 
     // Returns the field index of `field` within `structName`, or -1.
-    int fieldIndex(std::string_view structName, std::string_view field) const noexcept {
-        const auto* t = find(structName);
+    int FieldIndex(std::string_view structName, std::string_view field) const noexcept
+    {
+        const auto* t = Find(structName);
         if (!t) return -1;
-        for (std::size_t i = 0; i < t->fields.size(); ++i) {
+        for (std::size_t i = 0; i < t->fields.size(); ++i)
+        {
             if (t->fields[i].name == field) return static_cast<int>(i);
         }
         return -1;
     }
 
-    const std::vector<StructType>& types() const noexcept { return types_; }
+    const std::vector<StructType>& Types() const noexcept
+    {
+        return m_types;
+    }
 
-private:
-    std::vector<StructType> types_;
+  private:
+    std::vector<StructType> m_types;
 };
 
 } // namespace strata

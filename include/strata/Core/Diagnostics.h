@@ -13,55 +13,77 @@
 #include <string>
 #include <vector>
 
-namespace strata {
+namespace strata
+{
 
-enum class DiagSeverity : std::uint8_t {
+enum class DiagSeverity : std::uint8_t
+{
     Error,
     Warning,
     Note,
 };
 
-struct Diagnostic {
+struct Diagnostic
+{
     DiagSeverity severity = DiagSeverity::Error;
     SourceRange range{};
     std::string message;
 };
 
-class DiagnosticEngine {
-public:
-    void report(DiagSeverity severity, SourceRange range, std::string message) {
-        if (severity == DiagSeverity::Error) {
-            errorCount_++;
+class DiagnosticEngine
+{
+  public:
+    void Report(DiagSeverity severity, SourceRange range, std::string message)
+    {
+        if (severity == DiagSeverity::Error)
+        {
+            m_errorCount++;
         }
-        diagnostics_.push_back({severity, range, std::move(message)});
+        m_diagnostics.push_back({.severity = severity, .range = range, .message = std::move(message)});
     }
 
-    void error(SourceRange range, std::string message) {
-        report(DiagSeverity::Error, range, std::move(message));
+    void Error(SourceRange range, std::string message)
+    {
+        Report(DiagSeverity::Error, range, std::move(message));
     }
-    void warning(SourceRange range, std::string message) {
-        report(DiagSeverity::Warning, range, std::move(message));
+    void Warning(SourceRange range, std::string message)
+    {
+        Report(DiagSeverity::Warning, range, std::move(message));
     }
-    void note(SourceRange range, std::string message) {
-        report(DiagSeverity::Note, range, std::move(message));
+    void Note(SourceRange range, std::string message)
+    {
+        Report(DiagSeverity::Note, range, std::move(message));
     }
 
-    std::uint32_t errorCount() const noexcept { return errorCount_; }
-    bool hasErrors() const noexcept { return errorCount_ > 0; }
-    std::size_t count() const noexcept { return diagnostics_.size(); }
-    const std::vector<Diagnostic>& diagnostics() const noexcept { return diagnostics_; }
-    void clear() noexcept {
-        diagnostics_.clear();
-        errorCount_ = 0;
+    std::uint32_t ErrorCount() const noexcept
+    {
+        return m_errorCount;
+    }
+    bool HasErrors() const noexcept
+    {
+        return m_errorCount > 0;
+    }
+    std::size_t Count() const noexcept
+    {
+        return m_diagnostics.size();
+    }
+    const std::vector<Diagnostic>& Diagnostics() const noexcept
+    {
+        return m_diagnostics;
+    }
+    void Clear() noexcept
+    {
+        m_diagnostics.clear();
+        m_errorCount = 0;
     }
 
     // Renders all diagnostics to text, one per line, in the form:
     //   <file>(<line>,<col>): error: <message>
-    std::string format(const SourceManager& src) const;
+    std::string Format(const SourceManager& src) const;
 
-private:
-    std::vector<Diagnostic> diagnostics_;
-    std::uint32_t errorCount_ = 0;
+  private:
+    std::vector<Diagnostic> m_diagnostics;
+    std::uint32_t m_errorCount = 0;
 };
 
 } // namespace strata

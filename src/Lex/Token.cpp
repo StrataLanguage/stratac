@@ -2,116 +2,110 @@
 
 #include <array>
 
-namespace strata {
+namespace strata
+{
 
-namespace {
+namespace
+{
 
-struct Spelling { TokKind kind; std::string_view text; };
+struct Spelling
+{
+    TokKind kind;
+    std::string_view text;
+};
 
 // Order matters only for readability; lookup is linear over a tiny table.
 constexpr std::array<Spelling, 28> kKeywords = {{
-    {TokKind::Kw_void,      "void"},
-    {TokKind::Kw_bool,      "bool"},
-    {TokKind::Kw_int,       "int"},
-    {TokKind::Kw_uint,      "uint"},
-    {TokKind::Kw_half,      "half"},
-    {TokKind::Kw_float,     "float"},
-    {TokKind::Kw_double,    "double"},
-    {TokKind::Kw_string,    "string"},
-    {TokKind::Kw_in,        "in"},
-    {TokKind::Kw_out,       "out"},
-    {TokKind::Kw_inout,     "inout"},
-    {TokKind::Kw_const,     "const"},
-    {TokKind::Kw_static,    "static"},
-    {TokKind::Kw_extern,    "extern"},
-    {TokKind::Kw_handle,    "handle"},
-    {TokKind::Kw_return,    "return"},
-    {TokKind::Kw_if,        "if"},
-    {TokKind::Kw_else,      "else"},
-    {TokKind::Kw_while,     "while"},
-    {TokKind::Kw_for,       "for"},
-    {TokKind::Kw_break,     "break"},
-    {TokKind::Kw_continue,  "continue"},
-    {TokKind::Kw_true,      "true"},
-    {TokKind::Kw_false,     "false"},
-    {TokKind::Kw_struct,    "struct"},
-    {TokKind::Kw_namespace, "namespace"},
+    {.kind = TokKind::KwVoid, .text = "void"},     {.kind = TokKind::KwBool, .text = "bool"},
+    {.kind = TokKind::KwInt, .text = "int"},       {.kind = TokKind::KwUint, .text = "uint"},
+    {.kind = TokKind::KwHalf, .text = "half"},     {.kind = TokKind::KwFloat, .text = "float"},
+    {.kind = TokKind::KwDouble, .text = "double"}, {.kind = TokKind::KwString, .text = "string"},
+    {.kind = TokKind::KwIn, .text = "in"},         {.kind = TokKind::KwOut, .text = "out"},
+    {.kind = TokKind::KwInout, .text = "inout"},   {.kind = TokKind::KwConst, .text = "const"},
+    {.kind = TokKind::KwStatic, .text = "static"}, {.kind = TokKind::KwExtern, .text = "extern"},
+    {.kind = TokKind::KwHandle, .text = "handle"}, {.kind = TokKind::KwReturn, .text = "return"},
+    {.kind = TokKind::KwIf, .text = "if"},         {.kind = TokKind::KwElse, .text = "else"},
+    {.kind = TokKind::KwWhile, .text = "while"},   {.kind = TokKind::KwFor, .text = "for"},
+    {.kind = TokKind::KwBreak, .text = "break"},   {.kind = TokKind::KwContinue, .text = "continue"},
+    {.kind = TokKind::KwTrue, .text = "true"},     {.kind = TokKind::KwFalse, .text = "false"},
+    {.kind = TokKind::KwStruct, .text = "struct"}, {.kind = TokKind::KwNamespace, .text = "namespace"},
 }};
 
 constexpr std::array<Spelling, 38> kPunct = {{
-    {TokKind::LParen,    "("},
-    {TokKind::RParen,    ")"},
-    {TokKind::LBrace,    "{"},
-    {TokKind::RBrace,    "}"},
-    {TokKind::LBracket,  "["},
-    {TokKind::RBracket,  "]"},
-    {TokKind::Comma,     ","},
-    {TokKind::Semicolon, ";"},
-    {TokKind::Colon,     ":"},
-    {TokKind::Dot,       "."},
-    {TokKind::Arrow,     "->"},
-    {TokKind::Assign,    "="},
-    {TokKind::Plus,      "+"},
-    {TokKind::Minus,     "-"},
-    {TokKind::Star,      "*"},
-    {TokKind::Slash,     "/"},
-    {TokKind::Percent,   "%"},
-    {TokKind::Amp,       "&"},
-    {TokKind::Pipe,      "|"},
-    {TokKind::Caret,     "^"},
-    {TokKind::Tilde,     "~"},
-    {TokKind::Bang,      "!"},
-    {TokKind::Lt,        "<"},
-    {TokKind::Gt,        ">"},
-    {TokKind::LtEq,      "<="},
-    {TokKind::GtEq,      ">="},
-    {TokKind::EqEq,      "=="},
-    {TokKind::NotEq,     "!="},
-    {TokKind::AmpAmp,    "&&"},
-    {TokKind::PipePipe,  "||"},
-    {TokKind::Shl,       "<<"},
-    {TokKind::Shr,       ">>"},
-    {TokKind::PlusEq,    "+="},
-    {TokKind::MinusEq,   "-="},
-    {TokKind::StarEq,    "*="},
-    {TokKind::SlashEq,   "/="},
-    {TokKind::PercentEq, "%="},
+    {.kind = TokKind::LParen, .text = "("},     {.kind = TokKind::RParen, .text = ")"},
+    {.kind = TokKind::LBrace, .text = "{"},     {.kind = TokKind::RBrace, .text = "}"},
+    {.kind = TokKind::LBracket, .text = "["},   {.kind = TokKind::RBracket, .text = "]"},
+    {.kind = TokKind::Comma, .text = ","},      {.kind = TokKind::Semicolon, .text = ";"},
+    {.kind = TokKind::Colon, .text = ":"},      {.kind = TokKind::Dot, .text = "."},
+    {.kind = TokKind::Arrow, .text = "->"},     {.kind = TokKind::Assign, .text = "="},
+    {.kind = TokKind::Plus, .text = "+"},       {.kind = TokKind::Minus, .text = "-"},
+    {.kind = TokKind::Star, .text = "*"},       {.kind = TokKind::Slash, .text = "/"},
+    {.kind = TokKind::Percent, .text = "%"},    {.kind = TokKind::Amp, .text = "&"},
+    {.kind = TokKind::Pipe, .text = "|"},       {.kind = TokKind::Caret, .text = "^"},
+    {.kind = TokKind::Tilde, .text = "~"},      {.kind = TokKind::Bang, .text = "!"},
+    {.kind = TokKind::Lt, .text = "<"},         {.kind = TokKind::Gt, .text = ">"},
+    {.kind = TokKind::LtEq, .text = "<="},      {.kind = TokKind::GtEq, .text = ">="},
+    {.kind = TokKind::EqEq, .text = "=="},      {.kind = TokKind::NotEq, .text = "!="},
+    {.kind = TokKind::AmpAmp, .text = "&&"},    {.kind = TokKind::PipePipe, .text = "||"},
+    {.kind = TokKind::Shl, .text = "<<"},       {.kind = TokKind::Shr, .text = ">>"},
+    {.kind = TokKind::PlusEq, .text = "+="},    {.kind = TokKind::MinusEq, .text = "-="},
+    {.kind = TokKind::StarEq, .text = "*="},    {.kind = TokKind::SlashEq, .text = "/="},
+    {.kind = TokKind::PercentEq, .text = "%="},
 }};
 
 } // namespace
 
-TokKind classifyKeyword(std::string_view ident) noexcept {
-    for (auto& kw : kKeywords) {
+TokKind ClassifyKeyword(std::string_view ident) noexcept
+{
+    for (const auto& kw : kKeywords)
+    {
         if (ident == kw.text) return kw.kind;
     }
     return TokKind::Ident;
 }
 
-std::string_view tokSpelling(TokKind k) noexcept {
-    for (auto& kw : kKeywords) if (kw.kind == k) return kw.text;
-    for (auto& p : kPunct)    if (p.kind == k) return p.text;
-    switch (k) {
-        case TokKind::Eof:   return "<eof>";
-        case TokKind::Ident: return "<ident>";
-        default:             return "<tok>";
+std::string_view TokSpelling(TokKind k) noexcept
+{
+    for (const auto& kw : kKeywords)
+        if (kw.kind == k) return kw.text;
+    for (const auto& p : kPunct)
+        if (p.kind == k) return p.text;
+    switch (k)
+    {
+    case TokKind::Eof:
+        return "<eof>";
+    case TokKind::Ident:
+        return "<ident>";
+    default:
+        return "<tok>";
     }
 }
 
-std::string_view tokName(TokKind k) noexcept {
-    switch (k) {
-        case TokKind::Eof:      return "end of input";
-        case TokKind::Unknown:  return "unknown token";
-        case TokKind::Ident:    return "identifier";
-        case TokKind::IntLit:   return "integer literal";
-        case TokKind::FloatLit: return "float literal";
-        case TokKind::BoolLit:  return "bool literal";
-        default: break;
+std::string_view TokName(TokKind k) noexcept
+{
+    switch (k)
+    {
+    case TokKind::Eof:
+        return "end of input";
+    case TokKind::Unknown:
+        return "unknown token";
+    case TokKind::Ident:
+        return "identifier";
+    case TokKind::IntLit:
+        return "integer literal";
+    case TokKind::FloatLit:
+        return "float literal";
+    case TokKind::BoolLit:
+        return "bool literal";
+    default:
+        break;
     }
     // Keyword?
-    for (auto& kw : kKeywords) {
+    for (const auto& kw : kKeywords)
+    {
         if (kw.kind == k) return kw.text; // "return", "int", ...
     }
-    auto sp = tokSpelling(k);
+    auto sp = TokSpelling(k);
     // Punctuation: wrap in quotes.
     return sp;
 }

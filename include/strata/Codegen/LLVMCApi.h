@@ -19,224 +19,229 @@
 #include <cstdint>
 
 // Opaque handle typedefs (subset defined as needed).
-extern "C" {
-struct LLVMOpaqueContext;
-struct LLVMOpaqueModule;
-struct LLVMOpaqueType;
-struct LLVMOpaqueValue;
-struct LLVMOpaqueBasicBlock;
-struct LLVMOpaqueBuilder;
+extern "C"
+{
+    struct LLVMOpaqueContext;
+    struct LLVMOpaqueModule;
+    struct LLVMOpaqueType;
+    struct LLVMOpaqueValue;
+    struct LLVMOpaqueBasicBlock;
+    struct LLVMOpaqueBuilder;
 
-typedef struct LLVMOpaqueContext*    LLVMContextRef;
-typedef struct LLVMOpaqueModule*     LLVMModuleRef;
-typedef struct LLVMOpaqueType*       LLVMTypeRef;
-typedef struct LLVMOpaqueValue*      LLVMValueRef;
-typedef struct LLVMOpaqueBasicBlock* LLVMBasicBlockRef;
-typedef struct LLVMOpaqueBuilder*    LLVMBuilderRef;
+    using LLVMContextRef = struct LLVMOpaqueContext*;
+    using LLVMModuleRef = struct LLVMOpaqueModule*;
+    using LLVMTypeRef = struct LLVMOpaqueType*;
+    using LLVMValueRef = struct LLVMOpaqueValue*;
+    using LLVMBasicBlockRef = struct LLVMOpaqueBasicBlock*;
+    using LLVMBuilderRef = struct LLVMOpaqueBuilder*;
 
-// llvm-c/Core.h
-typedef int LLVMBool;
+    // llvm-c/Core.h
+    using LLVMBool = int;
 
-// --- Version / context / module ---
-void LLVMGetVersion(unsigned* Major, unsigned* Minor, unsigned* Patch);
+    // --- Version / context / module ---
+    void LLVMGetVersion(unsigned* major, unsigned* minor, unsigned* patch);
 
-LLVMContextRef LLVMContextCreate(void);
-void LLVMContextDispose(LLVMContextRef C);
+    LLVMContextRef LLVMContextCreate(void);
+    void LLVMContextDispose(LLVMContextRef c);
 
-LLVMModuleRef LLVMModuleCreateWithNameInContext(const char* ModuleID, LLVMContextRef C);
-void LLVMDisposeModule(LLVMModuleRef M);
-void LLVMDumpModule(LLVMModuleRef M);
-char* LLVMPrintModuleToString(LLVMModuleRef M);
-void LLVMDisposeMessage(char* Message);
+    LLVMModuleRef LLVMModuleCreateWithNameInContext(const char* moduleId, LLVMContextRef c);
+    void LLVMDisposeModule(LLVMModuleRef m);
+    void LLVMDumpModule(LLVMModuleRef m);
+    char* LLVMPrintModuleToString(LLVMModuleRef m);
+    void LLVMDisposeMessage(char* message);
 
-// --- Types ---
-LLVMTypeRef LLVMInt1Type(void);
-LLVMTypeRef LLVMInt32Type(void);
-LLVMTypeRef LLVMInt64Type(void);
-LLVMTypeRef LLVMHalfType(void);
-LLVMTypeRef LLVMFloatType(void);
-LLVMTypeRef LLVMDoubleType(void);
-LLVMTypeRef LLVMVoidType(void);
-LLVMTypeRef LLVMVectorType(LLVMTypeRef ElementType, unsigned ElementCount);
+    // --- Types ---
+    LLVMTypeRef LLVMInt1Type(void);
+    LLVMTypeRef LLVMInt32Type(void);
+    LLVMTypeRef LLVMInt64Type(void);
+    LLVMTypeRef LLVMHalfType(void);
+    LLVMTypeRef LLVMFloatType(void);
+    LLVMTypeRef LLVMDoubleType(void);
+    LLVMTypeRef LLVMVoidType(void);
+    LLVMTypeRef LLVMVectorType(LLVMTypeRef elementType, unsigned elementCount);
 
-// Context-specific constructors (preferred; the context-less versions above
-// build in LLVM's global context, which must never be mixed with a module's
-// own context).
-LLVMTypeRef LLVMInt1TypeInContext(LLVMContextRef C);
-LLVMTypeRef LLVMInt32TypeInContext(LLVMContextRef C);
-LLVMTypeRef LLVMInt64TypeInContext(LLVMContextRef C);
-LLVMTypeRef LLVMHalfTypeInContext(LLVMContextRef C);
-LLVMTypeRef LLVMFloatTypeInContext(LLVMContextRef C);
-LLVMTypeRef LLVMDoubleTypeInContext(LLVMContextRef C);
-LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef C);
+    // Context-specific constructors (preferred; the context-less versions above
+    // build in LLVM's global context, which must never be mixed with a module's
+    // own context).
+    LLVMTypeRef LLVMInt1TypeInContext(LLVMContextRef c);
+    LLVMTypeRef LLVMInt32TypeInContext(LLVMContextRef c);
+    LLVMTypeRef LLVMInt64TypeInContext(LLVMContextRef c);
+    LLVMTypeRef LLVMHalfTypeInContext(LLVMContextRef c);
+    LLVMTypeRef LLVMFloatTypeInContext(LLVMContextRef c);
+    LLVMTypeRef LLVMDoubleTypeInContext(LLVMContextRef c);
+    LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef c);
 
-// Struct types (user-defined types).
-LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef C, const char* Name);
-LLVMBool LLVMStructSetBody(LLVMTypeRef StructTy, LLVMTypeRef* ElementTypes,
-                           unsigned ElementCount, LLVMBool Packed);
+    // Struct types (user-defined types).
+    LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef c, const char* name);
+    LLVMBool LLVMStructSetBody(LLVMTypeRef structTy, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
 
-LLVMTypeRef LLVMFunctionType(LLVMTypeRef ReturnType, LLVMTypeRef* ParamTypes,
-                             unsigned ParamCount, LLVMBool IsVarArg);
+    LLVMTypeRef LLVMFunctionType(LLVMTypeRef returnType, LLVMTypeRef* paramTypes, unsigned paramCount,
+                                 LLVMBool isVarArg);
 
-// --- Constants & params ---
-LLVMValueRef LLVMConstInt(LLVMTypeRef IntTy, unsigned long long N, LLVMBool SignExtend);
-LLVMValueRef LLVMConstReal(LLVMTypeRef Ty, double V);
-LLVMValueRef LLVMGetParam(LLVMValueRef Func, unsigned Index);
+    // --- Constants & params ---
+    LLVMValueRef LLVMConstInt(LLVMTypeRef intTy, unsigned long long n, LLVMBool signExtend);
+    LLVMValueRef LLVMConstReal(LLVMTypeRef ty, double v);
+    LLVMValueRef LLVMGetParam(LLVMValueRef func, unsigned index);
 
-// Globals (used for the JIT's extern-call slots).
-LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef C, unsigned AddressSpace);
-LLVMValueRef LLVMConstNull(LLVMTypeRef Ty);
-LLVMValueRef LLVMAddGlobal(LLVMModuleRef M, LLVMTypeRef Ty, const char* Name);
-void LLVMSetInitializer(LLVMValueRef GlobalVar, LLVMValueRef ConstantVal);
+    // Globals (used for the JIT's extern-call slots).
+    LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef c, unsigned addressSpace);
+    LLVMValueRef LLVMConstNull(LLVMTypeRef ty);
+    LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
+    void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
 
-// --- Functions & basic blocks ---
-LLVMValueRef LLVMAddFunction(LLVMModuleRef M, const char* Name, LLVMTypeRef FunctionTy);
-LLVMBasicBlockRef LLVMAppendBasicBlock(LLVMValueRef Func, const char* Name);
-LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef C, LLVMValueRef Func, const char* Name);
+    // --- Functions & basic blocks ---
+    LLVMValueRef LLVMAddFunction(LLVMModuleRef m, const char* name, LLVMTypeRef functionTy);
+    LLVMBasicBlockRef LLVMAppendBasicBlock(LLVMValueRef func, const char* name);
+    LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef c, LLVMValueRef func, const char* name);
 
-// --- Builder ---
-LLVMBuilderRef LLVMCreateBuilderInContext(LLVMContextRef C);
-void LLVMDisposeBuilder(LLVMBuilderRef B);
-void LLVMPositionBuilderAtEnd(LLVMBuilderRef B, LLVMBasicBlockRef Block);
+    // --- Builder ---
+    LLVMBuilderRef LLVMCreateBuilderInContext(LLVMContextRef c);
+    void LLVMDisposeBuilder(LLVMBuilderRef b);
+    void LLVMPositionBuilderAtEnd(LLVMBuilderRef b, LLVMBasicBlockRef block);
 
-LLVMValueRef LLVMBuildRet(LLVMBuilderRef B, LLVMValueRef V);
-LLVMValueRef LLVMBuildRetVoid(LLVMBuilderRef B);
-LLVMValueRef LLVMBuildBr(LLVMBuilderRef B, LLVMBasicBlockRef Dest);
-LLVMValueRef LLVMBuildCondBr(LLVMBuilderRef B, LLVMValueRef If, LLVMBasicBlockRef Then,
-                             LLVMBasicBlockRef Else);
-LLVMValueRef LLVMBuildAdd(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildSub(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildMul(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildFAdd(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildFSub(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildFMul(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildAlloca(LLVMBuilderRef B, LLVMTypeRef Ty, const char* Name);
-LLVMValueRef LLVMBuildStore(LLVMBuilderRef B, LLVMValueRef Val, LLVMValueRef Ptr);
-LLVMValueRef LLVMBuildLoad2(LLVMBuilderRef B, LLVMTypeRef Ty, LLVMValueRef Ptr, const char* Name);
-LLVMValueRef LLVMBuildCall2(LLVMBuilderRef B, LLVMTypeRef FnTy, LLVMValueRef Fn,
-                            LLVMValueRef* Args, unsigned NumArgs, const char* Name);
+    LLVMValueRef LLVMBuildRet(LLVMBuilderRef b, LLVMValueRef v);
+    LLVMValueRef LLVMBuildRetVoid(LLVMBuilderRef b);
+    LLVMValueRef LLVMBuildBr(LLVMBuilderRef b, LLVMBasicBlockRef dest);
+    LLVMValueRef LLVMBuildCondBr(LLVMBuilderRef b, LLVMValueRef If, LLVMBasicBlockRef then, LLVMBasicBlockRef Else);
+    LLVMValueRef LLVMBuildAdd(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildSub(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildMul(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildFAdd(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildFSub(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildFMul(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildAlloca(LLVMBuilderRef b, LLVMTypeRef ty, const char* name);
+    LLVMValueRef LLVMBuildStore(LLVMBuilderRef b, LLVMValueRef val, LLVMValueRef ptr);
+    LLVMValueRef LLVMBuildLoad2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef ptr, const char* name);
+    LLVMValueRef LLVMBuildCall2(LLVMBuilderRef b, LLVMTypeRef fnTy, LLVMValueRef fn, LLVMValueRef* args,
+                                unsigned numArgs, const char* name);
 
-// Additional arithmetic / logic / cast builders.
-typedef enum {
-    LLVMIntEQ = 32, LLVMIntNE, LLVMIntUGT, LLVMIntUGE, LLVMIntULT, LLVMIntULE,
-    LLVMIntSGT, LLVMIntSGE, LLVMIntSLT, LLVMIntSLE
-} LLVMIntPredicate;
+    // Additional arithmetic / logic / cast builders.
+    using LLVMIntPredicate = enum
+    {
+        LLVMIntEQ = 32,
+        LLVMIntNE,
+        LLVMIntUGT,
+        LLVMIntUGE,
+        LLVMIntULT,
+        LLVMIntULE,
+        LLVMIntSGT,
+        LLVMIntSGE,
+        LLVMIntSLT,
+        LLVMIntSLE
+    };
 
-LLVMValueRef LLVMBuildSDiv(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildUDiv(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildFDiv(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildSRem(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildURem(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildFRem(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildShl(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildLShr(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildAShr(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildAnd(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildOr(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildXor(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildNeg(LLVMBuilderRef B, LLVMValueRef V, const char* Name);
-LLVMValueRef LLVMBuildNot(LLVMBuilderRef B, LLVMValueRef V, const char* Name);
-LLVMValueRef LLVMBuildFNeg(LLVMBuilderRef B, LLVMValueRef V, const char* Name);
-LLVMValueRef LLVMBuildICmp(LLVMBuilderRef B, LLVMIntPredicate Pred, LLVMValueRef L,
-                           LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildFCmp(LLVMBuilderRef B, const char* Pred, LLVMValueRef L,
-                           LLVMValueRef R, const char* Name);
-LLVMValueRef LLVMBuildSIToFP(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
-LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
-LLVMValueRef LLVMBuildFPToSI(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
-LLVMValueRef LLVMBuildFPToUI(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
-LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy,
-                               LLVMBool IsSigned, const char* Name);
+    LLVMValueRef LLVMBuildSDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildUDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildFDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildSRem(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildURem(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildFRem(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildShl(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildLShr(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildAShr(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildAnd(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildOr(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildXor(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildNeg(LLVMBuilderRef b, LLVMValueRef v, const char* name);
+    LLVMValueRef LLVMBuildNot(LLVMBuilderRef b, LLVMValueRef v, const char* name);
+    LLVMValueRef LLVMBuildFNeg(LLVMBuilderRef b, LLVMValueRef v, const char* name);
+    LLVMValueRef LLVMBuildICmp(LLVMBuilderRef b, LLVMIntPredicate pred, LLVMValueRef l, LLVMValueRef r,
+                               const char* name);
+    LLVMValueRef LLVMBuildFCmp(LLVMBuilderRef b, const char* pred, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildSIToFP(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+    LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+    LLVMValueRef LLVMBuildFPToSI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+    LLVMValueRef LLVMBuildFPToUI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+    LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, LLVMBool isSigned,
+                                   const char* name);
 
-// Aggregate (struct) construction and member access.
-LLVMValueRef LLVMGetUndef(LLVMTypeRef Ty);
-LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef B, LLVMValueRef Agg, LLVMValueRef Val,
-                                  unsigned Index, const char* Name);
-LLVMValueRef LLVMBuildExtractValue(LLVMBuilderRef B, LLVMValueRef Agg, unsigned Index,
-                                   const char* Name);
-LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef B, LLVMTypeRef Ty, LLVMValueRef Pointer,
-                           LLVMValueRef* Indices, unsigned NumIndices, const char* Name);
+    // Aggregate (struct) construction and member access.
+    LLVMValueRef LLVMGetUndef(LLVMTypeRef ty);
+    LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueRef val, unsigned index,
+                                      const char* name);
+    LLVMValueRef LLVMBuildExtractValue(LLVMBuilderRef b, LLVMValueRef agg, unsigned index, const char* name);
+    LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices,
+                               unsigned numIndices, const char* name);
 
-// --- Verification ---
-// LLVMVerifierFailureAction: LLVMAbortProcessAction = 0, LLVMReturnStatusAction = 1.
-LLVMBool LLVMVerifyModule(LLVMModuleRef M, int VerifierAction, char** OutMessage);
+    // --- Verification ---
+    // LLVMVerifierFailureAction: LLVMAbortProcessAction = 0, LLVMReturnStatusAction = 1.
+    LLVMBool LLVMVerifyModule(LLVMModuleRef m, int verifierAction, char** outMessage);
 
-// --- Target initialization ---
-// The LLVMInitializeAll* / LLVMInitializeNativeTarget convenience wrappers are
-// not exported by this LLVM-C.dll, but the X86-specific entry points are. Since
-// the host is x86_64, these are what we need for both JIT and AOT.
-void LLVMInitializeX86TargetInfo(void);
-void LLVMInitializeX86Target(void);
-void LLVMInitializeX86TargetMC(void);
-void LLVMInitializeX86AsmPrinter(void);
+    // --- Target initialization ---
+    // The LLVMInitializeAll* / LLVMInitializeNativeTarget convenience wrappers are
+    // not exported by this LLVM-C.dll, but the X86-specific entry points are. Since
+    // the host is x86_64, these are what we need for both JIT and AOT.
+    void LLVMInitializeX86TargetInfo(void);
+    void LLVMInitializeX86Target(void);
+    void LLVMInitializeX86TargetMC(void);
+    void LLVMInitializeX86AsmPrinter(void);
 
-// --- Targets & target machines (llvm-c/Target.h, TargetMachine.h) ---
-typedef struct LLVMOpaqueTarget* LLVMTargetRef;
-typedef struct LLVMOpaqueTargetMachine* LLVMTargetMachineRef;
-typedef struct LLVMOpaqueMemoryBuffer* LLVMMemoryBufferRef;
+    // --- Targets & target machines (llvm-c/Target.h, TargetMachine.h) ---
+    using LLVMTargetRef = struct LLVMOpaqueTarget*;
+    using LLVMTargetMachineRef = struct LLVMOpaqueTargetMachine*;
+    using LLVMMemoryBufferRef = struct LLVMOpaqueMemoryBuffer*;
 
-typedef enum {
-    LLVMCodeGenLevelNone = 0,
-    LLVMCodeGenLevelLess = 1,
-    LLVMCodeGenLevelDefault = 2,
-    LLVMCodeGenLevelAggressive = 3
-} LLVMCodeGenOptLevel;
+    using LLVMCodeGenOptLevel = enum
+    {
+        LLVMCodeGenLevelNone = 0,
+        LLVMCodeGenLevelLess = 1,
+        LLVMCodeGenLevelDefault = 2,
+        LLVMCodeGenLevelAggressive = 3
+    };
 
-typedef enum {
-    LLVMRelocDefault = 0,
-    LLVMRelocStatic = 1,
-    LLVMRelocPIC = 2,
-    LLVMRelocDynamicNoPic = 3
-} LLVMRelocMode;
+    using LLVMRelocMode = enum
+    {
+        LLVMRelocDefault = 0,
+        LLVMRelocStatic = 1,
+        LLVMRelocPIC = 2,
+        LLVMRelocDynamicNoPic = 3
+    };
 
-typedef enum {
-    LLVMCodeModelDefault = 0,
-    LLVMCodeModelJITDefault = 1,
-    LLVMCodeModelTiny = 2,
-    LLVMCodeModelSmall = 3,
-    LLVMCodeModelKernel = 4,
-    LLVMCodeModelMedium = 5,
-    LLVMCodeModelLarge = 6
-} LLVMCodeModel;
+    using LLVMCodeModel = enum
+    {
+        LLVMCodeModelDefault = 0,
+        LLVMCodeModelJITDefault = 1,
+        LLVMCodeModelTiny = 2,
+        LLVMCodeModelSmall = 3,
+        LLVMCodeModelKernel = 4,
+        LLVMCodeModelMedium = 5,
+        LLVMCodeModelLarge = 6
+    };
 
-typedef enum {
-    LLVMAssemblyFile = 0,
-    LLVMObjectFile = 1
-} LLVMCodeGenFileType;
+    using LLVMCodeGenFileType = enum
+    {
+        LLVMAssemblyFile = 0,
+        LLVMObjectFile = 1
+    };
 
-LLVMBool LLVMGetTargetFromTriple(const char* Triple, LLVMTargetRef* Target,
-                                 char** ErrorMessage);
-char* LLVMGetDefaultTargetTriple(void);
-char* LLVMGetHostCPUName(void);
-LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef T, const char* Triple,
-                                             const char* CPU, const char* Features,
-                                             LLVMCodeGenOptLevel Level,
-                                             LLVMRelocMode Reloc, LLVMCodeModel CodeModel);
-void LLVMDisposeTargetMachine(LLVMTargetMachineRef T);
-LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef T, LLVMModuleRef M,
-                                     const char* Filename, LLVMCodeGenFileType codegen,
-                                     char** ErrorMessage);
-LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef T, LLVMModuleRef M,
-                                             LLVMCodeGenFileType codegen,
-                                             char** ErrorMessage,
-                                             LLVMMemoryBufferRef* OutMemBuf);
-void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef MemBuf);
+    LLVMBool LLVMGetTargetFromTriple(const char* triple, LLVMTargetRef* target, char** errorMessage);
+    char* LLVMGetDefaultTargetTriple(void);
+    char* LLVMGetHostCPUName(void);
+    LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef t, const char* triple, const char* cpu,
+                                                 const char* features, LLVMCodeGenOptLevel level, LLVMRelocMode reloc,
+                                                 LLVMCodeModel codeModel);
+    void LLVMDisposeTargetMachine(LLVMTargetMachineRef t);
+    LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef t, LLVMModuleRef m, const char* filename,
+                                         LLVMCodeGenFileType codegen, char** errorMessage);
+    LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef t, LLVMModuleRef m, LLVMCodeGenFileType codegen,
+                                                 char** errorMessage, LLVMMemoryBufferRef* outMemBuf);
+    void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef memBuf);
 
-// --- Execution engine / MCJIT (llvm-c/ExecutionEngine.h) ---
-typedef struct LLVMOpaqueExecutionEngine* LLVMExecutionEngineRef;
-LLVMBool LLVMCreateExecutionEngineForModule(LLVMExecutionEngineRef* OutEE,
-                                            LLVMModuleRef M, char** OutError);
-void LLVMDisposeExecutionEngine(LLVMExecutionEngineRef EE);
-uint64_t LLVMGetFunctionAddress(LLVMExecutionEngineRef EE, const char* Name);
-uint64_t LLVMGetGlobalValueAddress(LLVMExecutionEngineRef EE, const char* Name);
+    // --- Execution engine / MCJIT (llvm-c/ExecutionEngine.h) ---
+    using LLVMExecutionEngineRef = struct LLVMOpaqueExecutionEngine*;
+    LLVMBool LLVMCreateExecutionEngineForModule(LLVMExecutionEngineRef* outEe, LLVMModuleRef m, char** outError);
+    void LLVMDisposeExecutionEngine(LLVMExecutionEngineRef ee);
+    uint64_t LLVMGetFunctionAddress(LLVMExecutionEngineRef ee, const char* name);
+    uint64_t LLVMGetGlobalValueAddress(LLVMExecutionEngineRef ee, const char* name);
 
-// Symbol resolution for the JIT: binds a declared function/global in `M` to a
-// host address. Must be called on the engine before the referencing code is
-// compiled (i.e. before LLVMGetFunctionAddress triggers finalization).
-LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef M, const char* Name);
-void LLVMAddGlobalMapping(LLVMExecutionEngineRef EE, LLVMValueRef Global, void* Addr);
+    // Symbol resolution for the JIT: binds a declared function/global in `M` to a
+    // host address. Must be called on the engine before the referencing code is
+    // compiled (i.e. before LLVMGetFunctionAddress triggers finalization).
+    LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef m, const char* name);
+    void LLVMAddGlobalMapping(LLVMExecutionEngineRef ee, LLVMValueRef global, void* addr);
 } // extern "C"
 
-namespace strata::llvm_c {
+namespace strata::llvm_c
+{
 constexpr int kReturnStatusAction = 1;
 }

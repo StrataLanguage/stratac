@@ -17,8 +17,9 @@
 #include "strata/AST/AST.h"
 #include "strata/Core/Diagnostics.h"
 
-namespace strata {
+namespace strata
+{
 
-void resolveOverloads(Module& mod, DiagnosticEngine& diag);
+void ResolveOverloads(Module& mod, DiagnosticEngine& diag);
 
 } // namespace strata

@@ -10,10 +10,13 @@
 
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+// clang-format off
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+    
 typedef struct StrataCompiler StrataCompiler;
 
 typedef enum {
@@ -93,3 +96,5 @@ const char* strataLLVMVersion(void);
 #ifdef __cplusplus
 }
 #endif
+
+// clang-format on
