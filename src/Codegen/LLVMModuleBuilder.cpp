@@ -66,32 +66,32 @@ LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const detail::MappedType& t)
 
 struct TypeDesc
 {
-    LLVMTypeRef ty = nullptr;
+    LLVMTypeRef type = nullptr;
     bool isFloat = false;
     bool isUnsigned = false;
     bool isVoid = false;
-    std::string structName; // non-empty when this is a user struct value
+    std::string structTypeName;
 };
 
 struct Value
 {
-    LLVMValueRef v = nullptr;
-    TypeDesc td;
+    LLVMValueRef value = nullptr;
+    TypeDesc typeDesc;
 };
 
 struct FuncInfo
 {
-    LLVMValueRef fn = nullptr;
-    LLVMTypeRef ty = nullptr;
-    TypeDesc ret;
-    std::vector<bool> paramByPtr; // params passed by address (out/inout, or any struct)
+    LLVMValueRef function = nullptr;
+    LLVMTypeRef type = nullptr;
+    TypeDesc returnType;
+    std::vector<bool> paramByPtr;
 };
 
 struct LValue
 {
-    bool ok = false;
+    bool valid = false;
     LLVMValueRef ptr = nullptr;
-    TypeDesc td;
+    TypeDesc typeDesc;
 };
 
 class Builder
@@ -111,32 +111,32 @@ class Builder
 
         // Create all struct type handles first (allows mutual references),
         // then fill in bodies.
-        for (const auto& st : m_registry.Types())
+        for (const auto& structType : m_registry.Types())
         {
-            if (st.opaque)
+            if (structType.opaque)
             {
-                m_structTypes[st.name] = m_ptrTy; // opaque handles are pointer-sized
+                m_structTypes[structType.name] = m_ptrTy;
             }
             else
             {
-                m_structTypes[st.name] = LLVMStructCreateNamed(m_ctx, ("struct." + st.name).c_str());
+                m_structTypes[structType.name] = LLVMStructCreateNamed(m_ctx, ("struct." + structType.name).c_str());
             }
         }
 
-        for (const auto& st : m_registry.Types())
+        for (const auto& structType : m_registry.Types())
         {
-            if (st.opaque)
+            if (structType.opaque)
             {
                 continue;
             }
 
             std::vector<LLVMTypeRef> fields;
-            for (const auto& f : st.fields)
+            for (const auto& f : structType.fields)
             {
-                fields.push_back(Resolve(f.type).ty);
+                fields.push_back(Resolve(f.type).type);
             }
 
-            LLVMStructSetBody(m_structTypes[st.name], fields.data(), static_cast<unsigned>(fields.size()), 0);
+            LLVMStructSetBody(m_structTypes[structType.name], fields.data(), static_cast<unsigned>(fields.size()), 0);
         }
 
         for (const auto& f : module.functions)
@@ -172,7 +172,7 @@ class Builder
 
         BuiltModule out(m_ctx, m_mod);
         out.externSymbols = std::move(m_externNames);
-        
+
         m_ctx = nullptr;
         m_mod = nullptr;
 
@@ -184,7 +184,7 @@ class Builder
     LLVMModuleRef m_mod = nullptr;
     LLVMBuilderRef m_builder = nullptr;
     LLVMTypeRef m_ptrTy = nullptr;
-    
+
     TypeRegistry m_registry;
 
     std::map<std::string, LLVMTypeRef> m_structTypes;
@@ -193,22 +193,22 @@ class Builder
     std::map<std::string, LLVMValueRef> m_externSlots;
 
     std::vector<std::string> m_externNames;
-    
+
     TypeDesc m_curRet;
-    
+
     bool m_terminated = false;
     bool m_jitMode = false;
-    
+
     std::ostringstream* m_notesSink = nullptr;
-    
+
     LLVMValueRef m_curFn = nullptr;
-    
+
     struct Loop
     {
         LLVMBasicBlockRef cont;
         LLVMBasicBlockRef end;
     };
-    
+
     std::vector<Loop> m_loops;
 
     LLVMTypeRef I32Ty() const
@@ -256,107 +256,127 @@ class Builder
 
     TypeDesc Resolve(const TypeName& t)
     {
-        auto m = detail::MapType(t);
-        if (m.valid)
+        auto mapped = detail::MapType(t);
+        if (mapped.valid)
         {
-            return {.ty = ScalarLlvmType(m_ctx, m),
-                    .isFloat = m.isFloat,
-                    .isUnsigned = m.isUnsigned,
-                    .isVoid = m.isVoid,
-                    .structName = ""};
+            return {
+                .type = ScalarLlvmType(m_ctx, mapped),
+                .isFloat = mapped.isFloat,
+                .isUnsigned = mapped.isUnsigned,
+                .isVoid = mapped.isVoid,
+                .structTypeName = "",
+            };
         }
 
-        auto it = m_structTypes.find(t.name);
+        auto iterator = m_structTypes.find(t.name);
 
-        if (it != m_structTypes.end())
+        if (iterator != m_structTypes.end())
         {
-            return {.ty = it->second, .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = t.name};
+            return {
+                .type = iterator->second,
+                .isFloat = false,
+                .isUnsigned = false,
+                .isVoid = false,
+                .structTypeName = t.name,
+            };
         }
 
         Note("; TODO: unknown type '" + t.name + "' lowered as ptr\n");
 
-        return {.ty = m_ptrTy, .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""};
+        return {
+            .type = m_ptrTy,
+            .isFloat = false,
+            .isUnsigned = false,
+            .isVoid = false,
+            .structTypeName = "",
+        };
     }
 
-    static LLVMValueRef ZeroOf(const TypeDesc& td)
+    static LLVMValueRef ZeroOf(const TypeDesc& typeDesc)
     {
-        return LLVMConstNull(td.ty);
+        return LLVMConstNull(typeDesc.type);
     }
 
     Value ZeroInt() const
     {
-        TypeDesc td{.ty = I32Ty(), .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""};
-        return {.v = LLVMConstNull(I32Ty()), .td = td};
+        TypeDesc typeDesc{
+            .type = I32Ty(),
+            .isFloat = false,
+            .isUnsigned = false,
+            .isVoid = false,
+            .structTypeName = "",
+        };
+        return {
+            .value = LLVMConstNull(I32Ty()),
+            .typeDesc = typeDesc,
+        };
     }
 
-    // int<->float coercion for scalars.
-    Value Coerce(Value v, const TypeDesc& target)
+    Value Coerce(Value value, const TypeDesc& target)
     {
-        if (!v.td.ty || !target.ty || v.td.ty == target.ty)
+        if (!value.typeDesc.type || !target.type || value.typeDesc.type == target.type)
         {
-            return v;
+            return value;
         }
 
-        if (!v.td.structName.empty() || !target.structName.empty())
+        if (!value.typeDesc.structTypeName.empty() || !target.structTypeName.empty())
         {
-            return v;
+            return value;
         }
 
         LLVMValueRef r = nullptr;
-        if (!v.td.isFloat && target.isFloat)
+        if (!value.typeDesc.isFloat && target.isFloat)
         {
-            r = v.td.isUnsigned ? LLVMBuildUIToFP(m_builder, v.v, target.ty, "c")
-                                : LLVMBuildSIToFP(m_builder, v.v, target.ty, "c");
+            r = value.typeDesc.isUnsigned ? LLVMBuildUIToFP(m_builder, value.value, target.type, "c")
+                                          : LLVMBuildSIToFP(m_builder, value.value, target.type, "c");
         }
-        else if (v.td.isFloat && !target.isFloat)
+        else if (value.typeDesc.isFloat && !target.isFloat)
         {
-            r = target.isUnsigned ? LLVMBuildFPToUI(m_builder, v.v, target.ty, "c")
-                                  : LLVMBuildFPToSI(m_builder, v.v, target.ty, "c");
+            r = target.isUnsigned ? LLVMBuildFPToUI(m_builder, value.value, target.type, "c")
+                                  : LLVMBuildFPToSI(m_builder, value.value, target.type, "c");
         }
-        else if (!v.td.isFloat && !target.isFloat && !target.isVoid)
+        else if (!value.typeDesc.isFloat && !target.isFloat && !target.isVoid)
         {
-            r = LLVMBuildIntCast2(m_builder, v.v, target.ty, !target.isUnsigned, "c");
+            r = LLVMBuildIntCast2(m_builder, value.value, target.type, !target.isUnsigned, "c");
         }
         else
         {
-            return v;
+            return value;
         }
 
-        return {.v = r, .td = target};
+        return {
+            .value = r,
+            .typeDesc = target,
+        };
     }
 
     void DeclareFunction(const FunctionDecl& f)
     {
         FuncInfo info;
-        info.ret = Resolve(f.returnType);
-        
+        info.returnType = Resolve(f.returnType);
+
         std::vector<LLVMTypeRef> params;
 
         for (const auto& p : f.params)
         {
-            // Structs are always passed by reference (out/inout for write-back,
-            // and any struct param on any function). Scalars are by value unless
-            // out/inout.
             bool structVal = m_registry.IsUserType(p->type.name) && !m_registry.IsOpaque(p->type.name);
             bool byPtr = (p->mod == ParamMod::Out || p->mod == ParamMod::InOut) || structVal;
             info.paramByPtr.push_back(byPtr);
-            params.push_back(byPtr ? m_ptrTy : Resolve(p->type).ty);
+            params.push_back(byPtr ? m_ptrTy : Resolve(p->type).type);
         }
 
-        info.ty = LLVMFunctionType(info.ret.ty, params.data(), static_cast<unsigned>(params.size()), 0);
+        info.type = LLVMFunctionType(info.returnType.type, params.data(), static_cast<unsigned>(params.size()), 0);
 
         if (m_jitMode && f.isExtern)
         {
-            // Externs are not overloadable, so mangledName == name; the host
-            // binds the slot by source name.
             LLVMValueRef slot = LLVMAddGlobal(m_mod, m_ptrTy, ("__strata_ext_" + f.name).c_str());
             LLVMSetInitializer(slot, LLVMConstNull(m_ptrTy));
             m_externSlots[f.name] = slot;
-            info.fn = nullptr;
+            info.function = nullptr;
         }
         else
         {
-            info.fn = LLVMAddFunction(m_mod, f.mangledName.c_str(), info.ty);
+            info.function = LLVMAddFunction(m_mod, f.mangledName.c_str(), info.type);
         }
 
         m_funcs[f.mangledName] = info;
@@ -366,7 +386,7 @@ class Builder
     {
         if (!f.body)
         {
-            return; // declaration: extern or forward decl
+            return;
         }
 
         m_symbols.clear();
@@ -374,7 +394,7 @@ class Builder
         m_curRet = Resolve(f.returnType);
         m_loops.clear();
 
-        m_curFn = m_funcs[f.mangledName].fn;
+        m_curFn = m_funcs[f.mangledName].function;
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(m_ctx, m_curFn, "entry");
         LLVMPositionBuilderAtEnd(m_builder, entry);
@@ -382,21 +402,26 @@ class Builder
         for (unsigned i = 0; i < f.params.size(); ++i)
         {
             ParamMod mod = f.params[i]->mod;
-            TypeDesc td = Resolve(f.params[i]->type);
-            bool structVal = m_registry.IsUserType(f.params[i]->type.name) && !m_registry.IsOpaque(f.params[i]->type.name);
+            TypeDesc typeDesc = Resolve(f.params[i]->type);
+            bool structVal =
+                m_registry.IsUserType(f.params[i]->type.name) && !m_registry.IsOpaque(f.params[i]->type.name);
 
-            // out/inout (write-back) and all struct params arrive as pointers to
-            // the caller's storage; reads/writes go through them directly.
             if (mod == ParamMod::Out || mod == ParamMod::InOut || structVal)
             {
-                m_symbols[f.params[i]->name] = {.v = LLVMGetParam(m_curFn, i), .td = td};
+                m_symbols[f.params[i]->name] = {
+                    .value = LLVMGetParam(m_curFn, i),
+                    .typeDesc = typeDesc,
+                };
             }
             else
             {
-                LLVMValueRef slot = LLVMBuildAlloca(m_builder, td.ty, "arg");
+                LLVMValueRef slot = LLVMBuildAlloca(m_builder, typeDesc.type, "arg");
                 LLVMBuildStore(m_builder, LLVMGetParam(m_curFn, i), slot);
 
-                m_symbols[f.params[i]->name] = {.v = slot, .td = td};
+                m_symbols[f.params[i]->name] = {
+                    .value = slot,
+                    .typeDesc = typeDesc,
+                };
             }
         }
 
@@ -438,8 +463,8 @@ class Builder
 
             if (r->value)
             {
-                Value v = Coerce(EmitExpr(r->value.get()), m_curRet);
-                LLVMBuildRet(m_builder, v.v);
+                Value value = Coerce(EmitExpr(r->value.get()), m_curRet);
+                LLVMBuildRet(m_builder, value.value);
             }
             else
             {
@@ -459,23 +484,26 @@ class Builder
             return;
         case NodeKind::VarDecl:
         {
-            auto* vd = static_cast<VarDeclStmt*>(n);
-            
-            TypeDesc td = Resolve(vd->type);
-            
-            LLVMValueRef slot = LLVMBuildAlloca(m_builder, td.ty, "v");
+            auto* varDecl = static_cast<VarDeclStmt*>(n);
 
-            if (vd->init)
+            TypeDesc typeDesc = Resolve(varDecl->type);
+
+            LLVMValueRef slot = LLVMBuildAlloca(m_builder, typeDesc.type, "v");
+
+            if (varDecl->init)
             {
-                Value v = Coerce(EmitExpr(vd->init.get()), td);
-                LLVMBuildStore(m_builder, v.v, slot);
+                Value value = Coerce(EmitExpr(varDecl->init.get()), typeDesc);
+                LLVMBuildStore(m_builder, value.value, slot);
             }
             else
             {
-                LLVMBuildStore(m_builder, ZeroOf(td), slot);
+                LLVMBuildStore(m_builder, ZeroOf(typeDesc), slot);
             }
 
-            m_symbols[vd->name] = {.v = slot, .td = td};
+            m_symbols[varDecl->name] = {
+                .value = slot,
+                .typeDesc = typeDesc,
+            };
 
             return;
         }
@@ -490,9 +518,9 @@ class Builder
         case NodeKind::If:
         {
             auto* i = static_cast<IfStmt*>(n);
-            
+
             LLVMValueRef cond = ToI1(EmitExpr(i->condition.get()));
-            
+
             LLVMBasicBlockRef thenBB = NewBb("if.then");
             LLVMBasicBlockRef endBB = NewBb("if.end");
             LLVMBasicBlockRef elseBB = i->elseBranch ? NewBb("if.else") : endBB;
@@ -500,17 +528,17 @@ class Builder
             LLVMBuildCondBr(m_builder, cond, thenBB, elseBB);
 
             m_terminated = true;
-            
+
             PositionAtEnd(thenBB);
-            
+
             EmitStmt(i->thenBranch.get());
 
             Br(endBB);
-            
+
             if (i->elseBranch)
             {
                 PositionAtEnd(elseBB);
-                
+
                 EmitStmt(i->elseBranch.get());
 
                 Br(endBB);
@@ -524,35 +552,38 @@ class Builder
         case NodeKind::While:
         {
             auto* w = static_cast<WhileStmt*>(n);
-            
+
             LLVMBasicBlockRef condBB = NewBb("while.cond");
             LLVMBasicBlockRef bodyBB = NewBb("while.body");
             LLVMBasicBlockRef endBB = NewBb("while.end");
 
             LLVMBuildBr(m_builder, condBB);
-            
+
             m_terminated = true;
-            
+
             PositionAtEnd(condBB);
-            
+
             LLVMValueRef cond = ToI1(EmitExpr(w->condition.get()));
-            
+
             LLVMBuildCondBr(m_builder, cond, bodyBB, endBB);
-            
+
             m_terminated = true;
-            
+
             PositionAtEnd(bodyBB);
-            
-            m_loops.push_back({.cont = condBB, .end = endBB});
-            
+
+            m_loops.push_back({
+                .cont = condBB,
+                .end = endBB,
+            });
+
             EmitStmt(w->body.get());
-            
+
             m_loops.pop_back();
-            
+
             Br(condBB);
-            
+
             PositionAtEnd(endBB);
-            
+
             return;
         }
 
@@ -561,7 +592,7 @@ class Builder
             auto* fs = static_cast<ForStmt*>(n);
             if (fs->init)
             {
-                EmitStmt(fs->init.get()); // var decl or expression
+                EmitStmt(fs->init.get());
             }
 
             LLVMBasicBlockRef condBB = NewBb("for.cond");
@@ -569,11 +600,10 @@ class Builder
             LLVMBasicBlockRef updBB = NewBb("for.update");
             LLVMBasicBlockRef endBB = NewBb("for.end");
 
-            
             Br(condBB);
-            
+
             PositionAtEnd(condBB);
-            
+
             if (fs->condition)
             {
                 LLVMBuildCondBr(m_builder, ToI1(EmitExpr(fs->condition.get())), bodyBB, endBB);
@@ -584,19 +614,22 @@ class Builder
             }
 
             m_terminated = true;
-            
+
             PositionAtEnd(bodyBB);
 
-            m_loops.push_back({.cont = updBB, .end = endBB}); // continue runs the update
-            
+            m_loops.push_back({
+                .cont = updBB,
+                .end = endBB,
+            });
+
             EmitStmt(fs->body.get());
-            
+
             m_loops.pop_back();
-            
+
             Br(updBB);
-            
+
             PositionAtEnd(updBB);
-            
+
             if (fs->update)
             {
                 (void)EmitExpr(fs->update.get());
@@ -629,20 +662,20 @@ class Builder
         }
     }
 
-    // Coerce a value to i1 for use as a branch condition.
     LLVMValueRef ToI1(const Value& v)
     {
-        if (v.td.ty == I1Ty())
+        if (v.typeDesc.type == I1Ty())
         {
-            return v.v;
+            return v.value;
         }
 
-        if (v.td.isFloat)
+        if (v.typeDesc.isFloat)
         {
-            return LLVMBuildFCmp(m_builder, "one", v.v, LLVMConstNull(v.td.ty), "tobool");
+            return LLVMBuildFCmp(m_builder, "one", v.value, LLVMConstNull(v.typeDesc.type), "tobool");
         }
 
-        return LLVMBuildICmp(m_builder, v.td.isUnsigned ? LLVMIntNE : LLVMIntNE, v.v, LLVMConstNull(v.td.ty), "tobool");
+        return LLVMBuildICmp(m_builder, v.typeDesc.isUnsigned ? LLVMIntNE : LLVMIntNE, v.value,
+                             LLVMConstNull(v.typeDesc.type), "tobool");
     }
 
     Value EmitExpr(Node* n)
@@ -658,41 +691,48 @@ class Builder
         {
             auto* l = static_cast<IntLiteral*>(n);
 
-            TypeDesc td{
-                .ty = I32Ty(),
+            TypeDesc typeDesc{
+                .type = I32Ty(),
                 .isFloat = false,
                 .isUnsigned = l->isUnsigned,
                 .isVoid = false,
-                .structName = ""
+                .structTypeName = "",
             };
 
-            return {.v = LLVMConstInt(I32Ty(), l->value, 1), .td = td};
+            return {
+                .value = LLVMConstInt(I32Ty(), l->value, 1),
+                .typeDesc = typeDesc,
+            };
         }
 
         case NodeKind::FloatLiteral:
         {
             auto* l = static_cast<FloatLiteral*>(n);
-            TypeDesc td{
-                .ty = LLVMFloatTypeInContext(m_ctx),
+            TypeDesc typeDesc{
+                .type = LLVMFloatTypeInContext(m_ctx),
                 .isFloat = true,
                 .isUnsigned = false,
                 .isVoid = false,
-                .structName = ""
+                .structTypeName = "",
             };
 
-            return {.v = LLVMConstReal(LLVMFloatTypeInContext(m_ctx), l->value), .td = td};
+            return {
+                .value = LLVMConstReal(LLVMFloatTypeInContext(m_ctx), l->value),
+                .typeDesc = typeDesc,
+            };
         }
 
         case NodeKind::BoolLiteral:
             return {
-                .v = LLVMConstInt(I1Ty(), static_cast<unsigned long long>(static_cast<BoolLiteral*>(n)->value), 0),
-                .td = {
-                    .ty = I1Ty(),
-                    .isFloat = false,
-                    .isUnsigned = false,
-                    .isVoid = false,
-                    .structName = ""
-                }
+                .value = LLVMConstInt(I1Ty(), static_cast<unsigned long long>(static_cast<BoolLiteral*>(n)->value), 0),
+                .typeDesc =
+                    {
+                        .type = I1Ty(),
+                        .isFloat = false,
+                        .isUnsigned = false,
+                        .isVoid = false,
+                        .structTypeName = "",
+                    },
             };
         case NodeKind::Ident:
             return EmitIdent(static_cast<IdentExpr*>(n));
@@ -714,22 +754,23 @@ class Builder
 
     Value EmitIdent(IdentExpr* n)
     {
-        auto it = m_symbols.find(n->name);
+        auto iterator = m_symbols.find(n->name);
 
-        if (it == m_symbols.end())
+        if (iterator == m_symbols.end())
         {
             Note("; TODO: unknown identifier '" + n->name + "'\n");
 
             return ZeroInt();
         }
 
-        LLVMValueRef v = LLVMBuildLoad2(m_builder, it->second.td.ty, it->second.v, "id");
+        LLVMValueRef v = LLVMBuildLoad2(m_builder, iterator->second.typeDesc.type, iterator->second.value, "id");
 
-        return {.v = v, .td = it->second.td};
+        return {
+            .value = v,
+            .typeDesc = iterator->second.typeDesc,
+        };
     }
 
-    // Resolves an lvalue (a variable or a member-access chain rooted at one) to
-    // its storage pointer and element type.
     LValue EmitLValue(Node* n)
     {
         LValue none;
@@ -743,17 +784,17 @@ class Builder
         {
             auto* id = static_cast<IdentExpr*>(n);
 
-            auto it = m_symbols.find(id->name);
+            auto iterator = m_symbols.find(id->name);
 
-            if (it == m_symbols.end())
+            if (iterator == m_symbols.end())
             {
                 return none;
             }
 
             return {
-                .ok = true,
-                .ptr = it->second.v,
-                .td = it->second.td
+                .valid = true,
+                .ptr = iterator->second.value,
+                .typeDesc = iterator->second.typeDesc,
             };
         }
 
@@ -761,28 +802,28 @@ class Builder
         {
             auto* m = static_cast<MemberExpr*>(n);
             LValue base = EmitLValue(m->base.get());
-            if (!base.ok || base.td.structName.empty())
+            if (!base.valid || base.typeDesc.structTypeName.empty())
             {
                 return none;
             }
 
-            int idx = m_registry.FieldIndex(base.td.structName, m->member);
+            int idx = m_registry.FieldIndex(base.typeDesc.structTypeName, m->member);
             if (idx < 0)
             {
                 return none;
             }
 
-            const auto* st = m_registry.Find(base.td.structName);
-            
-            TypeDesc fieldTd = Resolve(st->fields[static_cast<std::size_t>(idx)].type);
-            
+            const auto* st = m_registry.Find(base.typeDesc.structTypeName);
+
+            TypeDesc fieldTypeDesc = Resolve(st->fields[static_cast<std::size_t>(idx)].type);
+
             LLVMValueRef idxs[2] = {IdxConst(0), IdxConst(static_cast<unsigned>(idx))};
-            LLVMValueRef ptr = LLVMBuildGEP2(m_builder, base.td.ty, base.ptr, idxs, 2, "f");
+            LLVMValueRef ptr = LLVMBuildGEP2(m_builder, base.typeDesc.type, base.ptr, idxs, 2, "f");
 
             return {
-                .ok = true,
+                .valid = true,
                 .ptr = ptr,
-                .td = fieldTd
+                .typeDesc = fieldTypeDesc,
             };
         }
 
@@ -791,36 +832,35 @@ class Builder
 
     Value EmitMember(MemberExpr* n)
     {
-        LValue lv = EmitLValue(n);
-        
-        if (lv.ok)
+        LValue lvalue = EmitLValue(n);
+
+        if (lvalue.valid)
         {
-            LLVMValueRef v = LLVMBuildLoad2(m_builder, lv.td.ty, lv.ptr, "m");
+            LLVMValueRef v = LLVMBuildLoad2(m_builder, lvalue.typeDesc.type, lvalue.ptr, "m");
 
             return {
-                .v = v,
-                .td = lv.td
+                .value = v,
+                .typeDesc = lvalue.typeDesc,
             };
         }
 
-        // Rvalue member access on a struct value (e.g. getVec().x).
         Value base = EmitExpr(n->base.get());
 
-        if (!base.td.structName.empty())
+        if (!base.typeDesc.structTypeName.empty())
         {
-            int idx = m_registry.FieldIndex(base.td.structName, n->member);
+            int idx = m_registry.FieldIndex(base.typeDesc.structTypeName, n->member);
 
             if (idx >= 0)
             {
-                const auto* st = m_registry.Find(base.td.structName);
-                
-                TypeDesc fieldTd = Resolve(st->fields[static_cast<std::size_t>(idx)].type);
-                
-                LLVMValueRef v = LLVMBuildExtractValue(m_builder, base.v, static_cast<unsigned>(idx), "m");
+                const auto* st = m_registry.Find(base.typeDesc.structTypeName);
+
+                TypeDesc fieldTypeDesc = Resolve(st->fields[static_cast<std::size_t>(idx)].type);
+
+                LLVMValueRef v = LLVMBuildExtractValue(m_builder, base.value, static_cast<unsigned>(idx), "m");
 
                 return {
-                    .v = v,
-                    .td = fieldTd
+                    .value = v,
+                    .typeDesc = fieldTypeDesc,
                 };
             }
         }
@@ -839,37 +879,39 @@ class Builder
             return e;
         case UnaryOp::Neg:
         {
-            LLVMValueRef r = e.td.isFloat ? LLVMBuildFNeg(m_builder, e.v, "neg") : LLVMBuildNeg(m_builder, e.v, "neg");
+            LLVMValueRef r =
+                e.typeDesc.isFloat ? LLVMBuildFNeg(m_builder, e.value, "neg") : LLVMBuildNeg(m_builder, e.value, "neg");
 
             return {
-                .v = r,
-                .td = e.td
+                .value = r,
+                .typeDesc = e.typeDesc,
             };
         }
 
         case UnaryOp::Not:
         {
-            LLVMValueRef r = LLVMBuildXor(m_builder, e.v, LLVMConstInt(I1Ty(), 1, 0), "not");
+            LLVMValueRef r = LLVMBuildXor(m_builder, e.value, LLVMConstInt(I1Ty(), 1, 0), "not");
 
             return {
-                .v = r,
-                .td = {
-                    .ty = I1Ty(),
-                    .isFloat = false,
-                    .isUnsigned = false,
-                    .isVoid = false,
-                    .structName = ""
-                }
+                .value = r,
+                .typeDesc =
+                    {
+                        .type = I1Ty(),
+                        .isFloat = false,
+                        .isUnsigned = false,
+                        .isVoid = false,
+                        .structTypeName = "",
+                    },
             };
         }
 
         case UnaryOp::BitNot:
         {
-            LLVMValueRef r = LLVMBuildNot(m_builder, e.v, "bnot");
+            LLVMValueRef r = LLVMBuildNot(m_builder, e.value, "bnot");
 
             return {
-                .v = r,
-                .td = e.td
+                .value = r,
+                .typeDesc = e.typeDesc,
             };
         }
         }
@@ -882,109 +924,118 @@ class Builder
         Value l = EmitExpr(n->lhs.get());
         Value r = EmitExpr(n->rhs.get());
 
-        // Promote mixed int/float operands to float so arithmetic is well-typed.
-        TypeDesc td = l.td;
+        TypeDesc typeDesc = l.typeDesc;
 
-        if (l.td.isFloat && !r.td.isFloat)
+        if (l.typeDesc.isFloat && !r.typeDesc.isFloat)
         {
-            r = Coerce(r, l.td);
+            r = Coerce(r, l.typeDesc);
         }
-        else if (!l.td.isFloat && r.td.isFloat)
+        else if (!l.typeDesc.isFloat && r.typeDesc.isFloat)
         {
-            l = Coerce(l, r.td);
-            td = r.td;
+            l = Coerce(l, r.typeDesc);
+            typeDesc = r.typeDesc;
         }
 
         LLVMValueRef out = nullptr;
-        bool flt = td.isFloat;
+        bool flt = typeDesc.isFloat;
 
         if (n->op == BinaryOp::LogicAnd || n->op == BinaryOp::LogicOr)
         {
             const char* op = (n->op == BinaryOp::LogicAnd) ? "and" : "or";
 
-            // non-short-circuit on i1
-            out = (n->op == BinaryOp::LogicAnd) ? LLVMBuildAnd(m_builder, l.v, r.v, "and")
-                                                : LLVMBuildOr(m_builder, l.v, r.v, "or");
+            out = (n->op == BinaryOp::LogicAnd) ? LLVMBuildAnd(m_builder, l.value, r.value, "and")
+                                                : LLVMBuildOr(m_builder, l.value, r.value, "or");
             (void)op;
 
             return {
-                .v = out,
-                .td = {
-                    .ty = I1Ty(),
-                    .isFloat = false,
-                    .isUnsigned = false,
-                    .isVoid = false,
-                    .structName = ""
-                }
+                .value = out,
+                .typeDesc =
+                    {
+                        .type = I1Ty(),
+                        .isFloat = false,
+                        .isUnsigned = false,
+                        .isVoid = false,
+                        .structTypeName = "",
+                    },
             };
         }
 
         auto icmp = [&](const char* pred)
         {
-            out = LLVMBuildICmp(m_builder, PredNameToPredicate(pred, td.isUnsigned), l.v, r.v, "cmp");
+            out = LLVMBuildICmp(m_builder, PredNameToPredicate(pred, typeDesc.isUnsigned), l.value, r.value, "cmp");
         };
 
         auto fcmp = [&](const char* pred)
         {
-            out = LLVMBuildFCmp(m_builder, pred, l.v, r.v, "cmp");
+            out = LLVMBuildFCmp(m_builder, pred, l.value, r.value, "cmp");
         };
 
-        TypeDesc boolTd{.ty = I1Ty(), .isFloat = false, .isUnsigned = false, .isVoid = false, .structName = ""};
+        TypeDesc boolTypeDesc{
+            .type = I1Ty(),
+            .isFloat = false,
+            .isUnsigned = false,
+            .isVoid = false,
+            .structTypeName = "",
+        };
 
         switch (n->op)
         {
         case BinaryOp::Add:
-            out = flt ? LLVMBuildFAdd(m_builder, l.v, r.v, "add") : LLVMBuildAdd(m_builder, l.v, r.v, "add");
-            return {.v = out, .td = td};
+            out = flt ? LLVMBuildFAdd(m_builder, l.value, r.value, "add")
+                      : LLVMBuildAdd(m_builder, l.value, r.value, "add");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::Sub:
-            out = flt ? LLVMBuildFSub(m_builder, l.v, r.v, "sub") : LLVMBuildSub(m_builder, l.v, r.v, "sub");
-            return {.v = out, .td = td};
+            out = flt ? LLVMBuildFSub(m_builder, l.value, r.value, "sub")
+                      : LLVMBuildSub(m_builder, l.value, r.value, "sub");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::Mul:
-            out = flt ? LLVMBuildFMul(m_builder, l.v, r.v, "mul") : LLVMBuildMul(m_builder, l.v, r.v, "mul");
-            return {.v = out, .td = td};
+            out = flt ? LLVMBuildFMul(m_builder, l.value, r.value, "mul")
+                      : LLVMBuildMul(m_builder, l.value, r.value, "mul");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::Div:
-            out = flt ? LLVMBuildFDiv(m_builder, l.v, r.v, "div")
-                      : (td.isUnsigned ? LLVMBuildUDiv(m_builder, l.v, r.v, "div")
-                                       : LLVMBuildSDiv(m_builder, l.v, r.v, "div"));
-            return {.v = out, .td = td};
+            out = flt ? LLVMBuildFDiv(m_builder, l.value, r.value, "div")
+                      : (typeDesc.isUnsigned ? LLVMBuildUDiv(m_builder, l.value, r.value, "div")
+                                             : LLVMBuildSDiv(m_builder, l.value, r.value, "div"));
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::Mod:
-            out = flt ? LLVMBuildFRem(m_builder, l.v, r.v, "mod")
-                      : (td.isUnsigned ? LLVMBuildURem(m_builder, l.v, r.v, "mod")
-                                       : LLVMBuildSRem(m_builder, l.v, r.v, "mod"));
-            return {.v = out, .td = td};
+            out = flt ? LLVMBuildFRem(m_builder, l.value, r.value, "mod")
+                      : (typeDesc.isUnsigned ? LLVMBuildURem(m_builder, l.value, r.value, "mod")
+                                             : LLVMBuildSRem(m_builder, l.value, r.value, "mod"));
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::BitAnd:
-            out = LLVMBuildAnd(m_builder, l.v, r.v, "and");
-            return {.v = out, .td = td};
+            out = LLVMBuildAnd(m_builder, l.value, r.value, "and");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::BitOr:
-            out = LLVMBuildOr(m_builder, l.v, r.v, "or");
-            return {.v = out, .td = td};
+            out = LLVMBuildOr(m_builder, l.value, r.value, "or");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::BitXor:
-            out = LLVMBuildXor(m_builder, l.v, r.v, "xor");
-            return {.v = out, .td = td};
+            out = LLVMBuildXor(m_builder, l.value, r.value, "xor");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::Shl:
-            out = LLVMBuildShl(m_builder, l.v, r.v, "shl");
-            return {.v = out, .td = td};
+            out = LLVMBuildShl(m_builder, l.value, r.value, "shl");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::Shr:
-            out = td.isUnsigned ? LLVMBuildLShr(m_builder, l.v, r.v, "shr") : LLVMBuildAShr(m_builder, l.v, r.v, "shr");
-            return {.v = out, .td = td};
+            out = typeDesc.isUnsigned ? LLVMBuildLShr(m_builder, l.value, r.value, "shr")
+                                      : LLVMBuildAShr(m_builder, l.value, r.value, "shr");
+            return {.value = out, .typeDesc = typeDesc};
         case BinaryOp::EqEq:
             flt ? fcmp("oeq") : icmp("eq");
-            return {.v = out, .td = boolTd};
+            return {.value = out, .typeDesc = boolTypeDesc};
         case BinaryOp::NotEq:
             flt ? fcmp("one") : icmp("ne");
-            return {.v = out, .td = boolTd};
+            return {.value = out, .typeDesc = boolTypeDesc};
         case BinaryOp::Lt:
             flt ? fcmp("olt") : icmp("lt");
-            return {.v = out, .td = boolTd};
+            return {.value = out, .typeDesc = boolTypeDesc};
         case BinaryOp::LtEq:
             flt ? fcmp("ole") : icmp("le");
-            return {.v = out, .td = boolTd};
+            return {.value = out, .typeDesc = boolTypeDesc};
         case BinaryOp::Gt:
             flt ? fcmp("ogt") : icmp("gt");
-            return {.v = out, .td = boolTd};
+            return {.value = out, .typeDesc = boolTypeDesc};
         case BinaryOp::GtEq:
             flt ? fcmp("oge") : icmp("ge");
-            return {.v = out, .td = boolTd};
+            return {.value = out, .typeDesc = boolTypeDesc};
         default:
             return l;
         }
@@ -1027,30 +1078,29 @@ class Builder
 
     Value EmitAssign(AssignExpr* n)
     {
-        Value v = EmitExpr(n->value.get());
+        Value value = EmitExpr(n->value.get());
         if (n->target->kind == NodeKind::Ident || n->target->kind == NodeKind::Member)
         {
-            LValue lv = EmitLValue(n->target.get());
-            if (lv.ok)
+            LValue lvalue = EmitLValue(n->target.get());
+            if (lvalue.valid)
             {
-                Value stored = Coerce(v, lv.td);
-                LLVMBuildStore(m_builder, stored.v, lv.ptr);
+                Value stored = Coerce(value, lvalue.typeDesc);
+                LLVMBuildStore(m_builder, stored.value, lvalue.ptr);
                 return stored;
             }
         }
 
         Note("; TODO: assignment to unsupported lvalue\n");
-        return v;
+        return value;
     }
 
     Value EmitCall(CallExpr* n)
     {
-        // Constructor: callee names a struct type.
         if (m_structTypes.contains(n->callee))
         {
-            TypeDesc td = Resolve({.name = n->callee});
+            TypeDesc typeDesc = Resolve({.name = n->callee});
             const auto* st = m_registry.Find(n->callee);
-            LLVMValueRef agg = LLVMGetUndef(td.ty);
+            LLVMValueRef agg = LLVMGetUndef(typeDesc.type);
             for (std::size_t i = 0; i < n->args.size() && st; ++i)
             {
                 if (i >= st->fields.size())
@@ -1058,57 +1108,62 @@ class Builder
                     break;
                 }
 
-                Value av = Coerce(EmitExpr(n->args[i].get()), Resolve(st->fields[i].type));
-                agg = LLVMBuildInsertValue(m_builder, agg, av.v, static_cast<unsigned>(i), "ins");
+                Value argValue = Coerce(EmitExpr(n->args[i].get()), Resolve(st->fields[i].type));
+                agg = LLVMBuildInsertValue(m_builder, agg, argValue.value, static_cast<unsigned>(i), "ins");
             }
 
-            return {.v = agg, .td = td};
+            return {
+                .value = agg,
+                .typeDesc = typeDesc,
+            };
         }
 
-        auto it = m_funcs.find(n->callee);
-        if (it == m_funcs.end())
+        auto iterator = m_funcs.find(n->callee);
+        if (iterator == m_funcs.end())
         {
             Note("; TODO: call to unknown function '" + n->callee + "'\n");
             return ZeroInt();
         }
 
-        const auto& byPtr = it->second.paramByPtr;
+        const auto& byPtr = iterator->second.paramByPtr;
         std::vector<LLVMValueRef> args;
         for (std::size_t k = 0; k < n->args.size(); ++k)
         {
             bool passAddr = k < byPtr.size() && byPtr[k];
-            args.push_back(passAddr ? ArgAddress(n->args[k].get()) : EmitExpr(n->args[k].get()).v);
+            args.push_back(passAddr ? ArgAddress(n->args[k].get()) : EmitExpr(n->args[k].get()).value);
         }
 
-        LLVMValueRef callee = it->second.fn;
+        LLVMValueRef callee = iterator->second.function;
         if (m_jitMode)
         {
-            auto sit = m_externSlots.find(n->callee);
-            if (sit != m_externSlots.end())
+            auto slotIterator = m_externSlots.find(n->callee);
+            if (slotIterator != m_externSlots.end())
             {
-                LLVMValueRef fnPtr = LLVMBuildLoad2(m_builder, m_ptrTy, sit->second, "extfn");
+                LLVMValueRef fnPtr = LLVMBuildLoad2(m_builder, m_ptrTy, slotIterator->second, "extfn");
                 callee = fnPtr;
             }
         }
 
-        LLVMValueRef call = LLVMBuildCall2(m_builder, it->second.ty, callee, args.data(), static_cast<unsigned>(args.size()), "call");
+        LLVMValueRef call = LLVMBuildCall2(m_builder, iterator->second.type, callee, args.data(),
+                                           static_cast<unsigned>(args.size()), "call");
 
-        return {.v = call, .td = it->second.ret};
+        return {
+            .value = call,
+            .typeDesc = iterator->second.returnType,
+        };
     }
 
-    // Address to pass for an out/inout argument: the lvalue's storage if there
-    // is one, otherwise a temporary (writes discarded).
     LLVMValueRef ArgAddress(Node* arg)
     {
-        LValue lv = EmitLValue(arg);
-        if (lv.ok)
+        LValue lvalue = EmitLValue(arg);
+        if (lvalue.valid)
         {
-            return lv.ptr;
+            return lvalue.ptr;
         }
 
-        Value v = EmitExpr(arg);
-        LLVMValueRef slot = LLVMBuildAlloca(m_builder, v.td.ty, "outarg");
-        LLVMBuildStore(m_builder, v.v, slot);
+        Value value = EmitExpr(arg);
+        LLVMValueRef slot = LLVMBuildAlloca(m_builder, value.typeDesc.type, "outarg");
+        LLVMBuildStore(m_builder, value.value, slot);
         return slot;
     }
 };

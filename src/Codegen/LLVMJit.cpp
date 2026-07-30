@@ -59,32 +59,32 @@ bool LLVMJit::Load(BuiltModule bm, std::string& errorMessage)
     }
 
     m_externs = bm.externSymbols; // copy before we move bm
-    
-    LLVMContextRef c = nullptr;
-    LLVMModuleRef m = nullptr;
-    bm.Release(c, m); // steal ownership; bm won't dispose
 
-    m_ctx = c;
+    LLVMContextRef context = nullptr;
+    LLVMModuleRef modRef = nullptr;
+    bm.Release(context, modRef); // steal ownership; bm won't dispose
 
-    char* err = nullptr;
+    m_ctx = context;
 
-    if (LLVMCreateExecutionEngineForModule(&m_ee, m, &err))
+    char* error = nullptr;
+
+    if (LLVMCreateExecutionEngineForModule(&m_ee, modRef, &error))
     {
-        errorMessage = std::string("could not create execution engine: ") + (err ? err : "(no message)");
-        if (err)
+        errorMessage = std::string("could not create execution engine: ") + (error ? error : "(no message)");
+        if (error)
         {
-            LLVMDisposeMessage(err);
+            LLVMDisposeMessage(error);
         }
 
         // On failure the engine did not take ownership; free the module/context.
-        LLVMDisposeModule(m);
+        LLVMDisposeModule(modRef);
         m_ee = nullptr;
         LLVMContextDispose(m_ctx);
         m_ctx = nullptr;
         return false;
     }
 
-    m_mod = m; // engine owns it; keep a non-owning ref for symbol lookups
+    m_mod = modRef; // engine owns it; keep a non-owning ref for symbol lookups
 
     return true;
 }

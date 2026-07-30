@@ -34,12 +34,13 @@ void Lexer::SkipWhitespaceAndComments()
 {
     while (m_pos < m_source.size())
     {
-        char c = m_source[m_pos];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v')
+        char character = m_source[m_pos];
+        if (character == ' ' || character == '\t' || character == '\r' || character == '\n' || character == '\f' ||
+            character == '\v')
         {
             ++m_pos;
         }
-        else if (c == '/' && Peek(1) == '/')
+        else if (character == '/' && Peek(1) == '/')
         {
             // line comment
             while (m_pos < m_source.size() && m_source[m_pos] != '\n')
@@ -47,7 +48,7 @@ void Lexer::SkipWhitespaceAndComments()
                 ++m_pos;
             }
         }
-        else if (c == '/' && Peek(1) == '*')
+        else if (character == '/' && Peek(1) == '*')
         {
             // block comment (HLSL nests block comments)
             int depth = 1;
@@ -88,9 +89,9 @@ Token Lexer::NextToken()
     if (m_hasPeek)
     {
         m_hasPeek = false;
-        Token t = m_peeked;
+        Token token = m_peeked;
         m_peeked = {};
-        return t;
+        return token;
     }
 
     return LexToken();
@@ -114,29 +115,33 @@ Token Lexer::LexToken()
     std::size_t start = m_pos;
     if (m_pos >= m_source.size())
     {
-        return {TokKind::Eof, {.start = static_cast<std::uint32_t>(m_pos), .length = 0}};
+        return {TokKind::Eof,
+                {
+                    .start = static_cast<std::uint32_t>(m_pos),
+                    .length = 0,
+                }};
     }
 
-    char c = m_source[m_pos];
+    char character = m_source[m_pos];
 
-    if (IsIdentStart(c))
+    if (IsIdentStart(character))
     {
         return LexIdentOrKeyword();
     }
 
-    if (IsDigit(c))
+    if (IsDigit(character))
     {
         return LexNumber();
     }
 
-    if (c == '.' && IsDigit(Peek(1)))
+    if (character == '.' && IsDigit(Peek(1)))
     {
         return LexNumber(); // leading-dot float
     }
 
     // Punctuation / operators
     ++m_pos;
-    switch (c)
+    switch (character)
     {
     case '(':
         return Make(TokKind::LParen, start);
@@ -269,7 +274,7 @@ Token Lexer::LexToken()
 
         return Make(TokKind::Gt, start);
     default:
-        m_diag.Error({static_cast<std::uint32_t>(start), 1}, std::string("unexpected character '") + c + "'");
+        m_diag.Error({static_cast<std::uint32_t>(start), 1}, std::string("unexpected character '") + character + "'");
         return Make(TokKind::Unknown, start);
     }
 }
@@ -284,15 +289,15 @@ Token Lexer::LexIdentOrKeyword()
 
     std::string_view text(m_source.data() + start, m_pos - start);
 
-    TokKind kw = ClassifyKeyword(text);
-    if (kw == TokKind::KwTrue || kw == TokKind::KwFalse)
+    TokKind keyword = ClassifyKeyword(text);
+    if (keyword == TokKind::KwTrue || keyword == TokKind::KwFalse)
     {
         return Make(TokKind::BoolLit, start);
     }
 
-    if (kw != TokKind::Ident)
+    if (keyword != TokKind::Ident)
     {
-        return Make(kw, start);
+        return Make(keyword, start);
     }
 
     return Make(TokKind::Ident, start);

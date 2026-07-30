@@ -30,11 +30,11 @@ std::string DiagnosticEngine::Format(const SourceManager& src) const
     {
         char line[160];
         LineCol lc = src.LineCol(d.range.start);
-        int n = std::snprintf(line, sizeof(line), "%s(%u,%u): %s: ", std::string(src.Name()).c_str(), lc.line,
-                              lc.column, SeverityName(d.severity));
-        if (n > 0)
+        int count = std::snprintf(line, sizeof(line), "%s(%u,%u): %s: ", std::string(src.Name()).c_str(), lc.line,
+                                  lc.column, SeverityName(d.severity));
+        if (count > 0)
         {
-            out.append(line, static_cast<std::size_t>(n));
+            out.append(line, static_cast<std::size_t>(count));
         }
 
         out.append(d.message);

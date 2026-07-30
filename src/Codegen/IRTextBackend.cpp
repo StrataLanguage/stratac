@@ -240,14 +240,20 @@ class IRTextImpl
         {
             if (bp[i])
             {
-                m_symbols[f.params[i]->name] = {.type = ptypes[i], .ptr = m_paramRegs[i]};
+                m_symbols[f.params[i]->name] = {
+                    .type = ptypes[i],
+                    .ptr = m_paramRegs[i],
+                };
             }
             else
             {
                 std::string slot = NewReg();
                 m_body << "  " << slot << " = alloca " << ptypes[i].ir << "\n";
                 m_body << "  store " << ptypes[i].ir << " " << m_paramRegs[i] << ", ptr " << slot << "\n";
-                m_symbols[f.params[i]->name] = {.type = ptypes[i], .ptr = slot};
+                m_symbols[f.params[i]->name] = {
+                    .type = ptypes[i],
+                    .ptr = slot,
+                };
             }
         }
 
@@ -293,67 +299,70 @@ class IRTextImpl
 
     // Coerces an evaluated value to a target scalar type when they differ by
     // int<->float. Returns the (possibly new) value reference.
-    Eval Coerce(Eval ev, const detail::MappedType& target)
+    Eval Coerce(Eval eval, const detail::MappedType& target)
     {
-        if (ev.type.ir == target.ir || target.isVoid)
+        if (eval.type.ir == target.ir || target.isVoid)
         {
-            return ev;
+            return eval;
         }
 
-        if (target.IsVector() || ev.type.IsVector())
+        if (target.IsVector() || eval.type.IsVector())
         {
-            return ev; // WIP
+            return eval; // WIP
         }
 
         std::string r = NewReg();
-        if (!ev.type.isFloat && target.isFloat)
+        if (!eval.type.isFloat && target.isFloat)
         {
-            m_body << "  " << r << " = " << (ev.type.isUnsigned ? "uitofp " : "sitofp ") << ev.type.ir << " " << ev.val
-                   << " to " << target.ir << "\n";
+            m_body << "  " << r << " = " << (eval.type.isUnsigned ? "uitofp " : "sitofp ") << eval.type.ir << " "
+                   << eval.val << " to " << target.ir << "\n";
         }
-        else if (ev.type.isFloat && !target.isFloat)
+        else if (eval.type.isFloat && !target.isFloat)
         {
-            m_body << "  " << r << " = " << (target.isUnsigned ? "fptoui " : "fptosi ") << ev.type.ir << " " << ev.val
-                   << " to " << target.ir << "\n";
+            m_body << "  " << r << " = " << (target.isUnsigned ? "fptoui " : "fptosi ") << eval.type.ir << " "
+                   << eval.val << " to " << target.ir << "\n";
         }
         else
         {
-            return ev; // best effort (e.g. width changes not handled yet)
+            return eval; // best effort (e.g. width changes not handled yet)
         }
 
-        return {.type = target, .val = r};
+        return {
+            .type = target,
+            .val = r,
+        };
     }
 
-    void EmitStmt(Node* n)
+    void EmitStmt(Node* node)
     {
-        if (!n)
+        if (!node)
         {
             return;
         }
 
-        switch (n->kind)
+        switch (node->kind)
         {
         case NodeKind::Block:
-            for (auto& s : static_cast<Block*>(n)->statements)
+            for (auto& s : static_cast<Block*>(node)->statements)
             {
                 EmitStmt(s.get());
             }
 
             return;
         case NodeKind::ExprStmt:
-            if (auto* e = static_cast<ExprStmt*>(n)->expr.get())
+            if (auto* expr = static_cast<ExprStmt*>(node)->expr.get())
             {
-                (void)EmitExpr(e);
+                (void)EmitExpr(expr);
             }
 
             return;
         case NodeKind::Return:
         {
-            auto* r = static_cast<ReturnStmt*>(n);
+            auto* r = static_cast<ReturnStmt*>(node);
             if (r->value)
             {
-                Eval v = Coerce(EmitExpr(r->value.get()), m_retType);
-                m_body << "  ret " << m_retType.ir << " " << v.val << "\n";
+                Eval value = Coerce(EmitExpr(r->value.get()), m_retType);
+                m_body << "  ret " << m_retType.ir << " " << value.val << "\n";
             }
             else
             {
@@ -366,33 +375,36 @@ class IRTextImpl
 
         case NodeKind::VarDecl:
         {
-            auto* vd = static_cast<VarDeclStmt*>(n);
-            auto ty = MappedOr(vd->type, "ptr");
+            auto* varDecl = static_cast<VarDeclStmt*>(node);
+            auto type = MappedOr(varDecl->type, "ptr");
             std::string slot = NewReg();
-            m_body << "  " << slot << " = alloca " << ty.ir << "\n";
-            if (vd->init)
+            m_body << "  " << slot << " = alloca " << type.ir << "\n";
+            if (varDecl->init)
             {
-                Eval v = Coerce(EmitExpr(vd->init.get()), ty);
-                m_body << "  store " << ty.ir << " " << v.val << ", ptr " << slot << "\n";
+                Eval value = Coerce(EmitExpr(varDecl->init.get()), type);
+                m_body << "  store " << type.ir << " " << value.val << ", ptr " << slot << "\n";
             }
             else
             {
                 // zero-init by default (scalars, structs, vectors).
-                m_body << "  store " << ty.ir << " zeroinitializer, ptr " << slot << "\n";
+                m_body << "  store " << type.ir << " zeroinitializer, ptr " << slot << "\n";
             }
 
-            m_symbols[vd->name] = {.type = ty, .ptr = slot};
+            m_symbols[varDecl->name] = {
+                .type = type,
+                .ptr = slot,
+            };
             return;
         }
 
         case NodeKind::If:
-            EmitIf(static_cast<IfStmt*>(n));
+            EmitIf(static_cast<IfStmt*>(node));
             return;
         case NodeKind::While:
-            EmitWhile(static_cast<WhileStmt*>(n));
+            EmitWhile(static_cast<WhileStmt*>(node));
             return;
         case NodeKind::For:
-            EmitFor(static_cast<ForStmt*>(n));
+            EmitFor(static_cast<ForStmt*>(node));
             return;
         case NodeKind::Break:
             if (!m_loops.empty())
@@ -409,36 +421,36 @@ class IRTextImpl
 
             return;
         default:
-            (void)EmitExpr(n); // expression-shaped statement
+            (void)EmitExpr(node); // expression-shaped statement
             return;
         }
     }
 
-    void EmitIf(IfStmt* n)
+    void EmitIf(IfStmt* node)
     {
-        Eval cond = EmitExpr(n->condition.get());
+        Eval cond = EmitExpr(node->condition.get());
         std::string thenL = NewLabel();
         std::string elseL = NewLabel();
         std::string endL = NewLabel();
-        bool hasElse = n->elseBranch != nullptr;
+        bool hasElse = node->elseBranch != nullptr;
         m_body << "  br i1 " << cond.val << ", label %" << thenL << ", label %" << (hasElse ? elseL : endL) << "\n";
         m_terminated = true;
 
         EmitLabel(thenL);
-        EmitStmt(n->thenBranch.get());
+        EmitStmt(node->thenBranch.get());
         EmitBr(endL);
 
         if (hasElse)
         {
             EmitLabel(elseL);
-            EmitStmt(n->elseBranch.get());
+            EmitStmt(node->elseBranch.get());
             EmitBr(endL);
         }
 
         EmitLabel(endL);
     }
 
-    void EmitWhile(WhileStmt* n)
+    void EmitWhile(WhileStmt* node)
     {
         std::string condL = NewLabel();
         std::string bodyL = NewLabel();
@@ -446,22 +458,25 @@ class IRTextImpl
         m_body << "  br label %" << condL << "\n";
         m_terminated = true;
         EmitLabel(condL);
-        Eval cond = EmitExpr(n->condition.get());
+        Eval cond = EmitExpr(node->condition.get());
         m_body << "  br i1 " << cond.val << ", label %" << bodyL << ", label %" << endL << "\n";
         m_terminated = true;
         EmitLabel(bodyL);
-        m_loops.push_back({.cont = condL, .end = endL});
-        EmitStmt(n->body.get());
+        m_loops.push_back({
+            .cont = condL,
+            .end = endL,
+        });
+        EmitStmt(node->body.get());
         m_loops.pop_back();
         EmitBr(condL);
         EmitLabel(endL);
     }
 
-    void EmitFor(ForStmt* n)
+    void EmitFor(ForStmt* node)
     {
-        if (n->init)
+        if (node->init)
         {
-            EmitStmt(n->init.get()); // var decl or expression
+            EmitStmt(node->init.get()); // var decl or expression
         }
 
         std::string condL = NewLabel();
@@ -470,9 +485,9 @@ class IRTextImpl
         std::string endL = NewLabel();
         EmitBr(condL);
         EmitLabel(condL);
-        if (n->condition)
+        if (node->condition)
         {
-            Eval cond = EmitExpr(n->condition.get());
+            Eval cond = EmitExpr(node->condition.get());
             m_body << "  br i1 " << cond.val << ", label %" << bodyL << ", label %" << endL << "\n";
         }
         else
@@ -482,204 +497,297 @@ class IRTextImpl
 
         m_terminated = true;
         EmitLabel(bodyL);
-        m_loops.push_back({.cont = updL, .end = endL}); // continue runs the update
-        EmitStmt(n->body.get());
+        m_loops.push_back({
+            .cont = updL,
+            .end = endL,
+        }); // continue runs the update
+        EmitStmt(node->body.get());
         m_loops.pop_back();
         EmitBr(updL);
         EmitLabel(updL);
-        if (n->update)
+        if (node->update)
         {
-            (void)EmitExpr(n->update.get());
+            (void)EmitExpr(node->update.get());
         }
 
         EmitBr(condL);
         EmitLabel(endL);
     }
 
-    Eval EmitExpr(Node* n)
+    Eval EmitExpr(Node* node)
     {
-        if (!n)
+        if (!node)
         {
-            return {.type = MappedOr({.name = "int"}, "i32"), .val = "0"};
+            return {
+                .type = MappedOr({.name = "int"}, "i32"),
+                .val = "0",
+            };
         }
 
-        switch (n->kind)
+        switch (node->kind)
         {
         case NodeKind::IntLiteral:
         {
-            auto* l = static_cast<IntLiteral*>(n);
-            detail::MappedType t = detail::MapType({.name = l->isUnsigned ? "uint" : "int"});
-            return {.type = t, .val = std::to_string(l->value)};
+            auto* l = static_cast<IntLiteral*>(node);
+            detail::MappedType type = detail::MapType({.name = l->isUnsigned ? "uint" : "int"});
+            return {
+                .type = type,
+                .val = std::to_string(l->value),
+            };
         }
 
         case NodeKind::FloatLiteral:
         {
-            auto* l = static_cast<FloatLiteral*>(n);
-            return {.type = detail::MapType({.name = "float"}), .val = FloatConst(l->value)};
+            auto* l = static_cast<FloatLiteral*>(node);
+            return {
+                .type = detail::MapType({.name = "float"}),
+                .val = FloatConst(l->value),
+            };
         }
 
         case NodeKind::BoolLiteral:
-            return {.type = detail::MapType({.name = "bool"}), .val = static_cast<BoolLiteral*>(n)->value ? "1" : "0"};
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = static_cast<BoolLiteral*>(node)->value ? "1" : "0",
+            };
         case NodeKind::Ident:
-            return EmitIdent(static_cast<IdentExpr*>(n));
+            return EmitIdent(static_cast<IdentExpr*>(node));
         case NodeKind::Unary:
-            return EmitUnary(static_cast<UnaryExpr*>(n));
+            return EmitUnary(static_cast<UnaryExpr*>(node));
         case NodeKind::Binary:
-            return EmitBinary(static_cast<BinaryExpr*>(n));
+            return EmitBinary(static_cast<BinaryExpr*>(node));
         case NodeKind::Call:
-            return EmitCall(static_cast<CallExpr*>(n));
+            return EmitCall(static_cast<CallExpr*>(node));
         case NodeKind::Assign:
-            return EmitAssign(static_cast<AssignExpr*>(n));
+            return EmitAssign(static_cast<AssignExpr*>(node));
         default:
             m_out << "; TODO: unsupported expression kind\n";
-            return {.type = detail::MapType({.name = "int"}), .val = "0"};
+            return {
+                .type = detail::MapType({.name = "int"}),
+                .val = "0",
+            };
         }
     }
 
-    Eval EmitIdent(IdentExpr* n)
+    Eval EmitIdent(IdentExpr* node)
     {
-        auto it = m_symbols.find(n->name);
-        if (it == m_symbols.end())
+        auto iterator = m_symbols.find(node->name);
+        if (iterator == m_symbols.end())
         {
-            m_out << "; TODO: unknown identifier '" << n->name << "'\n";
-            return {.type = detail::MapType({.name = "int"}), .val = "0"};
+            m_out << "; TODO: unknown identifier '" << node->name << "'\n";
+            return {
+                .type = detail::MapType({.name = "int"}),
+                .val = "0",
+            };
         }
 
         std::string r = NewReg();
-        m_body << "  " << r << " = load " << it->second.type.ir << ", ptr " << it->second.ptr << "\n";
-        return {.type = it->second.type, .val = r};
+        m_body << "  " << r << " = load " << iterator->second.type.ir << ", ptr " << iterator->second.ptr << "\n";
+        return {
+            .type = iterator->second.type,
+            .val = r,
+        };
     }
 
-    Eval EmitUnary(UnaryExpr* n)
+    Eval EmitUnary(UnaryExpr* node)
     {
-        Eval e = EmitExpr(n->operand.get());
+        Eval expr = EmitExpr(node->operand.get());
         std::string r = NewReg();
-        switch (n->op)
+        switch (node->op)
         {
         case UnaryOp::Pos:
-            return e;
+            return expr;
         case UnaryOp::Neg:
-            if (e.type.isFloat)
+            if (expr.type.isFloat)
             {
-                m_body << "  " << r << " = fneg " << e.type.ir << " " << e.val << "\n";
+                m_body << "  " << r << " = fneg " << expr.type.ir << " " << expr.val << "\n";
             }
             else
             {
-                m_body << "  " << r << " = sub " << e.type.ir << " 0, " << e.val << "\n";
+                m_body << "  " << r << " = sub " << expr.type.ir << " 0, " << expr.val << "\n";
             }
 
-            return {.type = e.type, .val = r};
+            return {
+                .type = expr.type,
+                .val = r,
+            };
         case UnaryOp::Not:
-            m_body << "  " << r << " = xor i1 " << e.val << ", true\n";
-            return {.type = detail::MapType({.name = "bool"}), .val = r};
+            m_body << "  " << r << " = xor i1 " << expr.val << ", true\n";
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = r,
+            };
         case UnaryOp::BitNot:
-            m_body << "  " << r << " = xor " << e.type.ir << " " << e.val << ", -1\n";
-            return {.type = e.type, .val = r};
+            m_body << "  " << r << " = xor " << expr.type.ir << " " << expr.val << ", -1\n";
+            return {
+                .type = expr.type,
+                .val = r,
+            };
         }
 
-        return e;
+        return expr;
     }
 
-    Eval EmitBinary(BinaryExpr* n)
+    Eval EmitBinary(BinaryExpr* node)
     {
-        Eval l = EmitExpr(n->lhs.get());
-        Eval r = EmitExpr(n->rhs.get());
-        detail::MappedType t = l.type;
+        Eval left = EmitExpr(node->lhs.get());
+        Eval right = EmitExpr(node->rhs.get());
+        detail::MappedType type = left.type;
         std::string out = NewReg();
 
-        if (n->op == BinaryOp::LogicAnd || n->op == BinaryOp::LogicOr)
+        if (node->op == BinaryOp::LogicAnd || node->op == BinaryOp::LogicOr)
         {
             // Non-short-circuit on i1 for now.
-            const char* op = (n->op == BinaryOp::LogicAnd) ? "and" : "or";
-            m_body << "  " << out << " = " << op << " i1 " << l.val << ", " << r.val << "\n";
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            const char* op = (node->op == BinaryOp::LogicAnd) ? "and" : "or";
+            m_body << "  " << out << " = " << op << " i1 " << left.val << ", " << right.val << "\n";
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         }
 
-        bool flt = t.isFloat;
+        bool flt = type.isFloat;
         auto icmp = [&](const char* pred)
         {
-            m_body << "  " << out << " = icmp " << pred << " " << t.ir << " " << l.val << ", " << r.val << "\n";
+            m_body << "  " << out << " = icmp " << pred << " " << type.ir << " " << left.val << ", " << right.val
+                   << "\n";
         };
         auto fcmp = [&](const char* pred)
         {
-            m_body << "  " << out << " = fcmp " << pred << " " << t.ir << " " << l.val << ", " << r.val << "\n";
+            m_body << "  " << out << " = fcmp " << pred << " " << type.ir << " " << left.val << ", " << right.val
+                   << "\n";
         };
 
-        switch (n->op)
+        switch (node->op)
         {
         case BinaryOp::Add:
-            m_body << "  " << out << " = " << (flt ? "fadd " : "add ") << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = " << (flt ? "fadd " : "add ") << type.ir << " " << left.val << ", "
+                   << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::Sub:
-            m_body << "  " << out << " = " << (flt ? "fsub " : "sub ") << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = " << (flt ? "fsub " : "sub ") << type.ir << " " << left.val << ", "
+                   << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::Mul:
-            m_body << "  " << out << " = " << (flt ? "fmul " : "mul ") << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = " << (flt ? "fmul " : "mul ") << type.ir << " " << left.val << ", "
+                   << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::Div:
-            m_body << "  " << out << " = " << (flt ? "fdiv " : (t.isUnsigned ? "udiv " : "sdiv ")) << t.ir << " "
-                   << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = " << (flt ? "fdiv " : (type.isUnsigned ? "udiv " : "sdiv ")) << type.ir << " "
+                   << left.val << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::Mod:
-            m_body << "  " << out << " = " << (flt ? "frem " : (t.isUnsigned ? "urem " : "srem ")) << t.ir << " "
-                   << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = " << (flt ? "frem " : (type.isUnsigned ? "urem " : "srem ")) << type.ir << " "
+                   << left.val << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::BitAnd:
-            m_body << "  " << out << " = and " << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = and " << type.ir << " " << left.val << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::BitOr:
-            m_body << "  " << out << " = or " << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = or " << type.ir << " " << left.val << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::BitXor:
-            m_body << "  " << out << " = xor " << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = xor " << type.ir << " " << left.val << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::Shl:
-            m_body << "  " << out << " = shl " << t.ir << " " << l.val << ", " << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = shl " << type.ir << " " << left.val << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::Shr:
-            m_body << "  " << out << " = " << (t.isUnsigned ? "lshr " : "ashr ") << t.ir << " " << l.val << ", "
-                   << r.val << "\n";
-            return {.type = t, .val = out};
+            m_body << "  " << out << " = " << (type.isUnsigned ? "lshr " : "ashr ") << type.ir << " " << left.val
+                   << ", " << right.val << "\n";
+            return {
+                .type = type,
+                .val = out,
+            };
         case BinaryOp::EqEq:
             flt ? fcmp("oeq") : icmp("eq");
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         case BinaryOp::NotEq:
             flt ? fcmp("one") : icmp("ne");
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         case BinaryOp::Lt:
-            flt ? fcmp("olt") : icmp(t.isUnsigned ? "ult" : "slt");
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            flt ? fcmp("olt") : icmp(type.isUnsigned ? "ult" : "slt");
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         case BinaryOp::LtEq:
-            flt ? fcmp("ole") : icmp(t.isUnsigned ? "ule" : "sle");
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            flt ? fcmp("ole") : icmp(type.isUnsigned ? "ule" : "sle");
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         case BinaryOp::Gt:
-            flt ? fcmp("ogt") : icmp(t.isUnsigned ? "ugt" : "sgt");
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            flt ? fcmp("ogt") : icmp(type.isUnsigned ? "ugt" : "sgt");
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         case BinaryOp::GtEq:
-            flt ? fcmp("oge") : icmp(t.isUnsigned ? "uge" : "sge");
-            return {.type = detail::MapType({.name = "bool"}), .val = out};
+            flt ? fcmp("oge") : icmp(type.isUnsigned ? "uge" : "sge");
+            return {
+                .type = detail::MapType({.name = "bool"}),
+                .val = out,
+            };
         default:
-            return {.type = t, .val = r.val};
+            return {
+                .type = type,
+                .val = right.val,
+            };
         }
     }
 
-    Eval EmitAssign(AssignExpr* n)
+    Eval EmitAssign(AssignExpr* node)
     {
-        Eval v = EmitExpr(n->value.get());
-        if (n->target->kind == NodeKind::Ident)
+        Eval value = EmitExpr(node->value.get());
+        if (node->target->kind == NodeKind::Ident)
         {
-            auto* id = static_cast<IdentExpr*>(n->target.get());
-            auto it = m_symbols.find(id->name);
-            if (it != m_symbols.end())
+            auto* identifier = static_cast<IdentExpr*>(node->target.get());
+            auto iterator = m_symbols.find(identifier->name);
+            if (iterator != m_symbols.end())
             {
-                Eval stored = Coerce(v, it->second.type);
-                m_body << "  store " << it->second.type.ir << " " << stored.val << ", ptr " << it->second.ptr << "\n";
+                Eval stored = Coerce(value, iterator->second.type);
+                m_body << "  store " << iterator->second.type.ir << " " << stored.val << ", ptr "
+                       << iterator->second.ptr << "\n";
                 return stored;
             }
         }
 
         m_out << "; TODO: assignment to non-variable lvalue\n";
-        return v;
+        return value;
     }
 
     // Address to pass for an out/inout argument: the lvalue's slot if there is
@@ -688,34 +796,34 @@ class IRTextImpl
     {
         if (arg && arg->kind == NodeKind::Ident)
         {
-            auto it = m_symbols.find(static_cast<IdentExpr*>(arg)->name);
-            if (it != m_symbols.end())
+            auto iterator = m_symbols.find(static_cast<IdentExpr*>(arg)->name);
+            if (iterator != m_symbols.end())
             {
-                return it->second.ptr;
+                return iterator->second.ptr;
             }
         }
 
-        Eval v = EmitExpr(arg);
+        Eval value = EmitExpr(arg);
         std::string slot = NewReg();
-        m_body << "  " << slot << " = alloca " << v.type.ir << "\n";
-        m_body << "  store " << v.type.ir << " " << v.val << ", ptr " << slot << "\n";
+        m_body << "  " << slot << " = alloca " << value.type.ir << "\n";
+        m_body << "  store " << value.type.ir << " " << value.val << ", ptr " << slot << "\n";
         return slot;
     }
 
-    Eval EmitCall(CallExpr* n)
+    Eval EmitCall(CallExpr* node)
     {
         // Return type of the callee (resolved by overload resolution). Falls
         // back to i32 when unknown (e.g. an unresolved host call).
-        detail::MappedType ret = detail::MapType({.name = "int"});
-        auto rit = m_retOf.find(n->callee);
+        detail::MappedType returnType = detail::MapType({.name = "int"});
+        auto rit = m_retOf.find(node->callee);
         if (rit != m_retOf.end())
         {
-            ret = rit->second;
+            returnType = rit->second;
         }
 
-        const auto& bp = m_paramByPtrOf[n->callee];
+        const auto& bp = m_paramByPtrOf[node->callee];
         std::ostringstream args;
-        for (std::size_t i = 0; i < n->args.size(); ++i)
+        for (std::size_t i = 0; i < node->args.size(); ++i)
         {
             bool passAddr = i < bp.size() && bp[i];
             if (i)
@@ -725,18 +833,21 @@ class IRTextImpl
 
             if (passAddr)
             {
-                args << "ptr " << EmitArgAddress(n->args[i].get());
+                args << "ptr " << EmitArgAddress(node->args[i].get());
             }
             else
             {
-                Eval a = EmitExpr(n->args[i].get());
+                Eval a = EmitExpr(node->args[i].get());
                 args << a.type.ir << " " << a.val;
             }
         }
 
         std::string r = NewReg();
-        m_body << "  " << r << " = call " << ret.ir << " @" << n->callee << "(" << args.str() << ")\n";
-        return {.type = ret, .val = r};
+        m_body << "  " << r << " = call " << returnType.ir << " @" << node->callee << "(" << args.str() << ")\n";
+        return {
+            .type = returnType,
+            .val = r,
+        };
     }
 };
 

@@ -150,13 +150,13 @@ class Resolver
             return;
         case NodeKind::VarDecl:
         {
-            auto* vd = static_cast<VarDeclStmt*>(n);
-            if (vd->init)
+            auto* varDecl = static_cast<VarDeclStmt*>(n);
+            if (varDecl->init)
             {
-                ResolveExpr(vd->init.get(), scope);
+                ResolveExpr(varDecl->init.get(), scope);
             }
 
-            scope[vd->name] = vd->type.name;
+            scope[varDecl->name] = varDecl->type.name;
             return;
         }
 
@@ -296,8 +296,8 @@ class Resolver
 
     void ResolveCall(CallExpr& c, VarScope& scope)
     {
-        auto it = m_byName.find(c.callee);
-        if (it == m_byName.end() || it->second.empty())
+        auto iterator = m_byName.find(c.callee);
+        if (iterator == m_byName.end() || iterator->second.empty())
         {
             return; // unknown -> codegen reports
         }
@@ -312,7 +312,7 @@ class Resolver
         FunctionDecl* best = nullptr;
         int bestScore = INT_MAX;
         bool ambiguous = false;
-        for (auto* f : it->second)
+        for (auto* f : iterator->second)
         {
             if (f->params.size() != c.args.size())
             {
@@ -323,14 +323,14 @@ class Resolver
             bool viable = true;
             for (std::size_t i = 0; i < c.args.size(); ++i)
             {
-                int m = MatchRank(argTypes[i], f->params[i]->type.name);
-                if (m < 0)
+                int match = MatchRank(argTypes[i], f->params[i]->type.name);
+                if (match < 0)
                 {
                     viable = false;
                     break;
                 }
 
-                score += m;
+                score += match;
             }
 
             if (!viable)
@@ -404,8 +404,8 @@ class Resolver
             return "bool";
         case NodeKind::Ident:
         {
-            auto it = scope.find(static_cast<IdentExpr*>(n)->name);
-            return it == scope.end() ? "" : it->second;
+            auto iterator = scope.find(static_cast<IdentExpr*>(n)->name);
+            return iterator == scope.end() ? "" : iterator->second;
         }
 
         case NodeKind::Unary:
@@ -469,8 +469,8 @@ class Resolver
                 return "";
             }
 
-            const auto* st = m_registry.Find(baseName);
-            if (!st)
+            const auto* structType = m_registry.Find(baseName);
+            if (!structType)
             {
                 return "";
             }
@@ -481,7 +481,7 @@ class Resolver
                 return "";
             }
 
-            return st->fields[static_cast<std::size_t>(idx)].type.name;
+            return structType->fields[static_cast<std::size_t>(idx)].type.name;
         }
 
         case NodeKind::Call:

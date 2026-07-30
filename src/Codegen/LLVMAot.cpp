@@ -40,23 +40,24 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
 
     char* triple = LLVMGetDefaultTargetTriple();
     LLVMTargetRef target = nullptr;
-    char* err = nullptr;
-    if (LLVMGetTargetFromTriple(triple, &target, &err))
+    char* error = nullptr;
+    if (LLVMGetTargetFromTriple(triple, &target, &error))
     {
-        errorMessage = std::string("unknown target triple '") + triple + "': " + (err ? err : "(no message)");
-        if (err)
+        errorMessage = std::string("unknown target triple '") + triple + "': " + (error ? error : "(no message)");
+        if (error)
         {
-            LLVMDisposeMessage(err);
+            LLVMDisposeMessage(error);
         }
 
         LLVMDisposeMessage(triple);
         return false;
     }
 
-    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, "" /* host CPU */, "" /* features */,
-                                                      LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
+    LLVMTargetMachineRef targetMachine =
+        LLVMCreateTargetMachine(target, triple, "" /* host CPU */, "" /* features */, LLVMCodeGenLevelDefault,
+                                LLVMRelocDefault, LLVMCodeModelDefault);
     LLVMDisposeMessage(triple);
-    if (!tm)
+    if (!targetMachine)
     {
         errorMessage = "could not create target machine";
         return false;
@@ -64,7 +65,7 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
 
     LLVMCodeGenFileType kind = assembly ? LLVMAssemblyFile : LLVMObjectFile;
     char* emitErr = nullptr;
-    bool ok = !LLVMTargetMachineEmitToFile(tm, bm.mod, path.c_str(), kind, &emitErr);
+    bool ok = !LLVMTargetMachineEmitToFile(targetMachine, bm.mod, path.c_str(), kind, &emitErr);
     if (!ok)
     {
         errorMessage = std::string("emission failed: ") + (emitErr ? emitErr : "(no message)");
@@ -75,7 +76,7 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
         LLVMDisposeMessage(emitErr);
     }
 
-    LLVMDisposeTargetMachine(tm);
+    LLVMDisposeTargetMachine(targetMachine);
     return ok;
 }
 

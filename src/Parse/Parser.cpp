@@ -17,7 +17,10 @@ SourceRange SpanFrom(const Token& begin, const Token& end) noexcept
 {
     std::uint32_t s = begin.range.start;
     std::uint32_t e = end.range.End();
-    return {.start = s, .length = static_cast<std::uint16_t>(e > s ? e - s : 0)};
+    return {
+        .start = s,
+        .length = static_cast<std::uint16_t>(e > s ? e - s : 0),
+    };
 }
 
 bool BinaryInfo(TokKind k, int& prec, BinaryOp& op) noexcept
@@ -128,9 +131,9 @@ bool IsAssignOp(TokKind k) noexcept
            k == TokKind::SlashEq || k == TokKind::PercentEq;
 }
 
-std::string ToString(std::string_view sv)
+std::string ToString(std::string_view stringView)
 {
-    return std::string(sv);
+    return std::string(stringView);
 }
 
 } // namespace
@@ -167,9 +170,9 @@ Token Parser::Expect(TokKind k, std::string_view what)
 {
     if (m_cur.Is(k))
     {
-        Token t = m_cur;
+        Token token = m_cur;
         Advance();
-        return t;
+        return token;
     }
 
     std::string msg = "expected ";
@@ -236,7 +239,7 @@ bool Parser::TryParseType(TypeName& out)
         Advance();
     }
 
-    SourceRange r = m_cur.range;
+    SourceRange range = m_cur.range;
     std::string name;
     switch (m_cur.kind)
     {
@@ -278,9 +281,12 @@ bool Parser::TryParseType(TypeName& out)
 
     Advance();
     out.name = std::move(name);
-    out.range = {.start = constRange.start, .length = static_cast<std::uint16_t>(m_cur.range.start - constRange.start)};
+    out.range = {
+        .start = constRange.start,
+        .length = static_cast<std::uint16_t>(m_cur.range.start - constRange.start),
+    };
     out.isConst = isConst;
-    (void)r;
+    (void)range;
     return true;
 }
 
@@ -297,10 +303,10 @@ std::unique_ptr<Module> Parser::ParseModule()
 
         if (m_cur.Is(TokKind::KwHandle))
         {
-            auto h = ParseHandleDecl();
-            if (h)
+            auto handleDecl = ParseHandleDecl();
+            if (handleDecl)
             {
-                mod->handles.push_back(std::move(h));
+                mod->handles.push_back(std::move(handleDecl));
             }
             else
             {
@@ -312,10 +318,10 @@ std::unique_ptr<Module> Parser::ParseModule()
 
         if (m_cur.Is(TokKind::KwStruct))
         {
-            auto s = ParseStructDecl();
-            if (s)
+            auto structDecl = ParseStructDecl();
+            if (structDecl)
             {
-                mod->structs.push_back(std::move(s));
+                mod->structs.push_back(std::move(structDecl));
             }
             else
             {
@@ -340,10 +346,10 @@ std::unique_ptr<Module> Parser::ParseModule()
             }
         }
 
-        auto fn = ParseFunction();
-        if (fn)
+        auto functionDecl = ParseFunction();
+        if (functionDecl)
         {
-            mod->functions.push_back(std::move(fn));
+            mod->functions.push_back(std::move(functionDecl));
         }
         else
         {
@@ -370,16 +376,16 @@ std::unique_ptr<HandleDecl> Parser::ParseHandleDecl()
 
     Token nameTok = m_cur;
     Advance();
-    auto h = std::make_unique<HandleDecl>(nameTok.range, ToString(IdentText(nameTok)));
+    auto handleDecl = std::make_unique<HandleDecl>(nameTok.range, ToString(IdentText(nameTok)));
     if (Consume(TokKind::LBrace))
     {
-        m_diag.Error(nameTok.range,
-                     "handle '" + h->name + "' cannot have a body (it is opaque; use 'struct' for a value type)");
+        m_diag.Error(nameTok.range, "handle '" + handleDecl->name +
+                                        "' cannot have a body (it is opaque; use 'struct' for a value type)");
         Synchronize();
     }
 
     Expect(TokKind::Semicolon, "';'");
-    return h;
+    return handleDecl;
 }
 
 std::unique_ptr<StructDecl> Parser::ParseStructDecl()
@@ -398,7 +404,7 @@ std::unique_ptr<StructDecl> Parser::ParseStructDecl()
 
     Token nameTok = m_cur;
     Advance();
-    auto s = std::make_unique<StructDecl>(nameTok.range, ToString(IdentText(nameTok)));
+    auto structDecl = std::make_unique<StructDecl>(nameTok.range, ToString(IdentText(nameTok)));
 
     if (Consume(TokKind::LBrace))
     {
@@ -419,7 +425,7 @@ std::unique_ptr<StructDecl> Parser::ParseStructDecl()
 
             std::string fname = ToString(IdentText(m_cur));
             Advance();
-            s->fields.push_back({std::move(ft), std::move(fname)});
+            structDecl->fields.push_back({std::move(ft), std::move(fname)});
             if (!Expect(TokKind::Semicolon, "';'").Is(TokKind::Semicolon))
             {
                 break;
@@ -430,20 +436,20 @@ std::unique_ptr<StructDecl> Parser::ParseStructDecl()
     }
     else
     {
-        m_diag.Error(nameTok.range,
-                     "struct '" + s->name + "' requires a body; use 'handle " + s->name + ";' for an opaque type");
+        m_diag.Error(nameTok.range, "struct '" + structDecl->name + "' requires a body; use 'handle " +
+                                        structDecl->name + ";' for an opaque type");
     }
 
     Expect(TokKind::Semicolon, "';'");
-    return s;
+    return structDecl;
 }
 
 std::unique_ptr<FunctionDecl> Parser::ParseFunction()
 {
     bool isExtern = Consume(TokKind::KwExtern);
 
-    TypeName ret;
-    if (!TryParseType(ret))
+    TypeName returnType;
+    if (!TryParseType(returnType))
     {
         if (!m_cur.Is(TokKind::Eof))
         {
@@ -461,13 +467,13 @@ std::unique_ptr<FunctionDecl> Parser::ParseFunction()
 
     Token nameTok = m_cur;
     Advance();
-    auto fn = std::make_unique<FunctionDecl>(SpanFrom(Token{TokKind::Ident, ret.range}, nameTok), ret,
-                                             ToString(IdentText(nameTok)));
-    fn->isExtern = isExtern;
+    auto functionDecl = std::make_unique<FunctionDecl>(SpanFrom(Token{TokKind::Ident, returnType.range}, nameTok),
+                                                       returnType, ToString(IdentText(nameTok)));
+    functionDecl->isExtern = isExtern;
 
     if (!Expect(TokKind::LParen, "'('").Is(TokKind::LParen))
     {
-        return fn;
+        return functionDecl;
     }
 
     if (!m_cur.Is(TokKind::RParen))
@@ -477,7 +483,7 @@ std::unique_ptr<FunctionDecl> Parser::ParseFunction()
             auto param = ParseParam();
             if (param)
             {
-                fn->params.push_back(std::move(param));
+                functionDecl->params.push_back(std::move(param));
             }
             else
             {
@@ -497,7 +503,7 @@ std::unique_ptr<FunctionDecl> Parser::ParseFunction()
 
     if (Consume(TokKind::Semicolon))
     {
-        return fn; // declaration (extern or forward)
+        return functionDecl; // declaration (extern or forward)
     }
 
     if (isExtern)
@@ -510,17 +516,17 @@ std::unique_ptr<FunctionDecl> Parser::ParseFunction()
             Synchronize();
         }
 
-        return fn;
+        return functionDecl;
     }
 
     if (!m_cur.Is(TokKind::LBrace))
     {
         m_diag.Error(m_cur.range, "expected function body '{...}' or ';'");
-        return fn;
+        return functionDecl;
     }
 
-    fn->body = ParseBlock();
-    return fn;
+    functionDecl->body = ParseBlock();
+    return functionDecl;
 }
 
 std::unique_ptr<ParamDecl> Parser::ParseParam()
@@ -555,8 +561,11 @@ std::unique_ptr<ParamDecl> Parser::ParseParam()
 
     Token nameTok = m_cur;
     Advance();
-    SourceRange r{.start = start.start, .length = static_cast<std::uint16_t>(nameTok.range.End() - start.start)};
-    return std::make_unique<ParamDecl>(r, mod, std::move(type), ToString(IdentText(nameTok)));
+    SourceRange range{
+        .start = start.start,
+        .length = static_cast<std::uint16_t>(nameTok.range.End() - start.start),
+    };
+    return std::make_unique<ParamDecl>(range, mod, std::move(type), ToString(IdentText(nameTok)));
 }
 
 NodePtr Parser::ParseBlock()
@@ -565,10 +574,10 @@ NodePtr Parser::ParseBlock()
     auto block = std::make_unique<Block>(lb.range);
     while (!m_cur.Is(TokKind::RBrace) && !m_cur.Is(TokKind::Eof))
     {
-        NodePtr s = ParseStatement();
-        if (s)
+        NodePtr stmt = ParseStatement();
+        if (stmt)
         {
-            block->statements.push_back(std::move(s));
+            block->statements.push_back(std::move(stmt));
         }
         else
         {
@@ -596,25 +605,25 @@ NodePtr Parser::ParseStatement()
         return ParseFor();
     case TokKind::KwBreak:
     {
-        Token t = m_cur;
+        Token token = m_cur;
         Advance();
         Expect(TokKind::Semicolon, "';'");
-        return std::make_unique<BreakStmt>(t.range);
+        return std::make_unique<BreakStmt>(token.range);
     }
 
     case TokKind::KwContinue:
     {
-        Token t = m_cur;
+        Token token = m_cur;
         Advance();
         Expect(TokKind::Semicolon, "';'");
-        return std::make_unique<ContinueStmt>(t.range);
+        return std::make_unique<ContinueStmt>(token.range);
     }
 
     case TokKind::Semicolon:
     {
-        Token t = m_cur;
+        Token token = m_cur;
         Advance(); // empty statement
-        return std::make_unique<ExprStmt>(t.range, nullptr);
+        return std::make_unique<ExprStmt>(token.range, nullptr);
     }
 
     default:
@@ -641,14 +650,14 @@ NodePtr Parser::ParseVarDeclOrExprStmt()
 
         Token nameTok = m_cur;
         Advance();
-        auto vd = std::make_unique<VarDeclStmt>(SpanFrom(start, nameTok), type, ToString(IdentText(nameTok)));
+        auto varDecl = std::make_unique<VarDeclStmt>(SpanFrom(start, nameTok), type, ToString(IdentText(nameTok)));
         if (Consume(TokKind::Assign))
         {
-            vd->init = ParseExpr();
+            varDecl->init = ParseExpr();
         }
 
         Expect(TokKind::Semicolon, "';'");
-        return vd;
+        return varDecl;
     }
 
     NodePtr e = ParseExpr();
@@ -663,9 +672,9 @@ NodePtr Parser::ParseVarDeclOrExprStmt()
 
 NodePtr Parser::ParseReturn()
 {
-    Token t = m_cur;
+    Token token = m_cur;
     Advance(); // 'return'
-    auto r = std::make_unique<ReturnStmt>(t.range);
+    auto r = std::make_unique<ReturnStmt>(token.range);
     if (!m_cur.Is(TokKind::Semicolon))
     {
         r->value = ParseExpr();
@@ -677,38 +686,38 @@ NodePtr Parser::ParseReturn()
 
 NodePtr Parser::ParseIf()
 {
-    Token t = m_cur;
+    Token token = m_cur;
     Advance(); // 'if'
     Expect(TokKind::LParen, "'('");
     NodePtr cond = ParseExpr();
     Expect(TokKind::RParen, "')'");
-    auto n = std::make_unique<IfStmt>(t.range);
-    n->condition = std::move(cond);
-    n->thenBranch = ParseStatement();
+    auto node = std::make_unique<IfStmt>(token.range);
+    node->condition = std::move(cond);
+    node->thenBranch = ParseStatement();
     if (Consume(TokKind::KwElse))
     {
-        n->elseBranch = ParseStatement();
+        node->elseBranch = ParseStatement();
     }
 
-    return n;
+    return node;
 }
 
 NodePtr Parser::ParseWhile()
 {
-    Token t = m_cur;
+    Token token = m_cur;
     Advance(); // 'while'
     Expect(TokKind::LParen, "'('");
     NodePtr cond = ParseExpr();
     Expect(TokKind::RParen, "')'");
-    auto n = std::make_unique<WhileStmt>(t.range);
-    n->condition = std::move(cond);
-    n->body = ParseStatement();
-    return n;
+    auto node = std::make_unique<WhileStmt>(token.range);
+    node->condition = std::move(cond);
+    node->body = ParseStatement();
+    return node;
 }
 
 NodePtr Parser::ParseFor()
 {
-    Token t = m_cur;
+    Token token = m_cur;
     Advance(); // 'for'
     if (!Expect(TokKind::LParen, "'('").Is(TokKind::LParen))
     {
@@ -735,13 +744,13 @@ NodePtr Parser::ParseFor()
 
             Token nameTok = m_cur;
             Advance();
-            auto vd = std::make_unique<VarDeclStmt>(SpanFrom(t, nameTok), type, ToString(IdentText(nameTok)));
+            auto varDecl = std::make_unique<VarDeclStmt>(SpanFrom(token, nameTok), type, ToString(IdentText(nameTok)));
             if (Consume(TokKind::Assign))
             {
-                vd->init = ParseExpr();
+                varDecl->init = ParseExpr();
             }
 
-            init = std::move(vd);
+            init = std::move(varDecl);
         }
         else
         {
@@ -767,12 +776,12 @@ NodePtr Parser::ParseFor()
 
     Expect(TokKind::RParen, "')'");
 
-    auto n = std::make_unique<ForStmt>(t.range);
-    n->init = std::move(init);
-    n->condition = std::move(cond);
-    n->update = std::move(update);
-    n->body = ParseStatement();
-    return n;
+    auto node = std::make_unique<ForStmt>(token.range);
+    node->init = std::move(init);
+    node->condition = std::move(cond);
+    node->update = std::move(update);
+    node->body = ParseStatement();
+    return node;
 }
 
 NodePtr Parser::ParseExpr()
@@ -842,7 +851,7 @@ NodePtr Parser::ParseUnary()
         return ParsePostfix();
     }
 
-    Token t = m_cur;
+    Token token = m_cur;
     Advance();
     NodePtr operand = ParseUnary();
     if (!operand)
@@ -850,7 +859,7 @@ NodePtr Parser::ParseUnary()
         return nullptr;
     }
 
-    return std::make_unique<UnaryExpr>(t.range, op, std::move(operand));
+    return std::make_unique<UnaryExpr>(token.range, op, std::move(operand));
 }
 
 NodePtr Parser::ParsePostfix()
@@ -876,54 +885,56 @@ NodePtr Parser::ParsePostfix()
 
 NodePtr Parser::ParsePrimary()
 {
-    Token t = m_cur;
+    Token token = m_cur;
     switch (m_cur.kind)
     {
     case TokKind::IntLit:
     {
         Advance();
-        auto sv = IdentText(t);
-        bool isUnsigned = !sv.empty() && (sv.back() == 'u' || sv.back() == 'U');
+        auto stringView = IdentText(token);
+        bool isUnsigned = !stringView.empty() && (stringView.back() == 'u' || stringView.back() == 'U');
         if (isUnsigned)
         {
-            sv.remove_suffix(1);
+            stringView.remove_suffix(1);
         }
 
         std::uint64_t val = 0;
         int base = 10;
-        if (sv.size() >= 2 && sv[0] == '0' && (sv[1] == 'x' || sv[1] == 'X'))
+        if (stringView.size() >= 2 && stringView[0] == '0' && (stringView[1] == 'x' || stringView[1] == 'X'))
         {
             base = 16;
         }
 
-        auto [p, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), val, base);
-        if (ec != std::errc())
+        auto [position, errorCode] =
+            std::from_chars(stringView.data(), stringView.data() + stringView.size(), val, base);
+        if (errorCode != std::errc())
         {
-            m_diag.Error(t.range, "invalid integer literal");
+            m_diag.Error(token.range, "invalid integer literal");
         }
 
-        return std::make_unique<IntLiteral>(t.range, val, isUnsigned);
+        return std::make_unique<IntLiteral>(token.range, val, isUnsigned);
     }
 
     case TokKind::FloatLit:
     {
         Advance();
-        auto sv = IdentText(t);
+        auto stringView = IdentText(token);
         // strip trailing f/h/F/H suffix
-        if (!sv.empty() && (sv.back() == 'f' || sv.back() == 'F' || sv.back() == 'h' || sv.back() == 'H'))
+        if (!stringView.empty() && (stringView.back() == 'f' || stringView.back() == 'F' || stringView.back() == 'h' ||
+                                    stringView.back() == 'H'))
         {
-            sv.remove_suffix(1);
+            stringView.remove_suffix(1);
         }
 
-        std::string tmp(sv);
+        std::string tmp(stringView);
         double val = std::strtod(tmp.c_str(), nullptr);
-        return std::make_unique<FloatLiteral>(t.range, val);
+        return std::make_unique<FloatLiteral>(token.range, val);
     }
 
     case TokKind::BoolLit:
     {
         Advance();
-        return std::make_unique<BoolLiteral>(t.range, IdentText(t) == "true");
+        return std::make_unique<BoolLiteral>(token.range, IdentText(token) == "true");
     }
 
     case TokKind::Ident:
@@ -931,7 +942,7 @@ NodePtr Parser::ParsePrimary()
         Advance();
         if (m_cur.Is(TokKind::LParen))
         {
-            auto call = std::make_unique<CallExpr>(t.range, ToString(IdentText(t)));
+            auto call = std::make_unique<CallExpr>(token.range, ToString(IdentText(token)));
             Advance(); // '('
             if (!m_cur.Is(TokKind::RParen))
             {
@@ -956,7 +967,7 @@ NodePtr Parser::ParsePrimary()
             return call;
         }
 
-        return std::make_unique<IdentExpr>(t.range, ToString(IdentText(t)));
+        return std::make_unique<IdentExpr>(token.range, ToString(IdentText(token)));
     }
 
     case TokKind::LParen:
@@ -968,8 +979,8 @@ NodePtr Parser::ParsePrimary()
     }
 
     default:
-        m_diag.Error(t.range,
-                     std::string("expected an expression but found '") + std::string(TokSpelling(t.kind)) + "'");
+        m_diag.Error(token.range,
+                     std::string("expected an expression but found '") + std::string(TokSpelling(token.kind)) + "'");
         return nullptr;
     }
 }

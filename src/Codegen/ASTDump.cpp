@@ -115,21 +115,21 @@ void Dump(Node* n, int indent, std::ostringstream& out)
     {
     case NodeKind::Module:
     {
-        auto* m = static_cast<Module*>(n);
-        out << "module " << m->name << "\n";
-        for (auto& s : m->structs)
+        auto* module = static_cast<Module*>(n);
+        out << "module " << module->name << "\n";
+        for (auto& s : module->structs)
         {
             Dump(s.get(), indent + 2, out);
         }
 
-        for (auto& h : m->handles)
+        for (auto& h : module->handles)
         {
             Dump(h.get(), indent + 2, out);
         }
 
-        for (auto& f : m->functions)
+        for (auto& func : module->functions)
         {
-            Dump(f.get(), indent + 2, out);
+            Dump(func.get(), indent + 2, out);
         }
 
         return;
@@ -137,19 +137,19 @@ void Dump(Node* n, int indent, std::ostringstream& out)
 
     case NodeKind::Handle:
     {
-        auto* h = static_cast<HandleDecl*>(n);
-        out << "handle " << h->name << "  ; opaque\n";
+        auto* handleDecl = static_cast<HandleDecl*>(n);
+        out << "handle " << handleDecl->name << "  ; opaque\n";
         return;
     }
 
     case NodeKind::Struct:
     {
-        auto* s = static_cast<StructDecl*>(n);
-        out << "struct " << s->name << " {\n";
-        for (const auto& f : s->fields)
+        auto* structDecl = static_cast<StructDecl*>(n);
+        out << "struct " << structDecl->name << " {\n";
+        for (const auto& field : structDecl->fields)
         {
             Pad(indent + 4, out);
-            out << f.type.name << " " << f.name << "\n";
+            out << field.type.name << " " << field.name << "\n";
         }
 
         Pad(indent + 2, out);
@@ -159,50 +159,50 @@ void Dump(Node* n, int indent, std::ostringstream& out)
 
     case NodeKind::Function:
     {
-        auto* f = static_cast<FunctionDecl*>(n);
+        auto* functionDecl = static_cast<FunctionDecl*>(n);
         out << "fn ";
-        if (f->isExtern)
+        if (functionDecl->isExtern)
         {
             out << "extern ";
         }
 
-        out << f->returnType.name << " " << f->name << "(";
-        for (std::size_t i = 0; i < f->params.size(); ++i)
+        out << functionDecl->returnType.name << " " << functionDecl->name << "(";
+        for (std::size_t i = 0; i < functionDecl->params.size(); ++i)
         {
             if (i)
             {
                 out << ", ";
             }
 
-            auto& p = f->params[i];
-            out << ParamModSpelling(p->mod);
-            if (p->mod != ParamMod::None)
+            auto& param = functionDecl->params[i];
+            out << ParamModSpelling(param->mod);
+            if (param->mod != ParamMod::None)
             {
                 out << " ";
             }
 
-            out << p->type.name << " " << p->name;
+            out << param->type.name << " " << param->name;
         }
 
         out << ")";
-        if (!f->body)
+        if (!functionDecl->body)
         {
             out << ";\n";
             return;
         }
 
         out << "\n";
-        Dump(f->body.get(), indent + 2, out);
+        Dump(functionDecl->body.get(), indent + 2, out);
         return;
     }
 
     case NodeKind::Block:
     {
-        auto* b = static_cast<Block*>(n);
+        auto* block = static_cast<Block*>(n);
         out << "{\n";
-        for (auto& s : b->statements)
+        for (auto& stmt : block->statements)
         {
-            Dump(s.get(), indent + 2, out);
+            Dump(stmt.get(), indent + 2, out);
         }
 
         Pad(indent, out);
@@ -212,12 +212,12 @@ void Dump(Node* n, int indent, std::ostringstream& out)
 
     case NodeKind::Return:
     {
-        auto* r = static_cast<ReturnStmt*>(n);
+        auto* returnStmt = static_cast<ReturnStmt*>(n);
         out << "return";
-        if (r->value)
+        if (returnStmt->value)
         {
             out << " ";
-            Dump(r->value.get(), 0, out);
+            Dump(returnStmt->value.get(), 0, out);
         }
         else
         {
@@ -256,41 +256,41 @@ void Dump(Node* n, int indent, std::ostringstream& out)
 
     case NodeKind::For:
     {
-        auto* fs = static_cast<ForStmt*>(n);
+        auto* forStmt = static_cast<ForStmt*>(n);
         out << "for (";
-        if (fs->init)
+        if (forStmt->init)
         {
-            Dump(fs->init.get(), 0, out);
+            Dump(forStmt->init.get(), 0, out);
         }
         else
         {
             out << "; ";
         }
 
-        if (fs->condition)
+        if (forStmt->condition)
         {
-            Dump(fs->condition.get(), 0, out);
+            Dump(forStmt->condition.get(), 0, out);
         }
 
         out << "; ";
-        if (fs->update)
+        if (forStmt->update)
         {
-            Dump(fs->update.get(), 0, out);
+            Dump(forStmt->update.get(), 0, out);
         }
 
         out << ")\n";
-        Dump(fs->body.get(), indent + 2, out);
+        Dump(forStmt->body.get(), indent + 2, out);
         return;
     }
 
     case NodeKind::VarDecl:
     {
-        auto* v = static_cast<VarDeclStmt*>(n);
-        out << v->type.name << " " << v->name;
-        if (v->init)
+        auto* varDecl = static_cast<VarDeclStmt*>(n);
+        out << varDecl->type.name << " " << varDecl->name;
+        if (varDecl->init)
         {
             out << " = ";
-            Dump(v->init.get(), 0, out);
+            Dump(varDecl->init.get(), 0, out);
         }
         else
         {
@@ -302,10 +302,10 @@ void Dump(Node* n, int indent, std::ostringstream& out)
 
     case NodeKind::ExprStmt:
     {
-        auto* e = static_cast<ExprStmt*>(n);
-        if (e->expr)
+        auto* expr = static_cast<ExprStmt*>(n);
+        if (expr->expr)
         {
-            Dump(e->expr.get(), 0, out);
+            Dump(expr->expr.get(), 0, out);
         }
         else
         {
@@ -344,39 +344,39 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         return;
     case NodeKind::Unary:
     {
-        auto* u = static_cast<UnaryExpr*>(n);
-        out << "(" << UnaryOpSpelling(u->op) << " ";
-        Dump(u->operand.get(), 0, out);
+        auto* unaryExpr = static_cast<UnaryExpr*>(n);
+        out << "(" << UnaryOpSpelling(unaryExpr->op) << " ";
+        Dump(unaryExpr->operand.get(), 0, out);
         return; // operand's trailing newline closes the paren-line
     }
 
     case NodeKind::Binary:
     {
-        auto* b = static_cast<BinaryExpr*>(n);
-        out << "(" << BinaryOpSpelling(b->op) << " ";
-        Dump(b->lhs.get(), 0, out);
+        auto* binaryExpr = static_cast<BinaryExpr*>(n);
+        out << "(" << BinaryOpSpelling(binaryExpr->op) << " ";
+        Dump(binaryExpr->lhs.get(), 0, out);
         Pad(0, out);
-        Dump(b->rhs.get(), 0, out);
+        Dump(binaryExpr->rhs.get(), 0, out);
         return;
     }
 
     case NodeKind::Assign:
     {
-        auto* a = static_cast<AssignExpr*>(n);
-        out << "(" << AssignOpSpelling(a->op) << " ";
-        Dump(a->target.get(), 0, out);
-        Dump(a->value.get(), 0, out);
+        auto* assignExpr = static_cast<AssignExpr*>(n);
+        out << "(" << AssignOpSpelling(assignExpr->op) << " ";
+        Dump(assignExpr->target.get(), 0, out);
+        Dump(assignExpr->value.get(), 0, out);
         return;
     }
 
     case NodeKind::Call:
     {
-        auto* c = static_cast<CallExpr*>(n);
-        out << "(call " << c->callee;
-        for (auto& a : c->args)
+        auto* callExpr = static_cast<CallExpr*>(n);
+        out << "(call " << callExpr->callee;
+        for (auto& arg : callExpr->args)
         {
             out << " ";
-            Dump(a.get(), 0, out);
+            Dump(arg.get(), 0, out);
         }
 
         return;
@@ -384,9 +384,9 @@ void Dump(Node* n, int indent, std::ostringstream& out)
 
     case NodeKind::Member:
     {
-        auto* mem = static_cast<MemberExpr*>(n);
-        out << "(. " << mem->member << " ";
-        Dump(mem->base.get(), 0, out);
+        auto* memberExpr = static_cast<MemberExpr*>(n);
+        out << "(. " << memberExpr->member << " ";
+        Dump(memberExpr->base.get(), 0, out);
         return;
     }
 

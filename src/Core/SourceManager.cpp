@@ -12,13 +12,13 @@ void SourceManager::ComputeLineStarts()
 
     for (std::size_t i = 0; i < m_text.size(); ++i)
     {
-        char c = m_text[i];
+        char character = m_text[i];
 
-        if (c == '\n')
+        if (character == '\n')
         {
             m_lineStarts.push_back(static_cast<std::uint32_t>(i + 1));
         }
-        else if (c == '\r')
+        else if (character == '\r')
         {
             // Collapse CRLF; a lone CR also counts as a line break.
             if (i + 1 < m_text.size() && m_text[i + 1] == '\n')
@@ -46,10 +46,13 @@ std::string_view SourceManager::Slice(SourceRange r) const noexcept
 LineCol SourceManager::LineCol(std::uint32_t offset) const noexcept
 {
     // Binary search for the last lineStart <= offset.
-    auto it = std::ranges::upper_bound(m_lineStarts, offset);
-    std::uint32_t lineIdx = static_cast<std::uint32_t>((it - m_lineStarts.begin()) - 1);
+    auto iterator = std::ranges::upper_bound(m_lineStarts, offset);
+    std::uint32_t lineIdx = static_cast<std::uint32_t>((iterator - m_lineStarts.begin()) - 1);
 
-    return {.line = lineIdx + 1, .column = offset - m_lineStarts[lineIdx] + 1};
+    return {
+        .line = lineIdx + 1,
+        .column = offset - m_lineStarts[lineIdx] + 1,
+    };
 }
 
 std::string_view SourceManager::LineText(std::uint32_t line) const noexcept
