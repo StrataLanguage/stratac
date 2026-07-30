@@ -1,11 +1,3 @@
-// Strata compiler: build a *live* LLVM module from a Strata AST.
-//
-// This factors the IR construction (shared by the printer, the AOT object
-// emitter, and the JIT) out of the back-end. The returned BuiltModule owns its
-// LLVMContext and LLVMModule and gives them up on release()/move so an
-// ExecutionEngine or TargetMachine can take ownership.
-//
-// Internal header (LLVM-enabled sources only).
 #pragma once
 
 #include "strata/AST/AST.h"
@@ -22,6 +14,7 @@ class BuiltModule
   public:
     LLVMContextRef ctx = nullptr;
     LLVMModuleRef mod = nullptr;
+
     // Names declared `extern` in the source that the host runtime must provide.
     std::vector<std::string> externSymbols;
 
@@ -29,13 +22,16 @@ class BuiltModule
     BuiltModule(LLVMContextRef c, LLVMModuleRef m) : ctx(c), mod(m)
     {
     }
+
     BuiltModule(const BuiltModule&) = delete;
     BuiltModule& operator=(const BuiltModule&) = delete;
+    
     BuiltModule(BuiltModule&& o) noexcept : ctx(o.ctx), mod(o.mod), externSymbols(std::move(o.externSymbols))
     {
         o.ctx = nullptr;
         o.mod = nullptr;
     }
+    
     BuiltModule& operator=(BuiltModule&& o) noexcept
     {
         if (this != &o)
@@ -49,6 +45,7 @@ class BuiltModule
         }
         return *this;
     }
+    
     ~BuiltModule()
     {
         Dispose();
@@ -67,6 +64,7 @@ class BuiltModule
             ctx = nullptr;
         }
     }
+
     // Relinquishes ownership of BOTH context and module (caller must keep the
     // context alive for as long as anything references the module).
     void Release(LLVMContextRef& outCtx, LLVMModuleRef& outMod) noexcept
@@ -76,6 +74,7 @@ class BuiltModule
         ctx = nullptr;
         mod = nullptr;
     }
+
     explicit operator bool() const noexcept
     {
         return mod != nullptr;

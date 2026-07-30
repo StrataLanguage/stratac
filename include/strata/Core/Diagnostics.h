@@ -1,9 +1,3 @@
-// Strata compiler: diagnostics.
-//
-// A lightweight diagnostic engine that collects messages with associated source
-// ranges and reports whether any errors occurred. The parser, lexer, and later
-// semantic analysis all funnel problems through here so the driver can render a
-// single, consistent set of messages.
 #pragma once
 
 #include "strata/Core/SourceLocation.h"

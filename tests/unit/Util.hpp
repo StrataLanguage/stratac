@@ -1,4 +1,3 @@
-// Shared helpers for the unit-test suite.
 #pragma once
 
 #include "strata/AST/AST.h"

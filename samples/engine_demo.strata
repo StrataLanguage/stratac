@@ -15,7 +15,8 @@ extern int    get_y(Entity e);
 extern void   move(Entity e, int dx, int dy);
 
 // Move `step` cells toward the target, return the new x + y.
-int chase(Entity attacker, Entity target, int step) {
+int chase(Entity attacker, Entity target, int step)
+{
     int ax = get_x(attacker);
     int ay = get_y(attacker);
     int tx = get_x(target);

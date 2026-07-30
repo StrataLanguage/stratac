@@ -1,24 +1,7 @@
-// Strata compiler: curated forward declarations for the LLVM C API.
-//
-// The official Windows LLVM distribution does not ship the full llvm-c headers,
-// and the rest of LLVM's header graph (llvm/Config, llvm/Support) is heavy to
-// vendor. Strata consumes only a small slice of the C API, so we declare exactly
-// that slice here, matching the signatures in llvm/include/llvm-c/Core.h for the
-// LLVM build we link against (see LLVM_C_DIR / LLVMGetVersion at runtime).
-//
-// All opaque types are declared as incomplete structs; the link target is the
-// LLVM-C shared library (LLVM-C.dll on Windows), reached through its import
-// library (LLVM-C.lib). The compiler's own C++ code is MinGW-built; only the C
-// ABI crosses that boundary, which is stable across toolchains.
-//
-// IMPORTANT: keep these signatures byte-for-byte consistent with the upstream
-// C headers. When adopting more of the API, copy the declaration verbatim and
-// add it here.
 #pragma once
 
 #include <cstdint>
 
-// Opaque handle typedefs (subset defined as needed).
 extern "C"
 {
     struct LLVMOpaqueContext;

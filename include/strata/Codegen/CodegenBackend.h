@@ -1,11 +1,3 @@
-// Strata compiler: code generation back-end interface.
-//
-// A back-end consumes a (successfully parsed) Module and produces output. The
-// driver selects an implementation: the LLVM C API back-end builds the IR
-// in-process through the linked LLVM-C shared library, while the text back-end
-// emits human-readable LLVM IR as a string. Keeping this behind an interface
-// lets us develop the front-end and IR generation independently of how native
-// code is ultimately produced.
 #pragma once
 
 #include "strata/AST/AST.h"

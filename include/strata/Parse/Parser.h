@@ -1,24 +1,3 @@
-// Strata compiler: recursive-descent parser.
-//
-// Produces a Module AST from a token stream. The grammar is a C-style subset:
-//
-//   module        := decl*
-//   decl          := funcDecl
-//   funcDecl      := type ident '(' params? ')' block
-//   params        := param (',' param)*
-//   param         := paramMod? type ident
-//   block         := '{' stmt* '}'
-//   stmt          := return | if | while | varDecl | exprStmt | block | break | continue
-//   expr          := assignment
-//   assignment    := logicOr (assignOp assignment)?
-//   logicOr       := logicAnd ('||' logicAnd)*
-//   logicAnd      := bitOr ('&&' bitOr)*
-//   ... (precedence climbing down to primary)
-//   primary       := literal | ident | call | '(' expr ')'
-//
-// On syntax errors the parser reports a diagnostic and synchronizes to the next
-// statement boundary (';' or '}') before continuing, so a single typo yields a
-// bounded number of messages.
 #pragma once
 
 #include "strata/AST/AST.h"

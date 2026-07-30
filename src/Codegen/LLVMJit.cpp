@@ -1,4 +1,3 @@
-// Strata compiler: MCJIT implementation.
 #include "LLVMJit.h"
 #include "strata/Codegen/LLVMCApi.h"
 
@@ -7,35 +6,33 @@
 namespace strata
 {
 
-namespace
-{
-using namespace strata::llvm_c;
-
 // Both targets are initialized so AOT cross-compilation and JIT can coexist.
 // The LLVMInitializeAll* wrappers are not exported by this LLVM-C.dll, but the
 // per-target entry points are. The JIT always runs on the host (X86), but
 // initializing AArch64 too is harmless and keeps the init paths symmetric.
-void EnsureTargetsInitialized()
+static void EnsureTargetsInitialized()
 {
+    using namespace strata::llvm_c;
+
     static std::once_flag flag;
-    std::call_once(flag,
-                   []
-                   {
-                       LLVMInitializeX86TargetInfo();
-                       LLVMInitializeX86Target();
-                       LLVMInitializeX86TargetMC();
+    std::call_once(
+        flag,
+        []
+        {
+            LLVMInitializeX86TargetInfo();
+            LLVMInitializeX86Target();
+            LLVMInitializeX86TargetMC();
 
-                       // MCJIT emits to memory via the JIT emitter; the asm printer is not
-                       // required, but initializing it is harmless and keeps AOT/JIT symmetric.
-                       LLVMInitializeX86AsmPrinter();
+            // MCJIT emits to memory via the JIT emitter; the asm printer is not
+            // required, but initializing it is harmless and keeps AOT/JIT symmetric.
+            LLVMInitializeX86AsmPrinter();
 
-                       LLVMInitializeAArch64TargetInfo();
-                       LLVMInitializeAArch64Target();
-                       LLVMInitializeAArch64TargetMC();
-                       LLVMInitializeAArch64AsmPrinter();
-                   });
+            LLVMInitializeAArch64TargetInfo();
+            LLVMInitializeAArch64Target();
+            LLVMInitializeAArch64TargetMC();
+            LLVMInitializeAArch64AsmPrinter();
+        });
 }
-} // namespace
 
 void LLVMJit::EnsureInitialized()
 {

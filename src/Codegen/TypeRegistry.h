@@ -1,10 +1,3 @@
-// Strata compiler: registry of user-defined (struct) and opaque types.
-//
-// Both the text and LLVM back-ends consult this to resolve a textual type name
-// that is not a built-in scalar/vector. Struct layouts are captured here so the
-// back-ends can lower member access (field index + element type).
-//
-// Internal header.
 #pragma once
 
 #include "strata/AST/AST.h"
@@ -26,46 +19,65 @@ struct StructType
 
 class TypeRegistry
 {
-  public:
+public:
     void Build(const Module& m)
     {
         m_types.clear();
-        for (const auto& s : m.structs)
+
+        for (const auto& structDecl : m.structs)
         {
-            m_types.push_back(
-                {.name = s->name, .opaque = false, .fields = s->fields}); // structs are defined value types
+            m_types.push_back({ .name = structDecl->name, .opaque = false, .fields = structDecl->fields }); // structs are defined value types
         }
-        for (const auto& h : m.handles)
+
+        for (const auto& handleDecl : m.handles)
         {
-            m_types.push_back({.name = h->name, .opaque = true, .fields = {}}); // handles are opaque
+            m_types.push_back({ .name = handleDecl->name, .opaque = true, .fields = {} }); // handles are opaque
         }
     }
 
     const StructType* Find(std::string_view name) const noexcept
     {
         for (const auto& t : m_types)
-            if (t.name == name) return &t;
+        {
+            if (t.name == name)
+            {
+                return &t;
+            }
+        }
+
         return nullptr;
     }
+
     bool IsUserType(std::string_view name) const noexcept
     {
         return Find(name) != nullptr;
     }
+
     bool IsOpaque(std::string_view name) const noexcept
     {
-        const auto* t = Find(name);
-        return t && t->opaque;
+        const StructType* structType = Find(name);
+
+        return structType && structType->opaque;
     }
 
     // Returns the field index of `field` within `structName`, or -1.
     int FieldIndex(std::string_view structName, std::string_view field) const noexcept
     {
-        const auto* t = Find(structName);
-        if (!t) return -1;
-        for (std::size_t i = 0; i < t->fields.size(); ++i)
+        const StructType* structType = Find(structName);
+
+        if (!structType)
         {
-            if (t->fields[i].name == field) return static_cast<int>(i);
+            return -1;
         }
+
+        for (std::size_t i = 0; i < structType->fields.size(); ++i)
+        {
+            if (structType->fields[i].name == field)
+            {
+                return static_cast<int>(i);
+            }
+        }
+
         return -1;
     }
 
@@ -74,7 +86,7 @@ class TypeRegistry
         return m_types;
     }
 
-  private:
+private:
     std::vector<StructType> m_types;
 };
 

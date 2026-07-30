@@ -115,11 +115,13 @@ Token Lexer::LexToken()
     std::size_t start = m_pos;
     if (m_pos >= m_source.size())
     {
-        return {TokKind::Eof,
-                {
-                    .start = static_cast<std::uint32_t>(m_pos),
-                    .length = 0,
-                }};
+        return {
+            TokKind::Eof,
+            {
+                .start = static_cast<std::uint32_t>(m_pos),
+                .length = 0,
+            }
+        };
     }
 
     char character = m_source[m_pos];

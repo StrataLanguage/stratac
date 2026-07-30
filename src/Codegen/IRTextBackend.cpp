@@ -1,12 +1,3 @@
-// Strata compiler: text back-end.
-//
-// Emits LLVM IR as text from the AST. This is deliberately a real (if small)
-// lowering rather than a stub: scalar integer/float functions with parameters,
-// locals, assignment, arithmetic, comparisons, control flow (if/else, while),
-// and calls are turned into valid LLVM IR that downstream tools (clang, llc)
-// can assemble. Vector types and short-circuit logic are typed/passed through
-// but not fully lowered yet; those are flagged in the IR as TODO and left as
-// follow-up work.
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
 #include "strata/AST/AST.h"
@@ -105,29 +96,29 @@ class IRTextImpl
   private:
     std::ostringstream m_out;
     std::ostringstream m_body;
+    
     std::map<std::string, Symbol> m_symbols;
+    
     TypeRegistry m_registry;
+    
     std::map<std::string, detail::MappedType> m_retOf;       // mangled name -> return type
     std::map<std::string, std::vector<bool>> m_paramByPtrOf; // mangled name -> pass-by-pointer
+    
     std::vector<std::string> m_paramRegs;
+    
     detail::MappedType m_retType;
+
     int m_tmp = 0;
     int m_label = 0;
     bool m_terminated = false;
+
     struct Loop
     {
         std::string cont;
         std::string end;
     };
-    std::vector<Loop> m_loops;
 
-    // Determine if we need write-back (by ref)
-    static bool ByRef(ParamMod m)
-    {
-        // Handles In, Out, InOut.
-        // these all indicate pass by-ref
-        return m != ParamMod::None;
-    }
+    std::vector<Loop> m_loops;
 
     void CollectSignature(const FunctionDecl& f)
     {

@@ -1,18 +1,3 @@
-// Strata compiler: a tiny self-contained test framework.
-//
-// We avoid pulling in a third-party unit-test dependency by shipping this
-// minimal header. It supports TEST() blocks, CHECK/CHECK_EQ/REQUIRE, and a
-// single test runner. Good enough for bootstrap; replaceable later.
-//
-// Usage:
-//   // in a test .cpp:
-//   STRATA_TEST(lexer_tokenizes_int) {
-//       STRATA_CHECK(1 + 1 == 2);
-//       STRATA_CHECK_EQ(2 * 3, 6);
-//   }
-//   // exactly one TU defines the runner via STRATA_TEST_MAIN before including:
-//   #define STRATA_TEST_MAIN
-//   #include "strata/Test.hpp"
 #pragma once
 
 #include <cstdio>

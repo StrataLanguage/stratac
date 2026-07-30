@@ -1,12 +1,3 @@
-// Strata compiler: abstract syntax tree.
-//
-// All AST nodes derive from Node and carry their source range. Composite nodes
-// own their children via std::unique_ptr. The parser produces this tree and the
-// code generators consume it. Types are stored textually (a name like "int" or
-// "float4") so the AST is independent of any particular type system decision;
-// the generators map names to concrete representations.
-//
-// Ownership note: std::unique_ptr<Node> is abbreviated as NodePtr below.
 #pragma once
 
 #include "strata/Core/SourceLocation.h"
@@ -85,6 +76,14 @@ enum class ParamMod : std::uint8_t
     Out,
     InOut
 };
+
+// Determine if we need write-back (by ref)
+constexpr inline bool ByRef(ParamMod m)
+{
+    // Handles In, Out, InOut.
+    // these all indicate pass by-ref
+    return m != ParamMod::None;
+}
 
 inline std::string_view ParamModSpelling(ParamMod m) noexcept
 {

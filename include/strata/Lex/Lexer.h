@@ -1,10 +1,3 @@
-// Strata compiler: lexer.
-//
-// Turns a source buffer into a stream of Tokens on demand. The lexer is meant
-// to be driven by the parser via nextToken()/peekToken(). Comments (// and
-// /* */, nested) and whitespace are skipped. Literals are recognized but their
-// exact numeric values are parsed later by the parser/semantic layer via
-// SourceManager::slice().
 #pragma once
 
 #include "strata/Core/Diagnostics.h"

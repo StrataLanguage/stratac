@@ -1,4 +1,3 @@
-// Strata compiler: AOT native emission implementation.
 #include "LLVMAot.h"
 #include "strata/Codegen/LLVMCApi.h"
 
@@ -7,32 +6,27 @@
 namespace strata
 {
 
-namespace
+static void EnsureTargetsInitialized()
 {
-using namespace strata::llvm_c;
+    using namespace strata::llvm_c;
 
-// Both targets must be initialized exactly once before any TargetMachine or
-// ExecutionEngine is created. The LLVMInitializeAll* wrappers are not exported
-// by this LLVM-C.dll, but the per-target entry points are. X86 is the host;
-// AArch64 is the cross-compile target.
-void EnsureTargetsInitialized()
-{
     static std::once_flag flag;
-    std::call_once(flag,
-                   []
-                   {
-                       LLVMInitializeX86TargetInfo();
-                       LLVMInitializeX86Target();
-                       LLVMInitializeX86TargetMC();
-                       LLVMInitializeX86AsmPrinter();
+    
+    std::call_once(
+        flag,
+        []
+        {
+            LLVMInitializeX86TargetInfo();
+            LLVMInitializeX86Target();
+            LLVMInitializeX86TargetMC();
+            LLVMInitializeX86AsmPrinter();
 
-                       LLVMInitializeAArch64TargetInfo();
-                       LLVMInitializeAArch64Target();
-                       LLVMInitializeAArch64TargetMC();
-                       LLVMInitializeAArch64AsmPrinter();
-                   });
+            LLVMInitializeAArch64TargetInfo();
+            LLVMInitializeAArch64Target();
+            LLVMInitializeAArch64TargetMC();
+            LLVMInitializeAArch64AsmPrinter();
+        });
 }
-} // namespace
 
 bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembly, std::string& errorMessage,
                     const std::string& targetTriple)
@@ -49,6 +43,7 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
     // Use the explicit triple when provided, otherwise fall back to the host.
     const char* triple = nullptr;
     char* defaultTriple = nullptr;
+
     if (!targetTriple.empty())
     {
         triple = targetTriple.c_str();
@@ -60,7 +55,9 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
     }
 
     LLVMTargetRef target = nullptr;
+    
     char* error = nullptr;
+
     if (LLVMGetTargetFromTriple(triple, &target, &error))
     {
         errorMessage = std::string("unknown target triple '") + triple + "': " + (error ? error : "(no message)");
@@ -78,9 +75,14 @@ bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembl
         return false;
     }
 
-    LLVMTargetMachineRef targetMachine =
-        LLVMCreateTargetMachine(target, triple, "" /* host CPU */, "" /* features */, LLVMCodeGenLevelDefault,
-                                LLVMRelocDefault, LLVMCodeModelDefault);
+    LLVMTargetMachineRef targetMachine = LLVMCreateTargetMachine(
+        target,
+        triple,
+        "" /* host CPU */,
+        "" /* features */,
+        LLVMCodeGenLevelDefault,
+        LLVMRelocDefault,
+        LLVMCodeModelDefault);
 
     if (defaultTriple)
     {

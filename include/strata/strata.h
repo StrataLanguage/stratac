@@ -1,6 +1,6 @@
 // strata.h - public embedding API for the Strata language (C ABI).
 //
-// Host applications (e.g. a game engine) link against the Strata shared
+// Host applications link against the Strata shared
 // library and use these functions to compile Strata source at runtime. The
 // interface is pure C so it can be called from C, C++, C#, Rust, or any
 // language with a foreign-function interface.

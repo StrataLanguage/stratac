@@ -1,9 +1,3 @@
-// Strata compiler: lexical token kinds.
-//
-// Strata is an HLSL-inspired, C-style language: scalars and vector value types,
-// `in`/`out`/`inout` parameter modifiers, and no pointers or references. The
-// token set below covers the bootstrap surface area; new keywords and
-// punctuation can be appended without disturbing existing enumerators.
 #pragma once
 
 #include "strata/Core/SourceLocation.h"
@@ -103,8 +97,7 @@ std::string_view TokSpelling(TokKind kind) noexcept;
 // Human-readable name, e.g. "identifier", "'+'", "keyword 'return'".
 std::string_view TokName(TokKind kind) noexcept;
 
-// Maps an identifier spelling to a keyword token kind, or TokKind::Ident if it
-// is not a reserved word.
+// Maps an identifier spelling to a keyword token kind, or TokKind::Ident if it is not a reserved word.
 TokKind ClassifyKeyword(std::string_view ident) noexcept;
 
 struct Token
@@ -113,7 +106,9 @@ struct Token
     SourceRange range{};
 
     constexpr Token() = default;
-    constexpr Token(TokKind k, SourceRange r) : kind(k), range(r)
+    constexpr Token(TokKind k, SourceRange r)
+        : kind(k),
+          range(r)
     {
     }
 

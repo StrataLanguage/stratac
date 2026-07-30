@@ -1,9 +1,3 @@
-// Strata compiler: source location and source buffer management.
-//
-// The SourceManager owns the source text for a single translation unit and
-// answers line/column queries from byte offsets. Tokens and AST nodes carry
-// byte ranges ([start, start+length)) into this buffer, which keeps the core
-// data structures small and cheap to copy.
 #pragma once
 
 #include <cstdint>
@@ -38,7 +32,7 @@ struct LineCol
 
 class SourceManager
 {
-  public:
+public:
     SourceManager() = default;
 
     // Takes ownership of the source text for this translation unit.
@@ -46,6 +40,7 @@ class SourceManager
     {
         m_text = std::move(text);
         m_name = std::move(name);
+
         ComputeLineStarts();
     }
 
@@ -78,11 +73,12 @@ class SourceManager
         return static_cast<std::uint32_t>(m_lineStarts.size());
     }
 
-  private:
+private:
     void ComputeLineStarts();
 
     std::string m_text;
     std::string m_name;
+
     // Byte offset of the first character of each line. Line N starts at
     // lineStarts_[N-1]. Always contains at least one entry (line 1 -> 0).
     std::vector<std::uint32_t> m_lineStarts{0};

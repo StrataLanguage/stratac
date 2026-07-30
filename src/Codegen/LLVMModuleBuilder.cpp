@@ -1,15 +1,10 @@
-// Strata compiler: LLVM module construction (shared by printer/AOT/JIT).
-//
-// Translates a Strata AST into a live LLVM module via the C API. Handles the
-// bootstrap subset: scalar/vector built-ins, user-defined structs (value types
-// with member access and positional construction), opaque handle types
-// (`handle Name;`, lowered to `ptr`), and functions with `extern` host bindings.
 #include "LLVMModuleBuilder.h"
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
 #include "strata/AST/AST.h"
 #include "strata/Codegen/LLVMCApi.h"
 
+#include <cstring>
 #include <map>
 #include <sstream>
 #include <string>

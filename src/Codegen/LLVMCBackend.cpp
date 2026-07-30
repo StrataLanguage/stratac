@@ -1,9 +1,3 @@
-// Strata compiler: in-process LLVM back-end (textual IR) via the C API.
-//
-// This back-end prints LLVM IR. The IR construction itself lives in
-// LLVMModuleBuilder so it can be shared with the AOT emitter (LLVMAot) and the
-// JIT (LLVMJit). Only compiled when STRATA_ENABLE_LLVM is defined; otherwise
-// the factory falls back to the null stub in CodegenBackend.cpp.
 #ifdef STRATA_ENABLE_LLVM
 #include "LLVMModuleBuilder.h"
 #include "strata/AST/AST.h"
