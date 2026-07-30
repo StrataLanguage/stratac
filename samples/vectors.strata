@@ -15,4 +15,4 @@ struct Light {
     int      id;
     float3   position;
     Material material;
-};;
+};

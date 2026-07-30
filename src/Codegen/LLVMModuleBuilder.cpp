@@ -746,6 +746,8 @@ class Builder
             return EmitCall(static_cast<CallExpr*>(n));
         case NodeKind::Member:
             return EmitMember(static_cast<MemberExpr*>(n));
+        case NodeKind::StructInit:
+            return EmitStructInit(static_cast<StructInitExpr*>(n));
         default:
             Note("; TODO: LLVM back-end does not lower this expression yet\n");
             return ZeroInt();
@@ -1100,7 +1102,7 @@ class Builder
         {
             TypeDesc typeDesc = Resolve({.name = n->callee});
             const auto* st = m_registry.Find(n->callee);
-            LLVMValueRef agg = LLVMGetUndef(typeDesc.type);
+            LLVMValueRef agg = LLVMConstNull(typeDesc.type);
             for (std::size_t i = 0; i < n->args.size() && st; ++i)
             {
                 if (i >= st->fields.size())
@@ -1150,6 +1152,45 @@ class Builder
         return {
             .value = call,
             .typeDesc = iterator->second.returnType,
+        };
+    }
+
+    Value EmitStructInit(StructInitExpr* n)
+    {
+        TypeDesc typeDesc = Resolve({.name = n->typeName});
+        const auto* st = m_registry.Find(n->typeName);
+        LLVMValueRef agg = LLVMConstNull(typeDesc.type);
+
+        std::size_t positionalIndex = 0;
+        for (const auto& field : n->fields)
+        {
+            std::size_t idx = 0;
+            if (field.name.empty())
+            {
+                idx = positionalIndex++;
+            }
+            else
+            {
+                int named = m_registry.FieldIndex(n->typeName, field.name);
+                if (named < 0)
+                {
+                    continue;
+                }
+                idx = static_cast<std::size_t>(named);
+            }
+
+            if (!st || idx >= st->fields.size())
+            {
+                continue;
+            }
+
+            Value fieldValue = Coerce(EmitExpr(field.value.get()), Resolve(st->fields[idx].type));
+            agg = LLVMBuildInsertValue(m_builder, agg, fieldValue.value, static_cast<unsigned>(idx), "ins");
+        }
+
+        return {
+            .value = agg,
+            .typeDesc = typeDesc,
         };
     }
 

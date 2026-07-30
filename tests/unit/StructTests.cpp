@@ -321,16 +321,149 @@ STRATA_TEST(aot_emits_struct_object)
     strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
     std::string path = "strata_struct_test.o";
     bool ok = strata::EmitNativeFile(bm, path, false, err);
-    if (!ok)
-    {
-        std::printf("  AOT struct emission failed: %s\n", err.c_str());
-    }
-
     STRATA_CHECK(ok);
     std::ifstream in(path, std::ios::binary);
     STRATA_CHECK(in.good());
     in.seekg(0, std::ios::end);
     STRATA_CHECK(in.tellg() > 0);
+}
+
+// ---- Braced initialization ----
+
+STRATA_TEST(jit_braced_init_positional)
+{
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float entry() {\n"
+                                "  Vec3 v = Vec3{10.0, 20.0, 30.0};\n"
+                                "  return v.x + v.y + v.z;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f(); // 10 + 20 + 30 = 60
+            STRATA_CHECK(r > 59.9f && r < 60.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_braced_init_designated)
+{
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float entry() {\n"
+                                "  Vec3 v = Vec3{.x = 10.0, .y = 20.0, .z = 30.0};\n"
+                                "  return v.x + v.y + v.z;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f(); // 10 + 20 + 30 = 60
+            STRATA_CHECK(r > 59.9f && r < 60.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_braced_init_partial_designated)
+{
+    // Only set .z; .x and .y stay zero (undef -> zeroinitializer at store).
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float entry() {\n"
+                                "  Vec3 v = Vec3{.z = 42.0};\n"
+                                "  return v.z;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f();
+            STRATA_CHECK(r > 41.9f && r < 42.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_braced_init_out_of_order)
+{
+    // Designated fields can appear in any order.
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float entry() {\n"
+                                "  Vec3 v = Vec3{.z = 3.0, .x = 1.0, .y = 2.0};\n"
+                                "  return v.x * 100.0 + v.y * 10.0 + v.z;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f(); // 100 + 20 + 3 = 123
+            STRATA_CHECK(r > 122.9f && r < 123.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_braced_init_inferred_type)
+{
+    // Vec3 v = {.x = 1, .y = 2, .z = 3}; — type inferred from LHS, no repeat.
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float entry() {\n"
+                                "  Vec3 v = {.x = 10.0, .y = 20.0, .z = 30.0};\n"
+                                "  return v.x + v.y + v.z;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f(); // 10 + 20 + 30 = 60
+            STRATA_CHECK(r > 59.9f && r < 60.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_braced_init_inferred_positional)
+{
+    // Vec3 v = {1.0, 2.0, 3.0}; — positional, type inferred from LHS.
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float entry() {\n"
+                                "  Vec3 v = {10.0, 20.0, 30.0};\n"
+                                "  return v.x + v.y + v.z;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f();
+            STRATA_CHECK(r > 59.9f && r < 60.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
 }
 
 #endif // STRATA_ENABLE_LLVM

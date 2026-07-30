@@ -558,6 +558,8 @@ class IRTextImpl
             return EmitBinary(static_cast<BinaryExpr*>(node));
         case NodeKind::Call:
             return EmitCall(static_cast<CallExpr*>(node));
+        case NodeKind::StructInit:
+            return EmitStructInit(static_cast<StructInitExpr*>(node));
         case NodeKind::Assign:
             return EmitAssign(static_cast<AssignExpr*>(node));
         default:
@@ -810,8 +812,67 @@ class IRTextImpl
         return slot;
     }
 
+    Eval EmitStructInit(StructInitExpr* node)
+    {
+        detail::MappedType type = MappedOr({.name = node->typeName}, "ptr");
+        const auto* st = m_registry.Find(node->typeName);
+        std::string agg = "zeroinitializer";
+        std::size_t positionalIndex = 0;
+
+        for (const auto& field : node->fields)
+        {
+            int idx;
+            if (field.name.empty())
+            {
+                idx = static_cast<int>(positionalIndex++);
+            }
+            else
+            {
+                idx = m_registry.FieldIndex(node->typeName, field.name);
+            }
+
+            if (!st || idx < 0 || static_cast<std::size_t>(idx) >= st->fields.size())
+            {
+                continue;
+            }
+
+            Eval fieldVal =
+                Coerce(EmitExpr(field.value.get()), MappedOr(st->fields[static_cast<std::size_t>(idx)].type, "ptr"));
+            std::string reg = NewReg();
+            m_body << "  " << reg << " = insertvalue " << type.ir << " " << agg << ", " << fieldVal.type.ir << " "
+                   << fieldVal.val << ", " << idx << "\n";
+            agg = reg;
+        }
+
+        return {
+            .type = type,
+            .val = agg,
+        };
+    }
+
     Eval EmitCall(CallExpr* node)
     {
+        if (m_registry.IsUserType(node->callee) && !m_registry.IsOpaque(node->callee))
+        {
+            // Struct constructor: emit insertvalue chain.
+            detail::MappedType type = MappedOr({.name = node->callee}, "ptr");
+            const auto* st = m_registry.Find(node->callee);
+            std::string agg = "zeroinitializer";
+            for (std::size_t i = 0; i < node->args.size() && st && i < st->fields.size(); ++i)
+            {
+                Eval argVal = Coerce(EmitExpr(node->args[i].get()), MappedOr(st->fields[i].type, "ptr"));
+                std::string reg = NewReg();
+                m_body << "  " << reg << " = insertvalue " << type.ir << " " << agg << ", " << argVal.type.ir << " "
+                       << argVal.val << ", " << i << "\n";
+                agg = reg;
+            }
+
+            return {
+                .type = type,
+                .val = agg,
+            };
+        }
+
         // Return type of the callee (resolved by overload resolution). Falls
         // back to i32 when unknown (e.g. an unresolved host call).
         detail::MappedType returnType = detail::MapType({.name = "int"});

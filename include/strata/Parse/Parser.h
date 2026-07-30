@@ -88,6 +88,10 @@ class Parser
     NodePtr ParsePostfix();
     NodePtr ParsePrimary();
 
+    // Parses the body of a braced struct initializer: '{' fields '}'.
+    // `startTok` anchors the source range; `typeName` is the struct type.
+    NodePtr ParseStructInitBody(const Token& startTok, std::string typeName);
+
     // --- type helpers ---
     bool TryParseType(TypeName& out);
     bool IsTypeStart() const noexcept;

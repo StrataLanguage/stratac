@@ -47,6 +47,7 @@ enum class NodeKind : std::uint8_t
     Assign,
     Call,
     Member,
+    StructInit,
 };
 
 struct Node
@@ -386,6 +387,24 @@ struct MemberExpr : Node
 
     MemberExpr(SourceRange r, NodePtr b, std::string m)
         : Node(NodeKind::Member, r), base(std::move(b)), member(std::move(m))
+    {
+    }
+};
+
+// Braced struct initializer:  TypeName{ .field = expr, ... }  or  TypeName{ expr, ... }
+// Each entry has an optional field name (empty = positional) and a value expression.
+struct StructInitField
+{
+    std::string name; // empty for positional
+    NodePtr value;
+};
+
+struct StructInitExpr : Node
+{
+    std::string typeName;
+    std::vector<StructInitField> fields;
+
+    StructInitExpr(SourceRange r, std::string tn) : Node(NodeKind::StructInit, r), typeName(std::move(tn))
     {
     }
 };

@@ -295,11 +295,11 @@ std::unique_ptr<Module> Parser::ParseModule()
     auto mod = std::make_unique<Module>(m_moduleName);
     while (!m_cur.Is(TokKind::Eof))
     {
-        if (m_cur.Is(TokKind::Semicolon))
+        if (m_cur.Is(TokKind::Semicolon) || m_cur.Is(TokKind::RBrace))
         {
             Advance();
             continue;
-        } // stray ';'
+        } // stray ';' or '}'
 
         if (m_cur.Is(TokKind::KwHandle))
         {
@@ -653,7 +653,15 @@ NodePtr Parser::ParseVarDeclOrExprStmt()
         auto varDecl = std::make_unique<VarDeclStmt>(SpanFrom(start, nameTok), type, ToString(IdentText(nameTok)));
         if (Consume(TokKind::Assign))
         {
-            varDecl->init = ParseExpr();
+            if (m_cur.Is(TokKind::LBrace))
+            {
+                // Inferred braced init: Vec3 v = {.x = 1}; — type from LHS.
+                varDecl->init = ParseStructInitBody(start, type.name);
+            }
+            else
+            {
+                varDecl->init = ParseExpr();
+            }
         }
 
         Expect(TokKind::Semicolon, "';'");
@@ -883,6 +891,64 @@ NodePtr Parser::ParsePostfix()
     return e;
 }
 
+NodePtr Parser::ParseStructInitBody(const Token& startTok, std::string typeName)
+{
+    auto init = std::make_unique<StructInitExpr>(startTok.range, std::move(typeName));
+    
+    Advance(); // '{'
+
+    while (!m_cur.Is(TokKind::RBrace) && !m_cur.Is(TokKind::Eof))
+    {
+        StructInitField field;
+
+        if (m_cur.Is(TokKind::Dot))
+        {
+            // Designated field: .name = expr
+            Advance(); // '.'
+            if (!m_cur.Is(TokKind::Ident))
+            {
+                m_diag.Error(m_cur.range, "expected a field name after '.'");
+
+                break;
+            }
+
+            Token fieldTok = m_cur;
+            Advance();
+            field.name = ToString(IdentText(fieldTok));
+            Expect(TokKind::Assign, "'='");
+        }
+
+        field.value = ParseExpr();
+        init->fields.push_back(std::move(field));
+
+        if (Consume(TokKind::Comma))
+        {
+            continue;
+        }
+
+        // No comma. If we're at '}' or Eof, the list is done.
+        if (m_cur.IsOneOf(TokKind::RBrace, TokKind::Eof))
+        {
+            break;
+        }
+
+        // Error recovery: unexpected token after field value.
+        // Skip forward until we find ',', '.', '}', or Eof.
+        m_diag.Error(m_cur.range, "expected ',' or '}' in braced initializer");
+
+        while (!m_cur.IsOneOf(TokKind::Comma, TokKind::Dot, TokKind::RBrace, TokKind::Eof))
+        {
+            Advance();
+        }
+
+        Consume(TokKind::Comma);
+    }
+
+    Token close = Expect(TokKind::RBrace, "'}'");
+    init->range = SpanFrom(startTok, close);
+    return init;
+}
+
 NodePtr Parser::ParsePrimary()
 {
     Token token = m_cur;
@@ -965,6 +1031,12 @@ NodePtr Parser::ParsePrimary()
 
             Expect(TokKind::RParen, "')'");
             return call;
+        }
+
+        if (m_cur.Is(TokKind::LBrace))
+        {
+            // Braced struct initializer: TypeName { .field = expr, ... }
+            return ParseStructInitBody(token, ToString(IdentText(token)));
         }
 
         return std::make_unique<IdentExpr>(token.range, ToString(IdentText(token)));

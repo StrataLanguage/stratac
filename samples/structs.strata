@@ -35,8 +35,17 @@ float kinetic_energy(in Particle p) {
 float entry() {
     Particle p;
     p.id   = 1;
-    p.pos  = Vec3(0.0, 0.0, 0.0);
-    p.vel  = Vec3(3.0, 4.0, 0.0);   // speed^2 = 9 + 16 = 25
+    p.pos  = Vec3 { 0.0, 0.0, 0.0 };
+    p.vel  = Vec3 { 3.0, 4.0, 0.0 };   // speed^2 = 9 + 16 = 25
     p.mass = 2.0;
     return kinetic_energy(p);        // 25 * 2.0 * 0.5 = 25.0
 }
+
+// For standalone
+int main()
+{
+    Vec3 v = { .z = 50.0 };
+
+    return v.z;
+}
+

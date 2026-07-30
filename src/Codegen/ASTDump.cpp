@@ -390,6 +390,28 @@ void Dump(Node* n, int indent, std::ostringstream& out)
         return;
     }
 
+    case NodeKind::StructInit:
+    {
+        auto* si = static_cast<StructInitExpr*>(n);
+        out << "(struct-init " << si->typeName;
+        for (auto& field : si->fields)
+        {
+            out << " ";
+            if (!field.name.empty())
+            {
+                out << "(." << field.name << " ";
+                Dump(field.value.get(), 0, out);
+                out << ")";
+            }
+            else
+            {
+                Dump(field.value.get(), 0, out);
+            }
+        }
+
+        return;
+    }
+
     case NodeKind::Param:
         out << "(param)\n";
         return;

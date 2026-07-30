@@ -154,6 +154,14 @@ class Resolver
             if (varDecl->init)
             {
                 ResolveExpr(varDecl->init.get(), scope);
+
+                std::string initType = InferType(varDecl->init.get(), scope);
+
+                if (!initType.empty() && initType != varDecl->type.name && !(IsNumeric(initType) && IsNumeric(varDecl->type.name)))
+                {
+                    m_diag.Error(varDecl->range, "cannot initialize '" + varDecl->type.name +
+                                                     "' with a value of type '" + initType + "'");
+                }
             }
 
             scope[varDecl->name] = varDecl->type.name;
@@ -286,6 +294,48 @@ class Resolver
             }
 
             ResolveCall(*c, scope);
+            return;
+        }
+
+        case NodeKind::StructInit:
+        {
+            auto* si = static_cast<StructInitExpr*>(n);
+
+            if (!m_registry.IsUserType(si->typeName))
+            {
+                m_diag.Error(si->range, "'" + si->typeName + "' is not a known struct type");
+            }
+            else if (m_registry.IsOpaque(si->typeName))
+            {
+                m_diag.Error(si->range, "cannot braced-initialize opaque handle '" + si->typeName + "'");
+            }
+
+            std::size_t positionalCount = 0;
+            const auto* structType = m_registry.Find(si->typeName);
+
+            for (auto& field : si->fields)
+            {
+                ResolveExpr(field.value.get(), scope);
+
+                if (!field.name.empty())
+                {
+                    if (structType && m_registry.FieldIndex(si->typeName, field.name) < 0)
+                    {
+                        m_diag.Error(si->range,
+                                     "struct '" + si->typeName + "' has no field named '" + field.name + "'");
+                    }
+                }
+                else
+                {
+                    if (structType && positionalCount >= structType->fields.size())
+                    {
+                        m_diag.Error(si->range, "too many initializers for struct '" + si->typeName + "'");
+                    }
+
+                    ++positionalCount;
+                }
+            }
+
             return;
         }
 
@@ -506,6 +556,9 @@ class Resolver
 
             return "";
         }
+
+        case NodeKind::StructInit:
+            return static_cast<StructInitExpr*>(n)->typeName;
 
         default:
             return "";
