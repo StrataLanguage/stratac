@@ -73,7 +73,7 @@ STRATA_TEST(struct_vs_scalar_overload_resolves) {
     DiagnosticEngine diag;
     auto mod = resolve(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float mag(Vec3 v) { return v.x + v.y + v.z; }\n"
+        "float mag(in Vec3 v) { return v.x + v.y + v.z; }\n"
         "float mag(float s) { return s; }\n"
         "float ev() { Vec3 v; v.x = 1.0; v.y = 2.0; v.z = 3.0; return mag(v); }\n"
         "float es() { return mag(10.0); }\n", diag);
@@ -101,8 +101,8 @@ STRATA_TEST(no_matching_overload_is_an_error) {
 }
 
 STRATA_TEST(extern_struct_param_requires_direction) {
-    // A bare struct param on an extern must declare in/out/inout (it crosses
-    // the host boundary by pointer).
+    // A bare struct param (extern or not) must declare in/out/inout -- structs
+    // are always passed by reference.
     DiagnosticEngine diag;
     auto mod = resolve(
         "struct V { float x; };\n"
@@ -112,6 +112,23 @@ STRATA_TEST(extern_struct_param_requires_direction) {
         "struct V { float x; };\n"
         "extern void take(in V v);\n", diag);
     (void)ok;
+}
+
+STRATA_TEST(any_struct_param_requires_direction) {
+    // The rule is not extern-specific: a plain Strata function too.
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "struct V { float x; };\n"
+        "void take(V v) { };\n", diag);
+    STRATA_CHECK(diag.hasErrors());
+}
+
+STRATA_TEST(struct_inout_param_is_allowed) {
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "struct V { float x; };\n"
+        "void bump(inout V v) { v.x = v.x + 1.0; }\n", diag);
+    STRATA_CHECK(!diag.hasErrors());
 }
 
 STRATA_TEST(extern_struct_param_with_in_is_ok) {

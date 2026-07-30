@@ -186,12 +186,11 @@ private:
         info.ret = resolve(f.returnType);
         std::vector<LLVMTypeRef> params;
         for (const auto& p : f.params) {
-            // By pointer when writing back (out/inout), and whenever a struct
-            // crosses the host boundary (extern) -- by-value struct passing is
-            // ABI-fragile, so externs always take structs by pointer.
+            // Structs are always passed by reference (out/inout for write-back,
+            // and any struct param on any function). Scalars are by value unless
+            // out/inout.
             bool structVal = registry_.isUserType(p->type.name) && !registry_.isOpaque(p->type.name);
-            bool byPtr = (p->mod == ParamMod::Out || p->mod == ParamMod::InOut) ||
-                         (f.isExtern && structVal);
+            bool byPtr = (p->mod == ParamMod::Out || p->mod == ParamMod::InOut) || structVal;
             info.paramByPtr.push_back(byPtr);
             params.push_back(byPtr ? ptrTy_ : resolve(p->type).ty);
         }
@@ -224,9 +223,11 @@ private:
         for (unsigned i = 0; i < f.params.size(); ++i) {
             ParamMod mod = f.params[i]->mod;
             TypeDesc td = resolve(f.params[i]->type);
-            if (mod == ParamMod::Out || mod == ParamMod::InOut) {
-                // The incoming argument is already a pointer to the caller's
-                // storage; reads/writes go directly through it.
+            bool structVal =
+                registry_.isUserType(f.params[i]->type.name) && !registry_.isOpaque(f.params[i]->type.name);
+            // out/inout (write-back) and all struct params arrive as pointers to
+            // the caller's storage; reads/writes go through them directly.
+            if (mod == ParamMod::Out || mod == ParamMod::InOut || structVal) {
                 symbols_[f.params[i]->name] = {LLVMGetParam(curFn_, i), td};
             } else {
                 LLVMValueRef slot = LLVMBuildAlloca(builder_, td.ty, "arg");

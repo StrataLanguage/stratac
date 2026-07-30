@@ -53,21 +53,20 @@ public:
             walkBlock(*static_cast<Block*>(f->body.get()), scope);
         }
 
-        // Extern functions cross the host boundary. Structs must cross by
-        // pointer (by-value struct passing is ABI-fragile), so an extern struct
-        // parameter must declare in/out/inout, and an extern may not return a
-        // struct by value (use an out parameter instead).
+        // Struct parameters are always passed by reference, so every struct
+        // parameter (on any function) must declare in/out/inout. An extern may
+        // not return a struct by value (use an out parameter instead).
         for (auto& f : mod_.functions) {
-            if (!f->isExtern) continue;
             for (auto& p : f->params) {
                 if (isDefinedStruct(p->type.name) && p->mod == ParamMod::None) {
                     diag_.error(p->range,
-                                "extern struct parameter '" + p->name +
-                                    "' must be declared in/out/inout (it crosses the host "
-                                    "boundary by pointer)");
+                                "struct parameter '" + p->name +
+                                    "' must be declared in/out/inout (structs are passed by "
+                                    "reference; copy with '" + p->type.name + " " + p->name +
+                                    "_copy = " + p->name + ";' if you need a local value)");
                 }
             }
-            if (isDefinedStruct(f->returnType.name)) {
+            if (f->isExtern && isDefinedStruct(f->returnType.name)) {
                 diag_.error(f->range,
                             "extern function cannot return a struct by value; use an out "
                             "parameter");

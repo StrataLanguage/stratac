@@ -67,7 +67,12 @@ are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
   -> an opaque handle lowered as `ptr`.
 - Member access uses `LLVMBuildGEP2` on an alloca (`emitLValue` in
   LLVMModuleBuilder.cpp); positional construction (`Vec3(a,b,c)`) uses
-  `insertvalue`. Structs are passed/returned by value *within* Strata only.
+  `insertvalue`. **Struct parameters are always passed by reference**: any
+  struct parameter must declare `in`/`out`/`inout` (enforced by
+  `resolveOverloads`), lowered to `ptr`; the callee's symbol for it *is* the
+  incoming pointer, and call sites pass the argument's address. An `extern` may
+  not return a struct by value. Locals/returns are still by value; copy
+  explicitly (`Vec3 c = v;`) for a mutable local.
 - Aggregate-ABI caveat: structs are value types *within* Strata but cross the
   host boundary by pointer. An `extern` struct parameter must declare
   `in`/`out`/`inout` (enforced by `resolveOverloads`); it lowers to `ptr`. An

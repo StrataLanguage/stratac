@@ -234,10 +234,35 @@ float entry() {
 ```
 
 Structs are value types with no pointers: declare fields of any type (including
-other structs), read/write members (`v.x`, `b.pos.y`), construct positionally
-(`Vec3(1, 2, 3)`), and pass/return them by value **within Strata**. These all
-live in JIT-compiled code and use one calling convention on both sides, so they
-are ABI-independent.
+other structs), read/write members (`v.x`, `b.pos.y`), and construct positionally
+(`Vec3(1, 2, 3)`). Locals are values; **function parameters are always passed by
+reference** -- a struct parameter must declare `in`/`out`/`inout`, and is lowered
+to a pointer. `in` is a read-only reference; if you need a mutable local copy,
+make one explicitly. This keeps the calling convention uniform with `extern`
+(and future modules).
+
+```strata
+struct Vec3 { float x; float y; float z; };
+
+float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+void  scale(inout Vec3 v, float s) {
+    Vec3 c = v;            // explicit local copy
+    v.x = c.x * s; v.y = c.y * s; v.z = c.z * s;
+}
+```
+
+Initialization options:
+
+```strata
+Vec3 a;                  // zero-initialized by default -> {0.0, 0.0, 0.0}
+Vec3 b = Vec3(1, 2, 3);  // positional constructor
+Vec3 c = b;              // copy from another value
+a.x = 5.0;               // then set fields individually
+```
+
+Every variable declaration without an initializer is zero-initialized (scalars
+to `0`, floats to `0.0`, structs and vectors to all-zero fields), in both
+back-ends.
 
 ### Opaque engine handles
 
@@ -256,16 +281,16 @@ way to expose engine objects to scripts.
 
 ### A note on aggregates across the host/JIT boundary
 
-By value, passing a struct between host code and a JIT'd function depends on the
-platform's aggregate ABI, which the JIT can't always be retargeted to on this box
-(`LLVMSetTarget` isn't exported by `LLVM-C.dll`, and LLVM's `windows-msvc`
+Passing a struct *by value* between host code and a JIT'd function depends on
+the platform's aggregate ABI, which the JIT can't always be retargeted to on this
+box (`LLVMSetTarget` isn't exported by `LLVM-C.dll`, and LLVM's `windows-msvc`
 codegen and the MinGW host disagree on small aggregates).
 
-Strata avoids the problem by **never passing structs by value across the Strata
-→host boundary**. On `extern` functions, a struct parameter *must* declare a
-direction (`in`/`out`/`inout`) and is lowered to a **pointer**, which is a single
-register and ABI-stable. An `extern` may also not *return* a struct by value
-(use an `out` parameter). The host then implements the natural pointer signature:
+Strata sidesteps the problem entirely: **struct parameters are always passed by
+reference** (a `ptr`), whether the function is `extern` or not, so a struct never
+crosses any boundary by value. An `extern` may also not *return* a struct by
+value (use an `out` parameter). The host implements the natural pointer
+signature:
 
 ```strata
 extern float length_sq(in Vec3 v);                          // host: float(const Vec3*)

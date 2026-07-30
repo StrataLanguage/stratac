@@ -35,7 +35,7 @@ STRATA_TEST(parser_struct_typed_params_and_members) {
     strata::DiagnosticEngine diag;
     auto mod = strata::test_util::parseModule(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }\n",
+        "float dot(in Vec3 a, in Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }\n",
         diag);
     STRATA_CHECK(!diag.hasErrors());
     STRATA_CHECK_EQ(mod->functions.size(), (std::size_t)1);
@@ -105,10 +105,10 @@ STRATA_TEST(jit_struct_constructor_and_return) {
     }
 }
 
-STRATA_TEST(jit_struct_by_value_between_strata_functions) {
+STRATA_TEST(jit_struct_passed_between_strata_functions) {
     StrataJit* jit = compileJit(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
+        "float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
         "float entry() {\n"
         "  Vec3 a; a.x = 1.0; a.y = 2.0; a.z = 3.0;\n"
         "  Vec3 b; b.x = 4.0; b.y = 5.0; b.z = 6.0;\n"
@@ -179,6 +179,49 @@ STRATA_TEST(jit_opaque_engine_handle) {
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(jit_struct_zero_initialized_by_default) {
+    StrataJit* jit = compileJit(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "float entry() {\n"
+        "  Vec3 v;\n"            // zero-init -> {0, 0, 0}
+        "  v.x = 7.0;\n"         // -> {7, 0, 0}
+        "  return v.x + v.y + v.z;\n"   // 7 + 0 + 0 = 7
+        "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit) {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f) {
+            float r = f();
+            STRATA_CHECK(r > 6.9f && r < 7.1f);   // unwritten fields are zero
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_struct_inout_param_is_by_reference) {
+    // Struct params are passed by reference: an inout write is visible to the
+    // caller. (Copy explicitly with `Vec3 c = v;` for a local value.)
+    StrataJit* jit = compileJit(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "void bump(inout Vec3 v) { v.x = v.x + 10.0; v.y = v.y + 20.0; }\n"
+        "float entry() {\n"
+        "  Vec3 a; a.x = 1.0; a.y = 2.0; a.z = 3.0;\n"
+        "  bump(a);\n"               // a becomes {11, 22, 3}
+        "  return a.x + a.y + a.z;\n" // 11 + 22 + 3 = 36
+        "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit) {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f) {
+            float r = f();
+            STRATA_CHECK(r > 35.9f && r < 36.1f);   // write-back through the reference
+        }
+        strataJitDestroy(jit);
+    }
+}
+
 STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer) {
     // Structs cross the Strata->host boundary by pointer (in/out/inout), so the
     // host reads/writes through them. The host's Vec3 layout must match Strata's.
@@ -223,7 +266,7 @@ STRATA_TEST(aot_emits_struct_object) {
     strata::DiagnosticEngine diag;
     auto mod = strata::test_util::parseModule(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n", diag);
+        "float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n", diag);
     STRATA_CHECK(!diag.hasErrors());
     std::string notes, err;
     strata::BuiltModule bm = strata::buildLLVMModule(*mod, notes);

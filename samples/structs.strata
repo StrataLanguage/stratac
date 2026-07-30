@@ -1,12 +1,13 @@
 // structs.strata -- user-defined value types: fields, member access, positional
-// construction, nested structs, and by-value use within Strata.
+// construction, nested structs, and passing by reference.
 //
-// Straight-line code (no control flow), so the native back-end lowers it fully:
+// Struct parameters are always passed by reference (in/out/inout); copy
+// explicitly if you need a local value. Straight-line code, so the native
+// back-end lowers it fully:
 //   stratac --emit ir   structs.strata
 //   stratac --emit obj  structs.strata -o structs.o
 //
-// Structs are value types that live inside Strata. The host observes results
-// through scalar entry points (here, `entry`).
+// The host observes results through a scalar entry point (here, `entry`).
 
 struct Vec3 {
     float x;
@@ -21,12 +22,12 @@ struct Particle {
     float mass;
 };
 
-float dot(Vec3 a, Vec3 b) {
+float dot(in Vec3 a, in Vec3 b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 // Kinetic energy = 0.5 * m * |v|^2.
-float kinetic_energy(Particle p) {
+float kinetic_energy(in Particle p) {
     float speed_sq = dot(p.vel, p.vel);
     return speed_sq * p.mass * 0.5;
 }

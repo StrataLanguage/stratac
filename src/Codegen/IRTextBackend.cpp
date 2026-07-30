@@ -40,6 +40,18 @@ public:
         out_ << "; Strata module '" << mod.name << "'\n";
         registry_.build(mod);
 
+        // Emit struct type definitions (named, like the LLVM back-end).
+        for (const auto& st : registry_.types()) {
+            if (st.opaque) continue;
+            out_ << "%struct." << st.name << " = type { ";
+            for (std::size_t i = 0; i < st.fields.size(); ++i) {
+                if (i) out_ << ", ";
+                out_ << mappedOr(st.fields[i].type, "ptr").ir;
+            }
+            out_ << " }\n";
+        }
+        out_ << "\n";
+
         // Collect signatures first so call sites (in any order) know each
         // callee's return type and which parameters are passed by pointer.
         for (const auto& f : mod.functions) collectSignature(*f);
@@ -80,8 +92,9 @@ private:
         auto& bp = paramByPtrOf_[f.mangledName];
         bp.clear();
         for (const auto& p : f.params) {
+            // Structs are always by reference; scalars by value unless out/inout.
             bool structVal = registry_.isUserType(p->type.name) && !registry_.isOpaque(p->type.name);
-            bool byPtr = byRef(p->mod) || (f.isExtern && structVal);
+            bool byPtr = byRef(p->mod) || structVal;
             bp.push_back(byPtr);
         }
     }
@@ -97,11 +110,22 @@ private:
 
     detail::MappedType mappedOr(const TypeName& t, const char* fallback) {
         auto m = detail::mapType(t);
-        if (!m.valid) {
-            out_ << "; TODO: unsupported type '" << t.name << "' lowered as " << fallback << "\n";
-            m.ir = fallback;
-            m.elemIr = fallback;
+        if (m.valid) return m;
+        if (registry_.isUserType(t.name) && !registry_.isOpaque(t.name)) {
+            m.valid = true;
+            m.ir = "%struct." + t.name;
+            m.elemIr = m.ir;
+            return m;
         }
+        if (registry_.isOpaque(t.name)) {
+            m.valid = true;
+            m.ir = "ptr";
+            m.elemIr = "ptr";
+            return m;
+        }
+        out_ << "; TODO: unsupported type '" << t.name << "' lowered as " << fallback << "\n";
+        m.ir = fallback;
+        m.elemIr = fallback;
         return m;
     }
 
@@ -216,12 +240,15 @@ private:
             }
             case NodeKind::VarDecl: {
                 auto vd = static_cast<VarDeclStmt*>(n);
-                auto ty = mappedOr(vd->type, "i32");
+                auto ty = mappedOr(vd->type, "ptr");
                 std::string slot = newReg();
                 body_ << "  " << slot << " = alloca " << ty.ir << "\n";
                 if (vd->init) {
                     Eval v = coerce(emitExpr(vd->init.get()), ty);
                     body_ << "  store " << ty.ir << " " << v.val << ", ptr " << slot << "\n";
+                } else {
+                    // zero-init by default (scalars, structs, vectors).
+                    body_ << "  store " << ty.ir << " zeroinitializer, ptr " << slot << "\n";
                 }
                 symbols_[vd->name] = {ty, slot};
                 return;
