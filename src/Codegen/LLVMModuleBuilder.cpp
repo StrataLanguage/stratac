@@ -46,8 +46,9 @@ struct FuncInfo {
 
 class Builder {
 public:
-    BuiltModule build(const Module& module, std::string& notes) {
+    BuiltModule build(const Module& module, std::string& notes, bool jitMode) {
         notes = "; LLVM C API back-end\n";
+        jitMode_ = jitMode;
         ctx_ = LLVMContextCreate();
         mod_ = LLVMModuleCreateWithNameInContext(module.name.c_str(), ctx_);
         builder_ = LLVMCreateBuilderInContext(ctx_);
@@ -55,6 +56,11 @@ public:
         for (const auto& f : module.functions) declareFunction(*f);
         std::ostringstream bodyNotes;
         for (const auto& f : module.functions) defineFunction(*f, bodyNotes);
+
+        // Record extern (host-provided) symbols so the JIT/host know what to bind.
+        for (const auto& f : module.functions) {
+            if (f->isExtern) externNames_.push_back(f->name);
+        }
 
         char* diag = nullptr;
         if (LLVMVerifyModule(mod_, kReturnStatusAction, &diag)) {
@@ -69,6 +75,7 @@ public:
         // builder is a transient helper and is not part of the module.
         if (builder_) { LLVMDisposeBuilder(builder_); builder_ = nullptr; }
         BuiltModule out(ctx_, mod_);
+        out.externSymbols = std::move(externNames_);
         ctx_ = nullptr;
         mod_ = nullptr;
         return out;
@@ -82,6 +89,9 @@ private:
     std::map<std::string, Value> symbols_;
     detail::MappedType curRet_;
     bool terminated_ = false;
+    std::vector<std::string> externNames_;
+    std::map<std::string, LLVMValueRef> externSlots_; // JIT mode: name -> slot global
+    bool jitMode_ = false;
 
     LLVMTypeRef i32() const { return LLVMInt32TypeInContext(ctx_); }
     LLVMTypeRef i1() const { return LLVMInt1TypeInContext(ctx_); }
@@ -99,11 +109,22 @@ private:
         }
         info.ty = LLVMFunctionType(toLLVMType(ctx_, info.ret), params.data(),
                                    static_cast<unsigned>(params.size()), 0);
-        info.fn = LLVMAddFunction(mod_, f.name.c_str(), info.ty);
+        if (jitMode_ && f.isExtern) {
+            // Indirect-call slot: a writable global pointer the host fills.
+            LLVMTypeRef ptrTy = LLVMPointerTypeInContext(ctx_, 0);
+            std::string slotName = "__strata_ext_" + f.name;
+            LLVMValueRef slot = LLVMAddGlobal(mod_, ptrTy, slotName.c_str());
+            LLVMSetInitializer(slot, LLVMConstNull(ptrTy));
+            externSlots_[f.name] = slot;
+            info.fn = nullptr; // no direct function value; calls go through the slot
+        } else {
+            info.fn = LLVMAddFunction(mod_, f.name.c_str(), info.ty);
+        }
         funcs_[f.name] = info;
     }
 
     void defineFunction(const FunctionDecl& f, std::ostringstream& notes) {
+        if (!f.body) return; // declaration: extern or forward decl; nothing to emit
         symbols_.clear();
         terminated_ = false;
         curRet_ = detail::mapType(f.returnType);
@@ -222,6 +243,18 @@ private:
             notes << "; TODO: call to unknown function '" << n->callee << "'\n";
             return zeroInt();
         }
+        // JIT mode + extern: call indirectly through the host-filled slot.
+        if (jitMode_) {
+            auto sit = externSlots_.find(n->callee);
+            if (sit != externSlots_.end()) {
+                LLVMTypeRef ptrTy = LLVMPointerTypeInContext(ctx_, 0);
+                LLVMValueRef fnPtr = LLVMBuildLoad2(builder_, ptrTy, sit->second, "extfn");
+                LLVMValueRef call = LLVMBuildCall2(builder_, it->second.ty, fnPtr,
+                                                   args.data(), static_cast<unsigned>(args.size()),
+                                                   "call");
+                return {call, it->second.ret};
+            }
+        }
         LLVMValueRef call = LLVMBuildCall2(builder_, it->second.ty, it->second.fn,
                                            args.data(), static_cast<unsigned>(args.size()), "call");
         return {call, it->second.ret};
@@ -230,9 +263,9 @@ private:
 
 } // namespace
 
-BuiltModule buildLLVMModule(const Module& ast, std::string& notes) {
+BuiltModule buildLLVMModule(const Module& ast, std::string& notes, bool jitMode) {
     Builder b;
-    return b.build(ast, notes);
+    return b.build(ast, notes, jitMode);
 }
 
 } // namespace strata

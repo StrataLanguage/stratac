@@ -71,7 +71,9 @@ void dump(Node* n, int indent, std::ostringstream& out) {
         }
         case NodeKind::Function: {
             auto f = static_cast<FunctionDecl*>(n);
-            out << "fn " << f->returnType.name << " " << f->name << "(";
+            out << "fn ";
+            if (f->isExtern) out << "extern ";
+            out << f->returnType.name << " " << f->name << "(";
             for (std::size_t i = 0; i < f->params.size(); ++i) {
                 if (i) out << ", ";
                 auto& p = f->params[i];

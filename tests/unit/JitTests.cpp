@@ -119,4 +119,46 @@ STRATA_TEST(aot_emits_assembly_file) {
     STRATA_CHECK(in.tellg() > 0);
 }
 
+// ---- extern: Strata calls into host-provided functions ----
+
+// Host functions the engine would register. Plain C ABI; the symbol names match
+// the Strata `extern` declarations.
+static int host_double(int x) { return x * 2; }
+static int host_add(int a, int b) { return a + b; }
+
+STRATA_TEST(jit_calls_host_extern_function) {
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = nullptr;
+    StrataJit* jit = strataJitCompileString(
+        c,
+        "extern int host_double(int x);\n"
+        "extern int host_add(int a, int b);\n"
+        "int entry(int x) { return host_add(host_double(x), 1); }\n",
+        "ext", &err);
+    STRATA_CHECK(jit != nullptr);
+    if (!jit) {
+        strataFree(const_cast<char*>(err));
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    // The host can discover what the script needs.
+    STRATA_CHECK_EQ(strataJitGetExternSymbolCount(jit), (size_t)2);
+
+    // Bind host functions before resolving any Strata function (which compiles).
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "host_double", (void*)&host_double), 1);
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "host_add", (void*)&host_add), 1);
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "not_declared", (void*)&host_add), 0);
+
+    auto entry = reinterpret_cast<int (*)(int)>(strataJitGetFunction(jit, "entry"));
+    STRATA_CHECK(entry != nullptr);
+    if (entry) {
+        // entry(5) == host_add(host_double(5), 1) == host_add(10, 1) == 11
+        STRATA_CHECK_EQ(entry(5), 11);
+        STRATA_CHECK_EQ(entry(0), 1);
+    }
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 #endif // STRATA_ENABLE_LLVM

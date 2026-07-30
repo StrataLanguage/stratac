@@ -169,6 +169,8 @@ std::unique_ptr<Module> Parser::parseModule() {
 }
 
 std::unique_ptr<FunctionDecl> Parser::parseFunction() {
+    bool isExtern = consume(TokKind::Kw_extern);
+
     TypeName ret;
     if (!tryParseType(ret)) {
         if (!cur_.is(TokKind::Eof)) {
@@ -184,6 +186,7 @@ std::unique_ptr<FunctionDecl> Parser::parseFunction() {
     advance();
     auto fn = std::make_unique<FunctionDecl>(spanFrom(Token{TokKind::Ident, ret.range}, nameTok),
                                              ret, toString(identText(nameTok)));
+    fn->isExtern = isExtern;
 
     if (!expect(TokKind::LParen, "'('").is(TokKind::LParen)) {
         return fn;
@@ -203,7 +206,16 @@ std::unique_ptr<FunctionDecl> Parser::parseFunction() {
     expect(TokKind::RParen, "')'");
 
     if (consume(TokKind::Semicolon)) {
-        return fn; // forward declaration
+        return fn; // declaration (extern or forward)
+    }
+    if (isExtern) {
+        diag_.error(cur_.range, "extern function cannot have a body");
+        // Skip the body if present so parsing can continue.
+        if (cur_.is(TokKind::LBrace)) {
+            advance();
+            synchronize();
+        }
+        return fn;
     }
     if (!cur_.is(TokKind::LBrace)) {
         diag_.error(cur_.range, "expected function body '{...}' or ';'");

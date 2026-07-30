@@ -94,6 +94,7 @@ struct FunctionDecl : Node {
     std::string name;
     std::vector<std::unique_ptr<ParamDecl>> params;  // owned
     NodePtr body;                                     // a Block, or nullptr for a declaration
+    bool isExtern = false;                            // provided by the host runtime
 
     FunctionDecl(SourceRange r, TypeName ret, std::string n)
         : Node(NodeKind::Function, r), returnType(std::move(ret)), name(std::move(n)) {}

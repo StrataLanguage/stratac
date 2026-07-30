@@ -53,6 +53,15 @@ TargetMachine or ExecutionEngine** — `LLVMInitializeAll*` / `LLVMInitializeNat
 are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
 `ensureX86Initialized()` helpers in LLVMAot.cpp / LLVMJit.cpp do this once each.
 
+`extern` functions (host-provided) are lowered two ways, depending on path:
+- AOT: a body-less `declare`; the host satisfies it at link time.
+- JIT: each `extern` call is an indirect call through a writable global pointer
+  slot `__strata_ext_<name>`. `strataJitAddSymbol` resolves the slot via
+  `LLVMGetGlobalValueAddress` and writes the host pointer. (MCJIT's
+  `LLVMAddGlobalMapping` is not consulted by this build, so we don't rely on it.)
+  The builder only creates slots in `jitMode` (true for the JIT, false for
+  AOT/text).
+
 The JIT is demonstrated in `tests/unit/JitTests.cpp` (it actually calls JIT'd
 functions and asserts results).
 

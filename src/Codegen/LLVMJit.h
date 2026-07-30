@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace strata {
 
@@ -30,6 +31,14 @@ public:
     // Returns true on success; `errorMessage` is set on failure.
     bool load(BuiltModule bm, std::string& errorMessage);
 
+    // Binds a declared extern function name to a host address. Must be called
+    // before getAddress() triggers compilation of the referencing code. Returns
+    // false if the name is not declared in the module.
+    bool addSymbol(const char* name, void* addr);
+
+    // Names the script declared `extern` (the host is expected to bind these).
+    const std::vector<std::string>& externSymbols() const noexcept { return externs_; }
+
     // Resolves a function to its native address, or 0 if not present. The first
     // lookup triggers compilation of everything reachable from that function.
     std::uint64_t getAddress(const char* name) const;
@@ -41,6 +50,8 @@ private:
 
     LLVMExecutionEngineRef ee_ = nullptr; // owns the module once loaded
     LLVMContextRef ctx_ = nullptr;        // kept alive for the engine's lifetime
+    LLVMModuleRef mod_ = nullptr;         // non-owning; engine owns, kept for lookups
+    std::vector<std::string> externs_;
 };
 
 } // namespace strata

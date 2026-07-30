@@ -139,14 +139,56 @@ add:
     retq
 ```
 
+### Calling into the engine: `extern` functions
+
+Strata declares host-provided functions with `extern`. These have no body in
+Strata; the engine provides the implementation. This is engine-agnostic: the
+host just supplies native function pointers (JIT) or symbols (AOT).
+
+```strata
+extern int   engine_get_hp(int entity);
+extern void  engine_set_position(int entity, float x, float y, float z);
+extern float engine_distance(int a, int b);
+
+int danger_level(int self, int foe) {
+    return engine_get_hp(foe) + (int)engine_distance(self, foe); // calls into the host
+}
+```
+
+**JIT** — after compiling, register each extern name with a native pointer
+(before resolving any Strata function, which triggers compilation). You can also
+enumerate the names the script declared:
+
+```c
+StrataJit* jit = strataJitCompileString(c, src, "ai", &err);
+for (size_t i = 0; i < strataJitGetExternSymbolCount(jit); ++i) {
+    const char* name = strataJitGetExternSymbolName(jit, i);
+    strataJitAddSymbol(jit, name, engine_lookup(name)); // bind host function pointer
+}
+int (*f)(int,int) = (int(*)(int,int)) strataJitGetFunction(jit, "danger_level");
+```
+
+Internally the JIT lowers each `extern` call to an indirect call through a
+writable per-extern pointer slot (`__strata_ext_<name>`) that `strataJitAddSymbol`
+fills. This sidesteps MCJIT symbol resolution, which isn't exposed by this
+`LLVM-C.dll`.
+
+**AOT** — `extern` becomes an ordinary undefined symbol in the object file; the
+host provides it at link time:
+
+```sh
+stratac --emit obj ai.strata -o ai.o
+clang host.c ai.o -o ai        # host.c defines engine_get_hp, engine_set_position, ...
+```
+
 ### What the JIT / AOT paths lower today
 
-Both share one IR builder (currently the bootstrap subset: scalar int/float
-functions, parameters, returns, locals, `+ - *`, and calls). Control flow and
-`out`/`inout` mutation are handled by the text IR back-end and are next on the
-list for the native paths. `out`/`inout` also need an ABI decision (likely
-lowered to pointers in the host signature) before they are callable through a C
-function pointer.
+The native paths (JIT and AOT) share one IR builder and currently lower: scalar
+int/float functions, parameters, returns, locals, `+ - *`, calls between Strata
+functions, and `extern` calls into the host. Control flow and `out`/`inout`
+mutation are handled by the text IR back-end and are next on the list for the
+native paths; `out`/`inout` also need an ABI decision (likely lowered to pointers
+in the host signature) before they are callable through a C function pointer.
 
 ## Embedding (compile to IR / AST)
 

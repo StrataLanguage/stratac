@@ -34,6 +34,7 @@ bool LLVMJit::load(BuiltModule bm, std::string& errorMessage) {
     ensureInitialized();
     if (!bm.mod) { errorMessage = "no module to JIT"; return false; }
 
+    externs_ = bm.externSymbols; // copy before we move bm
     LLVMContextRef c = nullptr;
     LLVMModuleRef m = nullptr;
     bm.release(c, m); // steal ownership; bm won't dispose
@@ -51,6 +52,18 @@ bool LLVMJit::load(BuiltModule bm, std::string& errorMessage) {
         ctx_ = nullptr;
         return false;
     }
+    mod_ = m; // engine owns it; keep a non-owning ref for symbol lookups
+    return true;
+}
+
+bool LLVMJit::addSymbol(const char* name, void* addr) {
+    if (!ee_ || !name || !addr) return false;
+    // In JIT mode the builder emitted a writable per-extern slot named
+    // "__strata_ext_<name>"; resolve its address and store the host pointer.
+    std::string slot = std::string("__strata_ext_") + name;
+    uint64_t slotAddr = LLVMGetGlobalValueAddress(ee_, slot.c_str());
+    if (slotAddr == 0) return false;
+    *reinterpret_cast<void**>(slotAddr) = addr;
     return true;
 }
 

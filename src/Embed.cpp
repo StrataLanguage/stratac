@@ -14,6 +14,7 @@
 #include <string>
 #include <cstdio>
 #include <cstdint>
+#include <cstddef>
 #include <memory>
 
 #if defined(STRATA_ENABLE_LLVM)
@@ -176,7 +177,7 @@ static StrataJit* jitCompile(StrataCompiler* /*c*/, std::string source,
     }
 
     std::string notes;
-    strata::BuiltModule bm = strata::buildLLVMModule(*mod, notes);
+    strata::BuiltModule bm = strata::buildLLVMModule(*mod, notes, /*jitMode=*/true);
 
     auto jit = std::make_unique<strata::LLVMJit>();
     std::string err;
@@ -240,6 +241,38 @@ void* strataJitGetFunction(StrataJit* jit, const char* name) {
     return addr ? reinterpret_cast<void*>(addr) : nullptr;
 #else
     (void)jit; (void)name;
+    return nullptr;
+#endif
+}
+
+int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn) {
+#if defined(STRATA_ENABLE_LLVM)
+    if (!jit || !jit->jit || !name || !fn) return 0;
+    return jit->jit->addSymbol(name, fn) ? 1 : 0;
+#else
+    (void)jit; (void)name; (void)fn;
+    return 0;
+#endif
+}
+
+size_t strataJitGetExternSymbolCount(StrataJit* jit) {
+#if defined(STRATA_ENABLE_LLVM)
+    if (!jit || !jit->jit) return 0;
+    return jit->jit->externSymbols().size();
+#else
+    (void)jit;
+    return 0;
+#endif
+}
+
+const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index) {
+#if defined(STRATA_ENABLE_LLVM)
+    if (!jit || !jit->jit) return nullptr;
+    const auto& v = jit->jit->externSymbols();
+    if (index >= v.size()) return nullptr;
+    return v[index].c_str();
+#else
+    (void)jit; (void)index;
     return nullptr;
 #endif
 }

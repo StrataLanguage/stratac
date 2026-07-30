@@ -78,6 +78,12 @@ LLVMValueRef LLVMConstInt(LLVMTypeRef IntTy, unsigned long long N, LLVMBool Sign
 LLVMValueRef LLVMConstReal(LLVMTypeRef Ty, double V);
 LLVMValueRef LLVMGetParam(LLVMValueRef Func, unsigned Index);
 
+// Globals (used for the JIT's extern-call slots).
+LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef C, unsigned AddressSpace);
+LLVMValueRef LLVMConstNull(LLVMTypeRef Ty);
+LLVMValueRef LLVMAddGlobal(LLVMModuleRef M, LLVMTypeRef Ty, const char* Name);
+void LLVMSetInitializer(LLVMValueRef GlobalVar, LLVMValueRef ConstantVal);
+
 // --- Functions & basic blocks ---
 LLVMValueRef LLVMAddFunction(LLVMModuleRef M, const char* Name, LLVMTypeRef FunctionTy);
 LLVMBasicBlockRef LLVMAppendBasicBlock(LLVMValueRef Func, const char* Name);
@@ -174,6 +180,12 @@ LLVMBool LLVMCreateExecutionEngineForModule(LLVMExecutionEngineRef* OutEE,
 void LLVMDisposeExecutionEngine(LLVMExecutionEngineRef EE);
 uint64_t LLVMGetFunctionAddress(LLVMExecutionEngineRef EE, const char* Name);
 uint64_t LLVMGetGlobalValueAddress(LLVMExecutionEngineRef EE, const char* Name);
+
+// Symbol resolution for the JIT: binds a declared function/global in `M` to a
+// host address. Must be called on the engine before the referencing code is
+// compiled (i.e. before LLVMGetFunctionAddress triggers finalization).
+LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef M, const char* Name);
+void LLVMAddGlobalMapping(LLVMExecutionEngineRef EE, LLVMValueRef Global, void* Addr);
 } // extern "C"
 
 namespace strata::llvm_c {

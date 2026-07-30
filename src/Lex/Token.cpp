@@ -9,7 +9,7 @@ namespace {
 struct Spelling { TokKind kind; std::string_view text; };
 
 // Order matters only for readability; lookup is linear over a tiny table.
-constexpr std::array<Spelling, 26> kKeywords = {{
+constexpr std::array<Spelling, 27> kKeywords = {{
     {TokKind::Kw_void,      "void"},
     {TokKind::Kw_bool,      "bool"},
     {TokKind::Kw_int,       "int"},
@@ -23,6 +23,7 @@ constexpr std::array<Spelling, 26> kKeywords = {{
     {TokKind::Kw_inout,     "inout"},
     {TokKind::Kw_const,     "const"},
     {TokKind::Kw_static,    "static"},
+    {TokKind::Kw_extern,    "extern"},
     {TokKind::Kw_return,    "return"},
     {TokKind::Kw_if,        "if"},
     {TokKind::Kw_else,      "else"},

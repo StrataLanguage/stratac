@@ -8,6 +8,8 @@
 // Result strings are owned by the compiler and freed with strataResultFree().
 #pragma once
 
+#include <stddef.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -36,6 +38,19 @@ StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path,
 // Resolves `name` to a native function pointer, or NULL. Cast to the matching C
 // signature, e.g. ((int(*)(int,int))strataJitGetFunction(jit, "add"))(2, 3).
 void* strataJitGetFunction(StrataJit* jit, const char* name);
+
+// --- Host bindings (engine runtime) ---------------------------------------
+// A script declares host-provided functions with `extern`, e.g.
+//   extern int engine_get_hp(int entity);
+// The host must bind each such name to a native function pointer after
+// strataJitCompile* and before strataJitGetFunction triggers compilation.
+// Returns 1 on success, 0 if the name is not declared in the module.
+int    strataJitAddSymbol(StrataJit* jit, const char* name, void* fn);
+
+// Enumerates the `extern` names the script declared, so the host can verify it
+// can satisfy them. Names are valid until strataJitDestroy.
+size_t      strataJitGetExternSymbolCount(StrataJit* jit);
+const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index);
 
 const char* strataJitDiagnostics(StrataJit* jit);
 void strataJitDestroy(StrataJit* jit);

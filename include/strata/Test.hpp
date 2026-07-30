@@ -74,13 +74,16 @@ inline int runAll() {
     for (const auto& reg : registry()) {
         int before = failureCount();
         std::printf("[ RUN      ] %s\n", reg.name);
+        std::fflush(stdout);
         reg.fn();
+        std::fflush(stdout);
         int failed = failureCount() - before;
         if (failed == 0) {
             std::printf("[       OK ] %s\n", reg.name);
         } else {
             std::printf("[  FAILED  ] %s (%d assertion(s))\n", reg.name, failed);
         }
+        std::fflush(stdout);
         ++total;
     }
     int fails = failureCount();

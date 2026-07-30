@@ -38,6 +38,7 @@ enum class TokKind : std::uint8_t {
     Kw_inout,
     Kw_const,
     Kw_static,
+    Kw_extern,
     Kw_return,
     Kw_if,
     Kw_else,
