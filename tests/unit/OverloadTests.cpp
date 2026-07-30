@@ -23,13 +23,7 @@ bool Contains(const std::string& h, const std::string& n)
 // Parse + run overload resolution; returns the module.
 std::unique_ptr<Module> Resolve(std::string_view src, DiagnosticEngine& diag)
 {
-    auto mod = ParseModule(src, diag);
-    if (mod)
-    {
-        ResolveOverloads(*mod, diag);
-    }
-
-    return mod;
+    return ParseAndResolve(src, diag);
 }
 } // namespace
 
@@ -205,6 +199,36 @@ STRATA_TEST(handle_cannot_have_members_accessed)
                        "float entry() { Entity e = make(); return e.x; }\n",
                        diag); // e.x on a handle
     STRATA_CHECK(diag.HasErrors());
+}
+
+STRATA_TEST(in_scalar_param_is_const)
+{
+    DiagnosticEngine diag;
+    auto mod = Resolve("void foo(in int x) { x = 5; }\n", diag);
+    STRATA_CHECK(diag.HasErrors());
+}
+
+STRATA_TEST(in_scalar_param_compound_assign_is_error)
+{
+    DiagnosticEngine diag;
+    auto mod = Resolve("void foo(in int x) { x += 5; }\n", diag);
+    STRATA_CHECK(diag.HasErrors());
+}
+
+STRATA_TEST(in_struct_param_member_is_const)
+{
+    DiagnosticEngine diag;
+    auto mod = Resolve("struct Vec3 { float x; float y; float z; };\n"
+                       "void foo(in Vec3 v) { v.y = 3.0; }\n",
+                       diag);
+    STRATA_CHECK(diag.HasErrors());
+}
+
+STRATA_TEST(in_param_can_be_read)
+{
+    DiagnosticEngine diag;
+    auto mod = Resolve("int foo(in int x) { return x + 1; }\n", diag);
+    STRATA_CHECK(!diag.HasErrors());
 }
 
 #ifdef STRATA_ENABLE_LLVM

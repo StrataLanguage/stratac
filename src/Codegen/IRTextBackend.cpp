@@ -121,21 +121,27 @@ class IRTextImpl
     };
     std::vector<Loop> m_loops;
 
+    // Determine if we need write-back (by ref)
     static bool ByRef(ParamMod m)
     {
-        return m == ParamMod::Out || m == ParamMod::InOut;
+        // Handles In, Out, InOut.
+        // these all indicate pass by-ref
+        return m != ParamMod::None;
     }
 
     void CollectSignature(const FunctionDecl& f)
     {
         m_retOf[f.mangledName] = MappedOr(f.returnType, "void");
+        
         auto& bp = m_paramByPtrOf[f.mangledName];
         bp.clear();
+
         for (const auto& p : f.params)
         {
             // Structs are always by reference; scalars by value unless out/inout.
             bool structVal = m_registry.IsUserType(p->type.name) && !m_registry.IsOpaque(p->type.name);
             bool byPtr = ByRef(p->mod) || structVal;
+
             bp.push_back(byPtr);
         }
     }

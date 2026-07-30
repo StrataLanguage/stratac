@@ -130,6 +130,26 @@ extern "C"
         LLVMIntSLE
     };
 
+    using LLVMRealPredicate = enum
+    {
+        LLVMRealPredicateFalse = 0,
+        LLVMRealOEQ = 1,
+        LLVMRealOGT = 2,
+        LLVMRealOGE = 3,
+        LLVMRealOLT = 4,
+        LLVMRealOLE = 5,
+        LLVMRealONE = 6,
+        LLVMRealORD = 7,
+        LLVMRealUNO = 8,
+        LLVMRealUEQ = 9,
+        LLVMRealUGT = 10,
+        LLVMRealUGE = 11,
+        LLVMRealULT = 12,
+        LLVMRealULE = 13,
+        LLVMRealUNE = 14,
+        LLVMRealPredicateTrue = 15
+    };
+
     LLVMValueRef LLVMBuildSDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
     LLVMValueRef LLVMBuildUDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
     LLVMValueRef LLVMBuildFDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
@@ -147,7 +167,7 @@ extern "C"
     LLVMValueRef LLVMBuildFNeg(LLVMBuilderRef b, LLVMValueRef v, const char* name);
     LLVMValueRef LLVMBuildICmp(LLVMBuilderRef b, LLVMIntPredicate pred, LLVMValueRef l, LLVMValueRef r,
                                const char* name);
-    LLVMValueRef LLVMBuildFCmp(LLVMBuilderRef b, const char* pred, LLVMValueRef l, LLVMValueRef r, const char* name);
+    LLVMValueRef LLVMBuildFCmp(LLVMBuilderRef b, LLVMRealPredicate pred, LLVMValueRef l, LLVMValueRef r, const char* name);
     LLVMValueRef LLVMBuildSIToFP(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
     LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
     LLVMValueRef LLVMBuildFPToSI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
@@ -228,9 +248,10 @@ extern "C"
                                                  LLVMCodeModel codeModel);
     void LLVMDisposeTargetMachine(LLVMTargetMachineRef t);
 
-    // Target data layout — used to stamp the module so IR matches the target ABI.
     using LLVMTargetDataRef = struct LLVMOpaqueTargetData*;
+    
     LLVMTargetDataRef LLVMCreateTargetDataLayout(LLVMTargetMachineRef t);
+
     char* LLVMCopyStringRepOfTargetData(LLVMTargetDataRef td);
     void LLVMDisposeTargetData(LLVMTargetDataRef td);
     void LLVMSetDataLayout(LLVMModuleRef m, const char* dataLayout);

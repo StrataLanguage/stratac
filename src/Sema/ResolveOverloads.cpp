@@ -4,6 +4,7 @@
 
 #include <climits>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,9 +71,16 @@ class Resolver
             }
 
             VarScope scope;
+            m_constVars.clear();
             for (auto& p : f->params)
             {
                 scope[p->name] = p->type.name;
+
+                // In is const
+                if (p->mod == ParamMod::In)
+                {
+                    m_constVars.insert(p->name);
+                }
             }
 
             WalkBlock(*static_cast<Block*>(f->body.get()), scope);
@@ -87,18 +95,13 @@ class Resolver
             {
                 if (IsDefinedStruct(p->type.name) && p->mod == ParamMod::None)
                 {
-                    m_diag.Error(p->range, "struct parameter '" + p->name +
-                                               "' must be declared in/out/inout (structs are passed by "
-                                               "reference; copy with '" +
-                                               p->type.name + " " + p->name + "_copy = " + p->name +
-                                               ";' if you need a local value)");
+                    m_diag.Error(p->range, "struct parameter '" + p->name + "' must be passed by reference via in/out/inout");
                 }
             }
 
             if (f->isExtern && IsDefinedStruct(f->returnType.name))
             {
-                m_diag.Error(f->range, "extern function cannot return a struct by value; use an out "
-                                       "parameter");
+                m_diag.Error(f->range, "extern function cannot return a struct by value; use an in/out/inout qualifier on parameter");
             }
         }
     }
@@ -109,6 +112,7 @@ class Resolver
     TypeRegistry m_registry;
     std::map<std::string, std::vector<FunctionDecl*>> m_byName;
     std::map<std::string, FunctionDecl*> m_byMangled;
+    std::set<std::string> m_constVars; // 'in' params for the current function
 
     static std::string Mangle(const FunctionDecl& f)
     {
@@ -151,6 +155,12 @@ class Resolver
         case NodeKind::VarDecl:
         {
             auto* varDecl = static_cast<VarDeclStmt*>(n);
+
+            if (varDecl->type.isConst && !varDecl->init)
+            {
+                m_diag.Error(varDecl->range, "const variable '" + varDecl->name + "' must be initialized");
+            }
+
             if (varDecl->init)
             {
                 ResolveExpr(varDecl->init.get(), scope);
@@ -237,6 +247,28 @@ class Resolver
         }
     }
 
+    // Walks an assignment target to find the root identifier and reports an
+    // error if it is an 'in' parameter (implicitly const).
+    void CheckConstAssign(Node* target, SourceRange range)
+    {
+        Node* base = target;
+
+        // Drill through member access: a.b.c = ... → root is 'a'.
+        while (base->kind == NodeKind::Member)
+        {
+            base = static_cast<MemberExpr*>(base)->base.get();
+        }
+
+        if (base->kind == NodeKind::Ident)
+        {
+            const std::string& name = static_cast<IdentExpr*>(base)->name;
+            if (m_constVars.count(name))
+            {
+                m_diag.Error(range, "cannot modify 'in' parameter '" + name + "'");
+            }
+        }
+    }
+
     // Depth-first: resolve sub-expressions first, then resolve the call itself
     // (so argument types are known when overload resolution runs).
     void ResolveExpr(Node* n, VarScope& scope)
@@ -251,8 +283,17 @@ class Resolver
         case NodeKind::IntLiteral:
         case NodeKind::FloatLiteral:
         case NodeKind::BoolLiteral:
-        case NodeKind::Ident:
             return;
+        case NodeKind::Ident:
+        {
+            auto* ident = static_cast<IdentExpr*>(n);
+            if (scope.find(ident->name) == scope.end())
+            {
+                m_diag.Error(ident->range, "unknown variable '" + ident->name + "'");
+            }
+
+            return;
+        }
         case NodeKind::Unary:
             ResolveExpr(static_cast<UnaryExpr*>(n)->operand.get(), scope);
             return;
@@ -267,6 +308,10 @@ class Resolver
         case NodeKind::Assign:
         {
             auto* a = static_cast<AssignExpr*>(n);
+
+            // 'in'-only parameters are implicitly const
+            CheckConstAssign(a->target.get(), a->range);
+
             ResolveExpr(a->target.get(), scope);
             ResolveExpr(a->value.get(), scope);
             return;

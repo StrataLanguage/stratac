@@ -360,7 +360,7 @@ class Builder
         for (const auto& p : f.params)
         {
             bool structVal = m_registry.IsUserType(p->type.name) && !m_registry.IsOpaque(p->type.name);
-            bool byPtr = (p->mod == ParamMod::Out || p->mod == ParamMod::InOut) || structVal;
+            bool byPtr = p->mod != ParamMod::None || structVal;
             info.paramByPtr.push_back(byPtr);
             params.push_back(byPtr ? m_ptrTy : Resolve(p->type).type);
         }
@@ -403,11 +403,12 @@ class Builder
         {
             ParamMod mod = f.params[i]->mod;
             TypeDesc typeDesc = Resolve(f.params[i]->type);
-            bool structVal =
-                m_registry.IsUserType(f.params[i]->type.name) && !m_registry.IsOpaque(f.params[i]->type.name);
 
-            if (mod == ParamMod::Out || mod == ParamMod::InOut || structVal)
+            bool structVal = m_registry.IsUserType(f.params[i]->type.name) && !m_registry.IsOpaque(f.params[i]->type.name);
+
+            if (mod != ParamMod::None || structVal)
             {
+                // By Ref
                 m_symbols[f.params[i]->name] = {
                     .value = LLVMGetParam(m_curFn, i),
                     .typeDesc = typeDesc,
@@ -671,7 +672,7 @@ class Builder
 
         if (v.typeDesc.isFloat)
         {
-            return LLVMBuildFCmp(m_builder, "one", v.value, LLVMConstNull(v.typeDesc.type), "tobool");
+            return LLVMBuildFCmp(m_builder, LLVMRealONE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
         }
 
         return LLVMBuildICmp(m_builder, v.typeDesc.isUnsigned ? LLVMIntNE : LLVMIntNE, v.value,
@@ -969,7 +970,7 @@ class Builder
 
         auto fcmp = [&](const char* pred)
         {
-            out = LLVMBuildFCmp(m_builder, pred, l.value, r.value, "cmp");
+            out = LLVMBuildFCmp(m_builder, RealPredNameToPredicate(pred), l.value, r.value, "cmp");
         };
 
         TypeDesc boolTypeDesc{
@@ -1076,6 +1077,17 @@ class Builder
         }
 
         return LLVMIntEQ;
+    }
+
+    static LLVMRealPredicate RealPredNameToPredicate(const char* p)
+    {
+        if (std::strcmp(p, "oeq") == 0) return LLVMRealOEQ;
+        if (std::strcmp(p, "ogt") == 0) return LLVMRealOGT;
+        if (std::strcmp(p, "oge") == 0) return LLVMRealOGE;
+        if (std::strcmp(p, "olt") == 0) return LLVMRealOLT;
+        if (std::strcmp(p, "ole") == 0) return LLVMRealOLE;
+        if (std::strcmp(p, "one") == 0) return LLVMRealONE;
+        return LLVMRealOEQ;
     }
 
     Value EmitAssign(AssignExpr* n)

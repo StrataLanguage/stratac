@@ -560,21 +560,27 @@ std::unique_ptr<ParamDecl> Parser::ParseParam()
     }
 
     Token nameTok = m_cur;
+    
     Advance();
-    SourceRange range{
+    
+    SourceRange range {
         .start = start.start,
         .length = static_cast<std::uint16_t>(nameTok.range.End() - start.start),
     };
+
     return std::make_unique<ParamDecl>(range, mod, std::move(type), ToString(IdentText(nameTok)));
 }
 
 NodePtr Parser::ParseBlock()
 {
     Token lb = Expect(TokKind::LBrace, "'{'");
+    
     auto block = std::make_unique<Block>(lb.range);
+
     while (!m_cur.Is(TokKind::RBrace) && !m_cur.Is(TokKind::Eof))
     {
         NodePtr stmt = ParseStatement();
+
         if (stmt)
         {
             block->statements.push_back(std::move(stmt));
@@ -586,6 +592,7 @@ NodePtr Parser::ParseBlock()
     }
 
     Expect(TokKind::RBrace, "'}'");
+
     return block;
 }
 
@@ -655,7 +662,7 @@ NodePtr Parser::ParseVarDeclOrExprStmt()
         {
             if (m_cur.Is(TokKind::LBrace))
             {
-                // Inferred braced init: Vec3 v = {.x = 1}; — type from LHS.
+                // Inferred braced init
                 varDecl->init = ParseStructInitBody(start, type.name);
             }
             else

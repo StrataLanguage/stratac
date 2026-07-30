@@ -44,7 +44,7 @@ STRATA_TEST(sample_structs_compile_with_native_backend)
     STRATA_CHECK(!src.empty());
 
     strata::DiagnosticEngine diag;
-    auto mod = strata::test_util::ParseModule(src, diag, "structs.strata");
+    auto mod = strata::test_util::ParseAndResolve(src, diag, "structs.strata");
     STRATA_CHECK(!diag.HasErrors());
     STRATA_CHECK(!mod->structs.empty());
 

@@ -78,8 +78,6 @@ struct TypeName
     }
 };
 
-// ---- Parameter modifiers (HLSL-style; no pointers/references) ----
-
 enum class ParamMod : std::uint8_t
 {
     None,
@@ -126,7 +124,7 @@ struct FieldDecl
     std::string name;
 };
 
-// A user-defined aggregate type (a value type -- no pointers in Strata).
+// A user-defined aggregate type.
 struct StructDecl : Node
 {
     std::string name;
@@ -391,7 +389,7 @@ struct MemberExpr : Node
     }
 };
 
-// Braced struct initializer:  TypeName{ .field = expr, ... }  or  TypeName{ expr, ... }
+// Braced struct initializer.
 // Each entry has an optional field name (empty = positional) and a value expression.
 struct StructInitField
 {

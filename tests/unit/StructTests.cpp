@@ -422,7 +422,6 @@ STRATA_TEST(jit_braced_init_out_of_order)
 
 STRATA_TEST(jit_braced_init_inferred_type)
 {
-    // Vec3 v = {.x = 1, .y = 2, .z = 3}; — type inferred from LHS, no repeat.
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
                                 "float entry() {\n"
                                 "  Vec3 v = {.x = 10.0, .y = 20.0, .z = 30.0};\n"
@@ -445,7 +444,6 @@ STRATA_TEST(jit_braced_init_inferred_type)
 
 STRATA_TEST(jit_braced_init_inferred_positional)
 {
-    // Vec3 v = {1.0, 2.0, 3.0}; — positional, type inferred from LHS.
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
                                 "float entry() {\n"
                                 "  Vec3 v = {10.0, 20.0, 30.0};\n"
@@ -460,6 +458,110 @@ STRATA_TEST(jit_braced_init_inferred_positional)
         {
             float r = f();
             STRATA_CHECK(r > 59.9f && r < 60.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+// ---- 'in' params are passed by reference ----
+
+STRATA_TEST(jit_in_scalar_param_reads_correctly)
+{
+    StrataJit* jit = CompileJit("int identity(in int x) { return x; }\n"
+                                "int entry() { return identity(42); }\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 42);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_in_float_param_reads_correctly)
+{
+    StrataJit* jit = CompileJit("float half_val(in float x) { return x * 0.5; }\n"
+                                "float entry() { return half_val(10.0); }\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f(); // 5.0
+            STRATA_CHECK(r > 4.9f && r < 5.1f);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_in_param_does_not_corrupt_caller)
+{
+    // 'in' is by-ref but const — the caller's value must be unchanged after the call.
+    StrataJit* jit = CompileJit("void consume(in int x) { int unused = x + 1; }\n"
+                                "int entry() {\n"
+                                "  int v = 99;\n"
+                                "  consume(v);\n"
+                                "  return v;\n"
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 99);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_multiple_in_params)
+{
+    StrataJit* jit = CompileJit("int sum(in int a, in int b, in int c) { return a + b + c; }\n"
+                                "int entry() { return sum(10, 20, 30); }\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<int (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 60);
+        }
+
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_in_struct_param_passed_by_ref)
+{
+    StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
+                                "float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
+                                "float entry() {\n"
+                                "  Vec3 a = {1.0, 2.0, 3.0};\n"
+                                "  Vec3 b = {4.0, 5.0, 6.0};\n"
+                                "  return dot(a, b);\n" // 4+10+18=32
+                                "}\n");
+    STRATA_CHECK(jit != nullptr);
+    if (jit)
+    {
+        auto f = reinterpret_cast<float (*)()>(strataJitGetFunction(jit, "entry"));
+        STRATA_CHECK(f != nullptr);
+        if (f)
+        {
+            float r = f();
+            STRATA_CHECK(r > 31.9f && r < 32.1f);
         }
 
         strataJitDestroy(jit);

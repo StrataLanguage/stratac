@@ -25,6 +25,13 @@ CodegenResult GenText(std::string_view src)
     auto mod = ParseModule(src, diag);
     return CreateTextBackend()->Generate(*mod);
 }
+
+CodegenResult GenLlvm(std::string_view src)
+{
+    DiagnosticEngine diag;
+    auto mod = ParseAndResolve(src, diag);
+    return CreateLlvmBackend()->Generate(*mod);
+}
 } // namespace
 
 STRATA_TEST(text_emits_function_signature)
@@ -70,14 +77,57 @@ STRATA_TEST(text_forward_call_resolves)
     STRATA_CHECK(!Contains(res.output, "declare i32 @f"));
 }
 
+STRATA_TEST(text_in_scalar_param_is_by_reference)
+{
+    // 'in' scalars are passed by reference (ptr), not by value.
+    auto res = GenText("int foo(in int x) { return x; }");
+    STRATA_CHECK(res.ok);
+    // Signature: parameter is ptr, not i32.
+    STRATA_CHECK(Contains(res.output, "define i32 @foo(ptr"));
+    // Body: loads from the pointer.
+    STRATA_CHECK(Contains(res.output, "load i32, ptr"));
+}
+
+STRATA_TEST(text_plain_scalar_param_is_by_value)
+{
+    // No modifier → scalar passed by value (i32), NOT ptr.
+    auto res = GenText("int foo(int x) { return x; }");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "define i32 @foo(i32"));
+    STRATA_CHECK(!Contains(res.output, "define i32 @foo(ptr"));
+}
+
+STRATA_TEST(text_in_scalar_call_site_passes_address)
+{
+    // Caller must pass the address of an 'in' argument.
+    auto res = GenText("int foo(in int x) { return x; }\n"
+                       "int entry() { int v = 5; return foo(v); }\n");
+    STRATA_CHECK(res.ok);
+    // The call passes ptr, not an i32 value directly.
+    STRATA_CHECK(Contains(res.output, "call i32 @foo(ptr"));
+}
+
+STRATA_TEST(text_in_float_param_is_by_reference)
+{
+    auto res = GenText("float foo(in float x) { return x; }");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "define float @foo(ptr"));
+    STRATA_CHECK(Contains(res.output, "load float, ptr"));
+}
+
+STRATA_TEST(text_inout_and_out_remain_by_reference)
+{
+    auto res = GenText("void foo(out int x) { x = 1; }\n"
+                       "void bar(inout int y) { y = y + 1; }\n");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "define void @foo(ptr"));
+    STRATA_CHECK(Contains(res.output, "define void @bar(ptr"));
+}
+
 #ifdef STRATA_ENABLE_LLVM
 STRATA_TEST(llvm_backend_builds_module)
 {
-    DiagnosticEngine diag;
-    auto mod = ParseModule("int add(int a, int b) { return a + b; }", diag);
-    auto backend = CreateLlvmBackend();
-    STRATA_CHECK(backend != nullptr);
-    auto res = backend->Generate(*mod);
+    auto res = GenLlvm("int add(int a, int b) { return a + b; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define"));
     STRATA_CHECK(Contains(res.output, "add"));
@@ -92,6 +142,14 @@ STRATA_TEST(llvm_reports_version)
     unsigned pat = 0;
     LLVMGetVersion(&maj, &min, &pat);
     STRATA_CHECK(maj > 0);
+}
+
+STRATA_TEST(llvm_overloaded_in_struct_param)
+{
+    auto res = GenLlvm("struct Vec3 { float x; float y; float z; };\n"
+                       "float foo(float a, float b) { return a; }\n"
+                       "float foo(in Vec3 v) { return foo(v.x, v.y); }\n");
+    STRATA_CHECK(res.ok);
 }
 
 #endif
