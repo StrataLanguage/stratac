@@ -288,11 +288,11 @@ TokKind ClassifyKeyword(std::string_view ident) noexcept
     return TokKind::Ident;
 }
 
-std::string_view TokSpelling(TokKind k) noexcept
+std::string_view TokSpelling(TokKind kind) noexcept
 {
     for (const auto& kw : kKeywords)
     {
-        if (kw.kind == k)
+        if (kw.kind == kind)
         {
             return kw.text;
         }
@@ -300,13 +300,13 @@ std::string_view TokSpelling(TokKind k) noexcept
 
     for (const auto& p : kPunct)
     {
-        if (p.kind == k)
+        if (p.kind == kind)
         {
             return p.text;
         }
     }
 
-    switch (k)
+    switch (kind)
     {
     case TokKind::Eof:
         return "<eof>";
@@ -317,9 +317,9 @@ std::string_view TokSpelling(TokKind k) noexcept
     }
 }
 
-std::string_view TokName(TokKind k) noexcept
+std::string_view TokName(TokKind kind) noexcept
 {
-    switch (k)
+    switch (kind)
     {
     case TokKind::Eof:
         return "end of input";
@@ -340,13 +340,14 @@ std::string_view TokName(TokKind k) noexcept
     // Keyword?
     for (const auto& kw : kKeywords)
     {
-        if (kw.kind == k)
+        if (kw.kind == kind)
         {
             return kw.text; // "return", "int", ...
         }
     }
 
-    auto spelling = TokSpelling(k);
+    auto spelling = TokSpelling(kind);
+
     // Punctuation: wrap in quotes.
     return spelling;
 }

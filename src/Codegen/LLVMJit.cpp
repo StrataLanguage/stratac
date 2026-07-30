@@ -11,7 +11,11 @@ namespace
 {
 using namespace strata::llvm_c;
 
-void EnsureX86Initialized()
+// Both targets are initialized so AOT cross-compilation and JIT can coexist.
+// The LLVMInitializeAll* wrappers are not exported by this LLVM-C.dll, but the
+// per-target entry points are. The JIT always runs on the host (X86), but
+// initializing AArch64 too is harmless and keeps the init paths symmetric.
+void EnsureTargetsInitialized()
 {
     static std::once_flag flag;
     std::call_once(flag,
@@ -20,16 +24,22 @@ void EnsureX86Initialized()
                        LLVMInitializeX86TargetInfo();
                        LLVMInitializeX86Target();
                        LLVMInitializeX86TargetMC();
+
                        // MCJIT emits to memory via the JIT emitter; the asm printer is not
                        // required, but initializing it is harmless and keeps AOT/JIT symmetric.
                        LLVMInitializeX86AsmPrinter();
+
+                       LLVMInitializeAArch64TargetInfo();
+                       LLVMInitializeAArch64Target();
+                       LLVMInitializeAArch64TargetMC();
+                       LLVMInitializeAArch64AsmPrinter();
                    });
 }
 } // namespace
 
 void LLVMJit::EnsureInitialized()
 {
-    EnsureX86Initialized();
+    EnsureTargetsInitialized();
 }
 
 LLVMJit::~LLVMJit()
@@ -110,14 +120,14 @@ bool LLVMJit::AddSymbol(const char* name, void* addr)
     return true;
 }
 
-std::uint64_t LLVMJit::GetAddress(const char* name) const
+std::uintptr_t LLVMJit::GetAddress(const char* name) const
 {
     if (!m_ee || !name)
     {
         return 0;
     }
 
-    return LLVMGetFunctionAddress(m_ee, name);
+    return static_cast<std::uintptr_t>(LLVMGetFunctionAddress(m_ee, name));
 }
 
 } // namespace strata

@@ -72,15 +72,23 @@ class Lexer
 
     void SkipWhitespaceAndComments();
 
-    Token Make(TokKind k, std::size_t start) const noexcept
+    Token Make(TokKind kind, std::size_t start) const noexcept
     {
-        return Token{k,
-                     {.start = static_cast<std::uint32_t>(start), .length = static_cast<std::uint16_t>(m_pos - start)}};
+        return Token {
+            kind,
+            {
+                .start = static_cast<std::uint32_t>(start),
+                .length = static_cast<std::uint16_t>(m_pos - start)
+            }
+        };
     }
 
     std::string_view m_source;
+
     DiagnosticEngine& m_diag;
+    
     std::size_t m_pos = 0;
+    
     bool m_hasPeek = false;
     Token m_peeked;
 };

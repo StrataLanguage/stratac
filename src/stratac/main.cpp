@@ -4,11 +4,12 @@
 //   stratac [options] <file.strata>
 //
 // Options:
-//   --emit {ir|ast}   output kind (default: ir)
-//   -o <file>         write output to <file> (default: stdout)
-//   --no-llvm         use the text IR back-end instead of the in-process LLVM back-end
-//   --version         print version and linked LLVM version, then exit
-//   -h, --help        show this help
+//   --emit {ir|ast|obj|asm}  output kind (default: ir)
+//   -o <file>                write output to <file>
+//   --target <arch>          x86_64 (default), aarch64, arm64
+//   --no-llvm                use the text IR back-end
+//   --version                print version and exit
+//   -h, --help               show this help
 #include "strata/Codegen/CodegenBackend.h"
 #include "strata/Core/Diagnostics.h"
 #include "strata/Core/SourceLocation.h"
@@ -28,6 +29,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace
 {
@@ -43,6 +45,7 @@ void PrintHelp()
                          "      obj = native relocatable object (.o)  [requires LLVM + -o]\n"
                          "      asm = native assembly (.s)            [requires LLVM + -o]\n"
                          "  -o <file>        write output to <file> (required for obj/asm)\n"
+                         "  --target <arch>  target architecture: x86_64 (default), aarch64, arm64\n"
                          "  --no-llvm        use the text IR back-end\n"
                          "  --version        print version and exit\n"
                          "  -h, --help       show this help\n");
@@ -70,6 +73,7 @@ int main(int argc, char** argv)
     std::string emit = "ir";
     std::string outFile;
     std::string inputFile;
+    std::string targetArch;
     bool useLLVM = true;
 
     for (int i = 1; i < argc; ++i)
@@ -127,6 +131,26 @@ int main(int argc, char** argv)
         else if (a == "--llvm")
         {
             useLLVM = true;
+        }
+        else if (a == "--target")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "error: --target needs an argument\n");
+                return 2;
+            }
+
+            targetArch = argv[++i];
+            if (targetArch != "x86_64" && targetArch != "aarch64" && targetArch != "arm64")
+            {
+                std::fprintf(stderr, "error: --target must be 'x86_64', 'aarch64', or 'arm64'\n");
+                return 2;
+            }
+
+            if (targetArch == "arm64")
+            {
+                targetArch = "aarch64";
+            }
         }
         else if (!a.empty() && a[0] == '-')
         {
@@ -188,8 +212,30 @@ int main(int argc, char** argv)
 
         std::string notes;
         std::string err;
+
+        // Build the full target triple when cross-compiling. On Windows the
+        // host default is x86_64-pc-windows-msvc; for AArch64 we substitute
+        // the architecture prefix while keeping the host's OS/environment.
+        std::string triple;
+        if (!targetArch.empty() && targetArch != "x86_64")
+        {
+            char* hostTriple = LLVMGetDefaultTargetTriple();
+            std::string_view host(hostTriple);
+            auto firstDash = host.find('-');
+            if (firstDash != std::string_view::npos)
+            {
+                triple = targetArch + std::string(host.substr(firstDash));
+            }
+            else
+            {
+                // Fallback if the host triple is malformed.
+                triple = targetArch + "-pc-windows-msvc";
+            }
+            LLVMDisposeMessage(hostTriple);
+        }
+
         strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
-        bool ok = strata::EmitNativeFile(bm, outFile, emit == "asm", err);
+        bool ok = strata::EmitNativeFile(bm, outFile, emit == "asm", err, triple);
         if (!ok)
         {
             std::fprintf(stderr, "error: %s\n", err.c_str());

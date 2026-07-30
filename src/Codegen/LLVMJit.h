@@ -20,9 +20,9 @@
 namespace strata
 {
 
-class LLVMJit
+class LLVMJit final
 {
-  public:
+public:
     LLVMJit() = default;
     ~LLVMJit();
 
@@ -46,19 +46,20 @@ class LLVMJit
 
     // Resolves a function to its native address, or 0 if not present. The first
     // lookup triggers compilation of everything reachable from that function.
-    std::uint64_t GetAddress(const char* name) const;
+    std::uintptr_t GetAddress(const char* name) const;
 
     bool Valid() const noexcept
     {
         return m_ee != nullptr;
     }
 
-  private:
+private:
     static void EnsureInitialized();
 
     LLVMExecutionEngineRef m_ee = nullptr; // owns the module once loaded
     LLVMContextRef m_ctx = nullptr;        // kept alive for the engine's lifetime
     LLVMModuleRef m_mod = nullptr;         // non-owning; engine owns, kept for lookups
+
     std::vector<std::string> m_externs;
 };
 

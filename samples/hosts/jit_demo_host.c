@@ -21,22 +21,25 @@
 #endif
 
 /* ---- the "engine" the script talks to via `extern` ------------------------ */
-/* A handle is pointer-sized; the host models Entity as a pointer to its real
- * object. Strata only ever carries the pointer. */
-typedef struct { int value; } EntityImpl;
-typedef EntityImpl* Entity;
+typedef struct Entity_t { int value; } Entity;
 
-Entity entity_create(int value) {
-    Entity e = (Entity)malloc(sizeof(EntityImpl));
+Entity* entity_create(int value)
+{
+    Entity* e = (Entity*)malloc(sizeof(Entity));
+    memset(e, 0, sizeof(Entity));
+
     e->value = value;
+
     return e;
 }
-int entity_get(Entity e) { return e->value; }
-void entity_set(Entity e, int value) { e->value = value; }
-void entity_destroy(Entity e) { free(e); }
+
+int entity_get(Entity* e) { return e->value; }
+void entity_set(Entity* e, int value) { e->value = value; }
+void entity_destroy(Entity* e) { free(e); }
 
 /* Resolve a Strata `extern` name to the host function implementing it. */
-static void* resolve_extern(const char* name) {
+static void* resolve_extern(const char* name)
+{
     if (strcmp(name, "entity_create")  == 0) return (void*)&entity_create;
     if (strcmp(name, "entity_get")     == 0) return (void*)&entity_get;
     if (strcmp(name, "entity_set")     == 0) return (void*)&entity_set;

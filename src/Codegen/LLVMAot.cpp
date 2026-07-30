@@ -11,10 +11,11 @@ namespace
 {
 using namespace strata::llvm_c;
 
-// The X86 target must be initialized exactly once before any TargetMachine or
-// ExecutionEngine is created. (The LLVMInitializeAll* wrappers are not exported
-// by this LLVM-C.dll; the X86-specific entry points are, and the host is x86_64.)
-void EnsureX86Initialized()
+// Both targets must be initialized exactly once before any TargetMachine or
+// ExecutionEngine is created. The LLVMInitializeAll* wrappers are not exported
+// by this LLVM-C.dll, but the per-target entry points are. X86 is the host;
+// AArch64 is the cross-compile target.
+void EnsureTargetsInitialized()
 {
     static std::once_flag flag;
     std::call_once(flag,
@@ -24,59 +25,103 @@ void EnsureX86Initialized()
                        LLVMInitializeX86Target();
                        LLVMInitializeX86TargetMC();
                        LLVMInitializeX86AsmPrinter();
+
+                       LLVMInitializeAArch64TargetInfo();
+                       LLVMInitializeAArch64Target();
+                       LLVMInitializeAArch64TargetMC();
+                       LLVMInitializeAArch64AsmPrinter();
                    });
 }
 } // namespace
 
-bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembly, std::string& errorMessage)
+bool EmitNativeFile(const BuiltModule& bm, const std::string& path, bool assembly, std::string& errorMessage,
+                    const std::string& targetTriple)
 {
     if (!bm.mod)
     {
         errorMessage = "no module to emit";
+
         return false;
     }
 
-    EnsureX86Initialized();
+    EnsureTargetsInitialized();
 
-    char* triple = LLVMGetDefaultTargetTriple();
+    // Use the explicit triple when provided, otherwise fall back to the host.
+    const char* triple = nullptr;
+    char* defaultTriple = nullptr;
+    if (!targetTriple.empty())
+    {
+        triple = targetTriple.c_str();
+    }
+    else
+    {
+        defaultTriple = LLVMGetDefaultTargetTriple();
+        triple = defaultTriple;
+    }
+
     LLVMTargetRef target = nullptr;
     char* error = nullptr;
     if (LLVMGetTargetFromTriple(triple, &target, &error))
     {
         errorMessage = std::string("unknown target triple '") + triple + "': " + (error ? error : "(no message)");
+
         if (error)
         {
             LLVMDisposeMessage(error);
         }
 
-        LLVMDisposeMessage(triple);
+        if (defaultTriple)
+        {
+            LLVMDisposeMessage(defaultTriple);
+        }
+
         return false;
     }
 
     LLVMTargetMachineRef targetMachine =
         LLVMCreateTargetMachine(target, triple, "" /* host CPU */, "" /* features */, LLVMCodeGenLevelDefault,
                                 LLVMRelocDefault, LLVMCodeModelDefault);
-    LLVMDisposeMessage(triple);
+
+    if (defaultTriple)
+    {
+        LLVMDisposeMessage(defaultTriple);
+    }
+
     if (!targetMachine)
     {
         errorMessage = "could not create target machine";
+
         return false;
     }
 
+    // Stamp the module with the target triple and data layout so the IR matches
+    // the chosen ABI (pointer width, alignment, etc.). The TargetMachine would
+    // override these during emission anyway, but setting them explicitly avoids
+    // verifier warnings and makes --emit ir consistent with --emit obj.
+    LLVMSetTarget(bm.mod, triple);
+
+    LLVMTargetDataRef dataLayout = LLVMCreateTargetDataLayout(targetMachine);
+    char* dataLayoutStr = LLVMCopyStringRepOfTargetData(dataLayout);
+    LLVMSetDataLayout(bm.mod, dataLayoutStr);
+    LLVMDisposeMessage(dataLayoutStr);
+    LLVMDisposeTargetData(dataLayout);
+
     LLVMCodeGenFileType kind = assembly ? LLVMAssemblyFile : LLVMObjectFile;
-    char* emitErr = nullptr;
-    bool ok = !LLVMTargetMachineEmitToFile(targetMachine, bm.mod, path.c_str(), kind, &emitErr);
+    char* emitError = nullptr;
+    bool ok = !LLVMTargetMachineEmitToFile(targetMachine, bm.mod, path.c_str(), kind, &emitError);
+
     if (!ok)
     {
-        errorMessage = std::string("emission failed: ") + (emitErr ? emitErr : "(no message)");
+        errorMessage = std::string("emission failed: ") + (emitError ? emitError : "(no message)");
     }
 
-    if (emitErr)
+    if (emitError)
     {
-        LLVMDisposeMessage(emitErr);
+        LLVMDisposeMessage(emitError);
     }
 
     LLVMDisposeTargetMachine(targetMachine);
+
     return ok;
 }
 

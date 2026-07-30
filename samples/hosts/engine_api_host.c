@@ -9,25 +9,27 @@
 #include <stdlib.h>
 
 /* The engine's real entity type; Strata never sees inside it. */
-typedef struct { int x, y; } EntityImpl;
-typedef EntityImpl* Entity;   /* pointer-sized handle, matches Strata's `ptr` */
+typedef struct Entity_t { int x, y; } Entity;
 
-Entity world_spawn(int x, int y) {
-    EntityImpl* e = (EntityImpl*)malloc(sizeof(EntityImpl));
+Entity* world_spawn(int x, int y)
+{
+    Entity* e = (Entity*)malloc(sizeof(Entity));
     e->x = x;
     e->y = y;
+
     return e;
 }
 
-void world_move(Entity e, int dx, int dy) {
+void world_move(Entity* e, int dx, int dy)
+{
     e->x += dx;
     e->y += dy;
 }
 
-int world_x(Entity e) { return e->x; }
-int world_y(Entity e) { return e->y; }
+int world_x(Entity* e) { return e->x; }
+int world_y(Entity* e) { return e->y; }
 
-void world_destroy(Entity e) { free(e); }
+void world_destroy(Entity* e) { free(e); }
 
 /* Strata-provided entry (defined in engine_api.o). */
 extern int run(void);

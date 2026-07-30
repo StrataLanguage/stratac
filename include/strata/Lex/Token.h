@@ -98,10 +98,10 @@ enum class TokKind : std::uint8_t
 
 // Canonical spelling for a token kind, where one exists. Used by the parser to
 // emit messages like "expected ';' but found ','" and by diagnostics.
-std::string_view TokSpelling(TokKind k) noexcept;
+std::string_view TokSpelling(TokKind kind) noexcept;
 
 // Human-readable name, e.g. "identifier", "'+'", "keyword 'return'".
-std::string_view TokName(TokKind k) noexcept;
+std::string_view TokName(TokKind kind) noexcept;
 
 // Maps an identifier spelling to a keyword token kind, or TokKind::Ident if it
 // is not a reserved word.
@@ -117,19 +117,20 @@ struct Token
     {
     }
 
-    constexpr bool Is(TokKind k) const noexcept
+    constexpr bool Is(TokKind otherKind) const noexcept
     {
-        return kind == k;
+        return kind == otherKind;
     }
 
-    constexpr bool IsOneOf(TokKind a, TokKind b) const noexcept
+    constexpr bool IsOneOf(TokKind aKind, TokKind bKind) const noexcept
     {
-        return Is(a) || Is(b);
+        return Is(aKind) || Is(bKind);
     }
 
-    template <typename... Rest> constexpr bool IsOneOf(TokKind a, TokKind b, Rest... rest) const noexcept
+    template <typename... Rest>
+    constexpr bool IsOneOf(TokKind aKind, TokKind bKind, Rest... rest) const noexcept
     {
-        return Is(a) || IsOneOf(b, rest...);
+        return Is(aKind) || IsOneOf(bKind, rest...);
     }
 };
 

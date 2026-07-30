@@ -169,12 +169,18 @@ extern "C"
 
     // --- Target initialization ---
     // The LLVMInitializeAll* / LLVMInitializeNativeTarget convenience wrappers are
-    // not exported by this LLVM-C.dll, but the X86-specific entry points are. Since
-    // the host is x86_64, these are what we need for both JIT and AOT.
+    // not exported by this LLVM-C.dll, but the per-target entry points are. Both
+    // X86 (host) and AArch64 (cross-compile target) are initialized so stratac can
+    // emit native code for either architecture.
     void LLVMInitializeX86TargetInfo(void);
     void LLVMInitializeX86Target(void);
     void LLVMInitializeX86TargetMC(void);
     void LLVMInitializeX86AsmPrinter(void);
+
+    void LLVMInitializeAArch64TargetInfo(void);
+    void LLVMInitializeAArch64Target(void);
+    void LLVMInitializeAArch64TargetMC(void);
+    void LLVMInitializeAArch64AsmPrinter(void);
 
     // --- Targets & target machines (llvm-c/Target.h, TargetMachine.h) ---
     using LLVMTargetRef = struct LLVMOpaqueTarget*;
@@ -221,6 +227,15 @@ extern "C"
                                                  const char* features, LLVMCodeGenOptLevel level, LLVMRelocMode reloc,
                                                  LLVMCodeModel codeModel);
     void LLVMDisposeTargetMachine(LLVMTargetMachineRef t);
+
+    // Target data layout — used to stamp the module so IR matches the target ABI.
+    using LLVMTargetDataRef = struct LLVMOpaqueTargetData*;
+    LLVMTargetDataRef LLVMCreateTargetDataLayout(LLVMTargetMachineRef t);
+    char* LLVMCopyStringRepOfTargetData(LLVMTargetDataRef td);
+    void LLVMDisposeTargetData(LLVMTargetDataRef td);
+    void LLVMSetDataLayout(LLVMModuleRef m, const char* dataLayout);
+    void LLVMSetTarget(LLVMModuleRef m, const char* triple);
+
     LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef t, LLVMModuleRef m, const char* filename,
                                          LLVMCodeGenFileType codegen, char** errorMessage);
     LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef t, LLVMModuleRef m, LLVMCodeGenFileType codegen,
