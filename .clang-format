@@ -1,0 +1,62 @@
+---
+# Strata C++ style guide (clang-format 22+).
+#
+# Usage:
+#   clang-format -i <file>            reformat in place
+#   clang-format --dry-run -Werror <file>   check without writing
+# (clang-format finds this file automatically.)
+#
+# Rules this file enforces:
+#   - 4-space indentation, no tabs
+#   - Allman braces (opening brace on its own line)
+#   - switch case labels flush with `switch` (not indented)
+#   - 120-column limit
+# Everything not listed above inherits the LLVM base style, which already
+# matches the existing tree (left-bound pointers/references, trailing-comment
+# alignment, ControlStatements spacing, etc.).
+
+Language:        Cpp
+BasedOnStyle:    LLVM
+Standard:        c++20
+
+# ---- Indentation ----
+IndentWidth:                        4
+TabWidth:                           4
+UseTab:                             Never
+ContinuationIndentWidth:            4
+ConstructorInitializerIndentWidth:  4
+NamespaceIndentation:               None
+
+# ---- Braces: always on a new line ----
+BreakBeforeBraces:                  Allman
+AllowShortFunctionsOnASingleLine:   None
+AllowShortBlocksOnASingleLine:      Empty
+AllowShortEnumsOnASingleLine:       false
+AllowShortLambdasOnASingleLine:     Empty
+
+# ---- Braceless one-liners (kept as the existing code uses them) ----
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine:        true
+
+# ---- switch / case: labels flush with the switch ----
+IndentCaseLabels:   false
+IndentCaseBlocks:   false
+IndentGotoLabels:   false
+
+# ---- Line length ----
+ColumnLimit: 120
+
+# ---- Pointers / references bound to the type ----
+PointerAlignment:    Left
+ReferenceAlignment:  Left
+DerivePointerAlignment: false
+
+# ---- Includes: preserve manual groupings, sort within each ----
+IncludeBlocks: Preserve
+SortIncludes:  CaseSensitive
+
+# ---- Misc (explicit for documentation) ----
+FixNamespaceComments: true
+SpaceBeforeParens:    ControlStatements
+SpacesInAngles:       Never
+SpaceInEmptyBlock:    false

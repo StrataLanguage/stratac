@@ -2,8 +2,8 @@
 //
 // Translates a Strata AST into a live LLVM module via the C API. Handles the
 // bootstrap subset: scalar/vector built-ins, user-defined structs (value types
-// with member access and positional construction), opaque engine handle types
-// (`extern struct`), and functions with `extern` host bindings.
+// with member access and positional construction), opaque handle types
+// (`handle Name;`, lowered to `ptr`), and functions with `extern` host bindings.
 #include "strata/Codegen/LLVMCApi.h"
 #include "strata/AST/AST.h"
 #include "LLVMModuleBuilder.h"
@@ -51,7 +51,7 @@ struct FuncInfo {
     LLVMValueRef fn = nullptr;
     LLVMTypeRef ty = nullptr;
     TypeDesc ret;
-    std::vector<bool> paramByPtr; // params passed by address (out/inout, or extern structs)
+    std::vector<bool> paramByPtr; // params passed by address (out/inout, or any struct)
 };
 
 struct LValue {

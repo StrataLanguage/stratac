@@ -63,8 +63,9 @@ are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
   AOT/text).
 
 **User-defined types** (`src/Codegen/TypeRegistry.h` is shared by both back-ends):
-- `struct Name { ... }` -> `%struct.Name = type { ... }`; `extern struct Name;`
-  -> an opaque handle lowered as `ptr`.
+- `struct Name { ... }` -> `%struct.Name = type { ... }` (a defined value type; a
+  body-less `struct` is an error). `handle Name;` -> a distinct opaque type
+  lowered as `ptr` (engine objects; member access is a compile error).
 - Member access uses `LLVMBuildGEP2` on an alloca (`emitLValue` in
   LLVMModuleBuilder.cpp); positional construction (`Vec3(a,b,c)`) uses
   `insertvalue`. **Struct parameters are always passed by reference**: any
@@ -74,11 +75,11 @@ are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
   not return a struct by value. Locals/returns are still by value; copy
   explicitly (`Vec3 c = v;`) for a mutable local.
 - Aggregate-ABI caveat: structs are value types *within* Strata but cross the
-  host boundary by pointer. An `extern` struct parameter must declare
+  host boundary by pointer. Any struct parameter must declare
   `in`/`out`/`inout` (enforced by `resolveOverloads`); it lowers to `ptr`. An
-  `extern` may not return a struct by value. Opaque handles (`extern struct`)
-  are pointer-sized already. See README "A note on aggregates across the
-  host/JIT boundary".
+  `extern` may not return a struct by value. Handles (`handle Name;`) are
+  pointer-sized and passed by value, so they need no modifier. See README
+  "A note on aggregates across the host/JIT boundary".
 
 The JIT is demonstrated in `tests/unit/JitTests.cpp` (it actually calls JIT'd
 functions and asserts results).

@@ -159,25 +159,36 @@ std::unique_ptr<Module> Parser::parseModule() {
     while (!cur_.is(TokKind::Eof)) {
         if (cur_.is(TokKind::Semicolon)) { advance(); continue; } // stray ';'
 
-        // `struct Name {...}` or `extern struct Name;`
-        bool startsStruct = false;
-        bool externStruct = false;
-        if (cur_.is(TokKind::Kw_struct)) {
-            startsStruct = true;
-        } else if (cur_.is(TokKind::Kw_extern)) {
-            Token next = const_cast<Lexer&>(lex_).peekToken();
-            if (next.is(TokKind::Kw_struct)) { startsStruct = true; externStruct = true; }
+        if (cur_.is(TokKind::Kw_handle)) {
+            auto h = parseHandleDecl();
+            if (h) {
+                mod->handles.push_back(std::move(h));
+            } else {
+                synchronize();
+            }
+            continue;
         }
-
-        if (startsStruct) {
-            if (externStruct) advance(); // consume `extern`
-            auto s = parseStructDecl(externStruct);
+        if (cur_.is(TokKind::Kw_struct)) {
+            auto s = parseStructDecl();
             if (s) {
                 mod->structs.push_back(std::move(s));
             } else {
                 synchronize();
             }
             continue;
+        }
+        // `extern` is a function linkage marker. Catch the old `extern struct`
+        // form and point users at `handle`/`struct`.
+        if (cur_.is(TokKind::Kw_extern)) {
+            Token next = const_cast<Lexer&>(lex_).peekToken();
+            if (next.is(TokKind::Kw_struct) || next.is(TokKind::Kw_handle)) {
+                diag_.error(cur_.range,
+                            "'extern' applies to functions; declare an opaque type with "
+                            "'handle Name;' or a value type with 'struct Name { ... }'");
+                advance(); // consume extern
+                synchronize();
+                continue;
+            }
         }
 
         auto fn = parseFunction();
@@ -190,7 +201,28 @@ std::unique_ptr<Module> Parser::parseModule() {
     return mod;
 }
 
-std::unique_ptr<StructDecl> Parser::parseStructDecl(bool isExtern) {
+std::unique_ptr<HandleDecl> Parser::parseHandleDecl() {
+    if (!consume(TokKind::Kw_handle)) {
+        diag_.error(cur_.range, "expected 'handle'");
+        return nullptr;
+    }
+    if (!cur_.is(TokKind::Ident)) {
+        diag_.error(cur_.range, "expected a handle name");
+        return nullptr;
+    }
+    Token nameTok = cur_;
+    advance();
+    auto h = std::make_unique<HandleDecl>(nameTok.range, toString(identText(nameTok)));
+    if (consume(TokKind::LBrace)) {
+        diag_.error(nameTok.range, "handle '" + h->name +
+                      "' cannot have a body (it is opaque; use 'struct' for a value type)");
+        synchronize();
+    }
+    expect(TokKind::Semicolon, "';'");
+    return h;
+}
+
+std::unique_ptr<StructDecl> Parser::parseStructDecl() {
     if (!consume(TokKind::Kw_struct)) {
         diag_.error(cur_.range, "expected 'struct'");
         return nullptr;
@@ -204,10 +236,6 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl(bool isExtern) {
     auto s = std::make_unique<StructDecl>(nameTok.range, toString(identText(nameTok)));
 
     if (consume(TokKind::LBrace)) {
-        if (isExtern) {
-            diag_.error(nameTok.range, "extern struct cannot have a body (use a plain struct)");
-        }
-        s->isOpaque = false;
         while (!cur_.is(TokKind::RBrace) && !cur_.is(TokKind::Eof)) {
             TypeName ft;
             if (!tryParseType(ft)) {
@@ -225,7 +253,9 @@ std::unique_ptr<StructDecl> Parser::parseStructDecl(bool isExtern) {
         }
         expect(TokKind::RBrace, "'}'");
     } else {
-        s->isOpaque = true; // forward / opaque declaration
+        diag_.error(nameTok.range, "struct '" + s->name +
+                      "' requires a body; use 'handle " + s->name +
+                      ";' for an opaque type");
     }
     expect(TokKind::Semicolon, "';'");
     return s;

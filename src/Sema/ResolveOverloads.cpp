@@ -165,8 +165,16 @@ private:
                 resolveExpr(a->value.get(), scope);
                 return;
             }
-            case NodeKind::Member:
-                resolveExpr(static_cast<MemberExpr*>(n)->base.get(), scope); return;
+            case NodeKind::Member: {
+                auto m = static_cast<MemberExpr*>(n);
+                resolveExpr(m->base.get(), scope);
+                std::string baseName = inferType(m->base.get(), scope);
+                if (registry_.isOpaque(baseName)) {
+                    diag_.error(m->range, "cannot access member '" + m->member +
+                                          "' of opaque handle '" + baseName + "'");
+                }
+                return;
+            }
             case NodeKind::Call: {
                 auto c = static_cast<CallExpr*>(n);
                 for (auto& a : c->args) resolveExpr(a.get(), scope);
@@ -261,6 +269,11 @@ private:
             case NodeKind::Member: {
                 auto m = static_cast<MemberExpr*>(n);
                 std::string baseName = inferType(m->base.get(), scope);
+                if (registry_.isOpaque(baseName)) {
+                    diag_.error(m->range, "cannot access member '" + m->member +
+                                          "' of opaque handle '" + baseName + "'");
+                    return "";
+                }
                 const auto* st = registry_.find(baseName);
                 if (!st) return "";
                 int idx = registry_.fieldIndex(baseName, m->member);

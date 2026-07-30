@@ -16,7 +16,6 @@ STRATA_TEST(parser_struct_declaration) {
     STRATA_CHECK_EQ(mod->structs.size(), (std::size_t)1);
     auto& s = mod->structs.front();
     STRATA_CHECK(s->name == "Vec3");
-    STRATA_CHECK(!s->isOpaque);
     STRATA_CHECK_EQ(s->fields.size(), (std::size_t)3);
     STRATA_CHECK(s->fields[0].name == "x");
     STRATA_CHECK(s->fields[0].type.name == "float");
@@ -24,11 +23,10 @@ STRATA_TEST(parser_struct_declaration) {
 
 STRATA_TEST(parser_opaque_struct) {
     strata::DiagnosticEngine diag;
-    auto mod = strata::test_util::parseModule("extern struct Entity;\n", diag);
+    auto mod = strata::test_util::parseModule("handle Entity;\n", diag);
     STRATA_CHECK(!diag.hasErrors());
-    STRATA_CHECK_EQ(mod->structs.size(), (std::size_t)1);
-    STRATA_CHECK(mod->structs.front()->isOpaque);
-    STRATA_CHECK(mod->structs.front()->name == "Entity");
+    STRATA_CHECK_EQ(mod->handles.size(), (std::size_t)1);
+    STRATA_CHECK(mod->handles.front()->name == "Entity");
 }
 
 STRATA_TEST(parser_struct_typed_params_and_members) {
@@ -153,7 +151,7 @@ STRATA_TEST(jit_opaque_engine_handle) {
     // functions on it, without knowing the engine's layout. Handles are
     // pointer-sized, so they cross the host<->JIT boundary cleanly.
     StrataJit* jit = compileJit(
-        "extern struct Entity;\n"
+        "handle Entity;\n"
         "extern Entity spawn();\n"
         "extern void despawn(Entity e);\n"
         "extern int id_of(Entity e);\n"

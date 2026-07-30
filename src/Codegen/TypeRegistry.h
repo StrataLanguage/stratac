@@ -18,7 +18,7 @@ namespace strata {
 
 struct StructType {
     std::string name;
-    bool opaque = false; // declared `extern struct Name;`
+    bool opaque = false; // a `handle` (pointer-sized; layout unknown)
     std::vector<FieldDecl> fields;
 };
 
@@ -27,11 +27,10 @@ public:
     void build(const Module& m) {
         types_.clear();
         for (const auto& s : m.structs) {
-            StructType t;
-            t.name = s->name;
-            t.opaque = s->isOpaque;
-            t.fields = s->fields;
-            types_.push_back(std::move(t));
+            types_.push_back({s->name, false, s->fields}); // structs are defined value types
+        }
+        for (const auto& h : m.handles) {
+            types_.push_back({h->name, true, {}}); // handles are opaque
         }
     }
 

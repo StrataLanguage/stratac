@@ -3,12 +3,12 @@ REM ==========================================================================
 REM  run.bat -- compile a Strata program to a native executable and run it.
 REM
 REM  Usage:
-REM     run.bat  ^<file.strata^>
+REM     run.bat  ^<file.strata^>                   standalone (file needs `int main()`)
+REM     run.bat  ^<file.strata^> ^<host.c^>          link a host driver (provides main + externs)
 REM
-REM  The file must define an entry point the C runtime can call, i.e.
-REM  `int main()`. Files that call `extern` host functions need a host driver
-REM  instead (see samples\hosts\*.c). Tools can be overridden with the
-REM  STRATAC and CLANG environment variables.
+REM  The host driver supplies `extern` functions and `int main`; the Strata file
+REM  then does not need its own `main`. Tools can be overridden with the STRATAC
+REM  and CLANG environment variables.
 REM ==========================================================================
 setlocal enabledelayedexpansion
 
@@ -16,10 +16,19 @@ if "%~1"=="" goto usage
 
 set "SRC=%~1"
 set "SRC=%SRC:/=\%"
-
 if not exist "%SRC%" (
   echo error: input file not found: "%SRC%"
   exit /b 2
+)
+
+set "HOST="
+if not "%~2"=="" (
+  set "HOST=%~2"
+  set "HOST=!HOST:/=\!"
+  if not exist "!HOST!" (
+    echo error: host file not found: "!HOST!"
+    exit /b 2
+  )
 )
 
 REM --- locate tools (env override, else default repo / install paths) -------
@@ -44,8 +53,13 @@ echo [1/3] compile  %SRC% -^> %OBJ%
 "%STRATAC%" --emit obj "%SRC%" -o "%OBJ%" > "%LOG%" 2>&1
 if errorlevel 1 goto fail_compile
 
-echo [2/3] link     %OBJ% -^> %EXE%
-"%CLANG%" "%OBJ%" -o "%EXE%" > "%LOG%" 2>&1
+if defined HOST (
+  echo [2/3] link     !HOST! + %OBJ% -^> %EXE%
+  "%CLANG%" "!HOST!" "%OBJ%" -o "%EXE%" > "%LOG%" 2>&1
+) else (
+  echo [2/3] link     %OBJ% -^> %EXE%
+  "%CLANG%" "%OBJ%" -o "%EXE%" > "%LOG%" 2>&1
+)
 if errorlevel 1 goto fail_link
 
 echo [3/3] run      %EXE%
@@ -68,15 +82,19 @@ exit /b 1
 
 :fail_link
 echo.
-echo link failed. Does "%SRC%" define `int main()`^? Calls to `extern` functions
-echo need a host driver to link against ^(see samples\hosts\*.c^).
+if not defined HOST (
+  echo link failed. Pass a host driver as the second argument, e.g.
+  echo    run.bat %SRC% hosts\driver.c
+  echo or make sure "%SRC%" defines int main.
+)
 type "%LOG%"
 del "%OBJ%" "%EXE%" "%LOG%" >nul 2>&1
 exit /b 1
 
 :usage
-echo Usage: run.bat ^<file.strata^>
+echo Usage: run.bat ^<file.strata^> [host.c]
 echo.
-echo Compiles the program to a native executable with stratac + clang and runs it.
-echo The file must define `int main()`; `extern`-using files need a host driver.
+echo Standalone:  run.bat hello.strata            ^(.strata defines int main()^)
+echo With host:   run.bat engine_api.strata hosts\engine_api_host.c
+echo               ^(host provides main + extern functions^)
 exit /b 2

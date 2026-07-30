@@ -148,13 +148,22 @@ STRATA_TEST(extern_cannot_return_struct_by_value) {
     STRATA_CHECK(diag.hasErrors());
 }
 
-STRATA_TEST(opaque_handle_extern_does_not_need_direction) {
-    // Opaque handles are already pointer-sized, so they're fine without a mod.
+STRATA_TEST(handle_param_does_not_need_direction) {
+    // Handles are pointer-sized and passed by value; they need no in/out/inout.
     DiagnosticEngine diag;
     auto mod = resolve(
-        "extern struct Entity;\n"
+        "handle Entity;\n"
         "extern int id_of(Entity e);\n", diag);
     STRATA_CHECK(!diag.hasErrors());
+}
+
+STRATA_TEST(handle_cannot_have_members_accessed) {
+    DiagnosticEngine diag;
+    auto mod = resolve(
+        "handle Entity;\n"
+        "extern Entity make();\n"
+        "float entry() { Entity e = make(); return e.x; }\n", diag); // e.x on a handle
+    STRATA_CHECK(diag.hasErrors());
 }
 
 #if defined(STRATA_ENABLE_LLVM)

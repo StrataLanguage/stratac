@@ -22,6 +22,7 @@ enum class NodeKind : std::uint8_t {
     // Declarations
     Module,
     Struct,
+    Handle,
     Function,
     Param,
     // Statements
@@ -97,15 +98,23 @@ struct FieldDecl {
     std::string name;
 };
 
-// A user-defined aggregate type (a value type -- no pointers in Strata), or an
-// opaque handle type declared `extern struct Name;` whose layout the engine owns.
+// A user-defined aggregate type (a value type -- no pointers in Strata).
 struct StructDecl : Node {
     std::string name;
     std::vector<FieldDecl> fields;
-    bool isOpaque = false; // `extern struct Name;`
 
     explicit StructDecl(SourceRange r, std::string n)
         : Node(NodeKind::Struct, r), name(std::move(n)) {}
+};
+
+// An opaque, pointer-sized handle whose layout Strata never sees. Engine
+// objects (Entity, Texture, ...) are exposed this way; they can be held, passed
+// to `extern` functions, and returned, but never have their fields accessed.
+struct HandleDecl : Node {
+    std::string name;
+
+    explicit HandleDecl(SourceRange r, std::string n)
+        : Node(NodeKind::Handle, r), name(std::move(n)) {}
 };
 
 struct FunctionDecl : Node {
@@ -124,6 +133,7 @@ struct FunctionDecl : Node {
 struct Module : Node {
     std::string name;
     std::vector<std::unique_ptr<StructDecl>> structs;
+    std::vector<std::unique_ptr<HandleDecl>> handles;
     std::vector<std::unique_ptr<FunctionDecl>> functions;
 
     explicit Module(std::string n) : Node(NodeKind::Module), name(std::move(n)) {}

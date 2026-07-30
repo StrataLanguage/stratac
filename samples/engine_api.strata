@@ -9,7 +9,7 @@
 //   clang hosts/engine_api_host.c engine_api.o -o engine_api.exe
 //   ./engine_api.exe
 
-extern struct Entity;                       // engine-provided; layout unknown to Strata
+handle Entity;                            // engine-provided; layout unknown to Strata
 
 extern Entity world_spawn(int x, int y);    // engine creates an entity
 extern void   world_move(Entity e, int dx, int dy);

@@ -36,8 +36,8 @@ are passed by value, optionally with `in` / `out` / `inout` modifiers.
 ### Known limitations (intentional, for follow-up)
 
 - The **LLVM back-end** lowers the full statement surface (control flow,
-  recursion, `out`/`inout`, structs, overloads). Extern struct parameters cross
-  the host boundary by pointer (`in`/`out`/`inout`). What remains is vector
+  recursion, `out`/`inout`, structs, overloads). Struct parameters cross the
+  host boundary by reference (`in`/`out`/`inout`). What remains is vector
   construction/per-component arithmetic and a host *calling into* a Strata entry
   point that takes/returns a struct by value (see below).
 - `&&`/`||` are non-short-circuit; `half` constants are not fully lowered.
@@ -93,15 +93,17 @@ clang -c hello.ll -o hello.o
 
 ### Compile and run in one step (Windows)
 
-`run.bat` AOT-compiles a `.strata` program to a native executable and runs it
-(the file must define `int main()`):
+`run.bat` AOT-compiles a `.strata` program to a native executable and runs it:
 
 ```bat
-run.bat samples\hello.strata          :: exit code 25
-run.bat samples\control_flow.strata   :: exit code 255
+run.bat samples\hello.strata                              :: standalone (needs int main())
+run.bat samples\engine_api.strata samples\hosts\engine_api_host.c   :: with a host driver
 ```
 
-Tools can be overridden with the `STRATAC` and `CLANG` environment variables.
+Standalone mode links the `.strata` object alone (it must define `int main()`).
+Pass a host `.c` file as the second argument to link a driver that provides
+`main` and any `extern` functions the script calls. Tools can be overridden with
+the `STRATAC` and `CLANG` environment variables.
 
 ## Running Strata code
 
@@ -267,17 +269,20 @@ back-ends.
 ### Opaque engine handles
 
 ```strata
-extern struct Entity;              // engine owns the layout; Strata sees a handle
-extern Entity spawn();             // engine returns a handle
-extern int  id_of(Entity e);       // Strata passes the handle back to the engine
+handle Entity;                       // opaque, pointer-sized; engine owns the layout
+extern Entity spawn();               // engine returns a handle
+extern int  id_of(Entity e);         // Strata passes the handle to the engine
 extern void despawn(Entity e);
 ```
 
-`extern struct Name;` declares an opaque, pointer-sized handle. Strata code can
-hold handles, pass them to engine functions, get them back, and compare them --
-but not access fields. Because a handle is a single pointer-sized value, it
-crosses the host<->JIT boundary cleanly (like a scalar). This is the recommended
-way to expose engine objects to scripts.
+`handle Name;` declares a distinct opaque type. Strata code can hold handles,
+pass them to `extern` functions, get them back, and compare them -- but not
+access fields (member access on a handle is a compile error). A handle is a
+single pointer-sized value, so it crosses the host<->JIT boundary cleanly (like a
+scalar) and needs no `in`/`out`/`inout` modifier. This is the recommended way to
+expose engine objects to scripts, and the shape that will cross future script
+modules unchanged. (`struct` is always a defined value type with a body; a
+body-less `struct` is an error -- use `handle`.)
 
 ### A note on aggregates across the host/JIT boundary
 
@@ -297,9 +302,9 @@ extern float length_sq(in Vec3 v);                          // host: float(const
 extern void  scale_into(in Vec3 src, float s, out Vec3 dst); // host: void(const Vec3*, float, Vec3*)
 ```
 
-(Opaque handle types like `extern struct Entity;` are already pointer-sized, so
-they cross the boundary as-is.) Within Strata, structs remain value types passed
-by value between Strata functions. The remaining caveat is only for a host
+(Handles declared with `handle Name;` are already pointer-sized, so they cross
+the boundary as-is.) Within Strata, structs are value types whose parameters are
+passed by reference. The remaining caveat is only for a host
 *calling into* a Strata entry point that takes/returns a struct by value --
 prefer scalar/handle entry points there.
 

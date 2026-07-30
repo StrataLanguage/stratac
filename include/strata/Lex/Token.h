@@ -49,6 +49,7 @@ enum class TokKind : std::uint8_t {
     Kw_true,
     Kw_false,
     Kw_struct,
+    Kw_handle,
     Kw_namespace, // reserved
 
     // --- Punctuation ---

@@ -16,7 +16,7 @@ which back-end each one uses. Build the compiler first
 | `overloads.strata` | type-based overload resolution (int / float / struct) | native |
 | `extern_struct.strata` + `hosts/extern_struct_host.c` | structs cross the host boundary by pointer (`in`/`out`) | native |
 | `extern_math.strata` + `hosts/extern_math_host.c` | `extern` host functions, AOT link-and-run | native |
-| `engine_api.strata` + `hosts/engine_api_host.c` | opaque engine handles (`extern struct`), AOT link-and-run | native |
+| `engine_api.strata` + `hosts/engine_api_host.c` | opaque engine handles (`handle`), AOT link-and-run | native |
 | `vectors.strata` | HLSL-style vector types (structural preview) | AST/type check |
 
 ### hello.strata
