@@ -3,7 +3,9 @@
 #include "strata/AST/AST.h"
 #include "strata/Codegen/CodegenBackend.h"
 #include "strata/Codegen/LLVMCApi.h"
+#include "strata/Core/Diagnostics.h"
 
+#include <sstream>
 #include <string>
 
 namespace strata
@@ -24,13 +26,35 @@ class LLVMCBackend : public CodegenBackend
     CodegenResult Generate(const Module& mod) override
     {
         CodegenResult res;
+
         res.moduleName = mod.name;
+
+        DiagnosticEngine diag;
         std::string notes;
-        BuiltModule bm = BuildLlvmModule(mod, notes);
+
+        BuiltModule bm = BuildLlvmModule(mod, diag, notes);
+
+        if (diag.HasErrors())
+        {
+            std::ostringstream msg;
+            msg << "; LLVM back-end errors:\n";
+            for (const auto& d : diag.Diagnostics())
+            {
+                msg << ";   " << d.message << "\n";
+            }
+
+            res.output = msg.str();
+            res.ok = false;
+            return res;
+        }
+
         char* ir = LLVMPrintModuleToString(bm.mod);
         res.output = notes + ir;
+
         LLVMDisposeMessage(ir);
+
         res.ok = true;
+
         return res;
     }
 };

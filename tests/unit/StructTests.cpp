@@ -318,7 +318,7 @@ STRATA_TEST(aot_emits_struct_object)
     STRATA_CHECK(!diag.HasErrors());
     std::string notes;
     std::string err;
-    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
+    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes);
     std::string path = "strata_struct_test.o";
     bool ok = strata::EmitNativeFile(bm, path, false, err);
     STRATA_CHECK(ok);

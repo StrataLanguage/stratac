@@ -35,6 +35,7 @@ void Lexer::SkipWhitespaceAndComments()
     while (m_pos < m_source.size())
     {
         char character = m_source[m_pos];
+
         if (character == ' ' || character == '\t' || character == '\r' || character == '\n' || character == '\f' ||
             character == '\v')
         {
@@ -50,9 +51,11 @@ void Lexer::SkipWhitespaceAndComments()
         }
         else if (character == '/' && Peek(1) == '*')
         {
-            // block comment (HLSL nests block comments)
+            // block comment
+
             int depth = 1;
             m_pos += 2;
+            
             while (m_pos < m_source.size() && depth > 0)
             {
                 if (m_source[m_pos] == '/' && Peek(1) == '*')
@@ -74,6 +77,7 @@ void Lexer::SkipWhitespaceAndComments()
             if (depth > 0)
             {
                 m_diag.Error({static_cast<std::uint32_t>(m_pos), 1}, "unterminated block comment");
+
                 return;
             }
         }
@@ -89,8 +93,10 @@ Token Lexer::NextToken()
     if (m_hasPeek)
     {
         m_hasPeek = false;
+        
         Token token = m_peeked;
         m_peeked = {};
+
         return token;
     }
 
@@ -106,13 +112,16 @@ Token Lexer::PeekToken()
 
     m_peeked = LexToken();
     m_hasPeek = true;
+
     return m_peeked;
 }
 
 Token Lexer::LexToken()
 {
     SkipWhitespaceAndComments();
+    
     std::size_t start = m_pos;
+
     if (m_pos >= m_source.size())
     {
         return {
@@ -143,6 +152,7 @@ Token Lexer::LexToken()
 
     // Punctuation / operators
     ++m_pos;
+
     switch (character)
     {
     case '(':
@@ -284,6 +294,7 @@ Token Lexer::LexToken()
 Token Lexer::LexIdentOrKeyword()
 {
     std::size_t start = m_pos;
+
     while (m_pos < m_source.size() && IsIdentCont(m_source[m_pos]))
     {
         ++m_pos;
@@ -292,6 +303,7 @@ Token Lexer::LexIdentOrKeyword()
     std::string_view text(m_source.data() + start, m_pos - start);
 
     TokKind keyword = ClassifyKeyword(text);
+
     if (keyword == TokKind::KwTrue || keyword == TokKind::KwFalse)
     {
         return Make(TokKind::BoolLit, start);
@@ -314,6 +326,7 @@ Token Lexer::LexNumber()
     {
         // hexadecimal integer
         m_pos += 2;
+
         while (m_pos < m_source.size() && IsHexDigit(m_source[m_pos]))
         {
             ++m_pos;
@@ -346,7 +359,9 @@ Token Lexer::LexNumber()
         if (Peek() == '.')
         {
             isFloat = true;
+
             ++m_pos;
+
             while (m_pos < m_source.size() && IsDigit(m_source[m_pos]))
             {
                 ++m_pos;
@@ -358,11 +373,14 @@ Token Lexer::LexNumber()
     if (Peek() == 'e' || Peek() == 'E')
     {
         isFloat = true;
+        
         ++m_pos;
+        
         if (Peek() == '+' || Peek() == '-')
         {
             ++m_pos;
         }
+
         while (m_pos < m_source.size() && IsDigit(m_source[m_pos]))
         {
             ++m_pos;
@@ -370,13 +388,16 @@ Token Lexer::LexNumber()
     }
 
     // optional numeric suffix
-    char sfx = Peek();
-    if (sfx == 'f' || sfx == 'F' || sfx == 'h' || sfx == 'H')
+    
+    char suffix = Peek();
+
+    if (suffix == 'f' || suffix == 'F')
     {
         isFloat = true;
+
         ++m_pos;
     }
-    else if (sfx == 'u' || sfx == 'U')
+    else if (suffix == 'u' || suffix == 'U')
     {
         ++m_pos;
     }

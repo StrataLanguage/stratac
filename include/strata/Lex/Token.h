@@ -25,7 +25,6 @@ enum class TokKind : std::uint8_t
     KwBool,
     KwInt,
     KwUint,
-    KwHalf,
     KwFloat,
     KwDouble,
     KwString, // reserved

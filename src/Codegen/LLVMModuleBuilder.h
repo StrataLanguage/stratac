@@ -2,6 +2,7 @@
 
 #include "strata/AST/AST.h"
 #include "strata/Codegen/LLVMCApi.h"
+#include "strata/Core/Diagnostics.h"
 
 #include <string>
 #include <vector>
@@ -88,6 +89,6 @@ class BuiltModule
 // this avoids relying on MCJIT symbol resolution, which is unavailable through
 // this LLVM-C.dll. In AOT/text mode, externs are ordinary declarations the
 // downstream linker resolves.
-BuiltModule BuildLlvmModule(const Module& ast, std::string& notes, bool jitMode = false);
+BuiltModule BuildLlvmModule(const Module& ast, DiagnosticEngine& diag, std::string& notes, bool jitMode = false);
 
 } // namespace strata

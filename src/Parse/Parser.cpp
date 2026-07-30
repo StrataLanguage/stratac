@@ -212,7 +212,6 @@ bool Parser::LooksLikeVarDecl() const noexcept
     case TokKind::KwBool:
     case TokKind::KwUint:
     case TokKind::KwInt:
-    case TokKind::KwHalf:
     case TokKind::KwFloat:
     case TokKind::KwDouble:
     case TokKind::KwString:
@@ -254,9 +253,6 @@ bool Parser::TryParseType(TypeName& out)
         break;
     case TokKind::KwUint:
         name = "uint";
-        break;
-    case TokKind::KwHalf:
-        name = "half";
         break;
     case TokKind::KwFloat:
         name = "float";

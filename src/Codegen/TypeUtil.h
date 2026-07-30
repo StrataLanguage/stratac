@@ -82,8 +82,9 @@ inline MappedType MapType(const TypeName& t)
         if (parsedSize >= 1 && parsedSize <= 4)
         {
             std::string_view candidateBase = base.substr(0, split);
+
             if (candidateBase == "float" || candidateBase == "int" || candidateBase == "uint" ||
-                candidateBase == "half" || candidateBase == "double" || candidateBase == "bool")
+                candidateBase == "double" || candidateBase == "bool")
             {
                 base = candidateBase;
                 vec = parsedSize;
@@ -113,10 +114,6 @@ inline MappedType MapType(const TypeName& t)
     if (base == "uint")
     {
         return MakePrimitive(false, true, 32, "i32", vec);
-    }
-    if (base == "half")
-    {
-        return MakePrimitive(true, false, 16, "half", vec);
     }
     if (base == "float")
     {

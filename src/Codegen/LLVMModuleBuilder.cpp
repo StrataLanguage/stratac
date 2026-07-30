@@ -3,6 +3,7 @@
 #include "TypeUtil.h"
 #include "strata/AST/AST.h"
 #include "strata/Codegen/LLVMCApi.h"
+#include "strata/Core/Diagnostics.h"
 
 #include <cstring>
 #include <map>
@@ -33,10 +34,6 @@ LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const detail::MappedType& t)
     else if (t.elemIr == "i32")
     {
         elem = LLVMInt32TypeInContext(ctx);
-    }
-    else if (t.elemIr == "half")
-    {
-        elem = LLVMHalfTypeInContext(ctx);
     }
     else if (t.elemIr == "float")
     {
@@ -92,8 +89,9 @@ struct LValue
 class Builder
 {
   public:
-    BuiltModule Build(const Module& module, std::string& notes, bool jitMode)
+    BuiltModule Build(const Module& module, DiagnosticEngine& diag, std::string& notes, bool jitMode)
     {
+        m_diag = &diag;
         notes = "; LLVM C API back-end\n";
 
         m_jitMode = jitMode;
@@ -175,6 +173,7 @@ class Builder
     }
 
   private:
+    DiagnosticEngine* m_diag = nullptr;
     LLVMContextRef m_ctx = nullptr;
     LLVMModuleRef m_mod = nullptr;
     LLVMBuilderRef m_builder = nullptr;
@@ -276,7 +275,10 @@ class Builder
             };
         }
 
-        Note("; TODO: unknown type '" + t.name + "' lowered as ptr\n");
+        if (m_diag)
+        {
+            m_diag->Error(t.range, "unknown type '" + t.name + "'");
+        }
 
         return {
             .type = m_ptrTy,
@@ -294,13 +296,14 @@ class Builder
 
     Value ZeroInt() const
     {
-        TypeDesc typeDesc{
+        TypeDesc typeDesc {
             .type = I32Ty(),
             .isFloat = false,
             .isUnsigned = false,
             .isVoid = false,
             .structTypeName = "",
         };
+
         return {
             .value = LLVMConstNull(I32Ty()),
             .typeDesc = typeDesc,
@@ -320,6 +323,7 @@ class Builder
         }
 
         LLVMValueRef r = nullptr;
+
         if (!value.typeDesc.isFloat && target.isFloat)
         {
             r = value.typeDesc.isUnsigned ? LLVMBuildUIToFP(m_builder, value.value, target.type, "c")
@@ -745,7 +749,11 @@ class Builder
         case NodeKind::StructInit:
             return EmitStructInit(static_cast<StructInitExpr*>(n));
         default:
-            Note("; TODO: LLVM back-end does not lower this expression yet\n");
+            if (m_diag)
+            {
+                m_diag->Error(n->range, "unsupported expression");
+            }
+
             return ZeroInt();
         }
     }
@@ -756,7 +764,10 @@ class Builder
 
         if (iterator == m_symbols.end())
         {
-            Note("; TODO: unknown identifier '" + n->name + "'\n");
+            if (m_diag)
+            {
+                m_diag->Error(n->range, "unknown identifier '" + n->name + "'");
+            }
 
             return ZeroInt();
         }
@@ -863,7 +874,10 @@ class Builder
             }
         }
 
-        Note("; TODO: cannot access member '" + n->member + "'\n");
+        if (m_diag)
+        {
+            m_diag->Error(n->range, "cannot access member '" + n->member + "'");
+        }
 
         return ZeroInt();
     }
@@ -1099,7 +1113,11 @@ class Builder
             }
         }
 
-        Note("; TODO: assignment to unsupported lvalue\n");
+        if (m_diag)
+        {
+            m_diag->Error(n->range, "assignment to unsupported lvalue");
+        }
+
         return value;
     }
 
@@ -1130,7 +1148,11 @@ class Builder
         auto iterator = m_funcs.find(n->callee);
         if (iterator == m_funcs.end())
         {
-            Note("; TODO: call to unknown function '" + n->callee + "'\n");
+            if (m_diag)
+            {
+                m_diag->Error(n->range, "call to unknown function '" + n->callee + "'");
+            }
+
             return ZeroInt();
         }
 
@@ -1218,10 +1240,10 @@ class Builder
 
 } // namespace
 
-BuiltModule BuildLlvmModule(const Module& ast, std::string& notes, bool jitMode)
+BuiltModule BuildLlvmModule(const Module& ast, DiagnosticEngine& diag, std::string& notes, bool jitMode)
 {
     Builder b;
-    return b.Build(ast, notes, jitMode);
+    return b.Build(ast, diag, notes, jitMode);
 }
 
 } // namespace strata

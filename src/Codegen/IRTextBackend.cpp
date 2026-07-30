@@ -90,6 +90,7 @@ class IRTextImpl
 
         res.ok = true;
         res.output = m_out.str();
+
         return res;
     }
 
@@ -776,6 +777,7 @@ class IRTextImpl
         {
             auto* identifier = static_cast<IdentExpr*>(node->target.get());
             auto iterator = m_symbols.find(identifier->name);
+
             if (iterator != m_symbols.end())
             {
                 Eval stored = Coerce(value, iterator->second.type);

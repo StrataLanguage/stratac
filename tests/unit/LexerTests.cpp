@@ -50,9 +50,9 @@ STRATA_TEST(lexer_integer_literal_kinds)
 
 STRATA_TEST(lexer_float_literals)
 {
-    auto t = LexAll("1.0 1.5e3 .5f 10.0h");
+    auto t = LexAll("1.0 1.5e3 .5f");
     auto k = Kinds(t);
-    for (std::size_t i = 0; i < 4; ++i)
+    for (std::size_t i = 0; i < 3; ++i)
     {
         STRATA_CHECK(k[i] == TokKind::FloatLit);
     }

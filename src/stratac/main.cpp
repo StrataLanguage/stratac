@@ -234,7 +234,16 @@ int main(int argc, char** argv)
             LLVMDisposeMessage(hostTriple);
         }
 
-        strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
+        strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes);
+
+        if (diag.HasErrors())
+        {
+            std::string d = diag.Format(src);
+            std::fwrite(d.data(), 1, d.size(), stderr);
+            std::fprintf(stderr, "%u error(s).\n", diag.ErrorCount());
+            return 1;
+        }
+
         bool ok = strata::EmitNativeFile(bm, outFile, emit == "asm", err, triple);
         if (!ok)
         {

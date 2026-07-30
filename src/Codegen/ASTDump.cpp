@@ -107,10 +107,12 @@ void Dump(Node* n, int indent, std::ostringstream& out)
     if (!n)
     {
         out << "(null)";
+
         return;
     }
 
     Pad(indent, out);
+
     switch (n->kind)
     {
     case NodeKind::Module:

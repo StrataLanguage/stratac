@@ -19,7 +19,7 @@ using VarScope = std::map<std::string, std::string>; // variable name -> source 
 
 bool IsNumeric(std::string_view t)
 {
-    return t == "int" || t == "uint" || t == "half" || t == "float" || t == "double";
+    return t == "int" || t == "uint" || t == "float" || t == "double";
 }
 
 class Resolver
@@ -513,6 +513,7 @@ class Resolver
         case NodeKind::Unary:
         {
             auto* u = static_cast<UnaryExpr*>(n);
+
             return u->op == UnaryOp::Not ? "bool" : InferType(u->operand.get(), scope);
         }
 
@@ -534,14 +535,10 @@ class Resolver
             {
                 std::string lt = InferType(b->lhs.get(), scope);
                 std::string rt = InferType(b->rhs.get(), scope);
+
                 if (lt == "double" || rt == "double")
                 {
                     return "double";
-                }
-
-                if (lt == "half" || rt == "half")
-                {
-                    return "half";
                 }
 
                 if (lt == "float" || rt == "float")
@@ -561,23 +558,29 @@ class Resolver
 
         case NodeKind::Assign:
             return InferType(static_cast<AssignExpr*>(n)->target.get(), scope);
+
         case NodeKind::Member:
         {
             auto* m = static_cast<MemberExpr*>(n);
+            
             std::string baseName = InferType(m->base.get(), scope);
+
             if (m_registry.IsOpaque(baseName))
             {
                 m_diag.Error(m->range, "cannot access member '" + m->member + "' of opaque handle '" + baseName + "'");
+
                 return "";
             }
 
             const auto* structType = m_registry.Find(baseName);
+
             if (!structType)
             {
                 return "";
             }
 
             int idx = m_registry.FieldIndex(baseName, m->member);
+
             if (idx < 0)
             {
                 return "";
@@ -589,6 +592,7 @@ class Resolver
         case NodeKind::Call:
         {
             auto* c = static_cast<CallExpr*>(n);
+
             if (c->resolvedDecl)
             {
                 return c->resolvedDecl->returnType.name;

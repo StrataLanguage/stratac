@@ -106,7 +106,7 @@ STRATA_TEST(aot_emits_native_object_file)
 
     std::string notes;
     std::string err;
-    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
+    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes);
     std::string path = "strata_aot_test.o";
     bool ok = strata::EmitNativeFile(bm, path, /*assembly=*/false, err);
     if (!ok)
@@ -130,7 +130,7 @@ STRATA_TEST(aot_emits_assembly_file)
 
     std::string notes;
     std::string err;
-    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes);
+    strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes);
     std::string path = "strata_aot_test.s";
     bool ok = strata::EmitNativeFile(bm, path, /*assembly=*/true, err);
     if (!ok)

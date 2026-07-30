@@ -31,17 +31,9 @@ struct StrataCompiler
 
 extern "C"
 {
-
     StrataCompiler* strataCompilerCreate(void)
     {
-        try
-        {
-            return new StrataCompiler{};
-        }
-        catch (...)
-        {
-            return nullptr;
-        }
+        return new StrataCompiler;
     }
 
     void strataCompilerDestroy(StrataCompiler* c)
@@ -83,7 +75,9 @@ extern "C"
         strata::DiagnosticEngine diag;
         strata::Lexer lex(src.Source(), diag);
         strata::Parser parser(lex, diag, moduleName);
+        
         auto mod = parser.ParseModule();
+
         strata::ResolveOverloads(*mod, diag);
 
         std::string diagText = diag.Format(src);
@@ -235,7 +229,18 @@ extern "C"
         }
 
         std::string notes;
-        strata::BuiltModule bm = strata::BuildLlvmModule(*mod, notes, /*jitMode=*/true);
+        strata::BuiltModule bm = strata::BuildLlvmModule(*mod, diag, notes, /*jitMode=*/true);
+
+        if (diag.HasErrors())
+        {
+            if (errOut)
+            {
+                std::string allDiag = diag.Format(src);
+                *errOut = DupCString("codegen errors:\n" + allDiag);
+            }
+
+            return nullptr;
+        }
 
         auto jit = std::make_unique<strata::LLVMJit>();
         std::string err;
