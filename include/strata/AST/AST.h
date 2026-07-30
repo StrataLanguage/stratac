@@ -113,9 +113,11 @@ struct FunctionDecl : Node {
     std::vector<std::unique_ptr<ParamDecl>> params;  // owned
     NodePtr body;                                     // a Block, or nullptr for a declaration
     bool isExtern = false;                            // provided by the host runtime
+    std::string mangledName;                          // unique IR symbol (set by overload resolution)
 
     FunctionDecl(SourceRange r, TypeName ret, std::string n)
-        : Node(NodeKind::Function, r), returnType(std::move(ret)), name(std::move(n)) {}
+        : Node(NodeKind::Function, r), returnType(std::move(ret)), name(std::move(n)),
+          mangledName(name) {}
 };
 
 struct Module : Node {
@@ -233,6 +235,7 @@ struct IdentExpr : Node {
 
 struct CallExpr : Node {
     std::string callee;
+    const FunctionDecl* resolvedDecl = nullptr; // set by overload resolution
     std::vector<NodePtr> args;
     CallExpr(SourceRange r, std::string c) : Node(NodeKind::Call, r), callee(std::move(c)) {}
 };

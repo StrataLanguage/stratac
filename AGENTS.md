@@ -100,10 +100,20 @@ functions and asserts results).
 2. Lexing: `src/Lex/Lexer.cpp`.
 3. Grammar + AST: `include/strata/AST/AST.h` (add a node) + `src/Parse/Parser.cpp`.
 4. AST dump: `src/Codegen/ASTDump.cpp`.
-5. Codegen: both `src/Codegen/IRTextBackend.cpp` and
-   `src/Codegen/LLVMCBackend.cpp`.
-6. Tests: `tests/unit/` (framework is `include/strata/Test.hpp`), then re-run
+5. Semantic analysis: `src/Sema/ResolveOverloads.cpp` runs between parse and
+   codegen (in `stratac` and `Embed.cpp`). It infers argument types, resolves
+   overloads, and sets `FunctionDecl::mangledName` + `CallExpr::callee`
+   (mangled) + `CallExpr::resolvedDecl`. Anything type-related belongs here.
+6. Codegen: both `src/Codegen/IRTextBackend.cpp` and
+   `src/Codegen/LLVMModuleBuilder.cpp` (note: LLVMModuleBuilder feeds the printer,
+   AOT emitter, and JIT). Both emit functions/calls by `mangledName`.
+7. Tests: `tests/unit/` (framework is `include/strata/Test.hpp`), then re-run
    `ctest --preset default` and the `clang -c` IR check above.
+
+Overloads: two functions may share a name with different parameter types.
+`resolveOverloads` mangles overloaded symbols as `name$type$type` (single
+functions keep the base name, so host-callable entries like `main`/`entry` must
+not be overloaded). Extern functions cannot be overloaded.
 
 ## CTest wiring
 

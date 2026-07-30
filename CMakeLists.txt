@@ -26,6 +26,7 @@ set(STRATA_SOURCES
     src/Lex/Token.cpp
     src/Lex/Lexer.cpp
     src/Parse/Parser.cpp
+    src/Sema/ResolveOverloads.cpp
     src/Codegen/ASTDump.cpp
     src/Codegen/CodegenBackend.cpp
     src/Codegen/IRTextBackend.cpp
@@ -88,6 +89,7 @@ add_executable(strata_tests
     tests/unit/SampleTests.cpp
     tests/unit/JitTests.cpp
     tests/unit/StructTests.cpp
+    tests/unit/OverloadTests.cpp
 )
 target_link_libraries(strata_tests PRIVATE strata)
 target_compile_definitions(strata_tests PRIVATE

@@ -13,6 +13,7 @@ which back-end each one uses. Build the compiler first
 | `hello.strata` | functions, arithmetic, calls | text **and** native |
 | `control_flow.strata` | `if`/`else`, `while`, `break`/`continue`, recursion, `out` params | text (IR inspection) |
 | `structs.strata` | structs, member access, positional construction, nested structs, by-value | native |
+| `overloads.strata` | type-based overload resolution (int / float / struct) | native |
 | `extern_math.strata` + `hosts/extern_math_host.c` | `extern` host functions, AOT link-and-run | native |
 | `engine_api.strata` + `hosts/engine_api_host.c` | opaque engine handles (`extern struct`), AOT link-and-run | native |
 | `vectors.strata` | HLSL-style vector types (structural preview) | AST/type check |
@@ -43,6 +44,17 @@ scalar entry point (`entry`).
 ```sh
 stratac --emit ir  samples/structs.strata
 stratac --emit obj samples/structs.strata -o structs.o
+```
+
+### overloads.strata
+
+Several `length` functions share a name; each call resolves to the overload
+whose parameter types best match the arguments:
+
+```sh
+stratac --emit ir  samples/overloads.strata     # see length$int / length$float / length$Vec3
+stratac --emit obj samples/overloads.strata -o overloads.o
+clang overloads.o -o overloads.exe && ./overloads.exe ; echo $?   # 15
 ```
 
 ### extern_math.strata -- script calls the host

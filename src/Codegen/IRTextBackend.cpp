@@ -56,6 +56,7 @@ private:
     std::ostringstream out_;
     std::ostringstream body_;
     std::map<std::string, Symbol> symbols_;
+    std::map<std::string, detail::MappedType> retOf_; // mangled name -> return type
     std::vector<std::string> paramRegs_;
     detail::MappedType retType_;
     int tmp_ = 0;
@@ -85,7 +86,8 @@ private:
 
     void emitDeclare(const FunctionDecl& f) {
         retType_ = mappedOr(f.returnType, "void");
-        out_ << "declare " << retType_.ir << " @" << f.name << "(";
+        retOf_[f.mangledName] = retType_;
+        out_ << "declare " << retType_.ir << " @" << f.mangledName << "(";
         for (std::size_t i = 0; i < f.params.size(); ++i) {
             if (i) out_ << ", ";
             out_ << mappedOr(f.params[i]->type, "ptr").ir;
@@ -95,8 +97,9 @@ private:
 
     void emitFunction(const FunctionDecl& f) {
         retType_ = mappedOr(f.returnType, "void");
+        retOf_[f.mangledName] = retType_;
         std::vector<detail::MappedType> ptypes;
-        out_ << "define " << retType_.ir << " @" << f.name << "(";
+        out_ << "define " << retType_.ir << " @" << f.mangledName << "(";
         paramRegs_.clear();
         for (std::size_t i = 0; i < f.params.size(); ++i) {
             ptypes.push_back(mappedOr(f.params[i]->type, "ptr"));
@@ -383,11 +386,11 @@ private:
     }
 
     Eval emitCall(CallExpr* n) {
-        // Without the module in hand we cannot resolve the callee's signature,
-        // so assume a value-returning call of type i32. The driver passes the
-        // module to back-ends that need precise types (e.g. the LLVM backend);
-        // for the text back-end this is sufficient for the bootstrap test set.
+        // Return type of the callee (resolved by overload resolution). Falls
+        // back to i32 when unknown (e.g. an unresolved host call).
         detail::MappedType ret = detail::mapType({"int"});
+        auto rit = retOf_.find(n->callee);
+        if (rit != retOf_.end()) ret = rit->second;
         std::ostringstream args;
         for (std::size_t i = 0; i < n->args.size(); ++i) {
             Eval a = emitExpr(n->args[i].get());

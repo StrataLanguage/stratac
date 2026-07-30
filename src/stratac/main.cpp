@@ -14,6 +14,7 @@
 #include "strata/Core/SourceLocation.h"
 #include "strata/Lex/Lexer.h"
 #include "strata/Parse/Parser.h"
+#include "strata/Sema/ResolveOverloads.h"
 
 #if defined(STRATA_ENABLE_LLVM)
 #include "strata/Codegen/LLVMCApi.h"
@@ -118,6 +119,7 @@ int main(int argc, char** argv) {
     strata::Lexer lex(src.source(), diag);
     strata::Parser parser(lex, diag, inputFile);
     auto mod = parser.parseModule();
+    strata::resolveOverloads(*mod, diag);
 
     if (diag.count() > 0) {
         std::string d = diag.format(src);

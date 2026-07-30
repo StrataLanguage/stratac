@@ -28,6 +28,9 @@ are passed by value, optionally with `in` / `out` / `inout` modifiers.
   expression statements, blocks.
 - Expressions: literals, identifiers, calls, unary/binary operators with C
   precedence, assignment (`= += -= *= /= %=`), member access (parsed).
+- **Overloads**: functions may share a name when their parameter types differ;
+  each call resolves to the best-matching overload by argument type (exact match
+  first, then numeric conversions).
 - Comments: `//` and nestable `/* */`.
 
 ### Known limitations (intentional, for follow-up)

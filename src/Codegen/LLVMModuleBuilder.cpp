@@ -174,14 +174,16 @@ private:
         info.ty = LLVMFunctionType(info.ret.ty, params.data(),
                                    static_cast<unsigned>(params.size()), 0);
         if (jitMode_ && f.isExtern) {
+            // Externs are not overloadable, so mangledName == name; the host
+            // binds the slot by source name.
             LLVMValueRef slot = LLVMAddGlobal(mod_, ptrTy_, ("__strata_ext_" + f.name).c_str());
             LLVMSetInitializer(slot, LLVMConstNull(ptrTy_));
             externSlots_[f.name] = slot;
             info.fn = nullptr;
         } else {
-            info.fn = LLVMAddFunction(mod_, f.name.c_str(), info.ty);
+            info.fn = LLVMAddFunction(mod_, f.mangledName.c_str(), info.ty);
         }
-        funcs_[f.name] = info;
+        funcs_[f.mangledName] = info;
     }
 
     void defineFunction(const FunctionDecl& f) {
@@ -190,7 +192,7 @@ private:
         terminated_ = false;
         curRet_ = resolve(f.returnType);
 
-        LLVMValueRef fn = funcs_[f.name].fn;
+        LLVMValueRef fn = funcs_[f.mangledName].fn;
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx_, fn, "entry");
         LLVMPositionBuilderAtEnd(builder_, entry);
 

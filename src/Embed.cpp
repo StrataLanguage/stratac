@@ -6,6 +6,7 @@
 #include "strata/Core/SourceLocation.h"
 #include "strata/Lex/Lexer.h"
 #include "strata/Parse/Parser.h"
+#include "strata/Sema/ResolveOverloads.h"
 
 #include <cstring>
 #include <fstream>
@@ -61,6 +62,7 @@ static StrataResult compileSource(StrataCompiler* c, std::string source,
     strata::Lexer lex(src.source(), diag);
     strata::Parser parser(lex, diag, moduleName);
     auto mod = parser.parseModule();
+    strata::resolveOverloads(*mod, diag);
 
     std::string diagText = diag.format(src);
     std::string out;
@@ -169,6 +171,7 @@ static StrataJit* jitCompile(StrataCompiler* /*c*/, std::string source,
     strata::Lexer lex(src.source(), diag);
     strata::Parser parser(lex, diag, moduleName);
     auto mod = parser.parseModule();
+    strata::resolveOverloads(*mod, diag);
     std::string diagText = diag.format(src);
 
     if (diag.hasErrors() || !mod) {
