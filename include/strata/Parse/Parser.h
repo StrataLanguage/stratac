@@ -55,6 +55,7 @@ private:
     bool looksLikeVarDecl() const noexcept;
 
     // --- grammar ---
+    std::unique_ptr<StructDecl> parseStructDecl(bool isExtern);
     std::unique_ptr<FunctionDecl> parseFunction();
     std::unique_ptr<ParamDecl> parseParam();
     NodePtr parseBlock();
@@ -68,6 +69,7 @@ private:
     NodePtr parseAssign();
     NodePtr parseBinary(int minPrec);
     NodePtr parseUnary();
+    NodePtr parsePostfix();
     NodePtr parsePrimary();
 
     // --- type helpers ---

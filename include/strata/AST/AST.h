@@ -21,6 +21,7 @@ namespace strata {
 enum class NodeKind : std::uint8_t {
     // Declarations
     Module,
+    Struct,
     Function,
     Param,
     // Statements
@@ -89,6 +90,23 @@ struct ParamDecl : Node {
         : Node(NodeKind::Param, r), mod(m), type(std::move(t)), name(std::move(n)) {}
 };
 
+// A named field of a struct.
+struct FieldDecl {
+    TypeName type;
+    std::string name;
+};
+
+// A user-defined aggregate type (a value type -- no pointers in Strata), or an
+// opaque handle type declared `extern struct Name;` whose layout the engine owns.
+struct StructDecl : Node {
+    std::string name;
+    std::vector<FieldDecl> fields;
+    bool isOpaque = false; // `extern struct Name;`
+
+    explicit StructDecl(SourceRange r, std::string n)
+        : Node(NodeKind::Struct, r), name(std::move(n)) {}
+};
+
 struct FunctionDecl : Node {
     TypeName returnType;
     std::string name;
@@ -102,6 +120,7 @@ struct FunctionDecl : Node {
 
 struct Module : Node {
     std::string name;
+    std::vector<std::unique_ptr<StructDecl>> structs;
     std::vector<std::unique_ptr<FunctionDecl>> functions;
 
     explicit Module(std::string n) : Node(NodeKind::Module), name(std::move(n)) {}

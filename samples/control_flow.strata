@@ -1,0 +1,50 @@
+// control_flow.strata -- if/else, while, break/continue, and recursion.
+//
+// The native (JIT/AOT) back-end does not lower control flow yet, so use the
+// text IR back-end to inspect this one:
+//   stratac --no-llvm --emit ir control_flow.strata
+//   stratac --emit ast control_flow.strata
+
+// Iterative factorial.
+int factorial(int n) {
+    int result = 1;
+    int i = 1;
+    while (i <= n) {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+
+// Recursive Fibonacci (a function may call itself).
+int fibonacci(int n) {
+    if (n < 2) {
+        return n;
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+// Loop with break and continue: sum of 1..n, skipping 5.
+int sum_skipping_five(int n) {
+    int total = 0;
+    int i = 0;
+    while (true) {
+        i = i + 1;
+        if (i > n) { break; }
+        if (i == 5) { continue; }
+        total = total + i;
+    }
+    return total;
+}
+
+// 'out' parameters let a function hand values back to its caller. (Syntax is
+// parsed; full by-reference lowering is in progress -- see samples/README.md.)
+void describe(int n, out int doubled, out int negated) {
+    doubled = n + n;
+    negated = 0 - n;
+}
+
+int main() {
+    // factorial(5) = 120, fibonacci(10) = 55, sum_skipping_five(10) = 50
+    return factorial(5) + fibonacci(10) + sum_skipping_five(10);   // 225
+}

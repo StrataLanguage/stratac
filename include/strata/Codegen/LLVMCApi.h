@@ -70,6 +70,11 @@ LLVMTypeRef LLVMFloatTypeInContext(LLVMContextRef C);
 LLVMTypeRef LLVMDoubleTypeInContext(LLVMContextRef C);
 LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef C);
 
+// Struct types (user-defined types).
+LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef C, const char* Name);
+LLVMBool LLVMStructSetBody(LLVMTypeRef StructTy, LLVMTypeRef* ElementTypes,
+                           unsigned ElementCount, LLVMBool Packed);
+
 LLVMTypeRef LLVMFunctionType(LLVMTypeRef ReturnType, LLVMTypeRef* ParamTypes,
                              unsigned ParamCount, LLVMBool IsVarArg);
 
@@ -107,6 +112,47 @@ LLVMValueRef LLVMBuildStore(LLVMBuilderRef B, LLVMValueRef Val, LLVMValueRef Ptr
 LLVMValueRef LLVMBuildLoad2(LLVMBuilderRef B, LLVMTypeRef Ty, LLVMValueRef Ptr, const char* Name);
 LLVMValueRef LLVMBuildCall2(LLVMBuilderRef B, LLVMTypeRef FnTy, LLVMValueRef Fn,
                             LLVMValueRef* Args, unsigned NumArgs, const char* Name);
+
+// Additional arithmetic / logic / cast builders.
+typedef enum {
+    LLVMIntEQ = 32, LLVMIntNE, LLVMIntUGT, LLVMIntUGE, LLVMIntULT, LLVMIntULE,
+    LLVMIntSGT, LLVMIntSGE, LLVMIntSLT, LLVMIntSLE
+} LLVMIntPredicate;
+
+LLVMValueRef LLVMBuildSDiv(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildUDiv(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildFDiv(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildSRem(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildURem(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildFRem(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildShl(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildLShr(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildAShr(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildAnd(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildOr(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildXor(LLVMBuilderRef B, LLVMValueRef L, LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildNeg(LLVMBuilderRef B, LLVMValueRef V, const char* Name);
+LLVMValueRef LLVMBuildNot(LLVMBuilderRef B, LLVMValueRef V, const char* Name);
+LLVMValueRef LLVMBuildFNeg(LLVMBuilderRef B, LLVMValueRef V, const char* Name);
+LLVMValueRef LLVMBuildICmp(LLVMBuilderRef B, LLVMIntPredicate Pred, LLVMValueRef L,
+                           LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildFCmp(LLVMBuilderRef B, const char* Pred, LLVMValueRef L,
+                           LLVMValueRef R, const char* Name);
+LLVMValueRef LLVMBuildSIToFP(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
+LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
+LLVMValueRef LLVMBuildFPToSI(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
+LLVMValueRef LLVMBuildFPToUI(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy, const char* Name);
+LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef B, LLVMValueRef V, LLVMTypeRef DestTy,
+                               LLVMBool IsSigned, const char* Name);
+
+// Aggregate (struct) construction and member access.
+LLVMValueRef LLVMGetUndef(LLVMTypeRef Ty);
+LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef B, LLVMValueRef Agg, LLVMValueRef Val,
+                                  unsigned Index, const char* Name);
+LLVMValueRef LLVMBuildExtractValue(LLVMBuilderRef B, LLVMValueRef Agg, unsigned Index,
+                                   const char* Name);
+LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef B, LLVMTypeRef Ty, LLVMValueRef Pointer,
+                           LLVMValueRef* Indices, unsigned NumIndices, const char* Name);
 
 // --- Verification ---
 // LLVMVerifierFailureAction: LLVMAbortProcessAction = 0, LLVMReturnStatusAction = 1.

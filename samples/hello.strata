@@ -1,50 +1,20 @@
-// samples/hello.strata
-// A small Strata program exercising the bootstrap subset: scalar functions,
-// in/out parameters, arithmetic, control flow, and calls.
+// hello.strata -- Strata in a nutshell.
+//
+// No control flow, so this compiles and runs through *every* path:
+//   stratac --emit ir  hello.strata                 # in-process LLVM IR
+//   stratac --no-llvm --emit ir  hello.strata       # text IR
+//   stratac --emit obj hello.strata -o hello.o      # native object
+//   clang hello.o -o hello.exe && ./hello.exe ; echo $?   # runs, exit code 25
 
 int add(int a, int b) {
     return a + b;
 }
 
-int square(int x) {
-    return x * x;
+int mul(int a, int b) {
+    return a * b;
 }
 
-// 'out' parameters write back to the caller (there are no pointers/references
-// in Strata; out/inout are the only ways to return multiple values).
-void sum_and_count(in int a, in int b, out int sum, out int count) {
-    sum = a + b;
-    count = 2;
-}
-
-float lerp(float a, float b, float t) {
-    return a + (b - a) * t;
-}
-
-int clamp(int v, int lo, int hi) {
-    int result = v;
-    if (result < lo) {
-        result = lo;
-    } else {
-        if (result > hi) {
-            result = hi;
-        }
-    }
-    return result;
-}
-
-int first_sum_up_to(int n) {
-    int total = 0;
-    int i = 1;
-    while (i <= n) {
-        total = total + i;
-        i = i + 1;
-    }
-    return total;
-}
-
-int entry() {
-    int x = add(3, 4);
-    int y = square(x);
-    return add(x, y);
+// The host invokes this entry point.
+int main() {
+    return add(2, 3) + mul(4, 5);   // 5 + 20 = 25
 }

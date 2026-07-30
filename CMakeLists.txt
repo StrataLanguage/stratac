@@ -87,6 +87,7 @@ add_executable(strata_tests
     tests/unit/EmbedTests.cpp
     tests/unit/SampleTests.cpp
     tests/unit/JitTests.cpp
+    tests/unit/StructTests.cpp
 )
 target_link_libraries(strata_tests PRIVATE strata)
 target_compile_definitions(strata_tests PRIVATE

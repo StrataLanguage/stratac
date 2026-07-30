@@ -184,11 +184,68 @@ clang host.c ai.o -o ai        # host.c defines engine_get_hp, engine_set_positi
 ### What the JIT / AOT paths lower today
 
 The native paths (JIT and AOT) share one IR builder and currently lower: scalar
-int/float functions, parameters, returns, locals, `+ - *`, calls between Strata
-functions, and `extern` calls into the host. Control flow and `out`/`inout`
-mutation are handled by the text IR back-end and are next on the list for the
-native paths; `out`/`inout` also need an ABI decision (likely lowered to pointers
-in the host signature) before they are callable through a C function pointer.
+int/float functions, parameters, returns, locals, arithmetic (with int/float
+promotion), calls between Strata functions, `extern` calls into the host,
+**user-defined structs** (member access, positional construction, by-value use
+within Strata), and **opaque engine handle types**. Control flow and
+`out`/`inout` mutation are handled by the text IR back-end and are next on the
+list for the native paths; `out`/`inout` also need an ABI decision (likely
+lowered to pointers in the host signature) before they are callable through a C
+function pointer.
+
+## User-defined types
+
+### Structs (value types)
+
+```strata
+struct Vec3 { float x; float y; float z; };
+struct Body { int id; Vec3 pos; };
+
+float energy(Body b) {
+    return b.pos.x * b.pos.x + b.pos.y * b.pos.y + b.pos.z * b.pos.z + b.id;
+}
+
+float entry() {
+    Body body;
+    body.id  = 5;
+    body.pos = Vec3(3.0, 4.0, 0.0);   // positional constructor
+    return energy(body);              // passed by value, Strata -> Strata
+}
+```
+
+Structs are value types with no pointers: declare fields of any type (including
+other structs), read/write members (`v.x`, `b.pos.y`), construct positionally
+(`Vec3(1, 2, 3)`), and pass/return them by value **within Strata**. These all
+live in JIT-compiled code and use one calling convention on both sides, so they
+are ABI-independent.
+
+### Opaque engine handles
+
+```strata
+extern struct Entity;              // engine owns the layout; Strata sees a handle
+extern Entity spawn();             // engine returns a handle
+extern int  id_of(Entity e);       // Strata passes the handle back to the engine
+extern void despawn(Entity e);
+```
+
+`extern struct Name;` declares an opaque, pointer-sized handle. Strata code can
+hold handles, pass them to engine functions, get them back, and compare them --
+but not access fields. Because a handle is a single pointer-sized value, it
+crosses the host<->JIT boundary cleanly (like a scalar). This is the recommended
+way to expose engine objects to scripts.
+
+### A note on aggregates across the host/JIT boundary
+
+Passing a **struct by value** directly between host code and a JIT'd Strata
+function depends on the platform's aggregate ABI, which the JIT can't always be
+retargeted to (on this box `LLVMSetTarget` isn't exported by `LLVM-C.dll`, and
+LLVM's default `windows-msvc` codegen and MinGW's host disagree on small
+aggregates). It is reliable when the host toolchain matches LLVM's target. For
+engine-agnostic portability, cross the boundary with **scalars** or **opaque
+handles**, and keep struct values inside Strata (observed via scalar entry
+points) -- which is exactly what the tests above do.
+
+
 
 ## Embedding (compile to IR / AST)
 
@@ -207,6 +264,30 @@ strataResultFree(&r);
 strataCompilerDestroy(c);
 ```
 
+## Samples
+
+The `samples/` directory has a worked example for each feature, including host
+drivers you can build and run:
+
+```sh
+# hello: runs as a standalone program (exit code 25)
+stratac --emit obj samples/hello.strata -o hello.o
+clang hello.o -o hello.exe && ./hello.exe ; echo $?
+
+# structs: native IR + object
+stratac --emit ir  samples/structs.strata
+stratac --emit obj samples/structs.strata -o structs.o
+
+# script calls host externs, then opaque engine handles (AOT link + run)
+stratac --emit obj samples/extern_math.strata -o extern_math.o
+clang samples/hosts/extern_math_host.c extern_math.o -o extern_math.exe && ./extern_math.exe
+
+stratac --emit obj samples/engine_api.strata -o engine_api.o
+clang samples/hosts/engine_api_host.c engine_api.o -o engine_api.exe && ./engine_api.exe
+```
+
+See `samples/README.md` for the full list and which back-end each uses.
+
 ## Project layout
 
 ```
@@ -219,7 +300,7 @@ src/Codegen       AST dump, back-end interface, text + LLVM-C back-ends,
 src/Embed.cpp     implementation of the C embedding API
 src/stratac       the stratac CLI driver
 tests/unit        unit + end-to-end tests (self-contained test framework)
-samples/          example Strata programs
+samples/          example Strata programs + host drivers (see samples/README.md)
 third_party/      (reserved for vendored deps)
 ```
 

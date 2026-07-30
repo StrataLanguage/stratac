@@ -1,0 +1,18 @@
+// vectors.strata -- HLSL-style vector types are part of Strata's type system.
+//
+// Status: vector types (float4, int3, ...) are recognized and can appear as
+// struct fields / parameter types, and they lower to LLVM vector types
+// (<4 x float>, <3 x i32>). Construction and per-component arithmetic are not
+// lowered yet, so this is a structural preview rather than a runnable program.
+//   stratac --emit ast vectors.strata
+
+struct Material {
+    float4 color;        // RGBA
+    float3 emission;     // light output
+};
+
+struct Light {
+    int      id;
+    float3   position;
+    Material material;
+};;

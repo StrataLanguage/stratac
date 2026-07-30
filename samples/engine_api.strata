@@ -1,0 +1,31 @@
+// engine_api.strata -- opaque engine handles.
+//
+// The engine owns the Entity layout; Strata only holds pointer-sized handles
+// and calls engine functions on them. This is how scripts talk to engine
+// objects without the language knowing anything about them. See
+// hosts/engine_api_host.c.
+//
+//   stratac --emit obj engine_api.strata -o engine_api.o
+//   clang hosts/engine_api_host.c engine_api.o -o engine_api.exe
+//   ./engine_api.exe
+
+extern struct Entity;                       // engine-provided; layout unknown to Strata
+
+extern Entity world_spawn(int x, int y);    // engine creates an entity
+extern void   world_move(Entity e, int dx, int dy);
+extern int    world_x(Entity e);
+extern int    world_y(Entity e);
+extern void   world_destroy(Entity e);
+
+// Move an entity and report its new x coordinate.
+int relocate(Entity e, int dx, int dy) {
+    world_move(e, dx, dy);
+    return world_x(e);
+}
+
+int run() {
+    Entity e = world_spawn(10, 20);
+    int x_after = relocate(e, 5, 7);        // x = 15
+    world_destroy(e);
+    return x_after;
+}

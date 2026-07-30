@@ -66,7 +66,20 @@ void dump(Node* n, int indent, std::ostringstream& out) {
         case NodeKind::Module: {
             auto m = static_cast<Module*>(n);
             out << "module " << m->name << "\n";
+            for (auto& s : m->structs) dump(s.get(), indent + 2, out);
             for (auto& f : m->functions) dump(f.get(), indent + 2, out);
+            return;
+        }
+        case NodeKind::Struct: {
+            auto s = static_cast<StructDecl*>(n);
+            if (s->isOpaque) { out << "struct " << s->name << "  ; opaque (engine-provided)\n"; return; }
+            out << "struct " << s->name << " {\n";
+            for (const auto& f : s->fields) {
+                pad(indent + 4, out);
+                out << f.type.name << " " << f.name << "\n";
+            }
+            pad(indent + 2, out);
+            out << "}\n";
             return;
         }
         case NodeKind::Function: {

@@ -158,6 +158,28 @@ std::unique_ptr<Module> Parser::parseModule() {
     auto mod = std::make_unique<Module>(moduleName_);
     while (!cur_.is(TokKind::Eof)) {
         if (cur_.is(TokKind::Semicolon)) { advance(); continue; } // stray ';'
+
+        // `struct Name {...}` or `extern struct Name;`
+        bool startsStruct = false;
+        bool externStruct = false;
+        if (cur_.is(TokKind::Kw_struct)) {
+            startsStruct = true;
+        } else if (cur_.is(TokKind::Kw_extern)) {
+            Token next = const_cast<Lexer&>(lex_).peekToken();
+            if (next.is(TokKind::Kw_struct)) { startsStruct = true; externStruct = true; }
+        }
+
+        if (startsStruct) {
+            if (externStruct) advance(); // consume `extern`
+            auto s = parseStructDecl(externStruct);
+            if (s) {
+                mod->structs.push_back(std::move(s));
+            } else {
+                synchronize();
+            }
+            continue;
+        }
+
         auto fn = parseFunction();
         if (fn) {
             mod->functions.push_back(std::move(fn));
@@ -166,6 +188,47 @@ std::unique_ptr<Module> Parser::parseModule() {
         }
     }
     return mod;
+}
+
+std::unique_ptr<StructDecl> Parser::parseStructDecl(bool isExtern) {
+    if (!consume(TokKind::Kw_struct)) {
+        diag_.error(cur_.range, "expected 'struct'");
+        return nullptr;
+    }
+    if (!cur_.is(TokKind::Ident)) {
+        diag_.error(cur_.range, "expected a struct name");
+        return nullptr;
+    }
+    Token nameTok = cur_;
+    advance();
+    auto s = std::make_unique<StructDecl>(nameTok.range, toString(identText(nameTok)));
+
+    if (consume(TokKind::LBrace)) {
+        if (isExtern) {
+            diag_.error(nameTok.range, "extern struct cannot have a body (use a plain struct)");
+        }
+        s->isOpaque = false;
+        while (!cur_.is(TokKind::RBrace) && !cur_.is(TokKind::Eof)) {
+            TypeName ft;
+            if (!tryParseType(ft)) {
+                diag_.error(cur_.range, "expected a field type");
+                break;
+            }
+            if (!cur_.is(TokKind::Ident)) {
+                diag_.error(cur_.range, "expected a field name");
+                break;
+            }
+            std::string fname = toString(identText(cur_));
+            advance();
+            s->fields.push_back({std::move(ft), std::move(fname)});
+            if (!expect(TokKind::Semicolon, "';'").is(TokKind::Semicolon)) break;
+        }
+        expect(TokKind::RBrace, "'}'");
+    } else {
+        s->isOpaque = true; // forward / opaque declaration
+    }
+    expect(TokKind::Semicolon, "';'");
+    return s;
 }
 
 std::unique_ptr<FunctionDecl> Parser::parseFunction() {
@@ -307,6 +370,7 @@ NodePtr Parser::parseVarDeclOrExprStmt() {
     }
 
     NodePtr e = parseExpr();
+    if (!e) return nullptr; // let the caller synchronize
     expect(TokKind::Semicolon, "';'");
     return std::make_unique<ExprStmt>(start.range, std::move(e));
 }
@@ -384,12 +448,29 @@ NodePtr Parser::parseUnary() {
         case TokKind::Plus:  op = UnaryOp::Pos; break;
         case TokKind::Bang:  op = UnaryOp::Not; break;
         case TokKind::Tilde: op = UnaryOp::BitNot; break;
-        default: return parsePrimary();
+        default: return parsePostfix();
     }
     Token t = cur_; advance();
     NodePtr operand = parseUnary();
     if (!operand) return nullptr;
     return std::make_unique<UnaryExpr>(t.range, op, std::move(operand));
+}
+
+NodePtr Parser::parsePostfix() {
+    NodePtr e = parsePrimary();
+    while (e && cur_.is(TokKind::Dot)) {
+        Token dot = cur_;
+        advance();
+        if (!cur_.is(TokKind::Ident)) {
+            diag_.error(cur_.range, "expected a member name after '.'");
+            break;
+        }
+        Token memberTok = cur_;
+        advance();
+        e = std::make_unique<MemberExpr>(spanFrom(dot, memberTok), std::move(e),
+                                         toString(identText(memberTok)));
+    }
+    return e;
 }
 
 NodePtr Parser::parsePrimary() {
