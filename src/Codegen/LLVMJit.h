@@ -23,7 +23,7 @@ public:
     bool Load(BuiltModule bm, std::string& errorMessage);
 
     // Binds a declared extern function name to a host address. Must be called
-    // before getAddress() triggers compilation of the referencing code. Returns
+    // before GetAddress() triggers compilation of the referencing code. Returns
     // false if the name is not declared in the module.
     bool AddSymbol(const char* name, void* addr);
 
