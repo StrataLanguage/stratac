@@ -43,7 +43,11 @@ if(STRATA_ENABLE_LLVM)
         NAMES LLVM-C LLVM-C.lib
         PATHS ${LLVM_C_DIR}/lib
         NO_DEFAULT_PATH REQUIRED)
-    target_sources(strata PRIVATE src/Codegen/LLVMCBackend.cpp)
+    target_sources(strata PRIVATE
+        src/Codegen/LLVMCBackend.cpp
+        src/Codegen/LLVMModuleBuilder.cpp
+        src/Codegen/LLVMAot.cpp
+        src/Codegen/LLVMJit.cpp)
     target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
     target_compile_definitions(strata PUBLIC STRATA_ENABLE_LLVM)
     target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
@@ -82,6 +86,7 @@ add_executable(strata_tests
     tests/unit/CodegenTests.cpp
     tests/unit/EmbedTests.cpp
     tests/unit/SampleTests.cpp
+    tests/unit/JitTests.cpp
 )
 target_link_libraries(strata_tests PRIVATE strata)
 target_compile_definitions(strata_tests PRIVATE

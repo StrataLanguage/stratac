@@ -17,6 +17,8 @@
 
 #if defined(STRATA_ENABLE_LLVM)
 #include "strata/Codegen/LLVMCApi.h"
+#include "Codegen/LLVMModuleBuilder.h"
+#include "Codegen/LLVMAot.h"
 #endif
 
 #include <cstdio>
@@ -33,8 +35,12 @@ void printHelp() {
         "stratac - Strata compiler\n"
         "Usage: stratac [options] <file.strata>\n"
         "Options:\n"
-        "  --emit {ir|ast}  output kind (default: ir)\n"
-        "  -o <file>        write output to <file> (default: stdout)\n"
+        "  --emit {ir|ast|obj|asm}  output kind (default: ir)\n"
+        "      ir  = textual LLVM IR (default)\n"
+        "      ast = pretty-printed AST\n"
+        "      obj = native relocatable object (.o)  [requires LLVM + -o]\n"
+        "      asm = native assembly (.s)            [requires LLVM + -o]\n"
+        "  -o <file>        write output to <file> (required for obj/asm)\n"
         "  --no-llvm        use the text IR back-end\n"
         "  --version        print version and exit\n"
         "  -h, --help       show this help\n");
@@ -73,8 +79,8 @@ int main(int argc, char** argv) {
         if (a == "--emit") {
             if (i + 1 >= argc) { std::fprintf(stderr, "error: --emit needs an argument\n"); return 2; }
             emit = argv[++i];
-            if (emit != "ir" && emit != "ast") {
-                std::fprintf(stderr, "error: --emit must be 'ir' or 'ast'\n"); return 2;
+            if (emit != "ir" && emit != "ast" && emit != "obj" && emit != "asm") {
+                std::fprintf(stderr, "error: --emit must be 'ir', 'ast', 'obj' or 'asm'\n"); return 2;
             }
         } else if (a == "-o") {
             if (i + 1 >= argc) { std::fprintf(stderr, "error: -o needs an argument\n"); return 2; }
@@ -124,6 +130,27 @@ int main(int argc, char** argv) {
     }
 
     std::string output;
+    if (emit == "obj" || emit == "asm") {
+#if defined(STRATA_ENABLE_LLVM)
+        if (outFile.empty()) {
+            std::fprintf(stderr, "error: --emit %s requires -o <file>\n", emit.c_str());
+            return 2;
+        }
+        std::string notes, err;
+        strata::BuiltModule bm = strata::buildLLVMModule(*mod, notes);
+        bool ok = strata::emitNativeFile(bm, outFile, emit == "asm", err);
+        if (!ok) {
+            std::fprintf(stderr, "error: %s\n", err.c_str());
+            return 1;
+        }
+        std::fprintf(stderr, "wrote native %s: %s\n",
+                     emit == "asm" ? "assembly" : "object", outFile.c_str());
+        return 0;
+#else
+        std::fprintf(stderr, "error: --emit %s requires LLVM linkage\n", emit.c_str());
+        return 2;
+#endif
+    }
     if (emit == "ast") {
         output = strata::dumpAST(*mod);
     } else {

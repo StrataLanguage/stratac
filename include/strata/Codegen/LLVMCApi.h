@@ -105,6 +105,75 @@ LLVMValueRef LLVMBuildCall2(LLVMBuilderRef B, LLVMTypeRef FnTy, LLVMValueRef Fn,
 // --- Verification ---
 // LLVMVerifierFailureAction: LLVMAbortProcessAction = 0, LLVMReturnStatusAction = 1.
 LLVMBool LLVMVerifyModule(LLVMModuleRef M, int VerifierAction, char** OutMessage);
+
+// --- Target initialization ---
+// The LLVMInitializeAll* / LLVMInitializeNativeTarget convenience wrappers are
+// not exported by this LLVM-C.dll, but the X86-specific entry points are. Since
+// the host is x86_64, these are what we need for both JIT and AOT.
+void LLVMInitializeX86TargetInfo(void);
+void LLVMInitializeX86Target(void);
+void LLVMInitializeX86TargetMC(void);
+void LLVMInitializeX86AsmPrinter(void);
+
+// --- Targets & target machines (llvm-c/Target.h, TargetMachine.h) ---
+typedef struct LLVMOpaqueTarget* LLVMTargetRef;
+typedef struct LLVMOpaqueTargetMachine* LLVMTargetMachineRef;
+typedef struct LLVMOpaqueMemoryBuffer* LLVMMemoryBufferRef;
+
+typedef enum {
+    LLVMCodeGenLevelNone = 0,
+    LLVMCodeGenLevelLess = 1,
+    LLVMCodeGenLevelDefault = 2,
+    LLVMCodeGenLevelAggressive = 3
+} LLVMCodeGenOptLevel;
+
+typedef enum {
+    LLVMRelocDefault = 0,
+    LLVMRelocStatic = 1,
+    LLVMRelocPIC = 2,
+    LLVMRelocDynamicNoPic = 3
+} LLVMRelocMode;
+
+typedef enum {
+    LLVMCodeModelDefault = 0,
+    LLVMCodeModelJITDefault = 1,
+    LLVMCodeModelTiny = 2,
+    LLVMCodeModelSmall = 3,
+    LLVMCodeModelKernel = 4,
+    LLVMCodeModelMedium = 5,
+    LLVMCodeModelLarge = 6
+} LLVMCodeModel;
+
+typedef enum {
+    LLVMAssemblyFile = 0,
+    LLVMObjectFile = 1
+} LLVMCodeGenFileType;
+
+LLVMBool LLVMGetTargetFromTriple(const char* Triple, LLVMTargetRef* Target,
+                                 char** ErrorMessage);
+char* LLVMGetDefaultTargetTriple(void);
+char* LLVMGetHostCPUName(void);
+LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef T, const char* Triple,
+                                             const char* CPU, const char* Features,
+                                             LLVMCodeGenOptLevel Level,
+                                             LLVMRelocMode Reloc, LLVMCodeModel CodeModel);
+void LLVMDisposeTargetMachine(LLVMTargetMachineRef T);
+LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef T, LLVMModuleRef M,
+                                     const char* Filename, LLVMCodeGenFileType codegen,
+                                     char** ErrorMessage);
+LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef T, LLVMModuleRef M,
+                                             LLVMCodeGenFileType codegen,
+                                             char** ErrorMessage,
+                                             LLVMMemoryBufferRef* OutMemBuf);
+void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef MemBuf);
+
+// --- Execution engine / MCJIT (llvm-c/ExecutionEngine.h) ---
+typedef struct LLVMOpaqueExecutionEngine* LLVMExecutionEngineRef;
+LLVMBool LLVMCreateExecutionEngineForModule(LLVMExecutionEngineRef* OutEE,
+                                            LLVMModuleRef M, char** OutError);
+void LLVMDisposeExecutionEngine(LLVMExecutionEngineRef EE);
+uint64_t LLVMGetFunctionAddress(LLVMExecutionEngineRef EE, const char* Name);
+uint64_t LLVMGetGlobalValueAddress(LLVMExecutionEngineRef EE, const char* Name);
 } // extern "C"
 
 namespace strata::llvm_c {

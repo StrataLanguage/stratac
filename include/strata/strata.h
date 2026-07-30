@@ -19,6 +19,27 @@ typedef enum {
     STRATA_EMIT_AST     = 1, // pretty-printed AST
 } StrataEmitKind;
 
+// ---------------------------------------------------------------------------
+// JIT execution
+//
+// Compile Strata source to native code in-process and obtain raw function
+// pointers the host can call. This is how a game engine runs scripts: compile
+// at load time, resolve entry points, call them every frame. No external
+// toolchain or process spawn is involved. (Requires LLVM linkage.)
+typedef struct StrataJit StrataJit;
+
+StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
+                                  const char* moduleName, const char** errOut);
+StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path,
+                                const char** errOut);
+
+// Resolves `name` to a native function pointer, or NULL. Cast to the matching C
+// signature, e.g. ((int(*)(int,int))strataJitGetFunction(jit, "add"))(2, 3).
+void* strataJitGetFunction(StrataJit* jit, const char* name);
+
+const char* strataJitDiagnostics(StrataJit* jit);
+void strataJitDestroy(StrataJit* jit);
+
 typedef struct StrataResult {
     int ok;                 // 1 on success, 0 if errors occurred
     const char* output;     // generated text (IR/AST), or "" ; NUL-terminated
@@ -47,6 +68,9 @@ StrataResult strataCompileFile(StrataCompiler* c, const char* path,
 void strataCompilerUseLLVM(StrataCompiler* c, int enabled);
 
 void strataResultFree(StrataResult* r);
+
+// Frees a string returned by the API (e.g. an errOut from strataJitCompile*).
+void strataFree(char* s);
 
 // Returns the linked LLVM version, or "0.0.0" if built without LLVM.
 const char* strataLLVMVersion(void);

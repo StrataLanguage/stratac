@@ -85,7 +85,72 @@ The emitted IR can be assembled to native code by an external LLVM toolchain:
 clang -c hello.ll -o hello.o
 ```
 
-## Embedding
+## Running Strata code
+
+There are two ways to run Strata, both via LLVM:
+
+### 1. JIT — compile in-process, call function pointers (the game-engine path)
+
+Compile a module to native code in-process and resolve entry points as raw
+function pointers. No external toolchain or process spawn is involved; this is
+how a host engine runs scripts at native speed at load time.
+
+```c
+#include "strata/strata.h"
+
+StrataCompiler* c = strataCompilerCreate();
+const char* err = NULL;
+StrataJit* jit = strataJitCompileString(
+    c, "int add(int a, int b){ return a + b; }", "math", &err);
+strataFree((char*)err);
+
+int (*add)(int, int) = (int(*)(int,int)) strataJitGetFunction(jit, "add");
+int r = add(2, 3);  // r == 5   -- JIT-compiled native code
+
+strataJitDestroy(jit);
+strataCompilerDestroy(c);
+```
+
+The suite verifies this end-to-end: it JITs `add`, `answer()` (which calls
+`sq(7)`), and `twice(float)`, then asserts the native results.
+
+### 2. AOT — emit native object / assembly to disk (the shipping / cache path)
+
+`stratac` lowers the IR to a relocatable object (`.o`) or assembly (`.s`) in
+process via LLVM's `TargetMachine`:
+
+```sh
+stratac --emit obj run.strata -o run.o    # native object
+stratac --emit asm run.strata -o run.s    # native assembly
+```
+
+The emitted object uses the host's x64 ABI and links like any other:
+
+```sh
+# host.c references int add(int,int); produced by stratac --emit obj
+clang host.c run.o -o run.exe && ./run.exe
+```
+
+A real example compiles `int add(int a,int b){ return a+b; }` to:
+
+```asm
+add:
+    leal (%rcx,%rdx), %eax   ; Windows x64: args in RCX/RDX, result in EAX
+    retq
+```
+
+### What the JIT / AOT paths lower today
+
+Both share one IR builder (currently the bootstrap subset: scalar int/float
+functions, parameters, returns, locals, `+ - *`, and calls). Control flow and
+`out`/`inout` mutation are handled by the text IR back-end and are next on the
+list for the native paths. `out`/`inout` also need an ABI decision (likely
+lowered to pointers in the host signature) before they are callable through a C
+function pointer.
+
+## Embedding (compile to IR / AST)
+
+For inspecting IR or the AST rather than executing, use the non-JIT API:
 
 Link against the `strata` library and use the C API:
 
@@ -107,7 +172,8 @@ include/strata/   public headers (Core, Lex, AST, Parse, Codegen, strata.h)
 src/Core          SourceManager, Diagnostics
 src/Lex           Token kinds, Lexer
 src/Parse         recursive-descent Parser
-src/Codegen       AST dump, back-end interface, text + LLVM-C back-ends
+src/Codegen       AST dump, back-end interface, text + LLVM-C back-ends,
+                  shared IR builder, AOT object emitter, and JIT engine
 src/Embed.cpp     implementation of the C embedding API
 src/stratac       the stratac CLI driver
 tests/unit        unit + end-to-end tests (self-contained test framework)

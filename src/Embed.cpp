@@ -13,9 +13,13 @@
 #include <sstream>
 #include <string>
 #include <cstdio>
+#include <cstdint>
+#include <memory>
 
 #if defined(STRATA_ENABLE_LLVM)
 #include "strata/Codegen/LLVMCApi.h"
+#include "Codegen/LLVMModuleBuilder.h"
+#include "Codegen/LLVMJit.h"
 #endif
 
 struct StrataCompiler {
@@ -143,6 +147,114 @@ const char* strataLLVMVersion(void) {
 #else
     return "0.0.0";
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// JIT execution
+// ---------------------------------------------------------------------------
+struct StrataJit {
+#if defined(STRATA_ENABLE_LLVM)
+    std::unique_ptr<strata::LLVMJit> jit;
+#endif
+    std::string diagnostics;
+};
+
+#if defined(STRATA_ENABLE_LLVM)
+static StrataJit* jitCompile(StrataCompiler* /*c*/, std::string source,
+                             std::string moduleName, const char** errOut) {
+    strata::SourceManager src;
+    src.setSource(std::move(source), moduleName);
+    strata::DiagnosticEngine diag;
+    strata::Lexer lex(src.source(), diag);
+    strata::Parser parser(lex, diag, moduleName);
+    auto mod = parser.parseModule();
+    std::string diagText = diag.format(src);
+
+    if (diag.hasErrors() || !mod) {
+        if (errOut) *errOut = dupCString("parse errors:\n" + diagText);
+        return nullptr;
+    }
+
+    std::string notes;
+    strata::BuiltModule bm = strata::buildLLVMModule(*mod, notes);
+
+    auto jit = std::make_unique<strata::LLVMJit>();
+    std::string err;
+    if (!jit->load(std::move(bm), err)) {
+        if (errOut) *errOut = dupCString("JIT error: " + err);
+        return nullptr;
+    }
+
+    auto* handle = new StrataJit{};
+    handle->jit = std::move(jit);
+    handle->diagnostics = diagText + notes;
+    return handle;
+}
+#endif
+
+StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
+                                  const char* moduleName, const char** errOut) {
+#if defined(STRATA_ENABLE_LLVM)
+    if (errOut) *errOut = nullptr;
+    if (!c || !source) {
+        if (errOut) *errOut = dupCString("null compiler or source");
+        return nullptr;
+    }
+    return jitCompile(c, std::string(source),
+                      moduleName ? std::string(moduleName) : std::string("strata_module"),
+                      errOut);
+#else
+    if (errOut) *errOut = dupCString("JIT unavailable: strata built without LLVM");
+    return nullptr;
+#endif
+}
+
+StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut) {
+#if defined(STRATA_ENABLE_LLVM)
+    if (errOut) *errOut = nullptr;
+    if (!c || !path) {
+        if (errOut) *errOut = dupCString("null compiler or path");
+        return nullptr;
+    }
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        if (errOut) *errOut = dupCString(std::string("cannot open file: ") + path);
+        return nullptr;
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    std::string base = path;
+    auto slash = base.find_last_of("/\\");
+    std::string moduleName = (slash != std::string::npos) ? base.substr(slash + 1) : base;
+    return jitCompile(c, ss.str(), moduleName, errOut);
+#else
+    if (errOut) *errOut = dupCString("JIT unavailable: strata built without LLVM");
+    return nullptr;
+#endif
+}
+
+void* strataJitGetFunction(StrataJit* jit, const char* name) {
+#if defined(STRATA_ENABLE_LLVM)
+    if (!jit || !jit->jit || !name) return nullptr;
+    std::uint64_t addr = jit->jit->getAddress(name);
+    return addr ? reinterpret_cast<void*>(addr) : nullptr;
+#else
+    (void)jit; (void)name;
+    return nullptr;
+#endif
+}
+
+const char* strataJitDiagnostics(StrataJit* jit) {
+    if (!jit) return "";
+    return jit->diagnostics.c_str();
+}
+
+void strataJitDestroy(StrataJit* jit) {
+    delete jit;
+}
+
+void strataFree(char* s) {
+    delete[] s;
 }
 
 } // extern "C"

@@ -35,6 +35,27 @@ C:/Users/andre/llvm-x64/bin/clang.exe -c build/default/hello.ll -o build/default
 `clang -c` must exit 0 (a `-Woverride-module` warning about the target triple is
 fine; the IR carries no triple by design).
 
+## Running Strata code (execution)
+
+Two paths, both via LLVM:
+
+- **JIT (in-process):** `strataJitCompileString/CompileFile` → `strataJitGetFunction`
+  returns native function pointers. Implemented in `src/Codegen/LLVMJit.*` (MCJIT
+  via the ExecutionEngine C API). ORC v2 (`LLVMOrc*`) is also exported by
+  LLVM-C.dll for future hot-reload.
+- **AOT (disk):** `stratac --emit obj|asm`, implemented in `src/Codegen/LLVMAot.*`
+  via `LLVMTargetMachineEmitToFile`. Emits the host x64 ABI; the object links
+  like any COFF object.
+
+Both share one IR builder (`src/Codegen/LLVMModuleBuilder.*`) returning a live,
+owned `BuiltModule`. **Always call the X86 target initializers before creating a
+TargetMachine or ExecutionEngine** — `LLVMInitializeAll*` / `LLVMInitializeNativeTarget`
+are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
+`ensureX86Initialized()` helpers in LLVMAot.cpp / LLVMJit.cpp do this once each.
+
+The JIT is demonstrated in `tests/unit/JitTests.cpp` (it actually calls JIT'd
+functions and asserts results).
+
 ## Conventions
 
 - **C++20**, `namespace strata`. No compiler extensions. No new comments beyond
