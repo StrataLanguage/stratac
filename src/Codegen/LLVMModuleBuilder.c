@@ -919,7 +919,7 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         }
 
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, idx);
-        TypeDesc fieldTd = Resolve(b, &fd->type);
+        TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
 
         Value fieldValue = Coerce(b, EmitExpr(b, field->value), fieldTd);
 
