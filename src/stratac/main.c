@@ -9,7 +9,7 @@
 #include "Codegen/LLVMModuleBuilder.h"
 #include "strata/Codegen/LLVMCApi.h"
 
-#include <Defines.hpp>
+#include <Defines.h>
 
 #include <stdio.h>
 #include <stdlib.h>
