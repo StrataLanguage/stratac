@@ -49,14 +49,14 @@ STRATA_TEST(parser_out_parameter)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseModule("void g(out int x) {}", &diag, &arena);
+    Module* mod = ParseModule("void g(ref int x) {}", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
     STRATA_CHECK_EQ((long)fn->params.count, 1);
 
     ParamDecl* p = (ParamDecl*)VecGet(&fn->params, 0);
-    STRATA_CHECK(p->mod == ModOut);
+    STRATA_CHECK(p->mod == ModRef);
     STRATA_CHECK(strcmp(p->type.name, "int") == 0);
     STRATA_CHECK(strcmp(p->name, "x") == 0);
 
@@ -68,12 +68,12 @@ STRATA_TEST(parser_inout_parameter)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseModule("void h(inout float t) {}", &diag, &arena);
+    Module* mod = ParseModule("void h(ref float t) {}", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
     ParamDecl* p = (ParamDecl*)VecGet(&fn->params, 0);
-    STRATA_CHECK(p->mod == ModInOut);
+    STRATA_CHECK(p->mod == ModRef);
     STRATA_CHECK(strcmp(p->type.name, "float") == 0);
 
     DiagnosticEngineFree(&diag);

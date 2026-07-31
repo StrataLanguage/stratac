@@ -33,6 +33,7 @@ int chase(Entity attacker, Entity target, int step)
     if (ty < ay) { dy = 0 - step; }
 
     move(attacker, dx, dy);
-     Shoot(p);
-    return p.ammo;//get_x(attacker) + get_y(attacker);
+    Shoot(p);
+
+    return get_x(attacker) + get_y(attacker);
 }

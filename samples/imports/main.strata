@@ -1,5 +1,6 @@
 import weapons/pistol;
 
-int entry() {
-    return makeDamage(5);
+int entry()
+{
+    return MakePistol(5).ammo;
 }

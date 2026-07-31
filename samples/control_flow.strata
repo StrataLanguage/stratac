@@ -1,7 +1,7 @@
-// control_flow.strata -- control flow and out/inout parameters.
+// control_flow.strata -- control flow and ref parameters.
 //
 // The LLVM back-end handles if/else, while, for, break/continue, recursion,
-// and out/inout. Run it natively:
+// and ref. Run it natively:
 //   stratac control_flow.strata -o control_flow.o
 //   clang control_flow.o -o control_flow.exe && ./control_flow.exe ; echo $?
 // Or inspect the AST:
@@ -58,9 +58,9 @@ int sum_skipping_fives(int n)
     return total;
 }
 
-// out parameters hand values back to the caller (there are no pointers in
-// Strata; out/inout are lowered to pointers internally).
-void minmax(int a, int b, out int lo, out int hi)
+// ref parameters hand values back to the caller (there are no pointers in
+// Strata; ref is lowered to a pointer internally).
+void minmax(int a, int b, ref int lo, ref int hi)
 {
     if (a < b)
     {

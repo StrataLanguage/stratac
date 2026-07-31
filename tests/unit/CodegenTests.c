@@ -65,7 +65,7 @@ STRATA_TEST(llvm_forward_call_resolves)
 
 STRATA_TEST(llvm_in_scalar_param_is_by_reference)
 {
-    CodegenResult res = GenLlvm("int foo(in int x) { return x; }");
+    CodegenResult res = GenLlvm("int foo(ref int x) { return x; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define i32 @foo(ptr"));
     STRATA_CHECK(Contains(res.output, "load i32, ptr"));
@@ -81,7 +81,7 @@ STRATA_TEST(llvm_plain_scalar_param_is_by_value)
 
 STRATA_TEST(llvm_in_scalar_call_site_passes_address)
 {
-    CodegenResult res = GenLlvm("int foo(in int x) { return x; }\n"
+    CodegenResult res = GenLlvm("int foo(ref int x) { return x; }\n"
                                 "int entry() { int v = 5; return foo(v); }\n");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "call i32 @foo(ptr"));
@@ -89,7 +89,7 @@ STRATA_TEST(llvm_in_scalar_call_site_passes_address)
 
 STRATA_TEST(llvm_in_float_param_is_by_reference)
 {
-    CodegenResult res = GenLlvm("float foo(in float x) { return x; }");
+    CodegenResult res = GenLlvm("float foo(ref float x) { return x; }");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define float @foo(ptr"));
     STRATA_CHECK(Contains(res.output, "load float, ptr"));
@@ -97,8 +97,8 @@ STRATA_TEST(llvm_in_float_param_is_by_reference)
 
 STRATA_TEST(llvm_inout_and_out_remain_by_reference)
 {
-    CodegenResult res = GenLlvm("void foo(out int x) { x = 1; }\n"
-                                "void bar(inout int y) { y = y + 1; }\n");
+    CodegenResult res = GenLlvm("void foo(ref int x) { x = 1; }\n"
+                                "void bar(ref int y) { y = y + 1; }\n");
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "define void @foo(ptr"));
     STRATA_CHECK(Contains(res.output, "define void @bar(ptr"));
@@ -126,7 +126,8 @@ STRATA_TEST(llvm_overloaded_in_struct_param)
 {
     CodegenResult res = GenLlvm("struct Vec3 { float x; float y; float z; };\n"
                                 "float foo(float a, float b) { return a; }\n"
-                                "float foo(in Vec3 v) { return foo(v.x, v.y); }\n");
+                                "float foo(const Vec3 v) { return foo(v.x, v.y); }\n");
     STRATA_CHECK(res.ok);
 }
+
 

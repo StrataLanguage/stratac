@@ -46,7 +46,7 @@ STRATA_TEST(parser_struct_typed_params_and_members)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     Module* mod = ParseModule(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(in Vec3 a, in Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }\n",
+        "float dot(const Vec3 a, const Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }\n",
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK_EQ((long)mod->functions.count, 1);
@@ -121,7 +121,7 @@ STRATA_TEST(jit_struct_constructor_and_return)
 STRATA_TEST(jit_struct_passed_between_strata_functions)
 {
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
-                                "float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
+                                "float dot(const Vec3 a, const Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
                                 "float entry() {\n"
                                 "  Vec3 a; a.x = 1.0; a.y = 2.0; a.z = 3.0;\n"
                                 "  Vec3 b; b.x = 4.0; b.y = 5.0; b.z = 6.0;\n"
@@ -237,7 +237,7 @@ STRATA_TEST(jit_struct_zero_initialized_by_default)
 STRATA_TEST(jit_struct_inout_param_is_by_reference)
 {
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
-                                "void bump(inout Vec3 v) { v.x = v.x + 10.0; v.y = v.y + 20.0; }\n"
+                                "void bump(Vec3 v) { v.x = v.x + 10.0; v.y = v.y + 20.0; }\n"
                                 "float entry() {\n"
                                 "  Vec3 a; a.x = 1.0; a.y = 2.0; a.z = 3.0;\n"
                                 "  bump(a);\n"
@@ -274,8 +274,8 @@ static void test_scale_into(const HostVec3* src, float s, HostVec3* dst)
 STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
 {
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
-                                "extern float length_sq(in Vec3 v);\n"
-                                "extern void scale_into(in Vec3 src, float s, out Vec3 dst);\n"
+                                "extern float length_sq(const Vec3 v);\n"
+                                "extern void scale_into(const Vec3 src, float s, Vec3 dst);\n"
                                 "float entry() {\n"
                                 "  Vec3 v = Vec3(3.0, 4.0, 0.0);\n"
                                 "  Vec3 r;\n"
@@ -311,7 +311,7 @@ STRATA_TEST(aot_emits_struct_object)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     Module* mod = ParseModule(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n",
+        "float dot(const Vec3 a, const Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n",
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -463,7 +463,7 @@ STRATA_TEST(jit_braced_init_inferred_positional)
 
 STRATA_TEST(jit_in_scalar_param_reads_correctly)
 {
-    StrataJit* jit = CompileJit("int identity(in int x) { return x; }\n"
+    StrataJit* jit = CompileJit("int identity(const int x) { return x; }\n"
                                 "int entry() { return identity(42); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -480,7 +480,7 @@ STRATA_TEST(jit_in_scalar_param_reads_correctly)
 
 STRATA_TEST(jit_in_float_param_reads_correctly)
 {
-    StrataJit* jit = CompileJit("float half_val(in float x) { return x * 0.5; }\n"
+    StrataJit* jit = CompileJit("float half_val(const float x) { return x * 0.5; }\n"
                                 "float entry() { return half_val(10.0); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -498,7 +498,7 @@ STRATA_TEST(jit_in_float_param_reads_correctly)
 
 STRATA_TEST(jit_in_param_does_not_corrupt_caller)
 {
-    StrataJit* jit = CompileJit("void consume(in int x) { int unused = x + 1; }\n"
+    StrataJit* jit = CompileJit("void consume(const int x) { int unused = x + 1; }\n"
                                 "int entry() {\n"
                                 "  int v = 99;\n"
                                 "  consume(v);\n"
@@ -519,7 +519,7 @@ STRATA_TEST(jit_in_param_does_not_corrupt_caller)
 
 STRATA_TEST(jit_multiple_in_params)
 {
-    StrataJit* jit = CompileJit("int sum(in int a, in int b, in int c) { return a + b + c; }\n"
+    StrataJit* jit = CompileJit("int sum(const int a, const int b, const int c) { return a + b + c; }\n"
                                 "int entry() { return sum(10, 20, 30); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -537,7 +537,7 @@ STRATA_TEST(jit_multiple_in_params)
 STRATA_TEST(jit_in_struct_param_passed_by_ref)
 {
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
-                                "float dot(in Vec3 a, in Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
+                                "float dot(const Vec3 a, const Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n"
                                 "float entry() {\n"
                                 "  Vec3 a = {1.0, 2.0, 3.0};\n"
                                 "  Vec3 b = {4.0, 5.0, 6.0};\n"
@@ -556,4 +556,5 @@ STRATA_TEST(jit_in_struct_param_passed_by_ref)
         strataJitDestroy(jit);
     }
 }
+
 

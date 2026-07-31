@@ -3,12 +3,12 @@
 
 STRATA_TEST(lexer_keywords_and_idents)
 {
-    TokenList t = LexAll("int float4 MyType inout return");
+    TokenList t = LexAll("int float4 MyType ref return");
     TokKind* k = Kinds(t);
     STRATA_CHECK(k[0] == TokKwInt);
     STRATA_CHECK(k[1] == TokIdent);
     STRATA_CHECK(k[2] == TokIdent);
-    STRATA_CHECK(k[3] == TokKwInout);
+    STRATA_CHECK(k[3] == TokKwRef);
     STRATA_CHECK(k[4] == TokKwReturn);
     STRATA_CHECK(k[t.count - 1] == TokEof);
     free(k);

@@ -31,7 +31,7 @@ STRATA_TEST(import_function_jit_runs)
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 25);
+        STRATA_CHECK_EQ(entry(), 5);
     }
 
     strataJitDestroy(jit);
@@ -80,7 +80,7 @@ STRATA_TEST(import_compiles_to_merged_ir)
     }
 
     STRATA_CHECK(r.ok);
-    STRATA_CHECK(strstr(r.output, "makeDamage") != NULL);
+    STRATA_CHECK(strstr(r.output, "MakePistol") != NULL);
     STRATA_CHECK(strstr(r.output, "entry") != NULL);
 
     strataResultFree(&r);

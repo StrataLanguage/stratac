@@ -5,7 +5,7 @@ struct Vec3
     float z;
 };
 
-float max(in Vec3 v)
+float max(const Vec3 v)
 {
     return max(v.x, max(v.y, v.z));
 }
@@ -17,7 +17,7 @@ float max(float a, float b)
     return b;
 }
 
-Vec3 add(in Vec3 a, in Vec3 b)
+Vec3 add(const Vec3 a, const Vec3 b)
 {
     Vec3 res;
     res.x = a.x + b.x;
@@ -34,13 +34,13 @@ struct Particle
     float mass;
 };
 
-float dot(in Vec3 a, in Vec3 b)
+float dot(const Vec3 a, const Vec3 b)
 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 // Kinetic energy = 0.5 * m * |v|^2.
-float kinetic_energy(in Particle p)
+float kinetic_energy(const Particle p)
 {
     float speed_sq = dot(p.vel, p.vel);
     return speed_sq * p.mass * 0.5;

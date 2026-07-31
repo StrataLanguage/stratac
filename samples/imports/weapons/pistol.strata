@@ -18,8 +18,3 @@ void Shoot(Pistol pistol)
 
     pistol.ammo -= 1;
 }
-
-int makeDamage(int base)
-{
-    return base * 5;
-}

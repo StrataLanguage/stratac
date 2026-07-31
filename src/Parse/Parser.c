@@ -315,17 +315,9 @@ static ParamDecl* ParseParam(Parser* p)
     SourceRange start = p->m_cur.range;
     ParamMod mod = ModNone;
 
-    if (ParserConsume(p, TokKwIn))
+    if (ParserConsume(p, TokKwRef))
     {
-        mod = ModIn;
-    }
-    else if (ParserConsume(p, TokKwOut))
-    {
-        mod = ModOut;
-    }
-    else if (ParserConsume(p, TokKwInout))
-    {
-        mod = ModInOut;
+        mod = ModRef;
     }
 
     TypeName type = {0};

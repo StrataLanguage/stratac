@@ -88,7 +88,7 @@ STRATA_TEST(struct_vs_scalar_overload_resolves)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(
         "struct Vec3 { float x; float y; float z; };\n"
-        "float mag(in Vec3 v) { return v.x + v.y + v.z; }\n"
+        "float mag(const Vec3 v) { return v.x + v.y + v.z; }\n"
         "float mag(float s) { return s; }\n"
         "float ev() { Vec3 v; v.x = 1.0; v.y = 2.0; v.z = 3.0; return mag(v); }\n"
         "float es() { return mag(10.0); }\n",
@@ -212,7 +212,7 @@ STRATA_TEST(struct_inout_param_is_allowed)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { float x; };\nvoid bump(inout V v) { v.x = v.x + 1.0; }\n", &diag, &arena);
+    ParseAndResolve("struct V { float x; };\nvoid bump(V v) { v.x = v.x + 1.0; }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -224,8 +224,8 @@ STRATA_TEST(extern_struct_param_with_in_is_ok)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { float x; };\n"
-        "extern void take(in V v);\n"
-        "extern void fill(out V v);\n",
+        "extern void take(const V v);\n"
+        "extern void fill(V v);\n",
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -270,7 +270,7 @@ STRATA_TEST(in_scalar_param_is_const)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("void foo(in int x) { x = 5; }\n", &diag, &arena);
+    ParseAndResolve("void foo(const int x) { x = 5; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -280,7 +280,7 @@ STRATA_TEST(in_scalar_param_compound_assign_is_error)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("void foo(in int x) { x += 5; }\n", &diag, &arena);
+    ParseAndResolve("void foo(const int x) { x += 5; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -290,7 +290,7 @@ STRATA_TEST(in_struct_param_member_is_const)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct Vec3 { float x; float y; float z; };\nvoid foo(in Vec3 v) { v.y = 3.0; }\n", &diag, &arena);
+    ParseAndResolve("struct Vec3 { float x; float y; float z; };\nvoid foo(const Vec3 v) { v.y = 3.0; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -300,7 +300,7 @@ STRATA_TEST(in_param_can_be_read)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("int foo(in int x) { return x + 1; }\n", &diag, &arena);
+    ParseAndResolve("int foo(const int x) { return x + 1; }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -341,4 +341,5 @@ STRATA_TEST(jit_runs_resolved_overloads)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
+
 

@@ -16,7 +16,7 @@ static StrataJit* CompileJit(const char* src)
 
 STRATA_TEST(jit_inout_param_writes_back)
 {
-    StrataJit* jit = CompileJit("void add_one(inout int x) { x = x + 1; }\n"
+    StrataJit* jit = CompileJit("void add_one(ref int x) { x = x + 1; }\n"
                                 "int entry() { int n = 10; add_one(n); return n; }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -33,7 +33,7 @@ STRATA_TEST(jit_inout_param_writes_back)
 
 STRATA_TEST(jit_out_params_return_values)
 {
-    StrataJit* jit = CompileJit("void divmod(int a, int b, out int q, out int r) { q = a / b; r = a % b; }\n"
+    StrataJit* jit = CompileJit("void divmod(int a, int b, ref int q, ref int r) { q = a / b; r = a % b; }\n"
                                 "int entry() {\n"
                                 "  int q;\n"
                                 "  int r;\n"
@@ -186,4 +186,5 @@ STRATA_TEST(jit_for_loop_with_continue)
         strataJitDestroy(jit);
     }
 }
+
 

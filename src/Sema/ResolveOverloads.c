@@ -618,7 +618,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
             StrMapPut(&scope, p->name, (void*)p->type.name);
 
-            if (p->mod == ModIn || p->type.isConst)
+            if (p->type.isConst)
             {
                 StrMapPut(&r.m_constVars, p->name, (void*)1);
             }
@@ -640,9 +640,9 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             if (IsDefinedStruct(&r.m_registry, p->type.name)
                 && p->type.isConst
-                && p->mod == ModOut)
+                && p->mod == ModRef)
             {
-                DiagErrorFmt(diag, p->base.range, "'out' parameter cannot be 'const'");
+                DiagErrorFmt(diag, p->base.range, "'ref' parameter cannot be 'const'");
             }
         }
 

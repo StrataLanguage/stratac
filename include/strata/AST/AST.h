@@ -55,9 +55,7 @@ static inline bool TypeNameValid(const TypeName* t)
 
 typedef enum {
     ModNone,
-    ModIn,
-    ModOut,
-    ModInOut,
+    ModRef,
 } ParamMod;
 
 static inline bool ByRef(ParamMod m)
@@ -69,12 +67,8 @@ static inline const char* ParamModSpelling(ParamMod m)
 {
     switch (m)
     {
-    case ModIn:
-        return "in";
-    case ModOut:
-        return "out";
-    case ModInOut:
-        return "inout";
+    case ModRef:
+        return "ref";
     case ModNone:
         return "";
     }

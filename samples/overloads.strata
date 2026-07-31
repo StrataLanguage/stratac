@@ -26,7 +26,7 @@ float length(float s)
     return s;                       // pass-through for a scalar
 }
 
-float length(in Vec3 v)
+float length(const Vec3 v)
 {
     return v.x + v.y + v.z;         // sum of components (a stand-in for magnitude)
 }
