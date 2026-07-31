@@ -20,8 +20,7 @@ extern void   move(Entity e, int dx, int dy);
 // Move `step` cells toward the target, return the new x + y.
 int chase(Entity attacker, Entity target, int step)
 {
-    Pistol p;
-    p.ammo = 100;
+    Pistol p = MakePistol(100);
 
     int ax = get_x(attacker);
     int ay = get_y(attacker);
@@ -34,8 +33,6 @@ int chase(Entity attacker, Entity target, int step)
     if (ty < ay) { dy = 0 - step; }
 
     move(attacker, dx, dy);
-
-    Shoot(p);
-
+     Shoot(p);
     return p.ammo;//get_x(attacker) + get_y(attacker);
 }

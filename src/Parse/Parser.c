@@ -73,6 +73,7 @@ void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, con
     p->m_arena = arena;
     p->m_moduleName = arena_strdup(arena, moduleName ? moduleName : "strata_module");
     p->m_cur = LexerNextToken(lex);
+    p->m_returnType = NULL;
 }
 
 Str ParserIdentText(const Parser* p, Token t)
@@ -454,7 +455,9 @@ static FunctionDecl* ParseFunction(Parser* p)
         return node;
     }
 
+    p->m_returnType = node->returnType.name;
     node->body = ParseBlock(p);
+    p->m_returnType = NULL;
 
     return node;
 }
@@ -744,7 +747,14 @@ static Node* ParseReturn(Parser* p)
 
     if (p->m_cur.kind != TokSemicolon)
     {
-        node->value = ParseExpr(p);
+        if (p->m_cur.kind == TokLBrace && p->m_returnType)
+        {
+            node->value = ParseStructInitBody(p, p->m_cur, p->m_returnType);
+        }
+        else
+        {
+            node->value = ParseExpr(p);
+        }
     }
 
     ParserExpect(p, TokSemicolon, "';'");

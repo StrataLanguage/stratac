@@ -18,6 +18,7 @@ typedef struct {
     TypeRegistry m_registry;
     Arena* m_arena;
     StrMap m_constVars;
+    const char* m_currentReturnType;
 } Resolver;
 
 static char* Mangle(Arena* arena, const FunctionDecl* f)
@@ -478,11 +479,15 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ReturnStmt* rs = (ReturnStmt*)n;
         if (rs->value)
         {
+            if (r->m_currentReturnType && strcmp(r->m_currentReturnType, "void") == 0)
+            {
+                DiagErrorFmt(r->m_diag, rs->base.range, "void function cannot return a value");
+            }
+
             ResolveExpr(r, rs->value, scope);
 
             const char* typeName = InferType(r, rs->value, scope);
-            
-            // Void cannot be returned, as it would likely cause the universe to implode in upon itself.
+
             if (typeName[0] != '\0' && strcmp(typeName, "void") == 0)
             {
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
@@ -619,7 +624,10 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             }
         }
 
+        r.m_currentReturnType = functionDecl->returnType.name;
+
         WalkBlock(&r, (Block*)functionDecl->body, &scope);
+        r.m_currentReturnType = NULL;
     }
 
     for (size_t i = 0; i < mod->functions.count; i++)

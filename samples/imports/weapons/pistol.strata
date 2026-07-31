@@ -4,7 +4,12 @@ struct Pistol
     int ammo;
 };
 
-int Shoot(inout Pistol pistol)
+Pistol MakePistol(int ammo)
+{
+    return Pistol { .ammo = ammo };
+}
+
+void Shoot(inout Pistol pistol)
 {
     if (pistol.ammo <= 0)
     {
@@ -12,8 +17,6 @@ int Shoot(inout Pistol pistol)
     }
 
     pistol.ammo -= 1;
-
-    return pistol.ammo;
 }
 
 int makeDamage(int base)
