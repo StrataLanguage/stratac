@@ -7,7 +7,7 @@ typedef struct {
     const char* text;
 } Spelling;
 
-static const Spelling kKeywords[] = {
+static const Spelling keywords[] = {
     { TokKwVoid, "void" },
     { TokKwBool, "bool" },
     { TokKwInt, "int" },
@@ -35,7 +35,7 @@ static const Spelling kKeywords[] = {
     { TokKwNamespace, "namespace" },
 };
 
-static const Spelling kPunct[] = {
+static const Spelling punct[] = {
     { TokLParen, "(" },
     { TokRParen, ")" },
     { TokLBrace, "{" },
@@ -75,17 +75,17 @@ static const Spelling kPunct[] = {
     { TokPercentEq, "%=" },
 };
 
-#define KEYWORD_COUNT (sizeof(kKeywords) / sizeof(kKeywords[0]))
-#define PUNCT_COUNT (sizeof(kPunct) / sizeof(kPunct[0]))
+#define KEYWORD_COUNT (sizeof(keywords) / sizeof(keywords[0]))
+#define PUNCT_COUNT (sizeof(punct) / sizeof(punct[0]))
 
 TokKind ClassifyKeyword(Str ident)
 {
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (ident.len == strlen(kKeywords[i].text) &&
-            memcmp(ident.data, kKeywords[i].text, ident.len) == 0)
+        if (ident.len == strlen(keywords[i].text) &&
+            memcmp(ident.data, keywords[i].text, ident.len) == 0)
         {
-            return kKeywords[i].kind;
+            return keywords[i].kind;
         }
     }
     return TokIdent;
@@ -95,17 +95,17 @@ const char* TokSpelling(TokKind kind)
 {
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (kKeywords[i].kind == kind)
+        if (keywords[i].kind == kind)
         {
-            return kKeywords[i].text;
+            return keywords[i].text;
         }
     }
 
     for (size_t i = 0; i < PUNCT_COUNT; i++)
     {
-        if (kPunct[i].kind == kind)
+        if (punct[i].kind == kind)
         {
-            return kPunct[i].text;
+            return punct[i].text;
         }
     }
 
@@ -125,26 +125,26 @@ const char* TokName(TokKind kind)
     switch (kind)
     {
     case TokEof:
-        return "end of input";
+        return "end-of-input";
     case TokUnknown:
-        return "unknown token";
+        return "unknown";
     case TokIdent:
         return "identifier";
     case TokIntLit:
-        return "integer literal";
+        return "int-literal";
     case TokFloatLit:
-        return "float literal";
+        return "float-literal";
     case TokBoolLit:
-        return "bool literal";
+        return "bool-literal";
     default:
         break;
     }
 
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (kKeywords[i].kind == kind)
+        if (keywords[i].kind == kind)
         {
-            return kKeywords[i].text;
+            return keywords[i].text;
         }
     }
 

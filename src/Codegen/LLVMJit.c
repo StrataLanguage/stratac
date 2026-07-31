@@ -1,5 +1,3 @@
-#ifdef STRATA_ENABLE_LLVM
-
 #include "LLVMJit.h"
 #include "strata/Codegen/LLVMCApi.h"
 
@@ -143,5 +141,3 @@ uint64_t LLVMJitGetAddress(LLVMJit* jit, const char* name)
 
     return (uint64_t)LLVMGetFunctionAddress(jit->m_ee, name);
 }
-
-#endif

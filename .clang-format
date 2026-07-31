@@ -10,6 +10,9 @@
 #   - 4-space indentation, no tabs
 #   - Allman braces (opening brace on its own line)
 #   - switch case labels flush with `switch` (not indented)
+#   - multiline binary expressions break before the operator, so && / ||
+#     start the new line (BreakBeforeBinaryOperators applies to all binary
+#     operators; clang-format has no per-operator control)
 #   - 120-column limit
 # Everything not listed above inherits the LLVM base style, which already
 # matches the existing tree (left-bound pointers/references, trailing-comment
@@ -43,6 +46,9 @@ InsertBraces:                        true
 IndentCaseLabels:   false
 IndentCaseBlocks:   false
 IndentGotoLabels:   false
+
+# ---- Operator breaks: && / || (and all binary operators) start the line ----
+BreakBeforeBinaryOperators: All
 
 # ---- Line length ----
 ColumnLimit: 120

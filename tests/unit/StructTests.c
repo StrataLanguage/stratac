@@ -59,7 +59,6 @@ STRATA_TEST(parser_struct_typed_params_and_members)
     arena_free(&arena);
 }
 
-#ifdef STRATA_ENABLE_LLVM
 
 static StrataJit* CompileJit(const char* src)
 {
@@ -558,4 +557,3 @@ STRATA_TEST(jit_in_struct_param_passed_by_ref)
     }
 }
 
-#endif

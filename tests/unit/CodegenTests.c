@@ -2,9 +2,7 @@
 #include "strata/Codegen/CodegenBackend.h"
 #include "strata/Test.h"
 
-#ifdef STRATA_ENABLE_LLVM
 #include "strata/Codegen/LLVMCApi.h"
-#endif
 
 #include <string.h>
 
@@ -13,7 +11,6 @@ static bool Contains(const char* hay, const char* needle)
     return strstr(hay, needle) != NULL;
 }
 
-#ifdef STRATA_ENABLE_LLVM
 
 static CodegenResult GenLlvm(const char* src)
 {
@@ -133,4 +130,3 @@ STRATA_TEST(llvm_overloaded_in_struct_param)
     STRATA_CHECK(res.ok);
 }
 
-#endif

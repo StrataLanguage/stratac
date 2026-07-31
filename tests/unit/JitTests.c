@@ -4,7 +4,6 @@
 
 #include <stdio.h>
 
-#ifdef STRATA_ENABLE_LLVM
 #include "Codegen/LLVMAot.h"
 #include "Codegen/LLVMModuleBuilder.h"
 
@@ -203,4 +202,3 @@ STRATA_TEST(jit_calls_host_extern_function)
     strataCompilerDestroy(c);
 }
 
-#endif

@@ -5,8 +5,8 @@
 
 static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const char* elemIr, int vec)
 {
-    MappedType m;
-    memset(&m, 0, sizeof(m));
+    MappedType m = {0};
+
     m.valid = true;
     m.isFloat = isFloat;
     m.isUnsigned = isUnsigned;
@@ -28,8 +28,7 @@ static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const c
 
 MappedType MapType(const TypeName* t)
 {
-    MappedType m;
-    memset(&m, 0, sizeof(m));
+    MappedType m = {0};
 
     if (!t->name || t->name[0] == '\0')
     {
@@ -62,9 +61,11 @@ MappedType MapType(const TypeName* t)
             memcpy(candidate, base, clen);
             candidate[clen] = '\0';
 
-            if (strcmp(candidate, "float") == 0 || strcmp(candidate, "int") == 0 ||
-                strcmp(candidate, "uint") == 0 || strcmp(candidate, "double") == 0 ||
-                strcmp(candidate, "bool") == 0)
+            if (strcmp(candidate, "float") == 0
+                || strcmp(candidate, "int") == 0
+                || strcmp(candidate, "uint") == 0
+                || strcmp(candidate, "double") == 0
+                || strcmp(candidate, "bool") == 0)
             {
                 base = candidate;
                 vec = parsedSize;
@@ -78,14 +79,34 @@ MappedType MapType(const TypeName* t)
         m.isVoid = true;
         strcpy(m.ir, "void");
         strcpy(m.elemIr, "void");
+
         return m;
     }
 
-    if (strcmp(base, "bool") == 0)   return MakePrimitive(false, false, 1, "i1", vec);
-    if (strcmp(base, "int") == 0)    return MakePrimitive(false, false, 32, "i32", vec);
-    if (strcmp(base, "uint") == 0)   return MakePrimitive(false, true, 32, "i32", vec);
-    if (strcmp(base, "float") == 0)  return MakePrimitive(true, false, 32, "float", vec);
-    if (strcmp(base, "double") == 0) return MakePrimitive(true, false, 64, "double", vec);
+    if (strcmp(base, "bool") == 0)
+    {
+        return MakePrimitive(false, false, 1, "i1", vec);
+    }
+
+    if (strcmp(base, "int") == 0)
+    {
+        return MakePrimitive(false, false, 32, "i32", vec);
+    }
+
+    if (strcmp(base, "uint") == 0)
+    {
+        return MakePrimitive(false, true, 32, "i32", vec);
+    }
+
+    if (strcmp(base, "float") == 0)
+    {
+        return MakePrimitive(true, false, 32, "float", vec);
+    }
+
+    if (strcmp(base, "double") == 0)
+    {
+        return MakePrimitive(true, false, 64, "double", vec);
+    }
 
     return m;
 }

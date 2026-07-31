@@ -1,5 +1,3 @@
-#ifdef STRATA_ENABLE_LLVM
-
 #include "LLVMAot.h"
 #include "strata/Codegen/LLVMCApi.h"
 
@@ -128,5 +126,3 @@ bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** err
 
     return ok;
 }
-
-#endif

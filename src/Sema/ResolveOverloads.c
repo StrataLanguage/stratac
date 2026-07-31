@@ -290,7 +290,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         const char* baseName = InferType(r, m->base_node, scope);
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member, baseName);
+            DiagError(r->m_diag, m->base.range, "cannot access a member of opaque an handle");
         }
         return;
     }

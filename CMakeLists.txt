@@ -11,7 +11,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-option(STRATA_ENABLE_LLVM "Link the in-process LLVM C API back-end" ON)
 set(LLVM_C_DIR "" CACHE PATH
     "Directory of the x64 LLVM distribution (lib/LLVM-C.*, bin/LLVM-C.dll)")
 
@@ -26,7 +25,10 @@ set(STRATA_SOURCES
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
-    src/Codegen/CodegenBackend.c
+    src/Codegen/LLVMCBackend.c
+    src/Codegen/LLVMModuleBuilder.c
+    src/Codegen/LLVMAot.c
+    src/Codegen/LLVMJit.c
     src/Embed.c
 )
 
@@ -36,24 +38,16 @@ target_include_directories(strata PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-if(STRATA_ENABLE_LLVM)
-    find_library(LLVM_C_LIB
-        NAMES LLVM-C LLVM-C.lib
-        PATHS ${LLVM_C_DIR}/lib
-        NO_DEFAULT_PATH REQUIRED)
-    target_sources(strata PRIVATE
-        src/Codegen/LLVMCBackend.c
-        src/Codegen/LLVMModuleBuilder.c
-        src/Codegen/LLVMAot.c
-        src/Codegen/LLVMJit.c)
-    target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
-    target_compile_definitions(strata PUBLIC STRATA_ENABLE_LLVM)
-    target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
-    set(STRATA_LLVM_DLL "${LLVM_C_DIR}/bin/LLVM-C.dll" CACHE FILEPATH "Path to LLVM-C.dll")
-endif()
+find_library(LLVM_C_LIB
+    NAMES LLVM-C LLVM-C.lib
+    PATHS ${LLVM_C_DIR}/lib
+    NO_DEFAULT_PATH REQUIRED)
+target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
+target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
+set(STRATA_LLVM_DLL "${LLVM_C_DIR}/bin/LLVM-C.dll" CACHE FILEPATH "Path to LLVM-C.dll")
 
 function(strata_stage_dll target)
-    if(STRATA_ENABLE_LLVM AND EXISTS "${STRATA_LLVM_DLL}")
+    if(EXISTS "${STRATA_LLVM_DLL}")
         add_custom_command(TARGET ${target} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${STRATA_LLVM_DLL}" "$<TARGET_FILE_DIR:${target}>")

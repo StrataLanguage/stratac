@@ -1,7 +1,6 @@
 #include "strata/Test.h"
 #include "strata/strata.h"
 
-#ifdef STRATA_ENABLE_LLVM
 
 static StrataJit* CompileJit(const char* src)
 {
@@ -188,4 +187,3 @@ STRATA_TEST(jit_for_loop_with_continue)
     }
 }
 
-#endif

@@ -13,11 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef STRATA_ENABLE_LLVM
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
 #include "strata/Codegen/LLVMCApi.h"
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -122,8 +120,7 @@ static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t 
 {
     (void)c;
 
-    StrataResult r;
-    memset(&r, 0, sizeof(r));
+    StrataResult r = {0};
     r.ok = 0;
     r.output = DupCString("");
     r.diagnostics = DupCString("");
@@ -191,47 +188,55 @@ StrataResult strataCompileString(StrataCompiler* c, const char* source,
 {
     if (!c || !source)
     {
-        StrataResult r;
-        memset(&r, 0, sizeof(r));
+        StrataResult r = {0};
         r.ok = 0;
         r.output = DupCString("");
         r.diagnostics = DupCString("null compiler or source");
+
         return r;
     }
 
-    return CompileSource(c, source, strlen(source),
-                        moduleName ? moduleName : "strata_module", emit);
+    return CompileSource(
+        c,
+        source,
+        strlen(source),
+        moduleName ? moduleName : "strata_module",
+        emit);
 }
 
 StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKind emit)
 {
     if (!c || !path)
     {
-        StrataResult r;
-        memset(&r, 0, sizeof(r));
+        StrataResult r = {0};
         r.ok = 0;
         r.output = DupCString("");
         r.diagnostics = DupCString("null compiler or path");
+
         return r;
     }
 
     size_t fileLen = 0;
     char* source = ReadFile(path, &fileLen);
+
     if (!source)
     {
-        StrataResult r;
-        memset(&r, 0, sizeof(r));
+        StrataResult r = {0};
         r.ok = 0;
         r.output = DupCString("");
         r.diagnostics = ConcatOwned("cannot open file: ", path);
         r.error_count = 1;
+
         return r;
     }
 
     const char* moduleName = Basename(path);
-    StrataResult r = CompileSource(c, source, fileLen, moduleName, emit);
+
+    StrataResult res = CompileSource(c, source, fileLen, moduleName, emit);
+
     free(source);
-    return r;
+
+    return res;
 }
 
 void strataResultFree(StrataResult* r)
@@ -243,13 +248,13 @@ void strataResultFree(StrataResult* r)
 
     free((void*)r->output);
     free((void*)r->diagnostics);
+
     r->output = NULL;
     r->diagnostics = NULL;
 }
 
 const char* strataLLVMVersion(void)
 {
-#ifdef STRATA_ENABLE_LLVM
     static char buf[32];
     unsigned maj = 0;
     unsigned min = 0;
@@ -257,20 +262,14 @@ const char* strataLLVMVersion(void)
     LLVMGetVersion(&maj, &min, &pat);
     snprintf(buf, sizeof(buf), "%u.%u.%u", maj, min, pat);
     return buf;
-#else
-    return "0.0.0";
-#endif
 }
 
 struct StrataJit
 {
-#ifdef STRATA_ENABLE_LLVM
     LLVMJit* jit;
-#endif
     char* diagnostics;
 };
 
-#ifdef STRATA_ENABLE_LLVM
 static StrataJit* JitCompile(StrataCompiler* c, const char* source, size_t sourceLen,
                             const char* moduleName, const char** errOut)
 {
@@ -361,12 +360,10 @@ static StrataJit* JitCompile(StrataCompiler* c, const char* source, size_t sourc
 
     return handle;
 }
-#endif
 
 StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
                                  const char* moduleName, const char** errOut)
 {
-#ifdef STRATA_ENABLE_LLVM
     if (errOut)
     {
         *errOut = NULL;
@@ -384,19 +381,10 @@ StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
 
     return JitCompile(c, source, strlen(source),
                      moduleName ? moduleName : "strata_module", errOut);
-#else
-    if (errOut)
-    {
-        *errOut = DupCString("JIT unavailable: strata built without LLVM");
-    }
-
-    return NULL;
-#endif
 }
 
 StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut)
 {
-#ifdef STRATA_ENABLE_LLVM
     if (errOut)
     {
         *errOut = NULL;
@@ -428,19 +416,10 @@ StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char*
     StrataJit* jit = JitCompile(c, source, fileLen, moduleName, errOut);
     free(source);
     return jit;
-#else
-    if (errOut)
-    {
-        *errOut = DupCString("JIT unavailable: strata built without LLVM");
-    }
-
-    return NULL;
-#endif
 }
 
 void* strataJitGetFunction(StrataJit* jit, const char* name)
 {
-#ifdef STRATA_ENABLE_LLVM
     if (!jit || !jit->jit || !name)
     {
         return NULL;
@@ -448,48 +427,30 @@ void* strataJitGetFunction(StrataJit* jit, const char* name)
 
     uint64_t addr = LLVMJitGetAddress(jit->jit, name);
     return addr ? (void*)(uintptr_t)addr : NULL;
-#else
-    (void)jit;
-    (void)name;
-    return NULL;
-#endif
 }
 
 int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
 {
-#ifdef STRATA_ENABLE_LLVM
     if (!jit || !jit->jit || !name || !fn)
     {
         return 0;
     }
 
     return LLVMJitAddSymbol(jit->jit, name, fn) ? 1 : 0;
-#else
-    (void)jit;
-    (void)name;
-    (void)fn;
-    return 0;
-#endif
 }
 
 size_t strataJitGetExternSymbolCount(StrataJit* jit)
 {
-#ifdef STRATA_ENABLE_LLVM
     if (!jit || !jit->jit)
     {
         return 0;
     }
 
     return jit->jit->m_externs.count;
-#else
-    (void)jit;
-    return 0;
-#endif
 }
 
 const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
 {
-#ifdef STRATA_ENABLE_LLVM
     if (!jit || !jit->jit)
     {
         return NULL;
@@ -501,11 +462,6 @@ const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
     }
 
     return (const char*)jit->jit->m_externs.items[index];
-#else
-    (void)jit;
-    (void)index;
-    return NULL;
-#endif
 }
 
 const char* strataJitDiagnostics(StrataJit* jit)
@@ -525,13 +481,11 @@ void strataJitDestroy(StrataJit* jit)
         return;
     }
 
-#ifdef STRATA_ENABLE_LLVM
     if (jit->jit)
     {
         LLVMJitDestroy(jit->jit);
         free(jit->jit);
     }
-#endif
 
     free(jit->diagnostics);
     free(jit);

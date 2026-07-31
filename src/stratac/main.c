@@ -5,11 +5,9 @@
 #include "strata/Parse/Parser.h"
 #include "strata/Sema/ResolveOverloads.h"
 
-#ifdef STRATA_ENABLE_LLVM
 #include "Codegen/LLVMAot.h"
 #include "Codegen/LLVMModuleBuilder.h"
 #include "strata/Codegen/LLVMCApi.h"
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -144,15 +142,11 @@ int main(int argc, char** argv)
 
         if (strcmp(a, "--version") == 0)
         {
-#ifdef STRATA_ENABLE_LLVM
             unsigned maj = 0;
             unsigned min = 0;
             unsigned pat = 0;
             LLVMGetVersion(&maj, &min, &pat);
             printf("stratac 0.1.0 (LLVM %u.%u.%u)\n", maj, min, pat);
-#else
-            printf("stratac 0.1.0 (no LLVM linkage)\n");
-#endif
             return 0;
         }
 
@@ -262,7 +256,6 @@ int main(int argc, char** argv)
         fwrite(ast, 1, strlen(ast), stderr);
     }
 
-#ifdef STRATA_ENABLE_LLVM
     BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
 
     if (DiagHasErrors(&diag))
@@ -340,8 +333,4 @@ int main(int argc, char** argv)
 
     BuiltModuleDispose(&bm);
     return 0;
-#else
-    fprintf(stderr, "error: object emission requires LLVM linkage\n");
-    return 1;
-#endif
 }

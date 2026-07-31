@@ -8,26 +8,31 @@
 //   stratac --ast overloads.strata  # see mangled symbols in the AST
 //   clang overloads.o -o overloads.exe && ./overloads.exe ; echo $?   # 15
 
-struct Vec3 {
+struct Vec3
+{
     float x;
     float y;
     float z;
 };
 
 // Three overloads of `length`, distinguished by parameter type.
-float length(int n) {
+float length(int n)
+{
     return n;                       // a count, widened to float
 }
 
-float length(float s) {
+float length(float s)
+{
     return s;                       // pass-through for a scalar
 }
 
-float length(in Vec3 v) {
+float length(in Vec3 v)
+{
     return v.x + v.y + v.z;         // sum of components (a stand-in for magnitude)
 }
 
-int main() {
+int main()
+{
     float a = length(7);            // int    arg -> length$int    -> 7.0
     float b = length(2.0);          // float  arg -> length$float  -> 2.0
     Vec3 v;
