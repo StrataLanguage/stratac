@@ -11,7 +11,8 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
-        "LLVM_C_DIR": "C:/Users/andre/llvm-x64"
+        "LLVM_C_DIR": "C:/Users/andre/llvm-x64",
+        "STRATA_SHARED": true
       }
     }
   ],

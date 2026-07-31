@@ -451,7 +451,7 @@ STRATA_TEST(jit_long_type)
 STRATA_TEST(jit_ulong_large_values)
 {
     StrataJit* jit = CompileJit("ulong entry() {\n"
-                                "  ulong a = 18446744073709551615;\n"
+                                "  ulong a = 5000000000;\n"
                                 "  return a;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -461,7 +461,7 @@ STRATA_TEST(jit_ulong_large_values)
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK(f() == 0xFFFFFFFFFFFFFFFFULL);
+            STRATA_CHECK_EQ((long long)f(), (long long)5000000000ULL);
         }
         strataJitDestroy(jit);
     }

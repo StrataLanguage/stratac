@@ -33,7 +33,7 @@ set(STRATA_SOURCES
     src/Embed.c
 )
 
-option(STRATA_SHARED "Build Strata as a shared library (DLL)" OFF)
+option(STRATA_SHARED "Build Strata as a shared library (DLL)" ON)
 
 if(STRATA_SHARED)
     add_library(strata SHARED ${STRATA_SOURCES})
@@ -50,7 +50,6 @@ target_include_directories(strata PUBLIC
 
 find_package(LLVM REQUIRED CONFIG)
 
-# If there is no custom path provided, use the path pulled by find_package
 if (LLVM_C_DIR STREQUAL "")
     get_filename_component(LLVM_C_DIR "${LLVM_DIR}/../../.." ABSOLUTE)
 endif()
@@ -60,12 +59,6 @@ if (APPLE)
 elseif (WIN32)
     set (LLVM_C_LIB "${LLVM_C_DIR}/lib/LLVM-C.lib")
 endif()
-
-target_sources(strata PRIVATE
-    src/Codegen/LLVMCBackend.c
-    src/Codegen/LLVMModuleBuilder.c
-    src/Codegen/LLVMAot.c
-    src/Codegen/LLVMJit.c)
 
 target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
 target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
@@ -108,8 +101,7 @@ strata_stage_dll(engine_demo)
 
 enable_testing()
 
-if(NOT STRATA_SHARED)
-add_executable(strata_tests
+set(STRATA_TEST_SOURCES
     tests/unit/test_main.c
     tests/unit/LexerTests.c
     tests/unit/ParserTests.c
@@ -123,17 +115,24 @@ add_executable(strata_tests
     tests/unit/ImportTests.c
     tests/unit/OperatorTests.c
 )
-target_link_libraries(strata_tests PRIVATE strata)
-target_include_directories(strata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit)
+
+add_executable(strata_tests ${STRATA_TEST_SOURCES} ${STRATA_SOURCES})
+target_include_directories(strata_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit
+    ${LLVM_C_DIR}/include
+)
+target_compile_definitions(strata_tests PRIVATE STRATA_STATIC)
+target_link_libraries(strata_tests PRIVATE ${LLVM_C_LIB})
 target_compile_definitions(strata_tests PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
-strata_stage_dll(strata_tests)
+if(EXISTS "${STRATA_LLVM_DLL}")
+    add_custom_command(TARGET strata_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${STRATA_LLVM_DLL}" "$<TARGET_FILE_DIR:strata_tests>")
+endif()
 add_test(NAME strata_tests COMMAND strata_tests)
-endif()
 
-set_target_properties(stratac jit_demo engine_demo PROPERTIES
+set_target_properties(stratac strata_tests jit_demo engine_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-if(NOT STRATA_SHARED)
-set_target_properties(strata_tests PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
-endif()

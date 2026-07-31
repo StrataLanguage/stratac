@@ -122,6 +122,10 @@ static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
     {
         elem = LLVMInt32TypeInContext(ctx);
     }
+    else if (strcmp(t->elemIr, "i64") == 0)
+    {
+        elem = LLVMInt64TypeInContext(ctx);
+    }
     else if (strcmp(t->elemIr, "float") == 0)
     {
         elem = LLVMFloatTypeInContext(ctx);
@@ -741,6 +745,20 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         l = Coerce(b, l, r.typeDesc);
 
         typeDesc = r.typeDesc;
+    }
+    else if (!l.typeDesc.isFloat && !r.typeDesc.isFloat
+             && l.typeDesc.type != r.typeDesc.type
+             && l.typeDesc.type && r.typeDesc.type)
+    {
+        if (l.typeDesc.type == I64Ty(b))
+        {
+            r = Coerce(b, r, l.typeDesc);
+        }
+        else
+        {
+            l = Coerce(b, l, r.typeDesc);
+            typeDesc = r.typeDesc;
+        }
     }
 
     LLVMValueRef out = NULL;
