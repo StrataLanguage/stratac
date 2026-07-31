@@ -11,7 +11,7 @@ LLD_HAS_DRIVER(macho)
 #include <string>
 #include <vector>
 
-bool LLDLink(LLDTarget target, int argc, const char** argv, char** errorOut)
+char* LLDLink(int argc, const char** argv)
 {
     std::vector<const char*> args(argv, argv + argc);
 
@@ -31,31 +31,19 @@ bool LLDLink(LLDTarget target, int argc, const char** argv, char** errorOut)
 
     const bool success = (result.retCode == 0);
 
-    if (!errorOut)
-    {
-        return success;
-    }
-
+    char* errBuf = nullptr;
     std::string combined = outStr + errStr;
+
     if (!combined.empty())
     {
-        char* str = static_cast<char*>(malloc(combined.size() + 1));
-        if (str)
+        errBuf = static_cast<char*>(malloc(combined.size() + 1));
+        if (errBuf)
         {
-            memcpy(str, combined.c_str(), combined.size() + 1);
-            *errorOut = str;
+            memcpy(errBuf, combined.c_str(), combined.size() + 1);
         }
-        else
-        {
-            *errorOut = nullptr;
-        }
-    }
-    else
-    {
-        *errorOut = nullptr;
     }
 
-    return success;
+    return errBuf;
 }
 
 void LLDFreeString(char* str)

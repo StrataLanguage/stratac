@@ -15,7 +15,9 @@
 
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
+#include "strata/Codegen/LLDCApi.h"
 #include "strata/Codegen/LLVMCApi.h"
+#include <Defines.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -242,6 +244,21 @@ extern "C"
         {
             return result;
         }
+
+        char objBuffer[512];
+        snprintf(objBuffer, 512, "%s.o", path);
+
+        char exeBuffer[512];
+        snprintf(exeBuffer, 512, "%s", path);
+
+        const char* linkArgs[] = {
+            "lld",
+            objBuffer,
+            "-o",
+            exeBuffer,
+        };
+
+        char* errorMsg = LLDLink(ARRAY_COUNT(linkArgs), linkArgs);
 
         return result;
     }
