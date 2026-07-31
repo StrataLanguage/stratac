@@ -147,6 +147,24 @@ STRATA_TEST(undefined_function_is_an_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(returning_void_value_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "void shoot(int x) { }\n"
+        "int entry() { return shoot(1); }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot return a value of type 'void'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(constructor_call_is_not_unknown)
 {
     Arena arena; arena_init(&arena, 0);

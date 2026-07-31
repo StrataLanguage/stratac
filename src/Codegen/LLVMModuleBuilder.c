@@ -766,7 +766,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
 static Value EmitAssign(Builder* b, AssignExpr* n)
 {
-    Value value = EmitExpr(b, n->value);
+    Value rhs = EmitExpr(b, n->value);
 
     if (n->target->kind == NodeIdent || n->target->kind == NodeMember)
     {
@@ -774,10 +774,53 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (lvalue.valid)
         {
-            Value stored = Coerce(b, value, lvalue.typeDesc);
-            LLVMBuildStore(b->m_builder, stored.value, lvalue.ptr);
+            Value result = Coerce(b, rhs, lvalue.typeDesc);
 
-            return stored;
+            if (n->op != AssignSet)
+            {
+                LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "cur");
+                Value lhs = ValueMake(cur, lvalue.typeDesc);
+                bool flt = lvalue.typeDesc.isFloat;
+
+                switch (n->op)
+                {
+                case AssignAdd:
+                    result = ValueMake(flt
+                        ? LLVMBuildFAdd(b->m_builder, cur, result.value, "add")
+                        : LLVMBuildAdd(b->m_builder, cur, result.value, "add"), lvalue.typeDesc);
+                    break;
+                case AssignSub:
+                    result = ValueMake(flt
+                        ? LLVMBuildFSub(b->m_builder, cur, result.value, "sub")
+                        : LLVMBuildSub(b->m_builder, cur, result.value, "sub"), lvalue.typeDesc);
+                    break;
+                case AssignMul:
+                    result = ValueMake(flt
+                        ? LLVMBuildFMul(b->m_builder, cur, result.value, "mul")
+                        : LLVMBuildMul(b->m_builder, cur, result.value, "mul"), lvalue.typeDesc);
+                    break;
+                case AssignDiv:
+                    result = ValueMake(flt
+                        ? LLVMBuildFDiv(b->m_builder, cur, result.value, "div")
+                        : (lvalue.typeDesc.isUnsigned
+                            ? LLVMBuildUDiv(b->m_builder, cur, result.value, "div")
+                            : LLVMBuildSDiv(b->m_builder, cur, result.value, "div")), lvalue.typeDesc);
+                    break;
+                case AssignMod:
+                    result = ValueMake(flt
+                        ? LLVMBuildFRem(b->m_builder, cur, result.value, "mod")
+                        : (lvalue.typeDesc.isUnsigned
+                            ? LLVMBuildURem(b->m_builder, cur, result.value, "mod")
+                            : LLVMBuildSRem(b->m_builder, cur, result.value, "mod")), lvalue.typeDesc);
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            LLVMBuildStore(b->m_builder, result.value, lvalue.ptr);
+
+            return result;
         }
     }
 
@@ -786,7 +829,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
         DiagError(b->m_diag, n->base.range, "assignment to unsupported lvalue");
     }
 
-    return value;
+    return rhs;
 }
 
 static LLVMValueRef ArgAddress(Builder* b, Node* arg)

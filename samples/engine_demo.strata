@@ -6,6 +6,9 @@
 // See hosts/engine_demo_host.c (conditional #ifdef USE_JIT) and
 // run_engine_demo.bat.
 
+
+import imports/weapons/pistol;
+
 handle Entity;
 
 extern Entity spawn(int x, int y);
@@ -17,6 +20,9 @@ extern void   move(Entity e, int dx, int dy);
 // Move `step` cells toward the target, return the new x + y.
 int chase(Entity attacker, Entity target, int step)
 {
+    Pistol p;
+    p.ammo = 100;
+
     int ax = get_x(attacker);
     int ay = get_y(attacker);
     int tx = get_x(target);
@@ -28,5 +34,8 @@ int chase(Entity attacker, Entity target, int step)
     if (ty < ay) { dy = 0 - step; }
 
     move(attacker, dx, dy);
-    return get_x(attacker) + get_y(attacker);
+
+    Shoot(p);
+
+    return p.ammo;//get_x(attacker) + get_y(attacker);
 }

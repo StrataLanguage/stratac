@@ -1,5 +1,22 @@
-struct Bullet { int damage; };
 
-int makeDamage(int base) {
+struct Pistol
+{
+    int ammo;
+};
+
+int Shoot(inout Pistol pistol)
+{
+    if (pistol.ammo <= 0)
+    {
+        return;
+    }
+
+    pistol.ammo -= 1;
+
+    return pistol.ammo;
+}
+
+int makeDamage(int base)
+{
     return base * 5;
 }

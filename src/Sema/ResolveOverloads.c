@@ -479,6 +479,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (rs->value)
         {
             ResolveExpr(r, rs->value, scope);
+
+            const char* typeName = InferType(r, rs->value, scope);
+            
+            // Void cannot be returned, as it would likely cause the universe to implode in upon itself.
+            if (typeName[0] != '\0' && strcmp(typeName, "void") == 0)
+            {
+                DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
+            }
         }
 
         return;
