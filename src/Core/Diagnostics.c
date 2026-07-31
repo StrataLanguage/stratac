@@ -134,7 +134,7 @@ void DiagClear(DiagnosticEngine* diag)
     diag->m_errorCount = 0;
 }
 
-char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* src, Arena* arena)
+char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* sources, size_t sourceCount, Arena* arena)
 {
     Sb sb;
     SbInit(&sb);
@@ -142,13 +142,21 @@ char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* src, Arena* 
     for (size_t i = 0; i < diag->m_count; i++)
     {
         const Diagnostic* d = &diag->m_diagnostics[i];
-        LineCol lc = SourceManagerLineCol(src, d->range.start);
 
-        SbPrintf(&sb, "%s(%u,%u): %s: ", src->m_name, lc.line, lc.column, SeverityName(d->severity));
+        const SourceManager* src = (sourceCount > 0) ? &sources[0] : NULL;
+        if (d->range.fileId < sourceCount)
+        {
+            src = &sources[d->range.fileId];
+        }
+
+        LineCol lc = src ? SourceManagerLineCol(src, d->range.start) : (LineCol){0, 0};
+        const char* fileName = src ? src->m_name : "<unknown>";
+
+        SbPrintf(&sb, "%s(%u,%u): %s: ", fileName, lc.line, lc.column, SeverityName(d->severity));
         SbPuts(&sb, d->message);
         SbPutc(&sb, '\n');
 
-        if (d->range.length > 0)
+        if (d->range.length > 0 && src)
         {
             LineCol endLc = SourceManagerLineCol(src, SourceRangeEnd(d->range) - 1);
 

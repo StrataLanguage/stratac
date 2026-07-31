@@ -7,6 +7,7 @@
 
 #include "Codegen/LLVMAot.h"
 #include "Codegen/LLVMModuleBuilder.h"
+#include "Import/ModuleLoader.h"
 #include "strata/Codegen/LLVMCApi.h"
 
 #include <stdio.h>
@@ -36,47 +37,6 @@ static char* DupString(const char* s)
         memcpy(out, s, n + 1);
     }
     return out;
-}
-
-static char* ReadFile(const char* path, size_t* outLen)
-{
-    FILE* in = fopen(path, "rb");
-    if (!in)
-    {
-        return NULL;
-    }
-
-    if (fseek(in, 0, SEEK_END) != 0)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    long size = ftell(in);
-    if (size < 0)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    rewind(in);
-
-    char* buf = (char*)malloc((size_t)size + 1);
-    if (!buf)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    size_t n = fread(buf, 1, (size_t)size, in);
-    fclose(in);
-
-    buf[n] = '\0';
-    if (outLen)
-    {
-        *outLen = n;
-    }
-    return buf;
 }
 
 static char* ReplaceExt(const char* path, const char* ext)
@@ -211,37 +171,21 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    size_t sourceLen = 0;
-    char* source = ReadFile(inputFile, &sourceLen);
-
-    if (!source)
-    {
-        fprintf(stderr, "error: cannot open file '%s'\n", inputFile);
-        return 1;
-    }
-
     Arena arena;
     arena_init(&arena, 0);
-
-    SourceManager src;
-    SourceManagerInit(&src);
-    SourceManagerSetSource(&src, source, sourceLen, inputFile);
 
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    Lexer lex;
-    LexerInit(&lex, src.m_text, src.m_textLen, &diag);
+    ModuleLoader loader;
+    ModuleLoaderInit(&loader, &arena, &diag);
 
-    Parser parser;
-    ParserInit(&parser, &lex, &diag, &arena, inputFile);
-
-    Module* mod = ParserParseModule(&parser);
+    Module* mod = ModuleLoaderLoad(&loader, inputFile);
     ResolveOverloads(mod, &diag, &arena);
 
     if (DiagCount(&diag) > 0)
     {
-        char* d = DiagFormat(&diag, &src, &arena);
+        char* d = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
         fwrite(d, 1, strlen(d), stderr);
     }
 
@@ -263,7 +207,7 @@ int main(int argc, char** argv)
     {
         if (DiagCount(&diag) > 0)
         {
-            char* d = DiagFormat(&diag, &src, &arena);
+            char* d = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
             fwrite(d, 1, strlen(d), stderr);
         }
         fprintf(stderr, "%u error(s).\n", DiagErrorCount(&diag));

@@ -8,7 +8,7 @@ static SourceRange SpanFrom(Token begin, Token end)
     uint32_t s = begin.range.start;
     uint32_t e = SourceRangeEnd(end.range);
 
-    return (SourceRange){s, (uint16_t)(e > s ? e - s : 0)};
+    return (SourceRange){s, (uint16_t)(e > s ? e - s : 0), begin.range.fileId};
 }
 
 static bool BinaryInfo(TokKind k, int* prec, BinaryOp* op)
@@ -202,7 +202,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     Advance(p);
 
     out->name = (char*)name;
-    out->range = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start)};
+    out->range = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
     out->isConst = isConst;
 
     return true;
@@ -346,7 +346,7 @@ static ParamDecl* ParseParam(Parser* p)
 
     ParamDecl* node = AST_NEW(p->m_arena, ParamDecl);
     node->base.kind = NodeParam;
-    node->base.range = (SourceRange){start.start, (uint16_t)(SourceRangeEnd(nameTok.range) - start.start)};
+    node->base.range = (SourceRange){start.start, (uint16_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
     node->mod = mod;
     node->type = type;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
@@ -459,6 +459,48 @@ static FunctionDecl* ParseFunction(Parser* p)
     return node;
 }
 
+static ImportDecl* ParseImport(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p);
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected module path after 'import' but found '%s'", TokSpelling(p->m_cur.kind));
+        Synchronize(p);
+        return NULL;
+    }
+
+    Token first = p->m_cur;
+    Token last = first;
+
+    while (p->m_cur.kind == TokIdent || p->m_cur.kind == TokSlash || p->m_cur.kind == TokDot)
+    {
+        last = p->m_cur;
+        Advance(p);
+    }
+
+    SourceRange pathRange = SpanFrom(first, last);
+
+    ParserExpect(p, TokSemicolon, "';'");
+
+    ImportDecl* imp = AST_NEW(p->m_arena, ImportDecl);
+    imp->base.kind = NodeImport;
+    imp->base.range = SpanFrom(kw, last);
+    imp->pathRange = pathRange;
+
+    Str src = LexerSourceText(p->m_lex);
+    uint32_t pend = SourceRangeEnd(pathRange);
+    if (pend > (uint32_t)src.len)
+    {
+        pend = (uint32_t)src.len;
+    }
+    Str pathStr = {src.data + pathRange.start, pend - pathRange.start};
+    imp->importPath = ToOwned(p->m_arena, pathStr);
+
+    return imp;
+}
+
 Module* ParserParseModule(Parser* p)
 {
     Module* mod = AST_NEW(p->m_arena, Module);
@@ -468,12 +510,28 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->structs);
     VecInit(&mod->handles);
     VecInit(&mod->functions);
+    VecInit(&mod->imports);
 
     while (p->m_cur.kind != TokEof)
     {
         if (p->m_cur.kind == TokSemicolon || p->m_cur.kind == TokRBrace)
         {
             Advance(p);
+            continue;
+        }
+
+        if (p->m_cur.kind == TokKwImport)
+        {
+            ImportDecl* imp = ParseImport(p);
+            if (imp)
+            {
+                VecPush(&mod->imports, imp);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
             continue;
         }
 

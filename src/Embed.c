@@ -15,6 +15,7 @@
 
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
+#include "Import/ModuleLoader.h"
 #include "strata/Codegen/LLVMCApi.h"
 
 #ifdef __cplusplus
@@ -51,60 +52,6 @@ static char* ConcatOwned(const char* a, const char* b)
     return buf;
 }
 
-static char* ReadFile(const char* path, size_t* outLen)
-{
-    FILE* in = fopen(path, "rb");
-    if (!in)
-    {
-        return NULL;
-    }
-
-    if (fseek(in, 0, SEEK_END) != 0)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    long size = ftell(in);
-    if (size < 0)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    rewind(in);
-
-    char* buf = (char*)malloc((size_t)size + 1);
-    if (!buf)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    size_t n = fread(buf, 1, (size_t)size, in);
-    fclose(in);
-
-    buf[n] = '\0';
-    if (outLen)
-    {
-        *outLen = n;
-    }
-    return buf;
-}
-
-static const char* Basename(const char* path)
-{
-    const char* base = path;
-    for (const char* p = path; *p != '\0'; ++p)
-    {
-        if (*p == '/' || *p == '\\')
-        {
-            base = p + 1;
-        }
-    }
-    return base;
-}
-
 StrataCompiler* strataCompilerCreate(void)
 {
     return (StrataCompiler*)malloc(sizeof(StrataCompiler));
@@ -115,15 +62,46 @@ void strataCompilerDestroy(StrataCompiler* c)
     free(c);
 }
 
+static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* arena,
+                                const SourceManager* sources, size_t sourceCount, StrataEmitKind emit)
+{
+    StrataResult r = {0};
+
+    const char* out = "";
+    char* irOwned = NULL;
+
+    if (!DiagHasErrors(diag) && mod)
+    {
+        if (emit == STRATA_EMIT_AST)
+        {
+            out = DumpAst(mod, arena);
+        }
+        else
+        {
+            CodegenResult result = GenerateLlvmIr(mod);
+            irOwned = result.output;
+            out = result.output ? result.output : "";
+            if (!result.ok)
+            {
+                DiagError(diag, SRC_INVALID, "code generation failed");
+            }
+        }
+    }
+
+    char* diagText = DiagFormat(diag, sources, sourceCount, arena);
+    r.output = DupCString(out);
+    r.diagnostics = DupCString(diagText);
+    r.error_count = DiagErrorCount(diag);
+    r.ok = !DiagHasErrors(diag) ? 1 : 0;
+
+    free(irOwned);
+    return r;
+}
+
 static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t sourceLen,
-                                 const char* moduleName, StrataEmitKind emit)
+                                  const char* moduleName, StrataEmitKind emit)
 {
     (void)c;
-
-    StrataResult r = {0};
-    r.ok = 0;
-    r.output = DupCString("");
-    r.diagnostics = DupCString("");
 
     Arena arena;
     arena_init(&arena, 0);
@@ -136,46 +114,23 @@ static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t 
     DiagnosticEngineInit(&diag);
 
     Lexer lex;
-    LexerInit(&lex, src.m_text, src.m_textLen, &diag);
+    LexerInit(&lex, src.m_text, src.m_textLen, &diag, 0);
 
     Parser parser;
     ParserInit(&parser, &lex, &diag, &arena, moduleName);
 
     Module* mod = ParserParseModule(&parser);
 
-    ResolveOverloads(mod, &diag, &arena);
-
-    char* diagText = DiagFormat(&diag, &src, &arena);
-
-    const char* out = "";
-    char* irOwned = NULL;
-
-    if (!DiagHasErrors(&diag) && mod)
+    if (mod && mod->imports.count > 0)
     {
-        if (emit == STRATA_EMIT_AST)
-        {
-            out = DumpAst(mod, &arena);
-        }
-        else
-        {
-            CodegenResult result = GenerateLlvmIr(mod);
-            irOwned = result.output;
-            out = result.output ? result.output : "";
-            if (!result.ok)
-            {
-                DiagError(&diag, SRC_INVALID, "code generation failed");
-            }
-        }
+        DiagErrorFmt(&diag, SRC_INVALID,
+                     "imports are not supported when compiling from a string; use strataCompileFile");
     }
 
-    free((void*)r.output);
-    free((void*)r.diagnostics);
-    r.output = DupCString(out);
-    r.diagnostics = DupCString(diagText);
-    r.error_count = DiagErrorCount(&diag);
-    r.ok = !DiagHasErrors(&diag) ? 1 : 0;
+    ResolveOverloads(mod, &diag, &arena);
 
-    free(irOwned);
+    StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit);
+
     DiagnosticEngineFree(&diag);
     SourceManagerFree(&src);
     arena_free(&arena);
@@ -216,27 +171,25 @@ StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKi
         return r;
     }
 
-    size_t fileLen = 0;
-    char* source = ReadFile(path, &fileLen);
+    Arena arena;
+    arena_init(&arena, 0);
 
-    if (!source)
-    {
-        StrataResult r = {0};
-        r.ok = 0;
-        r.output = DupCString("");
-        r.diagnostics = ConcatOwned("cannot open file: ", path);
-        r.error_count = 1;
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
 
-        return r;
-    }
+    ModuleLoader loader;
+    ModuleLoaderInit(&loader, &arena, &diag);
 
-    const char* moduleName = Basename(path);
+    Module* mod = ModuleLoaderLoad(&loader, path);
+    ResolveOverloads(mod, &diag, &arena);
 
-    StrataResult res = CompileSource(c, source, fileLen, moduleName, emit);
+    StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit);
 
-    free(source);
+    ModuleLoaderDispose(&loader);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
 
-    return res;
+    return r;
 }
 
 void strataResultFree(StrataResult* r)
@@ -270,60 +223,32 @@ struct StrataJit
     char* diagnostics;
 };
 
-static StrataJit* JitCompile(StrataCompiler* c, const char* source, size_t sourceLen,
-                            const char* moduleName, const char** errOut)
+static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena,
+                                const SourceManager* sources, size_t sourceCount, const char** errOut)
 {
-    (void)c;
+    char* diagText = DiagFormat(diag, sources, sourceCount, arena);
 
-    Arena arena;
-    arena_init(&arena, 0);
-
-    SourceManager src;
-    SourceManagerInit(&src);
-    SourceManagerSetSource(&src, source, sourceLen, moduleName);
-
-    DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-
-    Lexer lex;
-    LexerInit(&lex, src.m_text, src.m_textLen, &diag);
-
-    Parser parser;
-    ParserInit(&parser, &lex, &diag, &arena, moduleName);
-
-    Module* mod = ParserParseModule(&parser);
-
-    ResolveOverloads(mod, &diag, &arena);
-
-    char* diagText = DiagFormat(&diag, &src, &arena);
-
-    if (DiagHasErrors(&diag) || !mod)
+    if (DiagHasErrors(diag) || !mod)
     {
         if (errOut)
         {
             *errOut = ConcatOwned("parse errors:\n", diagText);
         }
 
-        DiagnosticEngineFree(&diag);
-        SourceManagerFree(&src);
-        arena_free(&arena);
         return NULL;
     }
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, true);
+    BuiltModule bm = BuildLlvmModule(mod, diag, arena, true);
 
-    if (DiagHasErrors(&diag))
+    if (DiagHasErrors(diag))
     {
         if (errOut)
         {
-            char* allDiag = DiagFormat(&diag, &src, &arena);
+            char* allDiag = DiagFormat(diag, sources, sourceCount, arena);
             *errOut = ConcatOwned("codegen errors:\n", allDiag);
         }
 
         BuiltModuleDispose(&bm);
-        DiagnosticEngineFree(&diag);
-        SourceManagerFree(&src);
-        arena_free(&arena);
         return NULL;
     }
 
@@ -342,9 +267,6 @@ static StrataJit* JitCompile(StrataCompiler* c, const char* source, size_t sourc
         LLVMJitDestroy(jit);
         free(jit);
         BuiltModuleDispose(&bm);
-        DiagnosticEngineFree(&diag);
-        SourceManagerFree(&src);
-        arena_free(&arena);
         return NULL;
     }
 
@@ -353,6 +275,42 @@ static StrataJit* JitCompile(StrataCompiler* c, const char* source, size_t sourc
     StrataJit* handle = (StrataJit*)calloc(1, sizeof(StrataJit));
     handle->jit = jit;
     handle->diagnostics = DupCString(diagText);
+
+    return handle;
+}
+
+static StrataJit* JitCompileString(StrataCompiler* c, const char* source, size_t sourceLen,
+                                   const char* moduleName, const char** errOut)
+{
+    (void)c;
+
+    Arena arena;
+    arena_init(&arena, 0);
+
+    SourceManager src;
+    SourceManagerInit(&src);
+    SourceManagerSetSource(&src, source, sourceLen, moduleName);
+
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+
+    Lexer lex;
+    LexerInit(&lex, src.m_text, src.m_textLen, &diag, 0);
+
+    Parser parser;
+    ParserInit(&parser, &lex, &diag, &arena, moduleName);
+
+    Module* mod = ParserParseModule(&parser);
+
+    if (mod && mod->imports.count > 0)
+    {
+        DiagErrorFmt(&diag, SRC_INVALID,
+                     "imports are not supported when compiling from a string; use strataJitCompileFile");
+    }
+
+    ResolveOverloads(mod, &diag, &arena);
+
+    StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut);
 
     DiagnosticEngineFree(&diag);
     SourceManagerFree(&src);
@@ -379,8 +337,8 @@ StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
         return NULL;
     }
 
-    return JitCompile(c, source, strlen(source),
-                     moduleName ? moduleName : "strata_module", errOut);
+    return JitCompileString(c, source, strlen(source),
+                          moduleName ? moduleName : "strata_module", errOut);
 }
 
 StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut)
@@ -400,21 +358,24 @@ StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char*
         return NULL;
     }
 
-    size_t fileLen = 0;
-    char* source = ReadFile(path, &fileLen);
-    if (!source)
-    {
-        if (errOut)
-        {
-            *errOut = ConcatOwned("cannot open file: ", path);
-        }
+    Arena arena;
+    arena_init(&arena, 0);
 
-        return NULL;
-    }
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
 
-    const char* moduleName = Basename(path);
-    StrataJit* jit = JitCompile(c, source, fileLen, moduleName, errOut);
-    free(source);
+    ModuleLoader loader;
+    ModuleLoaderInit(&loader, &arena, &diag);
+
+    Module* mod = ModuleLoaderLoad(&loader, path);
+    ResolveOverloads(mod, &diag, &arena);
+
+    StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut);
+
+    ModuleLoaderDispose(&loader);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
     return jit;
 }
 

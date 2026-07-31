@@ -8,6 +8,7 @@
 
 typedef enum {
     NodeModule,
+    NodeImport,
     NodeStruct,
     NodeHandle,
     NodeFunction,
@@ -119,7 +120,14 @@ typedef struct {
     Vec structs;
     Vec handles;
     Vec functions;
+    Vec imports;
 } Module;
+
+typedef struct {
+    Node base;
+    char* importPath;
+    SourceRange pathRange;
+} ImportDecl;
 
 typedef struct {
     Node base;

@@ -33,10 +33,20 @@ static Token Make(const Lexer* lex, TokKind kind, size_t start)
     t.kind = kind;
     t.range.start = (uint32_t)start;
     t.range.length = (uint16_t)(lex->m_pos - start);
+    t.range.fileId = lex->m_fileId;
     return t;
 }
 
-void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngine* diag)
+static SourceRange LexRange(const Lexer* lex, size_t pos, uint16_t len)
+{
+    SourceRange r;
+    r.start = (uint32_t)pos;
+    r.length = len;
+    r.fileId = lex->m_fileId;
+    return r;
+}
+
+void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngine* diag, uint16_t fileId)
 {
     lex->m_source = source;
     lex->m_sourceLen = sourceLen;
@@ -45,6 +55,7 @@ void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngin
     lex->m_hasPeek = false;
     lex->m_peeked.kind = TokEof;
     lex->m_peeked.range = SRC_INVALID;
+    lex->m_fileId = fileId;
 }
 
 size_t LexerPosition(const Lexer* lex)
@@ -104,7 +115,7 @@ static void SkipWhitespaceAndComments(Lexer* lex)
 
             if (depth > 0)
             {
-                DiagError(lex->m_diag, SRC_POS(lex->m_pos, 1), "unterminated block comment");
+                DiagError(lex->m_diag, LexRange(lex, lex->m_pos, 1), "unterminated block comment");
                 return;
             }
         }
@@ -290,7 +301,7 @@ static Token LexTokenImpl(Lexer* lex)
         }
         return Make(lex, TokGt, start);
     default:
-        DiagErrorFmt(lex->m_diag, SRC_POS(start, 1), "unexpected character '%c'", c);
+        DiagErrorFmt(lex->m_diag, LexRange(lex, start, 1), "unexpected character '%c'", c);
         return Make(lex, TokUnknown, start);
     }
 }

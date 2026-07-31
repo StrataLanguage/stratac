@@ -14,7 +14,7 @@
 static inline Module* ParseModule(const char* src, DiagnosticEngine* diag, Arena* arena)
 {
     Lexer lex;
-    LexerInit(&lex, src, strlen(src), diag);
+    LexerInit(&lex, src, strlen(src), diag, 0);
     Parser parser;
     ParserInit(&parser, &lex, diag, arena, "test");
     return ParserParseModule(&parser);
@@ -40,7 +40,7 @@ static inline TokenList LexAll(const char* src)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Lexer lex;
-    LexerInit(&lex, src, strlen(src), &diag);
+    LexerInit(&lex, src, strlen(src), &diag, 0);
     TokenList tl = {NULL, 0};
     size_t cap = 0;
     while (true)

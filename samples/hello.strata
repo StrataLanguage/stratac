@@ -1,18 +1,14 @@
-// hello.strata -- Strata in a nutshell.
-//
-// No control flow, so this compiles and runs cleanly:
-//   stratac hello.strata -o hello.o
-//   clang hello.o -o hello.exe && ./hello.exe ; echo $?   # runs, exit code 25
-
-int add(int a, int b) {
+int add(int a, int b)
+{
     return a + b;
 }
 
-int mul(int a, int b) {
+int mul(int a, int b)
+{
     return a * b;
 }
 
-// The host invokes this entry point.
-int main() {
+int main()
+{
     return add(2, 3) + mul(4, 5);   // 5 + 20 = 25
 }

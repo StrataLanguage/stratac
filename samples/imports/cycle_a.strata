@@ -1,0 +1,5 @@
+import cycle_b;
+
+int a_value() {
+    return b_value() + 1;
+}

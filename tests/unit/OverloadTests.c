@@ -140,7 +140,7 @@ STRATA_TEST(undefined_function_is_an_error)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     SourceManager sm; SourceManagerInit(&sm);
-    char* d = DiagFormat(&diag, &sm, &arena);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "unknown function 'foofdofdofd'"));
 
     DiagnosticEngineFree(&diag);

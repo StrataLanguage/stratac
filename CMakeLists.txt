@@ -29,6 +29,7 @@ set(STRATA_SOURCES
     src/Codegen/LLVMModuleBuilder.c
     src/Codegen/LLVMAot.c
     src/Codegen/LLVMJit.c
+    src/Import/ModuleLoader.c
     src/Embed.c
 )
 
@@ -104,6 +105,7 @@ add_executable(strata_tests
     tests/unit/StructTests.c
     tests/unit/OverloadTests.c
     tests/unit/ControlFlowTests.c
+    tests/unit/ImportTests.c
 )
 target_link_libraries(strata_tests PRIVATE strata)
 target_compile_definitions(strata_tests PRIVATE

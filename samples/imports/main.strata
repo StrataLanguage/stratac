@@ -1,0 +1,5 @@
+import weapons/pistol;
+
+int entry() {
+    return makeDamage(5);
+}

@@ -110,6 +110,11 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         Module* module = AsNode(Module, n);
         SbPrintf(out, "module %s\n", module->name);
+        for (size_t i = 0; i < module->imports.count; i++)
+        {
+            Node* imp = (Node*)VecGet(&module->imports, i);
+            Dump(imp, indent + 2, out);
+        }
         for (size_t i = 0; i < module->structs.count; i++)
         {
             Node* s = (Node*)VecGet(&module->structs, i);
@@ -125,6 +130,13 @@ static void Dump(Node* n, int indent, Sb* out)
             Node* func = (Node*)VecGet(&module->functions, i);
             Dump(func, indent + 2, out);
         }
+        return;
+    }
+
+    case NodeImport:
+    {
+        ImportDecl* imp = AsNode(ImportDecl, n);
+        SbPrintf(out, "import %s;\n", imp->importPath);
         return;
     }
 

@@ -18,12 +18,14 @@ extern int    world_y(Entity e);
 extern void   world_destroy(Entity e);
 
 // Move an entity and report its new x coordinate.
-int relocate(Entity e, int dx, int dy) {
+int relocate(Entity e, int dx, int dy)
+{
     world_move(e, dx, dy);
     return world_x(e);
 }
 
-int run() {
+int run()
+{
     Entity e = world_spawn(10, 20);
     int x_after = relocate(e, 5, 7);        // x = 15
     world_destroy(e);

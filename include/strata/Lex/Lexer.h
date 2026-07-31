@@ -13,9 +13,10 @@ typedef struct {
     size_t m_pos;
     bool m_hasPeek;
     Token m_peeked;
+    uint16_t m_fileId;
 } Lexer;
 
-void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngine* diag);
+void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngine* diag, uint16_t fileId);
 
 Token LexerNextToken(Lexer* lex);
 Token LexerPeekToken(Lexer* lex);

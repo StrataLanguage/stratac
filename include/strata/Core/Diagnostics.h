@@ -40,4 +40,4 @@ bool DiagHasErrors(const DiagnosticEngine* diag);
 size_t DiagCount(const DiagnosticEngine* diag);
 
 void DiagClear(DiagnosticEngine* diag);
-char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* src, Arena* arena);
+char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* sources, size_t sourceCount, Arena* arena);

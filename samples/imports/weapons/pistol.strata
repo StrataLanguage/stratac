@@ -1,0 +1,5 @@
+struct Bullet { int damage; };
+
+int makeDamage(int base) {
+    return base * 5;
+}

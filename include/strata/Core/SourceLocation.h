@@ -9,6 +9,7 @@
 typedef struct {
     uint32_t start;
     uint16_t length;
+    uint16_t fileId;
 } SourceRange;
 
 static inline uint32_t SourceRangeEnd(SourceRange r)
@@ -21,8 +22,8 @@ static inline bool SourceRangeValid(SourceRange r)
     return r.length != 0 || r.start != 0;
 }
 
-#define SRC_INVALID ((SourceRange){0, 0})
-#define SRC_POS(pos, len) ((SourceRange){(uint32_t)(pos), (uint16_t)(len)})
+#define SRC_INVALID ((SourceRange){0, 0, 0})
+#define SRC_POS(pos, len) ((SourceRange){(uint32_t)(pos), (uint16_t)(len), 0})
 
 typedef struct {
     uint32_t line;   // 1-based

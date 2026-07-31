@@ -32,6 +32,7 @@ static const Spelling keywords[] = {
     { TokKwTrue, "true" },
     { TokKwFalse, "false" },
     { TokKwStruct, "struct" },
+    { TokKwImport, "import" },
     { TokKwNamespace, "namespace" },
 };
 

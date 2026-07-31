@@ -1,0 +1,5 @@
+import broken_mod;
+
+int entry() {
+    return 0;
+}
