@@ -5,6 +5,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <stdarg.h>
+
 typedef struct ArenaChunk {
     struct ArenaChunk* next;
     size_t size;
