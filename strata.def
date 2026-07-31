@@ -1,0 +1,18 @@
+LIBRARY strata
+EXPORTS
+strataCompilerCreate
+strataCompilerDestroy
+strataCompileString
+strataCompileFile
+strataCompileToObject
+strataResultFree
+strataFree
+strataLLVMVersion
+strataJitCompileString
+strataJitCompileFile
+strataJitGetFunction
+strataJitAddSymbol
+strataJitGetExternSymbolCount
+strataJitGetExternSymbolName
+strataJitDiagnostics
+strataJitDestroy

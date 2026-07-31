@@ -1,18 +1,9 @@
-#include "strata/Codegen/CodegenBackend.h"
-#include "strata/Core/Diagnostics.h"
-#include "strata/Core/SourceLocation.h"
-#include "strata/Lex/Lexer.h"
-#include "strata/Parse/Parser.h"
-#include "strata/Sema/ResolveOverloads.h"
-
-#include "Codegen/LLVMAot.h"
-#include "Codegen/LLVMModuleBuilder.h"
-#include "Import/ModuleLoader.h"
-#include "strata/Codegen/LLVMCApi.h"
+#include "strata/strata.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 static void PrintHelp(void)
 {
@@ -23,60 +14,39 @@ static void PrintHelp(void)
                     "  -o <file>        output object file (default: <input>.o)\n"
                     "  --asm            also emit assembly (<output>.s)\n"
                     "  --ast            also print the AST to stderr\n"
-                    "  --target <arch>  target: x86_64 (default), aarch64, arm64\n"
                     "  --version        print version and exit\n"
                     "  -h, --help       show this help\n");
 }
 
 static char* ReplaceExt(const char* path, const char* ext)
 {
-    size_t pathLen = strlen(path);
+    char* slash = strrchr(path, '/');
+    char* bslash = strrchr(path, '\\');
+    char* lastSep = bslash > slash ? bslash : slash;
+
+    char* dot = strrchr(path, '.');
+    if (dot && (!lastSep || dot > lastSep))
+    {
+        size_t baseLen = dot - path;
+        size_t extLen = strlen(ext);
+        char* result = malloc(baseLen + extLen + 1);
+        memcpy(result, path, baseLen);
+        memcpy(result + baseLen, ext, extLen + 1);
+        return result;
+    }
+
+    size_t len = strlen(path);
     size_t extLen = strlen(ext);
-
-    size_t slashPos = (size_t)-1;
-    size_t dotPos = (size_t)-1;
-
-    for (size_t i = 0; i < pathLen; i++)
-    {
-        char c = path[i];
-
-        if (c == '/' || c == '\\')
-        {
-            slashPos = i;
-        }
-        else if (c == '.')
-        {
-            dotPos = i;
-        }
-    }
-
-    size_t prefix;
-    if (dotPos != (size_t)-1 && (slashPos == (size_t)-1 || dotPos > slashPos))
-    {
-        prefix = dotPos;
-    }
-    else
-    {
-        prefix = pathLen;
-    }
-
-    char* result = (char*)malloc(prefix + extLen + 1);
-    if (!result)
-    {
-        return NULL;
-    }
-
-    memcpy(result, path, prefix);
-    memcpy(result + prefix, ext, extLen);
-    result[prefix + extLen] = '\0';
+    char* result = malloc(len + extLen + 1);
+    memcpy(result, path, len);
+    memcpy(result + len, ext, extLen + 1);
     return result;
 }
 
 int main(int argc, char** argv)
 {
-    char* outFile = NULL;
-    char* inputFile = NULL;
-    char* targetArch = NULL;
+    const char* outFile = NULL;
+    const char* inputFile = NULL;
     bool emitAsm = false;
     bool printAst = false;
 
@@ -92,11 +62,7 @@ int main(int argc, char** argv)
 
         if (strcmp(a, "--version") == 0)
         {
-            unsigned maj = 0;
-            unsigned min = 0;
-            unsigned pat = 0;
-            LLVMGetVersion(&maj, &min, &pat);
-            printf("stratac 0.1.0 (LLVM %u.%u.%u)\n", maj, min, pat);
+            printf("stratac 0.1.0 (%s)\n", strataLLVMVersion());
             return 0;
         }
 
@@ -107,8 +73,7 @@ int main(int argc, char** argv)
                 fprintf(stderr, "error: -o needs an argument\n");
                 return 2;
             }
-            free(outFile);
-            outFile = DupString(argv[++i]);
+            outFile = argv[++i];
         }
         else if (strcmp(a, "--asm") == 0)
         {
@@ -118,29 +83,7 @@ int main(int argc, char** argv)
         {
             printAst = true;
         }
-        else if (strcmp(a, "--target") == 0)
-        {
-            if (i + 1 >= argc)
-            {
-                fprintf(stderr, "error: --target needs an argument\n");
-                return 2;
-            }
-            free(targetArch);
-            targetArch = DupString(argv[++i]);
-            if (strcmp(targetArch, "x86_64") != 0 &&
-                strcmp(targetArch, "aarch64") != 0 &&
-                strcmp(targetArch, "arm64") != 0)
-            {
-                fprintf(stderr, "error: --target must be 'x86_64', 'aarch64', or 'arm64'\n");
-                return 2;
-            }
-            if (strcmp(targetArch, "arm64") == 0)
-            {
-                free(targetArch);
-                targetArch = DupString("aarch64");
-            }
-        }
-        else if (a[0] != '\0' && a[0] == '-')
+        else if (a[0] == '-' && a[1] != '\0')
         {
             fprintf(stderr, "error: unknown option '%s'\n", a);
             PrintHelp();
@@ -148,8 +91,7 @@ int main(int argc, char** argv)
         }
         else
         {
-            free(inputFile);
-            inputFile = DupString(a);
+            inputFile = a;
         }
     }
 
@@ -160,79 +102,20 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    Arena arena;
-    arena_init(&arena, 0);
-
-    DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-
-    ModuleLoader loader;
-    ModuleLoaderInit(&loader, &arena, &diag);
-
-    Module* mod = ModuleLoaderLoad(&loader, inputFile);
-    ResolveOverloads(mod, &diag, &arena);
-
-    if (DiagCount(&diag) > 0)
-    {
-        char* d = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
-        fwrite(d, 1, strlen(d), stderr);
-    }
-
-    if (DiagHasErrors(&diag))
-    {
-        fprintf(stderr, "%u error(s).\n", DiagErrorCount(&diag));
-        return 1;
-    }
+    StrataCompiler* compiler = strataCompilerCreate();
 
     if (printAst)
     {
-        char* ast = DumpAst(mod, &arena);
-        fwrite(ast, 1, strlen(ast), stderr);
-    }
-
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
-
-    if (DiagHasErrors(&diag))
-    {
-        if (DiagCount(&diag) > 0)
+        StrataResult r = strataCompileFile(compiler, inputFile, STRATA_EMIT_AST);
+        if (r.diagnostics && r.diagnostics[0])
         {
-            char* d = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
-            fwrite(d, 1, strlen(d), stderr);
+            fprintf(stderr, "%s\n", r.diagnostics);
         }
-        fprintf(stderr, "%u error(s).\n", DiagErrorCount(&diag));
-        return 1;
-    }
-
-    char* triple = NULL;
-    if (targetArch && strcmp(targetArch, "x86_64") != 0)
-    {
-        char* hostTriple = LLVMGetDefaultTargetTriple();
-        const char* firstDash = strchr(hostTriple, '-');
-
-        const char* suffix;
-        size_t suffixLen;
-
-        if (firstDash)
+        if (r.ok && r.output)
         {
-            suffix = firstDash;
-            suffixLen = strlen(firstDash);
+            fprintf(stderr, "%s\n", r.output);
         }
-        else
-        {
-            suffix = "-pc-windows-msvc";
-            suffixLen = strlen(suffix);
-        }
-
-        size_t tLen = strlen(targetArch);
-        triple = (char*)malloc(tLen + suffixLen + 1);
-        if (triple)
-        {
-            memcpy(triple, targetArch, tLen);
-            memcpy(triple + tLen, suffix, suffixLen);
-            triple[tLen + suffixLen] = '\0';
-        }
-
-        LLVMDisposeMessage(hostTriple);
+        strataResultFree(&r);
     }
 
     if (!outFile)
@@ -240,11 +123,18 @@ int main(int argc, char** argv)
         outFile = ReplaceExt(inputFile, ".o");
     }
 
-    char* err = NULL;
+    const char* err = NULL;
+    int ok = strataCompileToObject(compiler, inputFile, outFile, 0, &err);
 
-    if (!EmitNativeFile(&bm, outFile, false, &err, triple))
+    if (!ok)
     {
-        fprintf(stderr, "error: %s\n", err ? err : "(unknown)");
+        fprintf(stderr, "%s\n", err ? err : "compilation failed");
+        strataFree((char*)err);
+        strataCompilerDestroy(compiler);
+        if ((const char*)outFile != inputFile)
+        {
+            free((void*)outFile);
+        }
         return 1;
     }
 
@@ -253,18 +143,27 @@ int main(int argc, char** argv)
     if (emitAsm)
     {
         char* asmFile = ReplaceExt(outFile, ".s");
+        const char* asmErr = NULL;
+        int asmOk = strataCompileToObject(compiler, inputFile, asmFile, 1, &asmErr);
 
-        if (!EmitNativeFile(&bm, asmFile, true, &err, triple))
+        if (!asmOk)
         {
-            fprintf(stderr, "error: %s\n", err ? err : "(unknown)");
-            free(asmFile);
-            return 1;
+            fprintf(stderr, "error writing assembly: %s\n", asmErr ? asmErr : "(no message)");
+            strataFree((char*)asmErr);
+        }
+        else
+        {
+            fprintf(stderr, "wrote assembly: %s\n", asmFile);
         }
 
-        fprintf(stderr, "wrote assembly: %s\n", asmFile);
         free(asmFile);
     }
 
-    BuiltModuleDispose(&bm);
+    if ((const char*)outFile != inputFile)
+    {
+        free((void*)outFile);
+    }
+
+    strataCompilerDestroy(compiler);
     return 0;
 }

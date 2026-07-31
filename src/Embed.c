@@ -15,6 +15,7 @@
 
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
+#include "Codegen/LLVMAot.h"
 #include "Import/ModuleLoader.h"
 #include "strata/Codegen/LLVMCApi.h"
 
@@ -179,6 +180,58 @@ StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKi
     arena_free(&arena);
 
     return r;
+}
+
+int strataCompileToObject(StrataCompiler* c, const char* inputPath,
+                          const char* outputPath, int assembly,
+                          const char** errOut)
+{
+    (void)c;
+
+    if (!inputPath || !outputPath)
+    {
+        if (errOut) *errOut = DupString("null input or output path");
+        return 0;
+    }
+
+    Arena arena;
+    arena_init(&arena, 0);
+
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+
+    ModuleLoader loader;
+    ModuleLoaderInit(&loader, &arena, &diag);
+
+    Module* mod = ModuleLoaderLoad(&loader, inputPath);
+    ResolveOverloads(mod, &diag, &arena);
+
+    if (DiagHasErrors(&diag) || !mod)
+    {
+        char* diagText = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
+        if (errOut) *errOut = DupString(diagText ? diagText : "compilation failed");
+        ModuleLoaderDispose(&loader);
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+        return 0;
+    }
+
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
+
+    char* emitErr = NULL;
+    int ok = EmitNativeFile(&bm, outputPath, assembly, &emitErr, NULL);
+
+    if (!ok && errOut)
+    {
+        *errOut = DupString(emitErr ? emitErr : "emission failed");
+    }
+
+    BuiltModuleDispose(&bm);
+    ModuleLoaderDispose(&loader);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    return ok;
 }
 
 void strataResultFree(StrataResult* r)

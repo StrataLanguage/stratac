@@ -33,7 +33,16 @@ set(STRATA_SOURCES
     src/Embed.c
 )
 
-add_library(strata STATIC ${STRATA_SOURCES})
+option(STRATA_SHARED "Build Strata as a shared library (DLL)" OFF)
+
+if(STRATA_SHARED)
+    add_library(strata SHARED ${STRATA_SOURCES})
+    target_compile_definitions(strata PRIVATE STRATA_EXPORTS)
+    set_target_properties(strata PROPERTIES PREFIX "")
+else()
+    add_library(strata STATIC ${STRATA_SOURCES})
+    target_compile_definitions(strata PUBLIC STRATA_STATIC)
+endif()
 target_include_directories(strata PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -73,6 +82,11 @@ function(strata_stage_dll target)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${STRATA_LLVM_DLL}" "$<TARGET_FILE_DIR:${target}>")
     endif()
+    if(STRATA_SHARED AND TARGET strata)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "$<TARGET_FILE:strata>" "$<TARGET_FILE_DIR:${target}>")
+    endif()
 endfunction()
 
 add_executable(stratac src/stratac/main.c)
@@ -94,6 +108,7 @@ strata_stage_dll(engine_demo)
 
 enable_testing()
 
+if(NOT STRATA_SHARED)
 add_executable(strata_tests
     tests/unit/test_main.c
     tests/unit/LexerTests.c
@@ -113,6 +128,11 @@ target_compile_definitions(strata_tests PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(strata_tests)
 add_test(NAME strata_tests COMMAND strata_tests)
+endif()
 
-set_target_properties(stratac strata_tests jit_demo engine_demo PROPERTIES
+set_target_properties(stratac jit_demo engine_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+if(NOT STRATA_SHARED)
+set_target_properties(strata_tests PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()

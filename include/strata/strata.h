@@ -10,87 +10,69 @@
 
 #include <stddef.h>
 
-// clang-format off
+#ifdef _WIN32
+#if defined(STRATA_STATIC)
+#define STRATA_API
+#elif defined(STRATA_EXPORTS)
+#define STRATA_API __declspec(dllexport)
+#else
+#define STRATA_API __declspec(dllimport)
+#endif
+#else   // !_WIN32
+#define STRATA_API
+#endif  // _WIN32
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
-    
+
 typedef struct StrataCompiler StrataCompiler;
 
-typedef enum {
-    STRATA_EMIT_LLVM_IR = 0, // textual LLVM IR
-    STRATA_EMIT_AST     = 1, // pretty-printed AST
+typedef enum
+{
+    STRATA_EMIT_LLVM_IR = 0,
+    STRATA_EMIT_AST     = 1,
 } StrataEmitKind;
 
-// ---------------------------------------------------------------------------
-// JIT execution
-//
-// Compile Strata source to native code in-process and obtain raw function
-// pointers the host can call. This is how a game engine runs scripts: compile
-// at load time, resolve entry points, call them every frame. No external
-// toolchain or process spawn is involved. (Requires LLVM linkage.)
 typedef struct StrataJit StrataJit;
 
-StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
-                                  const char* moduleName, const char** errOut);
-StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path,
-                                const char** errOut);
+STRATA_API StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
+                                              const char* moduleName, const char** errOut);
+STRATA_API StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path,
+                                           const char** errOut);
 
-// Resolves `name` to a native function pointer, or NULL. Cast to the matching C
-// signature, e.g. ((int(*)(int,int))strataJitGetFunction(jit, "add"))(2, 3).
-void* strataJitGetFunction(StrataJit* jit, const char* name);
+STRATA_API void* strataJitGetFunction(StrataJit* jit, const char* name);
 
-// --- Host bindings (engine runtime) ---------------------------------------
-// A script declares host-provided functions with `extern`, e.g.
-//   extern int engine_get_hp(int entity);
-// The host must bind each such name to a native function pointer after
-// strataJitCompile* and before strataJitGetFunction triggers compilation.
-// Returns 1 on success, 0 if the name is not declared in the module.
-int    strataJitAddSymbol(StrataJit* jit, const char* name, void* fn);
+STRATA_API int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn);
 
-// Enumerates the `extern` names the script declared, so the host can verify it
-// can satisfy them. Names are valid until strataJitDestroy.
-size_t      strataJitGetExternSymbolCount(StrataJit* jit);
-const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index);
+STRATA_API size_t strataJitGetExternSymbolCount(StrataJit* jit);
+STRATA_API const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index);
 
-const char* strataJitDiagnostics(StrataJit* jit);
-void strataJitDestroy(StrataJit* jit);
+STRATA_API const char* strataJitDiagnostics(StrataJit* jit);
+STRATA_API void strataJitDestroy(StrataJit* jit);
 
-typedef struct StrataResult {
-    int ok;                 // 1 on success, 0 if errors occurred
-    const char* output;     // generated text (IR/AST), or "" ; NUL-terminated
-    const char* diagnostics;// human-readable diagnostics, or ""; NUL-terminated
+typedef struct
+{
+    int ok;
+    const char* output;
+    const char* diagnostics;
     unsigned error_count;
     unsigned warning_count;
 } StrataResult;
 
-// Lifecycle ------------------------------------------------------------------
+STRATA_API StrataCompiler* strataCompilerCreate(void);
+STRATA_API void strataCompilerDestroy(StrataCompiler* c);
 
-StrataCompiler* strataCompilerCreate(void);
-void strataCompilerDestroy(StrataCompiler* c);
+STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,
+                                            const char* moduleName, StrataEmitKind emit);
+STRATA_API StrataResult strataCompileFile(StrataCompiler* c, const char* path,
+                                          StrataEmitKind emit);
 
-// Compilation ---------------------------------------------------------------
-// moduleName may be NULL; defaults to "strata_module".
-
-StrataResult strataCompileString(StrataCompiler* c, const char* source,
-                                 const char* moduleName, StrataEmitKind emit);
-
-StrataResult strataCompileFile(StrataCompiler* c, const char* path,
-                               StrataEmitKind emit);
-
-void strataResultFree(StrataResult* r);
-
-// Frees a string returned by the API (e.g. an errOut from strataJitCompile*).
-void strataFree(char* s);
-
-// Returns the linked LLVM version, or "0.0.0" if built without LLVM.
-const char* strataLLVMVersion(void);
+STRATA_API void strataResultFree(StrataResult* r);
+STRATA_API void strataFree(char* s);
+STRATA_API const char* strataLLVMVersion(void);
 
 #ifdef __cplusplus
 }
-
 #endif
-
-// clang-format on
