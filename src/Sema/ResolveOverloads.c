@@ -9,6 +9,8 @@ static bool IsNumeric(const char* t)
 {
     return strcmp(t, "int") == 0
         || strcmp(t, "uint") == 0
+        || strcmp(t, "long") == 0
+        || strcmp(t, "ulong") == 0
         || strcmp(t, "float") == 0
         || strcmp(t, "double") == 0;
 }
@@ -247,6 +249,16 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
             if (strcmp(lt, "float") == 0 || strcmp(rt, "float") == 0)
             {
                 return "float";
+            }
+
+            if (strcmp(lt, "ulong") == 0 || strcmp(rt, "ulong") == 0)
+            {
+                return "ulong";
+            }
+
+            if (strcmp(lt, "long") == 0 || strcmp(rt, "long") == 0)
+            {
+                return "long";
             }
 
             if (strcmp(lt, "uint") == 0 || strcmp(rt, "uint") == 0)

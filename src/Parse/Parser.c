@@ -154,6 +154,8 @@ static bool LooksLikeVarDecl(const Parser* p)
     case TokKwBool:
     case TokKwUint:
     case TokKwInt:
+    case TokKwLong:
+    case TokKwUlong:
     case TokKwFloat:
     case TokKwDouble:
     case TokKwString:
@@ -187,6 +189,8 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     case TokKwBool:   name = "bool";   break;
     case TokKwInt:    name = "int";    break;
     case TokKwUint:   name = "uint";   break;
+    case TokKwLong:   name = "long";   break;
+    case TokKwUlong:  name = "ulong";  break;
     case TokKwFloat:  name = "float";  break;
     case TokKwDouble: name = "double"; break;
     case TokKwString: name = "string"; break;
@@ -1017,6 +1021,7 @@ static Node* ParseUnary(Parser* p)
             Token next = LexerPeekToken(p->m_lex);
 
             if (next.kind == TokKwInt || next.kind == TokKwUint ||
+                next.kind == TokKwLong || next.kind == TokKwUlong ||
                 next.kind == TokKwFloat || next.kind == TokKwDouble ||
                 next.kind == TokKwBool)
             {

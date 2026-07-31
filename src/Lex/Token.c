@@ -12,6 +12,8 @@ static const Spelling keywords[] = {
     { TokKwBool, "bool" },
     { TokKwInt, "int" },
     { TokKwUint, "uint" },
+    { TokKwLong, "long" },
+    { TokKwUlong, "ulong" },
     { TokKwFloat, "float" },
     { TokKwDouble, "double" },
     { TokKwString, "string" },

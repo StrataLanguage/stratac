@@ -427,3 +427,101 @@ STRATA_TEST(jit_global_negative_init)
         strataJitDestroy(jit);
     }
 }
+
+STRATA_TEST(jit_long_type)
+{
+    StrataJit* jit = CompileJit("long entry() {\n"
+                                "  long a = 3000000000;\n"
+                                "  long b = 2000000000;\n"
+                                "  return a + b;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        long long (*f)(void) = (long long (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 5000000000LL);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_ulong_large_values)
+{
+    StrataJit* jit = CompileJit("ulong entry() {\n"
+                                "  ulong a = 18446744073709551615;\n"
+                                "  return a;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        unsigned long long (*f)(void) = (unsigned long long (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK(f() == 0xFFFFFFFFFFFFFFFFULL);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_long_arithmetic)
+{
+    StrataJit* jit = CompileJit("long entry() {\n"
+                                "  long x = 1000000;\n"
+                                "  long y = x * x;\n"
+                                "  return y;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        long long (*f)(void) = (long long (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 1000000000000LL);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_long_int_mixed)
+{
+    StrataJit* jit = CompileJit("long entry() {\n"
+                                "  int small = 5;\n"
+                                "  long big = 1000000000;\n"
+                                "  return big + small;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        long long (*f)(void) = (long long (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 1000000005LL);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_cast_int_to_long)
+{
+    StrataJit* jit = CompileJit("long entry() {\n"
+                                "  int x = 2147483647;\n"
+                                "  return (long)x * 2;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        long long (*f)(void) = (long long (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 4294967294LL);
+        }
+        strataJitDestroy(jit);
+    }
+}

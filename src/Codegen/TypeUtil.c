@@ -98,6 +98,16 @@ MappedType MapType(const TypeName* t)
         return MakePrimitive(false, true, 32, "i32", vec);
     }
 
+    if (strcmp(base, "long") == 0)
+    {
+        return MakePrimitive(false, false, 64, "i64", vec);
+    }
+
+    if (strcmp(base, "ulong") == 0)
+    {
+        return MakePrimitive(false, true, 64, "i64", vec);
+    }
+
     if (strcmp(base, "float") == 0)
     {
         return MakePrimitive(true, false, 32, "float", vec);

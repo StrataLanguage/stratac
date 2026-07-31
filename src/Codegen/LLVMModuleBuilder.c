@@ -205,6 +205,11 @@ static LLVMTypeRef I32Ty(Builder* b)
     return LLVMInt32TypeInContext(b->m_ctx);
 }
 
+static LLVMTypeRef I64Ty(Builder* b)
+{
+    return LLVMInt64TypeInContext(b->m_ctx);
+}
+
 static LLVMTypeRef I1Ty(Builder* b)
 {
     return LLVMInt1TypeInContext(b->m_ctx);
@@ -1083,8 +1088,13 @@ static Value EmitExpr(Builder* b, Node* n)
     {
         IntLiteral* literal = (IntLiteral*)n;
 
-        TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, literal->isUnsigned, false, NULL);
+        if (literal->value > 0xFFFFFFFFULL)
+        {
+            TypeDesc typeDesc = TypeDescMake(I64Ty(b), false, literal->isUnsigned, false, NULL);
+            return ValueMake(LLVMConstInt(I64Ty(b), literal->value, 1), typeDesc);
+        }
 
+        TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, literal->isUnsigned, false, NULL);
         return ValueMake(LLVMConstInt(I32Ty(b), literal->value, 1), typeDesc);
     }
 

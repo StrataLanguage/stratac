@@ -18,6 +18,8 @@ typedef enum {
     TokKwBool,
     TokKwInt,
     TokKwUint,
+    TokKwLong,
+    TokKwUlong,
     TokKwFloat,
     TokKwDouble,
     TokKwString,
