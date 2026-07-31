@@ -56,6 +56,8 @@ typedef struct {
     bool m_terminated;
     bool m_jitMode;
     LLVMValueRef m_curFn;
+    LLVMBasicBlockRef m_entryBlock;
+    LLVMValueRef m_entryAllocaPt;
     Vec m_loops;
     Arena* m_arena;
 } Builder;
@@ -210,6 +212,26 @@ static LLVMTypeRef I1Ty(Builder* b)
 static LLVMBasicBlockRef NewBb(Builder* b, const char* name)
 {
     return LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, name);
+}
+
+static LLVMValueRef EntryAlloca(Builder* b, LLVMTypeRef type, const char* name)
+{
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(b->m_builder);
+
+    if (b->m_entryAllocaPt)
+    {
+        LLVMPositionBuilderBefore(b->m_builder, b->m_entryAllocaPt);
+    }
+    else
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, b->m_entryBlock);
+    }
+
+    LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, type, name);
+    b->m_entryAllocaPt = slot;
+
+    LLVMPositionBuilderAtEnd(b->m_builder, cur);
+    return slot;
 }
 
 static void PositionAtEnd(Builder* b, LLVMBasicBlockRef bb)
@@ -391,6 +413,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_curFn = info ? info->function : NULL;
 
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "entry");
+    b->m_entryBlock = entry;
+    b->m_entryAllocaPt = NULL;
     LLVMPositionBuilderAtEnd(b->m_builder, entry);
 
     for (size_t i = 0; i < f->params.count; i++)
@@ -410,7 +434,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         }
         else
         {
-            LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, typeDesc.type, "arg");
+            LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "arg");
             LLVMBuildStore(b->m_builder, LLVMGetParam(b->m_curFn, (unsigned)i), slot);
 
             sym->value = slot;
@@ -903,7 +927,7 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
 
     Value value = EmitExpr(b, arg);
 
-    LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, value.typeDesc.type, "outarg");
+    LLVMValueRef slot = EntryAlloca(b, value.typeDesc.type, "outarg");
     LLVMBuildStore(b->m_builder, value.value, slot);
 
     return slot;
@@ -1182,7 +1206,7 @@ static void EmitStmt(Builder* b, Node* n)
         VarDeclStmt* varDecl = (VarDeclStmt*)n;
         TypeDesc typeDesc = Resolve(b, &varDecl->type);
 
-        LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, typeDesc.type, "v");
+        LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "v");
 
         if (varDecl->init)
         {

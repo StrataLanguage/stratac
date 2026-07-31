@@ -53,6 +53,29 @@ STRATA_TEST(jit_out_params_return_values)
     }
 }
 
+STRATA_TEST(jit_large_loop_no_stack_overflow)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int total = 0;\n"
+                                "  for (int i = 0; i < 100000; i++) {\n"
+                                "    int step = 1;\n"
+                                "    total += step;\n"
+                                "  }\n"
+                                "  return total;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 100000);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
 STRATA_TEST(jit_if_else_branch)
 {
     StrataJit* jit = CompileJit("int sign(int n) { if (n < 0) { return -1; } else { return 1; } }\n"

@@ -130,6 +130,9 @@ LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef pointe
 LLVMValueRef LLVMBuildPhi(LLVMBuilderRef b, LLVMTypeRef ty, const char* name);
 void LLVMAddIncoming(LLVMValueRef phiNode, LLVMValueRef* incomingValues, LLVMBasicBlockRef* incomingBlocks, unsigned count);
 LLVMBasicBlockRef LLVMGetInsertBlock(LLVMBuilderRef b);
+void LLVMPositionBuilderBefore(LLVMBuilderRef b, LLVMValueRef inst);
+LLVMValueRef LLVMGetFirstInstruction(LLVMBasicBlockRef bb);
+LLVMValueRef LLVMGetBasicBlockTerminator(LLVMBasicBlockRef bb);
 
 LLVMBool LLVMVerifyModule(LLVMModuleRef m, int verifierAction, char** outMessage);
 
