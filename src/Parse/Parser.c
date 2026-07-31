@@ -974,7 +974,38 @@ static Node* ParseUnary(Parser* p)
 
         return (Node*)node;
     }
-    default:                        return ParsePostfix(p);
+    default:
+    {
+        if (p->m_cur.kind == TokLParen)
+        {
+            Token next = LexerPeekToken(p->m_lex);
+
+            if (next.kind == TokKwInt || next.kind == TokKwUint ||
+                next.kind == TokKwFloat || next.kind == TokKwDouble ||
+                next.kind == TokKwBool)
+            {
+                Token lparen = p->m_cur;
+                Advance(p);
+
+                TypeName castType = {0};
+
+                if (ParserTryParseType(p, &castType) && ParserConsume(p, TokRParen))
+                {
+                    Node* operand = ParseUnary(p);
+
+                    CastExpr* node = AST_NEW(p->m_arena, CastExpr);
+                    node->base.kind = NodeCast;
+                    node->base.range = lparen.range;
+                    node->type = castType;
+                    node->operand = operand;
+
+                    return (Node*)node;
+                }
+            }
+        }
+
+        return ParsePostfix(p);
+    }
     }
 
     Token token = p->m_cur;

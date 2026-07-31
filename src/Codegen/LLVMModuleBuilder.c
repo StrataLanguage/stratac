@@ -1151,6 +1151,15 @@ static Value EmitExpr(Builder* b, Node* n)
         return ValueMake(inc->isPrefix ? newVal : cur, lv.typeDesc);
     }
 
+    case NodeCast:
+    {
+        CastExpr* cast = (CastExpr*)n;
+        Value operand = EmitExpr(b, cast->operand);
+        TypeDesc target = Resolve(b, &cast->type);
+
+        return Coerce(b, operand, target);
+    }
+
     default:
         if (b->m_diag)
         {

@@ -261,6 +261,8 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
         return InferType(r, ((AssignExpr*)n)->target, scope);
     case NodeIncDec:
         return InferType(r, ((IncDecExpr*)n)->operand, scope);
+    case NodeCast:
+        return ((CastExpr*)n)->type.name;
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
@@ -367,6 +369,9 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         ResolveExpr(r, inc->operand, scope);
         return;
     }
+    case NodeCast:
+        ResolveExpr(r, ((CastExpr*)n)->operand, scope);
+        return;
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;

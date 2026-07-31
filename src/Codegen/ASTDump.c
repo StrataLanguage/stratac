@@ -421,6 +421,15 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     }
 
+    case NodeCast:
+    {
+        CastExpr* cast = AsNode(CastExpr, n);
+        SbPrintf(out, "(cast %s ", cast->type.name);
+        Dump(cast->operand, 0, out);
+        SbPutc(out, ')');
+        return;
+    }
+
     case NodeParam:
         SbPuts(out, "(param)\n");
         return;

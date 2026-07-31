@@ -207,3 +207,101 @@ STRATA_TEST(jit_short_circuit_and_evaluates_both_when_lhs_true)
         strataJitDestroy(jit);
     }
 }
+
+STRATA_TEST(jit_cast_int_to_float)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int x = 7;\n"
+                                "  float y = (float)x;\n"
+                                "  return (int)(y * 2.0);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 14);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_cast_float_to_int_truncates)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  float x = 3.9;\n"
+                                "  return (int)x;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_cast_double_to_float_to_int)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  double d = 2.5;\n"
+                                "  float f = (float)d;\n"
+                                "  return (int)(f * 4.0);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 10);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_cast_uint_to_int)
+{
+    StrataJit* jit = CompileJit("uint entry() {\n"
+                                "  int x = -1;\n"
+                                "  return (uint)x;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        unsigned (*f)(void) = (unsigned (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK(f() == 0xFFFFFFFF);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_cast_in_expression)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  float pi = 3.14159;\n"
+                                "  int r = 5;\n"
+                                "  return (int)(2 * (float)r * pi);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 31);
+        }
+        strataJitDestroy(jit);
+    }
+}

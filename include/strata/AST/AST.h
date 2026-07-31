@@ -33,6 +33,7 @@ typedef enum {
     NodeMember,
     NodeStructInit,
     NodeIncDec,
+    NodeCast,
 } NodeKind;
 
 typedef struct {
@@ -283,3 +284,9 @@ typedef struct {
     bool isPrefix;
     Node* operand;
 } IncDecExpr;
+
+typedef struct {
+    Node base;
+    TypeName type;
+    Node* operand;
+} CastExpr;
