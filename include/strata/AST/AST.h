@@ -32,6 +32,7 @@ typedef enum {
     NodeCall,
     NodeMember,
     NodeStructInit,
+    NodeIncDec,
 } NodeKind;
 
 typedef struct {
@@ -275,3 +276,10 @@ typedef struct {
     char* typeName;
     Vec fields;
 } StructInitExpr;
+
+typedef struct {
+    Node base;
+    bool isDec;
+    bool isPrefix;
+    Node* operand;
+} IncDecExpr;

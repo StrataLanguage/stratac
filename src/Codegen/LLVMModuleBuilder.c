@@ -619,6 +619,75 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
 static Value EmitBinary(Builder* b, BinaryExpr* n)
 {
+    if (n->op == BinLogicAnd || n->op == BinLogicOr)
+    {
+        bool isAnd = (n->op == BinLogicAnd);
+
+        Value l = EmitExpr(b, n->lhs);
+
+        LLVMValueRef cond = l.value;
+        if (l.typeDesc.type != I1Ty(b))
+        {
+            if (l.typeDesc.isFloat)
+            {
+                cond = LLVMBuildFCmp(b->m_builder, LLVMRealONE, l.value,
+                                     LLVMConstReal(l.typeDesc.type, 0.0), "tobool");
+            }
+            else
+            {
+                cond = LLVMBuildICmp(b->m_builder, LLVMIntNE, l.value,
+                                     LLVMConstInt(l.typeDesc.type, 0, 0), "tobool");
+            }
+        }
+
+        LLVMBasicBlockRef lhsEnd = LLVMGetInsertBlock(b->m_builder);
+        LLVMBasicBlockRef rhsBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.rhs");
+        LLVMBasicBlockRef mergeBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.end");
+
+        if (isAnd)
+        {
+            LLVMBuildCondBr(b->m_builder, cond, rhsBlock, mergeBlock);
+        }
+        else
+        {
+            LLVMBuildCondBr(b->m_builder, cond, mergeBlock, rhsBlock);
+        }
+
+        LLVMPositionBuilderAtEnd(b->m_builder, rhsBlock);
+        Value r = EmitExpr(b, n->rhs);
+
+        LLVMValueRef rhsCond = r.value;
+        if (r.typeDesc.type != I1Ty(b))
+        {
+            if (r.typeDesc.isFloat)
+            {
+                rhsCond = LLVMBuildFCmp(b->m_builder, LLVMRealONE, r.value,
+                                        LLVMConstReal(r.typeDesc.type, 0.0), "tobool");
+            }
+            else
+            {
+                rhsCond = LLVMBuildICmp(b->m_builder, LLVMIntNE, r.value,
+                                        LLVMConstInt(r.typeDesc.type, 0, 0), "tobool");
+            }
+        }
+
+        LLVMBasicBlockRef rhsEnd = LLVMGetInsertBlock(b->m_builder);
+        LLVMBuildBr(b->m_builder, mergeBlock);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, mergeBlock);
+        LLVMValueRef phi = LLVMBuildPhi(b->m_builder, I1Ty(b), "logic");
+
+        LLVMValueRef shortCircuit = isAnd
+            ? LLVMConstNull(I1Ty(b))
+            : LLVMConstInt(I1Ty(b), 1, 0);
+
+        LLVMBasicBlockRef incomingBlocks[2] = { lhsEnd, rhsEnd };
+        LLVMValueRef incomingVals[2] = { shortCircuit, rhsCond };
+        LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
+
+        return ValueMake(phi, TypeDescMake(I1Ty(b), false, false, false, NULL));
+    }
+
     Value l = EmitExpr(b, n->lhs);
     Value r = EmitExpr(b, n->rhs);
 
@@ -637,15 +706,6 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
     LLVMValueRef out = NULL;
     bool flt = typeDesc.isFloat;
-
-    if (n->op == BinLogicAnd || n->op == BinLogicOr)
-    {
-        out = (n->op == BinLogicAnd)
-            ? LLVMBuildAnd(b->m_builder, l.value, r.value, "and")
-            : LLVMBuildOr(b->m_builder, l.value, r.value, "or");
-
-        return ValueMake(out, TypeDescMake(I1Ty(b), false, false, false, NULL));
-    }
 
     TypeDesc boolTypeDesc = TypeDescMake(I1Ty(b), false, false, false, NULL);
 
@@ -1033,6 +1093,39 @@ static Value EmitExpr(Builder* b, Node* n)
 
     case NodeStructInit:
         return EmitStructInit(b, (StructInitExpr*)n);
+
+    case NodeIncDec:
+    {
+        IncDecExpr* inc = (IncDecExpr*)n;
+        LValue lv = EmitLValue(b, inc->operand);
+
+        if (!lv.valid)
+        {
+            if (b->m_diag)
+            {
+                DiagError(b->m_diag, inc->base.range, "increment/decrement of non-lvalue");
+            }
+
+            return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
+        }
+
+        LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "inc");
+        LLVMValueRef one = lv.typeDesc.isFloat
+            ? LLVMConstReal(lv.typeDesc.type, 1.0)
+            : LLVMConstInt(lv.typeDesc.type, 1, 0);
+
+        LLVMValueRef newVal = inc->isDec
+            ? (lv.typeDesc.isFloat
+                ? LLVMBuildFSub(b->m_builder, cur, one, "dec")
+                : LLVMBuildSub(b->m_builder, cur, one, "dec"))
+            : (lv.typeDesc.isFloat
+                ? LLVMBuildFAdd(b->m_builder, cur, one, "inc")
+                : LLVMBuildAdd(b->m_builder, cur, one, "inc"));
+
+        LLVMBuildStore(b->m_builder, newVal, lv.ptr);
+
+        return ValueMake(inc->isPrefix ? newVal : cur, lv.typeDesc);
+    }
 
     default:
         if (b->m_diag)

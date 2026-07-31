@@ -9,7 +9,7 @@
 #include <stdlib.h>
 
 /* The engine's real entity type; Strata never sees inside it. */
-typedef struct Entity_t { int x, y; } Entity;
+typedef struct { int x, y; } Entity;
 
 Entity* world_spawn(int x, int y)
 {

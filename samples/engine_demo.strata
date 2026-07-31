@@ -26,13 +26,17 @@ int chase(Entity attacker, Entity target, int step)
     int ay = get_y(attacker);
     int tx = get_x(target);
     int ty = get_y(target);
+    
+    for (int i = 0; i < 100000; i++)
+    {
+        int dx = step;
+        int dy = step;
+        if (tx < ax) { dx = 0 - step; }
+        if (ty < ay) { dy = 0 - step; }
 
-    int dx = step;
-    int dy = step;
-    if (tx < ax) { dx = 0 - step; }
-    if (ty < ay) { dy = 0 - step; }
+        move(attacker, dx, dy);
+    }
 
-    move(attacker, dx, dy);
     Shoot(p);
 
     return get_x(attacker) + get_y(attacker);

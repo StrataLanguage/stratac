@@ -127,6 +127,9 @@ LLVMValueRef LLVMGetUndef(LLVMTypeRef ty);
 LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueRef val, unsigned index, const char* name);
 LLVMValueRef LLVMBuildExtractValue(LLVMBuilderRef b, LLVMValueRef agg, unsigned index, const char* name);
 LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices, const char* name);
+LLVMValueRef LLVMBuildPhi(LLVMBuilderRef b, LLVMTypeRef ty, const char* name);
+void LLVMAddIncoming(LLVMValueRef phiNode, LLVMValueRef* incomingValues, LLVMBasicBlockRef* incomingBlocks, unsigned count);
+LLVMBasicBlockRef LLVMGetInsertBlock(LLVMBuilderRef b);
 
 LLVMBool LLVMVerifyModule(LLVMModuleRef m, int verifierAction, char** outMessage);
 

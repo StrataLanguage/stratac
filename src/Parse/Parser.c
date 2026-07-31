@@ -952,6 +952,28 @@ static Node* ParseUnary(Parser* p)
     case TokPlus:  op = UnPos;      break;
     case TokBang:  op = UnNot;      break;
     case TokTilde: op = UnBitNot;   break;
+    case TokInc:
+    case TokDec:
+    {
+        Token token = p->m_cur;
+        Advance(p);
+
+        Node* operand = ParseUnary(p);
+
+        if (!operand)
+        {
+            return NULL;
+        }
+
+        IncDecExpr* node = AST_NEW(p->m_arena, IncDecExpr);
+        node->base.kind = NodeIncDec;
+        node->base.range = token.range;
+        node->isDec = (token.kind == TokDec);
+        node->isPrefix = true;
+        node->operand = operand;
+
+        return (Node*)node;
+    }
     default:                        return ParsePostfix(p);
     }
 
@@ -978,8 +1000,23 @@ static Node* ParsePostfix(Parser* p)
 {
     Node* e = ParsePrimary(p);
 
-    while (e && p->m_cur.kind == TokDot)
+    while (e && (p->m_cur.kind == TokDot || p->m_cur.kind == TokInc || p->m_cur.kind == TokDec))
     {
+        if (p->m_cur.kind == TokInc || p->m_cur.kind == TokDec)
+        {
+            Token token = p->m_cur;
+            Advance(p);
+
+            IncDecExpr* node = AST_NEW(p->m_arena, IncDecExpr);
+            node->base.kind = NodeIncDec;
+            node->base.range = token.range;
+            node->isDec = (token.kind == TokDec);
+            node->isPrefix = false;
+            node->operand = e;
+            e = (Node*)node;
+            continue;
+        }
+
         Token dot = p->m_cur;
         Advance(p);
 

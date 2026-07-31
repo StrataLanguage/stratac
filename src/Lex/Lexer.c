@@ -209,6 +209,11 @@ static Token LexTokenImpl(Lexer* lex)
     case '.':
         return Make(lex, TokDot, start);
     case '-':
+        if (LexerPeek(lex, 0) == '-')
+        {
+            ++lex->m_pos;
+            return Make(lex, TokDec, start);
+        }
         if (LexerPeek(lex, 0) == '>')
         {
             ++lex->m_pos;
@@ -235,6 +240,11 @@ static Token LexTokenImpl(Lexer* lex)
         }
         return Make(lex, TokBang, start);
     case '+':
+        if (LexerPeek(lex, 0) == '+')
+        {
+            ++lex->m_pos;
+            return Make(lex, TokInc, start);
+        }
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;

@@ -21,7 +21,7 @@
 #endif
 
 /* ---- the "engine" the script talks to via `extern` ------------------------ */
-typedef struct Entity_t { int value; } Entity;
+typedef struct { int value; } Entity;
 
 Entity* entity_create(int value)
 {

@@ -409,6 +409,18 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     }
 
+    case NodeIncDec:
+    {
+        IncDecExpr* inc = AsNode(IncDecExpr, n);
+        SbPrintf(out, "(%c%c%s ",
+            inc->isDec ? '-' : '+',
+            inc->isDec ? '-' : '+',
+            inc->isPrefix ? "" : "p");
+        Dump(inc->operand, 0, out);
+        SbPutc(out, ')');
+        return;
+    }
+
     case NodeParam:
         SbPuts(out, "(param)\n");
         return;

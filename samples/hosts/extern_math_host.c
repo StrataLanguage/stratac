@@ -7,28 +7,28 @@
 //   ./extern_math.exe
 #include <stdio.h>
 
-/* ---- functions Strata calls via `extern` (matching signatures) ---- */
-
 static int g_rng_state = 0;
 
-int rand_seed(int s) {
+int rand_seed(int s)
+{
     g_rng_state = s;
     return s;
 }
 
-int rand_next(void) {
-    /* a tiny LCG */
+int rand_next(void)
+{
     g_rng_state = g_rng_state * 1103515245 + 12345;
     return (g_rng_state >> 16) & 0x7fffffff;
 }
 
-int clamp_int(int value, int lo, int hi) {
+int clamp_int(int value, int lo, int hi)
+{
     if (value < lo) return lo;
     if (value > hi) return hi;
     return value;
 }
 
-/* ---- Strata-provided entry (defined in extern_math.o) ---- */
+/* defined in Strata code. */
 extern int lucky_number(int seed);
 
 int main(void) {

@@ -72,6 +72,8 @@ static const Spelling punct[] = {
     { TokStarEq, "*=" },
     { TokSlashEq, "/=" },
     { TokPercentEq, "%=" },
+    { TokInc, "++" },
+    { TokDec, "--" },
 };
 
 #define KEYWORD_COUNT (sizeof(keywords) / sizeof(keywords[0]))

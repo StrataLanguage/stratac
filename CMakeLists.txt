@@ -106,6 +106,7 @@ add_executable(strata_tests
     tests/unit/OverloadTests.c
     tests/unit/ControlFlowTests.c
     tests/unit/ImportTests.c
+    tests/unit/OperatorTests.c
 )
 target_link_libraries(strata_tests PRIVATE strata)
 target_compile_definitions(strata_tests PRIVATE

@@ -23,7 +23,7 @@
 #endif
 
 /* ---- shared engine API (the "engine" the script calls via extern) -------- */
-typedef struct Entity_t { int x, y; } Entity;
+typedef struct { int x, y; } Entity;
 
 Entity* spawn(int x, int y)
 {

@@ -10,17 +10,19 @@
 
 typedef struct { float x, y, z; } Vec3;
 
-float length_sq(const Vec3* v) {
+float length_sq(const Vec3* v)
+{
     return v->x * v->x + v->y * v->y + v->z * v->z;
 }
 
-void scale_into(const Vec3* src, float s, Vec3* dst) {
+void scale_into(const Vec3* src, float s, Vec3* dst)
+{
     dst->x = src->x * s;
     dst->y = src->y * s;
     dst->z = src->z * s;
 }
 
-/* Strata-provided entry (defined in extern_struct.o). */
+/* defined in Strata code. */
 extern float entry(void);
 
 int main(void) {
