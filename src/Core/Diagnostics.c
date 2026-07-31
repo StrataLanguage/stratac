@@ -1,4 +1,4 @@
-#include "strata/Core/Diagnostics.h"
+#include "Core/Diagnostics.h"
 
 #include <stdarg.h>
 #include <stdio.h>

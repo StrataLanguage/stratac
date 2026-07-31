@@ -1,7 +1,7 @@
 #pragma once
 
-#include "strata/Core/SourceLocation.h"
-#include "strata/Core/Util.h"
+#include "Core/SourceLocation.h"
+#include "Core/Util.h"
 
 #include <stdint.h>
 #include <string.h>

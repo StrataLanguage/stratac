@@ -1,4 +1,4 @@
-#include "strata/Lex/Lexer.h"
+#include "Lex/Lexer.h"
 
 #include <ctype.h>
 

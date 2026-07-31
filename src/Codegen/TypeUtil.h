@@ -1,6 +1,6 @@
 #pragma once
 
-#include "strata/AST/AST.h"
+#include "AST/AST.h"
 
 #include <stdbool.h>
 

@@ -1,7 +1,7 @@
 #include "Util.h"
-#include "strata/Codegen/CodegenBackend.h"
-#include "strata/Sema/ResolveOverloads.h"
-#include "strata/Test.h"
+#include "Codegen/CodegenBackend.h"
+#include "Sema/ResolveOverloads.h"
+#include "Test.h"
 
 #include <string.h>
 

@@ -1,5 +1,5 @@
 #include "LLVMAot.h"
-#include "strata/Codegen/LLVMCApi.h"
+#include "Codegen/LLVMCApi.h"
 
 #include <stdio.h>
 #include <stdlib.h>

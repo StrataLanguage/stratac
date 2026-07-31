@@ -1,5 +1,5 @@
-#include "strata/AST/AST.h"
-#include "strata/Codegen/CodegenBackend.h"
+#include "AST/AST.h"
+#include "Codegen/CodegenBackend.h"
 
 static const char* UnaryOpSpelling(UnaryOp op)
 {

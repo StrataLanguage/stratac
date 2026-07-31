@@ -1,4 +1,4 @@
-#include "strata/Sema/ResolveOverloads.h"
+#include "Sema/ResolveOverloads.h"
 #include "Codegen/TypeRegistry.h"
 
 #include <limits.h>

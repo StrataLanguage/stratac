@@ -1,6 +1,6 @@
 #include "Util.h"
-#include "strata/Codegen/CodegenBackend.h"
-#include "strata/Test.h"
+#include "Codegen/CodegenBackend.h"
+#include "Test.h"
 
 #include <string.h>
 #include <stdlib.h>

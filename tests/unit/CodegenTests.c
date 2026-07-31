@@ -1,8 +1,8 @@
 #include "Util.h"
-#include "strata/Codegen/CodegenBackend.h"
-#include "strata/Test.h"
+#include "Codegen/CodegenBackend.h"
+#include "Test.h"
 
-#include "strata/Codegen/LLVMCApi.h"
+#include "Codegen/LLVMCApi.h"
 
 #include <string.h>
 

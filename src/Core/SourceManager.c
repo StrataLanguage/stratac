@@ -1,4 +1,4 @@
-#include "strata/Core/SourceLocation.h"
+#include "Core/SourceLocation.h"
 
 #include <stdlib.h>
 #include <string.h>

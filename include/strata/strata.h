@@ -69,6 +69,10 @@ STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* sourc
 STRATA_API StrataResult strataCompileFile(StrataCompiler* c, const char* path,
                                           StrataEmitKind emit);
 
+STRATA_API int strataCompileToObject(StrataCompiler* c, const char* inputPath,
+                                     const char* outputPath, int assembly,
+                                     const char** errOut);
+
 STRATA_API void strataResultFree(StrataResult* r);
 STRATA_API void strataFree(char* s);
 STRATA_API const char* strataLLVMVersion(void);

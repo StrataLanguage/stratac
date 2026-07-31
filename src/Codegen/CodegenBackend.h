@@ -1,7 +1,7 @@
 #pragma once
 
-#include "strata/AST/AST.h"
-#include "strata/Core/Util.h"
+#include "AST/AST.h"
+#include "Core/Util.h"
 
 typedef struct {
     bool ok;

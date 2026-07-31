@@ -1,7 +1,7 @@
 #include "Codegen/LLVMModuleBuilder.h"
-#include "strata/Codegen/CodegenBackend.h"
-#include "strata/Codegen/LLVMCApi.h"
-#include "strata/Core/Diagnostics.h"
+#include "Codegen/CodegenBackend.h"
+#include "Codegen/LLVMCApi.h"
+#include "Core/Diagnostics.h"
 
 #include <stdlib.h>
 #include <string.h>

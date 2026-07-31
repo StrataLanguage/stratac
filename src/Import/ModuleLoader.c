@@ -1,7 +1,7 @@
 #include "Import/ModuleLoader.h"
 
-#include "strata/Lex/Lexer.h"
-#include "strata/Parse/Parser.h"
+#include "Lex/Lexer.h"
+#include "Parse/Parser.h"
 
 #include <stdio.h>
 #include <stdlib.h>

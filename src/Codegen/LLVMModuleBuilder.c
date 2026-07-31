@@ -1,9 +1,9 @@
 #include "LLVMModuleBuilder.h"
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
-#include "strata/AST/AST.h"
-#include "strata/Codegen/LLVMCApi.h"
-#include "strata/Core/Diagnostics.h"
+#include "AST/AST.h"
+#include "Codegen/LLVMCApi.h"
+#include "Core/Diagnostics.h"
 
 #include <stdlib.h>
 #include <string.h>

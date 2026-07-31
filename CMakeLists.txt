@@ -124,6 +124,7 @@ add_executable(strata_tests
     tests/unit/OperatorTests.c
 )
 target_link_libraries(strata_tests PRIVATE strata)
+target_include_directories(strata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit)
 target_compile_definitions(strata_tests PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(strata_tests)

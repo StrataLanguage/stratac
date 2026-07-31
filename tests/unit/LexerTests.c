@@ -1,5 +1,5 @@
 #include "Util.h"
-#include "strata/Test.h"
+#include "Test.h"
 
 STRATA_TEST(lexer_keywords_and_idents)
 {

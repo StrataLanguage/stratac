@@ -1,8 +1,8 @@
 #pragma once
 
-#include "strata/Core/Diagnostics.h"
-#include "strata/Core/SourceLocation.h"
-#include "strata/Lex/Token.h"
+#include "Core/Diagnostics.h"
+#include "Core/SourceLocation.h"
+#include "Lex/Token.h"
 
 #include <stddef.h>
 

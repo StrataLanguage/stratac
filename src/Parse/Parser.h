@@ -1,10 +1,10 @@
 #pragma once
 
-#include "strata/AST/AST.h"
-#include "strata/Core/Diagnostics.h"
-#include "strata/Core/Util.h"
-#include "strata/Lex/Lexer.h"
-#include "strata/Lex/Token.h"
+#include "AST/AST.h"
+#include "Core/Diagnostics.h"
+#include "Core/Util.h"
+#include "Lex/Lexer.h"
+#include "Lex/Token.h"
 
 typedef struct {
     Lexer* m_lex;

@@ -1,5 +1,5 @@
 #include "Util.h"
-#include "strata/Test.h"
+#include "Test.h"
 #include "strata/strata.h"
 
 #include <stdint.h>

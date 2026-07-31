@@ -1,11 +1,11 @@
 #include "strata/strata.h"
 
-#include "strata/Codegen/CodegenBackend.h"
-#include "strata/Core/Diagnostics.h"
-#include "strata/Core/SourceLocation.h"
-#include "strata/Lex/Lexer.h"
-#include "strata/Parse/Parser.h"
-#include "strata/Sema/ResolveOverloads.h"
+#include "Codegen/CodegenBackend.h"
+#include "Core/Diagnostics.h"
+#include "Core/SourceLocation.h"
+#include "Lex/Lexer.h"
+#include "Parse/Parser.h"
+#include "Sema/ResolveOverloads.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -17,7 +17,7 @@
 #include "Codegen/LLVMModuleBuilder.h"
 #include "Codegen/LLVMAot.h"
 #include "Import/ModuleLoader.h"
-#include "strata/Codegen/LLVMCApi.h"
+#include "Codegen/LLVMCApi.h"
 
 #ifdef __cplusplus
 extern "C" {

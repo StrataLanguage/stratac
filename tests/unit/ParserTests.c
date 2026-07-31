@@ -1,5 +1,5 @@
 #include "Util.h"
-#include "strata/Test.h"
+#include "Test.h"
 
 static ReturnStmt* SingleReturn(Module* m)
 {

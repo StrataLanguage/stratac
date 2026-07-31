@@ -1,4 +1,4 @@
-#include "strata/Parse/Parser.h"
+#include "Parse/Parser.h"
 
 #include <stdlib.h>
 #include <string.h>

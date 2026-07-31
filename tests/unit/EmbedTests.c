@@ -1,4 +1,4 @@
-#include "strata/Test.h"
+#include "Test.h"
 #include "strata/strata.h"
 
 #include <string.h>

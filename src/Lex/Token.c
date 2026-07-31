@@ -1,4 +1,4 @@
-#include "strata/Lex/Token.h"
+#include "Lex/Token.h"
 
 #include <string.h>
 

@@ -1,9 +1,9 @@
 #pragma once
 
-#include "strata/AST/AST.h"
-#include "strata/Core/Diagnostics.h"
-#include "strata/Core/SourceLocation.h"
-#include "strata/Core/Util.h"
+#include "AST/AST.h"
+#include "Core/Diagnostics.h"
+#include "Core/SourceLocation.h"
+#include "Core/Util.h"
 
 #include <stddef.h>
 #include <stdint.h>

@@ -1,5 +1,5 @@
 #define STRATA_TEST_MAIN
-#include "strata/Test.h"
+#include "Test.h"
 
 static TestRegistration* g_tests = NULL;
 static size_t g_testCount = 0;
