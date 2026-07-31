@@ -111,6 +111,7 @@ bool EmitNativeFile(
     LLVMDisposeTargetData(dataLayout);
 
     LLVMCodeGenFileType kind = assembly ? LLVMAssemblyFile : LLVMObjectFile;
+
     char* emitError = NULL;
     bool ok = !LLVMTargetMachineEmitToFile(targetMachine, bm->mod, path, kind, &emitError);
 
@@ -118,7 +119,7 @@ bool EmitNativeFile(
     {
         const char* msg = emitError ? emitError : "(no message)";
         int needed = snprintf(NULL, 0, "emission failed: %s", msg);
-        
+
         char* buf = (char*)malloc((size_t)needed + 1);
         snprintf(buf, (size_t)needed + 1, "emission failed: %s", msg);
 

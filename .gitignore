@@ -1,5 +1,6 @@
 # Build directories
 build/
+ethan_build/
 out/
 cmake-build-*/
 
@@ -22,5 +23,6 @@ cmake-build-*/
 # Downloaded installer kept outside the repo (not versioned)
 LLVM-*.exe
 
-
+.DS_Store
+.git/
 .vs/

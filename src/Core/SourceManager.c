@@ -5,6 +5,7 @@
 
 void SourceManagerInit(SourceManager* sm)
 {
+    *sm = (SourceManager){0};
     sm->m_text = NULL;
     sm->m_textLen = 0;
     sm->m_name = "<string>";

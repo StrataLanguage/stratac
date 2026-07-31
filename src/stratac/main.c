@@ -90,6 +90,7 @@ static char* ReplaceExt(const char* path, const char* ext)
     for (size_t i = 0; i < pathLen; i++)
     {
         char c = path[i];
+
         if (c == '/' || c == '\\')
         {
             slashPos = i;

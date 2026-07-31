@@ -62,20 +62,22 @@ typedef struct {
 
 static TypeDesc TypeDescMake(LLVMTypeRef type, bool isFloat, bool isUnsigned, bool isVoid, const char* structTypeName)
 {
-    TypeDesc td;
+    TypeDesc td = {0};
     td.type = type;
     td.isFloat = isFloat;
     td.isUnsigned = isUnsigned;
     td.isVoid = isVoid;
     td.structTypeName = structTypeName;
+
     return td;
 }
 
 static Value ValueMake(LLVMValueRef value, TypeDesc typeDesc)
 {
-    Value v;
+    Value v = {0};
     v.value = value;
     v.typeDesc = typeDesc;
+
     return v;
 }
 
@@ -299,13 +301,15 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
 
     if (!value.typeDesc.isFloat && target.isFloat)
     {
-        r = value.typeDesc.isUnsigned ? LLVMBuildUIToFP(b->m_builder, value.value, target.type, "c")
-                                      : LLVMBuildSIToFP(b->m_builder, value.value, target.type, "c");
+        r = value.typeDesc.isUnsigned
+            ? LLVMBuildUIToFP(b->m_builder, value.value, target.type, "c")
+            : LLVMBuildSIToFP(b->m_builder, value.value, target.type, "c");
     }
     else if (value.typeDesc.isFloat && !target.isFloat)
     {
-        r = target.isUnsigned ? LLVMBuildFPToUI(b->m_builder, value.value, target.type, "c")
-                              : LLVMBuildFPToSI(b->m_builder, value.value, target.type, "c");
+        r = target.isUnsigned
+            ? LLVMBuildFPToUI(b->m_builder, value.value, target.type, "c")
+            : LLVMBuildFPToSI(b->m_builder, value.value, target.type, "c");
     }
     else if (!value.typeDesc.isFloat && !target.isFloat && !target.isVoid)
     {

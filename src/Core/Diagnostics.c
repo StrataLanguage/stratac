@@ -49,6 +49,7 @@ static void DiagPushBack(DiagnosticEngine* diag, Diagnostic d)
         }
         diag->m_cap = newcap;
     }
+
     diag->m_diagnostics[diag->m_count++] = d;
 }
 
@@ -104,8 +105,11 @@ void DiagErrorFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ..
 {
     va_list args;
     va_start(args, fmt);
+
     char* msg = arena_vformat(&diag->m_arena, fmt, args);
+
     va_end(args);
+
     DiagReport(diag, SevError, range, msg ? msg : "");
 }
 
@@ -157,10 +161,12 @@ char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* src, Arena* 
                 SbPutc(&sb, '^');
 
                 size_t carets = d->range.length - 1;
+
                 if (carets > 60)
                 {
                     carets = 60;
                 }
+
                 SbPutr(&sb, '~', carets);
                 SbPutc(&sb, '\n');
             }
