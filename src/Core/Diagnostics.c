@@ -1,7 +1,7 @@
 #include "strata/Core/Diagnostics.h"
 
-#include <stdio.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 static const char* SeverityName(DiagSeverity s)
@@ -60,10 +60,10 @@ void DiagReport(DiagnosticEngine* diag, DiagSeverity severity, SourceRange range
     }
 
     DiagPushBack(diag, (Diagnostic){
-        .severity = severity,
-        .range = range,
-        .message = arena_strdup(&diag->m_arena, message),
-    });
+                           .severity = severity,
+                           .range = range,
+                           .message = arena_strdup(&diag->m_arena, message),
+                       });
 }
 
 void DiagReportFmt(DiagnosticEngine* diag, DiagSeverity severity, SourceRange range, const char* fmt, ...)
@@ -79,10 +79,10 @@ void DiagReportFmt(DiagnosticEngine* diag, DiagSeverity severity, SourceRange ra
     }
 
     DiagPushBack(diag, (Diagnostic){
-        .severity = severity,
-        .range = range,
-        .message = msg ? msg : "",
-    });
+                           .severity = severity,
+                           .range = range,
+                           .message = msg ? msg : "",
+                       });
 }
 
 void DiagError(DiagnosticEngine* diag, SourceRange range, const char* message)

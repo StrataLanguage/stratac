@@ -38,13 +38,36 @@ target_include_directories(strata PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-find_library(LLVM_C_LIB
-    NAMES LLVM-C LLVM-C.lib
-    PATHS ${LLVM_C_DIR}/lib
-    NO_DEFAULT_PATH REQUIRED)
-target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
-target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
-set(STRATA_LLVM_DLL "${LLVM_C_DIR}/bin/LLVM-C.dll" CACHE FILEPATH "Path to LLVM-C.dll")
+if(STRATA_ENABLE_LLVM)
+    find_package(LLVM REQUIRED CONFIG)
+
+    # If there is no custom path provided, use the path pulled by find_package
+    if (LLVM_C_DIR STREQUAL "")
+        get_filename_component(LLVM_C_DIR "${LLVM_DIR}/../../.." ABSOLUTE)
+    endif()
+
+    if (APPLE)
+        set (LLVM_C_LIB "${LLVM_C_DIR}/lib/libLLVM-C.dylib")
+    elseif (WIN32)
+        set (LLVM_C_LIB "${LLVM_C_DIR}/lib/LLVM-C.dll")
+    endif()
+
+    target_sources(strata PRIVATE
+        src/Codegen/LLVMCBackend.c
+        src/Codegen/LLVMModuleBuilder.c
+        src/Codegen/LLVMAot.c
+        src/Codegen/LLVMJit.c)
+
+    target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
+    target_compile_definitions(strata PUBLIC STRATA_ENABLE_LLVM)
+    target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
+
+    if (APPLE)
+        set(STRATA_LLVM_DLL "${LLVM_C_DIR}/lib/libLLVM-C.dylib" CACHE FILEPATH "Path to LLVM-C")
+    elseif (WIN32)
+        set(STRATA_LLVM_DLL "${LLVM_C_DIR}/lib/LLVM-C.dll" CACHE FILEPATH "Path to LLVM-C")
+    endif()
+endif()
 
 function(strata_stage_dll target)
     if(EXISTS "${STRATA_LLVM_DLL}")
