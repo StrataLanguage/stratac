@@ -29,25 +29,29 @@ static bool IsHexDigit(char c)
 
 static Token Make(const Lexer* lex, TokKind kind, size_t start)
 {
-    Token t;
+    Token t = {0};
     t.kind = kind;
     t.range.start = (uint32_t)start;
     t.range.length = (uint16_t)(lex->m_pos - start);
     t.range.fileId = lex->m_fileId;
+
     return t;
 }
 
 static SourceRange LexRange(const Lexer* lex, size_t pos, uint16_t len)
 {
-    SourceRange r;
+    SourceRange r = {0};
     r.start = (uint32_t)pos;
     r.length = len;
     r.fileId = lex->m_fileId;
+
     return r;
 }
 
 void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngine* diag, uint16_t fileId)
 {
+    *lex = (Lexer){0};
+
     lex->m_source = source;
     lex->m_sourceLen = sourceLen;
     lex->m_diag = diag;
@@ -131,9 +135,11 @@ Token LexerNextToken(Lexer* lex)
     if (lex->m_hasPeek)
     {
         lex->m_hasPeek = false;
+
         Token token = lex->m_peeked;
         lex->m_peeked.kind = TokEof;
         lex->m_peeked.range = SRC_INVALID;
+
         return token;
     }
 
@@ -149,6 +155,7 @@ Token LexerPeekToken(Lexer* lex)
 
     lex->m_peeked = LexTokenImpl(lex);
     lex->m_hasPeek = true;
+
     return lex->m_peeked;
 }
 
@@ -212,106 +219,139 @@ static Token LexTokenImpl(Lexer* lex)
         if (LexerPeek(lex, 0) == '-')
         {
             ++lex->m_pos;
+            
             return Make(lex, TokDec, start);
         }
+
         if (LexerPeek(lex, 0) == '>')
         {
             ++lex->m_pos;
+
             return Make(lex, TokArrow, start);
         }
+
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokMinusEq, start);
         }
+
         return Make(lex, TokMinus, start);
     case '=':
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokEqEq, start);
         }
+
         return Make(lex, TokAssign, start);
     case '!':
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokNotEq, start);
         }
+
         return Make(lex, TokBang, start);
     case '+':
         if (LexerPeek(lex, 0) == '+')
         {
             ++lex->m_pos;
+
             return Make(lex, TokInc, start);
         }
+
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokPlusEq, start);
         }
+
         return Make(lex, TokPlus, start);
     case '*':
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokStarEq, start);
         }
+
         return Make(lex, TokStar, start);
     case '/':
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokSlashEq, start);
         }
+
         return Make(lex, TokSlash, start);
     case '%':
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokPercentEq, start);
         }
+
         return Make(lex, TokPercent, start);
     case '&':
         if (LexerPeek(lex, 0) == '&')
         {
             ++lex->m_pos;
+
             return Make(lex, TokAmpAmp, start);
         }
+
         return Make(lex, TokAmp, start);
     case '|':
         if (LexerPeek(lex, 0) == '|')
         {
             ++lex->m_pos;
+
             return Make(lex, TokPipePipe, start);
         }
+
         return Make(lex, TokPipe, start);
     case '<':
         if (LexerPeek(lex, 0) == '<')
         {
             ++lex->m_pos;
+
             return Make(lex, TokShl, start);
         }
+
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokLtEq, start);
         }
+
         return Make(lex, TokLt, start);
     case '>':
         if (LexerPeek(lex, 0) == '>')
         {
             ++lex->m_pos;
+
             return Make(lex, TokShr, start);
         }
+
         if (LexerPeek(lex, 0) == '=')
         {
             ++lex->m_pos;
+
             return Make(lex, TokGtEq, start);
         }
+
         return Make(lex, TokGt, start);
     default:
         DiagErrorFmt(lex->m_diag, LexRange(lex, start, 1), "unexpected character '%c'", c);
+
         return Make(lex, TokUnknown, start);
     }
 }
@@ -366,7 +406,9 @@ static Token LexNumber(Lexer* lex)
     if (lex->m_source[lex->m_pos] == '.')
     {
         isFloat = true;
+        
         ++lex->m_pos;
+
         while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
         {
             ++lex->m_pos;
@@ -382,6 +424,7 @@ static Token LexNumber(Lexer* lex)
         if (LexerPeek(lex, 0) == '.')
         {
             isFloat = true;
+
             ++lex->m_pos;
 
             while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
@@ -394,6 +437,7 @@ static Token LexNumber(Lexer* lex)
     if (LexerPeek(lex, 0) == 'e' || LexerPeek(lex, 0) == 'E')
     {
         isFloat = true;
+
         ++lex->m_pos;
 
         if (LexerPeek(lex, 0) == '+' || LexerPeek(lex, 0) == '-')
@@ -412,6 +456,7 @@ static Token LexNumber(Lexer* lex)
     if (suffix == 'f' || suffix == 'F')
     {
         isFloat = true;
+
         ++lex->m_pos;
     }
     else if (suffix == 'u' || suffix == 'U')

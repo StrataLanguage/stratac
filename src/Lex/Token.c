@@ -31,7 +31,7 @@ static const Spelling keywords[] = {
     { TokKwFalse, "false" },
     { TokKwStruct, "struct" },
     { TokKwImport, "import" },
-    { TokKwNamespace, "namespace" },
+    { TokKwNamespace, "namespace" }
 };
 
 static const Spelling punct[] = {
@@ -73,7 +73,7 @@ static const Spelling punct[] = {
     { TokSlashEq, "/=" },
     { TokPercentEq, "%=" },
     { TokInc, "++" },
-    { TokDec, "--" },
+    { TokDec, "--" }
 };
 
 #define KEYWORD_COUNT (sizeof(keywords) / sizeof(keywords[0]))
@@ -83,12 +83,12 @@ TokKind ClassifyKeyword(Str ident)
 {
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (ident.len == strlen(keywords[i].text) &&
-            memcmp(ident.data, keywords[i].text, ident.len) == 0)
+        if (ident.len == strlen(keywords[i].text) && memcmp(ident.data, keywords[i].text, ident.len) == 0)
         {
             return keywords[i].kind;
         }
     }
+
     return TokIdent;
 }
 

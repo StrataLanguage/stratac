@@ -93,6 +93,7 @@ static size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
 {
     size_t lo = 0;
     size_t hi = count;
+
     while (lo < hi)
     {
         size_t mid = lo + (hi - lo) / 2;
@@ -105,6 +106,7 @@ static size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
             hi = mid;
         }
     }
+
     return lo;
 }
 
@@ -121,7 +123,7 @@ LineCol SourceManagerLineCol(const SourceManager* sm, uint32_t offset)
 
     return (LineCol){
         .line = lineIdx + 1,
-        .column = offset - sm->m_lineStarts[lineIdx] + 1,
+        .column = offset - sm->m_lineStarts[lineIdx] + 1
     };
 }
 

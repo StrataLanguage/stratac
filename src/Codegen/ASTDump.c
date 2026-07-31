@@ -99,6 +99,7 @@ static void Dump(Node* n, int indent, Sb* out)
     if (!n)
     {
         SbPuts(out, "(null)");
+
         return;
     }
 
@@ -182,22 +183,30 @@ static void Dump(Node* n, int indent, Sb* out)
             {
                 SbPuts(out, ", ");
             }
+            
             ParamDecl* param = (ParamDecl*)VecGet(&function_decl->params, i);
             SbPuts(out, ParamModSpelling(param->mod));
+
             if (param->mod != ModNone)
             {
                 SbPutc(out, ' ');
             }
+
             SbPrintf(out, "%s %s", param->type.name, param->name);
         }
+
         SbPutc(out, ')');
+
         if (!function_decl->body)
         {
             SbPuts(out, ";\n");
+
             return;
         }
+
         SbPutc(out, '\n');
         Dump(function_decl->body, indent + 2, out);
+        
         return;
     }
 
@@ -205,13 +214,16 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         Block* block = AsNode(Block, n);
         SbPuts(out, "{\n");
+
         for (size_t i = 0; i < block->statements.count; i++)
         {
             Node* stmt = (Node*)VecGet(&block->statements, i);
             Dump(stmt, indent + 2, out);
         }
+
         Pad(indent, out);
         SbPuts(out, "}\n");
+        
         return;
     }
 
@@ -219,31 +231,37 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         ReturnStmt* return_stmt = AsNode(ReturnStmt, n);
         SbPuts(out, "return");
+
         if (return_stmt->value)
         {
             SbPutc(out, ' ');
+
             Dump(return_stmt->value, 0, out);
         }
         else
         {
             SbPutc(out, '\n');
         }
+
         return;
     }
 
     case NodeIf:
     {
         IfStmt* i = AsNode(IfStmt, n);
+        
         SbPuts(out, "if ");
         Dump(i->condition, 0, out);
         SbPutc(out, '\n');
         Dump(i->thenBranch, indent + 2, out);
+
         if (i->elseBranch)
         {
             Pad(indent, out);
             SbPuts(out, "else\n");
             Dump(i->elseBranch, indent + 2, out);
         }
+
         return;
     }
 
@@ -254,6 +272,7 @@ static void Dump(Node* n, int indent, Sb* out)
         Dump(w->condition, 0, out);
         SbPutc(out, '\n');
         Dump(w->body, indent + 2, out);
+
         return;
     }
 
@@ -261,6 +280,7 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         ForStmt* for_stmt = AsNode(ForStmt, n);
         SbPuts(out, "for (");
+
         if (for_stmt->init)
         {
             Dump(for_stmt->init, 0, out);
@@ -269,17 +289,22 @@ static void Dump(Node* n, int indent, Sb* out)
         {
             SbPuts(out, "; ");
         }
+
         if (for_stmt->condition)
         {
             Dump(for_stmt->condition, 0, out);
         }
+
         SbPuts(out, "; ");
+        
         if (for_stmt->update)
         {
             Dump(for_stmt->update, 0, out);
         }
+        
         SbPuts(out, ")\n");
         Dump(for_stmt->body, indent + 2, out);
+        
         return;
     }
 
@@ -287,6 +312,7 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         VarDeclStmt* var_decl = AsNode(VarDeclStmt, n);
         SbPrintf(out, "%s %s", var_decl->type.name, var_decl->name);
+
         if (var_decl->init)
         {
             SbPuts(out, " = ");
@@ -296,12 +322,14 @@ static void Dump(Node* n, int indent, Sb* out)
         {
             SbPutc(out, '\n');
         }
+
         return;
     }
 
     case NodeExprStmt:
     {
         ExprStmt* expr = AsNode(ExprStmt, n);
+
         if (expr->expr)
         {
             Dump(expr->expr, 0, out);
@@ -310,6 +338,7 @@ static void Dump(Node* n, int indent, Sb* out)
         {
             SbPuts(out, ";\n");
         }
+
         return;
     }
 
@@ -324,11 +353,14 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         IntLiteral* lit = AsNode(IntLiteral, n);
         SbPrintf(out, "%llu", (unsigned long long)lit->value);
+        
         if (lit->isUnsigned)
         {
             SbPutc(out, 'u');
         }
+        
         SbPutc(out, '\n');
+
         return;
     }
 
@@ -349,6 +381,7 @@ static void Dump(Node* n, int indent, Sb* out)
         UnaryExpr* unary_expr = AsNode(UnaryExpr, n);
         SbPrintf(out, "(%s ", UnaryOpSpelling(unary_expr->op));
         Dump(unary_expr->operand, 0, out);
+
         return;
     }
 
@@ -359,6 +392,7 @@ static void Dump(Node* n, int indent, Sb* out)
         Dump(binary_expr->lhs, 0, out);
         Pad(0, out);
         Dump(binary_expr->rhs, 0, out);
+
         return;
     }
 
@@ -368,6 +402,7 @@ static void Dump(Node* n, int indent, Sb* out)
         SbPrintf(out, "(%s ", AssignOpSpelling(assign_expr->op));
         Dump(assign_expr->target, 0, out);
         Dump(assign_expr->value, 0, out);
+
         return;
     }
 
@@ -375,12 +410,14 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         CallExpr* call_expr = AsNode(CallExpr, n);
         SbPrintf(out, "(call %s", call_expr->callee);
+
         for (size_t i = 0; i < call_expr->args.count; i++)
         {
             Node* arg = (Node*)VecGet(&call_expr->args, i);
             SbPutc(out, ' ');
             Dump(arg, 0, out);
         }
+        
         return;
     }
 
@@ -389,6 +426,7 @@ static void Dump(Node* n, int indent, Sb* out)
         MemberExpr* member_expr = AsNode(MemberExpr, n);
         SbPrintf(out, "(. %s ", member_expr->member);
         Dump(member_expr->base_node, 0, out);
+
         return;
     }
 
@@ -396,10 +434,12 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         StructInitExpr* si = AsNode(StructInitExpr, n);
         SbPrintf(out, "(struct-init %s", si->typeName);
+
         for (size_t i = 0; i < si->fields.count; i++)
         {
             StructInitField* field = (StructInitField*)VecGet(&si->fields, i);
             SbPutc(out, ' ');
+
             if (field->name != NULL && field->name[0] != '\0')
             {
                 SbPrintf(out, "(.%s ", field->name);
@@ -411,6 +451,7 @@ static void Dump(Node* n, int indent, Sb* out)
                 Dump(field->value, 0, out);
             }
         }
+
         return;
     }
 
@@ -423,6 +464,7 @@ static void Dump(Node* n, int indent, Sb* out)
             inc->isPrefix ? "" : "p");
         Dump(inc->operand, 0, out);
         SbPutc(out, ')');
+
         return;
     }
 
@@ -439,12 +481,15 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         GlobalDecl* gd = AsNode(GlobalDecl, n);
         SbPrintf(out, "global %s %s", gd->type.name, gd->name);
+        
         if (gd->init)
         {
             SbPuts(out, " = ");
             Dump(gd->init, 0, out);
         }
+
         SbPuts(out, " ;\n");
+        
         return;
     }
 
@@ -461,5 +506,6 @@ char* DumpAst(const Module* mod, Arena* arena)
     Sb out;
     SbInit(&out);
     Dump((Node*)mod, 0, &out);
+
     return SbFinish(&out, arena);
 }

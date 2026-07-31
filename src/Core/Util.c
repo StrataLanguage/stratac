@@ -10,10 +10,12 @@ char* DupString(const char* s)
 {
     size_t n = strlen(s);
     char* out = (char*)malloc(n + 1);
+
     if (out)
     {
         memcpy(out, s, n + 1);
     }
+
     return out;
 }
 
@@ -22,13 +24,16 @@ char* DupString(const char* s)
 static void ArenaGrow(Arena* a, size_t need)
 {
     size_t chunk_size = a->default_chunk;
+
     if (chunk_size < need + sizeof(ArenaChunk))
     {
         chunk_size = need + sizeof(ArenaChunk);
     }
+    
     chunk_size = (chunk_size + 63) & ~(size_t)63;
 
     ArenaChunk* c = (ArenaChunk*)malloc(chunk_size);
+
     if (!c)
     {
         abort();
@@ -53,12 +58,14 @@ void arena_init(Arena* a, size_t initial_chunk)
 void arena_free(Arena* a)
 {
     ArenaChunk* c = a->head;
+
     while (c)
     {
         ArenaChunk* next = c->next;
         free(c);
         c = next;
     }
+
     a->head = NULL;
     a->ptr = NULL;
     a->end = NULL;
@@ -86,6 +93,7 @@ void* arena_alloc_aligned(Arena* a, size_t size, size_t align)
 
     char* result = a->ptr + pad;
     a->ptr = result + size;
+
     return result;
 }
 
@@ -98,6 +106,7 @@ void* arena_dup(Arena* a, const void* src, size_t size)
 {
     void* dst = arena_alloc(a, size);
     memcpy(dst, src, size);
+
     return dst;
 }
 
@@ -106,6 +115,7 @@ char* arena_strdup(Arena* a, const char* s)
     size_t n = strlen(s) + 1;
     char* dst = (char*)arena_alloc(a, n);
     memcpy(dst, s, n);
+
     return dst;
 }
 
@@ -114,6 +124,7 @@ char* arena_strndup(Arena* a, const char* s, size_t n)
     char* dst = (char*)arena_alloc(a, n + 1);
     memcpy(dst, s, n);
     dst[n] = '\0';
+
     return dst;
 }
 
@@ -121,18 +132,21 @@ char* arena_vformat(Arena* a, const char* fmt, va_list args)
 {
     va_list args2;
     va_copy(args2, args);
+
     int n = vsnprintf(NULL, 0, fmt, args);
     va_end(args);
 
     if (n < 0)
     {
         va_end(args2);
+
         return NULL;
     }
 
     char* buf = (char*)arena_alloc(a, (size_t)n + 1);
     vsnprintf(buf, (size_t)n + 1, fmt, args2);
     va_end(args2);
+
     return buf;
 }
 
@@ -142,6 +156,7 @@ char* arena_format(Arena* a, const char* fmt, ...)
     va_start(args, fmt);
     char* result = arena_vformat(a, fmt, args);
     va_end(args);
+
     return result;
 }
 
@@ -175,15 +190,19 @@ void VecReserve(Vec* v, size_t n)
     }
 
     size_t newcap = v->cap ? v->cap * 2 : 8;
+    
     while (newcap < n)
     {
         newcap *= 2;
     }
+    
     v->items = (void**)realloc(v->items, newcap * sizeof(void*));
+
     if (!v->items)
     {
         abort();
     }
+
     v->cap = newcap;
 }
 
@@ -193,6 +212,7 @@ void VecPush(Vec* v, void* item)
     {
         VecReserve(v, v->count + 1);
     }
+
     v->items[v->count++] = item;
 }
 
@@ -222,6 +242,7 @@ static void StrMapResize(StrMap* m, size_t newcap)
 {
     const char** newkeys = (const char**)calloc(newcap, sizeof(const char*));
     void** newvals = (void**)calloc(newcap, sizeof(void*));
+
     if (!newkeys || !newvals)
     {
         abort();
@@ -232,10 +253,12 @@ static void StrMapResize(StrMap* m, size_t newcap)
         if (m->keys[i])
         {
             uint64_t h = StrMapHash(m->keys[i]) & (newcap - 1);
+
             while (newkeys[h])
             {
                 h = (h + 1) & (newcap - 1);
             }
+
             newkeys[h] = m->keys[i];
             newvals[h] = m->values[i];
         }
@@ -243,6 +266,7 @@ static void StrMapResize(StrMap* m, size_t newcap)
 
     free(m->keys);
     free(m->values);
+
     m->keys = newkeys;
     m->values = newvals;
     m->cap = newcap;
@@ -261,15 +285,19 @@ void StrMapPut(StrMap* m, const char* key, void* value)
     }
 
     uint64_t h = StrMapHash(key) & (m->cap - 1);
+
     while (m->keys[h])
     {
         if (strcmp(m->keys[h], key) == 0)
         {
             m->values[h] = value;
+
             return;
         }
+
         h = (h + 1) & (m->cap - 1);
     }
+
     m->keys[h] = key;
     m->values[h] = value;
     m->count++;
@@ -283,14 +311,17 @@ void* StrMapGet(const StrMap* m, const char* key)
     }
 
     uint64_t h = StrMapHash(key) & (m->cap - 1);
+
     while (m->keys[h])
     {
         if (strcmp(m->keys[h], key) == 0)
         {
             return m->values[h];
         }
+
         h = (h + 1) & (m->cap - 1);
     }
+
     return NULL;
 }
 
@@ -306,11 +337,14 @@ static void SbEnsure(Sb* sb, size_t extra)
     {
         newcap *= 2;
     }
+
     sb->data = (char*)realloc(sb->data, newcap);
+    
     if (!sb->data)
     {
         abort();
     }
+    
     sb->cap = newcap;
 }
 

@@ -304,8 +304,7 @@ static LLVMValueRef ZeroOf(TypeDesc typeDesc)
 
 static Value ZeroInt(Builder* b)
 {
-    TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, false, false, NULL);
-    return ValueMake(LLVMConstNull(I32Ty(b)), typeDesc);
+    return ValueMake(LLVMConstNull(I32Ty(b)), TypeDescMake(I32Ty(b), false, false, false, NULL));
 }
 
 static Value Coerce(Builder* b, Value value, TypeDesc target)
@@ -349,7 +348,7 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
 static void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
-    memset(info, 0, sizeof(FuncInfo));
+    *info = (FuncInfo){0};
 
     info->returnType = Resolve(b, &f->returnType);
 
@@ -562,7 +561,7 @@ static LValue EmitLValue(Builder* b, Node* n)
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
         TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
-        LLVMValueRef idxs[2];
+        LLVMValueRef idxs[2] = {0};
         idxs[0] = IdxConst(b, 0);
         idxs[1] = IdxConst(b, (unsigned)idx);
 
