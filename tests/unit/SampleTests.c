@@ -26,7 +26,6 @@ static char* LoadSample(const char* name)
     return buf;
 }
 
-#ifdef STRATA_ENABLE_LLVM
 STRATA_TEST(sample_hello_compiles_to_llvm_ir)
 {
     char* src = LoadSample("hello.strata");
@@ -92,4 +91,3 @@ STRATA_TEST(sample_control_flow_lowers_in_llvm_backend)
     free(src);
 }
 
-#endif

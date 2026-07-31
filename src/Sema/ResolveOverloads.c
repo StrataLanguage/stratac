@@ -6,8 +6,10 @@
 
 static bool IsNumeric(const char* t)
 {
-    return strcmp(t, "int") == 0 || strcmp(t, "uint") == 0 ||
-           strcmp(t, "float") == 0 || strcmp(t, "double") == 0;
+    return strcmp(t, "int") == 0
+        || strcmp(t, "uint") == 0
+        || strcmp(t, "float") == 0
+        || strcmp(t, "double") == 0;
 }
 
 typedef struct {
@@ -23,12 +25,14 @@ static char* Mangle(Arena* arena, const FunctionDecl* f)
     Sb sb;
     SbInit(&sb);
     SbPuts(&sb, f->name);
+
     for (size_t i = 0; i < f->params.count; i++)
     {
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
         SbPutc(&sb, '$');
         SbPuts(&sb, p->type.name);
     }
+
     return SbFinish(&sb, arena);
 }
 
@@ -40,11 +44,17 @@ static bool IsDefinedStruct(const TypeRegistry* reg, const char* name)
 static int CountByName(const Module* mod, const char* name)
 {
     int count = 0;
+
     for (size_t i = 0; i < mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
-        if (strcmp(f->name, name) == 0) count++;
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
+
+        if (strcmp(functionDecl->name, name) == 0)
+        {
+            count++;
+        }
     }
+
     return count;
 }
 
@@ -80,10 +90,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     bool found = false;
+
     for (size_t i = 0; i < r->m_mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
-        if (strcmp(f->name, c->callee) == 0)
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+
+        if (strcmp(functionDecl->name, c->callee) == 0)
         {
             found = true;
             break;
@@ -97,22 +109,33 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     FunctionDecl* best = NULL;
+
     int bestScore = INT_MAX;
     bool ambiguous = false;
 
     for (size_t i = 0; i < r->m_mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
-        if (strcmp(f->name, c->callee) != 0) continue;
-        if (f->params.count != c->args.count) continue;
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        
+        if (strcmp(functionDecl->name, c->callee) != 0)
+        {
+            continue;
+        }
+
+        if (functionDecl->params.count != c->args.count)
+        {
+            continue;
+        }
 
         int score = 0;
+        
         bool viable = true;
+
         for (size_t j = 0; j < c->args.count; j++)
         {
             Node* arg = (Node*)VecGet(&c->args, j);
             const char* argType = InferType(r, arg, scope);
-            ParamDecl* param = (ParamDecl*)VecGet(&f->params, j);
+            ParamDecl* param = (ParamDecl*)VecGet(&functionDecl->params, j);
 
             if (argType[0] == '\0')
             {
@@ -129,16 +152,20 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             else
             {
                 viable = false;
+
                 break;
             }
         }
 
-        if (!viable) continue;
+        if (!viable)
+        {
+            continue;
+        }
 
         if (score < bestScore)
         {
             bestScore = score;
-            best = f;
+            best = functionDecl;
             ambiguous = false;
         }
         else if (score == bestScore && best)
@@ -165,7 +192,10 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
 static const char* InferType(Resolver* r, Node* n, StrMap* scope)
 {
-    if (!n) return "";
+    if (!n)
+    {
+        return "";
+    }
 
     switch (n->kind)
     {
@@ -178,16 +208,19 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
     case NodeIdent:
     {
         const char* t = (const char*)StrMapGet(scope, ((IdentExpr*)n)->name);
+
         return t ? t : "";
     }
     case NodeUnary:
     {
         UnaryExpr* u = (UnaryExpr*)n;
+
         return u->op == UnNot ? "bool" : InferType(r, u->operand, scope);
     }
     case NodeBinary:
     {
         BinaryExpr* b = (BinaryExpr*)n;
+
         switch (b->op)
         {
         case BinEqEq:
@@ -203,9 +236,22 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
         {
             const char* lt = InferType(r, b->lhs, scope);
             const char* rt = InferType(r, b->rhs, scope);
-            if (strcmp(lt, "double") == 0 || strcmp(rt, "double") == 0) return "double";
-            if (strcmp(lt, "float") == 0 || strcmp(rt, "float") == 0) return "float";
-            if (strcmp(lt, "uint") == 0 || strcmp(rt, "uint") == 0) return "uint";
+
+            if (strcmp(lt, "double") == 0 || strcmp(rt, "double") == 0)
+            {
+                return "double";
+            }
+
+            if (strcmp(lt, "float") == 0 || strcmp(rt, "float") == 0)
+            {
+                return "float";
+            }
+
+            if (strcmp(lt, "uint") == 0 || strcmp(rt, "uint") == 0)
+            {
+                return "uint";
+            }
+
             return "int";
         }
         }
@@ -215,28 +261,46 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
+
         const char* baseName = InferType(r, m->base_node, scope);
 
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
             DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member, baseName);
+
             return "";
         }
 
-        const StructType* st = TypeRegistryFind(&r->m_registry, baseName);
-        if (!st) return "";
+        const StructType* structType = TypeRegistryFind(&r->m_registry, baseName);
+        if (!structType)
+        {
+            return "";
+        }
 
         int idx = TypeRegistryFieldIndex(&r->m_registry, baseName, m->member);
-        if (idx < 0) return "";
+        if (idx < 0)
+        {
+            return "";
+        }
 
-        FieldDecl* fd = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
-        return fd->type.name;
+        FieldDecl* fieldDecl = (FieldDecl*)VecGet((Vec*)&structType->fields, (size_t)idx);
+
+        return fieldDecl->type.name;
     }
     case NodeCall:
     {
         CallExpr* c = (CallExpr*)n;
-        if (c->resolvedDecl) return c->resolvedDecl->returnType.name;
-        if (TypeRegistryIsUserType(&r->m_registry, c->callee)) return c->callee;
+
+        if (c->resolvedDecl)
+        {
+            return c->resolvedDecl->returnType.name;
+        }
+
+        if (TypeRegistryIsUserType(&r->m_registry, c->callee))
+        {
+            return c->callee;
+        }
+
         return "";
     }
     case NodeStructInit:
@@ -248,7 +312,10 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
 
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 {
-    if (!n) return;
+    if (!n)
+    {
+        return;
+    }
 
     switch (n->kind)
     {
@@ -259,10 +326,12 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeIdent:
     {
         IdentExpr* ident = (IdentExpr*)n;
+
         if (!StrMapGet(scope, ident->name))
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
         }
+
         return;
     }
     case NodeUnary:
@@ -271,75 +340,90 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeBinary:
     {
         BinaryExpr* b = (BinaryExpr*)n;
+
         ResolveExpr(r, b->lhs, scope);
         ResolveExpr(r, b->rhs, scope);
+
         return;
     }
     case NodeAssign:
     {
         AssignExpr* a = (AssignExpr*)n;
+
         CheckConstAssign(r, a->target, a->base.range);
+
         ResolveExpr(r, a->target, scope);
         ResolveExpr(r, a->value, scope);
+
         return;
     }
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
         ResolveExpr(r, m->base_node, scope);
+        
         const char* baseName = InferType(r, m->base_node, scope);
+
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member, baseName);
+            DiagError(r->m_diag, m->base.range, "cannot access a member of opaque an handle");
         }
+
         return;
     }
     case NodeCall:
     {
         CallExpr* c = (CallExpr*)n;
+        
         for (size_t i = 0; i < c->args.count; i++)
         {
             ResolveExpr(r, (Node*)VecGet(&c->args, i), scope);
         }
+        
         ResolveCall(r, c, scope);
+
         return;
     }
     case NodeStructInit:
     {
-        StructInitExpr* si = (StructInitExpr*)n;
-        if (!TypeRegistryIsUserType(&r->m_registry, si->typeName))
+        StructInitExpr* structInitExpr = (StructInitExpr*)n;
+
+        if (!TypeRegistryIsUserType(&r->m_registry, structInitExpr->typeName))
         {
-            DiagErrorFmt(r->m_diag, si->base.range, "'%s' is not a known struct type", si->typeName);
+            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is not a known aggregate type", structInitExpr->typeName);
         }
-        else if (TypeRegistryIsOpaque(&r->m_registry, si->typeName))
+        else if (TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
         {
-            DiagErrorFmt(r->m_diag, si->base.range, "cannot braced-initialize opaque handle '%s'", si->typeName);
+            DiagError(r->m_diag, structInitExpr->base.range, "cannot braced-initialize handles");
         }
 
         size_t positionalCount = 0;
-        const StructType* structType = TypeRegistryFind(&r->m_registry, si->typeName);
 
-        for (size_t i = 0; i < si->fields.count; i++)
+        const StructType* structType = TypeRegistryFind(&r->m_registry, structInitExpr->typeName);
+
+        for (size_t i = 0; i < structInitExpr->fields.count; i++)
         {
-            StructInitField* field = (StructInitField*)VecGet(&si->fields, i);
+            StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
             ResolveExpr(r, field->value, scope);
 
             if (field->name && field->name[0] != '\0')
             {
-                if (structType && TypeRegistryFieldIndex(&r->m_registry, si->typeName, field->name) < 0)
+                if (structType && TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name) < 0)
                 {
-                    DiagErrorFmt(r->m_diag, si->base.range, "struct '%s' has no field named '%s'", si->typeName, field->name);
+                    DiagErrorFmt(r->m_diag, structInitExpr->base.range, "struct '%s' has no field named '%s'", structInitExpr->typeName, field->name);
                 }
             }
             else
             {
                 if (structType && positionalCount >= structType->fields.count)
                 {
-                    DiagErrorFmt(r->m_diag, si->base.range, "too many initializers for struct '%s'", si->typeName);
+                    DiagErrorFmt(r->m_diag, structInitExpr->base.range, "too many initializers for struct '%s'", structInitExpr->typeName);
                 }
+
                 positionalCount++;
             }
         }
+
         return;
     }
     default:
@@ -349,16 +433,21 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 {
-    if (!n) return;
+    if (!n)
+    {
+        return;
+    }
 
     switch (n->kind)
     {
     case NodeBlock:
         WalkBlock(r, (Block*)n, scope);
         return;
+
     case NodeVarDecl:
     {
         VarDeclStmt* vd = (VarDeclStmt*)n;
+
         if (vd->type.isConst && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "const variable '%s' must be initialized", vd->name);
@@ -368,15 +457,17 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         {
             ResolveExpr(r, vd->init, scope);
             const char* initType = InferType(r, vd->init, scope);
-            if (initType[0] != '\0' && strcmp(initType, vd->type.name) != 0 &&
-                !(IsNumeric(initType) && IsNumeric(vd->type.name)))
+
+            if (initType[0] != '\0'
+                && strcmp(initType, vd->type.name) != 0
+                && !(IsNumeric(initType) && IsNumeric(vd->type.name)))
             {
-                DiagErrorFmt(r->m_diag, vd->base.range, "cannot initialize '%s' with a value of type '%s'",
-                             vd->type.name, initType);
+                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
             }
         }
 
         StrMapPut(scope, vd->name, (void*)vd->type.name);
+
         return;
     }
     case NodeExprStmt:
@@ -385,7 +476,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     case NodeReturn:
     {
         ReturnStmt* rs = (ReturnStmt*)n;
-        if (rs->value) ResolveExpr(r, rs->value, scope);
+        if (rs->value)
+        {
+            ResolveExpr(r, rs->value, scope);
+        }
+
         return;
     }
     case NodeIf:
@@ -393,7 +488,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         IfStmt* i = (IfStmt*)n;
         ResolveExpr(r, i->condition, scope);
         WalkStmt(r, i->thenBranch, scope);
-        if (i->elseBranch) WalkStmt(r, i->elseBranch, scope);
+
+        if (i->elseBranch)
+        {
+            WalkStmt(r, i->elseBranch, scope);
+        }
+
         return;
     }
     case NodeWhile:
@@ -401,11 +501,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         WhileStmt* w = (WhileStmt*)n;
         ResolveExpr(r, w->condition, scope);
         WalkStmt(r, w->body, scope);
+
         return;
     }
     case NodeFor:
     {
         ForStmt* fs = (ForStmt*)n;
+
         if (fs->init)
         {
             if (fs->init->kind == NodeVarDecl)
@@ -417,9 +519,19 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 ResolveExpr(r, fs->init, scope);
             }
         }
-        if (fs->condition) ResolveExpr(r, fs->condition, scope);
-        if (fs->update) ResolveExpr(r, fs->update, scope);
+
+        if (fs->condition)
+        {
+            ResolveExpr(r, fs->condition, scope);
+        }
+
+        if (fs->update)
+        {
+            ResolveExpr(r, fs->update, scope);
+        }
+        
         WalkStmt(r, fs->body, scope);
+
         return;
     }
     default:
@@ -437,12 +549,14 @@ static void WalkBlock(Resolver* r, Block* b, StrMap* scope)
 
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
-    Resolver r;
+    Resolver r = {0};
     r.m_mod = mod;
     r.m_diag = diag;
     r.m_arena = arena;
+
     TypeRegistryInit(&r.m_registry);
     TypeRegistryBuild(&r.m_registry, mod);
+
     StrMapInit(&r.m_constVars);
 
     StrMap byMangled;
@@ -450,27 +564,32 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
-        bool overloaded = CountByName(mod, f->name) > 1;
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
+        bool overloaded = CountByName(mod, functionDecl->name) > 1;
 
-        if (overloaded && f->isExtern)
+        if (overloaded && functionDecl->isExtern)
         {
-            DiagErrorFmt(diag, f->base.range, "extern function '%s' cannot be overloaded", f->name);
+            DiagErrorFmt(diag, functionDecl->base.range, "extern function '%s' cannot be overloaded", functionDecl->name);
         }
 
-        f->mangledName = overloaded ? Mangle(arena, f) : f->name;
+        functionDecl->mangledName = overloaded ? Mangle(arena, functionDecl) : functionDecl->name;
 
-        if (StrMapGet(&byMangled, f->mangledName))
+        if (StrMapGet(&byMangled, functionDecl->mangledName))
         {
-            DiagErrorFmt(diag, f->base.range, "duplicate function signature for '%s'", f->name);
+            DiagErrorFmt(diag, functionDecl->base.range, "duplicate function signature for '%s'", functionDecl->name);
         }
-        StrMapPut(&byMangled, f->mangledName, f);
+
+        StrMapPut(&byMangled, functionDecl->mangledName, functionDecl);
     }
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
-        if (!f->body) continue;
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
+
+        if (!functionDecl->body)
+        {
+            continue;
+        }
 
         StrMap scope;
         StrMapInit(&scope);
@@ -481,35 +600,37 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             r.m_constVars.count = 0;
         }
 
-        for (size_t j = 0; j < f->params.count; j++)
+        for (size_t j = 0; j < functionDecl->params.count; j++)
         {
-            ParamDecl* p = (ParamDecl*)VecGet(&f->params, j);
+            ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
             StrMapPut(&scope, p->name, (void*)p->type.name);
+
             if (p->mod == ModIn)
             {
                 StrMapPut(&r.m_constVars, p->name, (void*)1);
             }
         }
 
-        WalkBlock(&r, (Block*)f->body, &scope);
+        WalkBlock(&r, (Block*)functionDecl->body, &scope);
     }
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
 
-        for (size_t j = 0; j < f->params.count; j++)
+        for (size_t j = 0; j < functionDecl->params.count; j++)
         {
-            ParamDecl* p = (ParamDecl*)VecGet(&f->params, j);
+            ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
+
             if (IsDefinedStruct(&r.m_registry, p->type.name) && p->mod == ModNone)
             {
                 DiagErrorFmt(diag, p->base.range, "struct parameter '%s' must be passed by reference via in/out/inout", p->name);
             }
         }
 
-        if (f->isExtern && IsDefinedStruct(&r.m_registry, f->returnType.name))
+        if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))
         {
-            DiagError(diag, f->base.range, "extern function cannot return a struct by value; use an in/out/inout qualifier on parameter");
+            DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
     }
 }

@@ -7,6 +7,7 @@ static SourceRange SpanFrom(Token begin, Token end)
 {
     uint32_t s = begin.range.start;
     uint32_t e = SourceRangeEnd(end.range);
+
     return (SourceRange){s, (uint16_t)(e > s ? e - s : 0)};
 }
 
@@ -14,25 +15,25 @@ static bool BinaryInfo(TokKind k, int* prec, BinaryOp* op)
 {
     switch (k)
     {
-    case TokPipePipe: *prec = 1;  *op = BinLogicOr;  return true;
-    case TokAmpAmp:   *prec = 2;  *op = BinLogicAnd; return true;
-    case TokPipe:     *prec = 3;  *op = BinBitOr;    return true;
-    case TokCaret:    *prec = 4;  *op = BinBitXor;   return true;
-    case TokAmp:      *prec = 5;  *op = BinBitAnd;   return true;
-    case TokEqEq:     *prec = 6;  *op = BinEqEq;     return true;
-    case TokNotEq:    *prec = 6;  *op = BinNotEq;    return true;
-    case TokLt:       *prec = 7;  *op = BinLt;       return true;
-    case TokLtEq:     *prec = 7;  *op = BinLtEq;     return true;
-    case TokGt:       *prec = 7;  *op = BinGt;       return true;
-    case TokGtEq:     *prec = 7;  *op = BinGtEq;     return true;
-    case TokShl:      *prec = 8;  *op = BinShl;      return true;
-    case TokShr:      *prec = 8;  *op = BinShr;      return true;
-    case TokPlus:     *prec = 9;  *op = BinAdd;      return true;
-    case TokMinus:    *prec = 9;  *op = BinSub;      return true;
-    case TokStar:     *prec = 10; *op = BinMul;      return true;
-    case TokSlash:    *prec = 10; *op = BinDiv;      return true;
-    case TokPercent:  *prec = 10; *op = BinMod;      return true;
-    default: return false;
+    case TokPipePipe: *prec = 1;  *op = BinLogicOr;     return true;
+    case TokAmpAmp:   *prec = 2;  *op = BinLogicAnd;    return true;
+    case TokPipe:     *prec = 3;  *op = BinBitOr;       return true;
+    case TokCaret:    *prec = 4;  *op = BinBitXor;      return true;
+    case TokAmp:      *prec = 5;  *op = BinBitAnd;      return true;
+    case TokEqEq:     *prec = 6;  *op = BinEqEq;        return true;
+    case TokNotEq:    *prec = 6;  *op = BinNotEq;       return true;
+    case TokLt:       *prec = 7;  *op = BinLt;          return true;
+    case TokLtEq:     *prec = 7;  *op = BinLtEq;        return true;
+    case TokGt:       *prec = 7;  *op = BinGt;          return true;
+    case TokGtEq:     *prec = 7;  *op = BinGtEq;        return true;
+    case TokShl:      *prec = 8;  *op = BinShl;         return true;
+    case TokShr:      *prec = 8;  *op = BinShr;         return true;
+    case TokPlus:     *prec = 9;  *op = BinAdd;         return true;
+    case TokMinus:    *prec = 9;  *op = BinSub;         return true;
+    case TokStar:     *prec = 10; *op = BinMul;         return true;
+    case TokSlash:    *prec = 10; *op = BinDiv;         return true;
+    case TokPercent:  *prec = 10; *op = BinMod;         return true;
+    default:                                            return false;
     }
 }
 
@@ -40,20 +41,24 @@ static AssignOp MapAssign(TokKind k)
 {
     switch (k)
     {
-    case TokAssign:   return AssignSet;
-    case TokPlusEq:   return AssignAdd;
-    case TokMinusEq:  return AssignSub;
-    case TokStarEq:   return AssignMul;
-    case TokSlashEq:  return AssignDiv;
-    case TokPercentEq: return AssignMod;
-    default: return AssignSet;
+    case TokAssign:     return AssignSet;
+    case TokPlusEq:     return AssignAdd;
+    case TokMinusEq:    return AssignSub;
+    case TokStarEq:     return AssignMul;
+    case TokSlashEq:    return AssignDiv;
+    case TokPercentEq:  return AssignMod;
+    default:            return AssignSet;
     }
 }
 
 static bool IsAssignOp(TokKind k)
 {
-    return k == TokAssign || k == TokPlusEq || k == TokMinusEq ||
-           k == TokStarEq || k == TokSlashEq || k == TokPercentEq;
+    return k == TokAssign
+        || k == TokPlusEq
+        || k == TokMinusEq
+        || k == TokStarEq
+        || k == TokSlashEq
+        || k == TokPercentEq;
 }
 
 static char* ToOwned(Arena* arena, Str s)
@@ -73,12 +78,18 @@ void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, con
 Str ParserIdentText(const Parser* p, Token t)
 {
     Str src = LexerSourceText(p->m_lex);
+
     if (t.range.start >= src.len)
     {
         return STR_EMPTY;
     }
+
     uint32_t end = SourceRangeEnd(t.range);
-    if (end > (uint32_t)src.len) end = (uint32_t)src.len;
+    if (end > (uint32_t)src.len)
+    {
+        end = (uint32_t)src.len;
+    }
+
     return (Str){src.data + t.range.start, end - t.range.start};
 }
 
@@ -92,8 +103,10 @@ bool ParserConsume(Parser* p, TokKind k)
     if (p->m_cur.kind == k)
     {
         Advance(p);
+
         return true;
     }
+
     return false;
 }
 
@@ -103,12 +116,13 @@ Token ParserExpect(Parser* p, TokKind k, const char* what)
     {
         Token token = p->m_cur;
         Advance(p);
+
         return token;
     }
 
     DiagErrorFmt(p->m_diag, p->m_cur.range, "expected %s but found '%s'", what, TokSpelling(p->m_cur.kind));
-    Token empty = {TokEof, SRC_INVALID};
-    return empty;
+
+    return (Token){TokEof, SRC_INVALID};
 }
 
 static void Synchronize(Parser* p)
@@ -120,10 +134,12 @@ static void Synchronize(Parser* p)
             Advance(p);
             return;
         }
+
         if (p->m_cur.kind == TokRBrace)
         {
             return;
         }
+
         Advance(p);
     }
 }
@@ -179,6 +195,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         {
             DiagError(p->m_diag, constRange, "'const' must be followed by a type");
         }
+
         return false;
     }
 
@@ -187,6 +204,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->name = (char*)name;
     out->range = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start)};
     out->isConst = isConst;
+
     return true;
 }
 
@@ -194,7 +212,7 @@ static HandleDecl* ParseHandleDecl(Parser* p)
 {
     if (!ParserConsume(p, TokKwHandle))
     {
-        DiagError(p->m_diag, p->m_cur.range, "expected 'handle'");
+        DiagError(p->m_diag, p->m_cur.range, "expected 'handle' keyword");
         return NULL;
     }
 
@@ -214,11 +232,12 @@ static HandleDecl* ParseHandleDecl(Parser* p)
 
     if (ParserConsume(p, TokLBrace))
     {
-        DiagErrorFmt(p->m_diag, nameTok.range, "handle '%s' cannot have a body (it is opaque; use 'struct' for a value type)", node->name);
+        DiagError(p->m_diag, nameTok.range, "opaque handles cannot have a body");
         Synchronize(p);
     }
 
     ParserExpect(p, TokSemicolon, "';'");
+
     return node;
 }
 
@@ -271,7 +290,11 @@ static StructDecl* ParseStructDecl(Parser* p)
             VecPush(&node->fields, field);
 
             Token semi = ParserExpect(p, TokSemicolon, "';'");
-            if (semi.kind != TokSemicolon) break;
+
+            if (semi.kind != TokSemicolon)
+            {
+                break;
+            }
         }
 
         ParserExpect(p, TokRBrace, "'}'");
@@ -282,6 +305,7 @@ static StructDecl* ParseStructDecl(Parser* p)
     }
 
     ParserExpect(p, TokSemicolon, "';'");
+
     return node;
 }
 
@@ -290,11 +314,21 @@ static ParamDecl* ParseParam(Parser* p)
     SourceRange start = p->m_cur.range;
     ParamMod mod = ModNone;
 
-    if (ParserConsume(p, TokKwIn)) mod = ModIn;
-    else if (ParserConsume(p, TokKwOut)) mod = ModOut;
-    else if (ParserConsume(p, TokKwInout)) mod = ModInOut;
+    if (ParserConsume(p, TokKwIn))
+    {
+        mod = ModIn;
+    }
+    else if (ParserConsume(p, TokKwOut))
+    {
+        mod = ModOut;
+    }
+    else if (ParserConsume(p, TokKwInout))
+    {
+        mod = ModInOut;
+    }
 
     TypeName type = {0};
+
     if (!ParserTryParseType(p, &type))
     {
         DiagError(p->m_diag, p->m_cur.range, "expected a parameter type");
@@ -316,6 +350,7 @@ static ParamDecl* ParseParam(Parser* p)
     node->mod = mod;
     node->type = type;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+
     return node;
 }
 
@@ -340,12 +375,14 @@ static FunctionDecl* ParseFunction(Parser* p)
         {
             DiagError(p->m_diag, p->m_cur.range, "expected a type to declare a function");
         }
+
         return NULL;
     }
 
     if (p->m_cur.kind != TokIdent)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected a function name");
+
         return NULL;
     }
 
@@ -371,6 +408,7 @@ static FunctionDecl* ParseFunction(Parser* p)
         while (true)
         {
             ParamDecl* param = ParseParam(p);
+
             if (param)
             {
                 VecPush(&node->params, param);
@@ -380,7 +418,11 @@ static FunctionDecl* ParseFunction(Parser* p)
                 break;
             }
 
-            if (ParserConsume(p, TokComma)) continue;
+            if (ParserConsume(p, TokComma))
+            {
+                continue;
+            }
+
             break;
         }
     }
@@ -395,21 +437,25 @@ static FunctionDecl* ParseFunction(Parser* p)
     if (isExtern)
     {
         DiagError(p->m_diag, p->m_cur.range, "extern function cannot have a body");
+
         if (p->m_cur.kind == TokLBrace)
         {
             Advance(p);
             Synchronize(p);
         }
+
         return node;
     }
 
     if (p->m_cur.kind != TokLBrace)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected function body '{...}' or ';'");
+
         return node;
     }
 
     node->body = ParseBlock(p);
+
     return node;
 }
 
@@ -434,22 +480,42 @@ Module* ParserParseModule(Parser* p)
         if (p->m_cur.kind == TokKwHandle)
         {
             HandleDecl* hd = ParseHandleDecl(p);
-            if (hd) VecPush(&mod->handles, hd);
-            else Synchronize(p);
+            if (hd)
+            {
+                VecPush(&mod->handles, hd);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
             continue;
         }
 
         if (p->m_cur.kind == TokKwStruct)
         {
             StructDecl* sd = ParseStructDecl(p);
-            if (sd) VecPush(&mod->structs, sd);
-            else Synchronize(p);
+            if (sd)
+            {
+                VecPush(&mod->structs, sd);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
             continue;
         }
 
         FunctionDecl* fd = ParseFunction(p);
-        if (fd) VecPush(&mod->functions, fd);
-        else Synchronize(p);
+        if (fd)
+        {
+            VecPush(&mod->functions, fd);
+        }
+        else
+        {
+            Synchronize(p);
+        }
     }
 
     return mod;
@@ -467,11 +533,19 @@ static Node* ParseBlock(Parser* p)
     while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
     {
         Node* stmt = ParseStatement(p);
-        if (stmt) VecPush(&block->statements, stmt);
-        else Synchronize(p);
+
+        if (stmt)
+        {
+            VecPush(&block->statements, stmt);
+        }
+        else
+        {
+            Synchronize(p);
+        }
     }
 
     ParserExpect(p, TokRBrace, "'}'");
+
     return (Node*)block;
 }
 
@@ -498,31 +572,40 @@ static Node* ParseStatement(Parser* p)
     case TokKwBreak:
     {
         Token token = p->m_cur;
+
         Advance(p);
         ParserExpect(p, TokSemicolon, "';'");
+
         BreakStmt* node = AST_NEW(p->m_arena, BreakStmt);
         node->base.kind = NodeBreak;
         node->base.range = token.range;
+
         return (Node*)node;
     }
     case TokKwContinue:
     {
         Token token = p->m_cur;
+
         Advance(p);
         ParserExpect(p, TokSemicolon, "';'");
+
         ContinueStmt* node = AST_NEW(p->m_arena, ContinueStmt);
         node->base.kind = NodeContinue;
         node->base.range = token.range;
+
         return (Node*)node;
     }
     case TokSemicolon:
     {
         Token token = p->m_cur;
+
         Advance(p);
+
         ExprStmt* node = AST_NEW(p->m_arena, ExprStmt);
         node->base.kind = NodeExprStmt;
         node->base.range = token.range;
         node->expr = NULL;
+
         return (Node*)node;
     }
     default:
@@ -537,7 +620,11 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
     if (LooksLikeVarDecl(p))
     {
         TypeName type = {0};
-        if (!ParserTryParseType(p, &type)) return NULL;
+
+        if (!ParserTryParseType(p, &type))
+        {
+            return NULL;
+        }
 
         if (p->m_cur.kind != TokIdent)
         {
@@ -567,11 +654,16 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         }
 
         ParserExpect(p, TokSemicolon, "';'");
+
         return (Node*)node;
     }
 
     Node* e = ParseExpr(p);
-    if (!e) return NULL;
+
+    if (!e)
+    {
+        return NULL;
+    }
 
     ParserExpect(p, TokSemicolon, "';'");
 
@@ -579,6 +671,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
     node->base.kind = NodeExprStmt;
     node->base.range = start.range;
     node->expr = e;
+
     return (Node*)node;
 }
 
@@ -597,6 +690,7 @@ static Node* ParseReturn(Parser* p)
     }
 
     ParserExpect(p, TokSemicolon, "';'");
+
     return (Node*)node;
 }
 
@@ -646,7 +740,10 @@ static Node* ParseFor(Parser* p)
     Token token = p->m_cur;
     Advance(p);
 
-    if (ParserExpect(p, TokLParen, "'('").kind != TokLParen) return NULL;
+    if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
+    {
+        return NULL;
+    }
 
     Node* init = NULL;
 
@@ -655,7 +752,11 @@ static Node* ParseFor(Parser* p)
         if (LooksLikeVarDecl(p))
         {
             TypeName type = {0};
-            if (!ParserTryParseType(p, &type)) return NULL;
+
+            if (!ParserTryParseType(p, &type))
+            {
+                return NULL;
+            }
 
             if (p->m_cur.kind != TokIdent)
             {
@@ -726,16 +827,19 @@ static Node* ParseAssign(Parser* p)
     if (IsAssignOp(p->m_cur.kind))
     {
         AssignOp op = MapAssign(p->m_cur.kind);
-        Token opTok = p->m_cur;
+
+        Token opToken = p->m_cur;
         Advance(p);
+
         Node* rhs = ParseAssign(p);
 
         AssignExpr* node = AST_NEW(p->m_arena, AssignExpr);
         node->base.kind = NodeAssign;
-        node->base.range = opTok.range;
+        node->base.range = opToken.range;
         node->op = op;
         node->target = lhs;
         node->value = rhs;
+
         return (Node*)node;
     }
 
@@ -751,8 +855,15 @@ static Node* ParseBinary(Parser* p, int minPrec)
         int prec = 0;
         BinaryOp op;
 
-        if (!BinaryInfo(p->m_cur.kind, &prec, &op)) break;
-        if (prec < minPrec) break;
+        if (!BinaryInfo(p->m_cur.kind, &prec, &op))
+        {
+            break;
+        }
+
+        if (prec < minPrec)
+        {
+            break;
+        }
 
         Advance(p);
 
@@ -764,6 +875,7 @@ static Node* ParseBinary(Parser* p, int minPrec)
         node->op = op;
         node->lhs = lhs;
         node->rhs = rhs;
+
         lhs = (Node*)node;
     }
 
@@ -776,24 +888,29 @@ static Node* ParseUnary(Parser* p)
 
     switch (p->m_cur.kind)
     {
-    case TokMinus: op = UnNeg;    break;
-    case TokPlus:  op = UnPos;    break;
-    case TokBang:  op = UnNot;    break;
-    case TokTilde: op = UnBitNot; break;
-    default:       return ParsePostfix(p);
+    case TokMinus: op = UnNeg;      break;
+    case TokPlus:  op = UnPos;      break;
+    case TokBang:  op = UnNot;      break;
+    case TokTilde: op = UnBitNot;   break;
+    default:                        return ParsePostfix(p);
     }
 
     Token token = p->m_cur;
     Advance(p);
 
     Node* operand = ParseUnary(p);
-    if (!operand) return NULL;
+
+    if (!operand)
+    {
+        return NULL;
+    }
 
     UnaryExpr* node = AST_NEW(p->m_arena, UnaryExpr);
     node->base.kind = NodeUnary;
     node->base.range = token.range;
     node->op = op;
     node->operand = operand;
+
     return (Node*)node;
 }
 
@@ -820,6 +937,7 @@ static Node* ParsePostfix(Parser* p)
         node->base.range = SpanFrom(dot, memberTok);
         node->base_node = e;
         node->member = ToOwned(p->m_arena, ParserIdentText(p, memberTok));
+
         e = (Node*)node;
     }
 
@@ -843,29 +961,40 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
         if (p->m_cur.kind == TokDot)
         {
             Advance(p);
+
             if (p->m_cur.kind != TokIdent)
             {
                 DiagError(p->m_diag, p->m_cur.range, "expected a field name after '.'");
                 break;
             }
 
-            Token fieldTok = p->m_cur;
+            Token fieldToken = p->m_cur;
             Advance(p);
-            field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldTok));
+
+            field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldToken));
+
             ParserExpect(p, TokAssign, "'='");
         }
 
         field->value = ParseExpr(p);
         VecPush(&init->fields, field);
 
-        if (ParserConsume(p, TokComma)) continue;
+        if (ParserConsume(p, TokComma))
+        {
+            continue;
+        }
 
-        if (p->m_cur.kind == TokRBrace || p->m_cur.kind == TokEof) break;
+        if (p->m_cur.kind == TokRBrace || p->m_cur.kind == TokEof)
+        {
+            break;
+        }
 
         DiagError(p->m_diag, p->m_cur.range, "expected ',' or '}' in braced initializer");
 
-        while (p->m_cur.kind != TokComma && p->m_cur.kind != TokDot &&
-               p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+        while (p->m_cur.kind != TokComma
+            && p->m_cur.kind != TokDot
+            && p->m_cur.kind != TokRBrace
+            && p->m_cur.kind != TokEof)
         {
             Advance(p);
         }
@@ -890,8 +1019,13 @@ static Node* ParsePrimary(Parser* p)
         Advance(p);
 
         Str sv = ParserIdentText(p, token);
+
         bool isUnsigned = sv.len > 0 && (sv.data[sv.len - 1] == 'u' || sv.data[sv.len - 1] == 'U');
-        if (isUnsigned) sv.len--;
+
+        if (isUnsigned)
+        {
+            sv.len--;
+        }
 
         int base = 10;
         if (sv.len >= 2 && sv.data[0] == '0' && (sv.data[1] == 'x' || sv.data[1] == 'X'))
@@ -911,6 +1045,7 @@ static Node* ParsePrimary(Parser* p)
         node->base.range = token.range;
         node->value = val;
         node->isUnsigned = isUnsigned;
+
         return (Node*)node;
     }
 
@@ -919,8 +1054,8 @@ static Node* ParsePrimary(Parser* p)
         Advance(p);
 
         Str sv = ParserIdentText(p, token);
-        if (sv.len > 0 && (sv.data[sv.len - 1] == 'f' || sv.data[sv.len - 1] == 'F' ||
-                           sv.data[sv.len - 1] == 'h' || sv.data[sv.len - 1] == 'H'))
+
+        if (sv.len > 0 && (sv.data[sv.len - 1] == 'f' || sv.data[sv.len - 1] == 'F'))
         {
             sv.len--;
         }
@@ -936,6 +1071,7 @@ static Node* ParsePrimary(Parser* p)
         node->base.kind = NodeFloatLiteral;
         node->base.range = token.range;
         node->value = val;
+
         return (Node*)node;
     }
 
@@ -950,6 +1086,7 @@ static Node* ParsePrimary(Parser* p)
         node->base.kind = NodeBoolLiteral;
         node->base.range = token.range;
         node->value = val;
+
         return (Node*)node;
     }
 
@@ -972,19 +1109,30 @@ static Node* ParsePrimary(Parser* p)
                 while (true)
                 {
                     Node* arg = ParseExpr(p);
-                    if (arg) VecPush(&call->args, arg);
-                    if (ParserConsume(p, TokComma)) continue;
+
+                    if (arg)
+                    {
+                        VecPush(&call->args, arg);
+                    }
+
+                    if (ParserConsume(p, TokComma))
+                    {
+                        continue;
+                    }
+
                     break;
                 }
             }
 
             ParserExpect(p, TokRParen, "')'");
+
             return (Node*)call;
         }
 
         if (p->m_cur.kind == TokLBrace)
         {
             Str name = ParserIdentText(p, token);
+
             return ParseStructInitBody(p, token, ToOwned(p->m_arena, name));
         }
 
@@ -992,14 +1140,17 @@ static Node* ParsePrimary(Parser* p)
         node->base.kind = NodeIdent;
         node->base.range = token.range;
         node->name = ToOwned(p->m_arena, ParserIdentText(p, token));
+
         return (Node*)node;
     }
 
     case TokLParen:
     {
         Advance(p);
+
         Node* e = ParseExpr(p);
         ParserExpect(p, TokRParen, "')'");
+
         return e;
     }
 

@@ -13,7 +13,8 @@ extern int rand_next();
 extern int clamp_int(int value, int lo, int hi);
 
 // A seeded "lucky number" clamped to [0, 99].
-int lucky_number(int seed) {
+int lucky_number(int seed)
+{
     rand_seed(seed);
     int r = rand_next();
     return clamp_int(r, 0, 99);

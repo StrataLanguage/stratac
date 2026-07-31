@@ -1,4 +1,3 @@
-#ifdef STRATA_ENABLE_LLVM
 #include "Codegen/LLVMModuleBuilder.h"
 #include "strata/Codegen/CodegenBackend.h"
 #include "strata/Codegen/LLVMCApi.h"
@@ -9,8 +8,8 @@
 
 CodegenResult GenerateLlvmIr(const Module* mod)
 {
-    CodegenResult res;
-    memset(&res, 0, sizeof(res));
+    CodegenResult res = {0};
+
     res.moduleName = mod ? mod->name : NULL;
 
     DiagnosticEngine diag;
@@ -23,6 +22,7 @@ CodegenResult GenerateLlvmIr(const Module* mod)
         Sb sb;
         SbInit(&sb);
         SbPuts(&sb, "; LLVM back-end errors:\n");
+
         for (size_t i = 0; i < diag.m_count; i++)
         {
             SbPrintf(&sb, ";   %s\n", diag.m_diagnostics[i].message);
@@ -30,8 +30,10 @@ CodegenResult GenerateLlvmIr(const Module* mod)
 
         res.output = SbFinish(&sb, scratch_arena());
         res.ok = false;
+        
         DiagnosticEngineFree(&diag);
         BuiltModuleDispose(&bm);
+
         return res;
     }
 
@@ -42,7 +44,6 @@ CodegenResult GenerateLlvmIr(const Module* mod)
     LLVMDisposeMessage(ir);
     DiagnosticEngineFree(&diag);
     BuiltModuleDispose(&bm);
+
     return res;
 }
-
-#endif

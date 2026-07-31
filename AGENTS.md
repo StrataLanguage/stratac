@@ -2,14 +2,6 @@
 
 Commands and conventions for any agent (or human) editing the Strata compiler.
 
-## Toolchain (this machine)
-
-- Host is **x86_64** Windows. C++ compiler: **MinGW GCC 16** (`g++`, on PATH).
-- Generators: **CMake 4.2** + **Ninja**.
-- **Do not** use the LLVM at `C:\llvm` — it is **ARM64** and will not run here.
-  The working x64 LLVM path is set as `LLVM_C_DIR` in `CMakePresets.json`
-  (provides `clang`, `LLVM-C.dll`, `LLVM-C.lib`).
-
 ## Build / test
 
 ```sh

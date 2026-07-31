@@ -6,12 +6,14 @@
 // lowered yet, so this is a structural preview rather than a runnable program.
 //   stratac --ast vectors.strata
 
-struct Material {
+struct Material
+{
     float4 color;        // RGBA
     float3 emission;     // light output
 };
 
-struct Light {
+struct Light
+{
     int      id;
     float3   position;
     Material material;

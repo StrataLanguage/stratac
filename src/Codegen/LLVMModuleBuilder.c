@@ -81,9 +81,9 @@ static Value ValueMake(LLVMValueRef value, TypeDesc typeDesc)
 
 static TypeName MakeTypeName(char* name)
 {
-    TypeName tn;
-    memset(&tn, 0, sizeof(tn));
+    TypeName tn = {0};
     tn.name = name;
+
     return tn;
 }
 
@@ -95,6 +95,7 @@ static void StrMapClear(StrMap* m)
         {
             m->keys[i] = NULL;
         }
+
         m->count = 0;
     }
 }
@@ -141,12 +142,12 @@ static LLVMIntPredicate PredNameToPredicate(const char* p, bool uns)
 {
     if (strcmp(p, "eq") == 0)
     {
-        return uns ? LLVMIntEQ : LLVMIntEQ;
+        return LLVMIntEQ;
     }
 
     if (strcmp(p, "ne") == 0)
     {
-        return uns ? LLVMIntNE : LLVMIntNE;
+        return LLVMIntNE;
     }
 
     if (strcmp(p, "lt") == 0)
@@ -180,6 +181,7 @@ static LLVMRealPredicate RealPredNameToPredicate(const char* p)
     if (strcmp(p, "olt") == 0) return LLVMRealOLT;
     if (strcmp(p, "ole") == 0) return LLVMRealOLE;
     if (strcmp(p, "one") == 0) return LLVMRealONE;
+
     return LLVMRealOEQ;
 }
 
@@ -339,9 +341,12 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     for (size_t i = 0; i < pcount; i++)
     {
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
+
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
+
         bool byPtr = p->mod != ModNone || structVal;
         info->paramByPtr[i] = byPtr;
+
         params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
     }
 
@@ -350,9 +355,12 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     if (b->m_jitMode && f->isExtern)
     {
         char* slotName = arena_format(b->m_arena, "__strata_ext_%s", f->name);
+
         LLVMValueRef slot = LLVMAddGlobal(b->m_mod, b->m_ptrTy, slotName);
         LLVMSetInitializer(slot, LLVMConstNull(b->m_ptrTy));
+
         StrMapPut(&b->m_externSlots, f->name, (void*)slot);
+
         info->function = NULL;
     }
     else
@@ -400,6 +408,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         {
             LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, typeDesc.type, "arg");
             LLVMBuildStore(b->m_builder, LLVMGetParam(b->m_curFn, (unsigned)i), slot);
+
             sym->value = slot;
             sym->typeDesc = typeDesc;
         }
@@ -469,8 +478,7 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
 
 static LValue EmitLValue(Builder* b, Node* n)
 {
-    LValue none;
-    memset(&none, 0, sizeof(none));
+    LValue none = {0};
 
     if (!n)
     {
@@ -511,17 +519,20 @@ static LValue EmitLValue(Builder* b, Node* n)
         }
 
         const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.structTypeName);
-        FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
-        TypeDesc fieldTypeDesc = Resolve(b, &fd->type);
+
+        FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
+        TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
         LLVMValueRef idxs[2];
         idxs[0] = IdxConst(b, 0);
         idxs[1] = IdxConst(b, (unsigned)idx);
+
         LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, base.typeDesc.type, base.ptr, idxs, 2, "f");
 
         none.valid = true;
         none.ptr = ptr;
         none.typeDesc = fieldTypeDesc;
+
         return none;
     }
 
@@ -535,6 +546,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     if (lvalue.valid)
     {
         LLVMValueRef v = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "m");
+
         return ValueMake(v, lvalue.typeDesc);
     }
 
@@ -547,9 +559,12 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         if (idx >= 0)
         {
             const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.structTypeName);
-            FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
-            TypeDesc fieldTypeDesc = Resolve(b, &fd->type);
+
+            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
+            TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
+
             LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, (unsigned)idx, "m");
+
             return ValueMake(v, fieldTypeDesc);
         }
     }
@@ -573,21 +588,25 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
     case UnNeg:
     {
-        LLVMValueRef r = e.typeDesc.isFloat ? LLVMBuildFNeg(b->m_builder, e.value, "neg")
-                                            : LLVMBuildNeg(b->m_builder, e.value, "neg");
-        return ValueMake(r, e.typeDesc);
+        LLVMValueRef ref = e.typeDesc.isFloat
+            ? LLVMBuildFNeg(b->m_builder, e.value, "neg")
+            : LLVMBuildNeg(b->m_builder, e.value, "neg");
+
+        return ValueMake(ref, e.typeDesc);
     }
 
     case UnNot:
     {
-        LLVMValueRef r = LLVMBuildXor(b->m_builder, e.value, LLVMConstInt(I1Ty(b), 1, 0), "not");
-        return ValueMake(r, TypeDescMake(I1Ty(b), false, false, false, NULL));
+        LLVMValueRef ref = LLVMBuildXor(b->m_builder, e.value, LLVMConstInt(I1Ty(b), 1, 0), "not");
+
+        return ValueMake(ref, TypeDescMake(I1Ty(b), false, false, false, NULL));
     }
 
     case UnBitNot:
     {
-        LLVMValueRef r = LLVMBuildNot(b->m_builder, e.value, "bnot");
-        return ValueMake(r, e.typeDesc);
+        LLVMValueRef ref = LLVMBuildNot(b->m_builder, e.value, "bnot");
+
+        return ValueMake(ref, e.typeDesc);
     }
     }
 
@@ -608,6 +627,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     else if (!l.typeDesc.isFloat && r.typeDesc.isFloat)
     {
         l = Coerce(b, l, r.typeDesc);
+
         typeDesc = r.typeDesc;
     }
 
@@ -616,8 +636,10 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
     if (n->op == BinLogicAnd || n->op == BinLogicOr)
     {
-        out = (n->op == BinLogicAnd) ? LLVMBuildAnd(b->m_builder, l.value, r.value, "and")
-                                     : LLVMBuildOr(b->m_builder, l.value, r.value, "or");
+        out = (n->op == BinLogicAnd)
+            ? LLVMBuildAnd(b->m_builder, l.value, r.value, "and")
+            : LLVMBuildOr(b->m_builder, l.value, r.value, "or");
+
         return ValueMake(out, TypeDescMake(I1Ty(b), false, false, false, NULL));
     }
 
@@ -626,81 +648,111 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     switch (n->op)
     {
     case BinAdd:
-        out = flt ? LLVMBuildFAdd(b->m_builder, l.value, r.value, "add")
-                  : LLVMBuildAdd(b->m_builder, l.value, r.value, "add");
+        out = flt
+            ? LLVMBuildFAdd(b->m_builder, l.value, r.value, "add")
+            : LLVMBuildAdd(b->m_builder, l.value, r.value, "add");
+
         return ValueMake(out, typeDesc);
 
     case BinSub:
-        out = flt ? LLVMBuildFSub(b->m_builder, l.value, r.value, "sub")
-                  : LLVMBuildSub(b->m_builder, l.value, r.value, "sub");
+        out = flt
+            ? LLVMBuildFSub(b->m_builder, l.value, r.value, "sub")
+            : LLVMBuildSub(b->m_builder, l.value, r.value, "sub");
+
         return ValueMake(out, typeDesc);
 
     case BinMul:
-        out = flt ? LLVMBuildFMul(b->m_builder, l.value, r.value, "mul")
-                  : LLVMBuildMul(b->m_builder, l.value, r.value, "mul");
+        out = flt
+            ? LLVMBuildFMul(b->m_builder, l.value, r.value, "mul")
+            : LLVMBuildMul(b->m_builder, l.value, r.value, "mul");
+
         return ValueMake(out, typeDesc);
 
     case BinDiv:
-        out = flt ? LLVMBuildFDiv(b->m_builder, l.value, r.value, "div")
-                  : (typeDesc.isUnsigned ? LLVMBuildUDiv(b->m_builder, l.value, r.value, "div")
-                                         : LLVMBuildSDiv(b->m_builder, l.value, r.value, "div"));
+        out = flt
+            ? LLVMBuildFDiv(b->m_builder, l.value, r.value, "div")
+            : (typeDesc.isUnsigned
+                ? LLVMBuildUDiv(b->m_builder, l.value, r.value, "div")
+                : LLVMBuildSDiv(b->m_builder, l.value, r.value, "div"));
+
         return ValueMake(out, typeDesc);
 
     case BinMod:
-        out = flt ? LLVMBuildFRem(b->m_builder, l.value, r.value, "mod")
-                  : (typeDesc.isUnsigned ? LLVMBuildURem(b->m_builder, l.value, r.value, "mod")
-                                         : LLVMBuildSRem(b->m_builder, l.value, r.value, "mod"));
+        out = flt
+            ? LLVMBuildFRem(b->m_builder, l.value, r.value, "mod")
+            : (typeDesc.isUnsigned
+                ? LLVMBuildURem(b->m_builder, l.value, r.value, "mod")
+                : LLVMBuildSRem(b->m_builder, l.value, r.value, "mod"));
+
         return ValueMake(out, typeDesc);
 
     case BinBitAnd:
         out = LLVMBuildAnd(b->m_builder, l.value, r.value, "and");
+
         return ValueMake(out, typeDesc);
 
     case BinBitOr:
         out = LLVMBuildOr(b->m_builder, l.value, r.value, "or");
+
         return ValueMake(out, typeDesc);
 
     case BinBitXor:
         out = LLVMBuildXor(b->m_builder, l.value, r.value, "xor");
+
         return ValueMake(out, typeDesc);
 
     case BinShl:
         out = LLVMBuildShl(b->m_builder, l.value, r.value, "shl");
+
         return ValueMake(out, typeDesc);
 
     case BinShr:
-        out = typeDesc.isUnsigned ? LLVMBuildLShr(b->m_builder, l.value, r.value, "shr")
-                                  : LLVMBuildAShr(b->m_builder, l.value, r.value, "shr");
+        out = typeDesc.isUnsigned
+            ? LLVMBuildLShr(b->m_builder, l.value, r.value, "shr")
+            : LLVMBuildAShr(b->m_builder, l.value, r.value, "shr");
+
         return ValueMake(out, typeDesc);
 
     case BinEqEq:
-        out = flt ? FcmpByName(b->m_builder, "oeq", l.value, r.value)
-                  : IcmpByName(b->m_builder, "eq", typeDesc.isUnsigned, l.value, r.value);
+        out = flt
+            ? FcmpByName(b->m_builder, "oeq", l.value, r.value)
+            : IcmpByName(b->m_builder, "eq", typeDesc.isUnsigned, l.value, r.value);
+
         return ValueMake(out, boolTypeDesc);
 
     case BinNotEq:
-        out = flt ? FcmpByName(b->m_builder, "one", l.value, r.value)
-                  : IcmpByName(b->m_builder, "ne", typeDesc.isUnsigned, l.value, r.value);
+        out = flt
+            ? FcmpByName(b->m_builder, "one", l.value, r.value)
+            : IcmpByName(b->m_builder, "ne", typeDesc.isUnsigned, l.value, r.value);
+
         return ValueMake(out, boolTypeDesc);
 
     case BinLt:
-        out = flt ? FcmpByName(b->m_builder, "olt", l.value, r.value)
-                  : IcmpByName(b->m_builder, "lt", typeDesc.isUnsigned, l.value, r.value);
+        out = flt
+            ? FcmpByName(b->m_builder, "olt", l.value, r.value)
+            : IcmpByName(b->m_builder, "lt", typeDesc.isUnsigned, l.value, r.value);
+
         return ValueMake(out, boolTypeDesc);
 
     case BinLtEq:
-        out = flt ? FcmpByName(b->m_builder, "ole", l.value, r.value)
-                  : IcmpByName(b->m_builder, "le", typeDesc.isUnsigned, l.value, r.value);
+        out = flt
+            ? FcmpByName(b->m_builder, "ole", l.value, r.value)
+            : IcmpByName(b->m_builder, "le", typeDesc.isUnsigned, l.value, r.value);
+
         return ValueMake(out, boolTypeDesc);
 
     case BinGt:
-        out = flt ? FcmpByName(b->m_builder, "ogt", l.value, r.value)
-                  : IcmpByName(b->m_builder, "gt", typeDesc.isUnsigned, l.value, r.value);
+        out = flt
+            ? FcmpByName(b->m_builder, "ogt", l.value, r.value)
+            : IcmpByName(b->m_builder, "gt", typeDesc.isUnsigned, l.value, r.value);
+
         return ValueMake(out, boolTypeDesc);
 
     case BinGtEq:
-        out = flt ? FcmpByName(b->m_builder, "oge", l.value, r.value)
-                  : IcmpByName(b->m_builder, "ge", typeDesc.isUnsigned, l.value, r.value);
+        out = flt
+            ? FcmpByName(b->m_builder, "oge", l.value, r.value)
+            : IcmpByName(b->m_builder, "ge", typeDesc.isUnsigned, l.value, r.value);
+
         return ValueMake(out, boolTypeDesc);
 
     default:
@@ -720,6 +772,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
         {
             Value stored = Coerce(b, value, lvalue.typeDesc);
             LLVMBuildStore(b->m_builder, stored.value, lvalue.ptr);
+
             return stored;
         }
     }
@@ -742,18 +795,23 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
     }
 
     Value value = EmitExpr(b, arg);
+
     LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, value.typeDesc.type, "outarg");
     LLVMBuildStore(b->m_builder, value.value, slot);
+
     return slot;
 }
 
 static Value EmitCall(Builder* b, CallExpr* n)
 {
+    // Is it a struct initializer call?
     if (StrMapGet(&b->m_structTypes, n->callee) != NULL)
     {
         TypeName tn = MakeTypeName(n->callee);
         TypeDesc typeDesc = Resolve(b, &tn);
+
         const StructType* st = TypeRegistryFind(&b->m_registry, n->callee);
+
         LLVMValueRef agg = LLVMConstNull(typeDesc.type);
 
         size_t nargs = n->args.count;
@@ -765,9 +823,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 break;
             }
 
-            FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, i);
-            TypeDesc fieldTd = Resolve(b, &fd->type);
+            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, i);
+            TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
+
             Value argValue = Coerce(b, EmitExpr(b, (Node*)VecGet(&n->args, i)), fieldTd);
+
             agg = LLVMBuildInsertValue(b->m_builder, agg, argValue.value, (unsigned)i, "ins");
         }
 
@@ -796,9 +856,10 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
     for (size_t k = 0; k < nargs; k++)
     {
-        bool passAddr = k < info->paramByPtrCount && info->paramByPtr[k];
+        bool shouldPassByPtr = k < info->paramByPtrCount && info->paramByPtr[k];
         Node* argNode = (Node*)VecGet(&n->args, k);
-        args[k] = passAddr ? ArgAddress(b, argNode) : EmitExpr(b, argNode).value;
+
+        args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : EmitExpr(b, argNode).value;
     }
 
     LLVMValueRef callee = info->function;
@@ -823,7 +884,9 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
 {
     TypeName tn = MakeTypeName(n->typeName);
     TypeDesc typeDesc = Resolve(b, &tn);
+
     const StructType* st = TypeRegistryFind(&b->m_registry, n->typeName);
+
     LLVMValueRef agg = LLVMConstNull(typeDesc.type);
 
     size_t positionalIndex = 0;
@@ -855,9 +918,11 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
             continue;
         }
 
-        FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, idx);
-        TypeDesc fieldTd = Resolve(b, &fd->type);
+        FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, idx);
+        TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
+
         Value fieldValue = Coerce(b, EmitExpr(b, field->value), fieldTd);
+
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, (unsigned)idx, "ins");
     }
 
@@ -875,24 +940,30 @@ static Value EmitExpr(Builder* b, Node* n)
     {
     case NodeIntLiteral:
     {
-        IntLiteral* l = (IntLiteral*)n;
-        TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, l->isUnsigned, false, NULL);
-        return ValueMake(LLVMConstInt(I32Ty(b), l->value, 1), typeDesc);
+        IntLiteral* literal = (IntLiteral*)n;
+
+        TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, literal->isUnsigned, false, NULL);
+
+        return ValueMake(LLVMConstInt(I32Ty(b), literal->value, 1), typeDesc);
     }
 
     case NodeFloatLiteral:
     {
-        FloatLiteral* l = (FloatLiteral*)n;
+        FloatLiteral* literal = (FloatLiteral*)n;
+
         LLVMTypeRef fty = LLVMFloatTypeInContext(b->m_ctx);
         TypeDesc typeDesc = TypeDescMake(fty, true, false, false, NULL);
-        return ValueMake(LLVMConstReal(fty, l->value), typeDesc);
+
+        return ValueMake(LLVMConstReal(fty, literal->value), typeDesc);
     }
 
     case NodeBoolLiteral:
     {
-        BoolLiteral* bl = (BoolLiteral*)n;
+        BoolLiteral* literal = (BoolLiteral*)n;
+
         TypeDesc typeDesc = TypeDescMake(I1Ty(b), false, false, false, NULL);
-        return ValueMake(LLVMConstInt(I1Ty(b), (unsigned long long)bl->value, 0), typeDesc);
+
+        return ValueMake(LLVMConstInt(I1Ty(b), (unsigned long long)literal->value, 0), typeDesc);
     }
 
     case NodeIdent:
@@ -950,6 +1021,7 @@ static void EmitStmt(Builder* b, Node* n)
         }
 
         b->m_terminated = true;
+
         return;
     }
 
@@ -959,8 +1031,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (e->expr)
         {
-            Value discard = EmitExpr(b, e->expr);
-            (void)discard;
+            (void)EmitExpr(b, e->expr);
         }
 
         return;
@@ -970,6 +1041,7 @@ static void EmitStmt(Builder* b, Node* n)
     {
         VarDeclStmt* varDecl = (VarDeclStmt*)n;
         TypeDesc typeDesc = Resolve(b, &varDecl->type);
+
         LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, typeDesc.type, "v");
 
         if (varDecl->init)
@@ -984,9 +1056,12 @@ static void EmitStmt(Builder* b, Node* n)
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
         memset(sym, 0, sizeof(Value));
+
         sym->value = slot;
         sym->typeDesc = typeDesc;
+
         StrMapPut(&b->m_symbols, varDecl->name, sym);
+
         return;
     }
 
@@ -1027,6 +1102,7 @@ static void EmitStmt(Builder* b, Node* n)
         }
 
         PositionAtEnd(b, endBB);
+
         return;
     }
 
@@ -1114,8 +1190,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (fs->update)
         {
-            Value discard = EmitExpr(b, fs->update);
-            (void)discard;
+            (void)EmitExpr(b, fs->update);
         }
 
         Br(b, condBB);
@@ -1149,8 +1224,7 @@ static void EmitStmt(Builder* b, Node* n)
 
     default:
     {
-        Value discard = EmitExpr(b, n);
-        (void)discard;
+        (void)EmitExpr(b, n);
         return;
     }
     }
@@ -1202,8 +1276,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
         for (size_t j = 0; j < fcount; j++)
         {
-            FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
-            fields[j] = Resolve(b, &fd->type).type;
+            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, j);
+            fields[j] = Resolve(b, &fieldDecl->type).type;
         }
 
         LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, st->name);
