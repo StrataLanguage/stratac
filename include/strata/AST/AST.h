@@ -34,6 +34,7 @@ typedef enum {
     NodeStructInit,
     NodeIncDec,
     NodeCast,
+    NodeGlobal,
 } NodeKind;
 
 typedef struct {
@@ -116,6 +117,7 @@ typedef struct {
     Vec structs;
     Vec handles;
     Vec functions;
+    Vec globals;
     Vec imports;
 } Module;
 
@@ -290,3 +292,10 @@ typedef struct {
     TypeName type;
     Node* operand;
 } CastExpr;
+
+typedef struct {
+    Node base;
+    TypeName type;
+    char* name;
+    Node* init;
+} GlobalDecl;

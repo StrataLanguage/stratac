@@ -3,6 +3,7 @@
 
 #include <limits.h>
 #include <string.h>
+#include <stdio.h>
 
 static bool IsNumeric(const char* t)
 {
@@ -620,6 +621,17 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         StrMap scope;
         StrMapInit(&scope);
+
+        for (size_t j = 0; j < mod->globals.count; j++)
+        {
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, j);
+            StrMapPut(&scope, gd->name, (void*)gd->type.name);
+
+            if (gd->type.isConst)
+            {
+                StrMapPut(&r.m_constVars, gd->name, (void*)1);
+            }
+        }
 
         if (r.m_constVars.cap > 0)
         {

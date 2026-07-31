@@ -125,6 +125,11 @@ static void Dump(Node* n, int indent, Sb* out)
             Node* h = (Node*)VecGet(&module->handles, i);
             Dump(h, indent + 2, out);
         }
+        for (size_t i = 0; i < module->globals.count; i++)
+        {
+            Node* g = (Node*)VecGet(&module->globals, i);
+            Dump(g, indent + 2, out);
+        }
         for (size_t i = 0; i < module->functions.count; i++)
         {
             Node* func = (Node*)VecGet(&module->functions, i);
@@ -427,6 +432,19 @@ static void Dump(Node* n, int indent, Sb* out)
         SbPrintf(out, "(cast %s ", cast->type.name);
         Dump(cast->operand, 0, out);
         SbPutc(out, ')');
+        return;
+    }
+
+    case NodeGlobal:
+    {
+        GlobalDecl* gd = AsNode(GlobalDecl, n);
+        SbPrintf(out, "global %s %s", gd->type.name, gd->name);
+        if (gd->init)
+        {
+            SbPuts(out, " = ");
+            Dump(gd->init, 0, out);
+        }
+        SbPuts(out, " ;\n");
         return;
     }
 

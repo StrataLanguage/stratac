@@ -357,7 +357,7 @@ static Node* ParsePostfix(Parser* p);
 static Node* ParsePrimary(Parser* p);
 static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName);
 
-static FunctionDecl* ParseFunction(Parser* p)
+static Node* ParseFunction(Parser* p)
 {
     bool isExtern = ParserConsume(p, TokKwExtern);
 
@@ -374,7 +374,7 @@ static FunctionDecl* ParseFunction(Parser* p)
 
     if (p->m_cur.kind != TokIdent)
     {
-        DiagError(p->m_diag, p->m_cur.range, "expected a function name");
+        DiagError(p->m_diag, p->m_cur.range, "expected a name");
 
         return NULL;
     }
@@ -382,7 +382,34 @@ static FunctionDecl* ParseFunction(Parser* p)
     Token nameTok = p->m_cur;
     Advance(p);
 
-    FunctionDecl* node = AST_NEW(p->m_arena, FunctionDecl);
+    if (p->m_cur.kind != TokLParen)
+    {
+        if (isExtern)
+        {
+            DiagError(p->m_diag, nameTok.range, "extern cannot be used with a global variable");
+            Synchronize(p);
+
+            return NULL;
+        }
+
+        GlobalDecl* gd = AST_NEW(p->m_arena, GlobalDecl);
+        gd->base.kind = NodeGlobal;
+        gd->base.range = nameTok.range;
+        gd->type = returnType;
+        gd->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+        gd->init = NULL;
+
+        if (ParserConsume(p, TokAssign))
+        {
+            gd->init = ParseExpr(p);
+        }
+
+        ParserExpect(p, TokSemicolon, "';'");
+
+        return (Node*)gd;
+    }
+
+        FunctionDecl* node = AST_NEW(p->m_arena, FunctionDecl);
     node->base.kind = NodeFunction;
     node->base.range = SpanFrom((Token){TokIdent, returnType.range}, nameTok);
     node->returnType = returnType;
@@ -393,7 +420,7 @@ static FunctionDecl* ParseFunction(Parser* p)
 
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
     {
-        return node;
+        return (Node*)node;
     }
 
     if (p->m_cur.kind != TokRParen)
@@ -424,7 +451,7 @@ static FunctionDecl* ParseFunction(Parser* p)
 
     if (ParserConsume(p, TokSemicolon))
     {
-        return node;
+        return (Node*)node;
     }
 
     if (isExtern)
@@ -437,21 +464,21 @@ static FunctionDecl* ParseFunction(Parser* p)
             Synchronize(p);
         }
 
-        return node;
+        return (Node*)node;
     }
 
     if (p->m_cur.kind != TokLBrace)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected function body '{...}' or ';'");
 
-        return node;
+        return (Node*)node;
     }
 
     p->m_returnType = node->returnType.name;
     node->body = ParseBlock(p);
     p->m_returnType = NULL;
 
-    return node;
+    return (Node*)node;
 }
 
 static ImportDecl* ParseImport(Parser* p)
@@ -505,6 +532,7 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->structs);
     VecInit(&mod->handles);
     VecInit(&mod->functions);
+    VecInit(&mod->globals);
     VecInit(&mod->imports);
 
     while (p->m_cur.kind != TokEof)
@@ -560,10 +588,18 @@ Module* ParserParseModule(Parser* p)
             continue;
         }
 
-        FunctionDecl* fd = ParseFunction(p);
-        if (fd)
+        Node* decl = ParseFunction(p);
+
+        if (decl)
         {
-            VecPush(&mod->functions, fd);
+            if (decl->kind == NodeFunction)
+            {
+                VecPush(&mod->functions, decl);
+            }
+            else if (decl->kind == NodeGlobal)
+            {
+                VecPush(&mod->globals, decl);
+            }
         }
         else
         {

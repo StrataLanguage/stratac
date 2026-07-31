@@ -50,6 +50,7 @@ typedef struct {
     StrMap m_structTypes;
     StrMap m_funcs;
     StrMap m_symbols;
+    StrMap m_globals;
     StrMap m_externSlots;
     Vec m_externNames;
     TypeDesc m_curRet;
@@ -491,6 +492,11 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
 
     if (!sym)
     {
+        sym = (Value*)StrMapGet(&b->m_globals, n->name);
+    }
+
+    if (!sym)
+    {
         if (b->m_diag)
         {
             DiagErrorFmt(b->m_diag, n->base.range, "unknown identifier '%s'", n->name);
@@ -517,6 +523,11 @@ static LValue EmitLValue(Builder* b, Node* n)
     {
         IdentExpr* id = (IdentExpr*)n;
         Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+
+        if (!sym)
+        {
+            sym = (Value*)StrMapGet(&b->m_globals, id->name);
+        }
 
         if (!sym)
         {
@@ -1463,6 +1474,51 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         DeclareFunction(b, f);
     }
 
+    for (size_t i = 0; i < module->globals.count; i++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
+        TypeDesc typeDesc = Resolve(b, &gd->type);
+
+        LLVMValueRef init = LLVMConstNull(typeDesc.type);
+
+        if (gd->init)
+        {
+            if (gd->init->kind == NodeIntLiteral)
+            {
+                init = LLVMConstInt(typeDesc.type, ((IntLiteral*)gd->init)->value, 0);
+            }
+            else if (gd->init->kind == NodeFloatLiteral)
+            {
+                init = LLVMConstReal(typeDesc.type, ((FloatLiteral*)gd->init)->value);
+            }
+            else if (gd->init->kind == NodeBoolLiteral)
+            {
+                init = LLVMConstInt(typeDesc.type, ((BoolLiteral*)gd->init)->value ? 1 : 0, 0);
+            }
+            else if (gd->init->kind == NodeUnary && ((UnaryExpr*)gd->init)->op == UnNeg)
+            {
+                Node* operand = ((UnaryExpr*)gd->init)->operand;
+                if (operand->kind == NodeIntLiteral)
+                {
+                    init = LLVMConstInt(typeDesc.type, -((IntLiteral*)operand)->value, 1);
+                }
+                else if (operand->kind == NodeFloatLiteral)
+                {
+                    init = LLVMConstReal(typeDesc.type, -((FloatLiteral*)operand)->value);
+                }
+            }
+        }
+
+        LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
+        LLVMSetInitializer(global, init);
+
+        Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+        memset(sym, 0, sizeof(Value));
+        sym->value = global;
+        sym->typeDesc = typeDesc;
+        StrMapPut(&b->m_globals, gd->name, sym);
+    }
+
     for (size_t i = 0; i < module->functions.count; i++)
     {
         FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
@@ -1523,6 +1579,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_structTypes);
     StrMapInit(&b.m_funcs);
     StrMapInit(&b.m_symbols);
+    StrMapInit(&b.m_globals);
     StrMapInit(&b.m_externSlots);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);

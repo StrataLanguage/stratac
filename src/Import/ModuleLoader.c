@@ -126,6 +126,10 @@ static void AppendItems(Module* root, const Module* src)
     {
         VecPush(&root->functions, VecGet(&src->functions, i));
     }
+    for (size_t i = 0; i < src->globals.count; i++)
+    {
+        VecPush(&root->globals, VecGet(&src->globals, i));
+    }
 }
 
 static void LoadInto(ModuleLoader* loader, const char* path)
@@ -220,6 +224,7 @@ Module* ModuleLoaderLoad(ModuleLoader* loader, const char* mainPath)
     VecInit(&loader->root->structs);
     VecInit(&loader->root->handles);
     VecInit(&loader->root->functions);
+    VecInit(&loader->root->globals);
     VecInit(&loader->root->imports);
 
     LoadInto(loader, mainPath);
