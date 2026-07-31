@@ -9,9 +9,18 @@
 #include "Codegen/LLVMModuleBuilder.h"
 #include "strata/Codegen/LLVMCApi.h"
 
+#include <Defines.hpp>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+enum ResultCode
+{
+    RCSuccess,
+    RCErrorFileIO = 1,
+    RCErrorInvalidArgument,
+};
 
 static void PrintHelp(void)
 {
@@ -26,6 +35,19 @@ static void PrintHelp(void)
                     "  --version        print version and exit\n"
                     "  -h, --help       show this help\n");
 }
+
+typedef struct
+{
+    const char* name;
+    const char* longName;
+    const char* archCode;
+    const char* fallbackSuffix;
+} StrataPlatform;
+
+static const StrataPlatform registeredPlatforms[] = {
+    (StrataPlatform){"win", "windows", "x64_64", "-pc-windows-msvc"},
+    (StrataPlatform){"mac", "macos", "arm64", "-apple-darwin-25.0.0"},
+};
 
 static char* DupString(const char* s)
 {
@@ -122,84 +144,152 @@ static char* ReplaceExt(const char* path, const char* ext)
     return result;
 }
 
+/**
+ * @brief Finds the platform that matches the requested name `request`. Returns NULL if no platform was found.
+ */
+static const StrataPlatform* GetPlatform(const char* request)
+{
+    const int platformCount = ARRAY_COUNT(registeredPlatforms);
+
+    for (int i = 0; i < platformCount; i++)
+    {
+        const StrataPlatform* platform = &registeredPlatforms[i];
+        if (!strcmp(request, platform->name) || !strcmp(request, platform->longName))
+        {
+            return platform;
+        }
+    }
+
+    return NULL;
+}
+
+char* BuildTargetTriple(const char* requestedPlatform)
+{
+    char* resultTriple = NULL;
+
+    if (requestedPlatform == NULL)
+    {
+        return NULL;
+    }
+
+    const char* targetSuffix = "";
+
+    const StrataPlatform* platform = GetPlatform(requestedPlatform);
+
+    char* hostTriple = LLVMGetDefaultTargetTriple();
+    const char* firstDash = strchr(hostTriple, '-');
+
+    const char* suffix;
+
+    if (firstDash)
+    {
+        suffix = firstDash;
+    }
+    else
+    {
+        suffix = platform->fallbackSuffix;
+    }
+
+    const size_t suffixLen = strlen(suffix);
+
+    // Build the final triple
+    {
+        size_t archCodeLen = strlen(platform->archCode);
+        resultTriple = (char*)malloc(archCodeLen + suffixLen + 1);
+
+        if (resultTriple)
+        {
+            memcpy(resultTriple, platform->archCode, archCodeLen);
+            memcpy(resultTriple + archCodeLen, suffix, suffixLen);
+            resultTriple[archCodeLen + suffixLen] = '\0';
+        }
+    }
+
+    LLVMDisposeMessage(hostTriple);
+
+    return resultTriple;
+}
+
 int main(int argc, char** argv)
 {
     char* outFile = NULL;
     char* inputFile = NULL;
-    char* targetArch = NULL;
+    char* requestedPlatform = NULL;
     bool emitAsm = false;
     bool printAst = false;
 
-    for (int i = 1; i < argc; i++)
+    for (int argIndex = 1; argIndex < argc; argIndex++)
     {
-        const char* a = argv[i];
+        const char* arg = argv[argIndex];
 
-        if (strcmp(a, "-h") == 0 || strcmp(a, "--help") == 0)
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0)
         {
             PrintHelp();
-            return 0;
+            return RCSuccess;
         }
 
-        if (strcmp(a, "--version") == 0)
+        if (strcmp(arg, "--version") == 0)
         {
             unsigned maj = 0;
             unsigned min = 0;
             unsigned pat = 0;
             LLVMGetVersion(&maj, &min, &pat);
             printf("stratac 0.1.0 (LLVM %u.%u.%u)\n", maj, min, pat);
-            return 0;
+            return RCSuccess;
         }
 
-        if (strcmp(a, "-o") == 0)
+        if (strcmp(arg, "-o") == 0)
         {
-            if (i + 1 >= argc)
+            if (argIndex + 1 >= argc)
             {
                 fprintf(stderr, "error: -o needs an argument\n");
-                return 2;
+                return RCErrorInvalidArgument;
             }
             free(outFile);
-            outFile = DupString(argv[++i]);
+            outFile = DupString(argv[++argIndex]);
         }
-        else if (strcmp(a, "--asm") == 0)
+        else if (strcmp(arg, "--asm") == 0)
         {
             emitAsm = true;
         }
-        else if (strcmp(a, "--ast") == 0)
+        else if (strcmp(arg, "--ast") == 0)
         {
             printAst = true;
         }
-        else if (strcmp(a, "--target") == 0)
+        else if (strcmp(arg, "--target") == 0)
         {
-            if (i + 1 >= argc)
+            if (argIndex + 1 >= argc)
             {
                 fprintf(stderr, "error: --target needs an argument\n");
-                return 2;
+                return RCErrorInvalidArgument;
             }
-            free(targetArch);
-            targetArch = DupString(argv[++i]);
-            if (strcmp(targetArch, "x86_64") != 0 &&
-                strcmp(targetArch, "aarch64") != 0 &&
-                strcmp(targetArch, "arm64") != 0)
+            free(requestedPlatform);
+            requestedPlatform = DupString(argv[++argIndex]);
+
+            const StrataPlatform* platform = GetPlatform(requestedPlatform);
+
+            if (platform == NULL)
             {
-                fprintf(stderr, "error: --target must be 'x86_64', 'aarch64', or 'arm64'\n");
-                return 2;
-            }
-            if (strcmp(targetArch, "arm64") == 0)
-            {
-                free(targetArch);
-                targetArch = DupString("aarch64");
+                fprintf(stderr, "error: --target must be one of the following:\n");
+                for (int i = 0; i < ARRAY_COUNT(registeredPlatforms); i++)
+                {
+                    const StrataPlatform* currentPlatform = &registeredPlatforms[i];
+                    fprintf(stderr, "\t%s|%s\n", currentPlatform->name, currentPlatform->longName);
+                }
+
+                return RCErrorInvalidArgument;
             }
         }
-        else if (a[0] != '\0' && a[0] == '-')
+        else if (arg[0] != '\0' && arg[0] == '-')
         {
-            fprintf(stderr, "error: unknown option '%s'\n", a);
+            fprintf(stderr, "error: unknown option '%s'\n", arg);
             PrintHelp();
-            return 2;
+            return RCErrorInvalidArgument;
         }
         else
         {
             free(inputFile);
-            inputFile = DupString(a);
+            inputFile = DupString(arg);
         }
     }
 
@@ -207,7 +297,7 @@ int main(int argc, char** argv)
     {
         fprintf(stderr, "error: no input file\n");
         PrintHelp();
-        return 2;
+        return RCErrorInvalidArgument;
     }
 
     size_t sourceLen = 0;
@@ -216,7 +306,7 @@ int main(int argc, char** argv)
     if (!source)
     {
         fprintf(stderr, "error: cannot open file '%s'\n", inputFile);
-        return 1;
+        return RCErrorFileIO;
     }
 
     Arena arena;
@@ -247,7 +337,7 @@ int main(int argc, char** argv)
     if (DiagHasErrors(&diag))
     {
         fprintf(stderr, "%u error(s).\n", DiagErrorCount(&diag));
-        return 1;
+        return RCErrorFileIO;
     }
 
     if (printAst)
@@ -266,40 +356,10 @@ int main(int argc, char** argv)
             fwrite(d, 1, strlen(d), stderr);
         }
         fprintf(stderr, "%u error(s).\n", DiagErrorCount(&diag));
-        return 1;
+        return RCErrorFileIO;
     }
 
-    char* triple = NULL;
-    if (targetArch && strcmp(targetArch, "x86_64") != 0)
-    {
-        char* hostTriple = LLVMGetDefaultTargetTriple();
-        const char* firstDash = strchr(hostTriple, '-');
-
-        const char* suffix;
-        size_t suffixLen;
-
-        if (firstDash)
-        {
-            suffix = firstDash;
-            suffixLen = strlen(firstDash);
-        }
-        else
-        {
-            suffix = "-pc-windows-msvc";
-            suffixLen = strlen(suffix);
-        }
-
-        size_t tLen = strlen(targetArch);
-        triple = (char*)malloc(tLen + suffixLen + 1);
-        if (triple)
-        {
-            memcpy(triple, targetArch, tLen);
-            memcpy(triple + tLen, suffix, suffixLen);
-            triple[tLen + suffixLen] = '\0';
-        }
-
-        LLVMDisposeMessage(hostTriple);
-    }
+    char* triple = BuildTargetTriple(requestedPlatform);
 
     if (!outFile)
     {
@@ -311,7 +371,7 @@ int main(int argc, char** argv)
     if (!EmitNativeFile(&bm, outFile, false, &err, triple))
     {
         fprintf(stderr, "error: %s\n", err ? err : "(unknown)");
-        return 1;
+        return RCErrorFileIO;
     }
 
     fprintf(stderr, "wrote object: %s\n", outFile);
@@ -324,7 +384,7 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "error: %s\n", err ? err : "(unknown)");
             free(asmFile);
-            return 1;
+            return RCErrorFileIO;
         }
 
         fprintf(stderr, "wrote assembly: %s\n", asmFile);
@@ -332,5 +392,5 @@ int main(int argc, char** argv)
     }
 
     BuiltModuleDispose(&bm);
-    return 0;
+    return RCSuccess;
 }
