@@ -16,7 +16,7 @@
 extern "C"
 {
 #endif
-    
+
 typedef struct StrataCompiler StrataCompiler;
 
 typedef enum {
@@ -79,6 +79,8 @@ StrataResult strataCompileString(StrataCompiler* c, const char* source,
 
 StrataResult strataCompileFile(StrataCompiler* c, const char* path,
                                StrataEmitKind emit);
+
+StrataResult strataCompileAndRun(StrataCompiler* c, const char* path, StrataEmitKind emit);
 
 void strataResultFree(StrataResult* r);
 

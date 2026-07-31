@@ -1,10 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(strata LANGUAGES C VERSION 0.1.0 DESCRIPTION "Strata scripting language")
+project(strata LANGUAGES C CXX VERSION 0.1.0 DESCRIPTION "Strata scripting language")
 
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
@@ -29,7 +33,9 @@ set(STRATA_SOURCES
     src/Codegen/LLVMModuleBuilder.c
     src/Codegen/LLVMAot.c
     src/Codegen/LLVMJit.c
+    src/Codegen/LLDCApi.cpp
     src/Embed.c
+
 )
 
 add_library(strata STATIC ${STRATA_SOURCES})
@@ -40,6 +46,7 @@ target_include_directories(strata PUBLIC
 
 if(STRATA_ENABLE_LLVM)
     find_package(LLVM REQUIRED CONFIG)
+    find_package(LLD REQUIRED CONFIG)
 
     # If there is no custom path provided, use the path pulled by find_package
     if (LLVM_C_DIR STREQUAL "")
@@ -58,9 +65,10 @@ if(STRATA_ENABLE_LLVM)
         src/Codegen/LLVMAot.c
         src/Codegen/LLVMJit.c)
 
-    target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
+    target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include ${LLD_INCLUDE_DIRS})
     target_compile_definitions(strata PUBLIC STRATA_ENABLE_LLVM)
-    target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
+
+    target_link_libraries(strata PUBLIC ${LLVM_C_LIB} ${LLD_LIBRARIES} lldCommon lldMachO lldELF lldCOFF)
 
     if (APPLE)
         set(STRATA_LLVM_DLL "${LLVM_C_DIR}/lib/libLLVM-C.dylib" CACHE FILEPATH "Path to LLVM-C")

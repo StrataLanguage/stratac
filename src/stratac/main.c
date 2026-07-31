@@ -18,7 +18,7 @@
 enum ResultCode
 {
     RCSuccess,
-    RCErrorFileIO = 1,
+    RCErrorFileIO,
     RCErrorInvalidArgument,
 };
 
@@ -28,12 +28,13 @@ static void PrintHelp(void)
                     "Usage: stratac [options] <file.strata>\n"
                     "Emits a relocatable object file (.o) by default.\n"
                     "Options:\n"
-                    "  -o <file>        output object file (default: <input>.o)\n"
-                    "  --asm            also emit assembly (<output>.s)\n"
-                    "  --ast            also print the AST to stderr\n"
-                    "  --target <arch>  target: x86_64 (default), aarch64, arm64\n"
-                    "  --version        print version and exit\n"
-                    "  -h, --help       show this help\n");
+                    "  --run <file.strata>  compile and run <file.strata>\n"
+                    "  -o <file>            output object file (default: <input>.o)\n"
+                    "  --asm                also emit assembly (<output>.s)\n"
+                    "  --ast                also print the AST to stderr\n"
+                    "  --target <platform>  specify the target platform\n"
+                    "  --version            print version and exit\n"
+                    "  -h, --help           show this help\n");
 }
 
 typedef struct
