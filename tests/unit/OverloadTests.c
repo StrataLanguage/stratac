@@ -178,22 +178,32 @@ STRATA_TEST(constructor_call_is_not_unknown)
     arena_free(&arena);
 }
 
-STRATA_TEST(extern_struct_param_requires_direction)
+STRATA_TEST(bare_struct_param_is_allowed)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { float x; };\nextern void take(V v);\n", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(const_struct_param_is_read_only)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct V { float x; };\nvoid take(const V v) { v.x = 1.0; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
 
-STRATA_TEST(any_struct_param_requires_direction)
+STRATA_TEST(bare_struct_param_is_mutable)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { float x; };\nvoid take(V v) { };\n", &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    ParseAndResolve("struct V { float x; };\nvoid take(V v) { v.x = 1.0; }\n", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }

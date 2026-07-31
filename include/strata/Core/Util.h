@@ -7,6 +7,8 @@
 
 #include <stdarg.h>
 
+char* DupString(const char* s);
+
 typedef struct ArenaChunk {
     struct ArenaChunk* next;
     size_t size;

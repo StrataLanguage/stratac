@@ -78,7 +78,7 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
         const char* name = ((IdentExpr*)base)->name;
         if (StrMapGet(&r->m_constVars, name))
         {
-            DiagErrorFmt(r->m_diag, range, "cannot modify 'in' parameter '%s'", name);
+            DiagErrorFmt(r->m_diag, range, "'%s' is immutable", name);
         }
     }
 }
@@ -618,7 +618,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
             StrMapPut(&scope, p->name, (void*)p->type.name);
 
-            if (p->mod == ModIn)
+            if (p->mod == ModIn || p->type.isConst)
             {
                 StrMapPut(&r.m_constVars, p->name, (void*)1);
             }
@@ -638,9 +638,11 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
 
-            if (IsDefinedStruct(&r.m_registry, p->type.name) && p->mod == ModNone)
+            if (IsDefinedStruct(&r.m_registry, p->type.name)
+                && p->type.isConst
+                && p->mod == ModOut)
             {
-                DiagErrorFmt(diag, p->base.range, "struct parameter '%s' must be passed by reference via in/out/inout", p->name);
+                DiagErrorFmt(diag, p->base.range, "'out' parameter cannot be 'const'");
             }
         }
 

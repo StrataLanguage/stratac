@@ -27,17 +27,6 @@ struct StrataCompiler
     char unused;
 };
 
-static char* DupCString(const char* s)
-{
-    size_t n = strlen(s) + 1;
-    char* p = (char*)malloc(n);
-    if (p)
-    {
-        memcpy(p, s, n);
-    }
-    return p;
-}
-
 static char* ConcatOwned(const char* a, const char* b)
 {
     size_t na = strlen(a);
@@ -89,8 +78,8 @@ static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* aren
     }
 
     char* diagText = DiagFormat(diag, sources, sourceCount, arena);
-    r.output = DupCString(out);
-    r.diagnostics = DupCString(diagText);
+    r.output = DupString(out);
+    r.diagnostics = DupString(diagText);
     r.error_count = DiagErrorCount(diag);
     r.ok = !DiagHasErrors(diag) ? 1 : 0;
 
@@ -145,8 +134,8 @@ StrataResult strataCompileString(StrataCompiler* c, const char* source,
     {
         StrataResult r = {0};
         r.ok = 0;
-        r.output = DupCString("");
-        r.diagnostics = DupCString("null compiler or source");
+        r.output = DupString("");
+        r.diagnostics = DupString("null compiler or source");
 
         return r;
     }
@@ -165,8 +154,8 @@ StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKi
     {
         StrataResult r = {0};
         r.ok = 0;
-        r.output = DupCString("");
-        r.diagnostics = DupCString("null compiler or path");
+        r.output = DupString("");
+        r.diagnostics = DupString("null compiler or path");
 
         return r;
     }
@@ -274,7 +263,7 @@ static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* aren
 
     StrataJit* handle = (StrataJit*)calloc(1, sizeof(StrataJit));
     handle->jit = jit;
-    handle->diagnostics = DupCString(diagText);
+    handle->diagnostics = DupString(diagText);
 
     return handle;
 }
@@ -331,7 +320,7 @@ StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
     {
         if (errOut)
         {
-            *errOut = DupCString("null compiler or source");
+            *errOut = DupString("null compiler or source");
         }
 
         return NULL;
@@ -352,7 +341,7 @@ StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char*
     {
         if (errOut)
         {
-            *errOut = DupCString("null compiler or path");
+            *errOut = DupString("null compiler or path");
         }
 
         return NULL;

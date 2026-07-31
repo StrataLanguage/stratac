@@ -4,6 +4,21 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+// String helpers
+
+char* DupString(const char* s)
+{
+    size_t n = strlen(s);
+    char* out = (char*)malloc(n + 1);
+    if (out)
+    {
+        memcpy(out, s, n + 1);
+    }
+    return out;
+}
+
+// Arena
+
 static void ArenaGrow(Arena* a, size_t need)
 {
     size_t chunk_size = a->default_chunk;
@@ -150,6 +165,8 @@ void scratch_reset(void)
     }
 }
 
+// Vec
+
 void VecReserve(Vec* v, size_t n)
 {
     if (n <= v->cap)
@@ -187,6 +204,8 @@ void* VecPop(Vec* v)
     }
     return v->items[--v->count];
 }
+
+// StrMap
 
 static uint64_t StrMapHash(const char* s)
 {
@@ -294,6 +313,8 @@ static void SbEnsure(Sb* sb, size_t extra)
     }
     sb->cap = newcap;
 }
+
+// StringBuilder
 
 void SbPutc(Sb* sb, char c)
 {

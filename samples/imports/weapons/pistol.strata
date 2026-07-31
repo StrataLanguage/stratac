@@ -9,7 +9,7 @@ Pistol MakePistol(int ammo)
     return Pistol { .ammo = ammo };
 }
 
-void Shoot(inout Pistol pistol)
+void Shoot(Pistol pistol)
 {
     if (pistol.ammo <= 0)
     {

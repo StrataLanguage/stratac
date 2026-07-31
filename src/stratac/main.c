@@ -28,17 +28,6 @@ static void PrintHelp(void)
                     "  -h, --help       show this help\n");
 }
 
-static char* DupString(const char* s)
-{
-    size_t n = strlen(s);
-    char* out = (char*)malloc(n + 1);
-    if (out)
-    {
-        memcpy(out, s, n + 1);
-    }
-    return out;
-}
-
 static char* ReplaceExt(const char* path, const char* ext)
 {
     size_t pathLen = strlen(path);
