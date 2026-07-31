@@ -22,6 +22,7 @@ CodegenResult GenerateLlvmIr(const Module* mod)
         Sb sb;
         SbInit(&sb);
         SbPuts(&sb, "; LLVM back-end errors:\n");
+
         for (size_t i = 0; i < diag.m_count; i++)
         {
             SbPrintf(&sb, ";   %s\n", diag.m_diagnostics[i].message);
@@ -29,8 +30,10 @@ CodegenResult GenerateLlvmIr(const Module* mod)
 
         res.output = SbFinish(&sb, scratch_arena());
         res.ok = false;
+        
         DiagnosticEngineFree(&diag);
         BuiltModuleDispose(&bm);
+
         return res;
     }
 
@@ -41,5 +44,6 @@ CodegenResult GenerateLlvmIr(const Module* mod)
     LLVMDisposeMessage(ir);
     DiagnosticEngineFree(&diag);
     BuiltModuleDispose(&bm);
+
     return res;
 }

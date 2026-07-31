@@ -375,12 +375,14 @@ static FunctionDecl* ParseFunction(Parser* p)
         {
             DiagError(p->m_diag, p->m_cur.range, "expected a type to declare a function");
         }
+
         return NULL;
     }
 
     if (p->m_cur.kind != TokIdent)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected a function name");
+
         return NULL;
     }
 

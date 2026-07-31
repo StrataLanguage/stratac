@@ -25,8 +25,12 @@ static void EnsureTargetsInitialized(void)
     }
 }
 
-bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** errorMessage,
-                    const char* targetTriple)
+bool EmitNativeFile(
+    BuiltModule* bm,
+    const char* path,
+    bool assembly,
+    char** errorMessage,
+    const char* targetTriple)
 {
     if (!bm->mod)
     {
@@ -58,8 +62,10 @@ bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** err
     {
         const char* msg = error ? error : "(no message)";
         int needed = snprintf(NULL, 0, "unknown target triple '%s': %s", triple, msg);
+
         char* buf = (char*)malloc((size_t)needed + 1);
         snprintf(buf, (size_t)needed + 1, "unknown target triple '%s': %s", triple, msg);
+
         *errorMessage = buf;
 
         if (error)
@@ -112,8 +118,10 @@ bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** err
     {
         const char* msg = emitError ? emitError : "(no message)";
         int needed = snprintf(NULL, 0, "emission failed: %s", msg);
+        
         char* buf = (char*)malloc((size_t)needed + 1);
         snprintf(buf, (size_t)needed + 1, "emission failed: %s", msg);
+
         *errorMessage = buf;
     }
 
