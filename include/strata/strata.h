@@ -52,6 +52,7 @@ STRATA_API StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path,
                                            const char** errOut);
 
 STRATA_API void* strataJitGetFunction(StrataJit* jit, const char* name);
+STRATA_API int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name);
 
 STRATA_API int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn);
 
