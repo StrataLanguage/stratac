@@ -896,7 +896,6 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
             if (n->op != AssignSet)
             {
                 LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "cur");
-                Value lhs = ValueMake(cur, lvalue.typeDesc);
                 bool flt = lvalue.typeDesc.isFloat;
 
                 switch (n->op)

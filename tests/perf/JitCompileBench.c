@@ -10,7 +10,7 @@
 #include "strata/strata.h"
 
 #include <math.h>
-#include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +44,7 @@ typedef enum {
 typedef struct {
     char path[1024];
     char name[128];
+    FixtureShape shape;
     size_t bytes;
     size_t lines;
     size_t declarations;
@@ -65,6 +66,22 @@ typedef struct {
 } Summary;
 
 typedef struct {
+    char fixtureName[128];
+    Summary llvm;
+    Summary tcc;
+    size_t llvmCalls;
+    size_t tccCalls;
+    size_t samples;
+} RuntimeReport;
+
+typedef struct {
+    Backend backend;
+    LLVMJit llvm;
+    TccJit tcc;
+    uint32_t (*hot)(uint32_t, int);
+} LoadedScript;
+
+typedef struct {
     FILE* file;
     size_t bytes;
     size_t lines;
@@ -77,6 +94,8 @@ static double NowSeconds(void)
     return (double)value.tv_sec + (double)value.tv_nsec / 1000000000.0;
 }
 
+static volatile uint32_t runtimeSink;
+
 static bool WriteText(FixtureWriter* writer, const char* text)
 {
     size_t length = strlen(text);
@@ -87,17 +106,6 @@ static bool WriteText(FixtureWriter* writer, const char* text)
         if (text[i] == '\n') writer->lines++;
     }
     return true;
-}
-
-static bool WriteFormat(FixtureWriter* writer, const char* format, ...)
-{
-    char buffer[512];
-    va_list args;
-    va_start(args, format);
-    int length = vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    if (length < 0 || (size_t)length >= sizeof(buffer)) return false;
-    return WriteText(writer, buffer);
 }
 
 static bool PadFixture(FixtureWriter* writer, size_t targetBytes)
@@ -148,6 +156,7 @@ static bool GenerateFixture(const char* directory, size_t mib, FixtureShape shap
 
     snprintf(fixture->name, sizeof(fixture->name), "%s-%zuMiB", ShapeName(shape), mib);
     snprintf(fixture->path, sizeof(fixture->path), "%s/%s.strata", directory, fixture->name);
+    fixture->shape = shape;
     fixture->declarations = 1;
     fixture->functions = 1;
 
@@ -203,6 +212,63 @@ static bool GenerateFixture(const char* directory, size_t mib, FixtureShape shap
         fixture->declarations = 3;
         fixture->functions = 3;
         fixture->expected = (int)(operations * 3);
+    }
+
+    if (ok && shape == ShapeArithmetic)
+    {
+        ok = WriteText(&writer,
+            "uint hot(uint state, int rounds) {\n"
+            "  for (int i = 0; i < rounds; i++) {\n"
+            "    state = state * 1664525u + 1013904223u;\n"
+            "    state = state ^ (state >> 16);\n"
+            "  }\n"
+            "  return state;\n"
+            "}\n");
+        fixture->declarations++;
+        fixture->functions++;
+    }
+    else if (ok && shape == ShapeControlFlow)
+    {
+        ok = WriteText(&writer,
+            "uint hot(uint state, int rounds) {\n"
+            "  for (int i = 0; i < rounds; i++) {\n"
+            "    if ((state & 1u) == 0u) { state = (state >> 1) ^ 277803737u; }\n"
+            "    else { state = state * 3u + 1u; }\n"
+            "    state = state ^ (state << 7);\n"
+            "  }\n"
+            "  return state;\n"
+            "}\n");
+        fixture->declarations++;
+        fixture->functions++;
+    }
+    else if (ok && shape == ShapeStructs)
+    {
+        ok = WriteText(&writer,
+            "struct HotPair { uint a; uint b; };\n"
+            "uint hot(uint state, int rounds) {\n"
+            "  HotPair p = {.a = state, .b = state ^ 277803737u};\n"
+            "  for (int i = 0; i < rounds; i++) {\n"
+            "    p.a = p.a * 1664525u + p.b;\n"
+            "    p.b = (p.b << 5) ^ (p.a >> 3) ^ 1013904223u;\n"
+            "  }\n"
+            "  return p.a ^ p.b;\n"
+            "}\n");
+        fixture->declarations += 2;
+        fixture->functions++;
+    }
+    else if (ok)
+    {
+        ok = WriteText(&writer,
+            "uint mix(uint a, uint b) { return a * 1664525u + b; }\n"
+            "uint hot(uint state, int rounds) {\n"
+            "  for (int i = 0; i < rounds; i++) {\n"
+            "    state = mix(state, (uint)i + 1013904223u);\n"
+            "    state = state ^ (state >> 15);\n"
+            "  }\n"
+            "  return state;\n"
+            "}\n");
+        fixture->declarations += 2;
+        fixture->functions += 2;
     }
 
     ok = ok && PadFixture(&writer, targetBytes);
@@ -286,7 +352,10 @@ static Timing CompileAst(Module* module, Backend backend, int expected)
         if (loaded)
         {
             int (*entry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&jit, "entry");
-            timing.ok = entry && entry() == expected;
+            int actual = entry ? entry() : 0;
+            timing.ok = entry && actual == expected;
+            if (!timing.ok)
+                fprintf(stderr, "LLVM entry returned %d, expected %d\n", actual, expected);
         }
         if (!timing.ok && error) fprintf(stderr, "LLVM JIT: %s\n", error);
         free(error);
@@ -308,7 +377,10 @@ static Timing CompileAst(Module* module, Backend backend, int expected)
         if (loaded)
         {
             int (*entry)(void) = (int (*)(void))TccJitGetAddress(&jit, "entry");
-            timing.ok = entry && entry() == expected;
+            int actual = entry ? entry() : 0;
+            timing.ok = entry && actual == expected;
+            if (!timing.ok)
+                fprintf(stderr, "TinyCC entry returned %d, expected %d\n", actual, expected);
         }
         if (!timing.ok && error) fprintf(stderr, "TinyCC JIT: %s\n", error);
         free(error);
@@ -387,6 +459,230 @@ static Summary Summarize(const double* input, size_t count)
     return result;
 }
 
+static void LoadedScriptInit(LoadedScript* script, Backend backend)
+{
+    memset(script, 0, sizeof(*script));
+    script->backend = backend;
+    LLVMJitInit(&script->llvm);
+    TccJitInit(&script->tcc);
+}
+
+static void LoadedScriptDestroy(LoadedScript* script)
+{
+    LLVMJitDestroy(&script->llvm);
+    TccJitDestroy(&script->tcc);
+    script->hot = NULL;
+}
+
+static bool LoadScript(Module* module, Backend backend, LoadedScript* script)
+{
+    LoadedScriptInit(script, backend);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    char* error = NULL;
+    bool loaded = false;
+
+    if (backend == BackendLlvm)
+    {
+        BuiltModule built = BuildLlvmModule(module, &diag, &arena, true);
+        loaded = !DiagHasErrors(&diag) && LLVMJitLoad(&script->llvm, &built, &error);
+        if (loaded)
+            script->hot = (uint32_t (*)(uint32_t, int))(uintptr_t)
+                LLVMJitGetAddress(&script->llvm, "hot");
+        BuiltModuleDispose(&built);
+    }
+    else
+    {
+        BuiltCModule built = BuildCModule(module, &diag, &arena, true);
+        loaded = !DiagHasErrors(&diag) && TccJitLoad(&script->tcc, &built, &error);
+        if (loaded)
+            script->hot = (uint32_t (*)(uint32_t, int))TccJitGetAddress(&script->tcc, "hot");
+        BuiltCModuleDispose(&built);
+    }
+
+    if (!loaded || !script->hot)
+    {
+        fprintf(stderr, "%s runtime load failed: %s\n",
+                backend == BackendLlvm ? "LLVM" : "TinyCC",
+                error ? error : "hot symbol not found");
+    }
+    free(error);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    return loaded && script->hot;
+}
+
+static uint32_t ReferenceHot(FixtureShape shape, uint32_t state, int rounds)
+{
+    uint32_t pairA = state;
+    uint32_t pairB = state ^ UINT32_C(277803737);
+    for (int i = 0; i < rounds; ++i)
+    {
+        switch (shape)
+        {
+        case ShapeArithmetic:
+            state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+            state ^= state >> 16;
+            break;
+        case ShapeControlFlow:
+            state = (state & 1u) == 0u
+                ? (state >> 1) ^ UINT32_C(277803737)
+                : state * 3u + 1u;
+            state ^= state << 7;
+            break;
+        case ShapeStructs:
+            pairA = pairA * UINT32_C(1664525) + pairB;
+            pairB = (pairB << 5) ^ (pairA >> 3) ^ UINT32_C(1013904223);
+            break;
+        case ShapeOverloads:
+            state = state * UINT32_C(1664525) + (uint32_t)i + UINT32_C(1013904223);
+            state ^= state >> 15;
+            break;
+        }
+    }
+    return shape == ShapeStructs ? pairA ^ pairB : state;
+}
+
+static double RunHotBatch(uint32_t (*hot)(uint32_t, int), size_t calls, int rounds,
+                          uint32_t seed, uint32_t* resultOut)
+{
+    uint32_t result = seed;
+    double start = NowSeconds();
+    for (size_t i = 0; i < calls; ++i) result = hot(result, rounds);
+    double elapsed = NowSeconds() - start;
+    runtimeSink = result;
+    if (resultOut) *resultOut = result;
+    return elapsed;
+}
+
+static size_t CalibrateRuntime(uint32_t (*hot)(uint32_t, int), int rounds)
+{
+    const double targetSeconds = 0.050;
+    const size_t maximumCalls = 100000000;
+    size_t calls = 16;
+    for (int attempt = 0; attempt < 12; ++attempt)
+    {
+        uint32_t result = 0;
+        double elapsed = RunHotBatch(hot, calls, rounds, UINT32_C(0x12345678), &result);
+        if (elapsed >= targetSeconds || calls == maximumCalls) return calls;
+
+        double scale = elapsed > 0.0 ? targetSeconds / elapsed : 10.0;
+        if (scale < 2.0) scale = 2.0;
+        if (scale > 10.0) scale = 10.0;
+        size_t next = (size_t)((double)calls * scale);
+        if (next <= calls) next = calls + 1;
+        calls = next > maximumCalls ? maximumCalls : next;
+    }
+    return calls;
+}
+
+static bool MeasureRuntime(FILE* csv, const Fixture* fixture, Module* ast,
+                           size_t samples, RuntimeReport* report)
+{
+    const int rounds = 4096;
+    const uint32_t validationSeed = UINT32_C(0x12345678);
+    LoadedScript scripts[2];
+    bool llvmLoaded = LoadScript(ast, BackendLlvm, &scripts[BackendLlvm]);
+    bool tccLoaded = LoadScript(ast, BackendTcc, &scripts[BackendTcc]);
+    if (!llvmLoaded || !tccLoaded)
+    {
+        LoadedScriptDestroy(&scripts[BackendLlvm]);
+        LoadedScriptDestroy(&scripts[BackendTcc]);
+        return false;
+    }
+
+    uint32_t expected = ReferenceHot(fixture->shape, validationSeed, rounds);
+    for (int i = 0; i < 8; ++i)
+    {
+        if (scripts[BackendLlvm].hot(validationSeed, rounds) != expected
+            || scripts[BackendTcc].hot(validationSeed, rounds) != expected)
+        {
+            LoadedScriptDestroy(&scripts[BackendLlvm]);
+            LoadedScriptDestroy(&scripts[BackendTcc]);
+            return false;
+        }
+    }
+
+    size_t calls[2];
+    calls[BackendLlvm] = CalibrateRuntime(scripts[BackendLlvm].hot, rounds);
+    calls[BackendTcc] = CalibrateRuntime(scripts[BackendTcc].hot, rounds);
+    size_t commonCalls = calls[BackendLlvm] > calls[BackendTcc]
+        ? calls[BackendLlvm] : calls[BackendTcc];
+    calls[BackendLlvm] = commonCalls;
+    calls[BackendTcc] = commonCalls;
+    double* elapsed[2];
+    elapsed[BackendLlvm] = (double*)calloc(samples, sizeof(double));
+    elapsed[BackendTcc] = (double*)calloc(samples, sizeof(double));
+    bool ok = calls[BackendLlvm] > 0 && calls[BackendTcc] > 0
+        && elapsed[BackendLlvm] && elapsed[BackendTcc];
+
+    for (size_t sample = 0; ok && sample < samples; ++sample)
+    {
+        Backend first = sample & 1 ? BackendTcc : BackendLlvm;
+        uint32_t results[2] = {0, 0};
+        for (int order = 0; order < 2; ++order)
+        {
+            Backend backend = order == 0 ? first
+                : (first == BackendLlvm ? BackendTcc : BackendLlvm);
+            uint32_t seed = validationSeed + (uint32_t)sample;
+            double batch = RunHotBatch(scripts[backend].hot, calls[backend], rounds,
+                                       seed, &results[backend]);
+            elapsed[backend][sample] = batch / (double)calls[backend];
+        }
+        ok = results[BackendLlvm] == results[BackendTcc];
+    }
+
+    if (ok)
+    {
+        snprintf(report->fixtureName, sizeof(report->fixtureName), "%s", fixture->name);
+        report->llvm = Summarize(elapsed[BackendLlvm], samples);
+        report->tcc = Summarize(elapsed[BackendTcc], samples);
+        report->llvmCalls = calls[BackendLlvm];
+        report->tccCalls = calls[BackendTcc];
+        report->samples = samples;
+        double ratio = report->llvm.median > 0.0
+            ? report->tcc.median / report->llvm.median : 0.0;
+        if (csv)
+        {
+            fprintf(csv, "%s,%zu,%zu,%zu,%zu,hot-runtime,LLVM,%.9f,%.9f,%.9f,,%zu,%.6f,%.3f,%zu\n",
+                    fixture->name, fixture->bytes, fixture->lines, fixture->declarations,
+                    fixture->functions, report->llvm.minimum * 1000.0,
+                    report->llvm.median * 1000.0, report->llvm.p95 * 1000.0,
+                    samples, ratio, 1.0 / report->llvm.median, report->llvmCalls);
+            fprintf(csv, "%s,%zu,%zu,%zu,%zu,hot-runtime,TinyCC,%.9f,%.9f,%.9f,,%zu,%.6f,%.3f,%zu\n",
+                    fixture->name, fixture->bytes, fixture->lines, fixture->declarations,
+                    fixture->functions, report->tcc.minimum * 1000.0,
+                    report->tcc.median * 1000.0, report->tcc.p95 * 1000.0,
+                    samples, ratio, 1.0 / report->tcc.median, report->tccCalls);
+        }
+    }
+
+    free(elapsed[BackendLlvm]);
+    free(elapsed[BackendTcc]);
+    LoadedScriptDestroy(&scripts[BackendLlvm]);
+    LoadedScriptDestroy(&scripts[BackendTcc]);
+    return ok;
+}
+
+static void PrintRuntimeReports(const RuntimeReport* reports, size_t count)
+{
+    printf("\nHot execution after JIT load (compilation excluded, 4096 rounds/call)\n");
+    printf("%-22s %12s %12s %12s %12s %9s\n",
+           "fixture", "LLVM ns/call", "TCC ns/call", "LLVM calls/s", "TCC calls/s", "ratio");
+    for (size_t i = 0; i < count; ++i)
+    {
+        const RuntimeReport* report = &reports[i];
+        double ratio = report->llvm.median > 0.0
+            ? report->tcc.median / report->llvm.median : 0.0;
+        printf("%-22s %12.1f %12.1f %12.0f %12.0f %8.2fx\n",
+               report->fixtureName, report->llvm.median * 1000000000.0,
+               report->tcc.median * 1000000000.0,
+               1.0 / report->llvm.median, 1.0 / report->tcc.median, ratio);
+    }
+}
+
 static void PrintPair(FILE* csv, const Fixture* fixture, const char* view,
                       const double* llvm, const double* tcc, size_t iterations)
 {
@@ -401,12 +697,12 @@ static void PrintPair(FILE* csv, const Fixture* fixture, const char* view,
 
     if (csv)
     {
-        fprintf(csv, "%s,%zu,%zu,%zu,%zu,%s,LLVM,%.6f,%.6f,%.6f,%.3f,%zu,%.6f\n",
+        fprintf(csv, "%s,%zu,%zu,%zu,%zu,%s,LLVM,%.6f,%.6f,%.6f,%.3f,%zu,%.6f,,\n",
                 fixture->name, fixture->bytes, fixture->lines, fixture->declarations,
                 fixture->functions, view, llvmSummary.minimum * 1000.0,
                 llvmSummary.median * 1000.0, llvmSummary.p95 * 1000.0,
                 mib / llvmSummary.median, iterations, ratio);
-        fprintf(csv, "%s,%zu,%zu,%zu,%zu,%s,TinyCC,%.6f,%.6f,%.6f,%.3f,%zu,%.6f\n",
+        fprintf(csv, "%s,%zu,%zu,%zu,%zu,%s,TinyCC,%.6f,%.6f,%.6f,%.3f,%zu,%.6f,,\n",
                 fixture->name, fixture->bytes, fixture->lines, fixture->declarations,
                 fixture->functions, view, tccSummary.minimum * 1000.0,
                 tccSummary.median * 1000.0, tccSummary.p95 * 1000.0,
@@ -508,6 +804,9 @@ int main(int argc, char** argv)
     size_t sizes[16] = {1, 5, 20};
     size_t sizeCount = 3;
     size_t iterations = 3;
+    bool runtimeOnly = false;
+    RuntimeReport runtimeReports[64];
+    size_t runtimeReportCount = 0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -516,6 +815,10 @@ int main(int argc, char** argv)
             sizes[0] = 1;
             sizeCount = 1;
             iterations = 1;
+        }
+        else if (strcmp(argv[i], "--runtime-only") == 0)
+        {
+            runtimeOnly = true;
         }
         else if (strcmp(argv[i], "--sizes") == 0 && i + 1 < argc)
         {
@@ -542,7 +845,7 @@ int main(int argc, char** argv)
         else
         {
             fprintf(stderr,
-                "usage: strata_jit_bench [--quick] [--sizes 1,5,20] "
+                "usage: strata_jit_bench [--quick] [--runtime-only] [--sizes 1,5,20] "
                 "[--iterations N] [--fixture-dir DIR] [--csv FILE]\n");
             return 2;
         }
@@ -558,14 +861,17 @@ int main(int argc, char** argv)
     {
         fprintf(csv,
             "fixture,bytes,lines,declarations,functions,view,backend,min_ms,median_ms,"
-            "p95_ms,mib_per_second,iterations,tcc_over_llvm\n");
+            "p95_ms,mib_per_second,iterations,tcc_over_llvm,calls_per_second,batch_calls\n");
     }
 
     printf("Strata JIT benchmark: build=%s system=%s arch=%s compiler=%s LLVM=%s TinyCC=0.9.28-strata seed=20260731\n",
            STRATA_BUILD_TYPE, STRATA_SYSTEM_NAME, STRATA_SYSTEM_PROCESSOR,
            STRATA_C_COMPILER, strataLLVMVersion());
-    printf("%-22s %-18s %9s %9s %9s %9s %9s\n",
-           "fixture", "view", "LLVM ms", "TCC ms", "LLVM MiB/s", "TCC MiB/s", "ratio");
+    if (!runtimeOnly)
+    {
+        printf("%-22s %-18s %9s %9s %9s %9s %9s\n",
+               "fixture", "view", "LLVM ms", "TCC ms", "LLVM MiB/s", "TCC MiB/s", "ratio");
+    }
 
     bool ok = true;
     for (size_t s = 0; ok && s < sizeCount; ++s)
@@ -591,12 +897,15 @@ int main(int argc, char** argv)
             Module* ast = ParseSource(source, length, fixture.name,
                                       &astArena, &astDiag, &astManager);
             ok = !DiagHasErrors(&astDiag);
-            if (ok) ok = MeasureView(csv, &fixture, source, length, ast,
-                                     "file-to-callable", iterations);
-            if (ok) ok = MeasureView(csv, &fixture, source, length, ast,
-                                     "source-to-callable", iterations);
-            if (ok) ok = MeasureView(csv, &fixture, source, length, ast,
-                                     "ast-to-callable", iterations);
+            if (ok && !runtimeOnly) ok = MeasureView(csv, &fixture, source, length, ast,
+                                                     "file-to-callable", iterations);
+            if (ok && !runtimeOnly) ok = MeasureView(csv, &fixture, source, length, ast,
+                                                     "source-to-callable", iterations);
+            if (ok && !runtimeOnly) ok = MeasureView(csv, &fixture, source, length, ast,
+                                                     "ast-to-callable", iterations);
+            if (ok) ok = MeasureRuntime(csv, &fixture, ast, iterations,
+                                        &runtimeReports[runtimeReportCount]);
+            if (ok) runtimeReportCount++;
             AstDispose((Node*)ast);
             SourceManagerFree(&astManager);
             DiagnosticEngineFree(&astDiag);
@@ -611,5 +920,6 @@ int main(int argc, char** argv)
         fprintf(stderr, "benchmark aborted because a backend failed correctness validation\n");
         return 1;
     }
+    PrintRuntimeReports(runtimeReports, runtimeReportCount);
     return 0;
 }
