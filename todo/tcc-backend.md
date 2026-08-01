@@ -42,6 +42,14 @@ samples (four source shapes, five latency views, two backends, three sizes). At
 These numbers are observational results for LLVM 21.1.7 and the vendored
 TinyCC 0.9.28-strata on the implementation host, not performance thresholds.
 
+The benchmark also measures already-loaded execution independently of compile
+time. Each `hot(uint state, int rounds)` workload runs 4,096 data-dependent
+unsigned rounds, receives the preceding call's result, and is checked against a
+native reference. In an 11-sample run pinned to one CPU, median TinyCC / LLVM
+execution ratios across the 1/5/20 MiB fixtures were 1.00-1.01x for arithmetic,
+1.40-1.41x for branch-heavy control flow, 1.25-1.49x for struct mutation, and
+1.18-1.21x for overloaded calls.
+
 ## Confirmed baseline
 
 - The current compiler is C11, not the older C++ layout described by the
