@@ -59,9 +59,14 @@ The full build provides an opt-in benchmark that generates deterministic large
 cmake --build build --target bench-jit
 build/bin/strata_jit_bench --sizes 1,5,20 --iterations 3 \
     --csv build/jit-benchmark.csv
+build/bin/strata_jit_bench --runtime-only --sizes 1,5,20 --iterations 7 \
+    --csv build/jit-runtime.csv
 ```
 
 It reports file-to-callable, source-to-callable, AST-to-callable, backend-build,
-and relocation medians, p95 latency, throughput, and the TinyCC/LLVM ratio. Each
-sample calls `entry` and verifies its deterministic result; the timing benchmark
-is observational and is not part of CTest.
+relocation, and post-load execution medians, p95 latency, throughput, and the
+TinyCC/LLVM ratio. Hot execution uses a dynamic unsigned workload specialized
+for each source shape, chains results between calls, runs 4,096 data-dependent
+rounds per call, and validates both JITs against a native reference before
+timing. `--runtime-only` skips the compile-latency passes. The benchmark is
+observational and is not part of CTest.
