@@ -29,11 +29,27 @@
         "STRATA_SHARED": "OFF",
         "STRATA_STATIC_RUNTIME": "ON"
       }
+    },
+    {
+      "name": "tcc-dyn",
+      "displayName": "MinGW GCC + Ninja (MinSizeRel, TinyCC only)",
+      "description": "Builds the Strata compiler/runtime without discovering or linking LLVM. (Dynamic)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/tcc-dyn",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "CMAKE_C_COMPILER": "gcc",
+        "STRATA_ENABLE_LLVM": "OFF",
+        "STRATA_ENABLE_TCC": "ON",
+        "STRATA_SHARED": "ON",
+        "STRATA_STATIC_RUNTIME": "OFF"
+      }
     }
   ],
   "buildPresets": [
     { "name": "default", "configurePreset": "default" },
-    { "name": "tcc-static", "configurePreset": "tcc-static" }
+    { "name": "tcc-static", "configurePreset": "tcc-static" },
+    { "name": "tcc-dyn", "configurePreset": "tcc-dyn" }
   ],
   "testPresets": [
     {
