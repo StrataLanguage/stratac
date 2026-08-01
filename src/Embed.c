@@ -488,6 +488,15 @@ void* strataJitGetFunction(StrataJit* jit, const char* name)
     return TccJitGetAddress(jit->jit, name);
 }
 
+int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
+{
+    if (!jit || !jit->jit || !name)
+    {
+        return 0;
+    }
+    return TccJitCanInvokeIntVoid(jit->jit, name) ? 1 : 0;
+}
+
 int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
 {
     if (!jit || !jit->jit || !name || !fn)
@@ -580,6 +589,13 @@ void* strataJitGetFunction(StrataJit* jit, const char* name)
     (void)jit;
     (void)name;
     return NULL;
+}
+
+int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
+{
+    (void)jit;
+    (void)name;
+    return 0;
 }
 
 int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)

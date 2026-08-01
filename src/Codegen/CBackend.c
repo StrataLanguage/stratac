@@ -667,6 +667,7 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
     CBackendSymbol* symbol = (CBackendSymbol*)arena_alloc(emitter->arena, sizeof(CBackendSymbol));
     symbol->strataName = function->name;
     symbol->cName = slotName;
+    symbol->isIntVoid = false;
     VecPush(&emitter->externs, symbol);
 }
 
@@ -778,6 +779,8 @@ static void EmitDeclarations(CEmitter* emitter)
             CBackendSymbol* symbol = (CBackendSymbol*)arena_alloc(emitter->arena, sizeof(CBackendSymbol));
             symbol->strataName = function->mangledName;
             symbol->cName = FunctionName(emitter, function->mangledName);
+            symbol->isIntVoid = strcmp(function->returnType.name, "int") == 0
+                && function->params.count == 0;
             VecPush(&emitter->exports, symbol);
         }
     }

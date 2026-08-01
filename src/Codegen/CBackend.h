@@ -7,6 +7,7 @@
 typedef struct {
     const char* strataName;
     const char* cName;
+    bool isIntVoid;
 } CBackendSymbol;
 
 typedef struct {
