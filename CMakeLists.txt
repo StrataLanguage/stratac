@@ -294,75 +294,76 @@ endif()
 enable_testing()
 
 if(NOT STRATA_SHARED)
-set(STRATA_TEST_SOURCES
-    tests/unit/test_main.c
-    tests/unit/LexerTests.c
-    tests/unit/ParserTests.c
-    tests/unit/CBackendTests.c
-    tests/unit/CapabilityTests.c
-    tests/unit/EmbedTests.c
-    tests/unit/OverloadTests.c
-)
-if(STRATA_ENABLE_TCC)
-    list(APPEND STRATA_TEST_SOURCES
-        tests/unit/TccJitTests.c
-        tests/unit/TccLifecycleTests.c
-        tests/unit/JitTests.c
-        tests/unit/StructTests.c
-        tests/unit/ControlFlowTests.c
-        tests/unit/ImportTests.c
-        tests/unit/OperatorTests.c
-    )
-endif()
-
-if(STRATA_ENABLE_LLVM)
-    list(APPEND STRATA_TEST_SOURCES
-        tests/unit/CodegenTests.c
-        tests/unit/SampleTests.c
+    set(STRATA_TEST_SOURCES
+        tests/unit/test_main.c
+        tests/unit/LexerTests.c
+        tests/unit/ParserTests.c
+        tests/unit/CBackendTests.c
+        tests/unit/CapabilityTests.c
+        tests/unit/EmbedTests.c
+        tests/unit/OverloadTests.c
     )
     if(STRATA_ENABLE_TCC)
-        list(APPEND STRATA_TEST_SOURCES tests/unit/BackendParityTests.c)
-    endif()
-endif()
-add_executable(strata_tests ${STRATA_TEST_SOURCES})
-target_link_libraries(strata_tests PRIVATE strata)
-if(STRATA_ENABLE_TCC)
-    find_package(Threads REQUIRED)
-    target_link_libraries(strata_tests PRIVATE Threads::Threads)
-endif()
-target_include_directories(strata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit)
-target_compile_definitions(strata_tests PRIVATE
-    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples"
-    STRATA_TEST_HAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
-    STRATA_TEST_HAS_TCC=$<BOOL:${STRATA_ENABLE_TCC}>
-)
-strata_stage_dll(strata_tests)
-add_test(NAME strata_tests COMMAND strata_tests)
-if(STRATA_ENABLE_TCC)
-    add_test(NAME stratac_cli_tests
-        COMMAND ${CMAKE_COMMAND}
-            -DSTRATAC=$<TARGET_FILE:stratac>
-            -DSAMPLE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/samples
-            -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
-            -DHAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
-            -DC_COMPILER=${CMAKE_C_COMPILER}
-            -DC_COMPILER_ID=${CMAKE_C_COMPILER_ID}
-            -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/RunCliTests.cmake
-    )
-    if(NOT STRATA_ENABLE_LLVM)
-        add_test(NAME stratac_no_llvm_audit
-            COMMAND ${CMAKE_COMMAND}
-                -DSTRATAC=$<TARGET_FILE:stratac>
-                -DCOMPILE_COMMANDS=${CMAKE_BINARY_DIR}/compile_commands.json
-                -DNM_TOOL=${CMAKE_NM}
-                -DLDD_TOOL=${STRATA_LDD_TOOL}
-                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/VerifyNoLlvm.cmake
+        list(APPEND STRATA_TEST_SOURCES
+            tests/unit/TccJitTests.c
+            tests/unit/TccLifecycleTests.c
+            tests/unit/JitTests.c
+            tests/unit/StructTests.c
+            tests/unit/ControlFlowTests.c
+            tests/unit/ImportTests.c
+            tests/unit/OperatorTests.c
         )
     endif()
-endif()
-endif()
-add_test(NAME strata_tests COMMAND strata_tests)
 
-set_target_properties(stratac strata_tests jit_demo engine_demo PROPERTIES
+    if(STRATA_ENABLE_LLVM)
+        list(APPEND STRATA_TEST_SOURCES
+            tests/unit/CodegenTests.c
+            tests/unit/SampleTests.c
+        )
+        if(STRATA_ENABLE_TCC)
+            list(APPEND STRATA_TEST_SOURCES tests/unit/BackendParityTests.c)
+        endif()
+    endif()
+    add_executable(strata_tests ${STRATA_TEST_SOURCES})
+    target_link_libraries(strata_tests PRIVATE strata)
+    if(STRATA_ENABLE_TCC)
+        find_package(Threads REQUIRED)
+        target_link_libraries(strata_tests PRIVATE Threads::Threads)
+    endif()
+    target_include_directories(strata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/unit)
+    target_compile_definitions(strata_tests PRIVATE
+        STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples"
+        STRATA_TEST_HAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
+        STRATA_TEST_HAS_TCC=$<BOOL:${STRATA_ENABLE_TCC}>
+    )
+    strata_stage_dll(strata_tests)
+    add_test(NAME strata_tests COMMAND strata_tests)
+    if(STRATA_ENABLE_TCC)
+        add_test(NAME stratac_cli_tests
+            COMMAND ${CMAKE_COMMAND}
+                -DSTRATAC=$<TARGET_FILE:stratac>
+                -DSAMPLE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/samples
+                -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
+                -DHAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
+                -DC_COMPILER=${CMAKE_C_COMPILER}
+                -DC_COMPILER_ID=${CMAKE_C_COMPILER_ID}
+                -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/RunCliTests.cmake
+        )
+        if(NOT STRATA_ENABLE_LLVM)
+            add_test(NAME stratac_no_llvm_audit
+                COMMAND ${CMAKE_COMMAND}
+                    -DSTRATAC=$<TARGET_FILE:stratac>
+                    -DCOMPILE_COMMANDS=${CMAKE_BINARY_DIR}/compile_commands.json
+                    -DNM_TOOL=${CMAKE_NM}
+                    -DLDD_TOOL=${STRATA_LDD_TOOL}
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/VerifyNoLlvm.cmake
+            )
+        endif()
+    endif()
+
+    set_target_properties(strata_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+endif()
+
+set_target_properties(stratac jit_demo engine_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
