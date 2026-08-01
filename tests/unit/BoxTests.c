@@ -174,12 +174,67 @@ STRATA_TEST(box_factory_returns_and_caller_owns)
     strataJitDestroy(jit);
 }
 
-STRATA_TEST(box_parameter_is_an_error)
+STRATA_TEST(box_owned_param_consumes_callers_box)
+{
+    /* An owned (non-ref) box parameter takes ownership: the caller's box is
+       moved (nulled), and the callee frees it at return. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "int consume(box<Cell> c) { return c.v; }\n"
+        "int entry() {\n"
+        "  box<Cell> a = Cell { .v = 9 };\n"
+        "  int r = consume(a);\n"          /* a moved */
+        "  return r;\n"
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err?err:"(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 9);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_ref_param_borrows_callers_box)
+{
+    /* A `ref box<T>` parameter is a borrow: the callee reads the box through
+       the reference but the caller still owns and frees it. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "int read(ref box<Cell> c) { return c.v; }\n"
+        "int entry() {\n"
+        "  box<Cell> a = Cell { .v = 7 };\n"
+        "  int r = read(a);\n"             /* borrow – a stays alive */
+        "  return r * a.v;\n"               /* 7 * 7 = 49 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err?err:"(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 49);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_owned_param_use_after_call_is_error)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { int x; };\nint take(box<V> v) { return v.x; }\n", &diag, &arena);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "int take(box<V> v) { return v.x; }\n"
+        "int entry() {\n"
+        "  box<V> a = V { .x = 1 };\n"
+        "  int r = take(a);\n"             /* a moved */
+        "  return a.x;\n"                   /* error: use of moved box 'a' */
+        "}\n",
+        &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "use of moved box 'a'"));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }

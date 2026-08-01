@@ -451,7 +451,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
 
-        bool byPtr = p->mod != ModNone || structVal;
+        bool byPtr = p->mod != ModNone || structVal || IsBoxTypeName(p->type.name);
         info->paramByPtr[i] = byPtr;
 
         params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
@@ -505,13 +505,20 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         TypeDesc typeDesc = Resolve(b, &p->type);
 
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
+        bool boxParam = IsBoxTypeName(p->type.name);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
 
-        if (p->mod != ModNone || structVal)
+        if (p->mod != ModNone || structVal || boxParam)
         {
             sym->value = LLVMGetParam(b->m_curFn, (unsigned)i);
             sym->typeDesc = typeDesc;
+
+            /* An owned (non-ref) box parameter is consumed: freed at return. */
+            if (boxParam && p->mod == ModNone)
+            {
+                VecPush(&b->m_owningLocals, sym->value);
+            }
         }
         else
         {

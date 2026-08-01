@@ -209,6 +209,18 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     c->callee = best->mangledName;
     c->resolvedDecl = best;
+
+    /* Passing a box to an owned (non-ref) box parameter moves it. */
+    for (size_t j = 0; j < c->args.count && j < best->params.count; j++)
+    {
+        ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
+        Node* arg = (Node*)VecGet(&c->args, j);
+
+        if (IsBoxTypeName(param->type.name) && param->mod == ModNone && arg->kind == NodeIdent)
+        {
+            MarkBoxMoved(r, ((IdentExpr*)arg)->name);
+        }
+    }
 }
 
 static const char* InferType(Resolver* r, Node* n, StrMap* scope)
@@ -851,11 +863,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         for (size_t j = 0; j < functionDecl->params.count; j++)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
-
-            if (IsBoxTypeName(p->type.name))
-            {
-                DiagErrorFmt(diag, p->base.range, "box parameters are not supported yet ('%s')", p->name);
-            }
 
             if (IsDefinedStruct(&r.m_registry, p->type.name)
                 && p->type.isConst
