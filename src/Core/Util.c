@@ -372,31 +372,47 @@ static void SbEnsure(Sb* sb, size_t extra)
 void SbPutc(Sb* sb, char c)
 {
     SbEnsure(sb, 1);
+
     sb->data[sb->len++] = c;
 }
 
 void SbPuts(Sb* sb, const char* s)
 {
     size_t n = strlen(s);
-    if (n == 0) return;
+    if (n == 0)
+    {
+        return;
+    }
+    
     SbEnsure(sb, n);
     memcpy(sb->data + sb->len, s, n);
+    
     sb->len += n;
 }
 
 void SbPutn(Sb* sb, const char* s, size_t n)
 {
-    if (n == 0) return;
+    if (n == 0)
+    {
+        return;
+    }
+
     SbEnsure(sb, n);
     memcpy(sb->data + sb->len, s, n);
+    
     sb->len += n;
 }
 
 void SbPutr(Sb* sb, char c, size_t repeat)
 {
-    if (repeat == 0) return;
+    if (repeat == 0)
+    {
+        return;
+    }
+
     SbEnsure(sb, repeat);
     memset(sb->data + sb->len, c, repeat);
+    
     sb->len += repeat;
 }
 
