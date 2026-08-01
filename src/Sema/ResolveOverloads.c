@@ -850,6 +850,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
+        // @TODO: Fix
         if (IsBoxTypeName(gd->type.name))
         {
             DiagErrorFmt(diag, gd->base.range, "global '%s' cannot have box type", gd->name);

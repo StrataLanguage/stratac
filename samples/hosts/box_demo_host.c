@@ -1,31 +1,55 @@
 // box_demo_host.c — host side of box_demo.strata.
 //
-// The host provides `strata_alloc` / `strata_free` (the heap backing for
-// box<T>) and implements the `extern` functions Strata declares.  Structs
-// arrive as pointers (Strata's by-ref lowering), and the layout must match.
-//   stratac box_demo.strata -o box_demo.o
-//   clang hosts/box_demo_host.c box_demo.o -o box_demo.exe
-//   ./box_demo.exe
-#include <stdio.h>
-#include <stdlib.h>
+// Uses the public JIT API (strataJitCompileFile) to load and execute the
+// sample at runtime.  The engine / host binary are compiled together via
+// CMake (see CMakeLists.txt).
+//
+// The host provides `strata_alloc` / `strata_free` as JIT symbols so that
+// generated box code can allocate on the host heap.
+#include "strata/strata.h"
 
-void* strata_alloc(unsigned long n) { return malloc((size_t)n); }
-void  strata_free(void* p)          { free(p); }
+#include <stdio.h>
 
 typedef struct { float x, y, z; } Vec3;
 
-/* Declared in Strata – the host sees box<T> fields through a regular struct
-   pointer (borrow – must not retain the pointer). */
-float host_length_sq(const Vec3* v)
+static float host_length_sq(const Vec3* v)
 {
     return v->x * v->x + v->y * v->y + v->z * v->z;
 }
 
-/* Defined in Strata code. */
-extern float entry(void);
-
 int main(void)
 {
-    printf("entry() = %.0f\n", entry());   /* 27 */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+
+    char path[512];
+    snprintf(path, sizeof path, "%s/box_demo.strata", STRATA_SAMPLE_DIR);
+    StrataJit* jit = strataJitCompileFile(c, path, &err);
+
+    if (!jit)
+    {
+        fprintf(stderr, "JIT compile failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return 1;
+    }
+
+    /* Bind host externs so generated code can call back (strata_alloc / strata_free
+       are already wired by the runtime). */
+    strataJitAddSymbol(jit, "host_length_sq", (void*)&host_length_sq);
+
+    float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+
+    if (entry)
+    {
+        printf("entry() = %.0f\n", entry());   /* 27 */
+    }
+    else
+    {
+        fprintf(stderr, "could not resolve 'entry'");
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
     return 0;
 }
