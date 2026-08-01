@@ -186,3 +186,81 @@ STRATA_TEST(box_uninitialized_is_an_error)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+STRATA_TEST(box_use_after_vardecl_move_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "int entry() {\n"
+        "  box<V> a = V { .x = 1 };\n"
+        "  box<V> b = a;\n"          /* a moved into b */
+        "  return a.x;\n"            /* error: use of moved box 'a' */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "use of moved box 'a'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_use_after_assign_move_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "int entry() {\n"
+        "  box<V> a = V { .x = 1 };\n"
+        "  box<V> b = V { .x = 2 };\n"
+        "  a = b;\n"                  /* b moved into a */
+        "  return b.x;\n"             /* error: use of moved box 'b' */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "use of moved box 'b'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_reassign_after_move_revalidates)
+{
+    /* After a is moved, reassigning it makes it usable again. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct V { int x; };\n"
+        "box<V> make(int n) { box<V> v = V { .x = n }; return v; }\n"
+        "int entry() {\n"
+        "  box<V> a = make(1);\n"
+        "  box<V> b = a;\n"          /* a moved */
+        "  a = make(7);\n"           /* a re-Live */
+        "  return a.x + b.x;\n"      /* ok: both live -> 7 + 1 = 8 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 8);
+    }
+
+    strataJitDestroy(jit);
+}
