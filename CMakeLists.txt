@@ -259,8 +259,19 @@ strata_stage_dll(engine_demo)
 if(STRATA_ENABLE_LLVM AND STRATA_ENABLE_TCC)
     set(STRATA_BENCH_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/bench-fixtures")
     file(MAKE_DIRECTORY "${STRATA_BENCH_FIXTURE_DIR}")
-    add_executable(strata_jit_bench tests/perf/JitCompileBench.c)
-    target_link_libraries(strata_jit_bench PRIVATE strata)
+    add_executable(strata_jit_bench tests/perf/JitCompileBench.c ${STRATA_SOURCES})
+    target_include_directories(strata_jit_bench PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${LLVM_C_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinycc
+    )
+    target_compile_definitions(strata_jit_bench PRIVATE
+        STRATA_STATIC
+        STRATA_HAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
+        STRATA_HAS_TCC=$<BOOL:${STRATA_ENABLE_TCC}>
+    )
+    target_link_libraries(strata_jit_bench PRIVATE ${LLVM_C_LIB} strata_tinycc)
     target_compile_definitions(strata_jit_bench PRIVATE
         STRATA_BENCH_FIXTURE_DIR="${STRATA_BENCH_FIXTURE_DIR}"
         STRATA_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
@@ -268,7 +279,6 @@ if(STRATA_ENABLE_LLVM AND STRATA_ENABLE_TCC)
         STRATA_SYSTEM_PROCESSOR="${CMAKE_SYSTEM_PROCESSOR}"
         STRATA_C_COMPILER="${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_VERSION}"
     )
-    strata_stage_dll(strata_jit_bench)
     set_target_properties(strata_jit_bench PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_custom_target(bench-jit

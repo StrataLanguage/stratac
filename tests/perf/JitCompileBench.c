@@ -16,6 +16,10 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #ifndef STRATA_BUILD_TYPE
 #define STRATA_BUILD_TYPE "unknown"
 #endif
@@ -89,9 +93,16 @@ typedef struct {
 
 static double NowSeconds(void)
 {
+#ifdef _WIN32
+    LARGE_INTEGER freq, count;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&count);
+    return (double)count.QuadPart / (double)freq.QuadPart;
+#else
     struct timespec value;
     timespec_get(&value, TIME_UTC);
     return (double)value.tv_sec + (double)value.tv_nsec / 1000000000.0;
+#endif
 }
 
 static volatile uint32_t runtimeSink;
@@ -284,7 +295,7 @@ static bool GenerateFixture(const char* directory, size_t mib, FixtureShape shap
     return true;
 }
 
-static char* ReadFile(const char* path, size_t* lengthOut)
+static char* ReadFileText(const char* path, size_t* lengthOut)
 {
     FILE* file = fopen(path, "rb");
     if (!file) return NULL;
@@ -423,7 +434,7 @@ static Timing CompileFile(const Fixture* fixture, Backend backend)
 {
     double start = NowSeconds();
     size_t length = 0;
-    char* source = ReadFile(fixture->path, &length);
+    char* source = ReadFileText(fixture->path, &length);
     Timing timing = {0};
     if (source)
     {
@@ -881,7 +892,7 @@ int main(int argc, char** argv)
             Fixture fixture = {0};
             ok = GenerateFixture(fixtureDirectory, sizes[s], shape, &fixture);
             size_t length = 0;
-            char* source = ok ? ReadFile(fixture.path, &length) : NULL;
+            char* source = ok ? ReadFileText(fixture.path, &length) : NULL;
             ok = ok && source && length == fixture.bytes;
             if (!ok)
             {
