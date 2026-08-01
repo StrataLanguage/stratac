@@ -42,7 +42,7 @@ typedef struct {
     SourceRange range;
 } Node;
 
-#define AST_NEW(arena, type) ((type*)memset(arena_alloc((arena), sizeof(type)), 0, sizeof(type)))
+#define AST_NEW(arena, type) ((type*)arena_alloc((arena), sizeof(type)))
 #define AsNode(type, node) ((type*)(node))
 
 typedef struct {

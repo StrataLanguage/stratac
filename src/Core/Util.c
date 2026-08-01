@@ -92,6 +92,8 @@ void* arena_alloc_aligned(Arena* a, size_t size, size_t align)
     pad = aligned - p;
 
     char* result = a->ptr + pad;
+    memset(result, 0, size);
+
     a->ptr = result + size;
 
     return result;
