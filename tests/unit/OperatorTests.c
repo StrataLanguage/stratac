@@ -639,3 +639,18 @@ STRATA_TEST(jit_handle_extends_multi_level)
         strataJitDestroy(jit);
     }
 }
+
+STRATA_TEST(jit_float_remainder)
+{
+    StrataJit* jit = CompileJit(
+        "float rem(float x, float y) { return x % y; }\n"
+        "int entry() { float x = 7.5; x %= 2.0; return (int)(x * 10.0 + rem(5.5, 2.0)); }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 16);
+        strataJitDestroy(jit);
+    }
+}

@@ -20,3 +20,5 @@ void BuiltCModuleInit(BuiltCModule* module);
 void BuiltCModuleDispose(BuiltCModule* module);
 
 BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode);
+BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
+                                    const SourceManager* sources, size_t sourceCount, bool jitMode);

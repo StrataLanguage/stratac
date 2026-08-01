@@ -300,3 +300,6 @@ typedef struct {
     char* name;
     Node* init;
 } GlobalDecl;
+
+void AstDispose(Node* node);
+void AstReleaseModuleLists(Module* module);

@@ -20,6 +20,7 @@ option(STRATA_ENABLE_TCC "Build the vendored TinyCC runtime backend" ON)
 option(STRATA_STATIC_RUNTIME "Optimize a static, self-contained Strata runtime" OFF)
 
 set(STRATA_COMMON_SOURCES
+    src/AST/AST.c
     src/Core/Util.c
     src/Core/SourceManager.c
     src/Core/Diagnostics.c
@@ -334,8 +335,21 @@ if(STRATA_ENABLE_TCC)
             -DSAMPLE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/samples
             -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
             -DHAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
+            -DC_COMPILER=${CMAKE_C_COMPILER}
+            -DC_COMPILER_ID=${CMAKE_C_COMPILER_ID}
+            -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/RunCliTests.cmake
     )
+    if(NOT STRATA_ENABLE_LLVM)
+        add_test(NAME stratac_no_llvm_audit
+            COMMAND ${CMAKE_COMMAND}
+                -DSTRATAC=$<TARGET_FILE:stratac>
+                -DCOMPILE_COMMANDS=${CMAKE_BINARY_DIR}/compile_commands.json
+                -DNM_TOOL=${CMAKE_NM}
+                -DLDD_TOOL=${STRATA_LDD_TOOL}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/VerifyNoLlvm.cmake
+        )
+    endif()
 endif()
 endif()
 add_test(NAME strata_tests COMMAND strata_tests)
