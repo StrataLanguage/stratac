@@ -302,6 +302,7 @@ STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
     strataJitDestroy(jit);
 }
 
+#if STRATA_TEST_HAS_LLVM
 #include "Codegen/LLVMAot.h"
 #include "Codegen/LLVMModuleBuilder.h"
 
@@ -334,6 +335,7 @@ STRATA_TEST(aot_emits_struct_object)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+#endif
 
 STRATA_TEST(jit_braced_init_positional)
 {
@@ -556,5 +558,4 @@ STRATA_TEST(jit_in_struct_param_passed_by_ref)
         strataJitDestroy(jit);
     }
 }
-
 
