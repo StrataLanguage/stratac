@@ -15,6 +15,11 @@
 
 #include "Import/ModuleLoader.h"
 
+#if STRATA_HAS_TCC
+#include "Codegen/CBackend.h"
+#include "Codegen/TccJit.h"
+#endif
+
 #if STRATA_HAS_LLVM
 #include "Codegen/LLVMCApi.h"
 #include "Codegen/LLVMJit.h"
@@ -31,7 +36,7 @@ struct StrataCompiler
     char unused;
 };
 
-#if STRATA_HAS_LLVM
+#if STRATA_HAS_TCC
 static char* ConcatOwned(const char* a, const char* b)
 {
     size_t na = strlen(a);
@@ -304,13 +309,16 @@ unsigned strataCapabilities(void)
 #if STRATA_HAS_LLVM
     capabilities |= STRATA_CAP_LLVM_IR | STRATA_CAP_LLVM_AOT;
 #endif
+#if STRATA_HAS_TCC
+    capabilities |= STRATA_CAP_TCC_JIT;
+#endif
     return capabilities;
 }
 
-#if STRATA_HAS_LLVM
+#if STRATA_HAS_TCC
 struct StrataJit
 {
-    LLVMJit* jit;
+    TccJit* jit;
     char* diagnostics;
 };
 
@@ -329,7 +337,7 @@ static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* aren
         return NULL;
     }
 
-    BuiltModule bm = BuildLlvmModule(mod, diag, arena, true);
+    BuiltCModule bm = BuildCModule(mod, diag, arena, true);
 
     if (DiagHasErrors(diag))
     {
@@ -339,15 +347,15 @@ static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* aren
             *errOut = ConcatOwned("codegen errors:\n", allDiag);
         }
 
-        BuiltModuleDispose(&bm);
+        BuiltCModuleDispose(&bm);
         return NULL;
     }
 
-    LLVMJit* jit = (LLVMJit*)malloc(sizeof(LLVMJit));
-    LLVMJitInit(jit);
+    TccJit* jit = (TccJit*)malloc(sizeof(TccJit));
+    TccJitInit(jit);
 
     char* err = NULL;
-    if (!LLVMJitLoad(jit, &bm, &err))
+    if (!TccJitLoad(jit, &bm, &err))
     {
         if (errOut)
         {
@@ -355,13 +363,13 @@ static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* aren
         }
 
         free(err);
-        LLVMJitDestroy(jit);
+        TccJitDestroy(jit);
         free(jit);
-        BuiltModuleDispose(&bm);
+        BuiltCModuleDispose(&bm);
         return NULL;
     }
 
-    BuiltModuleDispose(&bm);
+    BuiltCModuleDispose(&bm);
 
     StrataJit* handle = (StrataJit*)calloc(1, sizeof(StrataJit));
     handle->jit = jit;
@@ -477,8 +485,7 @@ void* strataJitGetFunction(StrataJit* jit, const char* name)
         return NULL;
     }
 
-    uint64_t addr = LLVMJitGetAddress(jit->jit, name);
-    return addr ? (void*)(uintptr_t)addr : NULL;
+    return TccJitGetAddress(jit->jit, name);
 }
 
 int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
@@ -488,7 +495,7 @@ int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
         return 0;
     }
 
-    return LLVMJitAddSymbol(jit->jit, name, fn) ? 1 : 0;
+    return TccJitAddSymbol(jit->jit, name, fn) ? 1 : 0;
 }
 
 size_t strataJitGetExternSymbolCount(StrataJit* jit)
@@ -498,7 +505,7 @@ size_t strataJitGetExternSymbolCount(StrataJit* jit)
         return 0;
     }
 
-    return jit->jit->m_externs.count;
+    return TccJitExternCount(jit->jit);
 }
 
 const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
@@ -508,12 +515,7 @@ const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
         return NULL;
     }
 
-    if (index >= jit->jit->m_externs.count)
-    {
-        return NULL;
-    }
-
-    return (const char*)jit->jit->m_externs.items[index];
+    return TccJitExternName(jit->jit, index);
 }
 
 const char* strataJitDiagnostics(StrataJit* jit)
@@ -535,7 +537,7 @@ void strataJitDestroy(StrataJit* jit)
 
     if (jit->jit)
     {
-        LLVMJitDestroy(jit->jit);
+        TccJitDestroy(jit->jit);
         free(jit->jit);
     }
 

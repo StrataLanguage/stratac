@@ -382,9 +382,17 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPuts(&emitter->out, ((const BoolLiteral*)node)->value ? "1" : "0");
         return;
     case NodeIdent:
-    case NodeMember:
         EmitLValue(emitter, node);
         return;
+    case NodeMember:
+    {
+        const MemberExpr* member = (const MemberExpr*)node;
+        SbPutc(&emitter->out, '(');
+        EmitExpr(emitter, member->base_node);
+        SbPuts(&emitter->out, ").");
+        SbPuts(&emitter->out, FieldName(emitter, member->member));
+        return;
+    }
     case NodeUnary:
     {
         const UnaryExpr* unary = (const UnaryExpr*)node;
