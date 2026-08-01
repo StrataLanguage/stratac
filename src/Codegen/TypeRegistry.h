@@ -9,6 +9,7 @@ typedef struct {
     const char* name;
     bool opaque;
     bool incomplete;
+    bool owning;        /* transitively contains a box<T> field */
     const char* extendsFrom;
     Vec fields;
 } StructType;
@@ -30,6 +31,7 @@ int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, cons
 /* box<T> type-name helpers (the name is encoded as "box<INNER>"). */
 bool IsBoxTypeName(const char* name);
 bool BoxInnerTypeName(const char* name, char* buf, size_t cap);
+bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 
 // -- Helpers
 

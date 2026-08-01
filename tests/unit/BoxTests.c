@@ -93,12 +93,51 @@ STRATA_TEST(box_global_is_an_error)
     arena_free(&arena);
 }
 
-STRATA_TEST(box_struct_field_is_an_error)
+STRATA_TEST(box_owning_field_linked_list)
 {
+    /* A recursive owning struct: box<Node> with a box<Node> next field.
+       Building the list moves boxes into fields; dropping the head frees the
+       whole chain recursively. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Node { int v; box<Node> next; };\n"
+        "box<Node> build() {\n"
+        "  box<Node> c = Node { .v = 3 };\n"
+        "  box<Node> b = Node { .v = 2, .next = c };\n"
+        "  box<Node> a = Node { .v = 1, .next = b };\n"
+        "  return a;\n"
+        "}\n"
+        "int entry() {\n"
+        "  box<Node> head = build();\n"
+        "  return head.v + head.next.v + head.next.next.v;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 6);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_owning_struct_field_allowed)
+{
+    /* box<T> fields are now allowed (the struct becomes owning). */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\nstruct W { box<V> v; };\n", &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }

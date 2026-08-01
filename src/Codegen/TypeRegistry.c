@@ -38,6 +38,7 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     t->name = name;
     t->opaque = false;
     t->incomplete = false;
+    t->owning = false;
     t->extendsFrom = NULL;
     VecInit(&t->fields);
 
@@ -105,6 +106,52 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->incomplete = false;
         t->extendsFrom = hd->extendsName;
     }
+
+    /* Fixpoint: a struct is owning if it has a box<T> field or an owning field. */
+    bool changed = true;
+
+    while (changed)
+    {
+        changed = false;
+
+        for (size_t i = 0; i < reg->count; i++)
+        {
+            StructType* t = &reg->types[i];
+
+            if (t->opaque || t->owning)
+            {
+                continue;
+            }
+
+            for (size_t j = 0; j < t->fields.count; j++)
+            {
+                FieldDecl* f = (FieldDecl*)VecGet(&t->fields, j);
+
+                if (IsBoxTypeName(f->type.name))
+                {
+                    t->owning = true;
+                    changed = true;
+                    break;
+                }
+
+                const StructType* ft = TypeRegistryFind(reg, f->type.name);
+
+                if (ft && ft->owning)
+                {
+                    t->owning = true;
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+}
+
+bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = TypeRegistryFind(reg, name);
+
+    return t && !t->opaque && t->owning;
 }
 
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name)
