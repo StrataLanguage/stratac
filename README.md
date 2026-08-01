@@ -63,6 +63,16 @@ build/bin/strata_jit_bench --runtime-only --sizes 1,5,20 --iterations 7 \
     --csv build/jit-runtime.csv
 ```
 
+On Windows, the repository-root batch runner configures and builds the default
+preset, stages `LLVM-C.dll`, and writes CSV reports under
+`build\default\perf`:
+
+```bat
+run-perf-tests.bat
+run-perf-tests.bat runtime
+run-perf-tests.bat quick
+```
+
 It reports file-to-callable, source-to-callable, AST-to-callable, backend-build,
 relocation, and post-load execution medians, p95 latency, throughput, and the
 TinyCC/LLVM ratio. Hot execution uses a dynamic unsigned workload specialized
