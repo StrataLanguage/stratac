@@ -49,3 +49,19 @@ those after compilation with `strataJitAddSymbol`.
 
 The vendored TinyCC source and its LGPL-2.1 licensing/provenance are documented
 in `third_party/tinycc/STRATA-VENDOR.md`.
+
+## LLVM versus TinyCC JIT benchmark
+
+The full build provides an opt-in benchmark that generates deterministic large
+`.strata` fixtures in the build directory and compares both in-memory engines:
+
+```sh
+cmake --build build --target bench-jit
+build/bin/strata_jit_bench --sizes 1,5,20 --iterations 3 \
+    --csv build/jit-benchmark.csv
+```
+
+It reports file-to-callable, source-to-callable, AST-to-callable, backend-build,
+and relocation medians, p95 latency, throughput, and the TinyCC/LLVM ratio. Each
+sample calls `entry` and verifies its deterministic result; the timing benchmark
+is observational and is not part of CTest.
