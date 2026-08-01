@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-
+#include <stdio.h>
 #include <stdarg.h>
 
 // -- Macros
@@ -12,7 +12,7 @@
 #define STRATA_CRASH(msg)                                                                                              \
     do                                                                                                                 \
     {                                                                                                                  \
-        fputs("Strata compiler crashed: " msg);                                                                        \
+        fputs("Strata compiler crashed: " msg, stderr);                                                                \
         abort();                                                                                                       \
     } while (0)
 

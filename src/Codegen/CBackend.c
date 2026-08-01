@@ -1138,6 +1138,7 @@ static void EmitDefinitions(CEmitter* emitter)
     for (size_t i = 0; i < emitter->mod->functions.count; ++i)
     {
         const FunctionDecl* function = (const FunctionDecl*)VecGet(&emitter->mod->functions, i);
+
         if (!function->body)
         {
             continue;
@@ -1149,14 +1150,14 @@ static void EmitDefinitions(CEmitter* emitter)
         for (size_t j = 0; j < emitter->mod->globals.count; ++j)
         {
             const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, j);
-            AddSymbol(emitter, global->name, global->type.name,
-                      GlobalName(emitter, global->name), false);
+
+            AddSymbol(emitter, global->name, global->type.name, GlobalName(emitter, global->name), false);
         }
         for (size_t j = 0; j < function->params.count; ++j)
         {
             const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, j);
-            AddSymbol(emitter, param->name, param->type.name,
-                      VarName(emitter, param->name), ParamIsIndirect(emitter, param));
+
+            AddSymbol(emitter, param->name, param->type.name, VarName(emitter, param->name), ParamIsIndirect(emitter, param));
         }
 
         EmitLineDirective(emitter, function->base.range);

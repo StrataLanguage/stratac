@@ -423,15 +423,19 @@ void SbPrintf(Sb* sb, const char* fmt, ...)
 char* SbFinish(Sb* sb, Arena* arena)
 {
     char* result = (char*)arena_alloc(arena, sb->len + 1);
+    
     if (sb->data)
     {
         memcpy(result, sb->data, sb->len);
     }
+
     result[sb->len] = '\0';
     free(sb->data);
+
     sb->data = NULL;
     sb->len = 0;
     sb->cap = 0;
+
     return result;
 }
 

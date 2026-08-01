@@ -344,13 +344,11 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
 static void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
-    *info = (FuncInfo){0};
 
     info->returnType = Resolve(b, &f->returnType);
 
     size_t pcount = f->params.count;
     info->paramByPtr = (bool*)arena_alloc(b->m_arena, pcount * sizeof(bool));
-    memset(info->paramByPtr, 0, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
 
     LLVMTypeRef* params = NULL;
@@ -421,7 +419,6 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-        memset(sym, 0, sizeof(Value));
 
         if (p->mod != ModNone || structVal)
         {
@@ -1254,8 +1251,6 @@ static void EmitStmt(Builder* b, Node* n)
         }
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-        memset(sym, 0, sizeof(Value));
-
         sym->value = slot;
         sym->typeDesc = typeDesc;
 
@@ -1528,7 +1523,6 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         LLVMSetInitializer(global, init);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-        memset(sym, 0, sizeof(Value));
         sym->value = global;
         sym->typeDesc = typeDesc;
         StrMapPut(&b->m_globals, gd->name, sym);
