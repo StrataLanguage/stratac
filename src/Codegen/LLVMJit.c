@@ -5,6 +5,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Strata heap runtime backing for the LLVM JIT (host malloc/free). */
+static void* strata_alloc_impl(unsigned long n)
+{
+    return malloc((size_t)n);
+}
+
+static void strata_free_impl(void* p)
+{
+    free(p);
+}
+
 static void EnsureTargetsInitialized(void)
 {
     static bool initialized = false;
@@ -107,6 +118,24 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     }
 
     jit->m_mod = modRef;
+
+    /* Map the compiler-internal heap runtime to the host so generated box
+       code can allocate without the user binding symbols. */
+    {
+        LLVMValueRef allocFn = LLVMGetNamedFunction(modRef, "strata_alloc");
+
+        if (allocFn)
+        {
+            LLVMAddGlobalMapping(jit->m_ee, allocFn, (void*)&strata_alloc_impl);
+        }
+
+        LLVMValueRef freeFn = LLVMGetNamedFunction(modRef, "strata_free");
+
+        if (freeFn)
+        {
+            LLVMAddGlobalMapping(jit->m_ee, freeFn, (void*)&strata_free_impl);
+        }
+    }
 
     return true;
 }

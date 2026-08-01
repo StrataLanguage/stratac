@@ -63,6 +63,8 @@ LLVMValueRef LLVMGetParam(LLVMValueRef func, unsigned index);
 
 LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef c, unsigned addressSpace);
 LLVMValueRef LLVMConstNull(LLVMTypeRef ty);
+LLVMValueRef LLVMConstGEP2(LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices);
+LLVMValueRef LLVMConstPtrToInt(LLVMValueRef constantVal, LLVMTypeRef toType);
 LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
 void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
 

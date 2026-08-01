@@ -65,6 +65,33 @@ STRATA_TEST(llvm_and_tcc_cast_to_bool_parity)
         3);
 }
 
+STRATA_TEST(llvm_and_tcc_box_parity)
+{
+    CheckParity(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  box<Cell> c = Cell { .v = 7 };\n"
+        "  c.v = c.v + 35;\n"
+        "  return c.v;\n"
+        "}\n",
+        42);
+}
+
+STRATA_TEST(llvm_and_tcc_box_move_parity)
+{
+    /* Factory return + VarDecl move + assign move, on both backends. */
+    CheckParity(
+        "struct Cell { int v; };\n"
+        "box<Cell> make(int n) { box<Cell> c = Cell { .v = n }; return c; }\n"
+        "int entry() {\n"
+        "  box<Cell> a = make(10);\n"
+        "  box<Cell> b = make(32);\n"
+        "  a = b;\n"
+        "  return a.v;\n"
+        "}\n",
+        32);
+}
+
 STRATA_TEST(llvm_and_tcc_scalar_control_flow_parity)
 {
     CheckParity(

@@ -383,15 +383,21 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         CheckConstAssign(r, a->target, a->base.range);
 
-        /* Reassigning a box variable is a move, which is not supported yet.
-           Writing through a box (v.x = ...) is fine. */
+        /* Assigning to a box variable is a move: the value must be a box of
+           the same type. Writing through a box (v.x = ...) is unaffected. */
         if (a->target->kind == NodeIdent)
         {
             const char* tt = InferType(r, a->target, scope);
 
             if (IsBoxTypeName(tt))
             {
-                DiagErrorFmt(r->m_diag, a->base.range, "cannot reassign box variable '%s'", ((IdentExpr*)a->target)->name);
+                const char* vt = InferType(r, a->value, scope);
+
+                if (vt[0] != '\0' && strcmp(vt, tt) != 0)
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to box variable '%s'",
+                                 vt, ((IdentExpr*)a->target)->name);
+                }
             }
         }
 
@@ -552,19 +558,23 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ResolveExpr(r, vd->init, scope);
             const char* initType = InferType(r, vd->init, scope);
 
-            /* A box<T> initializer boxes a value of the inner type T. */
-            char boxInner[128];
-            const char* expected = vd->type.name;
+            bool ok;
 
-            if (IsBoxTypeName(vd->type.name) && BoxInnerTypeName(vd->type.name, boxInner, sizeof boxInner))
+            if (IsBoxTypeName(vd->type.name))
             {
-                expected = boxInner;
+                char boxInner[128];
+                BoxInnerTypeName(vd->type.name, boxInner, sizeof boxInner);
+                /* Either box a value of the inner type, or move from another box<T>. */
+                ok = strcmp(initType, boxInner) == 0 || strcmp(initType, vd->type.name) == 0;
+            }
+            else
+            {
+                ok = strcmp(initType, vd->type.name) == 0
+                    || (IsNumeric(initType) && IsNumeric(vd->type.name))
+                    || HandleExtendsFrom(&r->m_registry, initType, vd->type.name);
             }
 
-            if (initType[0] != '\0'
-                && strcmp(initType, expected) != 0
-                && !(IsNumeric(initType) && IsNumeric(expected))
-                && !HandleExtendsFrom(&r->m_registry, initType, expected))
+            if (initType[0] != '\0' && !ok)
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
             }
@@ -594,11 +604,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             if (typeName[0] != '\0' && strcmp(typeName, "void") == 0)
             {
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
-            }
-
-            if (IsBoxTypeName(typeName))
-            {
-                DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a box value (use an output parameter)");
             }
         }
 
@@ -806,11 +811,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             {
                 DiagErrorFmt(diag, p->base.range, "'ref' parameter cannot be 'const'");
             }
-        }
-
-        if (IsBoxTypeName(functionDecl->returnType.name))
-        {
-            DiagErrorFmt(diag, functionDecl->base.range, "function cannot return box type '%s'", functionDecl->returnType.name);
         }
 
         if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))

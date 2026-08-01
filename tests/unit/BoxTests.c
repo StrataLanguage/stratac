@@ -103,14 +103,36 @@ STRATA_TEST(box_struct_field_is_an_error)
     arena_free(&arena);
 }
 
-STRATA_TEST(box_return_type_is_an_error)
+STRATA_TEST(box_factory_returns_and_caller_owns)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { int x; };\nbox<V> make() { return V { .x = 1 }; }\n", &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    /* A box returned from a function is moved out; the caller owns and frees it. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "box<Cell> make(int n) {\n"
+        "  box<Cell> c = Cell { .v = n };\n"
+        "  c.v = c.v * 2;\n"
+        "  return c;\n"
+        "}\n"
+        "int entry() { box<Cell> w = make(21); return w.v; }\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 42);
+    }
+
+    strataJitDestroy(jit);
 }
 
 STRATA_TEST(box_parameter_is_an_error)
@@ -123,27 +145,36 @@ STRATA_TEST(box_parameter_is_an_error)
     arena_free(&arena);
 }
 
-STRATA_TEST(box_reassign_is_an_error)
+STRATA_TEST(box_reassign_moves_ownership)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct V { int x; };\n"
+    /* `a = b` frees a's old box and moves b's pointer into a (b is nulled). */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 1 };\n"
-        "  box<V> b = V { .x = 2 };\n"
+        "  box<Cell> a = Cell { .v = 10 };\n"
+        "  box<Cell> b = Cell { .v = 32 };\n"
         "  a = b;\n"
-        "  return a.x;\n"
+        "  return a.v;\n"
         "}\n",
-        &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+        &err);
 
-    SourceManager sm; SourceManagerInit(&sm);
-    char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "cannot reassign box"));
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
 
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 32);
+    }
+
+    strataJitDestroy(jit);
 }
 
 STRATA_TEST(box_uninitialized_is_an_error)
