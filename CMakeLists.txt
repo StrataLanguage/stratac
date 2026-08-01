@@ -255,6 +255,31 @@ target_compile_definitions(engine_demo PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(engine_demo)
 
+if(STRATA_ENABLE_LLVM AND STRATA_ENABLE_TCC)
+    set(STRATA_BENCH_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/bench-fixtures")
+    file(MAKE_DIRECTORY "${STRATA_BENCH_FIXTURE_DIR}")
+    add_executable(strata_jit_bench tests/perf/JitCompileBench.c)
+    target_link_libraries(strata_jit_bench PRIVATE strata)
+    target_compile_definitions(strata_jit_bench PRIVATE
+        STRATA_BENCH_FIXTURE_DIR="${STRATA_BENCH_FIXTURE_DIR}"
+        STRATA_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+        STRATA_SYSTEM_NAME="${CMAKE_SYSTEM_NAME}"
+        STRATA_SYSTEM_PROCESSOR="${CMAKE_SYSTEM_PROCESSOR}"
+        STRATA_C_COMPILER="${CMAKE_C_COMPILER_ID}-${CMAKE_C_COMPILER_VERSION}"
+    )
+    strata_stage_dll(strata_jit_bench)
+    set_target_properties(strata_jit_bench PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_custom_target(bench-jit
+        COMMAND $<TARGET_FILE:strata_jit_bench>
+                --quick
+                --csv "${CMAKE_CURRENT_BINARY_DIR}/jit-benchmark.csv"
+        DEPENDS strata_jit_bench
+        USES_TERMINAL
+        VERBATIM
+    )
+endif()
+
 enable_testing()
 
 if(NOT STRATA_SHARED)
@@ -278,6 +303,7 @@ if(STRATA_ENABLE_TCC)
         tests/unit/OperatorTests.c
     )
 endif()
+
 if(STRATA_ENABLE_LLVM)
     list(APPEND STRATA_TEST_SOURCES
         tests/unit/CodegenTests.c
