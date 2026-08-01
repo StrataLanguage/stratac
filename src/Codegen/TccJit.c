@@ -90,7 +90,7 @@ void TccJitInit(TccJit* jit)
     VecInit(&jit->exports);
     VecInit(&jit->externs);
 
-    jit->tccArena = (Arena*)calloc(1, sizeof(Arena));
+    jit->tccArena = (Arena*)malloc(sizeof(Arena));
     if (!jit->tccArena)
     {
         STRATA_OOM();
@@ -127,14 +127,22 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     if (errorMessage) *errorMessage = NULL;
     if (!module || !module->source)
     {
-        if (errorMessage) *errorMessage = DupString("no C module to JIT");
+        if (errorMessage)
+        {
+            *errorMessage = DupString("no C module to JIT");
+        }
+
         return false;
     }
 
     jit->state = tcc_new();
     if (!jit->state)
     {
-        if (errorMessage) *errorMessage = DupString("could not create TinyCC state");
+        if (errorMessage)
+        {
+            *errorMessage = DupString("could not create TinyCC state");
+        }
+
         return false;
     }
 
@@ -146,8 +154,7 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     {
         if (errorMessage)
         {
-            *errorMessage = DupString(jit->diagnosticsLen
-                ? jit->diagnostics : "TinyCC compilation failed");
+            *errorMessage = DupString(jit->diagnosticsLen ? jit->diagnostics : "TinyCC compilation failed");
         }
         return false;
     }
@@ -162,8 +169,7 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     {
         if (errorMessage)
         {
-            *errorMessage = DupString(jit->diagnosticsLen
-                ? jit->diagnostics : "TinyCC relocation failed");
+            *errorMessage = DupString(jit->diagnosticsLen ? jit->diagnostics : "TinyCC relocation failed");
         }
 
         return false;

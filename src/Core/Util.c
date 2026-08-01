@@ -48,6 +48,7 @@ static void ArenaGrow(Arena* a, size_t need)
 
 void arena_init(Arena* a, size_t initial_chunk)
 {
+    *a = (Arena){0};
     a->head = NULL;
     a->default_chunk = initial_chunk > 0 ? initial_chunk : (1 << 16);
     a->ptr = NULL;
@@ -56,6 +57,11 @@ void arena_init(Arena* a, size_t initial_chunk)
 
 void arena_free(Arena* a)
 {
+    if (!a)
+    {
+        return;
+    }
+
     ArenaChunk* c = a->head;
 
     while (c)
