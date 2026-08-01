@@ -58,7 +58,7 @@ int sum_skipping_fives(int n)
     return total;
 }
 
-// ref parameters hand values back to the caller (there are no pointers in
+// ref parameters hand values back to the caller (there are no *EXPLICIT* pointers in
 // Strata; ref is lowered to a pointer internally).
 void minmax(int a, int b, ref int lo, ref int hi)
 {

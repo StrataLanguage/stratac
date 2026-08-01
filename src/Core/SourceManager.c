@@ -1,4 +1,5 @@
 #include "Core/SourceLocation.h"
+#include "Core/Util.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -87,27 +88,6 @@ Str SourceManagerSlice(const SourceManager* sm, SourceRange r)
     }
 
     return (Str){sm->m_text + r.start, end - r.start};
-}
-
-static size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
-{
-    size_t lo = 0;
-    size_t hi = count;
-
-    while (lo < hi)
-    {
-        size_t mid = lo + (hi - lo) / 2;
-        if (arr[mid] <= val)
-        {
-            lo = mid + 1;
-        }
-        else
-        {
-            hi = mid;
-        }
-    }
-
-    return lo;
 }
 
 LineCol SourceManagerLineCol(const SourceManager* sm, uint32_t offset)

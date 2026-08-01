@@ -10,7 +10,11 @@ static void DisposeVec(Vec* vec)
 
 void AstReleaseModuleLists(Module* module)
 {
-    if (!module) return;
+    if (!module)
+    {
+        return;
+    }
+
     DisposeVec(&module->structs);
     DisposeVec(&module->handles);
     DisposeVec(&module->functions);
@@ -27,17 +31,19 @@ void AstDispose(Node* node)
     case NodeModule:
     {
         Module* module = (Module*)node;
-        for (size_t i = 0; i < module->structs.count; ++i)
-            AstDispose((Node*)VecGet(&module->structs, i));
-        for (size_t i = 0; i < module->handles.count; ++i)
-            AstDispose((Node*)VecGet(&module->handles, i));
-        for (size_t i = 0; i < module->functions.count; ++i)
-            AstDispose((Node*)VecGet(&module->functions, i));
-        for (size_t i = 0; i < module->globals.count; ++i)
-            AstDispose((Node*)VecGet(&module->globals, i));
-        for (size_t i = 0; i < module->imports.count; ++i)
-            AstDispose((Node*)VecGet(&module->imports, i));
+
+#define DISPOSE_ALL(field) for (size_t i = 0; i < module->field.count; ++i) AstDispose((Node*)VecGet(&module->field, i))
+
+        DISPOSE_ALL(structs);
+        DISPOSE_ALL(handles);
+        DISPOSE_ALL(functions);
+        DISPOSE_ALL(globals);
+        DISPOSE_ALL(imports);
+
+#undef DISPOSE_ALL
+
         AstReleaseModuleLists(module);
+
         return;
     }
     case NodeStruct:
@@ -53,9 +59,14 @@ void AstDispose(Node* node)
     case NodeBlock:
     {
         Block* block = (Block*)node;
+
         for (size_t i = 0; i < block->statements.count; ++i)
+        {
             AstDispose((Node*)VecGet(&block->statements, i));
+        }
+
         DisposeVec(&block->statements);
+
         return;
     }
     case NodeReturn:
@@ -67,6 +78,7 @@ void AstDispose(Node* node)
         AstDispose(statement->condition);
         AstDispose(statement->thenBranch);
         AstDispose(statement->elseBranch);
+
         return;
     }
     case NodeWhile:
@@ -74,6 +86,7 @@ void AstDispose(Node* node)
         WhileStmt* statement = (WhileStmt*)node;
         AstDispose(statement->condition);
         AstDispose(statement->body);
+
         return;
     }
     case NodeFor:
@@ -83,6 +96,7 @@ void AstDispose(Node* node)
         AstDispose(statement->condition);
         AstDispose(statement->update);
         AstDispose(statement->body);
+
         return;
     }
     case NodeVarDecl:
@@ -99,6 +113,7 @@ void AstDispose(Node* node)
         BinaryExpr* expression = (BinaryExpr*)node;
         AstDispose(expression->lhs);
         AstDispose(expression->rhs);
+
         return;
     }
     case NodeAssign:
@@ -106,14 +121,20 @@ void AstDispose(Node* node)
         AssignExpr* expression = (AssignExpr*)node;
         AstDispose(expression->target);
         AstDispose(expression->value);
+
         return;
     }
     case NodeCall:
     {
         CallExpr* expression = (CallExpr*)node;
+
         for (size_t i = 0; i < expression->args.count; ++i)
+        {
             AstDispose((Node*)VecGet(&expression->args, i));
+        }
+
         DisposeVec(&expression->args);
+        
         return;
     }
     case NodeMember:
@@ -122,12 +143,15 @@ void AstDispose(Node* node)
     case NodeStructInit:
     {
         StructInitExpr* expression = (StructInitExpr*)node;
+
         for (size_t i = 0; i < expression->fields.count; ++i)
         {
             StructInitField* field = (StructInitField*)VecGet(&expression->fields, i);
             AstDispose(field->value);
         }
+
         DisposeVec(&expression->fields);
+
         return;
     }
     case NodeIncDec:
