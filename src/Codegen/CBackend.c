@@ -43,18 +43,29 @@ static void EmitEscapedFileName(CEmitter* emitter, const char* name)
 {
     for (const char* cursor = name; *cursor; ++cursor)
     {
-        if (*cursor == '\\' || *cursor == '"') SbPutc(&emitter->out, '\\');
+        if (*cursor == '\\' || *cursor == '"')
+        {
+            SbPutc(&emitter->out, '\\');
+        }
+
         SbPutc(&emitter->out, *cursor);
     }
 }
 
 static void EmitLineDirective(CEmitter* emitter, SourceRange range)
 {
-    if (!emitter->sources || !SourceRangeValid(range) || range.fileId >= emitter->sourceCount) return;
+    if (!emitter->sources || !SourceRangeValid(range) || range.fileId >= emitter->sourceCount)
+    {
+        return;
+    }
+
     const SourceManager* source = &emitter->sources[range.fileId];
+
     LineCol location = SourceManagerLineCol(source, range.start);
     SbPrintf(&emitter->out, "#line %u \"", location.line);
+    
     EmitEscapedFileName(emitter, source->m_name ? source->m_name : "<string>");
+    
     SbPuts(&emitter->out, "\"\n");
 }
 
@@ -137,6 +148,7 @@ static const char* FunctionName(CEmitter* emitter, const char* name)
     {
         return arena_strdup(emitter->arena, name);
     }
+
     return Encode(emitter, "strata__fn_", name);
 }
 
@@ -210,19 +222,28 @@ static void EmitType(CEmitter* emitter, const TypeName* type)
     SbPuts(&emitter->out, TypeNameC(emitter, type->name));
 }
 
-static void AddSymbol(CEmitter* emitter, const char* name, const char* typeName,
-                      const char* cName, bool indirect)
+static void AddSymbol(
+    CEmitter* emitter,
+    const char* name,
+    const char* typeName,
+    const char* cName,
+    bool indirect)
 {
     CSymbol* symbol = (CSymbol*)arena_alloc(emitter->arena, sizeof(CSymbol));
     symbol->typeName = typeName;
     symbol->cName = cName;
     symbol->indirect = indirect;
+
     StrMapPut(&emitter->symbols, name, symbol);
 }
 
 static const char* ExprType(CEmitter* emitter, const Node* node)
 {
-    if (!node) return "";
+    if (!node)
+    {
+        return "";
+    }
+
     switch (node->kind)
     {
     case NodeIntLiteral:
@@ -269,8 +290,10 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
         const char* baseName = ExprType(emitter, member->base_node);
         const StructType* type = TypeRegistryFind(&emitter->types, baseName);
         int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
+
         return index >= 0
-            ? ((const FieldDecl*)VecGet(&type->fields, (size_t)index))->type.name : "";
+            ? ((const FieldDecl*)VecGet(&type->fields, (size_t)index))->type.name
+            : "";
     }
     case NodeStructInit:
         return ((const StructInitExpr*)node)->typeName;
@@ -291,22 +314,35 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     if (!node)
     {
         SbPuts(&emitter->out, "0");
+
         return;
     }
 
     if (node->kind == NodeIdent)
     {
         const IdentExpr* ident = (const IdentExpr*)node;
+
         CSymbol* symbol = (CSymbol*)StrMapGet(&emitter->symbols, ident->name);
         if (!symbol)
         {
             DiagErrorFmt(emitter->diag, node->range, "C backend cannot resolve variable '%s'", ident->name);
             SbPuts(&emitter->out, "0");
+
             return;
         }
-        if (symbol->indirect) SbPuts(&emitter->out, "(*");
+
+        if (symbol->indirect)
+        {
+            SbPuts(&emitter->out, "(*");
+        }
+
         SbPuts(&emitter->out, symbol->cName);
-        if (symbol->indirect) SbPutc(&emitter->out, ')');
+
+        if (symbol->indirect)
+        {
+            SbPutc(&emitter->out, ')');
+        }
+
         return;
     }
 
@@ -317,6 +353,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
         EmitLValue(emitter, member->base_node);
         SbPuts(&emitter->out, ").");
         SbPuts(&emitter->out, FieldName(emitter, member->member));
+
         return;
     }
 
@@ -333,6 +370,7 @@ static const char* UnarySpelling(UnaryOp op)
     case UnNot: return "!";
     case UnBitNot: return "~";
     }
+
     return "";
 }
 
@@ -359,6 +397,7 @@ static const char* BinarySpelling(BinaryOp op)
     case BinLogicAnd: return "&&";
     case BinLogicOr: return "||";
     }
+
     return "";
 }
 
@@ -387,7 +426,9 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
     for (size_t i = 0; i < fields->count; ++i)
     {
         StructInitField* field = (StructInitField*)VecGet(fields, i);
+        
         size_t index;
+
         if (field->name && field->name[0])
         {
             int named = TypeRegistryFieldIndex(&emitter->types, typeName, field->name);
@@ -397,7 +438,12 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
         {
             index = positional++;
         }
-        if (i) SbPuts(&emitter->out, ", ");
+
+        if (i)
+        {
+            SbPuts(&emitter->out, ", ");
+        }
+
         if (type && index < type->fields.count)
         {
             FieldDecl* declaration = (FieldDecl*)VecGet(&type->fields, index);
@@ -405,8 +451,10 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             SbPuts(&emitter->out, FieldName(emitter, declaration->name));
             SbPuts(&emitter->out, " = ");
         }
+
         EmitExpr(emitter, field->value);
     }
+
     SbPuts(&emitter->out, " }");
 }
 
@@ -416,6 +464,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
     {
         Vec fields;
         VecInit(&fields);
+
         for (size_t i = 0; i < call->args.count; ++i)
         {
             StructInitField* field = (StructInitField*)arena_alloc(emitter->arena, sizeof(StructInitField));
@@ -423,26 +472,35 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
             field->value = (Node*)VecGet(&call->args, i);
             VecPush(&fields, field);
         }
+
         EmitStructInit(emitter, call->callee, &fields);
         free(fields.items);
+        
         return;
     }
 
     const FunctionDecl* function = call->resolvedDecl;
     const char* callee = FunctionName(emitter, call->callee);
+
     if (emitter->jitMode && function && function->isExtern)
     {
         callee = ExternSlotName(emitter, function->name);
     }
+
     SbPuts(&emitter->out, callee);
     SbPutc(&emitter->out, '(');
 
     for (size_t i = 0; i < call->args.count; ++i)
     {
-        if (i) SbPuts(&emitter->out, ", ");
+        if (i > 0)
+        {
+            SbPuts(&emitter->out, ", ");
+        }
+
         const Node* argument = (const Node*)VecGet(&call->args, i);
         const ParamDecl* parameter = function && i < function->params.count
-            ? (const ParamDecl*)VecGet(&function->params, i) : NULL;
+            ? (const ParamDecl*)VecGet(&function->params, i)
+            : NULL;
 
         if (parameter && ParamIsIndirect(emitter, parameter))
         {
@@ -467,6 +525,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
             EmitExpr(emitter, argument);
         }
     }
+
     SbPutc(&emitter->out, ')');
 }
 
@@ -475,6 +534,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     if (!node)
     {
         SbPuts(&emitter->out, "0");
+
         return;
     }
 
@@ -483,8 +543,8 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeIntLiteral:
     {
         const IntLiteral* literal = (const IntLiteral*)node;
-        SbPrintf(&emitter->out, "%llu%s", (unsigned long long)literal->value,
-                 literal->isUnsigned ? "u" : "");
+        SbPrintf(&emitter->out, "%llu%s", (unsigned long long)literal->value, literal->isUnsigned ? "u" : "");
+
         return;
     }
     case NodeFloatLiteral:
@@ -503,6 +563,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         EmitExpr(emitter, member->base_node);
         SbPuts(&emitter->out, ").");
         SbPuts(&emitter->out, FieldName(emitter, member->member));
+
         return;
     }
     case NodeUnary:
@@ -512,22 +573,26 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPuts(&emitter->out, UnarySpelling(unary->op));
         EmitExpr(emitter, unary->operand);
         SbPutc(&emitter->out, ')');
+
         return;
     }
     case NodeBinary:
     {
         const BinaryExpr* binary = (const BinaryExpr*)node;
         const char* resultType = ExprType(emitter, node);
-        if (binary->op == BinMod
-            && (strcmp(resultType, "float") == 0 || strcmp(resultType, "double") == 0))
+        
+        // @TODO IsFloatType()
+        if (binary->op == BinMod && (strcmp(resultType, "float") == 0 || strcmp(resultType, "double") == 0))
         {
             SbPuts(&emitter->out, strcmp(resultType, "double") == 0 ? "fmod(" : "fmodf(");
             EmitExpr(emitter, binary->lhs);
             SbPuts(&emitter->out, ", ");
             EmitExpr(emitter, binary->rhs);
             SbPutc(&emitter->out, ')');
+
             return;
         }
+
         SbPutc(&emitter->out, '(');
         EmitExpr(emitter, binary->lhs);
         SbPutc(&emitter->out, ' ');
@@ -535,14 +600,16 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPutc(&emitter->out, ' ');
         EmitExpr(emitter, binary->rhs);
         SbPutc(&emitter->out, ')');
+
         return;
     }
     case NodeAssign:
     {
         const AssignExpr* assign = (const AssignExpr*)node;
         const char* targetType = ExprType(emitter, assign->target);
-        if (assign->op == AssignMod
-            && (strcmp(targetType, "float") == 0 || strcmp(targetType, "double") == 0))
+
+        // @TODO IsFloatType()
+        if (assign->op == AssignMod && (strcmp(targetType, "float") == 0 || strcmp(targetType, "double") == 0))
         {
             SbPutc(&emitter->out, '(');
             EmitLValue(emitter, assign->target);
@@ -552,8 +619,10 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, ", ");
             EmitExpr(emitter, assign->value);
             SbPuts(&emitter->out, "))");
+
             return;
         }
+
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, assign->target);
         SbPutc(&emitter->out, ' ');
@@ -561,6 +630,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPutc(&emitter->out, ' ');
         EmitExpr(emitter, assign->value);
         SbPutc(&emitter->out, ')');
+
         return;
     }
     case NodeCall:
@@ -576,10 +646,21 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     {
         const IncDecExpr* increment = (const IncDecExpr*)node;
         SbPutc(&emitter->out, '(');
-        if (increment->isPrefix) SbPuts(&emitter->out, increment->isDec ? "--" : "++");
+        
+        if (increment->isPrefix)
+        {
+            SbPuts(&emitter->out, increment->isDec ? "--" : "++");
+        }
+
         EmitLValue(emitter, increment->operand);
-        if (!increment->isPrefix) SbPuts(&emitter->out, increment->isDec ? "--" : "++");
+
+        if (!increment->isPrefix)
+        {
+            SbPuts(&emitter->out, increment->isDec ? "--" : "++");
+        }
+
         SbPutc(&emitter->out, ')');
+
         return;
     }
     case NodeCast:
@@ -590,11 +671,13 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPuts(&emitter->out, ")(");
         EmitExpr(emitter, cast->operand);
         SbPuts(&emitter->out, "))");
+
         return;
     }
     default:
         DiagError(emitter->diag, node->range, "C backend encountered an unsupported expression");
         SbPuts(&emitter->out, "0");
+
         return;
     }
 }
@@ -603,9 +686,12 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 {
     EmitType(emitter, &declaration->type);
     SbPutc(&emitter->out, ' ');
+    
     const char* cName = VarName(emitter, declaration->name);
+    
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " = ");
+
     if (declaration->init)
     {
         EmitExpr(emitter, declaration->init);
@@ -616,7 +702,12 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         SbPuts(&emitter->out, TypeNameC(emitter, declaration->type.name));
         SbPuts(&emitter->out, "){0}");
     }
-    if (semicolon) SbPutc(&emitter->out, ';');
+
+    if (semicolon)
+    {
+        SbPutc(&emitter->out, ';');
+    }
+
     AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
 }
 
@@ -627,6 +718,7 @@ static void EmitControlledStmt(CEmitter* emitter, const Node* node)
     if (node && node->kind == NodeBlock)
     {
         EmitStmt(emitter, node);
+
         return;
     }
 
@@ -648,14 +740,19 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
     {
         const Block* block = (const Block*)node;
         SbPuts(&emitter->out, "{\n");
+
         emitter->indent++;
+
         for (size_t i = 0; i < block->statements.count; ++i)
         {
             EmitStmt(emitter, (const Node*)VecGet(&block->statements, i));
         }
+
         emitter->indent--;
+
         Pad(emitter);
         SbPutc(&emitter->out, '}');
+        
         return;
     }
     case NodeReturn:
@@ -663,25 +760,35 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         const ReturnStmt* statement = (const ReturnStmt*)node;
         Pad(emitter);
         SbPuts(&emitter->out, "return");
+        
         if (statement->value)
         {
             SbPutc(&emitter->out, ' ');
             EmitExpr(emitter, statement->value);
         }
+
         SbPuts(&emitter->out, ";\n");
+        
         return;
     }
     case NodeVarDecl:
         Pad(emitter);
         EmitVarDecl(emitter, (const VarDeclStmt*)node, true);
         SbPutc(&emitter->out, '\n');
+
         return;
     case NodeExprStmt:
     {
         Pad(emitter);
         const ExprStmt* statement = (const ExprStmt*)node;
-        if (statement->expr) EmitExpr(emitter, statement->expr);
+        
+        if (statement->expr)
+        {
+            EmitExpr(emitter, statement->expr);
+        }
+
         SbPuts(&emitter->out, ";\n");
+
         return;
     }
     case NodeIf:
@@ -692,12 +799,15 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         EmitExpr(emitter, statement->condition);
         SbPuts(&emitter->out, ") ");
         EmitControlledStmt(emitter, statement->thenBranch);
+
         if (statement->elseBranch)
         {
             SbPuts(&emitter->out, " else ");
             EmitControlledStmt(emitter, statement->elseBranch);
         }
+
         SbPutc(&emitter->out, '\n');
+        
         return;
     }
     case NodeWhile:
@@ -709,6 +819,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         SbPuts(&emitter->out, ") ");
         EmitControlledStmt(emitter, statement->body);
         SbPutc(&emitter->out, '\n');
+
         return;
     }
     case NodeFor:
@@ -716,34 +827,54 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         const ForStmt* statement = (const ForStmt*)node;
         Pad(emitter);
         SbPuts(&emitter->out, "for (");
+
         if (statement->init)
         {
             if (statement->init->kind == NodeVarDecl)
+            {
                 EmitVarDecl(emitter, (const VarDeclStmt*)statement->init, false);
+            }
             else
+            {
                 EmitExpr(emitter, statement->init);
+            }
         }
+
         SbPuts(&emitter->out, "; ");
-        if (statement->condition) EmitExpr(emitter, statement->condition);
+        
+        if (statement->condition)
+        {
+            EmitExpr(emitter, statement->condition);
+        }
+
         SbPuts(&emitter->out, "; ");
-        if (statement->update) EmitExpr(emitter, statement->update);
+
+        if (statement->update)
+        {
+            EmitExpr(emitter, statement->update);
+        }
+
         SbPuts(&emitter->out, ") ");
         EmitControlledStmt(emitter, statement->body);
         SbPutc(&emitter->out, '\n');
+        
         return;
     }
     case NodeBreak:
         Pad(emitter);
         SbPuts(&emitter->out, "break;\n");
+
         return;
     case NodeContinue:
         Pad(emitter);
         SbPuts(&emitter->out, "continue;\n");
+
         return;
     default:
         Pad(emitter);
         EmitExpr(emitter, node);
         SbPuts(&emitter->out, ";\n");
+
         return;
     }
 }
@@ -751,18 +882,26 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 static void EmitParam(CEmitter* emitter, const ParamDecl* param)
 {
     EmitType(emitter, &param->type);
-    if (ParamIsIndirect(emitter, param)) SbPutc(&emitter->out, '*');
+    
+    if (ParamIsIndirect(emitter, param))
+    {
+        SbPutc(&emitter->out, '*');
+    }
+
     SbPutc(&emitter->out, ' ');
     SbPuts(&emitter->out, VarName(emitter, param->name));
 }
 
-static void EmitFunctionSignature(CEmitter* emitter, const FunctionDecl* function,
-                                  const char* name)
+static void EmitFunctionSignature(
+    CEmitter* emitter,
+    const FunctionDecl* function,
+    const char* name)
 {
     EmitType(emitter, &function->returnType);
     SbPutc(&emitter->out, ' ');
     SbPuts(&emitter->out, name);
     SbPutc(&emitter->out, '(');
+
     if (function->params.count == 0)
     {
         SbPuts(&emitter->out, "void");
@@ -771,7 +910,11 @@ static void EmitFunctionSignature(CEmitter* emitter, const FunctionDecl* functio
     {
         for (size_t i = 0; i < function->params.count; ++i)
         {
-            if (i) SbPuts(&emitter->out, ", ");
+            if (i)
+            {
+                SbPuts(&emitter->out, ", ");
+            }
+
             EmitParam(emitter, (const ParamDecl*)VecGet(&function->params, i));
         }
     }
@@ -782,9 +925,12 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
 {
     EmitType(emitter, &function->returnType);
     SbPuts(&emitter->out, " (*");
+    
     const char* slotName = ExternSlotName(emitter, function->name);
     SbPuts(&emitter->out, slotName);
+    
     SbPuts(&emitter->out, ")(");
+
     if (function->params.count == 0)
     {
         SbPuts(&emitter->out, "void");
@@ -793,10 +939,18 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
     {
         for (size_t i = 0; i < function->params.count; ++i)
         {
-            if (i) SbPuts(&emitter->out, ", ");
+            if (i > 0)
+            {
+                SbPuts(&emitter->out, ", ");
+            }
+
             const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, i);
             EmitType(emitter, &param->type);
-            if (ParamIsIndirect(emitter, param)) SbPutc(&emitter->out, '*');
+
+            if (ParamIsIndirect(emitter, param))
+            {
+                SbPutc(&emitter->out, '*');
+            }
         }
     }
     SbPuts(&emitter->out, ") = 0;\n");
@@ -811,7 +965,11 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
 static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* states)
 {
     const StructType* type = &emitter->types.types[index];
-    if (type->opaque || states[index] == 2) return;
+    if (type->opaque || states[index] == 2)
+    {
+        return;
+    }
+
     if (states[index] == 1)
     {
         DiagErrorFmt(emitter->diag, TypeSourceRange(emitter, type->name),
@@ -820,10 +978,12 @@ static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* state
     }
 
     states[index] = 1;
+
     for (size_t fieldIndex = 0; fieldIndex < type->fields.count; ++fieldIndex)
     {
         const FieldDecl* field = (const FieldDecl*)VecGet(&type->fields, fieldIndex);
         const StructType* dependency = TypeRegistryFind(&emitter->types, field->type.name);
+
         if (dependency && !dependency->opaque)
         {
             size_t dependencyIndex = (size_t)(dependency - emitter->types.types);
@@ -832,11 +992,13 @@ static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* state
     }
 
     states[index] = 2;
+
     const char* cName = TypeNameC(emitter, type->name);
     EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
     SbPuts(&emitter->out, "struct ");
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " {\n");
+    
     for (size_t j = 0; j < type->fields.count; ++j)
     {
         FieldDecl* field = (FieldDecl*)VecGet(&type->fields, j);
@@ -846,18 +1008,21 @@ static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* state
         SbPuts(&emitter->out, FieldName(emitter, field->name));
         SbPuts(&emitter->out, ";\n");
     }
+
     SbPuts(&emitter->out, "};\n");
 }
 
 static void EmitTypes(CEmitter* emitter)
 {
     static const char* primitive[] = {"bool", "int", "uint", "float", "double"};
+
     for (size_t p = 0; p < sizeof(primitive) / sizeof(primitive[0]); ++p)
     {
         for (int lanes = 2; lanes <= 4; ++lanes)
         {
             const char* vectorName = arena_format(emitter->arena, "%s%d", primitive[p], lanes);
             const char* elementName = TypeNameC(emitter, primitive[p]);
+
             SbPuts(&emitter->out, "typedef struct { ");
             SbPuts(&emitter->out, elementName);
             SbPrintf(&emitter->out, " lane[%d]; } ", lanes);
@@ -870,7 +1035,9 @@ static void EmitTypes(CEmitter* emitter)
     {
         const StructType* type = &emitter->types.types[i];
         const char* cName = TypeNameC(emitter, type->name);
+        
         EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
+
         if (type->opaque)
         {
             SbPuts(&emitter->out, "typedef struct ");
@@ -889,11 +1056,14 @@ static void EmitTypes(CEmitter* emitter)
         }
     }
 
-    unsigned char* states = (unsigned char*)arena_alloc(
-        emitter->arena, emitter->types.count ? emitter->types.count : 1);
-    memset(states, 0, emitter->types.count ? emitter->types.count : 1);
+    // NOTE: arena_alloc zeros it out
+    unsigned char* states = (unsigned char*)arena_alloc(emitter->arena, emitter->types.count ? emitter->types.count : 1);
+    
     for (size_t i = 0; i < emitter->types.count; ++i)
+    {
         EmitStructBody(emitter, i, states);
+    }
+    
     SbPutc(&emitter->out, '\n');
 }
 
@@ -905,9 +1075,11 @@ static void EmitGlobals(CEmitter* emitter)
         EmitLineDirective(emitter, global->base.range);
         EmitType(emitter, &global->type);
         SbPutc(&emitter->out, ' ');
+
         const char* cName = GlobalName(emitter, global->name);
         SbPuts(&emitter->out, cName);
         SbPuts(&emitter->out, " = ");
+
         if (global->init)
         {
             EmitExpr(emitter, global->init);
@@ -918,10 +1090,15 @@ static void EmitGlobals(CEmitter* emitter)
             SbPuts(&emitter->out, TypeNameC(emitter, global->type.name));
             SbPuts(&emitter->out, "){0}");
         }
+
         SbPuts(&emitter->out, ";\n");
         AddSymbol(emitter, global->name, global->type.name, cName, false);
     }
-    if (emitter->mod->globals.count) SbPutc(&emitter->out, '\n');
+
+    if (emitter->mod->globals.count)
+    {
+        SbPutc(&emitter->out, '\n');
+    }
 }
 
 static void EmitDeclarations(CEmitter* emitter)
@@ -930,6 +1107,7 @@ static void EmitDeclarations(CEmitter* emitter)
     {
         const FunctionDecl* function = (const FunctionDecl*)VecGet(&emitter->mod->functions, i);
         EmitLineDirective(emitter, function->base.range);
+
         if (function->isExtern && emitter->jitMode)
         {
             EmitExternSlot(emitter, function);
@@ -946,11 +1124,12 @@ static void EmitDeclarations(CEmitter* emitter)
             CBackendSymbol* symbol = (CBackendSymbol*)arena_alloc(emitter->arena, sizeof(CBackendSymbol));
             symbol->strataName = function->mangledName;
             symbol->cName = FunctionName(emitter, function->mangledName);
-            symbol->isIntVoid = strcmp(function->returnType.name, "int") == 0
-                && function->params.count == 0;
+            symbol->isIntVoid = strcmp(function->returnType.name, "int") == 0 && function->params.count == 0;
+
             VecPush(&emitter->exports, symbol);
         }
     }
+
     SbPutc(&emitter->out, '\n');
 }
 
@@ -959,10 +1138,14 @@ static void EmitDefinitions(CEmitter* emitter)
     for (size_t i = 0; i < emitter->mod->functions.count; ++i)
     {
         const FunctionDecl* function = (const FunctionDecl*)VecGet(&emitter->mod->functions, i);
-        if (!function->body) continue;
+        if (!function->body)
+        {
+            continue;
+        }
 
         DisposeMap(&emitter->symbols);
         StrMapInit(&emitter->symbols);
+
         for (size_t j = 0; j < emitter->mod->globals.count; ++j)
         {
             const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, j);
@@ -979,13 +1162,17 @@ static void EmitDefinitions(CEmitter* emitter)
         EmitLineDirective(emitter, function->base.range);
         EmitFunctionSignature(emitter, function, FunctionName(emitter, function->mangledName));
         SbPuts(&emitter->out, " {\n");
+        
         emitter->indent++;
+        
         const Block* body = (const Block*)function->body;
         for (size_t j = 0; j < body->statements.count; ++j)
         {
             EmitStmt(emitter, (const Node*)VecGet(&body->statements, j));
         }
+
         Pad(emitter);
+
         if (strcmp(function->returnType.name, "void") == 0)
         {
             SbPuts(&emitter->out, "return;\n");
@@ -996,7 +1183,9 @@ static void EmitDefinitions(CEmitter* emitter)
             SbPuts(&emitter->out, TypeNameC(emitter, function->returnType.name));
             SbPuts(&emitter->out, "){0};\n");
         }
+
         emitter->indent--;
+        
         SbPuts(&emitter->out, "}\n");
         SbPutc(&emitter->out, '\n');
     }
@@ -1016,19 +1205,24 @@ void BuiltCModuleDispose(BuiltCModule* module)
     BuiltCModuleInit(module);
 }
 
-BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                    const SourceManager* sources, size_t sourceCount, bool jitMode)
+BuiltCModule BuildCModuleWithSources(
+    const Module* ast,
+    DiagnosticEngine* diag,
+    Arena* arena,
+    const SourceManager* sources,
+    size_t sourceCount,
+    bool jitMode)
 {
     BuiltCModule result;
     BuiltCModuleInit(&result);
+
     if (!ast)
     {
         DiagError(diag, SRC_INVALID, "C backend received a null module");
         return result;
     }
 
-    CEmitter emitter;
-    memset(&emitter, 0, sizeof(emitter));
+    CEmitter emitter = {0};
     emitter.mod = ast;
     emitter.diag = diag;
     emitter.arena = arena;
@@ -1058,6 +1252,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
 
     DisposeMap(&emitter.symbols);
     TypeRegistryFree(&emitter.types);
+
     return result;
 }
 
@@ -1073,8 +1268,10 @@ CodegenResult GenerateC(const Module* mod)
 
     Arena arena;
     arena_init(&arena, 0);
+
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
+
     BuiltCModule module = BuildCModule(mod, &diag, &arena, false);
 
     result.ok = !DiagHasErrors(&diag);
@@ -1083,5 +1280,6 @@ CodegenResult GenerateC(const Module* mod)
     BuiltCModuleDispose(&module);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
+
     return result;
 }

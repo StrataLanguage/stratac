@@ -11,12 +11,21 @@ static void AppendDiagnostic(TccJit* jit, const char* message)
 {
     size_t length = strlen(message);
     size_t needed = jit->diagnosticsLen + length + 2;
+
     if (needed > jit->diagnosticsCap)
     {
         size_t capacity = jit->diagnosticsCap ? jit->diagnosticsCap * 2 : 256;
-        while (capacity < needed) capacity *= 2;
+        while (capacity < needed)
+        {
+            capacity *= 2;
+        }
+
         char* diagnostics = (char*)realloc(jit->diagnostics, capacity);
-        if (!diagnostics) abort();
+        if (!diagnostics)
+        {
+            STRATA_CRASH("WTF");
+        }
+
         jit->diagnostics = diagnostics;
         jit->diagnosticsCap = capacity;
     }
@@ -37,8 +46,13 @@ static void CopySymbols(Vec* destination, const Vec* source)
     for (size_t i = 0; i < source->count; ++i)
     {
         const CBackendSymbol* input = (const CBackendSymbol*)VecGet(source, i);
+
         TccJitSymbol* output = (TccJitSymbol*)malloc(sizeof(TccJitSymbol));
-        if (!output) abort();
+        if (!output)
+        {
+            STRATA_CRASH("WTF");
+        }
+
         output->strataName = DupString(input->strataName);
         output->cName = DupString(input->cName);
         output->isIntVoid = input->isIntVoid;
@@ -55,6 +69,7 @@ static void FreeSymbols(Vec* symbols)
         free(symbol->cName);
         free(symbol);
     }
+
     free(symbols->items);
     VecInit(symbols);
 }
@@ -64,14 +79,19 @@ static TccJitSymbol* FindSymbol(const Vec* symbols, const char* name)
     for (size_t i = 0; i < symbols->count; ++i)
     {
         TccJitSymbol* symbol = (TccJitSymbol*)VecGet(symbols, i);
-        if (strcmp(symbol->strataName, name) == 0) return symbol;
+
+        if (strcmp(symbol->strataName, name) == 0)
+        {
+            return symbol;
+        }
     }
+
     return NULL;
 }
 
 void TccJitInit(TccJit* jit)
 {
-    memset(jit, 0, sizeof(*jit));
+    *jit = (TccJit){0};
     VecInit(&jit->exports);
     VecInit(&jit->externs);
 }
@@ -81,11 +101,15 @@ void TccJitDestroy(TccJit* jit)
     if (jit->state)
     {
         tcc_delete(jit->state);
+
         jit->state = NULL;
     }
+    
     FreeSymbols(&jit->exports);
     FreeSymbols(&jit->externs);
+    
     free(jit->diagnostics);
+
     jit->diagnostics = NULL;
     jit->diagnosticsLen = 0;
     jit->diagnosticsCap = 0;
@@ -108,6 +132,7 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     }
 
     tcc_set_error_func(jit->state, jit, TccError);
+
     if (tcc_set_output_type(jit->state, TCC_OUTPUT_MEMORY) < 0
         || tcc_set_options(jit->state, "-nostdlib -nostdinc") < 0
         || tcc_compile_string(jit->state, module->source) < 0)
@@ -133,37 +158,65 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
             *errorMessage = DupString(jit->diagnosticsLen
                 ? jit->diagnostics : "TinyCC relocation failed");
         }
+
         return false;
     }
 
     CopySymbols(&jit->exports, &module->exports);
     CopySymbols(&jit->externs, &module->externs);
+
     return true;
 }
 
 bool TccJitAddSymbol(TccJit* jit, const char* name, void* address)
 {
-    if (!jit || !jit->state || !name || !address) return false;
+    if (!jit || !jit->state || !name || !address)
+    {
+        return false;
+    }
+
     TccJitSymbol* symbol = FindSymbol(&jit->externs, name);
-    if (!symbol) return false;
+    if (!symbol)
+    {
+        return false;
+    }
+
     void* slot = tcc_get_symbol(jit->state, symbol->cName);
-    if (!slot) return false;
+    if (!slot)
+    {
+        return false;
+    }
+
     memcpy(slot, &address, sizeof(address));
+
     return true;
 }
 
 void* TccJitGetAddress(TccJit* jit, const char* name)
 {
-    if (!jit || !jit->state || !name) return NULL;
+    if (!jit || !jit->state || !name)
+    {
+        return NULL;
+    }
+
     TccJitSymbol* symbol = FindSymbol(&jit->exports, name);
-    if (!symbol) return NULL;
+    if (!symbol)
+    {
+        return NULL;
+    }
+
     return tcc_get_symbol(jit->state, symbol->cName);
 }
 
 bool TccJitCanInvokeIntVoid(const TccJit* jit, const char* name)
 {
-    if (!jit || !name) return false;
+    if (!jit || !name)
+    {
+        return false;
+    }
+
     TccJitSymbol* symbol = FindSymbol(&jit->exports, name);
+
     return symbol && symbol->isIntVoid;
 }
 
@@ -174,7 +227,11 @@ size_t TccJitExternCount(const TccJit* jit)
 
 const char* TccJitExternName(const TccJit* jit, size_t index)
 {
-    if (!jit || index >= jit->externs.count) return NULL;
+    if (!jit || index >= jit->externs.count)
+    {
+        return NULL;
+    }
+
     return ((const TccJitSymbol*)VecGet(&jit->externs, index))->strataName;
 }
 

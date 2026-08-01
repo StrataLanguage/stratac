@@ -92,19 +92,6 @@ static TypeName MakeTypeName(char* name)
     return tn;
 }
 
-static void StrMapClear(StrMap* m)
-{
-    if (m->cap > 0)
-    {
-        for (size_t i = 0; i < m->cap; i++)
-        {
-            m->keys[i] = NULL;
-        }
-
-        m->count = 0;
-    }
-}
-
 static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
 {
     if (t->isVoid)
@@ -1108,10 +1095,12 @@ static Value EmitExpr(Builder* b, Node* n)
         if (literal->value > 0xFFFFFFFFULL)
         {
             TypeDesc typeDesc = TypeDescMake(I64Ty(b), false, literal->isUnsigned, false, NULL);
+
             return ValueMake(LLVMConstInt(I64Ty(b), literal->value, 1), typeDesc);
         }
 
         TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, literal->isUnsigned, false, NULL);
+
         return ValueMake(LLVMConstInt(I32Ty(b), literal->value, 1), typeDesc);
     }
 
@@ -1569,6 +1558,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
     BuiltModule out;
     BuiltModuleInit(&out);
+
     out.ctx = b->m_ctx;
     out.mod = b->m_mod;
     out.externSymbols = b->m_externNames;
@@ -1599,8 +1589,7 @@ void BuiltModuleDispose(BuiltModule* bm)
 
 BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode)
 {
-    Builder b;
-    memset(&b, 0, sizeof(b));
+    Builder b = {0};
     b.m_arena = arena;
     StrMapInit(&b.m_structTypes);
     StrMapInit(&b.m_funcs);
@@ -1609,7 +1598,9 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_externSlots);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
+
     TypeRegistryInit(&b.m_registry);
+
     BuiltModule module = BuilderBuild(&b, ast, diag, jitMode);
     StrMapFree(&b.m_structTypes);
     StrMapFree(&b.m_funcs);
@@ -1618,5 +1609,6 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_externSlots);
     free(b.m_loops.items);
     TypeRegistryFree(&b.m_registry);
+
     return module;
 }

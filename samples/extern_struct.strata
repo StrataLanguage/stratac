@@ -18,8 +18,9 @@ struct Vec3 {
 extern float length_sq(const Vec3 v);
 extern void  scale_into(const Vec3 src, float s, Vec3 dst);
 
-float entry() {
-    Vec3 v = Vec3(3.0, 4.0, 0.0);
+float entry()
+{
+    Vec3 v = { .x = 3.0, .y = 4.0, .z = 0.0 };
     Vec3 d;
     scale_into(v, 2.0, d);               // d = (6, 8, 0)
     return length_sq(v) + length_sq(d);  // 25 + 100 = 125

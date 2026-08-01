@@ -7,7 +7,16 @@
 
 #include <stdarg.h>
 
-char* DupString(const char* s);
+// -- Macros
+
+#define STRATA_CRASH(msg)                                                                                              \
+    do                                                                                                                 \
+    {                                                                                                                  \
+        fputs("Strata compiler crashed: " msg);                                                                        \
+        abort();                                                                                                       \
+    } while (0)
+
+// -- Arena
 
 typedef struct ArenaChunk {
     struct ArenaChunk* next;
@@ -33,6 +42,12 @@ char* arena_vformat(Arena* a, const char* fmt, va_list args);
 
 Arena* scratch_arena(void);
 void   scratch_reset(void);
+
+// -- C string
+
+char* DupString(const char* s);
+
+// -- Str
 
 typedef struct {
     const char* data;
@@ -61,6 +76,8 @@ static inline Str StrSlice(Str s, size_t start, size_t end)
     return (Str){s.data + start, end - start};
 }
 
+// -- Vec
+
 typedef struct {
     void** items;
     size_t count;
@@ -83,6 +100,8 @@ static inline void* VecGet(const Vec* v, size_t i)
     return (i < v->count) ? v->items[i] : NULL;
 }
 
+// -- StrMap
+
 typedef struct {
     const char** keys;
     void** values;
@@ -101,6 +120,9 @@ static inline void StrMapInit(StrMap* m)
 void  StrMapPut(StrMap* m, const char* key, void* value);
 void* StrMapGet(const StrMap* m, const char* key);
 void  StrMapFree(StrMap* m);
+void StrMapClear(StrMap* m);
+
+// -- String Buffer
 
 typedef struct {
     char* data;
@@ -121,3 +143,7 @@ void SbPutn(Sb* sb, const char* s, size_t n);
 void SbPutr(Sb* sb, char c, size_t repeat);
 void SbPrintf(Sb* sb, const char* fmt, ...);
 char* SbFinish(Sb* sb, Arena* arena);
+
+// -- Misc
+
+size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);

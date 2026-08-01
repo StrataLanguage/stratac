@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
-// String helpers
+// -- C string
 
 char* DupString(const char* s)
 {
@@ -19,7 +19,7 @@ char* DupString(const char* s)
     return out;
 }
 
-// Arena
+// -- Arena
 
 static void ArenaGrow(Arena* a, size_t need)
 {
@@ -182,7 +182,7 @@ void scratch_reset(void)
     }
 }
 
-// Vec
+// -- Vec
 
 void VecReserve(Vec* v, size_t n)
 {
@@ -227,7 +227,7 @@ void* VecPop(Vec* v)
     return v->items[--v->count];
 }
 
-// StrMap
+// -- StrMap
 
 static uint64_t StrMapHash(const char* s)
 {
@@ -334,6 +334,19 @@ void StrMapFree(StrMap* m)
     StrMapInit(m);
 }
 
+void StrMapClear(StrMap* m)
+{
+    if (m->cap > 0)
+    {
+        for (size_t i = 0; i < m->cap; i++)
+        {
+            m->keys[i] = NULL;
+        }
+
+        m->count = 0;
+    }
+}
+
 static void SbEnsure(Sb* sb, size_t extra)
 {
     if (sb->len + extra <= sb->cap)
@@ -357,7 +370,7 @@ static void SbEnsure(Sb* sb, size_t extra)
     sb->cap = newcap;
 }
 
-// StringBuilder
+// -- StringBuilder
 
 void SbPutc(Sb* sb, char c)
 {
@@ -420,4 +433,27 @@ char* SbFinish(Sb* sb, Arena* arena)
     sb->len = 0;
     sb->cap = 0;
     return result;
+}
+
+// -- Misc
+
+size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
+{
+    size_t lo = 0;
+    size_t hi = count;
+
+    while (lo < hi)
+    {
+        size_t mid = lo + (hi - lo) / 2;
+        if (arr[mid] <= val)
+        {
+            lo = mid + 1;
+        }
+        else
+        {
+            hi = mid;
+        }
+    }
+
+    return lo;
 }
