@@ -11,6 +11,7 @@ typedef struct {
     TypeRegistry m_registry;
     Arena* m_arena;
     StrMap m_constVars;
+    StrMap m_movedBoxes;
     const char* m_currentReturnType;
 } Resolver;
 
@@ -39,6 +40,22 @@ static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
 {
     const StructType* t = TypeRegistryFind(reg, name);
     return t && t->opaque && t->incomplete;
+}
+
+/* Move-state tracking for box locals (value 1 = moved, 2 = re-live). */
+static bool IsBoxMoved(const Resolver* r, const char* name)
+{
+    return StrMapGet(&r->m_movedBoxes, name) == (void*)1;
+}
+
+static void MarkBoxMoved(Resolver* r, const char* name)
+{
+    StrMapPut(&r->m_movedBoxes, name, (void*)1);
+}
+
+static void MarkBoxLive(Resolver* r, const char* name)
+{
+    StrMapPut(&r->m_movedBoxes, name, (void*)2);
 }
 
 static int CountByName(const Module* mod, const char* name)
@@ -357,10 +374,15 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeIdent:
     {
         IdentExpr* ident = (IdentExpr*)n;
+        const char* varType = (const char*)StrMapGet(scope, ident->name);
 
-        if (!StrMapGet(scope, ident->name))
+        if (!varType)
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
+        }
+        else if (IsBoxTypeName(varType) && IsBoxMoved(r, ident->name))
+        {
+            DiagErrorFmt(r->m_diag, ident->base.range, "use of moved box '%s'", ident->name);
         }
 
         return;
@@ -383,26 +405,35 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         CheckConstAssign(r, a->target, a->base.range);
 
-        /* Assigning to a box variable is a move: the value must be a box of
-           the same type. Writing through a box (v.x = ...) is unaffected. */
-        if (a->target->kind == NodeIdent)
+        const char* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
+        bool boxMove = tt && IsBoxTypeName(tt);
+
+        if (boxMove)
         {
-            const char* tt = InferType(r, a->target, scope);
+            /* Box move: the value must be a box of the same type. Reading the
+               value validates it is not itself moved; then ownership moves. */
+            const char* vt = InferType(r, a->value, scope);
 
-            if (IsBoxTypeName(tt))
+            if (vt[0] != '\0' && strcmp(vt, tt) != 0)
             {
-                const char* vt = InferType(r, a->value, scope);
+                DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to box variable '%s'",
+                             vt, ((IdentExpr*)a->target)->name);
+            }
 
-                if (vt[0] != '\0' && strcmp(vt, tt) != 0)
-                {
-                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to box variable '%s'",
-                                 vt, ((IdentExpr*)a->target)->name);
-                }
+            ResolveExpr(r, a->value, scope);
+
+            MarkBoxLive(r, ((IdentExpr*)a->target)->name);
+
+            if (a->value->kind == NodeIdent)
+            {
+                MarkBoxMoved(r, ((IdentExpr*)a->value)->name);
             }
         }
-
-        ResolveExpr(r, a->target, scope);
-        ResolveExpr(r, a->value, scope);
+        else
+        {
+            ResolveExpr(r, a->target, scope);
+            ResolveExpr(r, a->value, scope);
+        }
 
         return;
     }
@@ -578,6 +609,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
             }
+
+            /* A box<T> initialized from another box<T> moves the source. */
+            if (IsBoxTypeName(vd->type.name) && IsBoxTypeName(initType) && vd->init->kind == NodeIdent)
+            {
+                MarkBoxMoved(r, ((IdentExpr*)vd->init)->name);
+            }
         }
 
         StrMapPut(scope, vd->name, (void*)vd->type.name);
@@ -604,6 +641,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             if (typeName[0] != '\0' && strcmp(typeName, "void") == 0)
             {
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
+            }
+
+            /* Returning a box moves it out. */
+            if (IsBoxTypeName(typeName) && rs->value->kind == NodeIdent)
+            {
+                MarkBoxMoved(r, ((IdentExpr*)rs->value)->name);
             }
         }
 
@@ -684,6 +727,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     TypeRegistryBuild(&r.m_registry, mod);
 
     StrMapInit(&r.m_constVars);
+    StrMapInit(&r.m_movedBoxes);
 
     StrMap byMangled;
     StrMapInit(&byMangled);
@@ -736,6 +780,12 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             memset(r.m_constVars.keys, 0, r.m_constVars.cap * sizeof(const char*));
             r.m_constVars.count = 0;
+        }
+
+        if (r.m_movedBoxes.cap > 0)
+        {
+            memset(r.m_movedBoxes.keys, 0, r.m_movedBoxes.cap * sizeof(const char*));
+            r.m_movedBoxes.count = 0;
         }
 
         for (size_t j = 0; j < functionDecl->params.count; j++)
@@ -825,6 +875,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 
     StrMapFree(&r.m_constVars);
+    StrMapFree(&r.m_movedBoxes);
     StrMapFree(&byMangled);
     TypeRegistryFree(&r.m_registry);
 }
