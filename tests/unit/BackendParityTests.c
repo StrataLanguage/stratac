@@ -57,6 +57,14 @@ static void CheckParity(const char* source, int expected)
     arena_free(&arena);
 }
 
+STRATA_TEST(llvm_and_tcc_cast_to_bool_parity)
+{
+    /* 2 and 4 are truthy but have a zero low bit: catches bit-truncation. */
+    CheckParity(
+        "int entry() { return (int)(bool)2 + (int)(bool)4 + (int)(bool)3; }",
+        3);
+}
+
 STRATA_TEST(llvm_and_tcc_scalar_control_flow_parity)
 {
     CheckParity(

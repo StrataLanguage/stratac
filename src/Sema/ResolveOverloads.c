@@ -5,33 +5,6 @@
 #include <string.h>
 #include <stdio.h>
 
-static bool IsNumeric(const char* t)
-{
-    return strcmp(t, "int") == 0
-        || strcmp(t, "uint") == 0
-        || strcmp(t, "long") == 0
-        || strcmp(t, "ulong") == 0
-        || strcmp(t, "float") == 0
-        || strcmp(t, "double") == 0;
-}
-
-static bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base)
-{
-    const StructType* t = TypeRegistryFind(reg, derived);
-
-    while (t && t->opaque && t->extendsFrom)
-    {
-        if (strcmp(t->extendsFrom, base) == 0)
-        {
-            return true;
-        }
-
-        t = TypeRegistryFind(reg, t->extendsFrom);
-    }
-
-    return false;
-}
-
 typedef struct {
     Module* m_mod;
     DiagnosticEngine* m_diag;
@@ -417,8 +390,26 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
     case NodeCast:
-        ResolveExpr(r, ((CastExpr*)n)->operand, scope);
+    {
+        CastExpr* cast = (CastExpr*)n;
+        ResolveExpr(r, cast->operand, scope);
+
+        const char* src = InferType(r, cast->operand, scope);
+        const char* dst = cast->type.name;
+
+        bool scalarPair = src && dst && IsScalarTypeName(src) && IsScalarTypeName(dst);
+        bool handlePair = src && dst
+            && IsHandleType(&r->m_registry, src) && IsHandleType(&r->m_registry, dst)
+            && (HandleExtendsFrom(&r->m_registry, dst, src)
+                || HandleExtendsFrom(&r->m_registry, src, dst));
+
+        if (src && src[0] != '\0' && dst && dst[0] != '\0' && !scalarPair && !handlePair)
+        {
+            DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", src, dst);
+        }
+
         return;
+    }
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;

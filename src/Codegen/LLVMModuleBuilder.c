@@ -315,6 +315,16 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
         return value;
     }
 
+    /* Conversion to bool is a (non)zero test, not a bit-truncation. */
+    if (target.type == I1Ty(b))
+    {
+        LLVMValueRef zero = LLVMConstNull(value.typeDesc.type);
+        LLVMValueRef cmp = value.typeDesc.isFloat
+            ? LLVMBuildFCmp(b->m_builder, LLVMRealUNE, value.value, zero, "tobool")
+            : LLVMBuildICmp(b->m_builder, LLVMIntNE, value.value, zero, "tobool");
+        return ValueMake(cmp, target);
+    }
+
     LLVMValueRef r = NULL;
 
     if (!value.typeDesc.isFloat && target.isFloat)
@@ -331,7 +341,8 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     }
     else if (!value.typeDesc.isFloat && !target.isFloat && !target.isVoid)
     {
-        r = LLVMBuildIntCast2(b->m_builder, value.value, target.type, !target.isUnsigned, "c");
+        bool srcIsBool = value.typeDesc.type == I1Ty(b);
+        r = LLVMBuildIntCast2(b->m_builder, value.value, target.type, !target.isUnsigned && !srcIsBool, "c");
     }
     else
     {

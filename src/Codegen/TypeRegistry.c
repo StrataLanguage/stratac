@@ -153,3 +153,28 @@ int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, cons
 
     return -1;
 }
+
+// -- Helpers
+
+bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base)
+{
+    const StructType* t = TypeRegistryFind(reg, derived);
+
+    while (t && t->opaque && t->extendsFrom)
+    {
+        if (strcmp(t->extendsFrom, base) == 0)
+        {
+            return true;
+        }
+
+        t = TypeRegistryFind(reg, t->extendsFrom);
+    }
+
+    return false;
+}
+
+bool IsHandleType(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = TypeRegistryFind(reg, name);
+    return t && t->opaque && !t->incomplete;
+}

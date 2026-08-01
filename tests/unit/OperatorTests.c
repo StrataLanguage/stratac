@@ -286,6 +286,31 @@ STRATA_TEST(jit_cast_uint_to_int)
     }
 }
 
+STRATA_TEST(jit_cast_to_bool_compares_to_zero)
+{
+    /* (bool)x must be "x != 0", not bit-truncation: 2 and 4 have a zero low
+       bit but are truthy. */
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int a = (bool)2;\n"
+                                "  int b = (bool)4;\n"
+                                "  int c = (bool)0;\n"
+                                "  float f = 3.0;\n"
+                                "  int d = (bool)f;\n"
+                                "  return a + b + c + d;\n"   // 1 + 1 + 0 + 1 = 3
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
 STRATA_TEST(jit_cast_in_expression)
 {
     StrataJit* jit = CompileJit("int entry() {\n"

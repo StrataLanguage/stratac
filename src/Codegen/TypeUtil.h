@@ -21,3 +21,7 @@ static inline bool MappedTypeIsVector(const MappedType* m)
 }
 
 MappedType MapType(const TypeName* t);
+
+bool IsNumeric(const char* t);
+bool IsScalarTypeName(const char* t);
+bool IsFloatType(const char* t);
