@@ -1611,5 +1611,13 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
     TypeRegistryInit(&b.m_registry);
-    return BuilderBuild(&b, ast, diag, jitMode);
+    BuiltModule module = BuilderBuild(&b, ast, diag, jitMode);
+    StrMapFree(&b.m_structTypes);
+    StrMapFree(&b.m_funcs);
+    StrMapFree(&b.m_symbols);
+    StrMapFree(&b.m_globals);
+    StrMapFree(&b.m_externSlots);
+    free(b.m_loops.items);
+    TypeRegistryFree(&b.m_registry);
+    return module;
 }

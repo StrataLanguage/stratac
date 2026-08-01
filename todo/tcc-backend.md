@@ -1,6 +1,46 @@
 # C output and TinyCC JIT backend plan
 
-Status: ready to implement.
+Status: implemented and verified on Linux x86-64 (2026-07-31).
+
+## Implementation results
+
+The work landed as one commit per checkpoint:
+
+1. `32804ed` vendors TinyCC and records this plan.
+2. `b06a8b6` partitions LLVM and TinyCC build modes.
+3. `0c32e05` adds the C output backend.
+4. `219d61c` moves the public JIT to in-memory TinyCC.
+5. `e0a1c88` adds the TinyCC-only static runtime profile.
+6. `3c8c386` expands the backend and lifecycle test matrix.
+7. `fe90553` adds deterministic large-file JIT benchmarks.
+
+The final hardening checkpoint adds AST/container cleanup, original-source
+`#line` mappings, C identifier and struct dependency handling, float remainder
+parity, generated-C host compiler tests, and a no-LLVM binary audit. Validation
+covers the full LLVM+TinyCC build, the `tcc-static` preset, full and TinyCC-only
+shared libraries, frontend-only configuration, ASan/UBSan, standalone generated
+C, repeated and parallel JIT lifecycles, and imported modules. Native Windows
+and macOS execution remains a platform-CI responsibility; unsupported targets
+fail during configuration rather than selecting a mismatched TinyCC target.
+
+The Linux `tcc-static` stripped executable measured 269,032 bytes. Its dynamic
+dependencies are only the platform loader, libc, and libm; the audit confirms
+there are no LLVM sources, symbols, staging paths, or runtime dependencies and
+that `tcc_compile_string` is incorporated into the executable.
+
+A Release run over deterministic 1, 5, and 20 MiB fixtures completed 120 timed
+samples (four source shapes, five latency views, two backends, three sizes). At
+20 MiB, median file-to-callable latency was:
+
+| Shape | LLVM MCJIT | TinyCC | TinyCC / LLVM |
+| --- | ---: | ---: | ---: |
+| arithmetic | 49.140 ms | 22.594 ms | 0.460x |
+| control flow | 357.744 ms | 32.309 ms | 0.090x |
+| structs | 132.300 ms | 23.383 ms | 0.177x |
+| overloads | 197.936 ms | 21.610 ms | 0.109x |
+
+These numbers are observational results for LLVM 21.1.7 and the vendored
+TinyCC 0.9.28-strata on the implementation host, not performance thresholds.
 
 ## Confirmed baseline
 

@@ -186,6 +186,7 @@ static void LoadInto(ModuleLoader* loader, const char* path)
     }
 
     AppendItems(loader->root, fileMod);
+    AstReleaseModuleLists(fileMod);
 }
 
 void ModuleLoaderInit(ModuleLoader* loader, Arena* arena, DiagnosticEngine* diag)

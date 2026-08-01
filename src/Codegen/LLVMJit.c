@@ -65,7 +65,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     if (!bm->mod)
     {
-        *errorMessage = strdup("no module to JIT");
+        *errorMessage = DupString("no module to JIT");
 
         return false;
     }
@@ -73,7 +73,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     for (size_t i = 0; i < bm->externSymbols.count; i++)
     {
         const char* sym = (const char*)VecGet(&bm->externSymbols, i);
-        VecPush(&jit->m_externs, strdup(sym));
+        VecPush(&jit->m_externs, DupString(sym));
     }
 
     LLVMContextRef context = bm->ctx;

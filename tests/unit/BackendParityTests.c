@@ -81,3 +81,10 @@ STRATA_TEST(llvm_and_tcc_recursion_parity)
         "int entry() { return fib(12); }",
         144);
 }
+
+STRATA_TEST(llvm_and_tcc_float_remainder_parity)
+{
+    CheckParity(
+        "int entry() { float x = 7.5; x %= 2.0; return (int)(x * 10.0 + (5.5 % 2.0)); }",
+        16);
+}

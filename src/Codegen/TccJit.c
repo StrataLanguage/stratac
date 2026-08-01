@@ -3,6 +3,7 @@
 #include "Core/Util.h"
 #include "libtcc.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -122,6 +123,8 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     tcc_add_symbol(jit->state, "memset", (const void*)(uintptr_t)&memset);
     tcc_add_symbol(jit->state, "memcpy", (const void*)(uintptr_t)&memcpy);
     tcc_add_symbol(jit->state, "memmove", (const void*)(uintptr_t)&memmove);
+    tcc_add_symbol(jit->state, "fmodf", (const void*)(uintptr_t)&fmodf);
+    tcc_add_symbol(jit->state, "fmod", (const void*)(uintptr_t)&fmod);
 
     if (tcc_relocate(jit->state) < 0)
     {

@@ -38,7 +38,7 @@ CodegenResult GenerateLlvmIr(const Module* mod)
     }
 
     char* ir = LLVMPrintModuleToString(bm.mod);
-    res.output = strdup(ir);
+    res.output = DupString(ir);
     res.ok = true;
 
     LLVMDisposeMessage(ir);

@@ -34,7 +34,7 @@ bool EmitNativeFile(
 {
     if (!bm->mod)
     {
-        *errorMessage = strdup("no module to emit");
+        *errorMessage = DupString("no module to emit");
 
         return false;
     }
@@ -97,7 +97,7 @@ bool EmitNativeFile(
 
     if (!targetMachine)
     {
-        *errorMessage = strdup("could not create target machine");
+        *errorMessage = DupString("could not create target machine");
 
         return false;
     }

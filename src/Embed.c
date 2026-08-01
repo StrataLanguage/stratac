@@ -6,6 +6,7 @@
 #include "Lex/Lexer.h"
 #include "Parse/Parser.h"
 #include "Sema/ResolveOverloads.h"
+#include "Codegen/CBackend.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -16,7 +17,6 @@
 #include "Import/ModuleLoader.h"
 
 #if STRATA_HAS_TCC
-#include "Codegen/CBackend.h"
 #include "Codegen/TccJit.h"
 #endif
 
@@ -78,13 +78,11 @@ static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* aren
         }
         else if (emit == STRATA_EMIT_C)
         {
-            CodegenResult result = GenerateC(mod);
-            irOwned = result.output;
-            out = result.output ? result.output : "";
-            if (!result.ok)
-            {
-                DiagError(diag, SRC_INVALID, "C code generation failed");
-            }
+            BuiltCModule result = BuildCModuleWithSources(
+                mod, diag, arena, sources, sourceCount, false);
+            irOwned = DupString(result.source ? result.source : "");
+            out = irOwned ? irOwned : "";
+            BuiltCModuleDispose(&result);
         }
         else if (emit == STRATA_EMIT_LLVM_IR)
         {
@@ -149,6 +147,7 @@ static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t 
 
     StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit);
 
+    AstDispose((Node*)mod);
     DiagnosticEngineFree(&diag);
     SourceManagerFree(&src);
     arena_free(&arena);
@@ -203,6 +202,7 @@ StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKi
 
     StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit);
 
+    AstDispose((Node*)mod);
     ModuleLoaderDispose(&loader);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -249,6 +249,7 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
     {
         char* diagText = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
         if (errOut) *errOut = DupString(diagText ? diagText : "compilation failed");
+        AstDispose((Node*)mod);
         ModuleLoaderDispose(&loader);
         DiagnosticEngineFree(&diag);
         arena_free(&arena);
@@ -266,6 +267,7 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
     }
 
     BuiltModuleDispose(&bm);
+    AstDispose((Node*)mod);
     ModuleLoaderDispose(&loader);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -337,7 +339,8 @@ static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* aren
         return NULL;
     }
 
-    BuiltCModule bm = BuildCModule(mod, diag, arena, true);
+    BuiltCModule bm = BuildCModuleWithSources(
+        mod, diag, arena, sources, sourceCount, true);
 
     if (DiagHasErrors(diag))
     {
@@ -411,6 +414,7 @@ static StrataJit* JitCompileString(StrataCompiler* c, const char* source, size_t
 
     StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut);
 
+    AstDispose((Node*)mod);
     DiagnosticEngineFree(&diag);
     SourceManagerFree(&src);
     arena_free(&arena);
@@ -471,6 +475,7 @@ StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char*
 
     StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut);
 
+    AstDispose((Node*)mod);
     ModuleLoaderDispose(&loader);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

@@ -25,18 +25,52 @@ typedef struct {
     Vec externs;
     bool jitMode;
     unsigned indent;
+    const SourceManager* sources;
+    size_t sourceCount;
 } CEmitter;
 
 static void DisposeMap(StrMap* map)
 {
-    free(map->keys);
-    free(map->values);
-    StrMapInit(map);
+    StrMapFree(map);
 }
 
 static void Pad(CEmitter* emitter)
 {
     SbPutr(&emitter->out, ' ', emitter->indent * 4);
+}
+
+static void EmitEscapedFileName(CEmitter* emitter, const char* name)
+{
+    for (const char* cursor = name; *cursor; ++cursor)
+    {
+        if (*cursor == '\\' || *cursor == '"') SbPutc(&emitter->out, '\\');
+        SbPutc(&emitter->out, *cursor);
+    }
+}
+
+static void EmitLineDirective(CEmitter* emitter, SourceRange range)
+{
+    if (!emitter->sources || !SourceRangeValid(range) || range.fileId >= emitter->sourceCount) return;
+    const SourceManager* source = &emitter->sources[range.fileId];
+    LineCol location = SourceManagerLineCol(source, range.start);
+    SbPrintf(&emitter->out, "#line %u \"", location.line);
+    EmitEscapedFileName(emitter, source->m_name ? source->m_name : "<string>");
+    SbPuts(&emitter->out, "\"\n");
+}
+
+static SourceRange TypeSourceRange(CEmitter* emitter, const char* name)
+{
+    for (size_t i = 0; i < emitter->mod->structs.count; ++i)
+    {
+        const StructDecl* declaration = (const StructDecl*)VecGet(&emitter->mod->structs, i);
+        if (strcmp(declaration->name, name) == 0) return declaration->base.range;
+    }
+    for (size_t i = 0; i < emitter->mod->handles.count; ++i)
+    {
+        const HandleDecl* declaration = (const HandleDecl*)VecGet(&emitter->mod->handles, i);
+        if (strcmp(declaration->name, name) == 0) return declaration->base.range;
+    }
+    return SRC_INVALID;
 }
 
 static const char* Encode(CEmitter* emitter, const char* prefix, const char* name)
@@ -62,6 +96,15 @@ static const char* Encode(CEmitter* emitter, const char* prefix, const char* nam
 
 static bool IsPlainIdentifier(const char* name)
 {
+    static const char* keywords[] = {
+        "alignas", "alignof", "auto", "break", "case", "char", "const",
+        "continue", "default", "do", "double", "else", "enum", "extern",
+        "float", "for", "goto", "if", "inline", "int", "long", "register",
+        "restrict", "return", "short", "signed", "sizeof", "static", "struct",
+        "switch", "typedef", "union", "unsigned", "void", "volatile", "while",
+        "_Alignas", "_Alignof", "_Atomic", "_Bool", "_Complex", "_Generic",
+        "_Imaginary", "_Noreturn", "_Static_assert", "_Thread_local"
+    };
     if (!name || !(isalpha((unsigned char)name[0]) || name[0] == '_'))
     {
         return false;
@@ -75,6 +118,16 @@ static bool IsPlainIdentifier(const char* name)
         }
     }
 
+    if (name[0] == '_' && (name[1] == '_' || isupper((unsigned char)name[1])))
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i)
+    {
+        if (strcmp(name, keywords[i]) == 0) return false;
+    }
+
     return true;
 }
 
@@ -84,7 +137,7 @@ static const char* FunctionName(CEmitter* emitter, const char* name)
     {
         return arena_strdup(emitter->arena, name);
     }
-    return Encode(emitter, "__strata_fn_", name);
+    return Encode(emitter, "strata__fn_", name);
 }
 
 static const char* TypeNameC(CEmitter* emitter, const char* name)
@@ -98,7 +151,7 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
     {
         if (mapped.vec > 1)
         {
-            return Encode(emitter, "__strata_vec_", name);
+            return Encode(emitter, "strata__vec_", name);
         }
         if (mapped.isVoid) return "void";
         if (mapped.isFloat && mapped.bits == 32) return "float";
@@ -110,7 +163,7 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
 
     if (TypeRegistryIsUserType(&emitter->types, name))
     {
-        return Encode(emitter, "__strata_type_", name);
+        return Encode(emitter, "strata__type_", name);
     }
 
     DiagErrorFmt(emitter->diag, SRC_INVALID, "C backend does not know type '%s'", name);
@@ -119,22 +172,22 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
 
 static const char* FieldName(CEmitter* emitter, const char* name)
 {
-    return Encode(emitter, "__strata_field_", name);
+    return Encode(emitter, "strata__field_", name);
 }
 
 static const char* VarName(CEmitter* emitter, const char* name)
 {
-    return Encode(emitter, "__strata_var_", name);
+    return Encode(emitter, "strata__var_", name);
 }
 
 static const char* GlobalName(CEmitter* emitter, const char* name)
 {
-    return Encode(emitter, "__strata_global_", name);
+    return Encode(emitter, "strata__global_", name);
 }
 
 static const char* ExternSlotName(CEmitter* emitter, const char* name)
 {
-    return Encode(emitter, "__strata_ext_", name);
+    return Encode(emitter, "strata__ext_", name);
 }
 
 static bool IsStructValue(CEmitter* emitter, const char* name)
@@ -165,6 +218,65 @@ static void AddSymbol(CEmitter* emitter, const char* name, const char* typeName,
     symbol->cName = cName;
     symbol->indirect = indirect;
     StrMapPut(&emitter->symbols, name, symbol);
+}
+
+static const char* ExprType(CEmitter* emitter, const Node* node)
+{
+    if (!node) return "";
+    switch (node->kind)
+    {
+    case NodeIntLiteral:
+        return ((const IntLiteral*)node)->isUnsigned ? "uint" : "int";
+    case NodeFloatLiteral:
+        return "float";
+    case NodeBoolLiteral:
+        return "bool";
+    case NodeIdent:
+    {
+        const CSymbol* symbol = (const CSymbol*)StrMapGet(
+            &emitter->symbols, ((const IdentExpr*)node)->name);
+        return symbol ? symbol->typeName : "";
+    }
+    case NodeUnary:
+        return ((const UnaryExpr*)node)->op == UnNot
+            ? "bool" : ExprType(emitter, ((const UnaryExpr*)node)->operand);
+    case NodeBinary:
+    {
+        const BinaryExpr* expression = (const BinaryExpr*)node;
+        if (expression->op >= BinEqEq) return "bool";
+        const char* lhs = ExprType(emitter, expression->lhs);
+        const char* rhs = ExprType(emitter, expression->rhs);
+        if (strcmp(lhs, "double") == 0 || strcmp(rhs, "double") == 0) return "double";
+        if (strcmp(lhs, "float") == 0 || strcmp(rhs, "float") == 0) return "float";
+        if (strcmp(lhs, "uint") == 0 || strcmp(rhs, "uint") == 0) return "uint";
+        return "int";
+    }
+    case NodeAssign:
+        return ExprType(emitter, ((const AssignExpr*)node)->target);
+    case NodeIncDec:
+        return ExprType(emitter, ((const IncDecExpr*)node)->operand);
+    case NodeCast:
+        return ((const CastExpr*)node)->type.name;
+    case NodeCall:
+    {
+        const CallExpr* call = (const CallExpr*)node;
+        if (call->resolvedDecl) return call->resolvedDecl->returnType.name;
+        return TypeRegistryIsUserType(&emitter->types, call->callee) ? call->callee : "";
+    }
+    case NodeMember:
+    {
+        const MemberExpr* member = (const MemberExpr*)node;
+        const char* baseName = ExprType(emitter, member->base_node);
+        const StructType* type = TypeRegistryFind(&emitter->types, baseName);
+        int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
+        return index >= 0
+            ? ((const FieldDecl*)VecGet(&type->fields, (size_t)index))->type.name : "";
+    }
+    case NodeStructInit:
+        return ((const StructInitExpr*)node)->typeName;
+    default:
+        return "";
+    }
 }
 
 static bool IsLValue(const Node* node)
@@ -405,6 +517,17 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeBinary:
     {
         const BinaryExpr* binary = (const BinaryExpr*)node;
+        const char* resultType = ExprType(emitter, node);
+        if (binary->op == BinMod
+            && (strcmp(resultType, "float") == 0 || strcmp(resultType, "double") == 0))
+        {
+            SbPuts(&emitter->out, strcmp(resultType, "double") == 0 ? "fmod(" : "fmodf(");
+            EmitExpr(emitter, binary->lhs);
+            SbPuts(&emitter->out, ", ");
+            EmitExpr(emitter, binary->rhs);
+            SbPutc(&emitter->out, ')');
+            return;
+        }
         SbPutc(&emitter->out, '(');
         EmitExpr(emitter, binary->lhs);
         SbPutc(&emitter->out, ' ');
@@ -417,6 +540,20 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeAssign:
     {
         const AssignExpr* assign = (const AssignExpr*)node;
+        const char* targetType = ExprType(emitter, assign->target);
+        if (assign->op == AssignMod
+            && (strcmp(targetType, "float") == 0 || strcmp(targetType, "double") == 0))
+        {
+            SbPutc(&emitter->out, '(');
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, " = ");
+            SbPuts(&emitter->out, strcmp(targetType, "double") == 0 ? "fmod(" : "fmodf(");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, ", ");
+            EmitExpr(emitter, assign->value);
+            SbPuts(&emitter->out, "))");
+            return;
+        }
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, assign->target);
         SbPutc(&emitter->out, ' ');
@@ -671,6 +808,47 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
     VecPush(&emitter->externs, symbol);
 }
 
+static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* states)
+{
+    const StructType* type = &emitter->types.types[index];
+    if (type->opaque || states[index] == 2) return;
+    if (states[index] == 1)
+    {
+        DiagErrorFmt(emitter->diag, TypeSourceRange(emitter, type->name),
+                     "struct '%s' has a by-value dependency cycle", type->name);
+        return;
+    }
+
+    states[index] = 1;
+    for (size_t fieldIndex = 0; fieldIndex < type->fields.count; ++fieldIndex)
+    {
+        const FieldDecl* field = (const FieldDecl*)VecGet(&type->fields, fieldIndex);
+        const StructType* dependency = TypeRegistryFind(&emitter->types, field->type.name);
+        if (dependency && !dependency->opaque)
+        {
+            size_t dependencyIndex = (size_t)(dependency - emitter->types.types);
+            EmitStructBody(emitter, dependencyIndex, states);
+        }
+    }
+
+    states[index] = 2;
+    const char* cName = TypeNameC(emitter, type->name);
+    EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
+    SbPuts(&emitter->out, "struct ");
+    SbPuts(&emitter->out, cName);
+    SbPuts(&emitter->out, " {\n");
+    for (size_t j = 0; j < type->fields.count; ++j)
+    {
+        FieldDecl* field = (FieldDecl*)VecGet(&type->fields, j);
+        SbPuts(&emitter->out, "    ");
+        EmitType(emitter, &field->type);
+        SbPutc(&emitter->out, ' ');
+        SbPuts(&emitter->out, FieldName(emitter, field->name));
+        SbPuts(&emitter->out, ";\n");
+    }
+    SbPuts(&emitter->out, "};\n");
+}
+
 static void EmitTypes(CEmitter* emitter)
 {
     static const char* primitive[] = {"bool", "int", "uint", "float", "double"};
@@ -692,10 +870,11 @@ static void EmitTypes(CEmitter* emitter)
     {
         const StructType* type = &emitter->types.types[i];
         const char* cName = TypeNameC(emitter, type->name);
+        EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
         if (type->opaque)
         {
             SbPuts(&emitter->out, "typedef struct ");
-            SbPuts(&emitter->out, Encode(emitter, "__strata_handle_tag_", type->name));
+            SbPuts(&emitter->out, Encode(emitter, "strata__handle_tag_", type->name));
             SbPuts(&emitter->out, "* ");
             SbPuts(&emitter->out, cName);
             SbPuts(&emitter->out, ";\n");
@@ -710,25 +889,11 @@ static void EmitTypes(CEmitter* emitter)
         }
     }
 
+    unsigned char* states = (unsigned char*)arena_alloc(
+        emitter->arena, emitter->types.count ? emitter->types.count : 1);
+    memset(states, 0, emitter->types.count ? emitter->types.count : 1);
     for (size_t i = 0; i < emitter->types.count; ++i)
-    {
-        const StructType* type = &emitter->types.types[i];
-        if (type->opaque) continue;
-        const char* cName = TypeNameC(emitter, type->name);
-        SbPuts(&emitter->out, "struct ");
-        SbPuts(&emitter->out, cName);
-        SbPuts(&emitter->out, " {\n");
-        for (size_t j = 0; j < type->fields.count; ++j)
-        {
-            FieldDecl* field = (FieldDecl*)VecGet(&type->fields, j);
-            SbPuts(&emitter->out, "    ");
-            EmitType(emitter, &field->type);
-            SbPutc(&emitter->out, ' ');
-            SbPuts(&emitter->out, FieldName(emitter, field->name));
-            SbPuts(&emitter->out, ";\n");
-        }
-        SbPuts(&emitter->out, "};\n");
-    }
+        EmitStructBody(emitter, i, states);
     SbPutc(&emitter->out, '\n');
 }
 
@@ -737,6 +902,7 @@ static void EmitGlobals(CEmitter* emitter)
     for (size_t i = 0; i < emitter->mod->globals.count; ++i)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
+        EmitLineDirective(emitter, global->base.range);
         EmitType(emitter, &global->type);
         SbPutc(&emitter->out, ' ');
         const char* cName = GlobalName(emitter, global->name);
@@ -763,6 +929,7 @@ static void EmitDeclarations(CEmitter* emitter)
     for (size_t i = 0; i < emitter->mod->functions.count; ++i)
     {
         const FunctionDecl* function = (const FunctionDecl*)VecGet(&emitter->mod->functions, i);
+        EmitLineDirective(emitter, function->base.range);
         if (function->isExtern && emitter->jitMode)
         {
             EmitExternSlot(emitter, function);
@@ -809,6 +976,7 @@ static void EmitDefinitions(CEmitter* emitter)
                       VarName(emitter, param->name), ParamIsIndirect(emitter, param));
         }
 
+        EmitLineDirective(emitter, function->base.range);
         EmitFunctionSignature(emitter, function, FunctionName(emitter, function->mangledName));
         SbPuts(&emitter->out, " {\n");
         emitter->indent++;
@@ -848,7 +1016,8 @@ void BuiltCModuleDispose(BuiltCModule* module)
     BuiltCModuleInit(module);
 }
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode)
+BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
+                                    const SourceManager* sources, size_t sourceCount, bool jitMode)
 {
     BuiltCModule result;
     BuiltCModuleInit(&result);
@@ -864,6 +1033,8 @@ BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* aren
     emitter.diag = diag;
     emitter.arena = arena;
     emitter.jitMode = jitMode;
+    emitter.sources = sources;
+    emitter.sourceCount = sourceCount;
     TypeRegistryInit(&emitter.types);
     TypeRegistryBuild(&emitter.types, ast);
     StrMapInit(&emitter.symbols);
@@ -873,7 +1044,9 @@ BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* aren
 
     SbPuts(&emitter.out,
         "/* Generated by Strata. */\n"
-        "_Static_assert(sizeof(int) == 4, \"Strata requires 32-bit int\");\n\n");
+        "_Static_assert(sizeof(int) == 4, \"Strata requires 32-bit int\");\n"
+        "extern float fmodf(float, float);\n"
+        "extern double fmod(double, double);\n\n");
     EmitTypes(&emitter);
     EmitGlobals(&emitter);
     EmitDeclarations(&emitter);
@@ -884,8 +1057,13 @@ BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* aren
     result.externs = emitter.externs;
 
     DisposeMap(&emitter.symbols);
-    free(emitter.types.types);
+    TypeRegistryFree(&emitter.types);
     return result;
+}
+
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode)
+{
+    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, jitMode);
 }
 
 CodegenResult GenerateC(const Module* mod)
