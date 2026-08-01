@@ -62,6 +62,12 @@ static bool IsDefinedStruct(const TypeRegistry* reg, const char* name)
     return TypeRegistryIsUserType(reg, name) && !TypeRegistryIsOpaque(reg, name);
 }
 
+static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = TypeRegistryFind(reg, name);
+    return t && t->opaque && t->incomplete;
+}
+
 static int CountByName(const Module* mod, const char* name)
 {
     int count = 0;
@@ -305,7 +311,14 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
 
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member, baseName);
+            if (IsIncompleteStruct(&r->m_registry, baseName))
+            {
+                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member, baseName);
+            }
+            else
+            {
+                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member, baseName);
+            }
 
             return "";
         }
@@ -415,7 +428,14 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
-            DiagError(r->m_diag, m->base.range, "cannot access a member of opaque an handle");
+            if (IsIncompleteStruct(&r->m_registry, baseName))
+            {
+                DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'", baseName);
+            }
+            else
+            {
+                DiagError(r->m_diag, m->base.range, "cannot access a member of an opaque handle");
+            }
         }
 
         return;
@@ -496,6 +516,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     case NodeVarDecl:
     {
         VarDeclStmt* vd = (VarDeclStmt*)n;
+
+        if (IsIncompleteStruct(&r->m_registry, vd->type.name))
+        {
+            DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
+        }
 
         if (vd->type.isConst && !vd->init)
         {
@@ -693,6 +718,26 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         StrMapFree(&scope);
     }
 
+    for (size_t i = 0; i < mod->structs.count; i++)
+    {
+        StructDecl* sd = (StructDecl*)VecGet(&mod->structs, i);
+
+        if (sd->incomplete)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < sd->fields.count; j++)
+        {
+            FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
+
+            if (IsIncompleteStruct(&r.m_registry, field->type.name))
+            {
+                DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name, field->type.name);
+            }
+        }
+    }
+
     for (size_t i = 0; i < mod->functions.count; i++)
     {
         FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
@@ -712,6 +757,11 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))
         {
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
+        }
+
+        if (IsIncompleteStruct(&r.m_registry, functionDecl->returnType.name))
+        {
+            DiagErrorFmt(diag, functionDecl->base.range, "function cannot return incomplete type '%s'", functionDecl->returnType.name);
         }
     }
 

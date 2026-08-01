@@ -1,4 +1,5 @@
 #include "Util.h"
+#include "Codegen/TypeRegistry.h"
 #include "Test.h"
 #include "strata/strata.h"
 
@@ -38,6 +39,80 @@ STRATA_TEST(parser_opaque_struct)
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
+}
+
+STRATA_TEST(parser_forward_struct_declaration)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct Foo;\n", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK_EQ((long)mod->structs.count, 1);
+
+    StructDecl* s = (StructDecl*)VecGet(&mod->structs, 0);
+    STRATA_CHECK(strcmp(s->name, "Foo") == 0);
+    STRATA_CHECK(s->incomplete);
+    STRATA_CHECK_EQ((long)s->fields.count, 0);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(forward_struct_is_completed_by_later_body)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Foo;\n"
+        "int get_x(const Foo f) { return f.x; }\n"
+        "struct Foo { int x; };\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    /* The forward decl and the body collapse to a single complete type, so a
+       function declared between them may use the field. */
+    TypeRegistry reg;
+    TypeRegistryInit(&reg);
+    TypeRegistryBuild(&reg, mod);
+    const StructType* t = TypeRegistryFind(&reg, "Foo");
+    STRATA_CHECK(t != NULL);
+    STRATA_CHECK(!t->opaque);
+    STRATA_CHECK(!t->incomplete);
+    STRATA_CHECK_EQ((long)t->fields.count, 1);
+    TypeRegistryFree(&reg);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(jit_forward_decl_completed_and_used)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct Foo;\n"
+        "int get_x(const Foo f) { return f.x; }\n"
+        "struct Foo { int x; };\n"
+        "int entry() { Foo f; f.x = 42; return get_x(f); }\n",
+        "fwd", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 42);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
 }
 
 STRATA_TEST(parser_struct_typed_params_and_members)

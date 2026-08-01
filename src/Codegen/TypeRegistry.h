@@ -6,6 +6,7 @@
 typedef struct {
     const char* name;
     bool opaque;
+    bool incomplete;
     const char* extendsFrom;
     Vec fields;
 } StructType;

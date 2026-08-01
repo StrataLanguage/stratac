@@ -156,6 +156,11 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeStruct:
     {
         StructDecl* struct_decl = AsNode(StructDecl, n);
+        if (struct_decl->incomplete)
+        {
+            SbPrintf(out, "struct %s;  ; forward\n", struct_decl->name);
+            return;
+        }
         SbPrintf(out, "struct %s {\n", struct_decl->name);
         for (size_t i = 0; i < struct_decl->fields.count; i++)
         {

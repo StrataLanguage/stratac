@@ -59,6 +59,49 @@ STRATA_TEST(c_backend_emits_typed_extern_slots)
     arena_free(&arena);
 }
 
+STRATA_TEST(c_backend_emits_forward_struct_when_incomplete)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Foo;\n"
+        "void use(const Foo f) {}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BuiltCModule result = BuildCModule(mod, &diag, &arena, true);
+    /* Incomplete struct: forward-declared C struct typedef, no body, and NOT a
+       handle pointer typedef. */
+    STRATA_CHECK(strstr(result.source, "typedef struct strata__type_Foo strata__type_Foo;") != NULL);
+    STRATA_CHECK(strstr(result.source, "struct strata__type_Foo {") == NULL);
+    STRATA_CHECK(strstr(result.source, "strata__handle_tag_Foo") == NULL);
+    BuiltCModuleDispose(&result);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(c_backend_completes_forward_declared_struct)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Foo;\n"
+        "struct Foo { int x; };\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BuiltCModule result = BuildCModule(mod, &diag, &arena, true);
+    /* A later body completes the type exactly once. */
+    STRATA_CHECK(strstr(result.source, "struct strata__type_Foo {\n") != NULL);
+    BuiltCModuleDispose(&result);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(c_backend_encodes_overload_symbols)
 {
     StrataCompiler* compiler = strataCompilerCreate();

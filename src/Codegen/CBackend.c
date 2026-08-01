@@ -1070,7 +1070,7 @@ static void EmitTypes(CEmitter* emitter)
         
         EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
 
-        if (type->opaque)
+        if (type->opaque && !type->incomplete)
         {
             SbPuts(&emitter->out, "typedef struct ");
             SbPuts(&emitter->out, Encode(emitter, "strata__handle_tag_", type->name));
