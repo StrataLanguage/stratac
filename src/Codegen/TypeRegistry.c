@@ -2,7 +2,6 @@
 
 #include <stdlib.h>
 #include <string.h>
-
 void TypeRegistryInit(TypeRegistry* reg)
 {
     *reg = (TypeRegistry){0};
@@ -177,4 +176,37 @@ bool IsHandleType(const TypeRegistry* reg, const char* name)
 {
     const StructType* t = TypeRegistryFind(reg, name);
     return t && t->opaque && !t->incomplete;
+}
+
+bool IsBoxTypeName(const char* name)
+{
+    if (!name)
+    {
+        return false;
+    }
+
+    size_t len = strlen(name);
+
+    return len > 5 && strncmp(name, "box<", 4) == 0 && name[len - 1] == '>';
+}
+
+bool BoxInnerTypeName(const char* name, char* buf, size_t cap)
+{
+    if (!IsBoxTypeName(name) || !buf || cap == 0)
+    {
+        return false;
+    }
+
+    size_t len = strlen(name);
+    size_t innerLen = len - 5; /* strip "box<" (4) and trailing ">" (1) */
+
+    if (innerLen >= cap)
+    {
+        innerLen = cap - 1;
+    }
+
+    memcpy(buf, name + 4, innerLen);
+    buf[innerLen] = '\0';
+
+    return true;
 }

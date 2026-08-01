@@ -282,6 +282,12 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
 
         const char* baseName = InferType(r, m->base_node, scope);
 
+        char boxInner[128];
+        if (IsBoxTypeName(baseName) && BoxInnerTypeName(baseName, boxInner, sizeof boxInner))
+        {
+            baseName = boxInner;
+        }
+
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
             if (IsIncompleteStruct(&r->m_registry, baseName))
@@ -377,6 +383,18 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         CheckConstAssign(r, a->target, a->base.range);
 
+        /* Reassigning a box variable is a move, which is not supported yet.
+           Writing through a box (v.x = ...) is fine. */
+        if (a->target->kind == NodeIdent)
+        {
+            const char* tt = InferType(r, a->target, scope);
+
+            if (IsBoxTypeName(tt))
+            {
+                DiagErrorFmt(r->m_diag, a->base.range, "cannot reassign box variable '%s'", ((IdentExpr*)a->target)->name);
+            }
+        }
+
         ResolveExpr(r, a->target, scope);
         ResolveExpr(r, a->value, scope);
 
@@ -416,6 +434,12 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         ResolveExpr(r, m->base_node, scope);
         
         const char* baseName = InferType(r, m->base_node, scope);
+
+        char boxInner[128];
+        if (IsBoxTypeName(baseName) && BoxInnerTypeName(baseName, boxInner, sizeof boxInner))
+        {
+            baseName = boxInner;
+        }
 
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
         {
@@ -513,6 +537,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
         }
 
+        if (IsBoxTypeName(vd->type.name) && !vd->init)
+        {
+            DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
+        }
+
         if (vd->type.isConst && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "const variable '%s' must be initialized", vd->name);
@@ -523,10 +552,19 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ResolveExpr(r, vd->init, scope);
             const char* initType = InferType(r, vd->init, scope);
 
+            /* A box<T> initializer boxes a value of the inner type T. */
+            char boxInner[128];
+            const char* expected = vd->type.name;
+
+            if (IsBoxTypeName(vd->type.name) && BoxInnerTypeName(vd->type.name, boxInner, sizeof boxInner))
+            {
+                expected = boxInner;
+            }
+
             if (initType[0] != '\0'
-                && strcmp(initType, vd->type.name) != 0
-                && !(IsNumeric(initType) && IsNumeric(vd->type.name))
-                && !HandleExtendsFrom(&r->m_registry, initType, vd->type.name))
+                && strcmp(initType, expected) != 0
+                && !(IsNumeric(initType) && IsNumeric(expected))
+                && !HandleExtendsFrom(&r->m_registry, initType, expected))
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
             }
@@ -556,6 +594,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             if (typeName[0] != '\0' && strcmp(typeName, "void") == 0)
             {
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
+            }
+
+            if (IsBoxTypeName(typeName))
+            {
+                DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a box value (use an output parameter)");
             }
         }
 
@@ -722,10 +765,25 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
 
+            if (IsBoxTypeName(field->type.name))
+            {
+                DiagErrorFmt(diag, field->type.range, "box fields are not supported yet (field '%s')", field->name);
+            }
+
             if (IsIncompleteStruct(&r.m_registry, field->type.name))
             {
                 DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name, field->type.name);
             }
+        }
+    }
+
+    for (size_t i = 0; i < mod->globals.count; i++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+
+        if (IsBoxTypeName(gd->type.name))
+        {
+            DiagErrorFmt(diag, gd->base.range, "global '%s' cannot have box type", gd->name);
         }
     }
 
@@ -737,12 +795,22 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
 
+            if (IsBoxTypeName(p->type.name))
+            {
+                DiagErrorFmt(diag, p->base.range, "box parameters are not supported yet ('%s')", p->name);
+            }
+
             if (IsDefinedStruct(&r.m_registry, p->type.name)
                 && p->type.isConst
                 && p->mod == ModRef)
             {
                 DiagErrorFmt(diag, p->base.range, "'ref' parameter cannot be 'const'");
             }
+        }
+
+        if (IsBoxTypeName(functionDecl->returnType.name))
+        {
+            DiagErrorFmt(diag, functionDecl->base.range, "function cannot return box type '%s'", functionDecl->returnType.name);
         }
 
         if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))

@@ -312,6 +312,7 @@ if(NOT STRATA_SHARED)
             tests/unit/ControlFlowTests.c
             tests/unit/ImportTests.c
             tests/unit/OperatorTests.c
+            tests/unit/BoxTests.c
         )
     endif()
 

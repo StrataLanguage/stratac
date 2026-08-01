@@ -285,6 +285,17 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(found, false, false, false, t->name);
     }
 
+    if (IsBoxTypeName(t->name))
+    {
+        if (b->m_diag)
+        {
+            DiagErrorFmt(b->m_diag, t->range,
+                         "box types are not yet supported by the LLVM backend (use the C/Tcc JIT)");
+        }
+
+        return TypeDescMake(b->m_ptrTy, false, false, false, NULL);
+    }
+
     if (b->m_diag)
     {
         DiagErrorFmt(b->m_diag, t->range, "unknown type '%s'", t->name);

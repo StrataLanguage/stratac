@@ -27,6 +27,9 @@ typedef struct {
     unsigned indent;
     const SourceManager* sources;
     size_t sourceCount;
+    Vec boxVars;                 /* in-scope box-local C names (current function) */
+    const char* currentReturn;  /* current function's return type name */
+    unsigned retCounter;
 } CEmitter;
 
 static void DisposeMap(StrMap* map)
@@ -154,6 +157,24 @@ static const char* FunctionName(CEmitter* emitter, const char* name)
 
 static const char* TypeNameC(CEmitter* emitter, const char* name)
 {
+    if (IsBoxTypeName(name))
+    {
+        char inner[128];
+
+        if (BoxInnerTypeName(name, inner, sizeof inner))
+        {
+            const char* innerC = TypeNameC(emitter, inner);
+            Sb sb;
+            SbInit(&sb);
+            SbPuts(&sb, innerC);
+            SbPuts(&sb, " *");
+
+            return SbFinish(&sb, emitter->arena);
+        }
+
+        return "void*";
+    }
+
     MappedType mapped;
     TypeName type = {0};
     type.name = (char*)name;
@@ -374,9 +395,11 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     if (node->kind == NodeMember)
     {
         const MemberExpr* member = (const MemberExpr*)node;
+        const char* baseType = ExprType(emitter, member->base_node);
+        bool throughBox = IsBoxTypeName(baseType);
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, member->base_node);
-        SbPuts(&emitter->out, ").");
+        SbPuts(&emitter->out, throughBox ? ")->" : ").");
         SbPuts(&emitter->out, FieldName(emitter, member->member));
 
         return;
@@ -585,9 +608,11 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeMember:
     {
         const MemberExpr* member = (const MemberExpr*)node;
+        const char* baseType = ExprType(emitter, member->base_node);
+        bool throughBox = IsBoxTypeName(baseType);
         SbPutc(&emitter->out, '(');
         EmitExpr(emitter, member->base_node);
-        SbPuts(&emitter->out, ").");
+        SbPuts(&emitter->out, throughBox ? ")->" : ").");
         SbPuts(&emitter->out, FieldName(emitter, member->member));
 
         return;
@@ -710,11 +735,54 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
 
 static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool semicolon)
 {
+    const char* cName = VarName(emitter, declaration->name);
+
+    if (IsBoxTypeName(declaration->type.name))
+    {
+        char inner[128];
+        BoxInnerTypeName(declaration->type.name, inner, sizeof inner);
+        const char* innerC = TypeNameC(emitter, inner);
+
+        /* <inner>* var = strata_alloc(sizeof(<inner>)); *var = (<init>); */
+        SbPuts(&emitter->out, innerC);
+        SbPuts(&emitter->out, " *");
+        SbPutc(&emitter->out, ' ');
+        SbPuts(&emitter->out, cName);
+        SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+        SbPuts(&emitter->out, innerC);
+        SbPuts(&emitter->out, "));");
+
+        if (semicolon)
+        {
+            SbPutc(&emitter->out, '\n');
+        }
+
+        if (declaration->init)
+        {
+            if (semicolon)
+            {
+                Pad(emitter);
+            }
+            SbPutc(&emitter->out, '*');
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, " = ");
+            EmitExpr(emitter, declaration->init);
+
+            if (semicolon)
+            {
+                SbPutc(&emitter->out, ';');
+            }
+        }
+
+        AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+        VecPush(&emitter->boxVars, (void*)cName);
+
+        return;
+    }
+
     EmitType(emitter, &declaration->type);
     SbPutc(&emitter->out, ' ');
-    
-    const char* cName = VarName(emitter, declaration->name);
-    
+
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " = ");
 
@@ -735,6 +803,25 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
     }
 
     AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+}
+
+static void EmitStmt(CEmitter* emitter, const Node* node);
+
+/* Emit `if (v) { strata_free(v); v = 0; }` for box locals [fromIndex, count). */
+static void EmitDrops(CEmitter* emitter, size_t fromIndex)
+{
+    for (size_t i = fromIndex; i < emitter->boxVars.count; ++i)
+    {
+        const char* var = (const char*)VecGet(&emitter->boxVars, i);
+        Pad(emitter);
+        SbPuts(&emitter->out, "if (");
+        SbPuts(&emitter->out, var);
+        SbPuts(&emitter->out, ") { strata_free(");
+        SbPuts(&emitter->out, var);
+        SbPuts(&emitter->out, "); ");
+        SbPuts(&emitter->out, var);
+        SbPuts(&emitter->out, " = 0; }\n");
+    }
 }
 
 static void EmitStmt(CEmitter* emitter, const Node* node);
@@ -769,32 +856,63 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
         emitter->indent++;
 
+        size_t boxMark = emitter->boxVars.count;
+
         for (size_t i = 0; i < block->statements.count; ++i)
         {
             EmitStmt(emitter, (const Node*)VecGet(&block->statements, i));
         }
 
+        EmitDrops(emitter, boxMark);
+        emitter->boxVars.count = boxMark;
+
         emitter->indent--;
 
         Pad(emitter);
         SbPutc(&emitter->out, '}');
-        
+
         return;
     }
     case NodeReturn:
     {
         const ReturnStmt* statement = (const ReturnStmt*)node;
-        Pad(emitter);
-        SbPuts(&emitter->out, "return");
-        
-        if (statement->value)
+
+        if (statement->value && emitter->boxVars.count > 0)
         {
+            /* Keep box members alive across the drop by materializing the
+               return value first. */
+            char tmp[32];
+            snprintf(tmp, sizeof tmp, "strata__ret%u", emitter->retCounter++);
+
+            Pad(emitter);
+            SbPuts(&emitter->out, TypeNameC(emitter, emitter->currentReturn ? emitter->currentReturn : "int"));
             SbPutc(&emitter->out, ' ');
+            SbPuts(&emitter->out, tmp);
+            SbPuts(&emitter->out, " = ");
             EmitExpr(emitter, statement->value);
+            SbPuts(&emitter->out, ";\n");
+
+            EmitDrops(emitter, 0);
+
+            Pad(emitter);
+            SbPuts(&emitter->out, "return ");
+            SbPuts(&emitter->out, tmp);
+            SbPuts(&emitter->out, ";\n");
+        }
+        else
+        {
+            Pad(emitter);
+            SbPuts(&emitter->out, "return");
+
+            if (statement->value)
+            {
+                SbPutc(&emitter->out, ' ');
+                EmitExpr(emitter, statement->value);
+            }
+
+            SbPuts(&emitter->out, ";\n");
         }
 
-        SbPuts(&emitter->out, ";\n");
-        
         return;
     }
     case NodeVarDecl:
@@ -1172,6 +1290,9 @@ static void EmitDefinitions(CEmitter* emitter)
 
         DisposeMap(&emitter->symbols);
         StrMapInit(&emitter->symbols);
+        emitter->boxVars.count = 0;
+        emitter->retCounter = 0;
+        emitter->currentReturn = function->returnType.name;
 
         for (size_t j = 0; j < emitter->mod->globals.count; ++j)
         {
@@ -1189,14 +1310,17 @@ static void EmitDefinitions(CEmitter* emitter)
         EmitLineDirective(emitter, function->base.range);
         EmitFunctionSignature(emitter, function, FunctionName(emitter, function->mangledName));
         SbPuts(&emitter->out, " {\n");
-        
+
         emitter->indent++;
-        
+
         const Block* body = (const Block*)function->body;
         for (size_t j = 0; j < body->statements.count; ++j)
         {
             EmitStmt(emitter, (const Node*)VecGet(&body->statements, j));
         }
+
+        EmitDrops(emitter, 0);
+        emitter->boxVars.count = 0;
 
         Pad(emitter);
 
@@ -1262,10 +1386,15 @@ BuiltCModule BuildCModuleWithSources(
     SbInit(&emitter.out);
     VecInit(&emitter.exports);
     VecInit(&emitter.externs);
+    VecInit(&emitter.boxVars);
+    emitter.currentReturn = "int";
+    emitter.retCounter = 0;
 
     SbPuts(&emitter.out,
         "/* Generated by Strata. */\n"
         "_Static_assert(sizeof(int) == 4, \"Strata requires 32-bit int\");\n"
+        "extern void* strata_alloc(unsigned long);\n"
+        "extern void strata_free(void*);\n"
         "extern float fmodf(float, float);\n"
         "extern double fmod(double, double);\n\n");
     EmitTypes(&emitter);
@@ -1278,6 +1407,7 @@ BuiltCModule BuildCModuleWithSources(
     result.externs = emitter.externs;
 
     DisposeMap(&emitter.symbols);
+    free(emitter.boxVars.items);
     TypeRegistryFree(&emitter.types);
 
     return result;
