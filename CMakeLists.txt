@@ -35,6 +35,10 @@ set(STRATA_COMMON_SOURCES
     src/Embed.c
 )
 
+if(STRATA_ENABLE_TCC)
+    list(APPEND STRATA_COMMON_SOURCES src/Codegen/TccJit.c)
+endif()
+
 set(STRATA_LLVM_SOURCES
     src/Codegen/LLVMCBackend.c
     src/Codegen/LLVMModuleBuilder.c
@@ -94,6 +98,9 @@ if(STRATA_ENABLE_TCC)
     )
     target_include_directories(strata_tinycc PRIVATE
         "${CMAKE_CURRENT_BINARY_DIR}/generated/tinycc"
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinycc"
+    )
+    target_include_directories(strata PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinycc"
     )
     target_compile_definitions(strata_tinycc PRIVATE
@@ -219,6 +226,9 @@ set(STRATA_TEST_SOURCES
     tests/unit/ParserTests.c
     tests/unit/CBackendTests.c
 )
+if(STRATA_ENABLE_TCC)
+    list(APPEND STRATA_TEST_SOURCES tests/unit/TccJitTests.c)
+endif()
 if(STRATA_ENABLE_LLVM)
     list(APPEND STRATA_TEST_SOURCES
         tests/unit/CodegenTests.c
