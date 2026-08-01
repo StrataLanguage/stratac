@@ -114,9 +114,20 @@ void TccJitDestroy(TccJit* jit)
 {
     if (jit->state)
     {
+        if (jit->relocated)
+        {
+            void (*moduleTeardown)(void) = (void (*)(void))tcc_get_symbol(jit->state, "__strata_module_teardown");
+
+            if (moduleTeardown)
+            {
+                moduleTeardown();
+            }
+        }
+
         tcc_delete(jit->state);
 
         jit->state = NULL;
+        jit->relocated = false;
     }
     
     FreeSymbols(&jit->exports);
@@ -188,8 +199,18 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
         return false;
     }
 
+    jit->relocated = true;
+
     CopySymbols(jit, &jit->exports, &module->exports);
     CopySymbols(jit, &jit->externs, &module->externs);
+
+    /* Boxes any box globals, if the emitted module has any. */
+    void (*moduleInit)(void) = (void (*)(void))tcc_get_symbol(jit->state, "__strata_module_init");
+
+    if (moduleInit)
+    {
+        moduleInit();
+    }
 
     return true;
 }

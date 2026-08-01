@@ -83,12 +83,259 @@ STRATA_TEST(box_in_loop_does_not_crash)
     strataJitDestroy(jit);
 }
 
-STRATA_TEST(box_global_is_an_error)
+STRATA_TEST(box_global_with_valid_init_reads_and_mutates)
+{
+    /* A box global boxed from a value initializer: readable and field-
+       mutable from any function, and freed automatically on JIT teardown. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "box<Cell> g = Cell { .v = 5 };\n"
+        "void bump() { g.v = g.v + 1; }\n"
+        "int entry() {\n"
+        "  bump();\n"
+        "  bump();\n"
+        "  return g.v;\n"          /* 5 + 1 + 1 = 7 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_global_with_call_init_reads)
+{
+    /* A box global boxed from a box-returning call. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "box<Cell> make() { box<Cell> c = Cell { .v = 41 }; return c; }\n"
+        "box<Cell> g = make();\n"
+        "int entry() { return g.v + 1; }\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 42);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_global_scalar_value_used_in_arithmetic)
+{
+    /* A box<int> global's value is read directly in an arithmetic
+       expression, not just via a bare `return g;` - it must be dereferenced
+       rather than treated as a pointer, and never moved. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "box<int> i = 9;\n"
+        "int entry() {\n"
+        "  int a = 3;\n"
+        "  return a + i;\n"   /* 3 + 9 = 12 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 12);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_global_scalar_bare_return_reads_value)
+{
+    /* `return i;` from a function whose return type is the boxed scalar's
+       inner type (not box<int> itself) reads the value - it is not a
+       move, so it's allowed even though 'i' is a box global. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "box<int> i = 41;\n"
+        "int entry() { return i; }\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 41);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_global_ref_param_borrows)
+{
+    /* Passing a box global to a 'ref' parameter borrows it: legal, and the
+       global is still readable/live afterward. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "box<Cell> g = Cell { .v = 6 };\n"
+        "int read(ref box<Cell> c) { return c.v; }\n"
+        "int entry() { return read(g) * g.v; }\n"   /* 6 * 6 = 36 */
+        ,
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 36);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_global_uninitialized_is_an_error)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { int x; };\nbox<V> g = V { .x = 1 };\n", &diag, &arena);
+    ParseAndResolve("struct V { int x; };\nbox<V> g;\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_global_move_init_from_another_global_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "box<V> a = V { .x = 1 };\n"
+        "box<V> b = a;\n",          /* error: moving from a global */
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_global_reassignment_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "box<V> g = V { .x = 1 };\n"
+        "box<V> other = V { .x = 2 };\n"
+        "void set() { g = other; }\n",   /* error: box global cannot be reassigned */
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot be reassigned"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_global_moved_into_local_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "box<V> g = V { .x = 1 };\n"
+        "int entry() { box<V> local = g; return local.x; }\n",   /* error: moving global */
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "box global 'g' cannot be moved"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_global_passed_to_owned_param_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "box<V> g = V { .x = 1 };\n"
+        "int take(box<V> v) { return v.x; }\n"
+        "int entry() { return take(g); }\n",   /* error: moving global into owned param */
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "box global 'g' cannot be moved"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_global_returned_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "box<V> g = V { .x = 1 };\n"
+        "box<V> give() { return g; }\n",   /* error: moving global out via return */
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "box global 'g' cannot be moved"));
+
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }

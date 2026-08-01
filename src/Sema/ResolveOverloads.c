@@ -12,6 +12,7 @@ typedef struct {
     Arena* m_arena;
     StrMap m_constVars;
     StrMap m_movedBoxes;
+    StrMap m_boxGlobals;
     const char* m_currentReturnType;
 } Resolver;
 
@@ -56,6 +57,26 @@ static void MarkBoxMoved(Resolver* r, const char* name)
 static void MarkBoxLive(Resolver* r, const char* name)
 {
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
+}
+
+static bool IsBoxGlobalName(const Resolver* r, const char* name)
+{
+    return StrMapGet(&r->m_boxGlobals, name) != NULL;
+}
+
+/* Marks 'name' moved, unless it's a box global - those can't be moved at all. */
+static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
+{
+    if (IsBoxGlobalName(r, name))
+    {
+        DiagErrorFmt(r->m_diag, range,
+                     "box global '%s' cannot be moved; pass it as 'ref %s' or access its fields directly",
+                     name, name);
+
+        return;
+    }
+
+    MarkBoxMoved(r, name);
 }
 
 static int CountByName(const Module* mod, const char* name)
@@ -218,7 +239,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (IsBoxTypeName(param->type.name) && param->mod == ModNone && arg->kind == NodeIdent)
         {
-            MarkBoxMoved(r, ((IdentExpr*)arg)->name);
+            MoveBoxIdent(r, ((IdentExpr*)arg)->name, arg->range);
         }
     }
 }
@@ -422,6 +443,19 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (boxMove)
         {
+            const char* targetName = ((IdentExpr*)a->target)->name;
+
+            if (IsBoxGlobalName(r, targetName))
+            {
+                DiagErrorFmt(r->m_diag, a->base.range,
+                             "box global '%s' cannot be reassigned; only its fields may be mutated",
+                             targetName);
+
+                ResolveExpr(r, a->value, scope);
+
+                return;
+            }
+
             /* Box move: the value must be a box of the same type. Reading the
                value validates it is not itself moved; then ownership moves. */
             const char* vt = InferType(r, a->value, scope);
@@ -429,16 +463,16 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
             if (vt[0] != '\0' && strcmp(vt, tt) != 0)
             {
                 DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to box variable '%s'",
-                             vt, ((IdentExpr*)a->target)->name);
+                             vt, targetName);
             }
 
             ResolveExpr(r, a->value, scope);
 
-            MarkBoxLive(r, ((IdentExpr*)a->target)->name);
+            MarkBoxLive(r, targetName);
 
             if (a->value->kind == NodeIdent)
             {
-                MarkBoxMoved(r, ((IdentExpr*)a->value)->name);
+                MoveBoxIdent(r, ((IdentExpr*)a->value)->name, a->base.range);
             }
         }
         else
@@ -632,7 +666,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             /* A box<T> initialized from another box<T> moves the source. */
             if (IsBoxTypeName(vd->type.name) && IsBoxTypeName(initType) && vd->init->kind == NodeIdent)
             {
-                MarkBoxMoved(r, ((IdentExpr*)vd->init)->name);
+                MoveBoxIdent(r, ((IdentExpr*)vd->init)->name, vd->base.range);
             }
         }
 
@@ -662,10 +696,33 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
             }
 
-            /* Returning a box moves it out. */
+            /* A box<T> identifier is only moved when the function itself
+               returns box<T>; returning its inner type instead just reads
+               the value (unless that type is owning, which can't be
+               copied out). */
             if (IsBoxTypeName(typeName) && rs->value->kind == NodeIdent)
             {
-                MarkBoxMoved(r, ((IdentExpr*)rs->value)->name);
+                bool returnsSameBox = r->m_currentReturnType && strcmp(r->m_currentReturnType, typeName) == 0;
+
+                if (returnsSameBox)
+                {
+                    MoveBoxIdent(r, ((IdentExpr*)rs->value)->name, rs->base.range);
+                }
+                else
+                {
+                    char boxInner[128];
+                    BoxInnerTypeName(typeName, boxInner, sizeof boxInner);
+
+                    bool innerIsOwning = TypeRegistryIsOwningStruct(&r->m_registry, boxInner);
+                    bool innerMatchesReturn = r->m_currentReturnType
+                        && (strcmp(r->m_currentReturnType, boxInner) == 0
+                            || (IsNumeric(boxInner) && IsNumeric(r->m_currentReturnType)));
+
+                    if (innerIsOwning || !innerMatchesReturn)
+                    {
+                        MoveBoxIdent(r, ((IdentExpr*)rs->value)->name, rs->base.range);
+                    }
+                }
             }
         }
 
@@ -747,6 +804,17 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
+    StrMapInit(&r.m_boxGlobals);
+
+    for (size_t i = 0; i < mod->globals.count; i++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+
+        if (IsBoxTypeName(gd->type.name))
+        {
+            StrMapPut(&r.m_boxGlobals, gd->name, (void*)gd->type.name);
+        }
+    }
 
     StrMap byMangled;
     StrMapInit(&byMangled);
@@ -846,15 +914,66 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         }
     }
 
-    for (size_t i = 0; i < mod->globals.count; i++)
     {
-        GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+        StrMap globalScope;
+        StrMapInit(&globalScope);
 
-        // @TODO: Fix
-        if (IsBoxTypeName(gd->type.name))
+        for (size_t i = 0; i < mod->globals.count; i++)
         {
-            DiagErrorFmt(diag, gd->base.range, "global '%s' cannot have box type", gd->name);
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+            StrMapPut(&globalScope, gd->name, (void*)gd->type.name);
         }
+
+        /* Clear per-function move state left over from the last function walked. */
+        if (r.m_movedBoxes.cap > 0)
+        {
+            memset(r.m_movedBoxes.keys, 0, r.m_movedBoxes.cap * sizeof(const char*));
+            r.m_movedBoxes.count = 0;
+        }
+
+        for (size_t i = 0; i < mod->globals.count; i++)
+        {
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+
+            if (!IsBoxTypeName(gd->type.name))
+            {
+                continue;
+            }
+
+            if (!gd->init)
+            {
+                DiagErrorFmt(diag, gd->base.range, "box global '%s' must be initialized", gd->name);
+                continue;
+            }
+
+            char boxInner[128];
+            BoxInnerTypeName(gd->type.name, boxInner, sizeof boxInner);
+
+            /* No moving from another variable to initialize a box global. */
+            if (gd->init->kind == NodeIdent)
+            {
+                DiagErrorFmt(diag, gd->base.range,
+                             "box global '%s' cannot be initialized by moving from another variable; "
+                             "initialize it with a value of '%s' or a call returning '%s'",
+                             gd->name, boxInner, gd->type.name);
+                continue;
+            }
+
+            ResolveExpr(&r, gd->init, &globalScope);
+
+            const char* initType = InferType(&r, gd->init, &globalScope);
+
+            bool ok = strcmp(initType, boxInner) == 0 || strcmp(initType, gd->type.name) == 0;
+
+            if (initType[0] != '\0' && !ok)
+            {
+                DiagErrorFmt(diag, gd->base.range,
+                             "box global '%s' cannot be initialized by expression of type '%s'",
+                             gd->name, initType);
+            }
+        }
+
+        StrMapFree(&globalScope);
     }
 
     for (size_t i = 0; i < mod->functions.count; i++)
@@ -886,6 +1005,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     StrMapFree(&r.m_constVars);
     StrMapFree(&r.m_movedBoxes);
+    StrMapFree(&r.m_boxGlobals);
     StrMapFree(&byMangled);
     TypeRegistryFree(&r.m_registry);
 }

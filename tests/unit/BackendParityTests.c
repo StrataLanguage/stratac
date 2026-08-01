@@ -102,6 +102,20 @@ STRATA_TEST(llvm_and_tcc_box_param_owned_parity)
         11);
 }
 
+STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
+{
+    /* box<int> read as a value (no field to access) in arithmetic and a bare return. */
+    CheckParity(
+        "int read_bare(box<int> owned) { return owned; }\n"
+        "int entry() {\n"
+        "  box<int> a = 9;\n"
+        "  box<int> b = 5;\n"
+        "  int sum = a + b * 2;\n"        /* 9 + 5*2 = 19 */
+        "  return sum + read_bare(a);\n"  /* a moved into read_bare -> 19 + 9 = 28 */
+        "}\n",
+        28);
+}
+
 STRATA_TEST(llvm_and_tcc_box_param_ref_parity)
 {
     /* A ref box parameter borrows the caller's box. */
