@@ -13,11 +13,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "Import/ModuleLoader.h"
+
+#if STRATA_HAS_LLVM
+#include "Codegen/LLVMCApi.h"
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
 #include "Codegen/LLVMAot.h"
-#include "Import/ModuleLoader.h"
-#include "Codegen/LLVMCApi.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,6 +71,7 @@ static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* aren
         }
         else
         {
+#if STRATA_HAS_LLVM
             CodegenResult result = GenerateLlvmIr(mod);
             irOwned = result.output;
             out = result.output ? result.output : "";
@@ -75,6 +79,9 @@ static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* aren
             {
                 DiagError(diag, SRC_INVALID, "code generation failed");
             }
+#else
+            DiagError(diag, SRC_INVALID, "LLVM backend not built");
+#endif
         }
     }
 
@@ -188,6 +195,15 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
 {
     (void)c;
 
+#if !STRATA_HAS_LLVM
+    (void)assembly;
+    if (errOut)
+    {
+        *errOut = DupString("LLVM backend not built");
+    }
+    return 0;
+#else
+
     if (!inputPath || !outputPath)
     {
         if (errOut) *errOut = DupString("null input or output path");
@@ -232,6 +248,7 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
     arena_free(&arena);
 
     return ok;
+#endif
 }
 
 void strataResultFree(StrataResult* r)
@@ -250,6 +267,7 @@ void strataResultFree(StrataResult* r)
 
 const char* strataLLVMVersion(void)
 {
+#if STRATA_HAS_LLVM
     static char buf[32];
     unsigned maj = 0;
     unsigned min = 0;
@@ -257,8 +275,21 @@ const char* strataLLVMVersion(void)
     LLVMGetVersion(&maj, &min, &pat);
     snprintf(buf, sizeof(buf), "%u.%u.%u", maj, min, pat);
     return buf;
+#else
+    return "disabled";
+#endif
 }
 
+unsigned strataCapabilities(void)
+{
+    unsigned capabilities = 0;
+#if STRATA_HAS_LLVM
+    capabilities |= STRATA_CAP_LLVM_IR | STRATA_CAP_LLVM_AOT;
+#endif
+    return capabilities;
+}
+
+#if STRATA_HAS_LLVM
 struct StrataJit
 {
     LLVMJit* jit;
@@ -493,6 +524,76 @@ void strataJitDestroy(StrataJit* jit)
     free(jit->diagnostics);
     free(jit);
 }
+#else
+struct StrataJit
+{
+    char unused;
+};
+
+static StrataJit* UnavailableJit(const char** errOut)
+{
+    if (errOut)
+    {
+        *errOut = DupString("JIT backend not built");
+    }
+    return NULL;
+}
+
+StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
+                                 const char* moduleName, const char** errOut)
+{
+    (void)c;
+    (void)source;
+    (void)moduleName;
+    return UnavailableJit(errOut);
+}
+
+StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut)
+{
+    (void)c;
+    (void)path;
+    return UnavailableJit(errOut);
+}
+
+void* strataJitGetFunction(StrataJit* jit, const char* name)
+{
+    (void)jit;
+    (void)name;
+    return NULL;
+}
+
+int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
+{
+    (void)jit;
+    (void)name;
+    (void)fn;
+    return 0;
+}
+
+size_t strataJitGetExternSymbolCount(StrataJit* jit)
+{
+    (void)jit;
+    return 0;
+}
+
+const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
+{
+    (void)jit;
+    (void)index;
+    return NULL;
+}
+
+const char* strataJitDiagnostics(StrataJit* jit)
+{
+    (void)jit;
+    return "";
+}
+
+void strataJitDestroy(StrataJit* jit)
+{
+    (void)jit;
+}
+#endif
 
 void strataFree(char* s)
 {
