@@ -100,6 +100,7 @@ static inline void StrMapInit(StrMap* m)
 
 void  StrMapPut(StrMap* m, const char* key, void* value);
 void* StrMapGet(const StrMap* m, const char* key);
+void  StrMapFree(StrMap* m);
 
 typedef struct {
     char* data;

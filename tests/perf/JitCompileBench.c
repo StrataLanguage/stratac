@@ -339,6 +339,7 @@ static Timing CompileSource(const char* source, size_t length, const char* name,
     Timing backendTiming = {0};
     if (!DiagHasErrors(&diag)) backendTiming = CompileAst(module, backend, expected);
     double end = NowSeconds();
+    AstDispose((Node*)module);
     SourceManagerFree(&manager);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -596,6 +597,7 @@ int main(int argc, char** argv)
                                      "source-to-callable", iterations);
             if (ok) ok = MeasureView(csv, &fixture, source, length, ast,
                                      "ast-to-callable", iterations);
+            AstDispose((Node*)ast);
             SourceManagerFree(&astManager);
             DiagnosticEngineFree(&astDiag);
             arena_free(&astArena);

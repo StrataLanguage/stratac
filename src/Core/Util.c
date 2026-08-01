@@ -325,6 +325,13 @@ void* StrMapGet(const StrMap* m, const char* key)
     return NULL;
 }
 
+void StrMapFree(StrMap* m)
+{
+    free(m->keys);
+    free(m->values);
+    StrMapInit(m);
+}
+
 static void SbEnsure(Sb* sb, size_t extra)
 {
     if (sb->len + extra <= sb->cap)
@@ -359,6 +366,7 @@ void SbPutc(Sb* sb, char c)
 void SbPuts(Sb* sb, const char* s)
 {
     size_t n = strlen(s);
+    if (n == 0) return;
     SbEnsure(sb, n);
     memcpy(sb->data + sb->len, s, n);
     sb->len += n;
@@ -366,6 +374,7 @@ void SbPuts(Sb* sb, const char* s)
 
 void SbPutn(Sb* sb, const char* s, size_t n)
 {
+    if (n == 0) return;
     SbEnsure(sb, n);
     memcpy(sb->data + sb->len, s, n);
     sb->len += n;
@@ -373,6 +382,7 @@ void SbPutn(Sb* sb, const char* s, size_t n)
 
 void SbPutr(Sb* sb, char c, size_t repeat)
 {
+    if (repeat == 0) return;
     SbEnsure(sb, repeat);
     memset(sb->data + sb->len, c, repeat);
     sb->len += repeat;
@@ -388,7 +398,7 @@ void SbPrintf(Sb* sb, const char* fmt, ...)
     va_end(args);
     if (n > 0)
     {
-        SbEnsure(sb, (size_t)n);
+        SbEnsure(sb, (size_t)n + 1);
         vsnprintf(sb->data + sb->len, (size_t)n + 1, fmt, args2);
         sb->len += (size_t)n;
     }

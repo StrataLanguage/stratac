@@ -36,6 +36,7 @@ MappedType MapType(const TypeName* t)
     }
 
     const char* base = t->name;
+    char candidate[32] = {0};
     int vec = 1;
 
     size_t len = strlen(base);
@@ -56,7 +57,6 @@ MappedType MapType(const TypeName* t)
 
         if (parsedSize >= 1 && parsedSize <= 4)
         {
-            char candidate[32];
             size_t clen = split < sizeof(candidate) - 1 ? split : sizeof(candidate) - 1;
             memcpy(candidate, base, clen);
             candidate[clen] = '\0';

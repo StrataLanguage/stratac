@@ -16,6 +16,7 @@ typedef struct {
 } TypeRegistry;
 
 void TypeRegistryInit(TypeRegistry* reg);
+void TypeRegistryFree(TypeRegistry* reg);
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m);
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);

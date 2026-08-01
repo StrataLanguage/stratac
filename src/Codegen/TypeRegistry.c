@@ -10,6 +10,12 @@ void TypeRegistryInit(TypeRegistry* reg)
     reg->cap = 0;
 }
 
+void TypeRegistryFree(TypeRegistry* reg)
+{
+    free(reg->types);
+    TypeRegistryInit(reg);
+}
+
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
 {
     reg->count = 0;

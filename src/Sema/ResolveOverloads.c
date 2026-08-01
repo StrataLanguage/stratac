@@ -654,6 +654,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         WalkBlock(&r, (Block*)functionDecl->body, &scope);
         r.m_currentReturnType = NULL;
+        StrMapFree(&scope);
     }
 
     for (size_t i = 0; i < mod->functions.count; i++)
@@ -677,4 +678,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
     }
+
+    StrMapFree(&r.m_constVars);
+    StrMapFree(&byMangled);
+    TypeRegistryFree(&r.m_registry);
 }
