@@ -1,11 +1,21 @@
-// strata.h - public embedding API for the Strata language (C ABI).
-//
-// Host applications link against the Strata shared
-// library and use these functions to compile Strata source at runtime. The
-// interface is pure C so it can be called from C, C++, C#, Rust, or any
-// language with a foreign-function interface.
-//
-// Result strings are owned by the compiler and freed with strataResultFree().
+/*
+ *  ------------------------------------------------------------------------------------
+ *  Public embedding API for the Strata language (C ABI).
+ *  ------------------------------------------------------------------------------------
+ *         __         __           __          __                __           __          
+ *        / /\       /\ \         /\ \        / /\              /\ \         / /\        
+ *       / /  \      \_\ \       /  \ \      / /  \             \_\ \       / /  \       
+ *      / / /\ \__   /\__ \     / /\ \ \    / / /\ \            /\__ \     / / /\ \      
+ *     / / /\ \___\ / /_ \ \   / / /\ \_\  / / /\ \ \          / /_ \ \   / / /\ \ \     
+ *     \ \ \ \/___// / /\ \ \ / / /_/ / / / / /  \ \ \        / / /\ \ \ / / /  \ \ \    
+ *      \ \ \     / / /  \/_// / /__\/ / / / /___/ /\ \      / / /  \/_// / /___/ /\ \   
+ *  _    \ \ \   / / /      / / /_____/ / / /_____/ /\ \    / / /      / / /_____/ /\ \  
+ * /_/\__/ / /  / / /      / / /\ \ \  / /_________/\ \ \  / / /      / /_________/\ \ \ 
+ * \ \/___/ /  /_/ /      / / /  \ \ \/ / /_       __\ \_\/_/ /      / / /_       __\ \_\
+ *  \_____\/   \_\/       \/_/    \_\/\_\___\     /____/_/\_\/       \_\___\     /____/_/
+ *
+ *  ------------------------------------------------------------------------------------
+ */
 #pragma once
 
 #include <stddef.h>
