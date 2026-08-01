@@ -14,6 +14,8 @@ typedef struct {
     bool isUnsigned;
     bool isVoid;
     const char* structTypeName;
+    bool isBox;
+    const char* boxInner;
 } TypeDesc;
 
 typedef struct {
@@ -60,6 +62,11 @@ typedef struct {
     LLVMBasicBlockRef m_entryBlock;
     LLVMValueRef m_entryAllocaPt;
     Vec m_loops;
+    Vec m_owningLocals;
+    LLVMValueRef m_allocFn;
+    LLVMTypeRef m_allocFnType;
+    LLVMValueRef m_freeFn;
+    LLVMTypeRef m_freeFnType;
     Arena* m_arena;
 } Builder;
 
@@ -287,13 +294,16 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     if (IsBoxTypeName(t->name))
     {
-        if (b->m_diag)
+        char inner[128];
+        TypeDesc td = TypeDescMake(b->m_ptrTy, false, false, false, NULL);
+
+        if (BoxInnerTypeName(t->name, inner, sizeof inner))
         {
-            DiagErrorFmt(b->m_diag, t->range,
-                         "box types are not yet supported by the LLVM backend (use the C/Tcc JIT)");
+            td.isBox = true;
+            td.boxInner = arena_strdup(b->m_arena, inner);
         }
 
-        return TypeDescMake(b->m_ptrTy, false, false, false, NULL);
+        return td;
     }
 
     if (b->m_diag)
@@ -363,6 +373,55 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     return ValueMake(r, target);
 }
 
+static LLVMValueRef StrataAllocFn(Builder* b)
+{
+    if (!b->m_allocFn)
+    {
+        LLVMTypeRef params[1] = { I64Ty(b) };
+        b->m_allocFnType = LLVMFunctionType(b->m_ptrTy, params, 1, 0);
+        b->m_allocFn = LLVMAddFunction(b->m_mod, "strata_alloc", b->m_allocFnType);
+    }
+
+    return b->m_allocFn;
+}
+
+static LLVMValueRef StrataFreeFn(Builder* b)
+{
+    if (!b->m_freeFn)
+    {
+        LLVMTypeRef params[1] = { b->m_ptrTy };
+        b->m_freeFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
+        b->m_freeFn = LLVMAddFunction(b->m_mod, "strata_free", b->m_freeFnType);
+    }
+
+    return b->m_freeFn;
+}
+
+static LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
+{
+    LLVMValueRef idx[1] = { LLVMConstInt(I64Ty(b), 1, 0) };
+    LLVMValueRef gep = LLVMConstGEP2(ty, LLVMConstNull(b->m_ptrTy), idx, 1);
+
+    return LLVMConstPtrToInt(gep, I64Ty(b));
+}
+
+static void EmitDropOne(Builder* b, LLVMValueRef slot)
+{
+    LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "box");
+    LLVMValueRef args[1] = { ptr };
+    StrataFreeFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, args, 1, "");
+    LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
+}
+
+static void EmitDrops(Builder* b, size_t fromIndex)
+{
+    for (size_t i = fromIndex; i < b->m_owningLocals.count; i++)
+    {
+        EmitDropOne(b, (LLVMValueRef)VecGet(&b->m_owningLocals, i));
+    }
+}
+
 static void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
@@ -424,6 +483,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_terminated = false;
     b->m_curRet = Resolve(b, &f->returnType);
     b->m_loops.count = 0;
+    b->m_owningLocals.count = 0;
 
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
     b->m_curFn = info ? info->function : NULL;
@@ -474,6 +534,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
 
     if (!b->m_terminated)
     {
+        EmitDrops(b, 0);
+
         if (b->m_curRet.isVoid)
         {
             LLVMBuildRetVoid(b->m_builder);
@@ -559,19 +621,40 @@ static LValue EmitLValue(Builder* b, Node* n)
         MemberExpr* m = (MemberExpr*)n;
         LValue base = EmitLValue(b, m->base_node);
 
-        if (!base.valid || !base.typeDesc.structTypeName)
+        if (!base.valid)
         {
             return none;
         }
 
-        int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.structTypeName, m->member);
+        LLVMValueRef structPtr;
+        LLVMTypeRef structTy;
+        const char* structName;
+
+        if (base.typeDesc.isBox)
+        {
+            structPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box");
+            structName = base.typeDesc.boxInner;
+            structTy = Resolve(b, &(TypeName){.name = (char*)base.typeDesc.boxInner}).type;
+        }
+        else if (base.typeDesc.structTypeName)
+        {
+            structPtr = base.ptr;
+            structName = base.typeDesc.structTypeName;
+            structTy = base.typeDesc.type;
+        }
+        else
+        {
+            return none;
+        }
+
+        int idx = TypeRegistryFieldIndex(&b->m_registry, structName, m->member);
 
         if (idx < 0)
         {
             return none;
         }
 
-        const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.structTypeName);
+        const StructType* st = TypeRegistryFind(&b->m_registry, structName);
 
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
         TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
@@ -580,7 +663,7 @@ static LValue EmitLValue(Builder* b, Node* n)
         idxs[0] = IdxConst(b, 0);
         idxs[1] = IdxConst(b, (unsigned)idx);
 
-        LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, base.typeDesc.type, base.ptr, idxs, 2, "f");
+        LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "f");
 
         none.valid = true;
         none.ptr = ptr;
@@ -897,6 +980,25 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (lvalue.valid)
         {
+            if (lvalue.typeDesc.isBox && n->op == AssignSet)
+            {
+                /* Box move: free the old value, take the new pointer, null the source. */
+                EmitDropOne(b, lvalue.ptr);
+                LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
+
+                if (n->value->kind == NodeIdent)
+                {
+                    LValue src = EmitLValue(b, n->value);
+
+                    if (src.valid)
+                    {
+                        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                    }
+                }
+
+                return rhs;
+            }
+
             Value result = Coerce(b, rhs, lvalue.typeDesc);
 
             if (n->op != AssignSet)
@@ -1227,11 +1329,30 @@ static void EmitStmt(Builder* b, Node* n)
     case NodeReturn:
     {
         ReturnStmt* r = (ReturnStmt*)n;
+        Value v = {0};
 
         if (r->value)
         {
-            Value value = Coerce(b, EmitExpr(b, r->value), b->m_curRet);
-            LLVMBuildRet(b->m_builder, value.value);
+            v = Coerce(b, EmitExpr(b, r->value), b->m_curRet);
+
+            /* Returning a box moves it out: null the source so the drop below
+               does not free it. */
+            if (v.typeDesc.isBox && r->value->kind == NodeIdent)
+            {
+                LValue src = EmitLValue(b, r->value);
+
+                if (src.valid)
+                {
+                    LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                }
+            }
+        }
+
+        EmitDrops(b, 0);
+
+        if (r->value)
+        {
+            LLVMBuildRet(b->m_builder, v.value);
         }
         else
         {
@@ -1260,6 +1381,49 @@ static void EmitStmt(Builder* b, Node* n)
         VarDeclStmt* varDecl = (VarDeclStmt*)n;
         TypeDesc typeDesc = Resolve(b, &varDecl->type);
 
+        if (typeDesc.isBox)
+        {
+            LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "box");
+
+            if (varDecl->init)
+            {
+                Value value = EmitExpr(b, varDecl->init);
+
+                if (value.typeDesc.isBox)
+                {
+                    /* Move from another box<T>: take its pointer, null the source. */
+                    LLVMBuildStore(b->m_builder, value.value, slot);
+
+                    LValue src = EmitLValue(b, varDecl->init);
+
+                    if (src.valid)
+                    {
+                        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                    }
+                }
+                else
+                {
+                    /* Box a value of the inner type. */
+                    TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)typeDesc.boxInner});
+                    LLVMValueRef size = SizeOfConst(b, innerTd.type);
+                    LLVMValueRef args[1] = { size };
+                    StrataAllocFn(b);
+                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "heap");
+                    LLVMBuildStore(b->m_builder, heap, slot);
+                    LLVMBuildStore(b->m_builder, value.value, heap);
+                }
+            }
+
+            Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+            sym->value = slot;
+            sym->typeDesc = typeDesc;
+
+            StrMapPut(&b->m_symbols, varDecl->name, sym);
+            VecPush(&b->m_owningLocals, slot);
+
+            return;
+        }
+
         LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "v");
 
         if (varDecl->init)
@@ -1284,11 +1448,19 @@ static void EmitStmt(Builder* b, Node* n)
     case NodeBlock:
     {
         Block* blk = (Block*)n;
+        size_t mark = b->m_owningLocals.count;
 
         for (size_t i = 0; i < blk->statements.count; i++)
         {
             EmitStmt(b, (Node*)VecGet(&blk->statements, i));
         }
+
+        if (!b->m_terminated)
+        {
+            EmitDrops(b, mark);
+        }
+
+        b->m_owningLocals.count = mark;
 
         return;
     }
@@ -1614,6 +1786,11 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_externSlots);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
+    VecInit(&b.m_owningLocals);
+    b.m_allocFn = NULL;
+    b.m_allocFnType = NULL;
+    b.m_freeFn = NULL;
+    b.m_freeFnType = NULL;
 
     TypeRegistryInit(&b.m_registry);
 
@@ -1624,6 +1801,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_globals);
     StrMapFree(&b.m_externSlots);
     free(b.m_loops.items);
+    free(b.m_owningLocals.items);
     TypeRegistryFree(&b.m_registry);
 
     return module;

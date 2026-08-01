@@ -660,6 +660,29 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
 
         const char* targetType = ExprType(emitter, assign->target);
 
+        if (assign->op == AssignSet && IsBoxTypeName(targetType))
+        {
+            /* Box move: free the old value, take the new pointer, null the source. */
+            SbPuts(&emitter->out, "(strata_free(");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, "), (");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, " = ");
+            EmitExpr(emitter, assign->value);
+            SbPuts(&emitter->out, ")");
+
+            if (assign->value->kind == NodeIdent)
+            {
+                SbPuts(&emitter->out, ", (");
+                SbPuts(&emitter->out, VarName(emitter, ((const IdentExpr*)assign->value)->name));
+                SbPuts(&emitter->out, " = 0)");
+            }
+
+            SbPuts(&emitter->out, ")");
+
+            return;
+        }
+
         if (assign->op == AssignMod && IsFloatType(targetType))
         {
             SbPutc(&emitter->out, '(');
@@ -742,35 +765,69 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         char inner[128];
         BoxInnerTypeName(declaration->type.name, inner, sizeof inner);
         const char* innerC = TypeNameC(emitter, inner);
+        const char* initType = declaration->init ? ExprType(emitter, declaration->init) : "";
 
-        /* <inner>* var = strata_alloc(sizeof(<inner>)); *var = (<init>); */
         SbPuts(&emitter->out, innerC);
         SbPuts(&emitter->out, " *");
         SbPutc(&emitter->out, ' ');
         SbPuts(&emitter->out, cName);
-        SbPuts(&emitter->out, " = strata_alloc(sizeof(");
-        SbPuts(&emitter->out, innerC);
-        SbPuts(&emitter->out, "));");
 
-        if (semicolon)
+        if (initType[0] != '\0' && IsBoxTypeName(initType))
         {
-            SbPutc(&emitter->out, '\n');
-        }
-
-        if (declaration->init)
-        {
-            if (semicolon)
-            {
-                Pad(emitter);
-            }
-            SbPutc(&emitter->out, '*');
-            SbPuts(&emitter->out, cName);
+            /* Move from another box<T>: take its pointer, null the source. */
             SbPuts(&emitter->out, " = ");
             EmitExpr(emitter, declaration->init);
 
             if (semicolon)
             {
                 SbPutc(&emitter->out, ';');
+            }
+
+            if (declaration->init->kind == NodeIdent)
+            {
+                if (semicolon)
+                {
+                    SbPutc(&emitter->out, '\n');
+                    Pad(emitter);
+                }
+
+                SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)declaration->init)->name));
+                SbPuts(&emitter->out, " = 0");
+
+                if (semicolon)
+                {
+                    SbPutc(&emitter->out, ';');
+                }
+            }
+        }
+        else
+        {
+            /* Box a value of the inner type: alloc, then store into it. */
+            SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+            SbPuts(&emitter->out, innerC);
+            SbPuts(&emitter->out, "));");
+
+            if (semicolon)
+            {
+                SbPutc(&emitter->out, '\n');
+            }
+
+            if (declaration->init)
+            {
+                if (semicolon)
+                {
+                    Pad(emitter);
+                }
+
+                SbPutc(&emitter->out, '*');
+                SbPuts(&emitter->out, cName);
+                SbPuts(&emitter->out, " = ");
+                EmitExpr(emitter, declaration->init);
+
+                if (semicolon)
+                {
+                    SbPutc(&emitter->out, ';');
+                }
             }
         }
 
@@ -891,6 +948,20 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, " = ");
             EmitExpr(emitter, statement->value);
             SbPuts(&emitter->out, ";\n");
+
+            /* Returning a box moves it out: null the source so the drop below
+               does not free it. */
+            if (statement->value->kind == NodeIdent)
+            {
+                const char* vt = ExprType(emitter, statement->value);
+
+                if (IsBoxTypeName(vt))
+                {
+                    Pad(emitter);
+                    SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)statement->value)->name));
+                    SbPuts(&emitter->out, " = 0;\n");
+                }
+            }
 
             EmitDrops(emitter, 0);
 
