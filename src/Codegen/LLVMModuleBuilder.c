@@ -289,6 +289,12 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     if (found)
     {
+        if (TypeRegistryIsOwningStruct(&b->m_registry, t->name) && b->m_diag)
+        {
+            DiagErrorFmt(b->m_diag, t->range,
+                         "owning structs are not yet supported by the LLVM backend (use the C/Tcc JIT)");
+        }
+
         return TypeDescMake(found, false, false, false, t->name);
     }
 

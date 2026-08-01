@@ -584,6 +584,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             DiagErrorFmt(r->m_diag, vd->base.range, "const variable '%s' must be initialized", vd->name);
         }
 
+        if (TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name))
+        {
+            DiagErrorFmt(r->m_diag, vd->base.range,
+                         "owning struct '%s' must be stored in a box; use 'box<%s>'",
+                         vd->type.name, vd->type.name);
+        }
+
         if (vd->init)
         {
             ResolveExpr(r, vd->init, scope);
@@ -819,11 +826,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         for (size_t j = 0; j < sd->fields.count; j++)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
-
-            if (IsBoxTypeName(field->type.name))
-            {
-                DiagErrorFmt(diag, field->type.range, "box fields are not supported yet (field '%s')", field->name);
-            }
 
             if (IsIncompleteStruct(&r.m_registry, field->type.name))
             {

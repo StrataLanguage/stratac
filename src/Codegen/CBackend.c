@@ -27,10 +27,17 @@ typedef struct {
     unsigned indent;
     const SourceManager* sources;
     size_t sourceCount;
-    Vec boxVars;                 /* in-scope box-local C names (current function) */
+    Vec boxVars;                 /* in-scope box-local OwnEntry* (current function) */
     const char* currentReturn;  /* current function's return type name */
     unsigned retCounter;
 } CEmitter;
+
+typedef struct {
+    const char* cName;
+    const char* typeName;
+} OwnEntry;
+
+static const char* DropHelperName(CEmitter* emitter, const char* structName);
 
 static void DisposeMap(StrMap* map)
 {
@@ -331,8 +338,15 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     case NodeMember:
     {
         const MemberExpr* member = (const MemberExpr*)node;
-        
+
         const char* baseName = ExprType(emitter, member->base_node);
+
+        char boxInner[128];
+
+        if (IsBoxTypeName(baseName) && BoxInnerTypeName(baseName, boxInner, sizeof boxInner))
+        {
+            baseName = boxInner;
+        }
 
         const StructType* type = TypeRegistryFind(&emitter->types, baseName);
         int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
@@ -756,6 +770,66 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     }
 }
 
+/* Box a struct value by allocating it and assigning each init field, so that
+   box<T> fields move their source (nulling it). Omitted fields stay zero/null. */
+static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char* innerC,
+                                const char* inner, const StructInitExpr* si)
+{
+    SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+    SbPuts(&emitter->out, innerC);
+    SbPuts(&emitter->out, "));\n");
+
+    Pad(emitter);
+    SbPutc(&emitter->out, '*');
+    SbPuts(&emitter->out, cName);
+    SbPuts(&emitter->out, " = (");
+    SbPuts(&emitter->out, innerC);
+    SbPuts(&emitter->out, "){0};\n");
+
+    const StructType* st = TypeRegistryFind(&emitter->types, inner);
+    size_t positional = 0;
+
+    for (size_t k = 0; k < si->fields.count; ++k)
+    {
+        StructInitField* sf = (StructInitField*)VecGet(&si->fields, k);
+
+        size_t idx;
+
+        if (sf->name && sf->name[0] != '\0')
+        {
+            int named = TypeRegistryFieldIndex(&emitter->types, inner, sf->name);
+            idx = named >= 0 ? (size_t)named : 0;
+        }
+        else
+        {
+            idx = positional++;
+        }
+
+        FieldDecl* fd = st ? (FieldDecl*)VecGet(&st->fields, idx) : NULL;
+
+        if (!fd)
+        {
+            continue;
+        }
+
+        Pad(emitter);
+        SbPuts(&emitter->out, cName);
+        SbPuts(&emitter->out, "->");
+        SbPuts(&emitter->out, FieldName(emitter, fd->name));
+        SbPuts(&emitter->out, " = ");
+        EmitExpr(emitter, sf->value);
+        SbPuts(&emitter->out, ";\n");
+
+        /* A box field moved from a variable nulls the source. */
+        if (IsBoxTypeName(fd->type.name) && sf->value->kind == NodeIdent)
+        {
+            Pad(emitter);
+            SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)sf->value)->name));
+            SbPuts(&emitter->out, " = 0;\n");
+        }
+    }
+}
+
 static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool semicolon)
 {
     const char* cName = VarName(emitter, declaration->name);
@@ -802,37 +876,52 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         }
         else
         {
-            /* Box a value of the inner type: alloc, then store into it. */
-            SbPuts(&emitter->out, " = strata_alloc(sizeof(");
-            SbPuts(&emitter->out, innerC);
-            SbPuts(&emitter->out, "));");
-
-            if (semicolon)
+            /* Box a value of the inner type. (var already declared above) */
+            if (declaration->init
+                && TypeRegistryIsOwningStruct(&emitter->types, inner)
+                && declaration->init->kind == NodeStructInit)
             {
-                SbPutc(&emitter->out, '\n');
+                EmitBoxedStructInit(emitter, cName, innerC, inner,
+                                    (const StructInitExpr*)declaration->init);
             }
-
-            if (declaration->init)
+            else
             {
+                SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+                SbPuts(&emitter->out, innerC);
+                SbPuts(&emitter->out, "));");
+
                 if (semicolon)
                 {
-                    Pad(emitter);
+                    SbPutc(&emitter->out, '\n');
                 }
 
-                SbPutc(&emitter->out, '*');
-                SbPuts(&emitter->out, cName);
-                SbPuts(&emitter->out, " = ");
-                EmitExpr(emitter, declaration->init);
-
-                if (semicolon)
+                if (declaration->init)
                 {
-                    SbPutc(&emitter->out, ';');
+                    if (semicolon)
+                    {
+                        Pad(emitter);
+                    }
+
+                    SbPutc(&emitter->out, '*');
+                    SbPuts(&emitter->out, cName);
+                    SbPuts(&emitter->out, " = ");
+                    EmitExpr(emitter, declaration->init);
+
+                    if (semicolon)
+                    {
+                        SbPutc(&emitter->out, ';');
+                    }
                 }
             }
         }
 
         AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
-        VecPush(&emitter->boxVars, (void*)cName);
+        {
+            OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
+            entry->cName = cName;
+            entry->typeName = declaration->type.name;
+            VecPush(&emitter->boxVars, entry);
+        }
 
         return;
     }
@@ -869,11 +958,27 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
 {
     for (size_t i = fromIndex; i < emitter->boxVars.count; ++i)
     {
-        const char* var = (const char*)VecGet(&emitter->boxVars, i);
+        OwnEntry* e = (OwnEntry*)VecGet(&emitter->boxVars, i);
+        const char* var = e->cName;
+        char inner[128];
+        bool owningInner = IsBoxTypeName(e->typeName)
+            && BoxInnerTypeName(e->typeName, inner, sizeof inner)
+            && TypeRegistryIsOwningStruct(&emitter->types, inner);
+
         Pad(emitter);
         SbPuts(&emitter->out, "if (");
         SbPuts(&emitter->out, var);
-        SbPuts(&emitter->out, ") { strata_free(");
+        SbPuts(&emitter->out, ") { ");
+
+        if (owningInner)
+        {
+            SbPuts(&emitter->out, DropHelperName(emitter, inner));
+            SbPuts(&emitter->out, "(");
+            SbPuts(&emitter->out, var);
+            SbPuts(&emitter->out, "); ");
+        }
+
+        SbPuts(&emitter->out, "strata_free(");
         SbPuts(&emitter->out, var);
         SbPuts(&emitter->out, "); ");
         SbPuts(&emitter->out, var);
@@ -1105,6 +1210,72 @@ static void EmitParam(CEmitter* emitter, const ParamDecl* param)
 
     SbPutc(&emitter->out, ' ');
     SbPuts(&emitter->out, VarName(emitter, param->name));
+}
+
+static const char* DropHelperName(CEmitter* emitter, const char* structName)
+{
+    return Encode(emitter, "strata__drop__", structName);
+}
+
+static void EmitDropField(CEmitter* emitter, const char* fieldC, const char* fieldType)
+{
+    if (IsBoxTypeName(fieldType))
+    {
+        char inner[128];
+        BoxInnerTypeName(fieldType, inner, sizeof inner);
+
+        SbPrintf(&emitter->out, "    if (p->%s) { ", fieldC);
+
+        if (TypeRegistryIsOwningStruct(&emitter->types, inner))
+        {
+            SbPrintf(&emitter->out, "%s(p->%s); ", DropHelperName(emitter, inner), fieldC);
+        }
+
+        SbPrintf(&emitter->out, "strata_free(p->%s); p->%s = 0; }\n", fieldC, fieldC);
+    }
+    else if (TypeRegistryIsOwningStruct(&emitter->types, fieldType))
+    {
+        SbPrintf(&emitter->out, "    %s(&(p->%s));\n", DropHelperName(emitter, fieldType), fieldC);
+    }
+}
+
+static void EmitDropHelpers(CEmitter* emitter)
+{
+    /* Forward declarations first so helpers may reference each other. */
+    for (size_t i = 0; i < emitter->types.count; ++i)
+    {
+        const StructType* t = &emitter->types.types[i];
+
+        if (TypeRegistryIsOwningStruct(&emitter->types, t->name))
+        {
+            SbPrintf(&emitter->out, "static void %s(%s*);\n",
+                     DropHelperName(emitter, t->name), TypeNameC(emitter, t->name));
+        }
+    }
+
+    for (size_t i = 0; i < emitter->types.count; ++i)
+    {
+        const StructType* t = &emitter->types.types[i];
+
+        if (!TypeRegistryIsOwningStruct(&emitter->types, t->name))
+        {
+            continue;
+        }
+
+        SbPrintf(&emitter->out, "static void %s(%s* p) {\n"
+                                "    if (!p) return;\n",
+                 DropHelperName(emitter, t->name), TypeNameC(emitter, t->name));
+
+        for (size_t j = 0; j < t->fields.count; ++j)
+        {
+            FieldDecl* f = (FieldDecl*)VecGet(&t->fields, j);
+            EmitDropField(emitter, FieldName(emitter, f->name), f->type.name);
+        }
+
+        SbPuts(&emitter->out, "}\n");
+    }
+
+    SbPutc(&emitter->out, '\n');
 }
 
 static void EmitFunctionSignature(
@@ -1469,6 +1640,7 @@ BuiltCModule BuildCModuleWithSources(
         "extern float fmodf(float, float);\n"
         "extern double fmod(double, double);\n\n");
     EmitTypes(&emitter);
+    EmitDropHelpers(&emitter);
     EmitGlobals(&emitter);
     EmitDeclarations(&emitter);
     EmitDefinitions(&emitter);
