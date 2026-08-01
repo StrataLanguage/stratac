@@ -5,9 +5,7 @@
 
 void TypeRegistryInit(TypeRegistry* reg)
 {
-    reg->types = NULL;
-    reg->count = 0;
-    reg->cap = 0;
+    *reg = (TypeRegistry){0};
 }
 
 void TypeRegistryFree(TypeRegistry* reg)
