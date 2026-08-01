@@ -26,7 +26,7 @@ typedef struct ArenaChunk {
     size_t size;
 } ArenaChunk;
 
-typedef struct {
+typedef struct Arena {
     ArenaChunk* head;
     size_t default_chunk;
     char* ptr;
