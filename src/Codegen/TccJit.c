@@ -41,20 +41,20 @@ static void TccError(void* opaque, const char* message)
     AppendDiagnostic((TccJit*)opaque, message);
 }
 
-static void CopySymbols(Vec* destination, const Vec* source)
+static void CopySymbols(TccJit* jit, Vec* destination, const Vec* source)
 {
     for (size_t i = 0; i < source->count; ++i)
     {
         const CBackendSymbol* input = (const CBackendSymbol*)VecGet(source, i);
 
-        TccJitSymbol* output = (TccJitSymbol*)malloc(sizeof(TccJitSymbol));
+        TccJitSymbol* output = (TccJitSymbol*)arena_alloc(jit->tccArena, sizeof(TccJitSymbol));
         if (!output)
         {
             STRATA_CRASH("WTF");
         }
 
-        output->strataName = DupString(input->strataName);
-        output->cName = DupString(input->cName);
+        output->strataName = arena_strdup(jit->tccArena, input->strataName);
+        output->cName = arena_strdup(jit->tccArena, input->cName);
         output->isIntVoid = input->isIntVoid;
         VecPush(destination, output);
     }
@@ -62,15 +62,10 @@ static void CopySymbols(Vec* destination, const Vec* source)
 
 static void FreeSymbols(Vec* symbols)
 {
-    for (size_t i = 0; i < symbols->count; ++i)
-    {
-        TccJitSymbol* symbol = (TccJitSymbol*)VecGet(symbols, i);
-        free(symbol->strataName);
-        free(symbol->cName);
-        free(symbol);
-    }
+    // symbol data itself is allocated via arena.
 
     free(symbols->items);
+
     VecInit(symbols);
 }
 
@@ -94,6 +89,14 @@ void TccJitInit(TccJit* jit)
     *jit = (TccJit){0};
     VecInit(&jit->exports);
     VecInit(&jit->externs);
+
+    jit->tccArena = (Arena*)calloc(1, sizeof(Arena));
+    if (!jit->tccArena)
+    {
+        STRATA_OOM();
+    }
+
+    arena_init(jit->tccArena, 0);
 }
 
 void TccJitDestroy(TccJit* jit)
@@ -109,6 +112,10 @@ void TccJitDestroy(TccJit* jit)
     FreeSymbols(&jit->externs);
     
     free(jit->diagnostics);
+
+    arena_free(jit->tccArena);
+    free(jit->tccArena);
+    jit->tccArena = NULL;
 
     jit->diagnostics = NULL;
     jit->diagnosticsLen = 0;
@@ -162,8 +169,8 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
         return false;
     }
 
-    CopySymbols(&jit->exports, &module->exports);
-    CopySymbols(&jit->externs, &module->externs);
+    CopySymbols(jit, &jit->exports, &module->exports);
+    CopySymbols(jit, &jit->externs, &module->externs);
 
     return true;
 }

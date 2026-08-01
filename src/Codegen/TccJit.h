@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 typedef struct TCCState TCCState;
+typedef struct Arena Arena;
 
 typedef struct {
     char* strataName;
@@ -20,6 +21,7 @@ typedef struct {
     char* diagnostics;
     size_t diagnosticsLen;
     size_t diagnosticsCap;
+    Arena* tccArena;
 } TccJit;
 
 void TccJitInit(TccJit* jit);
