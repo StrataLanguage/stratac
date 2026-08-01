@@ -33,6 +33,7 @@ typedef enum
 {
     STRATA_EMIT_LLVM_IR = 0,
     STRATA_EMIT_AST     = 1,
+    STRATA_EMIT_C       = 2,
 } StrataEmitKind;
 
 typedef enum
