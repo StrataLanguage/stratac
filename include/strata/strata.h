@@ -35,6 +35,14 @@ typedef enum
     STRATA_EMIT_AST     = 1,
 } StrataEmitKind;
 
+typedef enum
+{
+    STRATA_CAP_C_OUTPUT = 1u << 0,
+    STRATA_CAP_TCC_JIT  = 1u << 1,
+    STRATA_CAP_LLVM_IR  = 1u << 2,
+    STRATA_CAP_LLVM_AOT = 1u << 3,
+} StrataCapability;
+
 typedef struct StrataJit StrataJit;
 
 STRATA_API StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
@@ -75,6 +83,7 @@ STRATA_API int strataCompileToObject(StrataCompiler* c, const char* inputPath,
 
 STRATA_API void strataResultFree(StrataResult* r);
 STRATA_API void strataFree(char* s);
+STRATA_API unsigned strataCapabilities(void);
 STRATA_API const char* strataLLVMVersion(void);
 
 #ifdef __cplusplus

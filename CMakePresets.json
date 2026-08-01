@@ -13,15 +13,36 @@
         "CMAKE_C_COMPILER": "gcc",
         "LLVM_C_DIR": "C:/Users/andre/llvm-x64"
       }
+    },
+    {
+      "name": "tcc-static",
+      "displayName": "MinGW GCC + Ninja (MinSizeRel, TinyCC only)",
+      "description": "Builds the small static Strata compiler/runtime without discovering or linking LLVM.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/tcc-static",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "CMAKE_C_COMPILER": "gcc",
+        "STRATA_ENABLE_LLVM": "OFF",
+        "STRATA_ENABLE_TCC": "ON",
+        "STRATA_SHARED": "OFF",
+        "STRATA_STATIC_RUNTIME": "ON"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "default", "configurePreset": "default" }
+    { "name": "default", "configurePreset": "default" },
+    { "name": "tcc-static", "configurePreset": "tcc-static" }
   ],
   "testPresets": [
     {
       "name": "default",
       "configurePreset": "default",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "tcc-static",
+      "configurePreset": "tcc-static",
       "output": { "outputOnFailure": true }
     }
   ]
