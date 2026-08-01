@@ -59,6 +59,11 @@ if (APPLE)
     set (LLVM_C_LIB "${LLVM_C_DIR}/lib/libLLVM-C.dylib")
 elseif (WIN32)
     set (LLVM_C_LIB "${LLVM_C_DIR}/lib/LLVM-C.lib")
+else()
+    find_library(LLVM_C_LIB
+        NAMES LLVM
+        HINTS ${LLVM_LIBRARY_DIRS}
+        REQUIRED)
 endif()
 
 target_sources(strata PRIVATE
@@ -67,7 +72,7 @@ target_sources(strata PRIVATE
     src/Codegen/LLVMAot.c
     src/Codegen/LLVMJit.c)
 
-target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include)
+target_include_directories(strata PRIVATE ${LLVM_C_DIR}/include ${LLVM_INCLUDE_DIRS})
 target_link_libraries(strata PUBLIC ${LLVM_C_LIB})
 
 if (APPLE)
