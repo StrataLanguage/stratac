@@ -31,6 +31,7 @@ struct StrataCompiler
     char unused;
 };
 
+#if STRATA_HAS_LLVM
 static char* ConcatOwned(const char* a, const char* b)
 {
     size_t na = strlen(a);
@@ -44,6 +45,7 @@ static char* ConcatOwned(const char* a, const char* b)
     }
     return buf;
 }
+#endif
 
 StrataCompiler* strataCompilerCreate(void)
 {
@@ -69,7 +71,17 @@ static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* aren
         {
             out = DumpAst(mod, arena);
         }
-        else
+        else if (emit == STRATA_EMIT_C)
+        {
+            CodegenResult result = GenerateC(mod);
+            irOwned = result.output;
+            out = result.output ? result.output : "";
+            if (!result.ok)
+            {
+                DiagError(diag, SRC_INVALID, "C code generation failed");
+            }
+        }
+        else if (emit == STRATA_EMIT_LLVM_IR)
         {
 #if STRATA_HAS_LLVM
             CodegenResult result = GenerateLlvmIr(mod);
@@ -82,6 +94,10 @@ static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* aren
 #else
             DiagError(diag, SRC_INVALID, "LLVM backend not built");
 #endif
+        }
+        else
+        {
+            DiagError(diag, SRC_INVALID, "unknown output kind");
         }
     }
 
@@ -196,6 +212,8 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
     (void)c;
 
 #if !STRATA_HAS_LLVM
+    (void)inputPath;
+    (void)outputPath;
     (void)assembly;
     if (errOut)
     {
@@ -282,7 +300,7 @@ const char* strataLLVMVersion(void)
 
 unsigned strataCapabilities(void)
 {
-    unsigned capabilities = 0;
+    unsigned capabilities = STRATA_CAP_C_OUTPUT;
 #if STRATA_HAS_LLVM
     capabilities |= STRATA_CAP_LLVM_IR | STRATA_CAP_LLVM_AOT;
 #endif

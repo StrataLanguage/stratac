@@ -30,6 +30,7 @@ set(STRATA_COMMON_SOURCES
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
+    src/Codegen/CBackend.c
     src/Import/ModuleLoader.c
     src/Embed.c
 )
@@ -122,6 +123,7 @@ if(STRATA_ENABLE_TCC)
 
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(strata_tinycc PRIVATE
+            -Wno-error
             -Wno-implicit-fallthrough
             -Wno-missing-field-initializers
             -Wno-pointer-sign
@@ -215,6 +217,7 @@ set(STRATA_TEST_SOURCES
     tests/unit/test_main.c
     tests/unit/LexerTests.c
     tests/unit/ParserTests.c
+    tests/unit/CBackendTests.c
 )
 if(STRATA_ENABLE_LLVM)
     list(APPEND STRATA_TEST_SOURCES

@@ -10,4 +10,5 @@ typedef struct {
 } CodegenResult;
 
 CodegenResult GenerateLlvmIr(const Module* mod);
+CodegenResult GenerateC(const Module* mod);
 char* DumpAst(const Module* mod, Arena* arena);
