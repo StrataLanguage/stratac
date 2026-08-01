@@ -120,3 +120,25 @@ MappedType MapType(const TypeName* t)
 
     return m;
 }
+
+bool IsNumeric(const char* t)
+{
+    return strcmp(t, "int") == 0
+        || strcmp(t, "uint") == 0
+        || strcmp(t, "long") == 0
+        || strcmp(t, "ulong") == 0
+        || strcmp(t, "float") == 0
+        || strcmp(t, "double") == 0
+        || strcmp(t, "bool") == 0;
+}
+
+bool IsScalarTypeName(const char* t)
+{
+    return IsNumeric(t) || strcmp(t, "bool") == 0;
+}
+
+bool IsFloatType(const char* t)
+{
+    return strcmp(t, "double") == 0
+        || strcmp(t, "float") == 0;
+}

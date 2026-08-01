@@ -327,12 +327,6 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     }
 }
 
-static bool IsFloatType(const char* typeStr)
-{
-    return strcmp(typeStr, "double") == 0
-        || strcmp(typeStr, "float") == 0;
-}
-
 static bool IsLValue(const Node* node)
 {
     return node && (node->kind == NodeIdent || node->kind == NodeMember);

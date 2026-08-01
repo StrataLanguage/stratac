@@ -317,6 +317,96 @@ STRATA_TEST(forward_struct_param_is_allowed)
     arena_free(&arena);
 }
 
+STRATA_TEST(cast_scalar_to_scalar_is_allowed)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  float f = 2.0;\n"
+        "  int x = (int)f;\n"
+        "  long l = (long)x;\n"
+        "  bool b = (bool)l;\n"
+        "  return (int)b;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(cast_handle_downcast_in_lineage_is_allowed)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "handle Entity;\n"
+        "handle Player extends Entity;\n"
+        "extern Entity spawn();\n"
+        "int entry() { Entity e = spawn(); Player p = (Player)e; return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(cast_between_unrelated_handles_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "handle Entity;\n"
+        "handle Camera;\n"
+        "extern Entity spawn();\n"
+        "int entry() { Entity e = spawn(); Camera c = (Camera)e; return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "invalid cast"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(cast_between_handle_and_int_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "handle Entity;\n"
+        "extern Entity spawn();\n"
+        "int entry() { Entity e = spawn(); int x = (int)e; return x; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "invalid cast from 'Entity' to 'int'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(cast_struct_to_scalar_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { float x; };\n"
+        "int entry() { V v; int x = (int)v; return x; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "invalid cast from 'V' to 'int'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(handle_param_does_not_need_direction)
 {
     Arena arena; arena_init(&arena, 0);
