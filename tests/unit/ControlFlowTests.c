@@ -5,12 +5,15 @@
 static StrataJit* CompileJit(const char* src)
 {
     StrataCompiler* c = strataCompilerCreate();
+    
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c, src, "cfg", &err);
+    
     if (err)
     {
         strataFree((char*)err);
     }
+
     return jit;
 }
 
@@ -19,6 +22,7 @@ STRATA_TEST(jit_inout_param_writes_back)
     StrataJit* jit = CompileJit("void add_one(ref int x) { x = x + 1; }\n"
                                 "int entry() { int n = 10; add_one(n); return n; }\n");
     STRATA_CHECK(jit != NULL);
+
     if (jit)
     {
         int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");

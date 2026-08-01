@@ -264,12 +264,30 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     case NodeBinary:
     {
         const BinaryExpr* expression = (const BinaryExpr*)node;
-        if (expression->op >= BinEqEq) return "bool";
+
+        if (expression->op >= BinEqEq)
+        {
+            return "bool";
+        }
+        
         const char* lhs = ExprType(emitter, expression->lhs);
         const char* rhs = ExprType(emitter, expression->rhs);
-        if (strcmp(lhs, "double") == 0 || strcmp(rhs, "double") == 0) return "double";
-        if (strcmp(lhs, "float") == 0 || strcmp(rhs, "float") == 0) return "float";
-        if (strcmp(lhs, "uint") == 0 || strcmp(rhs, "uint") == 0) return "uint";
+
+        if (strcmp(lhs, "double") == 0 || strcmp(rhs, "double") == 0)
+        {
+            return "double";
+        }
+
+        if (strcmp(lhs, "float") == 0 || strcmp(rhs, "float") == 0)
+        {
+            return "float";
+        }
+
+        if (strcmp(lhs, "uint") == 0 || strcmp(rhs, "uint") == 0)
+        {
+            return "uint";
+        }
+
         return "int";
     }
     case NodeAssign:
@@ -281,13 +299,20 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     case NodeCall:
     {
         const CallExpr* call = (const CallExpr*)node;
-        if (call->resolvedDecl) return call->resolvedDecl->returnType.name;
+
+        if (call->resolvedDecl)
+        {
+            return call->resolvedDecl->returnType.name;
+        }
+
         return TypeRegistryIsUserType(&emitter->types, call->callee) ? call->callee : "";
     }
     case NodeMember:
     {
         const MemberExpr* member = (const MemberExpr*)node;
+        
         const char* baseName = ExprType(emitter, member->base_node);
+
         const StructType* type = TypeRegistryFind(&emitter->types, baseName);
         int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
 
@@ -300,6 +325,12 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     default:
         return "";
     }
+}
+
+static bool IsFloatType(const char* typeStr)
+{
+    return strcmp(typeStr, "double") == 0
+        || strcmp(typeStr, "float") == 0;
 }
 
 static bool IsLValue(const Node* node)
@@ -439,7 +470,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             index = positional++;
         }
 
-        if (i)
+        if (i > 0)
         {
             SbPuts(&emitter->out, ", ");
         }
@@ -513,6 +544,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
             else
             {
                 const char* typeName = TypeNameC(emitter, parameter->type.name);
+
                 SbPuts(&emitter->out, "&((");
                 SbPuts(&emitter->out, typeName);
                 SbPuts(&emitter->out, "[]){ ");
@@ -579,10 +611,10 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeBinary:
     {
         const BinaryExpr* binary = (const BinaryExpr*)node;
+
         const char* resultType = ExprType(emitter, node);
         
-        // @TODO IsFloatType()
-        if (binary->op == BinMod && (strcmp(resultType, "float") == 0 || strcmp(resultType, "double") == 0))
+        if (binary->op == BinMod && IsFloatType(resultType))
         {
             SbPuts(&emitter->out, strcmp(resultType, "double") == 0 ? "fmod(" : "fmodf(");
             EmitExpr(emitter, binary->lhs);
@@ -606,10 +638,10 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeAssign:
     {
         const AssignExpr* assign = (const AssignExpr*)node;
+
         const char* targetType = ExprType(emitter, assign->target);
 
-        // @TODO IsFloatType()
-        if (assign->op == AssignMod && (strcmp(targetType, "float") == 0 || strcmp(targetType, "double") == 0))
+        if (assign->op == AssignMod && IsFloatType(targetType))
         {
             SbPutc(&emitter->out, '(');
             EmitLValue(emitter, assign->target);
@@ -910,7 +942,7 @@ static void EmitFunctionSignature(
     {
         for (size_t i = 0; i < function->params.count; ++i)
         {
-            if (i)
+            if (i > 0)
             {
                 SbPuts(&emitter->out, ", ");
             }

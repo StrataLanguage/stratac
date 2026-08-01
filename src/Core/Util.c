@@ -33,10 +33,9 @@ static void ArenaGrow(Arena* a, size_t need)
     chunk_size = (chunk_size + 63) & ~(size_t)63;
 
     ArenaChunk* c = (ArenaChunk*)malloc(chunk_size);
-
     if (!c)
     {
-        abort();
+        STRATA_OOM();
     }
 
     c->next = a->head;
@@ -199,10 +198,9 @@ void VecReserve(Vec* v, size_t n)
     }
     
     v->items = (void**)realloc(v->items, newcap * sizeof(void*));
-
     if (!v->items)
     {
-        abort();
+        STRATA_OOM();
     }
 
     v->cap = newcap;
@@ -247,7 +245,7 @@ static void StrMapResize(StrMap* m, size_t newcap)
 
     if (!newkeys || !newvals)
     {
-        abort();
+        STRATA_OOM();
     }
 
     for (size_t i = 0; i < m->cap; i++)
@@ -361,10 +359,9 @@ static void SbEnsure(Sb* sb, size_t extra)
     }
 
     sb->data = (char*)realloc(sb->data, newcap);
-    
     if (!sb->data)
     {
-        abort();
+        STRATA_OOM();
     }
     
     sb->cap = newcap;

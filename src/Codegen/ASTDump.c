@@ -172,14 +172,17 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         FunctionDecl* function_decl = AsNode(FunctionDecl, n);
         SbPuts(out, "fn ");
+        
         if (function_decl->isExtern)
         {
             SbPuts(out, "extern ");
         }
+        
         SbPrintf(out, "%s %s(", function_decl->returnType.name, function_decl->name);
+
         for (size_t i = 0; i < function_decl->params.count; i++)
         {
-            if (i)
+            if (i > 0)
             {
                 SbPuts(out, ", ");
             }

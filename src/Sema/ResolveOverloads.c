@@ -627,6 +627,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     for (size_t i = 0; i < mod->functions.count; i++)
     {
         FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
+
         bool overloaded = CountByName(mod, functionDecl->name) > 1;
 
         if (overloaded && functionDecl->isExtern)
@@ -688,6 +689,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         WalkBlock(&r, (Block*)functionDecl->body, &scope);
         r.m_currentReturnType = NULL;
+
         StrMapFree(&scope);
     }
 

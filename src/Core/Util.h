@@ -16,6 +16,9 @@
         abort();                                                                                                       \
     } while (0)
 
+
+#define STRATA_OOM() STRATA_CRASH("OOM")
+
 // -- Arena
 
 typedef struct ArenaChunk {
