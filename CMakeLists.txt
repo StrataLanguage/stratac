@@ -197,10 +197,48 @@ if(STRATA_STATIC_RUNTIME)
     set_property(TARGET stratac PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(strata PRIVATE -ffunction-sections -fdata-sections)
+        if(TARGET strata_tinycc)
+            target_compile_options(strata_tinycc PRIVATE -ffunction-sections -fdata-sections)
+        endif()
         target_link_options(stratac PRIVATE -Wl,--gc-sections)
     elseif(MSVC)
         target_compile_options(strata PRIVATE /Gy /Gw)
         target_link_options(stratac PRIVATE /OPT:REF /OPT:ICF)
+    endif()
+endif()
+
+set(STRATA_SIZE_COPY
+    "${CMAKE_BINARY_DIR}/bin/$<TARGET_FILE_BASE_NAME:stratac>-stripped$<TARGET_FILE_SUFFIX:stratac>")
+add_custom_target(stratac-size-report
+    COMMAND ${CMAKE_COMMAND} -E copy "$<TARGET_FILE:stratac>" "${STRATA_SIZE_COPY}"
+    DEPENDS stratac
+    VERBATIM
+)
+if(CMAKE_STRIP)
+    add_custom_command(TARGET stratac-size-report POST_BUILD
+        COMMAND "${CMAKE_STRIP}" "${STRATA_SIZE_COPY}"
+        VERBATIM
+    )
+endif()
+find_program(STRATA_SIZE_TOOL NAMES llvm-size size)
+if(STRATA_SIZE_TOOL)
+    add_custom_command(TARGET stratac-size-report POST_BUILD
+        COMMAND "${STRATA_SIZE_TOOL}" "${STRATA_SIZE_COPY}"
+        VERBATIM
+    )
+endif()
+add_custom_command(TARGET stratac-size-report POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -DBINARY=${STRATA_SIZE_COPY}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReportBinarySize.cmake
+    VERBATIM
+)
+if(UNIX AND NOT APPLE)
+    find_program(STRATA_LDD_TOOL ldd)
+    if(STRATA_LDD_TOOL)
+        add_custom_command(TARGET stratac-size-report POST_BUILD
+            COMMAND "${STRATA_LDD_TOOL}" "${STRATA_SIZE_COPY}"
+            VERBATIM
+        )
     endif()
 endif()
 

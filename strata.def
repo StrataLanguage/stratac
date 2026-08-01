@@ -12,6 +12,7 @@ strataLLVMVersion
 strataJitCompileString
 strataJitCompileFile
 strataJitGetFunction
+strataJitCanInvokeIntVoid
 strataJitAddSymbol
 strataJitGetExternSymbolCount
 strataJitGetExternSymbolName

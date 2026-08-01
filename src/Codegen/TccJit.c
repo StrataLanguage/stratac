@@ -40,6 +40,7 @@ static void CopySymbols(Vec* destination, const Vec* source)
         if (!output) abort();
         output->strataName = DupString(input->strataName);
         output->cName = DupString(input->cName);
+        output->isIntVoid = input->isIntVoid;
         VecPush(destination, output);
     }
 }
@@ -154,6 +155,13 @@ void* TccJitGetAddress(TccJit* jit, const char* name)
     TccJitSymbol* symbol = FindSymbol(&jit->exports, name);
     if (!symbol) return NULL;
     return tcc_get_symbol(jit->state, symbol->cName);
+}
+
+bool TccJitCanInvokeIntVoid(const TccJit* jit, const char* name)
+{
+    if (!jit || !name) return false;
+    TccJitSymbol* symbol = FindSymbol(&jit->exports, name);
+    return symbol && symbol->isIntVoid;
 }
 
 size_t TccJitExternCount(const TccJit* jit)
