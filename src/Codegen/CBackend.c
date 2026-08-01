@@ -35,6 +35,7 @@ typedef struct {
 typedef struct {
     const char* cName;
     const char* typeName;
+    bool byRef;   /* by-ref box param: cName is a pointer to the caller's box slot */
 } OwnEntry;
 
 static const char* DropHelperName(CEmitter* emitter, const char* structName);
@@ -238,7 +239,7 @@ static bool IsStructValue(CEmitter* emitter, const char* name)
 
 static bool ParamIsIndirect(CEmitter* emitter, const ParamDecl* param)
 {
-    return ByRef(param->mod) || IsStructValue(emitter, param->type.name);
+    return ByRef(param->mod) || IsStructValue(emitter, param->type.name) || IsBoxTypeName(param->type.name);
 }
 
 static void EmitType(CEmitter* emitter, const TypeName* type)
@@ -965,8 +966,12 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
             && BoxInnerTypeName(e->typeName, inner, sizeof inner)
             && TypeRegistryIsOwningStruct(&emitter->types, inner);
 
+        /* For a by-ref box param, the box pointer lives at *var (caller's slot). */
+        const char* star = e->byRef ? "*" : "";
+
         Pad(emitter);
         SbPuts(&emitter->out, "if (");
+        SbPuts(&emitter->out, star);
         SbPuts(&emitter->out, var);
         SbPuts(&emitter->out, ") { ");
 
@@ -974,13 +979,16 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
         {
             SbPuts(&emitter->out, DropHelperName(emitter, inner));
             SbPuts(&emitter->out, "(");
+            SbPuts(&emitter->out, star);
             SbPuts(&emitter->out, var);
             SbPuts(&emitter->out, "); ");
         }
 
         SbPuts(&emitter->out, "strata_free(");
+        SbPuts(&emitter->out, star);
         SbPuts(&emitter->out, var);
         SbPuts(&emitter->out, "); ");
+        SbPuts(&emitter->out, star);
         SbPuts(&emitter->out, var);
         SbPuts(&emitter->out, " = 0; }\n");
     }
@@ -1547,6 +1555,16 @@ static void EmitDefinitions(CEmitter* emitter)
             const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, j);
 
             AddSymbol(emitter, param->name, param->type.name, VarName(emitter, param->name), ParamIsIndirect(emitter, param));
+
+            /* An owned (non-ref) box parameter is consumed: freed at return. */
+            if (IsBoxTypeName(param->type.name) && param->mod == ModNone)
+            {
+                OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
+                entry->cName = VarName(emitter, param->name);
+                entry->typeName = param->type.name;
+                entry->byRef = true;
+                VecPush(&emitter->boxVars, entry);
+            }
         }
 
         EmitLineDirective(emitter, function->base.range);

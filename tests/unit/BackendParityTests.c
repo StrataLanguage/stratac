@@ -92,6 +92,26 @@ STRATA_TEST(llvm_and_tcc_box_move_parity)
         32);
 }
 
+STRATA_TEST(llvm_and_tcc_box_param_owned_parity)
+{
+    /* An owned box parameter consumes the caller's box (moves it). */
+    CheckParity(
+        "struct Cell { int v; };\n"
+        "int consume(box<Cell> c) { return c.v; }\n"
+        "int entry() { box<Cell> a = Cell { .v = 11 }; return consume(a); }\n",
+        11);
+}
+
+STRATA_TEST(llvm_and_tcc_box_param_ref_parity)
+{
+    /* A ref box parameter borrows the caller's box. */
+    CheckParity(
+        "struct Cell { int v; };\n"
+        "int read(ref box<Cell> c) { return c.v; }\n"
+        "int entry() { box<Cell> a = Cell { .v = 5 }; return (read(a) * 10) + a.v; }\n",
+        55);
+}
+
 STRATA_TEST(llvm_and_tcc_scalar_control_flow_parity)
 {
     CheckParity(
