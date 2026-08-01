@@ -593,6 +593,23 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
     SbPutc(&emitter->out, ')');
 }
 
+/* Emits a box-typed identifier dereferenced to its value, for use as a
+   plain unary/binary operand (as opposed to a member-access base or a
+   box-to-box move, which need the raw pointer). */
+static void EmitScalarValue(CEmitter* emitter, const Node* node)
+{
+    if (node && node->kind == NodeIdent && IsBoxTypeName(ExprType(emitter, node)))
+    {
+        SbPuts(&emitter->out, "(*");
+        EmitLValue(emitter, node);
+        SbPutc(&emitter->out, ')');
+
+        return;
+    }
+
+    EmitExpr(emitter, node);
+}
+
 static void EmitExpr(CEmitter* emitter, const Node* node)
 {
     if (!node)
@@ -637,7 +654,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         const UnaryExpr* unary = (const UnaryExpr*)node;
         SbPutc(&emitter->out, '(');
         SbPuts(&emitter->out, UnarySpelling(unary->op));
-        EmitExpr(emitter, unary->operand);
+        EmitScalarValue(emitter, unary->operand);
         SbPutc(&emitter->out, ')');
 
         return;
@@ -647,24 +664,24 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         const BinaryExpr* binary = (const BinaryExpr*)node;
 
         const char* resultType = ExprType(emitter, node);
-        
+
         if (binary->op == BinMod && IsFloatType(resultType))
         {
             SbPuts(&emitter->out, strcmp(resultType, "double") == 0 ? "fmod(" : "fmodf(");
-            EmitExpr(emitter, binary->lhs);
+            EmitScalarValue(emitter, binary->lhs);
             SbPuts(&emitter->out, ", ");
-            EmitExpr(emitter, binary->rhs);
+            EmitScalarValue(emitter, binary->rhs);
             SbPutc(&emitter->out, ')');
 
             return;
         }
 
         SbPutc(&emitter->out, '(');
-        EmitExpr(emitter, binary->lhs);
+        EmitScalarValue(emitter, binary->lhs);
         SbPutc(&emitter->out, ' ');
         SbPuts(&emitter->out, BinarySpelling(binary->op));
         SbPutc(&emitter->out, ' ');
-        EmitExpr(emitter, binary->rhs);
+        EmitScalarValue(emitter, binary->rhs);
         SbPutc(&emitter->out, ')');
 
         return;
@@ -829,6 +846,47 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             SbPuts(&emitter->out, " = 0;\n");
         }
     }
+}
+
+/* Initializes an already-declared box global (EmitGlobals left it null). */
+static void EmitBoxGlobalInitStmt(CEmitter* emitter, const char* cName, const char* innerC,
+                                  const char* inner, const Node* init)
+{
+    const char* initType = ExprType(emitter, (Node*)init);
+
+    if (initType[0] != '\0' && IsBoxTypeName(initType))
+    {
+        /* A box-returning call: assign the returned pointer directly. */
+        Pad(emitter);
+        SbPuts(&emitter->out, cName);
+        SbPuts(&emitter->out, " = ");
+        EmitExpr(emitter, (Node*)init);
+        SbPuts(&emitter->out, ";\n");
+
+        return;
+    }
+
+    if (TypeRegistryIsOwningStruct(&emitter->types, inner) && init->kind == NodeStructInit)
+    {
+        Pad(emitter);
+        SbPuts(&emitter->out, cName);
+        EmitBoxedStructInit(emitter, cName, innerC, inner, (const StructInitExpr*)init);
+
+        return;
+    }
+
+    Pad(emitter);
+    SbPuts(&emitter->out, cName);
+    SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+    SbPuts(&emitter->out, innerC);
+    SbPuts(&emitter->out, "));\n");
+
+    Pad(emitter);
+    SbPutc(&emitter->out, '*');
+    SbPuts(&emitter->out, cName);
+    SbPuts(&emitter->out, " = ");
+    EmitExpr(emitter, (Node*)init);
+    SbPuts(&emitter->out, ";\n");
 }
 
 static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool semicolon)
@@ -1047,6 +1105,14 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
     {
         const ReturnStmt* statement = (const ReturnStmt*)node;
 
+        /* A bare box<T> identifier is only a move when the function itself
+           returns box<T>; otherwise it's read (dereferenced), not moved. */
+        bool returnsBoxIdent = statement->value && statement->value->kind == NodeIdent
+            && IsBoxTypeName(ExprType(emitter, statement->value));
+        bool movesBox = returnsBoxIdent
+            && emitter->currentReturn
+            && strcmp(emitter->currentReturn, ExprType(emitter, statement->value)) == 0;
+
         if (statement->value && emitter->boxVars.count > 0)
         {
             /* Keep box members alive across the drop by materializing the
@@ -1059,21 +1125,27 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPutc(&emitter->out, ' ');
             SbPuts(&emitter->out, tmp);
             SbPuts(&emitter->out, " = ");
-            EmitExpr(emitter, statement->value);
+
+            if (returnsBoxIdent && !movesBox)
+            {
+                SbPuts(&emitter->out, "(*");
+                EmitLValue(emitter, statement->value);
+                SbPutc(&emitter->out, ')');
+            }
+            else
+            {
+                EmitExpr(emitter, statement->value);
+            }
+
             SbPuts(&emitter->out, ";\n");
 
             /* Returning a box moves it out: null the source so the drop below
                does not free it. */
-            if (statement->value->kind == NodeIdent)
+            if (movesBox)
             {
-                const char* vt = ExprType(emitter, statement->value);
-
-                if (IsBoxTypeName(vt))
-                {
-                    Pad(emitter);
-                    SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)statement->value)->name));
-                    SbPuts(&emitter->out, " = 0;\n");
-                }
+                Pad(emitter);
+                SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)statement->value)->name));
+                SbPuts(&emitter->out, " = 0;\n");
             }
 
             EmitDrops(emitter, 0);
@@ -1091,7 +1163,17 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             if (statement->value)
             {
                 SbPutc(&emitter->out, ' ');
-                EmitExpr(emitter, statement->value);
+
+                if (returnsBoxIdent && !movesBox)
+                {
+                    SbPuts(&emitter->out, "(*");
+                    EmitLValue(emitter, statement->value);
+                    SbPutc(&emitter->out, ')');
+                }
+                else
+                {
+                    EmitExpr(emitter, statement->value);
+                }
             }
 
             SbPuts(&emitter->out, ";\n");
@@ -1474,7 +1556,13 @@ static void EmitGlobals(CEmitter* emitter)
         SbPuts(&emitter->out, cName);
         SbPuts(&emitter->out, " = ");
 
-        if (global->init)
+        if (IsBoxTypeName(global->type.name))
+        {
+            /* Boxing requires a runtime alloc, so the real init runs in
+               __strata_module_init; the declared storage starts null. */
+            SbPuts(&emitter->out, "0");
+        }
+        else if (global->init)
         {
             EmitExpr(emitter, global->init);
         }
@@ -1602,6 +1690,108 @@ static void EmitDefinitions(CEmitter* emitter)
     }
 }
 
+static bool ModuleHasBoxGlobals(const CEmitter* emitter)
+{
+    for (size_t i = 0; i < emitter->mod->globals.count; ++i)
+    {
+        const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
+
+        if (IsBoxTypeName(global->type.name))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Resets per-function scratch state for a synthetic module-level function. */
+static void ResetEmitterForSyntheticFunction(CEmitter* emitter)
+{
+    DisposeMap(&emitter->symbols);
+    StrMapInit(&emitter->symbols);
+    emitter->boxVars.count = 0;
+    emitter->retCounter = 0;
+    emitter->currentReturn = "void";
+
+    for (size_t j = 0; j < emitter->mod->globals.count; ++j)
+    {
+        const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, j);
+
+        AddSymbol(emitter, global->name, global->type.name, GlobalName(emitter, global->name), false);
+    }
+}
+
+/* Boxes each global, called once after the JIT/host loads the module. */
+static void EmitModuleInit(CEmitter* emitter)
+{
+    if (!ModuleHasBoxGlobals(emitter))
+    {
+        return;
+    }
+
+    ResetEmitterForSyntheticFunction(emitter);
+
+    SbPuts(&emitter->out, "void __strata_module_init(void) {\n");
+    emitter->indent++;
+
+    for (size_t i = 0; i < emitter->mod->globals.count; ++i)
+    {
+        const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
+
+        if (!IsBoxTypeName(global->type.name) || !global->init)
+        {
+            continue;
+        }
+
+        char inner[128];
+        BoxInnerTypeName(global->type.name, inner, sizeof inner);
+        const char* innerC = TypeNameC(emitter, inner);
+        const char* cName = GlobalName(emitter, global->name);
+
+        EmitBoxGlobalInitStmt(emitter, cName, innerC, inner, global->init);
+    }
+
+    emitter->indent--;
+    SbPuts(&emitter->out, "}\n\n");
+}
+
+/* Frees every box global, called once before the module/JIT is unloaded. */
+static void EmitModuleTeardown(CEmitter* emitter)
+{
+    if (!ModuleHasBoxGlobals(emitter))
+    {
+        return;
+    }
+
+    ResetEmitterForSyntheticFunction(emitter);
+
+    for (size_t i = 0; i < emitter->mod->globals.count; ++i)
+    {
+        const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
+
+        if (!IsBoxTypeName(global->type.name))
+        {
+            continue;
+        }
+
+        OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
+        entry->cName = GlobalName(emitter, global->name);
+        entry->typeName = global->type.name;
+        entry->byRef = false;
+        VecPush(&emitter->boxVars, entry);
+    }
+
+    SbPuts(&emitter->out, "void __strata_module_teardown(void) {\n");
+    emitter->indent++;
+
+    EmitDrops(emitter, 0);
+    emitter->boxVars.count = 0;
+
+    emitter->indent--;
+    SbPuts(&emitter->out, "}\n\n");
+}
+
 void BuiltCModuleInit(BuiltCModule* module)
 {
     module->source = NULL;
@@ -1662,6 +1852,8 @@ BuiltCModule BuildCModuleWithSources(
     EmitGlobals(&emitter);
     EmitDeclarations(&emitter);
     EmitDefinitions(&emitter);
+    EmitModuleInit(&emitter);
+    EmitModuleTeardown(&emitter);
 
     result.source = SbFinish(&emitter.out, arena);
     result.exports = emitter.exports;

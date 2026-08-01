@@ -15,6 +15,16 @@ struct Vec3 {
 // box<T> v = T { ... };   allocates a T on the heap, stores the value,
 //                          and auto-frees v when it goes out of scope.
 
+// ---------------------------------------------------------------------------
+// box<T> globals — module-lifetime storage, boxed once when the module
+// loads and freed once when it unloads. A box global can never be moved
+// (no reassignment, no passing to an owned parameter, no returning box<T>
+// itself) — but reading its value out (returning/using its inner type, or
+// `ref` borrowing, or field access) never needs a move, so it's allowed.
+
+box<int> i = 9;
+box<Vec3> gVec = Vec3 {.x = 90};
+
 float read_box()
 {
     box<Vec3> v = Vec3 { .x = 1.0, .y = 2.0, .z = 3.0 };
@@ -98,5 +108,5 @@ float entry()
     float d = consume_box(w);                  // owned param — w moved, callee frees
     // w is now moved — using it would be a compile error
 
-    return a + b + d;   // (1+2+0=3) + (1*1+4*4+0*0=17) + (0+3+4=7) = 27
+    return a + b + d + i;   // (1+2+0=3) + (1*1+4*4+0*0=17) + (0+3+4=7) + 9 = 36
 }

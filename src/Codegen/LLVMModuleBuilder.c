@@ -330,8 +330,28 @@ static Value ZeroInt(Builder* b)
     return ValueMake(LLVMConstNull(I32Ty(b)), TypeDescMake(I32Ty(b), false, false, false, NULL));
 }
 
+/* Reads a box value's inner value through the pointer, leaving the box
+   itself alone (not moved, not freed). */
+static Value DerefBoxValue(Builder* b, Value value)
+{
+    if (!value.typeDesc.isBox)
+    {
+        return value;
+    }
+
+    TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)value.typeDesc.boxInner});
+    LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, value.value, "boxval");
+
+    return ValueMake(loaded, innerTd);
+}
+
 static Value Coerce(Builder* b, Value value, TypeDesc target)
 {
+    if (value.typeDesc.isBox && !target.isBox)
+    {
+        value = DerefBoxValue(b, value);
+    }
+
     if (!value.typeDesc.type || !target.type || value.typeDesc.type == target.type)
     {
         return value;
@@ -728,7 +748,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
 static Value EmitUnary(Builder* b, UnaryExpr* n)
 {
-    Value e = EmitExpr(b, n->operand);
+    Value e = DerefBoxValue(b, EmitExpr(b, n->operand));
 
     switch (n->op)
     {
@@ -768,7 +788,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     {
         bool isAnd = (n->op == BinLogicAnd);
 
-        Value l = EmitExpr(b, n->lhs);
+        Value l = DerefBoxValue(b, EmitExpr(b, n->lhs));
 
         LLVMValueRef cond = l.value;
         if (l.typeDesc.type != I1Ty(b))
@@ -799,7 +819,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         }
 
         LLVMPositionBuilderAtEnd(b->m_builder, rhsBlock);
-        Value r = EmitExpr(b, n->rhs);
+        Value r = DerefBoxValue(b, EmitExpr(b, n->rhs));
 
         LLVMValueRef rhsCond = r.value;
         if (r.typeDesc.type != I1Ty(b))
@@ -833,8 +853,8 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         return ValueMake(phi, TypeDescMake(I1Ty(b), false, false, false, NULL));
     }
 
-    Value l = EmitExpr(b, n->lhs);
-    Value r = EmitExpr(b, n->rhs);
+    Value l = DerefBoxValue(b, EmitExpr(b, n->lhs));
+    Value r = DerefBoxValue(b, EmitExpr(b, n->rhs));
 
     TypeDesc typeDesc = l.typeDesc;
 
@@ -1346,10 +1366,12 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (r->value)
         {
+            /* Coerce derefs a box value unless the return type is itself a
+               box, so v.typeDesc.isBox below means a genuine move. */
             v = Coerce(b, EmitExpr(b, r->value), b->m_curRet);
 
-            /* Returning a box moves it out: null the source so the drop below
-               does not free it. */
+            /* Returning a box moves it out: null the source so the drop
+               below does not free it. */
             if (v.typeDesc.isBox && r->value->kind == NodeIdent)
             {
                 LValue src = EmitLValue(b, r->value);
@@ -1695,6 +1717,18 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
         TypeDesc typeDesc = Resolve(b, &gd->type);
+
+        if (IsBoxTypeName(gd->type.name))
+        {
+            if (b->m_diag)
+            {
+                DiagErrorFmt(b->m_diag, gd->base.range,
+                             "global '%s' has box type, which is not yet supported by the LLVM backend "
+                             "(use the C/Tcc JIT)", gd->name);
+            }
+
+            continue;
+        }
 
         LLVMValueRef init = LLVMConstNull(typeDesc.type);
 

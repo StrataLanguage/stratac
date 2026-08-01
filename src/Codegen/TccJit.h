@@ -16,6 +16,7 @@ typedef struct {
 
 typedef struct {
     TCCState* state;
+    bool relocated;
     Vec exports;
     Vec externs;
     char* diagnostics;
