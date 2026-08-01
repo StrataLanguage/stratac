@@ -99,6 +99,7 @@ typedef struct {
 typedef struct {
     Node base;
     char* name;
+    char* extendsName;
 } HandleDecl;
 
 typedef struct {

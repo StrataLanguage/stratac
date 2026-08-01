@@ -15,6 +15,23 @@ static bool IsNumeric(const char* t)
         || strcmp(t, "double") == 0;
 }
 
+static bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base)
+{
+    const StructType* t = TypeRegistryFind(reg, derived);
+
+    while (t && t->opaque && t->extendsFrom)
+    {
+        if (strcmp(t->extendsFrom, base) == 0)
+        {
+            return true;
+        }
+
+        t = TypeRegistryFind(reg, t->extendsFrom);
+    }
+
+    return false;
+}
+
 typedef struct {
     Module* m_mod;
     DiagnosticEngine* m_diag;
@@ -150,6 +167,10 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             {
             }
             else if (IsNumeric(argType) && IsNumeric(param->type.name))
+            {
+                score += 1;
+            }
+            else if (HandleExtendsFrom(&r->m_registry, argType, param->type.name))
             {
                 score += 1;
             }
@@ -488,7 +509,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             if (initType[0] != '\0'
                 && strcmp(initType, vd->type.name) != 0
-                && !(IsNumeric(initType) && IsNumeric(vd->type.name)))
+                && !(IsNumeric(initType) && IsNumeric(vd->type.name))
+                && !HandleExtendsFrom(&r->m_registry, initType, vd->type.name))
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
             }

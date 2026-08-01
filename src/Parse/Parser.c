@@ -234,6 +234,21 @@ static HandleDecl* ParseHandleDecl(Parser* p)
     node->base.kind = NodeHandle;
     node->base.range = nameTok.range;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->extendsName = NULL;
+
+    if (ParserConsume(p, TokKwExtends))
+    {
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a base handle name after 'extends'");
+        }
+        else
+        {
+            Token baseTok = p->m_cur;
+            Advance(p);
+            node->extendsName = ToOwned(p->m_arena, ParserIdentText(p, baseTok));
+        }
+    }
 
     if (ParserConsume(p, TokLBrace))
     {
@@ -1020,28 +1035,54 @@ static Node* ParseUnary(Parser* p)
         {
             Token next = LexerPeekToken(p->m_lex);
 
-            if (next.kind == TokKwInt || next.kind == TokKwUint ||
+            bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint ||
                 next.kind == TokKwLong || next.kind == TokKwUlong ||
                 next.kind == TokKwFloat || next.kind == TokKwDouble ||
-                next.kind == TokKwBool)
+                next.kind == TokKwBool;
+
+            bool isHandleCast = next.kind == TokIdent;
+
+            if (isScalarCast || isHandleCast)
             {
+                size_t savedPos = LexerPosition(p->m_lex);
+                bool savedPeek = p->m_lex->m_hasPeek;
+                Token savedPeeked = p->m_lex->m_peeked;
+                Token savedCur = p->m_cur;
+
                 Token lparen = p->m_cur;
                 Advance(p);
 
                 TypeName castType = {0};
 
-                if (ParserTryParseType(p, &castType) && ParserConsume(p, TokRParen))
+                if (ParserTryParseType(p, &castType) && p->m_cur.kind == TokRParen)
                 {
-                    Node* operand = ParseUnary(p);
+                    Token afterRparen = LexerPeekToken(p->m_lex);
+                    bool startsExpr = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit ||
+                        afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit ||
+                        afterRparen.kind == TokLParen || afterRparen.kind == TokMinus ||
+                        afterRparen.kind == TokPlus || afterRparen.kind == TokBang ||
+                        afterRparen.kind == TokTilde || afterRparen.kind == TokInc ||
+                        afterRparen.kind == TokDec;
 
-                    CastExpr* node = AST_NEW(p->m_arena, CastExpr);
-                    node->base.kind = NodeCast;
-                    node->base.range = lparen.range;
-                    node->type = castType;
-                    node->operand = operand;
+                    if (startsExpr || isScalarCast)
+                    {
+                        Advance(p);
+                        Node* operand = ParseUnary(p);
 
-                    return (Node*)node;
+                        CastExpr* node = AST_NEW(p->m_arena, CastExpr);
+                        node->base.kind = NodeCast;
+                        node->base.range = lparen.range;
+                        node->type = castType;
+                        node->operand = operand;
+
+                        return (Node*)node;
+                    }
                 }
+
+                p->m_lex->m_pos = savedPos;
+                p->m_lex->m_hasPeek = savedPeek;
+                p->m_lex->m_peeked = savedPeeked;
+                p->m_cur = savedCur;
             }
         }
 

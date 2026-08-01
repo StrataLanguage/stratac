@@ -38,6 +38,7 @@ typedef enum {
     TokKwFalse,
     TokKwStruct,
     TokKwHandle,
+    TokKwExtends,
     TokKwImport,
     TokKwNamespace,
 

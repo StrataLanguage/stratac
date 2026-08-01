@@ -525,3 +525,117 @@ STRATA_TEST(jit_cast_int_to_long)
         strataJitDestroy(jit);
     }
 }
+
+
+static int handle_get_int(void* e) { return (int)(intptr_t)e; }
+static void* handle_spawn_1234(void) { return (void*)(intptr_t)0x1234; }
+static void* handle_spawn_42(void) { return (void*)(intptr_t)42; }
+static void* handle_spawn_99(void) { return (void*)(intptr_t)99; }
+static void* handle_spawn_777(void) { return (void*)(intptr_t)777; }
+
+STRATA_TEST(jit_handle_extends_pass_as_base)
+{
+    StrataJit* jit = CompileJit("handle Entity;\n"
+                                "handle Player extends Entity;\n"
+                                "extern int get_id(Entity e);\n"
+                                "extern Player make_player();\n"
+                                "int entry() {\n"
+                                "  Player p = make_player();\n"
+                                "  return get_id(p);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "get_id", (void*)&handle_get_int);
+        strataJitAddSymbol(jit, "make_player", (void*)&handle_spawn_1234);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 0x1234);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_handle_extends_assign_to_base)
+{
+    StrataJit* jit = CompileJit("handle Entity;\n"
+                                "handle Player extends Entity;\n"
+                                "extern Player spawn();\n"
+                                "extern int get_id(Entity e);\n"
+                                "int entry() {\n"
+                                "  Player p = spawn();\n"
+                                "  Entity e = p;\n"
+                                "  return get_id(e);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "spawn", (void*)&handle_spawn_42);
+        strataJitAddSymbol(jit, "get_id", (void*)&handle_get_int);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 42);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_handle_extends_cast_down)
+{
+    StrataJit* jit = CompileJit("handle Entity;\n"
+                                "handle Player extends Entity;\n"
+                                "extern Entity spawn();\n"
+                                "extern int get_player_id(Player p);\n"
+                                "int entry() {\n"
+                                "  Entity e = spawn();\n"
+                                "  Player p = (Player)e;\n"
+                                "  return get_player_id(p);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "spawn", (void*)&handle_spawn_99);
+        strataJitAddSymbol(jit, "get_player_id", (void*)&handle_get_int);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 99);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_handle_extends_multi_level)
+{
+    StrataJit* jit = CompileJit("handle Entity;\n"
+                                "handle Character extends Entity;\n"
+                                "handle Player extends Character;\n"
+                                "extern int get_id(Entity e);\n"
+                                "extern Player create_player();\n"
+                                "int entry() {\n"
+                                "  Player p = create_player();\n"
+                                "  return get_id(p);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "get_id", (void*)&handle_get_int);
+        strataJitAddSymbol(jit, "create_player", (void*)&handle_spawn_777);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 777);
+        }
+        strataJitDestroy(jit);
+    }
+}

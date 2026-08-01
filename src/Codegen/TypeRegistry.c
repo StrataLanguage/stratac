@@ -27,6 +27,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         StructType* t = &reg->types[reg->count++];
         t->name = sd->name;
         t->opaque = false;
+        t->extendsFrom = NULL;
         t->fields = sd->fields;
     }
 
@@ -43,6 +44,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         StructType* t = &reg->types[reg->count++];
         t->name = hd->name;
         t->opaque = true;
+        t->extendsFrom = hd->extendsName;
         VecInit(&t->fields);
     }
 }
