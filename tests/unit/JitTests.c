@@ -4,8 +4,10 @@
 
 #include <stdio.h>
 
+#if STRATA_TEST_HAS_LLVM
 #include "Codegen/LLVMAot.h"
 #include "Codegen/LLVMModuleBuilder.h"
+#endif
 
 STRATA_TEST(jit_runs_int_addition)
 {
@@ -93,6 +95,7 @@ STRATA_TEST(jit_runs_float_function)
     strataCompilerDestroy(c);
 }
 
+#if STRATA_TEST_HAS_LLVM
 STRATA_TEST(aot_emits_native_object_file)
 {
     Arena arena; arena_init(&arena, 0);
@@ -156,6 +159,7 @@ STRATA_TEST(aot_emits_assembly_file)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+#endif
 
 static int HostDouble(int x)
 {
@@ -201,4 +205,3 @@ STRATA_TEST(jit_calls_host_extern_function)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
-
