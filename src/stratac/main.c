@@ -14,6 +14,7 @@ static void PrintHelp(void)
                     "  -o <file>        output object file (default: <input>.o)\n"
                     "  --asm            also emit assembly (<output>.s)\n"
                     "  --ast            also print the AST to stderr\n"
+                    "  --emit-c         emit portable C source instead of an object\n"
                     "  --version        print version and exit\n"
                     "  -h, --help       show this help\n");
 }
@@ -49,6 +50,8 @@ int main(int argc, char** argv)
     const char* inputFile = NULL;
     bool emitAsm = false;
     bool printAst = false;
+    bool emitC = false;
+    bool outFileOwned = false;
 
     for (int i = 1; i < argc; i++)
     {
@@ -82,6 +85,10 @@ int main(int argc, char** argv)
         else if (strcmp(a, "--ast") == 0)
         {
             printAst = true;
+        }
+        else if (strcmp(a, "--emit-c") == 0)
+        {
+            emitC = true;
         }
         else if (a[0] == '-' && a[1] != '\0')
         {
@@ -118,9 +125,64 @@ int main(int argc, char** argv)
         strataResultFree(&r);
     }
 
+    if (emitC)
+    {
+        if (emitAsm)
+        {
+            fprintf(stderr, "error: --asm cannot be combined with --emit-c\n");
+            strataCompilerDestroy(compiler);
+            return 2;
+        }
+
+        if (!outFile)
+        {
+            outFile = ReplaceExt(inputFile, ".c");
+            outFileOwned = true;
+        }
+
+        StrataResult result = strataCompileFile(compiler, inputFile, STRATA_EMIT_C);
+        if (result.diagnostics && result.diagnostics[0])
+        {
+            fprintf(stderr, "%s\n", result.diagnostics);
+        }
+        if (!result.ok)
+        {
+            strataResultFree(&result);
+            strataCompilerDestroy(compiler);
+            if (outFileOwned) free((void*)outFile);
+            return 1;
+        }
+
+        FILE* output = fopen(outFile, "wb");
+        if (!output)
+        {
+            fprintf(stderr, "error: cannot open output '%s'\n", outFile);
+            strataResultFree(&result);
+            strataCompilerDestroy(compiler);
+            if (outFileOwned) free((void*)outFile);
+            return 1;
+        }
+        size_t outputLen = strlen(result.output);
+        bool wrote = fwrite(result.output, 1, outputLen, output) == outputLen;
+        wrote = fclose(output) == 0 && wrote;
+        strataResultFree(&result);
+        if (!wrote)
+        {
+            fprintf(stderr, "error: failed writing C source '%s'\n", outFile);
+            strataCompilerDestroy(compiler);
+            if (outFileOwned) free((void*)outFile);
+            return 1;
+        }
+        fprintf(stderr, "wrote C source: %s\n", outFile);
+        strataCompilerDestroy(compiler);
+        if (outFileOwned) free((void*)outFile);
+        return 0;
+    }
+
     if (!outFile)
     {
         outFile = ReplaceExt(inputFile, ".o");
+        outFileOwned = true;
     }
 
     const char* err = NULL;
@@ -131,7 +193,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "%s\n", err ? err : "compilation failed");
         strataFree((char*)err);
         strataCompilerDestroy(compiler);
-        if ((const char*)outFile != inputFile)
+        if (outFileOwned)
         {
             free((void*)outFile);
         }
@@ -159,7 +221,7 @@ int main(int argc, char** argv)
         free(asmFile);
     }
 
-    if ((const char*)outFile != inputFile)
+    if (outFileOwned)
     {
         free((void*)outFile);
     }
