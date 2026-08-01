@@ -2,127 +2,180 @@
 
 Commands and conventions for any agent (or human) editing the Strata compiler.
 
+## Language: C11
+
+The entire compiler is **C11**. Allman brace style, `PascalCase` for types and
+functions, `camelCase` for locals.
+
 ## Build / test
 
 ```sh
-cmake --preset default          # configure (MinGW + Ninja, LLVM ON)
+cmake --preset default          # configure
 cmake --build --preset default  # build
-ctest --preset default          # run tests
+build/default/bin/strata_tests  # run tests directly (or: ctest --preset default)
 ```
 
-Binaries land in `build/default/bin/` (`stratac.exe`, `strata_tests.exe`).
-`LLVM-C.dll` is copied next to them automatically so they run from the build
-tree.
+Binaries land in `build/default/bin/` (`stratac`, `strata_tests`, `jit_demo`,
+`engine_demo`). `LLVM-C.dll` is copied next to them automatically.
 
-Run tests directly for full output: `build/default/bin/strata_tests.exe`.
+`STRATA_SHARED=ON` (the default) builds `strata.dll`; `-DSTRATA_SHARED=OFF`
+builds `libstrata.a`. The test executable compiles all sources directly (with
+`STRATA_STATIC`), so it works in both modes.
 
 Validate the emitted object after changes to the back-end:
 
 ```sh
 stratac samples/hello.strata -o build/default/hello.o
-<LLVM_C_DIR>/bin/clang.exe build/default/hello.o -o build/default/hello.exe
+clang build/default/hello.o -o build/default/hello.exe && ./build/default/hello.exe ; echo $?
+# exit code 25
 ```
 
-The object must link cleanly (`clang` exit 0); `hello.exe` should print exit
-code 25.
+## Architecture
 
-## Running Strata code (execution)
+```
+include/strata/strata.h        Public C API (the only public header)
+src/                           All internal headers + sources
+  Core/                        Arena, Str, Vec, StrMap, Diagnostics, SourceManager
+  Lex/                         Token kinds, Lexer
+  AST/AST.h                    Node hierarchy (tagged structs, struct embedding)
+  Parse/Parser.c               Recursive-descent parser
+  Sema/ResolveOverloads.c      Overload resolution, type inference, const-checking
+  Codegen/
+    TypeRegistry.h/.c          Struct/handle type table
+    TypeUtil.h/.c              TypeName → LLVM type mapping (MapType)
+    LLVMCApi.h                 Curated forward-decls of the LLVM C API
+    LLVMModuleBuilder.h/.c     AST → LLVM IR (shared by AOT, JIT, IR text)
+    LLVMAot.h/.c               Object/assembly emission (TargetMachine)
+    LLVMJit.h/.c               MCJIT execution engine
+    LLVMCBackend.c             GenerateLlvmIr (IR text via LLVMPrintModuleToString)
+    ASTDump.c                  Pretty-print the AST
+  Import/ModuleLoader.c        `import` directive resolution + module merging
+  Embed.c                      Implements strata.h (strataCompile*, strataJit*)
+  stratac/main.c               CLI driver (uses only the public API)
+tests/unit/                    Test framework (Test.h) + all tests
+samples/                       Example .strata files + host drivers
+```
 
-Two paths, both via LLVM:
+### Memory management
 
-- **JIT (in-process):** `strataJitCompileString/CompileFile` → `strataJitGetFunction`
-  returns native function pointers. Implemented in `src/Codegen/LLVMJit.*` (MCJIT
-  via the ExecutionEngine C API). ORC v2 (`LLVMOrc*`) is also exported by
-  LLVM-C.dll for future hot-reload.
-- **AOT (disk):** `stratac` (default: emits `.o`), implemented in `src/Codegen/LLVMAot.*`
-  via `LLVMTargetMachineEmitToFile`. Emits the host x64 ABI; the object links
-  like any COFF object.
+All AST nodes and strings are arena-allocated (`src/Core/Util.h`). The arena
+is a bump allocator — everything is freed at once when compilation finishes.
+No `free()` calls, no RAII, no ownership tracking.
 
-Both share one IR builder (`src/Codegen/LLVMModuleBuilder.*`) returning a live,
-owned `BuiltModule`. **Always call the X86 target initializers before creating a
-TargetMachine or ExecutionEngine** — `LLVMInitializeAll*` / `LLVMInitializeNativeTarget`
-are NOT exported by this LLVM-C.dll, but the X86-specific entry points are. The
-`ensureX86Initialized()` helpers in LLVMAot.cpp / LLVMJit.cpp do this once each.
+Key types in `Core/Util.h`:
+- `Arena` — bump allocator (`arena_alloc`, `arena_strdup`, `arena_format`)
+- `Str` — non-owning string view (`{data, len}`)
+- `Vec` — dynamic array of `void*` (`VecPush`, `VecGet`, `.count`)
+- `StrMap` — open-addressing hash map `char* → void*` (`StrMapPut`, `StrMapGet`)
+- `Sb` — string builder (`SbPrintf`, `SbFinish`)
 
-`extern` functions (host-provided) are lowered two ways, depending on path:
-- AOT: a body-less `declare`; the host satisfies it at link time.
-- JIT: each `extern` call is an indirect call through a writable global pointer
-  slot `__strata_ext_<name>`. `strataJitAddSymbol` resolves the slot via
-  `LLVMGetGlobalValueAddress` and writes the host pointer. (MCJIT's
-  `LLVMAddGlobalMapping` is not consulted by this build, so we don't rely on it.)
-  The builder only creates slots in `jitMode` (true for the JIT, false for
-  AOT/IR).
+### AST design
 
-**User-defined types** (`src/Codegen/TypeRegistry.h` is shared by all codegen paths):
-- `struct Name { ... }` -> `%struct.Name = type { ... }` (a defined value type; a
-  body-less `struct` is an error). `handle Name;` -> a distinct opaque type
-  lowered as `ptr` (engine objects; member access is a compile error).
-- Member access uses `LLVMBuildGEP2` on an alloca (`emitLValue` in
-  LLVMModuleBuilder.cpp); positional construction (`Vec3(a,b,c)`) uses
-  `insertvalue`. **Struct parameters are always passed by reference**: any
-  struct parameter must declare `in`/`out`/`inout` (enforced by
-  `resolveOverloads`), lowered to `ptr`; the callee's symbol for it *is* the
-  incoming pointer, and call sites pass the argument's address. An `extern` may
-  not return a struct by value. Locals/returns are still by value; copy
-  explicitly (`Vec3 c = v;`) for a mutable local.
-- Aggregate-ABI caveat: structs are value types *within* Strata but cross the
-  host boundary by pointer. Any struct parameter must declare
-  `in`/`out`/`inout` (enforced by `resolveOverloads`); it lowers to `ptr`. An
-  `extern` may not return a struct by value. Handles (`handle Name;`) are
-  pointer-sized and passed by value, so they need no modifier. See README
-  "A note on aggregates across the host/JIT boundary".
+Nodes are plain C structs with a `Node base` first member (struct embedding).
+The `AST_NEW(arena, Type)` macro zero-initializes via `memset`. Cast between
+node types with `(Type*)node` or the `AsNode(Type, node)` macro. Dispatch on
+`node->kind` (the `NodeKind` enum).
 
-The JIT is demonstrated in `tests/unit/JitTests.cpp` (it actually calls JIT'd
-functions and asserts results).
+### Pipeline
 
-## Conventions
+```
+Source → Lexer → Parser → Module (AST) → ResolveOverloads (sema) → LLVMModuleBuilder → LLVM IR
+                                                                              ↓
+                                                                    ┌─────────────┐
+                                                                    │ AOT: .o/.s  │
+                                                                    │ JIT: MCJIT  │
+                                                                    │ IR: text    │
+                                                                    └─────────────┘
+```
 
-- **C++20**, `namespace strata`. No compiler extensions. No new comments beyond
-  the existing doc style unless asked.
-- Headers use `#pragma once`. Internal helper headers live next to their sources
-  (e.g. `src/Codegen/TypeUtil.h`) and are included relatively.
-- AST nodes derive from `Node` (kind enum + `SourceRange`); children are owned by
-  `std::unique_ptr`. Use `asNode<T>`/`static_cast<T*>` by `NodeKind`.
-- The front-end has **no semantic analysis** yet. Type mapping happens in
-  `src/Codegen/TypeUtil.h` (`detail::mapType`) and is shared by all codegen paths —
-  change type representation there.
-- The LLVM back-end uses a **curated forward-declaration** of the LLVM C API in
-  `include/strata/Codegen/LLVMCApi.h`. When adding LLVM functions, declare them
-  there with signatures matching `llvm-c/Core.h`, and **always use the
-  `...InContext` variants** so types/BBs belong to the module's context (the
-  context-less constructors bind to LLVM's global context and fail verification
-  with "Function context does not match Module context").
+`ModuleLoader` (used by `stratac` and `strataCompileFile`) handles `import`
+directives: it parses each imported file, resolves relative paths, merges
+structs/handles/functions/globals/imports into a single `Module`.
+
+## Language features
+
+### Types
+
+- Scalars: `void bool int uint long ulong float double`
+- Structs: `struct Vec3 { float x; float y; float z; };` — value types,
+  passed by reference by default (pointer at the ABI level)
+- Handles: `handle Entity;` — opaque, pointer-sized, passed by value.
+- Handle inheritance: `handle Player extends Entity;` — `Player` is
+  passable anywhere `Entity` is expected (checked by `HandleExtendsFrom`)
+
+### Parameters
+
+- Scalars: pass by value by default
+- `ref int x` — pass by reference (mutable, caller sees changes)
+- `const int x` — by value, read-only (const-checked)
+- `const ref int x` — by reference, read-only
+- Structs: always by reference; `const` makes them read-only
+
+### Operators
+
+- `++` / `--` prefix and postfix (on any lvalue)
+- `&&` / `||` short-circuit (basic blocks + PHI, not bitwise)
+- C-style casts: `(int)x`, `(float)y`, `(Player)e` (scalar and handle casts)
+- Compound assignment: `+= -= *= /= %=`
+
+### Other
+
+- Global variables: `int g_count = 0;` at module scope (LLVM globals,
+  literal constant initializers only)
+- Overloads: functions may share a name with different param types;
+  mangled as `name$type$type` (non-overloaded keep the base name)
+- Inferred struct init: `return { .x = 1, .y = 2 };` infers the return type
+- `const` on any param or local triggers const-checking in the sema
+
+## extern and the host boundary
+
+- AOT: `extern` lowers to a body-less `declare`; the host links it.
+- JIT: each `extern` call goes through a writable global pointer slot
+  `__strata_ext_<name>`. `strataJitAddSymbol` writes the host address.
+- Structs cross the boundary as pointers (`ptr`); handles are already
+  pointer-sized and pass by value.
 
 ## Adding a language feature (typical path)
 
-1. Tokens/keywords: `include/strata/Lex/Token.h` + `src/Lex/Token.cpp`.
-2. Lexing: `src/Lex/Lexer.cpp`.
-3. Grammar + AST: `include/strata/AST/AST.h` (add a node) + `src/Parse/Parser.cpp`.
-4. AST dump: `src/Codegen/ASTDump.cpp`.
-5. Semantic analysis: `src/Sema/ResolveOverloads.cpp` runs between parse and
-   codegen (in `stratac` and `Embed.cpp`). It infers argument types, resolves
-   overloads, and sets `FunctionDecl::mangledName` + `CallExpr::callee`
-   (mangled) + `CallExpr::resolvedDecl`. Anything type-related belongs here.
-6. Codegen: `src/Codegen/LLVMModuleBuilder.cpp` (note: LLVMModuleBuilder feeds
-   the IR printer, AOT emitter, and JIT). It emits functions/calls by
-   `mangledName`.
-7. Tests: `tests/unit/` (framework is `include/strata/Test.hpp`), then re-run
-   `ctest --preset default` and the `clang -c` IR check above.
+1. **Tokens**: `src/Lex/Token.h` (enum) + `src/Lex/Token.c` (keyword table)
+2. **Lexer**: `src/Lex/Lexer.c` (punctuation/keyword recognition)
+3. **AST**: `src/AST/AST.h` (add node struct + NodeKind value)
+4. **Parser**: `src/Parse/Parser.c` (grammar rule)
+5. **AST dump**: `src/Codegen/ASTDump.c` (handle new node kind)
+6. **Sema**: `src/Sema/ResolveOverloads.c` (type inference, const checks,
+   overload matching — anything type-related)
+7. **Codegen**: `src/Codegen/LLVMModuleBuilder.c` (IR emission)
+8. **Type mapping**: `src/Codegen/TypeUtil.c` (`MapType`) if it's a new type
+9. **Tests**: `tests/unit/` (framework is `tests/unit/Test.h`), then add the
+   file to `STRATA_TEST_SOURCES` in `CMakeLists.txt`
 
-Overloads: two functions may share a name with different parameter types.
-`resolveOverloads` mangles overloaded symbols as `name$type$type` (single
-functions keep the base name, so host-callable entries like `main`/`entry` must
-not be overloaded). Extern functions cannot be overloaded.
+## LLVM C API
 
-Statement lowering (in `emitStmt`): `out`/`inout` parameters are
-lowered to pointers -- the callee's symbol for such a param *is* the incoming
-pointer, and call sites pass the argument's address (`&var`, via `emitLValue`).
-Control flow (`if`/`else`, `while`, `for`, `break`, `continue`) uses basic
-blocks + `br`/`cond br`; a loop stack tracks break/continue targets (continue
-targets the `for` update block, not the condition).
+`src/Codegen/LLVMCApi.h` is a curated forward-declaration of the LLVM C API.
+When adding LLVM functions, declare them there and **always use the
+`...InContext` variants** so types/BBs belong to the module's context.
+
+All `alloca` instructions go through `EntryAlloca` which inserts them in the
+function's entry block (before the terminator) — never inside loop bodies.
 
 ## CTest wiring
 
-A single test target `strata_tests` runs all unit tests. `STRATA_SAMPLE_DIR` is
-defined so `SampleTests.cpp` can read `samples/hello.strata`. New test files must
-be added to the `strata_tests` source list in `CMakeLists.txt`.
+A single test target `strata_tests` compiles all strata sources + test files.
+`STRATA_SAMPLE_DIR` is defined so `SampleTests.c` can read `samples/`.
+New test files must be added to `STRATA_TEST_SOURCES` in `CMakeLists.txt`.
+
+## DLL / MSVC integration
+
+```sh
+cmake --preset default -DSTRATA_SHARED=ON
+cmake --build --preset default
+# → strata.dll (produced as strata.dll, not libstrata.dll)
+```
+
+`gen_msvc_lib.bat` generates an MSVC-compatible `strata.lib` import library
+from `strata.def`. From a VS Developer Command Prompt:
+```
+gen_msvc_lib.bat
+```
+
+Ship: `strata.dll`, `strata.lib`, `strata.h`, `LLVM-C.dll`.
