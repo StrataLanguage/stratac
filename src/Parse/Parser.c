@@ -321,7 +321,7 @@ static StructDecl* ParseStructDecl(Parser* p)
     }
     else
     {
-        DiagErrorFmt(p->m_diag, nameTok.range, "struct '%s' requires a body; use 'handle %s;' for an opaque type", node->name, node->name);
+        node->incomplete = true;
     }
 
     ParserExpect(p, TokSemicolon, "';'");

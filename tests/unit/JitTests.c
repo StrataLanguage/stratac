@@ -171,6 +171,45 @@ static int HostAdd(int a, int b)
     return a + b;
 }
 
+typedef struct { int x; } HostFwd;
+
+static void HostConsumeFwd(const HostFwd* f)
+{
+    (void)f;
+}
+
+STRATA_TEST(jit_extern_with_forward_declared_struct)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct Foo;\n"
+        "extern void consume(const Foo f);\n"
+        "struct Foo { int x; };\n"
+        "int entry() { Foo f; f.x = 7; consume(f); return f.x; }\n",
+        "fwdfwd", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "consume", (void*)&HostConsumeFwd), 1);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 STRATA_TEST(jit_calls_host_extern_function)
 {
     StrataCompiler* c = strataCompilerCreate();

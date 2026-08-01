@@ -94,6 +94,7 @@ typedef struct {
     Node base;
     char* name;
     Vec fields;
+    bool incomplete;
 } StructDecl;
 
 typedef struct {
