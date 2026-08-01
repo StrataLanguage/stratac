@@ -121,28 +121,50 @@ static bool WriteText(FixtureWriter* writer, const char* text)
 
 static bool PadFixture(FixtureWriter* writer, size_t targetBytes)
 {
-    if (writer->bytes > targetBytes) return false;
+    if (writer->bytes > targetBytes)
+    {
+        return false;
+    }
+
     size_t remaining = targetBytes - writer->bytes;
     if (remaining >= 4)
     {
-        if (!WriteText(writer, "/*")) return false;
+        if (!WriteText(writer, "/*"))
+        {
+            return false;
+        }
+        
         remaining -= 4;
+        
         char block[4096];
         memset(block, 'x', sizeof(block));
+
         while (remaining)
         {
             size_t count = remaining < sizeof(block) ? remaining : sizeof(block);
-            if (fwrite(block, 1, count, writer->file) != count) return false;
+
+            if (fwrite(block, 1, count, writer->file) != count)
+            {
+                return false;
+            }
+
             writer->bytes += count;
             remaining -= count;
         }
+
         return WriteText(writer, "*/");
     }
+
     while (remaining--)
     {
-        if (fputc(' ', writer->file) == EOF) return false;
+        if (fputc(' ', writer->file) == EOF)
+        {
+            return false;
+        }
+
         writer->bytes++;
     }
+
     return true;
 }
 
@@ -473,7 +495,9 @@ static Summary Summarize(const double* input, size_t count)
 static void LoadedScriptInit(LoadedScript* script, Backend backend)
 {
     memset(script, 0, sizeof(*script));
+    
     script->backend = backend;
+    
     LLVMJitInit(&script->llvm);
     TccJitInit(&script->tcc);
 }
@@ -482,6 +506,7 @@ static void LoadedScriptDestroy(LoadedScript* script)
 {
     LLVMJitDestroy(&script->llvm);
     TccJitDestroy(&script->tcc);
+
     script->hot = NULL;
 }
 
