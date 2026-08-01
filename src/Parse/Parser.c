@@ -159,6 +159,7 @@ static bool LooksLikeVarDecl(const Parser* p)
     case TokKwFloat:
     case TokKwDouble:
     case TokKwString:
+    case TokKwBox:
         return true;
     case TokIdent:
     {
@@ -179,6 +180,38 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     {
         isConst = true;
         Advance(p);
+    }
+
+    if (p->m_cur.kind == TokKwBox)
+    {
+        SourceRange boxRange = p->m_cur.range;
+        Advance(p);
+
+        if (!ParserConsume(p, TokLt))
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected '<' after 'box'");
+            return false;
+        }
+
+        TypeName inner = {0};
+
+        if (!ParserTryParseType(p, &inner) || !inner.name)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type after 'box<'");
+            return false;
+        }
+
+        if (!ParserConsume(p, TokGt))
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "expected '>' to close 'box<%s>'", inner.name);
+            return false;
+        }
+
+        out->name = arena_format(p->m_arena, "box<%s>", inner.name);
+        out->range = (SourceRange){boxRange.start, (uint16_t)(p->m_cur.range.start - boxRange.start), boxRange.fileId};
+        out->isConst = isConst;
+
+        return true;
     }
 
     const char* name = NULL;

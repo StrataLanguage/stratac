@@ -27,6 +27,10 @@ bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
+/* box<T> type-name helpers (the name is encoded as "box<INNER>"). */
+bool IsBoxTypeName(const char* name);
+bool BoxInnerTypeName(const char* name, char* buf, size_t cap);
+
 // -- Helpers
 
 bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base);

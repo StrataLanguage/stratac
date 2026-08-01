@@ -271,6 +271,24 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
 
     BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
 
+    if (DiagHasErrors(&diag))
+    {
+        char* diagText = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
+
+        if (errOut)
+        {
+            *errOut = DupString(diagText ? diagText : "code generation failed");
+        }
+
+        BuiltModuleDispose(&bm);
+        AstDispose((Node*)mod);
+        ModuleLoaderDispose(&loader);
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+
+        return 0;
+    }
+
     char* emitErr = NULL;
     int ok = EmitNativeFile(&bm, outputPath, assembly, &emitErr, NULL);
 
