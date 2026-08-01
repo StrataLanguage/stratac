@@ -1,12 +1,8 @@
-// box_demo.strata — implicit heap allocation via box<T>.
+// implicit heap allocation via borrowing and move.
 //
-// No `new` keyword: when the target type is box<T>, the compiler boxes the
-// value automatically.  Boxes are move-only (cannot be copied), are dropped
-// at scope end, and ownership can be transferred by returning / assigning /
-// passing as an owned parameter.  See hosts/box_demo_host.c.
-//   stratac box_demo.strata -o box_demo.o
-//   clang hosts/box_demo_host.c box_demo.o -o box_demo.exe
-//   ./box_demo.exe
+// When the target type is a box<T>, the compiler allocates the object on the heap via host-provided allocation funuctions. 
+// Boxes are move-only (cannot be copied), are dropped (freed) at scope end, and ownership can be transferred by returning / assigning /
+// passing as an owned parameter.
 
 struct Vec3 {
     float x;
@@ -14,8 +10,7 @@ struct Vec3 {
     float z;
 };
 
-// ---------------------------------------------------------------------------
-// Implicit boxing — no `new` keyword
+
 // ---------------------------------------------------------------------------
 // box<T> v = T { ... };   allocates a T on the heap, stores the value,
 //                          and auto-frees v when it goes out of scope.
@@ -27,9 +22,6 @@ float read_box()
     return v.x + v.y + v.z;     // 10 + 2 + 3 = 15   (v freed at '}')
 }
 
-// ---------------------------------------------------------------------------
-// Factory: returning a box moves ownership to the caller
-// ---------------------------------------------------------------------------
 // `return v` *moves* the box out of the callee — the callee does NOT free
 // it.  The caller receives ownership and frees it at its own scope end.
 
