@@ -42,11 +42,13 @@ static void DiagPushBack(DiagnosticEngine* diag, Diagnostic d)
     if (diag->m_count >= diag->m_cap)
     {
         size_t newcap = diag->m_cap ? diag->m_cap * 2 : 16;
+
         diag->m_diagnostics = (Diagnostic*)realloc(diag->m_diagnostics, newcap * sizeof(Diagnostic));
         if (!diag->m_diagnostics)
         {
-            abort();
+            STRATA_OOM();
         }
+
         diag->m_cap = newcap;
     }
 

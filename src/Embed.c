@@ -220,16 +220,22 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
     (void)inputPath;
     (void)outputPath;
     (void)assembly;
+
     if (errOut)
     {
         *errOut = DupString("LLVM backend not built");
     }
+    
     return 0;
 #else
 
     if (!inputPath || !outputPath)
     {
-        if (errOut) *errOut = DupString("null input or output path");
+        if (errOut)
+        {
+            *errOut = DupString("null input or output path");
+        }
+
         return 0;
     }
 
@@ -248,11 +254,18 @@ int strataCompileToObject(StrataCompiler* c, const char* inputPath,
     if (DiagHasErrors(&diag) || !mod)
     {
         char* diagText = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
-        if (errOut) *errOut = DupString(diagText ? diagText : "compilation failed");
+
+        if (errOut)
+        {
+            *errOut = DupString(diagText ? diagText : "compilation failed");
+        }
+
         AstDispose((Node*)mod);
         ModuleLoaderDispose(&loader);
         DiagnosticEngineFree(&diag);
+        
         arena_free(&arena);
+        
         return 0;
     }
 
@@ -299,6 +312,7 @@ const char* strataLLVMVersion(void)
     unsigned pat = 0;
     LLVMGetVersion(&maj, &min, &pat);
     snprintf(buf, sizeof(buf), "%u.%u.%u", maj, min, pat);
+
     return buf;
 #else
     return "disabled";
@@ -417,6 +431,7 @@ static StrataJit* JitCompileString(StrataCompiler* c, const char* source, size_t
     AstDispose((Node*)mod);
     DiagnosticEngineFree(&diag);
     SourceManagerFree(&src);
+
     arena_free(&arena);
 
     return handle;
@@ -478,6 +493,7 @@ StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char*
     AstDispose((Node*)mod);
     ModuleLoaderDispose(&loader);
     DiagnosticEngineFree(&diag);
+
     arena_free(&arena);
 
     return jit;
@@ -558,7 +574,9 @@ void strataJitDestroy(StrataJit* jit)
     free(jit->diagnostics);
     free(jit);
 }
+
 #else
+
 struct StrataJit
 {
     char unused;
@@ -570,6 +588,7 @@ static StrataJit* UnavailableJit(const char** errOut)
     {
         *errOut = DupString("JIT backend not built");
     }
+
     return NULL;
 }
 

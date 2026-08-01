@@ -23,7 +23,7 @@ static void AppendDiagnostic(TccJit* jit, const char* message)
         char* diagnostics = (char*)realloc(jit->diagnostics, capacity);
         if (!diagnostics)
         {
-            STRATA_CRASH("WTF");
+            STRATA_OOM();
         }
 
         jit->diagnostics = diagnostics;
