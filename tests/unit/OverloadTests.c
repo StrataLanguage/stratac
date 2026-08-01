@@ -1,5 +1,7 @@
 #include "Util.h"
+#if STRATA_TEST_HAS_LLVM
 #include "Codegen/CodegenBackend.h"
+#endif
 #include "Sema/ResolveOverloads.h"
 #include "Test.h"
 
@@ -59,6 +61,7 @@ STRATA_TEST(overloads_get_mangled_names_and_resolve)
     arena_free(&arena);
 }
 
+#if STRATA_TEST_HAS_LLVM
 STRATA_TEST(llvm_emits_distinct_overload_symbols)
 {
     Arena arena; arena_init(&arena, 0);
@@ -80,6 +83,7 @@ STRATA_TEST(llvm_emits_distinct_overload_symbols)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+#endif
 
 
 STRATA_TEST(struct_vs_scalar_overload_resolves)
@@ -306,6 +310,7 @@ STRATA_TEST(in_param_can_be_read)
     arena_free(&arena);
 }
 
+#if STRATA_TEST_HAS_TCC
 STRATA_TEST(jit_runs_resolved_overloads)
 {
     StrataCompiler* c = strataCompilerCreate();
@@ -341,5 +346,4 @@ STRATA_TEST(jit_runs_resolved_overloads)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
-
-
+#endif

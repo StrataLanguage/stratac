@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#if STRATA_TEST_HAS_LLVM
 STRATA_TEST(embed_compile_string_ok)
 {
     StrataCompiler* c = strataCompilerCreate();
@@ -15,11 +16,12 @@ STRATA_TEST(embed_compile_string_ok)
     strataResultFree(&r);
     strataCompilerDestroy(c);
 }
+#endif
 
 STRATA_TEST(embed_compile_string_reports_errors)
 {
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_LLVM_IR);
+    StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_C);
     STRATA_CHECK_EQ(r.ok, 0);
     STRATA_CHECK(r.error_count > 0);
     STRATA_CHECK(r.diagnostics != NULL);
