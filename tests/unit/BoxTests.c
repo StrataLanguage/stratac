@@ -83,6 +83,43 @@ STRATA_TEST(box_in_loop_does_not_crash)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(box_returned_as_inner_struct_type_copies_value)
+{
+    /* Returning a box<Struct> by identifier from a function declared to
+       return the plain struct (not the box) copies the value out before
+       the box is freed - a read, not a move. Only sound because Struct
+       here is non-owning (no box<T> fields), so a bitwise copy is safe. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; int w; };\n"
+        "Cell make_cell() {\n"
+        "  box<Cell> c = Cell { .v = 40, .w = 2 };\n"
+        "  return c;\n"
+        "}\n"
+        "int entry() {\n"
+        "  Cell c = make_cell();\n"
+        "  return c.v + c.w;\n"     /* 40 + 2 = 42 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 42);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(box_global_with_valid_init_reads_and_mutates)
 {
     /* A box global boxed from a value initializer: readable and field-
@@ -603,5 +640,72 @@ STRATA_TEST(box_reassign_after_move_revalidates)
         STRATA_CHECK_EQ(entry(), 8);
     }
 
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_coerced_to_bare_param_borrows)
+{
+    /* Passing box<T> where T is expected borrows the heap pointer — the
+       box survives the call (not consumed). */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "int read_bare(const Cell c) { return c.v; }\n"
+        "int entry() {\n"
+        "  box<Cell> a = Cell { .v = 5 };\n"
+        "  int r = read_bare(a);\n"      /* borrow: a stays alive */
+        "  return r + a.v;\n"             /* 5 + 5 = 10 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err?err:"(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 10);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_coerced_to_bare_return_unboxes)
+{
+    /* Returning box<T> from a T-returning function loads the value out and
+       frees the box at the function's return. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "Cell extract() {\n"
+        "  box<Cell> c = Cell { .v = 42 };\n"
+        "  return c;\n"                   /* unbox: load value, free box */
+        "}\n"
+        "int entry() {\n"
+        "  Cell r = extract();\n"
+        "  return r.v;\n"                 /* 42 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err?err:"(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 42);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_coerced_to_bare_vardecl_copies)
+{
+    /* T v = boxVal; copies the pointee — the box is not consumed. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  box<Cell> a = Cell { .v = 7 };\n"
+        "  Cell copy = a;\n"             /* deref-copy: copy = *a */
+        "  copy.v = 99;\n"               /* mutate the copy */
+        "  return a.v;\n"                /* a unchanged: 7 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err?err:"(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 7);
     strataJitDestroy(jit);
 }

@@ -191,6 +191,22 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             {
                 score += 1;
             }
+            else if (IsBoxTypeName(argType))
+            {
+                /* box<T> coerces to T (implicit deref / borrow). */
+                char inner[128];
+
+                if (BoxInnerTypeName(argType, inner, sizeof inner)
+                    && strcmp(inner, param->type.name) == 0)
+                {
+                    score += 1;
+                }
+                else
+                {
+                    viable = false;
+                    break;
+                }
+            }
             else
             {
                 viable = false;
@@ -653,9 +669,15 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
             else
             {
+                /* Allow box<T> -> T coercion (implicit deref). */
+                char boxInner[128];
+
                 ok = strcmp(initType, vd->type.name) == 0
                     || (IsNumeric(initType) && IsNumeric(vd->type.name))
-                    || HandleExtendsFrom(&r->m_registry, initType, vd->type.name);
+                    || HandleExtendsFrom(&r->m_registry, initType, vd->type.name)
+                    || (IsBoxTypeName(initType)
+                        && BoxInnerTypeName(initType, boxInner, sizeof boxInner)
+                        && strcmp(boxInner, vd->type.name) == 0);
             }
 
             if (initType[0] != '\0' && !ok)

@@ -399,6 +399,19 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     return ValueMake(r, target);
 }
 
+/* If value is box<T> but the target context expects T, load the pointee. */
+static Value UnboxIfBox(Builder* b, Value value, TypeDesc target)
+{
+    if (value.typeDesc.isBox && !target.isBox && value.typeDesc.boxInner)
+    {
+        TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)value.typeDesc.boxInner});
+        LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, value.value, "unbox");
+        return ValueMake(loaded, innerTd);
+    }
+
+    return value;
+}
+
 static LLVMValueRef StrataAllocFn(Builder* b)
 {
     if (!b->m_allocFn)
@@ -1158,12 +1171,48 @@ static Value EmitCall(Builder* b, CallExpr* n)
         args = (LLVMValueRef*)arena_alloc(b->m_arena, nargs * sizeof(LLVMValueRef));
     }
 
+    const FunctionDecl* fd = n->resolvedDecl;
+
     for (size_t k = 0; k < nargs; k++)
     {
         bool shouldPassByPtr = k < info->paramByPtrCount && info->paramByPtr[k];
         Node* argNode = (Node*)VecGet(&n->args, k);
 
-        args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : EmitExpr(b, argNode).value;
+        /* box<T> coerced to T: if the param is a plain struct (not box),
+           and the arg is a box, the heap pointer IS the T* the param wants. */
+        bool paramIsBoxType = fd && k < fd->params.count
+            && IsBoxTypeName(((ParamDecl*)VecGet(&fd->params, k))->type.name);
+
+        bool argIsBox = false;
+
+        if (shouldPassByPtr && !paramIsBoxType)
+        {
+            if (argNode->kind == NodeIdent)
+            {
+                Value* sym = (Value*)StrMapGet(&b->m_symbols, ((IdentExpr*)argNode)->name);
+
+                if (!sym)
+                {
+                    sym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)argNode)->name);
+                }
+
+                argIsBox = sym && sym->typeDesc.isBox;
+            }
+            else if (argNode->kind == NodeCall)
+            {
+                FuncInfo* fi = (FuncInfo*)StrMapGet(&b->m_funcs, ((CallExpr*)argNode)->callee);
+                argIsBox = fi && fi->returnType.isBox;
+            }
+        }
+
+        if (shouldPassByPtr && !paramIsBoxType && argIsBox)
+        {
+            args[k] = EmitExpr(b, argNode).value;
+        }
+        else
+        {
+            args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : EmitExpr(b, argNode).value;
+        }
     }
 
     LLVMValueRef callee = info->function;
@@ -1368,7 +1417,7 @@ static void EmitStmt(Builder* b, Node* n)
         {
             /* Coerce derefs a box value unless the return type is itself a
                box, so v.typeDesc.isBox below means a genuine move. */
-            v = Coerce(b, EmitExpr(b, r->value), b->m_curRet);
+            v = UnboxIfBox(b, Coerce(b, EmitExpr(b, r->value), b->m_curRet), b->m_curRet);
 
             /* Returning a box moves it out: null the source so the drop
                below does not free it. */
@@ -1463,7 +1512,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (varDecl->init)
         {
-            Value value = Coerce(b, EmitExpr(b, varDecl->init), typeDesc);
+            Value value = UnboxIfBox(b, Coerce(b, EmitExpr(b, varDecl->init), typeDesc), typeDesc);
             LLVMBuildStore(b->m_builder, value.value, slot);
         }
         else

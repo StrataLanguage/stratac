@@ -82,6 +82,23 @@ float read_through_ref(ref box<Vec3> v)
     return v.x + v.y + v.z; // v is NOT freed here (borrow)
 }
 
+void take_value(ref box<Vec3> v)
+{
+}
+
+
+// Returning a box by identifier from a function declared to return the
+// inner type (not the box) copies the value out and frees the box, rather
+// than moving it — safe here since Vec3 has no box<T> fields to alias.
+
+Vec3 return_bare_vec3()
+{
+    box<Vec3> newVec = Vec3 { .x = 123 };
+    take_value(newVec);
+
+    return newVec;   // reads newVec's value, then frees it (not a move)
+}
+
 // ---------------------------------------------------------------------------
 // Passing box data to the host via an `extern` function
 // ---------------------------------------------------------------------------
@@ -108,5 +125,7 @@ float entry()
     float d = consume_box(w);                  // owned param — w moved, callee frees
     // w is now moved — using it would be a compile error
 
-    return a + b + d + i;   // (1+2+0=3) + (1*1+4*4+0*0=17) + (0+3+4=7) + 9 = 36
+    Vec3 bare = return_bare_vec3();
+
+    return bare.x;//a + b + d + i;   // (1+2+0=3) + (1*1+4*4+0*0=17) + (0+3+4=7) + 9 = 36
 }
