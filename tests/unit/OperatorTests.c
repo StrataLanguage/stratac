@@ -551,6 +551,104 @@ STRATA_TEST(jit_cast_int_to_long)
     }
 }
 
+STRATA_TEST(jit_byte_type)
+{
+    StrataJit* jit = CompileJit("byte entry() {\n"
+                                "  byte a = 200;\n"
+                                "  byte b = 100;\n"
+                                "  return a + b;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        unsigned char (*f)(void) = (unsigned char (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), (unsigned char)44);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_sbyte_type)
+{
+    StrataJit* jit = CompileJit("sbyte entry() {\n"
+                                "  sbyte a = 100;\n"
+                                "  sbyte b = 50;\n"
+                                "  return a + b;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        signed char (*f)(void) = (signed char (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), (signed char)-106);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_short_type)
+{
+    StrataJit* jit = CompileJit("short entry() {\n"
+                                "  short a = 30000;\n"
+                                "  short b = 10000;\n"
+                                "  return a + b;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        short (*f)(void) = (short (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), (short)-25536);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_ushort_type)
+{
+    StrataJit* jit = CompileJit("ushort entry() {\n"
+                                "  ushort a = 60000;\n"
+                                "  ushort b = 10000;\n"
+                                "  return a + b;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        unsigned short (*f)(void) = (unsigned short (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), (unsigned short)4464);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_cast_int_to_byte)
+{
+    StrataJit* jit = CompileJit("byte entry() {\n"
+                                "  int x = 300;\n"
+                                "  return (byte)x;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        unsigned char (*f)(void) = (unsigned char (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), (unsigned char)44);
+        }
+        strataJitDestroy(jit);
+    }
+}
 
 static int handle_get_int(void* e) { return (int)(intptr_t)e; }
 static void* handle_spawn_1234(void) { return (void*)(intptr_t)0x1234; }

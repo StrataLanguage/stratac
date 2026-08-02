@@ -17,6 +17,25 @@ static float host_length_sq(const Vec3* v)
     return v->x * v->x + v->y * v->y + v->z * v->z;
 }
 
+typedef struct { const char* name; } BaseEntity;
+typedef struct { BaseEntity base; } Entity;
+
+typedef Entity* HEntity;
+
+Entity g_entity;
+
+static void get_entity(HEntity* outEntityHandle)
+{
+    g_entity.base.name = "TestEntity";
+
+    *outEntityHandle = &g_entity;
+}
+
+static void print_entity_name(HEntity inEntity)
+{
+    puts(inEntity->base.name);
+}
+
 int main(void)
 {
     StrataCompiler* c = strataCompilerCreate();
@@ -37,6 +56,8 @@ int main(void)
     /* Bind host externs so generated code can call back (strata_alloc / strata_free
        are already wired by the runtime). */
     strataJitAddSymbol(jit, "host_length_sq", (void*)&host_length_sq);
+    strataJitAddSymbol(jit, "get_entity", (void*)&get_entity);
+    strataJitAddSymbol(jit, "print_entity_name", (void*)&print_entity_name);
 
     float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
 

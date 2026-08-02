@@ -96,7 +96,7 @@ structs/handles/functions/globals/imports into a single `Module`.
 
 ### Types
 
-- Scalars: `void bool int uint long ulong float double`
+- Scalars: `void bool int uint long ulong byte sbyte short ushort float double`
 - Structs: `struct Vec3 { float x; float y; float z; };` — value types,
   passed by reference by default (pointer at the ABI level)
 - Handles: `handle Entity;` — opaque, pointer-sized, passed by value.
