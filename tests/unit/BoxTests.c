@@ -85,10 +85,7 @@ STRATA_TEST(box_in_loop_does_not_crash)
 
 STRATA_TEST(box_returned_as_inner_struct_type_copies_value)
 {
-    /* Returning a box<Struct> by identifier from a function declared to
-       return the plain struct (not the box) copies the value out before
-       the box is freed - a read, not a move. Only sound because Struct
-       here is non-owning (no box<T> fields), so a bitwise copy is safe. */
+    /* Returning box<Struct> as plain Struct copies the value, then frees the box. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; int w; };\n"
@@ -122,8 +119,7 @@ STRATA_TEST(box_returned_as_inner_struct_type_copies_value)
 
 STRATA_TEST(box_returned_struct_literal_boxes_at_return)
 {
-    /* `return Cell{...};` from a box<Cell>-returning function boxes the
-       literal at the return site - no local box var needed first. */
+    /* `return Cell{...};` boxes the literal at the return site. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
@@ -151,8 +147,7 @@ STRATA_TEST(box_returned_struct_literal_boxes_at_return)
 
 STRATA_TEST(box_returned_anonymous_struct_literal_boxes_at_return)
 {
-    /* `return { .v = n };` infers Cell (the box's inner type, not
-       "box<Cell>") for the anonymous literal, then boxes it. */
+    /* `return { .v = n };` infers Cell, not "box<Cell>", then boxes it. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
@@ -180,8 +175,7 @@ STRATA_TEST(box_returned_anonymous_struct_literal_boxes_at_return)
 
 STRATA_TEST(box_global_with_valid_init_reads_and_mutates)
 {
-    /* A box global boxed from a value initializer: readable and field-
-       mutable from any function, and freed automatically on JIT teardown. */
+    /* A box global is readable/mutable from any function, freed at teardown. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
@@ -243,9 +237,7 @@ STRATA_TEST(box_global_with_call_init_reads)
 
 STRATA_TEST(box_global_scalar_value_used_in_arithmetic)
 {
-    /* A box<int> global's value is read directly in an arithmetic
-       expression, not just via a bare `return g;` - it must be dereferenced
-       rather than treated as a pointer, and never moved. */
+    /* A box<int> global's value is dereferenced in an expression, not just a bare return. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "box<int> i = 9;\n"
@@ -275,9 +267,7 @@ STRATA_TEST(box_global_scalar_value_used_in_arithmetic)
 
 STRATA_TEST(box_global_scalar_bare_return_reads_value)
 {
-    /* `return i;` from a function whose return type is the boxed scalar's
-       inner type (not box<int> itself) reads the value - it is not a
-       move, so it's allowed even though 'i' is a box global. */
+    /* `return i;` reads the value (not box<int>), so it's not a move. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "box<int> i = 41;\n"
@@ -304,8 +294,7 @@ STRATA_TEST(box_global_scalar_bare_return_reads_value)
 
 STRATA_TEST(box_global_ref_param_borrows)
 {
-    /* Passing a box global to a 'ref' parameter borrows it: legal, and the
-       global is still readable/live afterward. */
+    /* Passing a box global to 'ref' borrows it; still live afterward. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
@@ -390,7 +379,7 @@ STRATA_TEST(box_global_moved_into_local_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "box global 'g' cannot be moved"));
+    STRATA_CHECK(Contains(d, "g' is global, and cannot be moved"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -410,7 +399,7 @@ STRATA_TEST(box_global_passed_to_owned_param_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "box global 'g' cannot be moved"));
+    STRATA_CHECK(Contains(d, "g' is global, and cannot be moved"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -429,7 +418,7 @@ STRATA_TEST(box_global_returned_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "box global 'g' cannot be moved"));
+    STRATA_CHECK(Contains(d, "g' is global, and cannot be moved"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -501,8 +490,7 @@ STRATA_TEST(box_use_after_struct_field_move_is_an_error)
 
 STRATA_TEST(box_anonymous_struct_literal_infers_box_inner_type)
 {
-    /* `box<Holder> h = { p };` infers Holder (the box's inner type, not
-       "box<Holder>") for the anonymous literal, same as a named literal. */
+    /* `box<Holder> h = { p };` infers Holder, not "box<Holder>". */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Pistol { int ammo; };\n"
@@ -534,10 +522,7 @@ STRATA_TEST(box_anonymous_struct_literal_infers_box_inner_type)
 
 STRATA_TEST(box_field_wrong_box_inner_type_is_an_error)
 {
-    /* box<Any> and box<Pistol> are unrelated - a struct-init field value's
-       type was never checked against the field's declared type at all
-       (only the field name/position), so this silently passed sema before
-       and miscompiled a mismatched box pointer into the field. */
+    /* box<Any> and box<Pistol> are unrelated - field types weren't checked before. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
@@ -560,10 +545,95 @@ STRATA_TEST(box_field_wrong_box_inner_type_is_an_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(box_cast_via_opaque_marker_round_trips)
+{
+    /* box<Pistol> -> box<Any> -> box<Pistol>: allowed since Any is opaque.
+       Each cast moves its source, so nothing is freed twice. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Pistol { int ammo; };\n"
+        "struct Any;\n"
+        "struct Holder { box<Any> gun; };\n"
+        "int entry() {\n"
+        "  box<Pistol> p = Pistol { .ammo = 100 };\n"
+        "  box<Holder> holder = { (box<Any>)p };\n"
+        "  box<Pistol> p2 = (box<Pistol>)holder.gun;\n"
+        "  return p2.ammo;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 100);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_cast_between_unrelated_concrete_structs_is_an_error)
+{
+    /* Neither side is opaque, so this stays rejected. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Pistol { int ammo; };\n"
+        "struct Vec3 { float x; float y; float z; };\n"
+        "int entry() {\n"
+        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
+        "  box<Vec3> v = (box<Vec3>)p;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "invalid cast"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_field_extracted_twice_is_an_error)
+{
+    /* Extracting a box moves it out of the field; reading it again is an error. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Pistol { int ammo; };\n"
+        "struct Any;\n"
+        "struct Holder { box<Any> gun; };\n"
+        "int entry() {\n"
+        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
+        "  box<Holder> holder = { (box<Any>)p };\n"
+        "  box<Pistol> p2 = (box<Pistol>)holder.gun;\n"
+        "  box<Pistol> p3 = (box<Pistol>)holder.gun;\n"   /* error: gun moved already */
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "use of moved box 'holder.gun'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(struct_field_wrong_scalar_type_is_an_error)
 {
-    /* Same gap, no box involved: a plain struct field's value type was
-       never checked either. */
+    /* Same gap, no box involved. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
@@ -674,12 +744,7 @@ STRATA_TEST(box_ref_param_borrows_callers_box)
 
 STRATA_TEST(box_moved_unconditionally_every_loop_iteration_is_error)
 {
-    /* A box moved into an owned param on every iteration of a loop is only
-       valid for iteration 1 - by iteration 2 it's already freed. This must
-       be caught statically even though a single top-to-bottom walk of the
-       loop body alone can't see it (the use precedes the move in the same
-       textual pass); it only shows up once the moved-state a prior
-       iteration leaves behind is carried into the next one. */
+    /* Moving the box every iteration is only valid on iteration 1. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
@@ -703,9 +768,7 @@ STRATA_TEST(box_moved_unconditionally_every_loop_iteration_is_error)
 
 STRATA_TEST(box_fresh_local_per_iteration_moved_in_loop_is_allowed)
 {
-    /* A box declared fresh inside the loop body (not loop-carried) may be
-       freely moved each iteration - it's a brand new binding every time,
-       not the same live box surviving into the next iteration. */
+    /* A box declared fresh each iteration is a new binding, movable freely. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
@@ -740,8 +803,7 @@ STRATA_TEST(box_fresh_local_per_iteration_moved_in_loop_is_allowed)
 
 STRATA_TEST(box_moved_in_one_if_branch_used_only_in_other_branch_is_allowed)
 {
-    /* then/else are mutually exclusive: moving a box in one branch and
-       using it only in the other is safe, since at most one branch runs. */
+    /* Moving in one branch, using only in the other, is safe (mutually exclusive). */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
@@ -777,8 +839,7 @@ STRATA_TEST(box_moved_in_one_if_branch_used_only_in_other_branch_is_allowed)
 
 STRATA_TEST(box_moved_in_one_if_branch_used_unconditionally_after_is_error)
 {
-    /* Moved in only one branch, but used unconditionally after the whole
-       if - unsound, since the taken branch isn't known statically. */
+    /* Moved in one branch, used unconditionally after - unsound. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(

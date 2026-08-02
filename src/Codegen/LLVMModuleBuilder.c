@@ -632,6 +632,18 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
     return ValueMake(v, sym->typeDesc);
 }
 
+/* Unwraps casts to find the lvalue being moved (identifier or field chain),
+   for nulling via EmitLValue. */
+static Node* MovableBoxSourceNode(Node* n)
+{
+    while (n && n->kind == NodeCast)
+    {
+        n = ((CastExpr*)n)->operand;
+    }
+
+    return (n && (n->kind == NodeIdent || n->kind == NodeMember)) ? n : NULL;
+}
+
 static LValue EmitLValue(Builder* b, Node* n)
 {
     LValue none = {0};
@@ -1054,9 +1066,11 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 EmitDropOne(b, lvalue.ptr);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
 
-                if (n->value->kind == NodeIdent)
+                Node* movedSourceNode = MovableBoxSourceNode(n->value);
+
+                if (movedSourceNode)
                 {
-                    LValue src = EmitLValue(b, n->value);
+                    LValue src = EmitLValue(b, movedSourceNode);
 
                     if (src.valid)
                     {
@@ -1408,6 +1422,12 @@ static Value EmitExpr(Builder* b, Node* n)
         Value operand = EmitExpr(b, cast->operand);
         TypeDesc target = Resolve(b, &cast->type);
 
+        if (operand.typeDesc.isBox && target.isBox)
+        {
+            /* Retag with the destination type; Coerce would keep the source's. */
+            return ValueMake(operand.value, target);
+        }
+
         return Coerce(b, operand, target);
     }
 
@@ -1441,9 +1461,7 @@ static void EmitStmt(Builder* b, Node* n)
 
             if (b->m_curRet.isBox && !raw.typeDesc.isBox)
             {
-                /* Return type is box<T> but the expression produces a plain
-                   T (e.g. `return Pistol{...};`): box it, same as a
-                   `box<T> x = ...;` local. */
+                /* Returns box<T> but expr is a plain T: box it, like a local. */
                 TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)b->m_curRet.boxInner});
                 LLVMValueRef size = SizeOfConst(b, innerTd.type);
                 LLVMValueRef args[1] = { size };
@@ -1460,9 +1478,11 @@ static void EmitStmt(Builder* b, Node* n)
 
                 /* Returning a box moves it out: null the source so the drop
                    below does not free it. */
-                if (v.typeDesc.isBox && r->value->kind == NodeIdent)
+                Node* movedReturnNode = v.typeDesc.isBox ? MovableBoxSourceNode(r->value) : NULL;
+
+                if (movedReturnNode)
                 {
-                    LValue src = EmitLValue(b, r->value);
+                    LValue src = EmitLValue(b, movedReturnNode);
 
                     if (src.valid)
                     {
@@ -1515,14 +1535,20 @@ static void EmitStmt(Builder* b, Node* n)
 
                 if (value.typeDesc.isBox)
                 {
-                    /* Move from another box<T>: take its pointer, null the source. */
+                    /* Move from another box<T> (or a cast of one): take its
+                       pointer, null the source. */
                     LLVMBuildStore(b->m_builder, value.value, slot);
 
-                    LValue src = EmitLValue(b, varDecl->init);
+                    Node* movedDeclNode = MovableBoxSourceNode(varDecl->init);
 
-                    if (src.valid)
+                    if (movedDeclNode)
                     {
-                        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                        LValue src = EmitLValue(b, movedDeclNode);
+
+                        if (src.valid)
+                        {
+                            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                        }
                     }
                 }
                 else

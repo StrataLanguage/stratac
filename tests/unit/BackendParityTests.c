@@ -116,6 +116,21 @@ STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
         28);
 }
 
+STRATA_TEST(llvm_and_tcc_box_cast_via_opaque_marker_parity)
+{
+    /* Allowed since Any is opaque; each cast moves its source. */
+    CheckParity(
+        "struct Pistol { int ammo; };\n"
+        "struct Any;\n"
+        "int entry() {\n"
+        "  box<Pistol> p = Pistol { .ammo = 77 };\n"
+        "  box<Any> a = (box<Any>)p;\n"
+        "  box<Pistol> p2 = (box<Pistol>)a;\n"
+        "  return p2.ammo;\n"
+        "}\n",
+        77);
+}
+
 STRATA_TEST(llvm_and_tcc_box_param_ref_parity)
 {
     /* A ref box parameter borrows the caller's box. */

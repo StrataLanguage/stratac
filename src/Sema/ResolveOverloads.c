@@ -79,6 +79,36 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     MarkBoxMoved(r, name);
 }
 
+/* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
+   Identifier -> its name; member chain -> dotted key ("holder.gun"). */
+static const char* MovableBoxSourceKey(Resolver* r, Node* n)
+{
+    while (n && n->kind == NodeCast)
+    {
+        n = ((CastExpr*)n)->operand;
+    }
+
+    if (!n)
+    {
+        return NULL;
+    }
+
+    if (n->kind == NodeIdent)
+    {
+        return ((IdentExpr*)n)->name;
+    }
+
+    if (n->kind == NodeMember)
+    {
+        MemberExpr* m = (MemberExpr*)n;
+        const char* baseKey = MovableBoxSourceKey(r, m->base_node);
+
+        return baseKey ? arena_format(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
+    }
+
+    return NULL;
+}
+
 static void CopyStrMap(const StrMap* src, StrMap* dst)
 {
     StrMapInit(dst);
@@ -305,9 +335,13 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
         Node* arg = (Node*)VecGet(&c->args, j);
 
-        if (IsOwningType(param->type.name) && param->mod == ModNone && arg->kind == NodeIdent)
+        const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone
+            ? MovableBoxSourceKey(r, arg)
+            : NULL;
+
+        if (movedArgKey)
         {
-            MoveBoxIdent(r, ((IdentExpr*)arg)->name, arg->range);
+            MoveBoxIdent(r, movedArgKey, arg->range);
         }
     }
 }
@@ -553,9 +587,11 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
             MarkBoxLive(r, targetName);
 
-            if (a->value->kind == NodeIdent)
+            const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+
+            if (movedValueKey)
             {
-                MoveBoxIdent(r, ((IdentExpr*)a->value)->name, a->base.range);
+                MoveBoxIdent(r, movedValueKey, a->base.range);
             }
         }
         else
@@ -587,7 +623,12 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
             && (HandleExtendsFrom(&r->m_registry, dst, src)
                 || HandleExtendsFrom(&r->m_registry, src, dst));
 
-        if (src && src[0] != '\0' && dst && dst[0] != '\0' && !scalarPair && !handlePair)
+        /* box<T> -> box<U> only when T or U is opaque (erase/cast-back). */
+        bool boxPair = src && dst && IsOwningType(src) && IsOwningType(dst)
+            && (TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, src))
+                || TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, dst)));
+
+        if (src && src[0] != '\0' && dst && dst[0] != '\0' && !scalarPair && !handlePair && !boxPair)
         {
             DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", src, dst);
         }
@@ -616,6 +657,17 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
             else
             {
                 DiagError(r->m_diag, m->base.range, "cannot access a member of an opaque handle");
+            }
+        }
+
+        /* A box-typed field can be moved out too - check the same way. */
+        if (IsOwningType(InferType(r, n, scope)))
+        {
+            const char* key = MovableBoxSourceKey(r, n);
+
+            if (key && IsBoxMoved(r, key))
+            {
+                DiagErrorFmt(r->m_diag, m->base.range, "use of moved box '%s'", key);
             }
         }
 
@@ -696,13 +748,14 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
                                  fieldDecl->name, structInitExpr->typeName, fieldValueType);
                 }
 
-                /* A box<T> field initialized from an identifier moves it -
-                   the struct now owns that box, matching what codegen
-                   actually does (nulls the source when building the
-                   aggregate). */
-                if (IsOwningType(fieldDecl->type.name) && field->value->kind == NodeIdent)
+                /* A box<T> field moves its source (identifier/field/cast). */
+                const char* movedFieldKey = IsOwningType(fieldDecl->type.name)
+                    ? MovableBoxSourceKey(r, field->value)
+                    : NULL;
+
+                if (movedFieldKey)
                 {
-                    MoveBoxIdent(r, ((IdentExpr*)field->value)->name, structInitExpr->base.range);
+                    MoveBoxIdent(r, movedFieldKey, structInitExpr->base.range);
                 }
             }
         }
@@ -788,10 +841,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
             }
 
-            /* A box<T> initialized from another box<T> moves the source. */
-            if (IsOwningType(vd->type.name) && IsOwningType(initType) && vd->init->kind == NodeIdent)
+            /* box<T> init from a box source (identifier/field/cast) moves it. */
+            const char* movedInitKey = IsOwningType(vd->type.name) && IsOwningType(initType)
+                ? MovableBoxSourceKey(r, vd->init)
+                : NULL;
+
+            if (movedInitKey)
             {
-                MoveBoxIdent(r, ((IdentExpr*)vd->init)->name, vd->base.range);
+                MoveBoxIdent(r, movedInitKey, vd->base.range);
             }
         }
 
@@ -825,17 +882,17 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
             }
 
-            /* A box<T> identifier is only moved when the function itself
-               returns box<T>; returning its inner type instead just reads
-               the value (unless that type is owning, which can't be
-               copied out). */
-            if (IsOwningType(typeName) && rs->value->kind == NodeIdent)
+            /* Only a move if the function itself returns box<T>; otherwise
+               it's a read (unless the inner type is owning). */
+            const char* movedReturnKey = IsOwningType(typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
+
+            if (movedReturnKey)
             {
                 bool returnsSameBox = r->m_currentReturnType && strcmp(r->m_currentReturnType, typeName) == 0;
 
                 if (returnsSameBox)
                 {
-                    MoveBoxIdent(r, ((IdentExpr*)rs->value)->name, rs->base.range);
+                    MoveBoxIdent(r, movedReturnKey, rs->base.range);
                 }
                 else
                 {
@@ -849,7 +906,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
                     if (innerIsOwning || !innerMatchesReturn)
                     {
-                        MoveBoxIdent(r, ((IdentExpr*)rs->value)->name, rs->base.range);
+                        MoveBoxIdent(r, movedReturnKey, rs->base.range);
                     }
                 }
             }
@@ -1094,8 +1151,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             const char* boxInner = OwningInnerCStr(arena, gd->type.name);
 
-            /* No moving from another variable to initialize a box global. */
-            if (gd->init->kind == NodeIdent)
+            /* A box global can't be initialized by moving a source. */
+            if (MovableBoxSourceKey(&r, gd->init))
             {
                 DiagErrorFmt(diag, gd->base.range,
                              "box global '%s' cannot be initialized by moving from another variable; "
