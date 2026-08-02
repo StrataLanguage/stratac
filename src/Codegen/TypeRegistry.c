@@ -127,7 +127,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
             {
                 FieldDecl* f = (FieldDecl*)VecGet(&t->fields, j);
 
-                if (IsBoxTypeName(f->type.name))
+                if (IsOwningType(f->type.name))
                 {
                     t->owning = true;
                     changed = true;
@@ -225,7 +225,7 @@ bool IsHandleType(const TypeRegistry* reg, const char* name)
     return t && t->opaque && !t->incomplete;
 }
 
-bool IsBoxTypeName(const char* name)
+bool IsOwningType(const char* name)
 {
     if (!name)
     {
@@ -237,23 +237,26 @@ bool IsBoxTypeName(const char* name)
     return len > 5 && strncmp(name, "box<", 4) == 0 && name[len - 1] == '>';
 }
 
-bool BoxInnerTypeName(const char* name, char* buf, size_t cap)
+Str OwningInnerStr(const char* name)
 {
-    if (!IsBoxTypeName(name) || !buf || cap == 0)
+    if (!IsOwningType(name))
     {
-        return false;
+        return STR_EMPTY;
     }
 
     size_t len = strlen(name);
-    size_t innerLen = len - 5; /* strip "box<" (4) and trailing ">" (1) */
 
-    if (innerLen >= cap)
+    return (Str){name + 4, len - 5};
+}
+
+const char* OwningInnerCStr(Arena* arena, const char* name)
+{
+    Str s = OwningInnerStr(name);
+
+    if (!s.data)
     {
-        innerLen = cap - 1;
+        return NULL;
     }
 
-    memcpy(buf, name + 4, innerLen);
-    buf[innerLen] = '\0';
-
-    return true;
+    return StrNew(arena, s.data, s.len).data;
 }

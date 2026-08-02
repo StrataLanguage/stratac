@@ -80,7 +80,6 @@ static inline Str StrSlice(Str s, size_t start, size_t end)
 }
 
 Str StrNew(Arena* arena, const char* str, size_t len);
-void StrFree(Arena* arena, Str s);
 
 // -- Vec
 

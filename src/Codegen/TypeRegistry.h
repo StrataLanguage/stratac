@@ -28,9 +28,11 @@ bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
-/* box<T> type-name helpers (the name is encoded as "box<INNER>"). */
-bool IsBoxTypeName(const char* name);
-bool BoxInnerTypeName(const char* name, char* buf, size_t cap);
+/* Owning (heap-allocated, move-only) type helpers.
+ * Currently only box<T>; will extend to string, T[], etc. */
+bool IsOwningType(const char* name);
+Str  OwningInnerStr(const char* name);             /* Str slice — no alloc */
+const char* OwningInnerCStr(Arena* arena, const char* name); /* null-terminated arena copy */
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 
 // -- Helpers

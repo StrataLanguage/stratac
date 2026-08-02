@@ -298,15 +298,15 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(found, false, false, false, t->name);
     }
 
-    if (IsBoxTypeName(t->name))
+    if (IsOwningType(t->name))
     {
-        char inner[128];
         TypeDesc td = TypeDescMake(b->m_ptrTy, false, false, false, NULL);
+        Str _inner = OwningInnerStr(t->name);
 
-        if (BoxInnerTypeName(t->name, inner, sizeof inner))
+        if (_inner.data)
         {
             td.isBox = true;
-            td.boxInner = arena_strdup(b->m_arena, inner);
+            td.boxInner = arena_strndup(b->m_arena, _inner.data, _inner.len);
         }
 
         return td;
@@ -484,7 +484,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
 
-        bool byPtr = p->mod != ModNone || structVal || IsBoxTypeName(p->type.name);
+        bool byPtr = p->mod != ModNone || structVal || IsOwningType(p->type.name);
         info->paramByPtr[i] = byPtr;
 
         params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
@@ -538,7 +538,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         TypeDesc typeDesc = Resolve(b, &p->type);
 
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
-        bool boxParam = IsBoxTypeName(p->type.name);
+        bool boxParam = IsOwningType(p->type.name);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
 
@@ -1181,7 +1181,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
         /* box<T> coerced to T: if the param is a plain struct (not box),
            and the arg is a box, the heap pointer IS the T* the param wants. */
         bool paramIsBoxType = fd && k < fd->params.count
-            && IsBoxTypeName(((ParamDecl*)VecGet(&fd->params, k))->type.name);
+            && IsOwningType(((ParamDecl*)VecGet(&fd->params, k))->type.name);
 
         bool argIsBox = false;
 
@@ -1767,7 +1767,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
         TypeDesc typeDesc = Resolve(b, &gd->type);
 
-        if (IsBoxTypeName(gd->type.name))
+        if (IsOwningType(gd->type.name))
         {
             if (b->m_diag)
             {
