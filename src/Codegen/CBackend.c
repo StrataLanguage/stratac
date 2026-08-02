@@ -785,7 +785,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, strcmp(targetType, "double") == 0 ? "fmod(" : "fmodf(");
             EmitLValue(emitter, assign->target);
             SbPuts(&emitter->out, ", ");
-            EmitExpr(emitter, assign->value);
+            EmitScalarValue(emitter, assign->value);
             SbPuts(&emitter->out, "))");
 
             return;
@@ -796,7 +796,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPutc(&emitter->out, ' ');
         SbPuts(&emitter->out, AssignSpelling(assign->op));
         SbPutc(&emitter->out, ' ');
-        EmitExpr(emitter, assign->value);
+        EmitScalarValue(emitter, assign->value);
         SbPutc(&emitter->out, ')');
 
         return;

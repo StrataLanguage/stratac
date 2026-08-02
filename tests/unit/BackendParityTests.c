@@ -116,6 +116,16 @@ STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
         28);
 }
 
+STRATA_TEST(llvm_and_tcc_box_value_assigned_into_plain_ref_target_parity)
+{
+    /* box<Vec3> assigned into a plain `ref Vec3` target derefs on both backends. */
+    CheckParity(
+        "struct Vec3 { float x; };\n"
+        "void mutate(ref Vec3 inBox) { box<Vec3> newBox = Vec3 { .x = 100.0 }; inBox = newBox; }\n"
+        "int entry() { Vec3 w = Vec3 { .x = 0.0 }; mutate(w); return (int)w.x; }\n",
+        100);
+}
+
 STRATA_TEST(llvm_and_tcc_box_compound_assign_parity)
 {
     /* `val -= amt;` through a `ref box<int>` mutates in place on both backends. */

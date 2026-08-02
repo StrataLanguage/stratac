@@ -97,6 +97,22 @@ Vec3 return_bare_vec3()
     return newVec;   // reads newVec's value, then frees it (not a move)
 }
 
+void drop(box<Vec3> inBox)
+{
+}
+
+// A ref box<T> is a view of the CALLER's box, not something this function
+// owns - it can only be written through (`inBox = someVec3;` mutates the
+// caller's existing box in place), never rebound to a different box
+// (`inBox = someOtherBox;` is a compile error: that would silently rebind
+// the caller's variable too, invisibly to the caller's own move-tracking).
+void mutate_box(ref box<Vec3> inBox)
+{
+    box<Vec3> newBox = { .x = 100 };
+    Vec3 newBoxVal = newBox;   // read newBox's value (not a move)
+    inBox = newBoxVal;         // content-assign: overwrites in place
+}
+
 // ---------------------------------------------------------------------------
 // Passing box data to the host via an `extern` function
 // ---------------------------------------------------------------------------
@@ -117,10 +133,12 @@ float entry()
     float b = host_length_sq(Vec3 { .x = v.x, .y = v.y, .z = v.z });
 
     box<Vec3> w = make_vec3(0.0, 3.0, 4.0);
-    float d = consume_box(w);                  // owned param — w moved, callee frees
-    // w is now moved — using it would be a compile error
+    mutate_box(w);                              // w's contents replaced in place (see above)
+    float d = 0.0;
+    //float d = consume_box(w);                  // owned param — would move w, callee frees;
+    // not used here since w.x is still read below
 
     Vec3 bare = return_bare_vec3();
 
-    return a + b + d + i + bare.x;
+    return a + b + d + i + bare.x + w.x;
 }

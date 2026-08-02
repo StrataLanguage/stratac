@@ -83,6 +83,242 @@ STRATA_TEST(box_in_loop_does_not_crash)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(box_ref_param_passed_to_owned_param_is_an_error)
+{
+    /* `ref box<T>` is a borrow of the CALLER's box - the callee doesn't own
+       it, so passing it on to a consuming (owned, non-ref) parameter must
+       be rejected. Without this, the callee frees/nulls the caller's own
+       box out from under it with no way for the caller's sema to notice,
+       since move-tracking is per-function: the caller still thinks its box
+       is live after the call returns, and dereferencing it crashes. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "void drop(box<V> v) {}\n"
+        "void mutate(ref box<V> inBox) {\n"
+        "  drop(inBox);\n"    /* error: inBox is borrowed, not owned */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'inBox' cannot be moved"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_ref_param_moved_into_local_is_an_error)
+{
+    /* Same rule, different move context: moving a ref box<T> param into a
+       fresh local also isn't a real move - the callee still doesn't own
+       the source. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "void mutate(ref box<V> inBox) {\n"
+        "  box<V> stolen = inBox;\n"   /* error */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'inBox' cannot be moved"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_ref_param_returned_is_an_error)
+{
+    /* Same rule again: returning a ref box<T> param as box<T> would move
+       the caller's box out through the return value. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "box<V> steal(ref box<V> inBox) {\n"
+        "  return inBox;\n"   /* error */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'inBox' cannot be moved"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
+{
+    /* `inBox = newBox;` (RHS is itself a box<T>) looks like a move-assign
+       target, so sema tries the real box-reassign path - and rejects it,
+       since `inBox` is a `ref box<T>` borrow, not something this function
+       owns to rebind. Silently allowing this would rebind the CALLER's
+       variable out from under it via the shared slot, invisibly to the
+       caller's own move-tracking. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Vec3 { float x; };\n"
+        "void mutate_box(ref box<Vec3> inBox) {\n"
+        "  box<Vec3> newBox = Vec3 { .x = 100.0 };\n"
+        "  inBox = newBox;\n"    /* error: rebind through a ref */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'inBox' cannot be reassigned"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_ref_param_inner_value_assign_mutates_in_place)
+{
+    /* The legitimate way to write through a ref box<T>: assign its INNER
+       value (a plain Vec3, not box<Vec3>). This overwrites the contents of
+       whatever box the caller already owns, in place - the caller's box
+       keeps the same identity, only its data changes. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "box<Vec3> make_vec3(float x) { box<Vec3> v = Vec3 { .x = x }; return v; }\n"
+        "void mutate_box(ref box<Vec3> inBox) {\n"
+        "  box<Vec3> newBox = Vec3 { .x = 100.0 };\n"
+        "  Vec3 newBoxVal = newBox;\n"   /* read newBox's value (not a move) */
+        "  inBox = newBoxVal;\n"          /* content-assign, in place */
+        "}\n"
+        "int entry() {\n"
+        "  box<Vec3> w = make_vec3(0.0);\n"
+        "  mutate_box(w);\n"
+        "  return (int)w.x;\n"    /* 100 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 100);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_value_assigned_into_plain_ref_target_derefs)
+{
+    /* Assigning a box<T> value directly into a plain (non-box) `ref T`
+       target - not `ref box<T>` - reads through the box in place, same
+       box<T> -> T coercion already used for var-decl inits/call args/
+       returns. Was previously unvalidated by sema and unhandled by
+       codegen, which emitted an invalid `Vec3 = Vec3*` C assignment. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Vec3 { float x; };\n"
+        "void mutate(ref Vec3 inBox) {\n"
+        "  box<Vec3> newBox = Vec3 { .x = 100.0 };\n"
+        "  inBox = newBox;\n"     /* box<Vec3> -> Vec3, in place */
+        "}\n"
+        "int entry() {\n"
+        "  Vec3 w = Vec3 { .x = 0.0 };\n"
+        "  mutate(w);\n"
+        "  return (int)w.x;\n"    /* 100 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 100);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_value_assigned_into_mismatched_ref_target_is_an_error)
+{
+    /* box<Pistol> assigned into a plain (non-box) `ref Vec3` target - the
+       inner types don't match, so this is a genuine mismatch and must
+       still be rejected, not silently passed through like before. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Pistol { int ammo; };\n"
+        "struct Vec3 { float x; };\n"
+        "void mutate(ref Vec3 target) {\n"
+        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
+        "  target = p;\n"    /* error: box<Pistol> into ref Vec3 */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot assign"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_ref_param_reborrow_still_allowed)
+{
+    /* Passing a ref box<T> param on to ANOTHER ref box<T> param is a
+       re-borrow, not a move - must still be allowed. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct V { int x; };\n"
+        "int read_it(ref box<V> v) { return v.x; }\n"
+        "int reborrow(ref box<V> inBox) { return read_it(inBox); }\n"
+        "int entry() {\n"
+        "  box<V> v = V { .x = 9 };\n"
+        "  return reborrow(v);\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 9);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(box_compound_assign_mutates_contents_in_place)
 {
     /* `val -= amt;` on a box<int> target mutates the boxed value in place -
@@ -515,7 +751,7 @@ STRATA_TEST(box_global_moved_into_local_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "g' is global, and cannot be moved"));
+    STRATA_CHECK(Contains(d, "g' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -535,7 +771,7 @@ STRATA_TEST(box_global_passed_to_owned_param_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "g' is global, and cannot be moved"));
+    STRATA_CHECK(Contains(d, "g' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -554,7 +790,7 @@ STRATA_TEST(box_global_returned_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "g' is global, and cannot be moved"));
+    STRATA_CHECK(Contains(d, "g' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

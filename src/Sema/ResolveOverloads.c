@@ -13,6 +13,7 @@ typedef struct {
     StrMap m_constVars;
     StrMap m_movedBoxes;
     StrMap m_boxGlobals;
+    StrMap m_refBoxParams;
     const char* m_currentReturnType;
 } Resolver;
 
@@ -64,14 +65,38 @@ static bool IsBoxGlobalName(const Resolver* r, const char* name)
     return StrMapGet(&r->m_boxGlobals, name) != NULL;
 }
 
-/* Marks 'name' moved, unless it's a box global. */
+/* The identifier a dotted move key is rooted in - "holder.gun" -> "holder",
+   "p" -> "p". Used to check the underlying binding (e.g. a ref box<T>
+   param), not just the literal field-access text. */
+static const char* KeyRoot(Arena* arena, const char* key)
+{
+    const char* dot = strchr(key, '.');
+
+    return dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
+}
+
+/* Marks 'name' moved, unless it's a box global or rooted in a `ref box<T>`
+   param - a borrow of the caller's box, which the callee doesn't own and
+   can't validly move out of (the caller's own liveness tracking has no way
+   to see a move that happens inside a different function). */
 static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 {
     if (IsBoxGlobalName(r, name))
     {
         DiagErrorFmt(r->m_diag, range,
-                     "box '%s' is global, and cannot be moved (use a `ref box<T>` or simply `T`)",
+                     "'%s' cannot be moved as it is not owned because it is global. (use a `ref box<T>` or simply `T`)",
                      name, name);
+
+        return;
+    }
+
+    const char* root = KeyRoot(r->m_arena, name);
+
+    if (StrMapGet(&r->m_refBoxParams, root))
+    {
+        DiagErrorFmt(r->m_diag, range,
+                     "'%s' cannot be moved as it is not owned because it is bound as a ref.",
+                     name);
 
         return;
     }
@@ -610,6 +635,22 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
                     return;
                 }
 
+                /* A `ref box<T>` is a view of the caller's box binding, not
+                   something this function owns - rebinding it (`inBox =
+                   otherBox;`) would silently rebind the caller's variable
+                   too. Only the box's contents can be assigned through a
+                   ref (`inBox = someInnerValue;`), same restriction as a
+                   box global. */
+                if (StrMapGet(&r->m_refBoxParams, targetName))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "'%s' cannot be reassigned as it is not owned because it is bound as a ref; "
+                                 "assign its inner value instead",
+                                 targetName);
+
+                    return;
+                }
+
                 MarkBoxLive(r, targetName);
 
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
@@ -643,6 +684,22 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         {
             ResolveExpr(r, a->target, scope);
             ResolveExpr(r, a->value, scope);
+
+            /* A box<T> value assigned into a plain (non-box) T target - a
+               ref T param, a local, a field - reads through the box (same
+               "box<T> -> T" coercion already used for var-decl inits, call
+               args, and returns), not a move. */
+            if (tt)
+            {
+                const char* vt = InferType(r, a->value, scope);
+
+                if (vt[0] != '\0' && !IsAssignableType(r, tt, vt))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "cannot assign '%s' to '%s' of type '%s'",
+                                 vt, ((IdentExpr*)a->target)->name, tt);
+                }
+            }
         }
 
         return;
@@ -1053,6 +1110,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
     StrMapInit(&r.m_boxGlobals);
+    StrMapInit(&r.m_refBoxParams);
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {
@@ -1123,6 +1181,12 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             r.m_movedBoxes.count = 0;
         }
 
+        if (r.m_refBoxParams.cap > 0)
+        {
+            memset(r.m_refBoxParams.keys, 0, r.m_refBoxParams.cap * sizeof(const char*));
+            r.m_refBoxParams.count = 0;
+        }
+
         for (size_t j = 0; j < functionDecl->params.count; j++)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
@@ -1131,6 +1195,11 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             if (p->type.isConst)
             {
                 StrMapPut(&r.m_constVars, p->name, (void*)1);
+            }
+
+            if (IsOwningType(p->type.name) && p->mod == ModRef)
+            {
+                StrMapPut(&r.m_refBoxParams, p->name, (void*)1);
             }
         }
 
@@ -1253,6 +1322,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_constVars);
     StrMapFree(&r.m_movedBoxes);
     StrMapFree(&r.m_boxGlobals);
+    StrMapFree(&r.m_refBoxParams);
     StrMapFree(&byMangled);
     TypeRegistryFree(&r.m_registry);
 }
