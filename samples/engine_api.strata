@@ -33,6 +33,11 @@ void drop(box<int> x)
 {
 }
 
+void mutate_box(ref box<int> inVal)
+{
+    inVal++;
+}
+
 int run()
 {
     Entity e = world_spawn(10, 20);
@@ -41,6 +46,10 @@ int run()
     world_destroy(e);
 
     sub(x_after, 25);
+    mutate_box(x_after);
+
+    // Would be an error:
+    //drop(x_after);
 
     return x_after;
 }

@@ -30,6 +30,7 @@ typedef struct {
     Vec boxVars;                 /* in-scope box-local OwnEntry* (current function) */
     const char* currentReturn;  /* current function's return type name */
     unsigned retCounter;
+    unsigned boxTmpCounter;      /* unique names for inline struct-init field boxing */
 } CEmitter;
 
 typedef struct {
@@ -515,12 +516,51 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             SbPuts(&emitter->out, ", ");
         }
 
-        if (type && index < type->fields.count)
+        FieldDecl* declaration = (type && index < type->fields.count)
+            ? (FieldDecl*)VecGet(&type->fields, index)
+            : NULL;
+
+        if (declaration)
         {
-            FieldDecl* declaration = (FieldDecl*)VecGet(&type->fields, index);
             SbPutc(&emitter->out, '.');
             SbPuts(&emitter->out, FieldName(emitter, declaration->name));
             SbPuts(&emitter->out, " = ");
+        }
+
+        if (declaration && IsOwningType(declaration->type.name))
+        {
+            const char* valueType = ExprType(emitter, field->value);
+
+            if (valueType[0] != '\0' && !IsOwningType(valueType))
+            {
+                /* box<T> field initialized from a bare T value/literal -
+                   heap-box it inline. A raw `.field = (T){...}` here would
+                   be a type mismatch in C (the field is really T*), and
+                   silently truncating/reinterpreting it would corrupt the
+                   struct - so allocate storage for it via a GNU statement
+                   expression, which is valid in any expression position
+                   (including a nested struct-init field). */
+                const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
+                const char* innerC = TypeNameC(emitter, inner);
+                char tmp[32];
+                snprintf(tmp, sizeof tmp, "strata__boxtmp%u", emitter->boxTmpCounter++);
+
+                SbPuts(&emitter->out, "({ ");
+                SbPuts(&emitter->out, innerC);
+                SbPuts(&emitter->out, " *");
+                SbPuts(&emitter->out, tmp);
+                SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+                SbPuts(&emitter->out, innerC);
+                SbPuts(&emitter->out, ")); *");
+                SbPuts(&emitter->out, tmp);
+                SbPuts(&emitter->out, " = ");
+                EmitExpr(emitter, field->value);
+                SbPuts(&emitter->out, "; ");
+                SbPuts(&emitter->out, tmp);
+                SbPuts(&emitter->out, "; })");
+
+                continue;
+            }
         }
 
         EmitExpr(emitter, field->value);
@@ -813,14 +853,31 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeIncDec:
     {
         const IncDecExpr* increment = (const IncDecExpr*)node;
+        const char* operandType = ExprType(emitter, increment->operand);
+        bool throughBox = IsOwningType(operandType);
+
         SbPutc(&emitter->out, '(');
-        
+
         if (increment->isPrefix)
         {
             SbPuts(&emitter->out, increment->isDec ? "--" : "++");
         }
 
+        /* Parenthesize the box dereference as a unit so postfix ++/--
+           binds to the boxed int lvalue, not to the box pointer itself -
+           `*(*inVal)++` would parse as `*((*inVal)++)` and increment the
+           pointer instead of the pointee. */
+        if (throughBox)
+        {
+            SbPuts(&emitter->out, "(*");
+        }
+
         EmitLValue(emitter, increment->operand);
+
+        if (throughBox)
+        {
+            SbPutc(&emitter->out, ')');
+        }
 
         if (!increment->isPrefix)
         {
@@ -892,13 +949,51 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             continue;
         }
 
-        Pad(emitter);
-        SbPuts(&emitter->out, cName);
-        SbPuts(&emitter->out, "->");
-        SbPuts(&emitter->out, FieldName(emitter, fd->name));
-        SbPuts(&emitter->out, " = ");
-        EmitExpr(emitter, sf->value);
-        SbPuts(&emitter->out, ";\n");
+        bool fieldNeedsBoxing = IsOwningType(fd->type.name);
+
+        if (fieldNeedsBoxing)
+        {
+            const char* valueType = ExprType(emitter, sf->value);
+            fieldNeedsBoxing = valueType[0] != '\0' && !IsOwningType(valueType);
+        }
+
+        if (fieldNeedsBoxing)
+        {
+            /* box<T> field initialized from a bare T value/literal - heap-box
+               it, same as a top-level `box<T> x = T{...};` local. Without
+               this, the field (really a T*) would be assigned a raw T
+               value: a C type mismatch that, if silently coerced, would
+               corrupt the struct. */
+            const char* fieldInner = OwningInnerCStr(emitter->arena, fd->type.name);
+            const char* fieldInnerC = TypeNameC(emitter, fieldInner);
+
+            Pad(emitter);
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, "->");
+            SbPuts(&emitter->out, FieldName(emitter, fd->name));
+            SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+            SbPuts(&emitter->out, fieldInnerC);
+            SbPuts(&emitter->out, "));\n");
+
+            Pad(emitter);
+            SbPutc(&emitter->out, '*');
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, "->");
+            SbPuts(&emitter->out, FieldName(emitter, fd->name));
+            SbPuts(&emitter->out, " = ");
+            EmitExpr(emitter, sf->value);
+            SbPuts(&emitter->out, ";\n");
+        }
+        else
+        {
+            Pad(emitter);
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, "->");
+            SbPuts(&emitter->out, FieldName(emitter, fd->name));
+            SbPuts(&emitter->out, " = ");
+            EmitExpr(emitter, sf->value);
+            SbPuts(&emitter->out, ";\n");
+        }
 
         /* A moved-into box field nulls its source. */
         const Node* movedFieldSource = IsOwningType(fd->type.name) ? MovableBoxSource(sf->value) : NULL;
@@ -1732,6 +1827,7 @@ static void EmitDefinitions(CEmitter* emitter)
         StrMapInit(&emitter->symbols);
         emitter->boxVars.count = 0;
         emitter->retCounter = 0;
+        emitter->boxTmpCounter = 0;
         emitter->currentReturn = function->returnType.name;
 
         for (size_t j = 0; j < emitter->mod->globals.count; ++j)
@@ -1814,6 +1910,7 @@ static void ResetEmitterForSyntheticFunction(CEmitter* emitter)
     StrMapInit(&emitter->symbols);
     emitter->boxVars.count = 0;
     emitter->retCounter = 0;
+    emitter->boxTmpCounter = 0;
     emitter->currentReturn = "void";
 
     for (size_t j = 0; j < emitter->mod->globals.count; ++j)
@@ -1940,6 +2037,7 @@ BuiltCModule BuildCModuleWithSources(
     VecInit(&emitter.boxVars);
     emitter.currentReturn = "int";
     emitter.retCounter = 0;
+    emitter.boxTmpCounter = 0;
 
     SbPuts(&emitter.out,
         "/* Generated by Strata. */\n"

@@ -126,6 +126,49 @@ STRATA_TEST(llvm_and_tcc_box_value_assigned_into_plain_ref_target_parity)
         100);
 }
 
+STRATA_TEST(llvm_and_tcc_box_same_variable_two_owned_params_parity)
+{
+    /* The T** ABI means aliasing the same box into two owned params in one
+       call must be safe (no double-free) identically on both backends. */
+    CheckParity(
+        "struct Stage { int fuel; };\n"
+        "int ignite(box<Stage> primary, box<Stage> backup) { return primary.fuel + backup.fuel; }\n"
+        "int entry() { box<Stage> stage = Stage { .fuel = 50 }; return ignite(stage, stage); }\n",
+        100);
+}
+
+STRATA_TEST(llvm_and_tcc_box_ref_chain_three_levels_parity)
+{
+    /* A 3-deep ref-box re-borrow chain must mutate the original identically
+       on both backends. */
+    CheckParity(
+        "struct Stage { int fuel; };\n"
+        "void drain_innermost(ref box<Stage> s) { s.fuel = s.fuel - 1; }\n"
+        "void relay_b(ref box<Stage> s) { drain_innermost(s); }\n"
+        "void relay_a(ref box<Stage> s) { relay_b(s); }\n"
+        "int entry() { box<Stage> booster = Stage { .fuel = 100 }; relay_a(booster); return booster.fuel; }\n",
+        99);
+}
+
+STRATA_TEST(llvm_and_tcc_box_move_and_reassign_in_loop_parity)
+{
+    /* Move-then-revalidate every loop iteration, checked on both backends. */
+    CheckParity(
+        "struct Stage { int fuel; };\n"
+        "box<Stage> refuel(int amount) { box<Stage> s = Stage { .fuel = amount }; return s; }\n"
+        "int burn(box<Stage> s) { return s.fuel; }\n"
+        "int entry() {\n"
+        "  box<Stage> booster = refuel(5);\n"
+        "  int total = 0;\n"
+        "  for (int i = 0; i < 50; i++) {\n"
+        "    total += burn(booster);\n"
+        "    booster = refuel(5);\n"
+        "  }\n"
+        "  return total;\n"
+        "}\n",
+        250);
+}
+
 STRATA_TEST(llvm_and_tcc_box_compound_assign_parity)
 {
     /* `val -= amt;` through a `ref box<int>` mutates in place on both backends. */
