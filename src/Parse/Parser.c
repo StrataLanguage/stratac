@@ -1,5 +1,7 @@
 #include "Parse/Parser.h"
 
+#include "Codegen/TypeRegistry.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -526,7 +528,12 @@ static Node* ParseFunction(Parser* p)
         return (Node*)node;
     }
 
-    p->m_returnType = node->returnType.name;
+    /* `return { ... };` infers its struct type from the function's return
+       type; for a box<T>-returning function that's T, not "box<T>" - the
+       struct is boxed at the return site (see NodeReturn in the backends). */
+    p->m_returnType = IsOwningType(node->returnType.name)
+        ? OwningInnerCStr(p->m_arena, node->returnType.name)
+        : node->returnType.name;
     node->body = ParseBlock(p);
     p->m_returnType = NULL;
 
@@ -786,7 +793,14 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace)
             {
-                node->init = ParseStructInitBody(p, start, type.name);
+                /* `box<T> x = { ... };` infers T (the box's inner type),
+                   not "box<T>" - the struct is boxed at the declaration
+                   (see EmitVarDecl in the backends). */
+                const char* initTypeName = IsOwningType(type.name)
+                    ? OwningInnerCStr(p->m_arena, type.name)
+                    : type.name;
+
+                node->init = ParseStructInitBody(p, start, initTypeName);
             }
             else
             {

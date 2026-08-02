@@ -6,7 +6,7 @@ struct Pistol
 
 Pistol MakePistol(int ammo)
 {
-    return Pistol { .ammo = ammo };
+    return { .ammo = ammo };
 }
 
 void Shoot(Pistol pistol)
