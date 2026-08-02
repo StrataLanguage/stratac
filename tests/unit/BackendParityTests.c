@@ -116,6 +116,16 @@ STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
         28);
 }
 
+STRATA_TEST(llvm_and_tcc_box_passed_to_by_value_scalar_param_parity)
+{
+    /* A by-value (non-indirect) param - handles hit this same path - must
+       receive the dereferenced value, not the box's own heap pointer. */
+    CheckParity(
+        "int take(int x) { return x; }\n"
+        "int entry() { box<int> b = 41; return take(b); }\n",
+        41);
+}
+
 STRATA_TEST(llvm_and_tcc_box_cast_via_opaque_marker_parity)
 {
     /* Allowed since Any is opaque; each cast moves its source. */

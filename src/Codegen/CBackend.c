@@ -376,6 +376,7 @@ static const Node* MovableBoxSource(const Node* n)
 }
 
 static void EmitExpr(CEmitter* emitter, const Node* node);
+static void EmitScalarValue(CEmitter* emitter, const Node* node);
 
 static void EmitLValue(CEmitter* emitter, const Node* node)
 {
@@ -603,7 +604,10 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         }
         else
         {
-            EmitExpr(emitter, argument);
+            /* A box arg passed to a by-value (non-indirect) param - e.g. a
+               plain handle - must be dereferenced to its value, not passed
+               as the box's own heap pointer. */
+            EmitScalarValue(emitter, argument);
         }
     }
 

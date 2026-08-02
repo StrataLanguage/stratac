@@ -106,10 +106,7 @@ Vec3 return_bare_vec3()
 
 extern float host_length_sq(const Vec3 v);
 
-// ---------------------------------------------------------------------------
-// Entry point — ties everything together
-// ---------------------------------------------------------------------------
-
+// Entrypoint
 float entry()
 {
     box<Vec3> v = make_vec3(1.0, 2.0, 0.0);   // factory return — caller owns

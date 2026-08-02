@@ -1247,7 +1247,10 @@ static Value EmitCall(Builder* b, CallExpr* n)
         }
         else
         {
-            args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : EmitExpr(b, argNode).value;
+            /* A box arg passed to a by-value (non-indirect) param - e.g. a
+               plain handle - must be dereferenced to its value, not passed
+               as the box's own heap pointer. */
+            args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : DerefBoxValue(b, EmitExpr(b, argNode)).value;
         }
     }
 
