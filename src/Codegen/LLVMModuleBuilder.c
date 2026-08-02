@@ -112,6 +112,14 @@ static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
     {
         elem = LLVMInt1TypeInContext(ctx);
     }
+    else if (strcmp(t->elemIr, "i8") == 0)
+    {
+        elem = LLVMInt8TypeInContext(ctx);
+    }
+    else if (strcmp(t->elemIr, "i16") == 0)
+    {
+        elem = LLVMInt16TypeInContext(ctx);
+    }
     else if (strcmp(t->elemIr, "i32") == 0)
     {
         elem = LLVMInt32TypeInContext(ctx);

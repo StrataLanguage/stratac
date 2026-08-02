@@ -107,11 +107,29 @@ void mutate_box(ref box<Vec3> inBox)
     inBox = newBoxVal;         // content-assign: overwrites in place
 }
 
-extern float host_length_sq(const Vec3 v);
+extern float host_length_sq(Vec3 v);
+
+handle BaseEntity;
+handle Entity extends BaseEntity;
+
+void take_entity(box<BaseEntity> be)
+{
+}
+
+extern void get_entity(ref Entity outEntity);
+extern void print_entity_name(Entity entity);
 
 // Entrypoint
 float entry()
 {
+    Entity e;
+    get_entity(e);
+
+    box<Entity> eBox = e;
+    print_entity_name(eBox);
+    box<BaseEntity> casted = (box<BaseEntity>)eBox;
+    take_entity(casted);
+
     box<Vec3> v = make_vec3(1.0, 2.0, 0.0);   // factory return — caller owns
 
     float a = read_through_ref(v);             // borrow — v stays alive
@@ -120,6 +138,7 @@ float entry()
     float b = host_length_sq(Vec3 { .x = v.x, .y = v.y, .z = v.z });
 
     box<Vec3> w = make_vec3(0.0, 3.0, 4.0);
+    host_length_sq(w);
     mutate_box(w);                              // w's contents replaced in place (see above)
     float d = 0.0;
     //float d = consume_box(w);                  // owned param — would move w, callee frees;

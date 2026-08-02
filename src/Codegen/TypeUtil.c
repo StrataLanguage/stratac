@@ -108,6 +108,26 @@ MappedType MapType(const TypeName* t)
         return MakePrimitive(false, true, 64, "i64", vec);
     }
 
+    if (strcmp(base, "sbyte") == 0)
+    {
+        return MakePrimitive(false, false, 8, "i8", vec);
+    }
+
+    if (strcmp(base, "byte") == 0)
+    {
+        return MakePrimitive(false, true, 8, "i8", vec);
+    }
+
+    if (strcmp(base, "short") == 0)
+    {
+        return MakePrimitive(false, false, 16, "i16", vec);
+    }
+
+    if (strcmp(base, "ushort") == 0)
+    {
+        return MakePrimitive(false, true, 16, "i16", vec);
+    }
+
     if (strcmp(base, "float") == 0)
     {
         return MakePrimitive(true, false, 32, "float", vec);
@@ -127,6 +147,10 @@ bool IsNumeric(const char* t)
         || strcmp(t, "uint") == 0
         || strcmp(t, "long") == 0
         || strcmp(t, "ulong") == 0
+        || strcmp(t, "byte") == 0
+        || strcmp(t, "sbyte") == 0
+        || strcmp(t, "short") == 0
+        || strcmp(t, "ushort") == 0
         || strcmp(t, "float") == 0
         || strcmp(t, "double") == 0
         || strcmp(t, "bool") == 0;

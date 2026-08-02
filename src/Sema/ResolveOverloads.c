@@ -798,7 +798,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         }
         else if (TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
         {
-            DiagError(r->m_diag, structInitExpr->base.range, "cannot braced-initialize handles");
+            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is opaque and may not be instantiated", structInitExpr->typeName);
         }
 
         size_t positionalCount = 0;

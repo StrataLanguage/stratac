@@ -199,6 +199,8 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
         if (mapped.isFloat && mapped.bits == 32) return "float";
         if (mapped.isFloat && mapped.bits == 64) return "double";
         if (mapped.bits == 1) return "_Bool";
+        if (mapped.bits == 8) return mapped.isUnsigned ? "unsigned char" : "signed char";
+        if (mapped.bits == 16) return mapped.isUnsigned ? "unsigned short" : "short";
         if (mapped.isUnsigned) return "unsigned int";
         return "int";
     }
@@ -208,7 +210,7 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
         return Encode(emitter, "strata__type_", name);
     }
 
-    DiagErrorFmt(emitter->diag, SRC_INVALID, "C backend does not know type '%s'", name);
+    DiagErrorFmt(emitter->diag, SRC_INVALID, "don't know '%s'", name);
     return "void*";
 }
 
@@ -395,7 +397,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
         CSymbol* symbol = (CSymbol*)StrMapGet(&emitter->symbols, ident->name);
         if (!symbol)
         {
-            DiagErrorFmt(emitter->diag, node->range, "C backend cannot resolve variable '%s'", ident->name);
+            DiagErrorFmt(emitter->diag, node->range, "don't know '%s'", ident->name);
             SbPuts(&emitter->out, "0");
 
             return;

@@ -44,6 +44,8 @@ char* LLVMPrintModuleToString(LLVMModuleRef m);
 void LLVMDisposeMessage(char* message);
 
 LLVMTypeRef LLVMInt1TypeInContext(LLVMContextRef c);
+LLVMTypeRef LLVMInt8TypeInContext(LLVMContextRef c);
+LLVMTypeRef LLVMInt16TypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMInt32TypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMInt64TypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMHalfTypeInContext(LLVMContextRef c);

@@ -158,6 +158,10 @@ static bool LooksLikeVarDecl(const Parser* p)
     case TokKwInt:
     case TokKwLong:
     case TokKwUlong:
+    case TokKwByte:
+    case TokKwSbyte:
+    case TokKwShort:
+    case TokKwUshort:
     case TokKwFloat:
     case TokKwDouble:
     case TokKwString:
@@ -226,6 +230,10 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     case TokKwUint:   name = "uint";   break;
     case TokKwLong:   name = "long";   break;
     case TokKwUlong:  name = "ulong";  break;
+    case TokKwByte:   name = "byte";   break;
+    case TokKwSbyte:  name = "sbyte";  break;
+    case TokKwShort:  name = "short";  break;
+    case TokKwUshort: name = "ushort"; break;
     case TokKwFloat:  name = "float";  break;
     case TokKwDouble: name = "double"; break;
     case TokKwString: name = "string"; break;
@@ -1085,6 +1093,8 @@ static Node* ParseUnary(Parser* p)
 
             bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint ||
                 next.kind == TokKwLong || next.kind == TokKwUlong ||
+                next.kind == TokKwByte || next.kind == TokKwSbyte ||
+                next.kind == TokKwShort || next.kind == TokKwUshort ||
                 next.kind == TokKwFloat || next.kind == TokKwDouble ||
                 next.kind == TokKwBool;
 

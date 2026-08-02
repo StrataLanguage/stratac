@@ -261,3 +261,21 @@ STRATA_TEST(llvm_and_tcc_float_remainder_parity)
         "int entry() { float x = 7.5; x %= 2.0; return (int)(x * 10.0 + (5.5 % 2.0)); }",
         16);
 }
+
+STRATA_TEST(llvm_and_tcc_narrow_int_types_parity)
+{
+    /* Exercises wraparound behavior for byte/sbyte/short/ushort on both backends. */
+    CheckParity(
+        "int entry() {\n"
+        "  byte b = 200;\n"
+        "  b = b + 100;\n"        /* wraps: 300 % 256 = 44 */
+        "  sbyte sb = 100;\n"
+        "  sb = sb + 50;\n"       /* wraps: 150 - 256 = -106 */
+        "  short s = 30000;\n"
+        "  s = s + 10000;\n"      /* wraps: 40000 - 65536 = -25536 */
+        "  ushort us = 60000;\n"
+        "  us = us + 10000;\n"    /* wraps: 70000 % 65536 = 4464 */
+        "  return (int)b + (int)sb + (int)s + (int)us;\n"
+        "}\n",
+        44 + (-106) + (-25536) + 4464);
+}
