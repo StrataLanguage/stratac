@@ -734,6 +734,28 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
     Value base = EmitExpr(b, n->base_node);
 
+    if (base.typeDesc.isBox && base.typeDesc.boxInner)
+    {
+        /* A box-typed value with no addressable lvalue (e.g. a call result
+           used directly: `MakeThing().field`) - GEP+load through the
+           pointer instead of extracting from an aggregate value. */
+        LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, base.typeDesc.boxInner);
+        int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.boxInner, n->member);
+
+        if (structTy && idx >= 0)
+        {
+            const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.boxInner);
+            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
+            TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
+
+            LLVMValueRef idxs[2] = { IdxConst(b, 0), IdxConst(b, (unsigned)idx) };
+            LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, base.value, idxs, 2, "f");
+            LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
+
+            return ValueMake(v, fieldTypeDesc);
+        }
+    }
+
     if (base.typeDesc.structTypeName)
     {
         int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.structTypeName, n->member);
@@ -1415,19 +1437,37 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (r->value)
         {
-            /* Coerce derefs a box value unless the return type is itself a
-               box, so v.typeDesc.isBox below means a genuine move. */
-            v = UnboxIfBox(b, Coerce(b, EmitExpr(b, r->value), b->m_curRet), b->m_curRet);
+            Value raw = EmitExpr(b, r->value);
 
-            /* Returning a box moves it out: null the source so the drop
-               below does not free it. */
-            if (v.typeDesc.isBox && r->value->kind == NodeIdent)
+            if (b->m_curRet.isBox && !raw.typeDesc.isBox)
             {
-                LValue src = EmitLValue(b, r->value);
+                /* Return type is box<T> but the expression produces a plain
+                   T (e.g. `return Pistol{...};`): box it, same as a
+                   `box<T> x = ...;` local. */
+                TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)b->m_curRet.boxInner});
+                LLVMValueRef size = SizeOfConst(b, innerTd.type);
+                LLVMValueRef args[1] = { size };
+                StrataAllocFn(b);
+                LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "heap");
+                LLVMBuildStore(b->m_builder, Coerce(b, raw, innerTd).value, heap);
+                v = ValueMake(heap, b->m_curRet);
+            }
+            else
+            {
+                /* Coerce derefs a box value unless the return type is itself
+                   a box, so v.typeDesc.isBox below means a genuine move. */
+                v = UnboxIfBox(b, Coerce(b, raw, b->m_curRet), b->m_curRet);
 
-                if (src.valid)
+                /* Returning a box moves it out: null the source so the drop
+                   below does not free it. */
+                if (v.typeDesc.isBox && r->value->kind == NodeIdent)
                 {
-                    LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                    LValue src = EmitLValue(b, r->value);
+
+                    if (src.valid)
+                    {
+                        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+                    }
                 }
             }
         }

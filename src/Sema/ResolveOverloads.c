@@ -64,19 +64,73 @@ static bool IsBoxGlobalName(const Resolver* r, const char* name)
     return StrMapGet(&r->m_boxGlobals, name) != NULL;
 }
 
-/* Marks 'name' moved, unless it's a box global - those can't be moved at all. */
+/* Marks 'name' moved, unless it's a box global. */
 static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 {
     if (IsBoxGlobalName(r, name))
     {
         DiagErrorFmt(r->m_diag, range,
-                     "box global '%s' cannot be moved; pass it as 'ref %s' or access its fields directly",
+                     "box '%s' is global, and cannot be moved (use a `ref box<T>` or simply `T`)",
                      name, name);
 
         return;
     }
 
     MarkBoxMoved(r, name);
+}
+
+static void CopyStrMap(const StrMap* src, StrMap* dst)
+{
+    StrMapInit(dst);
+
+    for (size_t i = 0; i < src->cap; i++)
+    {
+        if (src->keys[i])
+        {
+            StrMapPut(dst, src->keys[i], src->values[i]);
+        }
+    }
+}
+
+static void ReplaceStrMapContents(StrMap* dst, const StrMap* src)
+{
+    StrMapClear(dst);
+
+    for (size_t i = 0; i < src->cap; i++)
+    {
+        if (src->keys[i])
+        {
+            StrMapPut(dst, src->keys[i], src->values[i]);
+        }
+    }
+}
+
+/* Conservatively folds 'other' into 'dst' (both moved-box state snapshots):
+   a name ends up moved if either side has it moved, else live if either
+   side has it live, else it's left as dst's value. Used to combine the
+   moved-state left by two mutually exclusive if/else branches, since only
+   one of them actually runs. */
+static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
+{
+    for (size_t i = 0; i < other->cap; i++)
+    {
+        if (!other->keys[i])
+        {
+            continue;
+        }
+
+        void* otherVal = other->values[i];
+        void* dstVal = StrMapGet(dst, other->keys[i]);
+
+        if (otherVal == (void*)1 || dstVal == (void*)1)
+        {
+            StrMapPut(dst, other->keys[i], (void*)1);
+        }
+        else if (otherVal == (void*)2 || dstVal == (void*)2)
+        {
+            StrMapPut(dst, other->keys[i], (void*)2);
+        }
+    }
 }
 
 static int CountByName(const Module* mod, const char* name)
@@ -101,6 +155,7 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope);
 static void WalkBlock(Resolver* r, Block* b, StrMap* scope);
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
+static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope);
 
 static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
 {
@@ -404,6 +459,21 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
     }
 }
 
+static bool IsAssignableType(const Resolver* r, const char* targetType, const char* valueType)
+{
+    if (IsOwningType(targetType))
+    {
+        Str inner = OwningInnerStr(targetType);
+
+        return StrEqC(inner, valueType) || strcmp(valueType, targetType) == 0;
+    }
+
+    return strcmp(valueType, targetType) == 0
+        || (IsNumeric(valueType) && IsNumeric(targetType))
+        || HandleExtendsFrom(&r->m_registry, valueType, targetType)
+        || StrEqC(OwningInnerStr(valueType), targetType);
+}
+
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 {
     if (!n)
@@ -586,11 +656,19 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
             StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
             ResolveExpr(r, field->value, scope);
 
+            FieldDecl* fieldDecl = NULL;
+
             if (field->name && field->name[0] != '\0')
             {
-                if (structType && TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name) < 0)
+                int idx = structType ? TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name) : -1;
+
+                if (structType && idx < 0)
                 {
                     DiagErrorFmt(r->m_diag, structInitExpr->base.range, "struct '%s' has no field named '%s'", structInitExpr->typeName, field->name);
+                }
+                else if (structType)
+                {
+                    fieldDecl = (FieldDecl*)VecGet(&structType->fields, (size_t)idx);
                 }
             }
             else
@@ -599,8 +677,33 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
                 {
                     DiagErrorFmt(r->m_diag, structInitExpr->base.range, "too many initializers for struct '%s'", structInitExpr->typeName);
                 }
+                else if (structType)
+                {
+                    fieldDecl = (FieldDecl*)VecGet(&structType->fields, positionalCount);
+                }
 
                 positionalCount++;
+            }
+
+            if (fieldDecl)
+            {
+                const char* fieldValueType = InferType(r, field->value, scope);
+
+                if (fieldValueType[0] != '\0' && !IsAssignableType(r, fieldDecl->type.name, fieldValueType))
+                {
+                    DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+                                 "field '%s' of struct '%s' cannot be initialized by expression of type '%s'",
+                                 fieldDecl->name, structInitExpr->typeName, fieldValueType);
+                }
+
+                /* A box<T> field initialized from an identifier moves it -
+                   the struct now owns that box, matching what codegen
+                   actually does (nulls the source when building the
+                   aggregate). */
+                if (IsOwningType(fieldDecl->type.name) && field->value->kind == NodeIdent)
+                {
+                    MoveBoxIdent(r, ((IdentExpr*)field->value)->name, structInitExpr->base.range);
+                }
             }
         }
 
@@ -609,6 +712,29 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     default:
         return;
     }
+}
+
+/* A loop body runs repeatedly, so a box move it contains must stay valid
+   across the "loop back" edge too - not just top-to-bottom once. Walk the
+   body once with diagnostics suppressed to propagate the moved-state one
+   iteration would leave behind (this is what the next iteration actually
+   starts from), then walk it again for real; any move violation that only
+   shows up because of that carried-over state - like moving the same box
+   on every iteration of a loop - is caught by the second walk. */
+static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope)
+{
+    DiagnosticEngine warmup;
+    DiagnosticEngineInit(&warmup);
+
+    DiagnosticEngine* realDiag = r->m_diag;
+    r->m_diag = &warmup;
+
+    WalkStmt(r, body, scope);
+
+    r->m_diag = realDiag;
+    DiagnosticEngineFree(&warmup);
+
+    WalkStmt(r, body, scope);
 }
 
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
@@ -655,22 +781,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ResolveExpr(r, vd->init, scope);
             const char* initType = InferType(r, vd->init, scope);
 
-            bool ok;
-
-            if (IsOwningType(vd->type.name))
-            {
-                /* Either box a value of the inner type, or move from another box<T>. */
-                Str _inner = OwningInnerStr(vd->type.name);
-                ok = StrEqC(_inner, initType) || strcmp(initType, vd->type.name) == 0;
-            }
-            else
-            {
-                /* Allow box<T> -> T coercion (implicit deref). */
-                ok = strcmp(initType, vd->type.name) == 0
-                    || (IsNumeric(initType) && IsNumeric(vd->type.name))
-                    || HandleExtendsFrom(&r->m_registry, initType, vd->type.name)
-                    || StrEqC(OwningInnerStr(initType), vd->type.name);
-            }
+            bool ok = IsAssignableType(r, vd->type.name, initType);
 
             if (initType[0] != '\0' && !ok)
             {
@@ -684,6 +795,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
+        /* Fresh binding: clear any stale moved-state a same-named variable
+           left behind (e.g. from a prior loop iteration or an earlier,
+           unrelated declaration in this function). */
+        StrMapPut(&r->m_movedBoxes, vd->name, NULL);
         StrMapPut(scope, vd->name, (void*)vd->type.name);
 
         return;
@@ -746,12 +861,29 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     {
         IfStmt* i = (IfStmt*)n;
         ResolveExpr(r, i->condition, scope);
+
+        /* then/else are mutually exclusive - each is walked from the same
+           starting moved-state (not one after the other), and the state
+           after the if is a conservative merge of both outcomes. */
+        StrMap beforeBranches;
+        CopyStrMap(&r->m_movedBoxes, &beforeBranches);
+
         WalkStmt(r, i->thenBranch, scope);
+
+        StrMap afterThen;
+        CopyStrMap(&r->m_movedBoxes, &afterThen);
+
+        ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
 
         if (i->elseBranch)
         {
             WalkStmt(r, i->elseBranch, scope);
         }
+
+        MergeMovedBoxes(&r->m_movedBoxes, &afterThen);
+
+        StrMapFree(&beforeBranches);
+        StrMapFree(&afterThen);
 
         return;
     }
@@ -759,7 +891,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     {
         WhileStmt* w = (WhileStmt*)n;
         ResolveExpr(r, w->condition, scope);
-        WalkStmt(r, w->body, scope);
+        WalkLoopBody(r, w->body, scope);
 
         return;
     }
@@ -788,8 +920,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         {
             ResolveExpr(r, fs->update, scope);
         }
-        
-        WalkStmt(r, fs->body, scope);
+
+        WalkLoopBody(r, fs->body, scope);
 
         return;
     }

@@ -854,7 +854,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
 }
 
 /* Initializes an already-declared box global (EmitGlobals left it null). */
-static void EmitBoxGlobalInitStmt(CEmitter* emitter, const char* cName, const char* innerC,
+static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* innerC,
                                   const char* inner, const Node* init)
 {
     const char* initType = ExprType(emitter, (Node*)init);
@@ -1115,13 +1115,43 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
     {
         const ReturnStmt* statement = (const ReturnStmt*)node;
 
+        const char* valueType = statement->value ? ExprType(emitter, statement->value) : "";
+        bool targetIsBox = emitter->currentReturn && IsOwningType(emitter->currentReturn);
+
+        /* The return type is box<T> but the expression produces a plain T
+           (e.g. `return Pistol{...};` from a box<Pistol>-returning
+           function): box it into a temporary, same as a `box<T> x = ...;`
+           local, then return the pointer. */
+        if (statement->value && targetIsBox
+            && !(valueType[0] != '\0' && strcmp(valueType, emitter->currentReturn) == 0))
+        {
+            const char* inner = OwningInnerCStr(emitter->arena, emitter->currentReturn);
+            const char* innerC = TypeNameC(emitter, inner);
+            char tmp[32];
+            snprintf(tmp, sizeof tmp, "strata__ret%u", emitter->retCounter++);
+
+            Pad(emitter);
+            SbPuts(&emitter->out, innerC);
+            SbPuts(&emitter->out, " *");
+            SbPuts(&emitter->out, tmp);
+            SbPuts(&emitter->out, ";\n");
+
+            EmitBoxInitStmt(emitter, tmp, innerC, inner, statement->value);
+            EmitDrops(emitter, 0);
+
+            Pad(emitter);
+            SbPuts(&emitter->out, "return ");
+            SbPuts(&emitter->out, tmp);
+            SbPuts(&emitter->out, ";\n");
+
+            return;
+        }
+
         /* A bare box<T> identifier is only a move when the function itself
            returns box<T>; otherwise it's read (dereferenced), not moved. */
         bool returnsBoxIdent = statement->value && statement->value->kind == NodeIdent
-            && IsOwningType(ExprType(emitter, statement->value));
-        bool movesBox = returnsBoxIdent
-            && emitter->currentReturn
-            && strcmp(emitter->currentReturn, ExprType(emitter, statement->value)) == 0;
+            && IsOwningType(valueType);
+        bool movesBox = returnsBoxIdent && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
 
         if (statement->value && emitter->boxVars.count > 0)
         {
@@ -1757,7 +1787,7 @@ static void EmitModuleInit(CEmitter* emitter)
         const char* innerC = TypeNameC(emitter, inner);
         const char* cName = GlobalName(emitter, global->name);
 
-        EmitBoxGlobalInitStmt(emitter, cName, innerC, inner, global->init);
+        EmitBoxInitStmt(emitter, cName, innerC, inner, global->init);
     }
 
     emitter->indent--;
