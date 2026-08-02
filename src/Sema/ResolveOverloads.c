@@ -252,6 +252,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             Node* arg = (Node*)VecGet(&c->args, j);
 
             const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone
+                && !best->isExtern
                 ? MovableBoxSourceKey(r, arg)
                 : NULL;
 
@@ -388,6 +389,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         Node* arg = (Node*)VecGet(&c->args, j);
 
         const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone
+            && !best->isExtern
             ? MovableBoxSourceKey(r, arg)
             : NULL;
 
@@ -413,6 +415,8 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
         return "float";
     case NodeBoolLiteral:
         return "bool";
+    case NodeStrLiteral:
+        return "string";
     case NodeIdent:
     {
         const char* t = (const char*)StrMapGet(scope, ((IdentExpr*)n)->name);
@@ -572,6 +576,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeIntLiteral:
     case NodeFloatLiteral:
     case NodeBoolLiteral:
+    case NodeStrLiteral:
         return;
     case NodeIdent:
     {

@@ -68,6 +68,7 @@ typedef struct {
     LLVMValueRef m_freeFn;
     LLVMTypeRef m_freeFnType;
     Arena* m_arena;
+    int m_strLitCount;
 } Builder;
 
 static TypeDesc TypeDescMake(LLVMTypeRef type, bool isFloat, bool isUnsigned, bool isVoid, const char* structTypeName)
@@ -310,6 +311,10 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
             td.isBox = true;
             td.boxInner = arena_strndup(b->m_arena, _inner.data, _inner.len);
         }
+        else if (strcmp(t->name, "string") == 0)
+        {
+            td.isBox = true;
+        }
 
         return td;
     }
@@ -337,6 +342,11 @@ static Value ZeroInt(Builder* b)
 static Value DerefBoxValue(Builder* b, Value value)
 {
     if (!value.typeDesc.isBox)
+    {
+        return value;
+    }
+
+    if (!value.typeDesc.boxInner)
     {
         return value;
     }
@@ -487,6 +497,15 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name) && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
 
         bool byPtr = p->mod != ModNone || structVal || IsOwningType(p->type.name);
+
+        /* For extern functions, a string param passes the data pointer
+           (const char*) directly, not a pointer to the owner slot.  The
+           host can read the string without taking ownership. */
+        if (byPtr && f->isExtern && strcmp(p->type.name, "string") == 0)
+        {
+            byPtr = false;
+        }
+
         info->paramByPtr[i] = byPtr;
 
         params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
@@ -937,6 +956,44 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
     TypeDesc boolTypeDesc = TypeDescMake(I1Ty(b), false, false, false, NULL);
 
+    /* For comparisons involving pointer types (string, box, handle), convert
+       both operands to i64 so that icmp works correctly. */
+    if (typeDesc.type == b->m_ptrTy || r.typeDesc.type == b->m_ptrTy)
+    {
+        switch (n->op)
+        {
+        case BinEqEq:
+        case BinNotEq:
+        case BinLt:
+        case BinLtEq:
+        case BinGt:
+        case BinGtEq:
+            typeDesc = TypeDescMake(I64Ty(b), false, false, false, NULL);
+            flt = false;
+            if (l.typeDesc.type == b->m_ptrTy)
+            {
+                l.value = LLVMBuildPtrToInt(b->m_builder, l.value, I64Ty(b), "picmp");
+                l.typeDesc = typeDesc;
+            }
+            else
+            {
+                l = Coerce(b, l, typeDesc);
+            }
+            if (r.typeDesc.type == b->m_ptrTy)
+            {
+                r.value = LLVMBuildPtrToInt(b->m_builder, r.value, I64Ty(b), "picmp");
+                r.typeDesc = typeDesc;
+            }
+            else
+            {
+                r = Coerce(b, r, typeDesc);
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
     switch (n->op)
     {
     case BinAdd:
@@ -1067,8 +1124,9 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                a box<T> - including `=` with a plain T value, e.g. `x = 5;`
                - mutates its contents instead. */
             bool boxMove = lvalue.typeDesc.isBox && n->op == AssignSet && rhs.typeDesc.isBox;
+            bool boxMoveFromLiteral = boxMove && !lvalue.typeDesc.boxInner && n->value->kind == NodeStrLiteral;
 
-            if (boxMove)
+            if (boxMove && !boxMoveFromLiteral)
             {
                 /* Box move: free the old value, take the new pointer, null the source. */
                 EmitDropOne(b, lvalue.ptr);
@@ -1084,6 +1142,31 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     {
                         LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
                     }
+                }
+
+                return rhs;
+            }
+
+            if (boxMoveFromLiteral)
+            {
+                EmitDropOne(b, lvalue.ptr);
+                StrLiteral* lit = AsNode(StrLiteral, n->value);
+                size_t copyLen = strlen(lit->value) + 1;
+                LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
+                LLVMValueRef args2[1] = { size };
+                StrataAllocFn(b);
+                LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args2, 1, "stra");
+                LLVMBuildStore(b->m_builder, heap, lvalue.ptr);
+                LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+                LLVMValueRef srcGep = rhs.value;
+                LLVMValueRef dstGep = heap;
+                for (size_t ci = 0; ci < copyLen; ci++)
+                {
+                    LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
+                    LLVMValueRef srcIdx[1] = { ciVal };
+                    LLVMValueRef dstIdx[1] = { ciVal };
+                    LLVMValueRef byteVal = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "srcas"), "bas");
+                    LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "dstas"));
                 }
 
                 return rhs;
@@ -1304,7 +1387,38 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
         }
 
-        if (shouldPassByPtr && !paramIsBoxType && argIsBox)
+        if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
+        {
+            StrLiteral* lit = AsNode(StrLiteral, argNode);
+            size_t copyLen = strlen(lit->value) + 1;
+            
+            LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
+            LLVMValueRef args2[1] = { size };
+            StrataAllocFn(b);
+
+            LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args2, 1, "argstr");
+
+            Value litVal = EmitExpr(b, argNode);
+            LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+            LLVMValueRef srcGep = litVal.value;
+            LLVMValueRef dstGep = heap;
+
+            for (size_t ci = 0; ci < copyLen; ci++)
+            {
+                LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
+                LLVMValueRef srcIdx[1] = { ciVal };
+                LLVMValueRef dstIdx[1] = { ciVal };
+                LLVMValueRef byteVal = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "asrc"), "ab");
+                
+                LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "adst"));
+            }
+
+            LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "stslot");
+            LLVMBuildStore(b->m_builder, heap, slot);
+
+            args[k] = slot;
+        }
+        else if (shouldPassByPtr && !paramIsBoxType && argIsBox)
         {
             args[k] = EmitExpr(b, argNode).value;
         }
@@ -1450,6 +1564,30 @@ static Value EmitExpr(Builder* b, Node* n)
         return ValueMake(LLVMConstInt(I1Ty(b), (unsigned long long)literal->value, 0), typeDesc);
     }
 
+    case NodeStrLiteral:
+    {
+        StrLiteral* literal = (StrLiteral*)n;
+
+        size_t len = strlen(literal->value);
+        LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
+        LLVMTypeRef strType = LLVMTypeOf(strConst);
+
+        char* gName = arena_format(b->m_arena, ".str.%d", b->m_strLitCount++);
+        LLVMValueRef global = LLVMAddGlobal(b->m_mod, strType, gName);
+        LLVMSetInitializer(global, strConst);
+        LLVMSetLinkage(global, LLVMPrivateLinkage);
+        LLVMSetUnnamedAddr(global, 1);
+        LLVMSetGlobalConstant(global, 1);
+
+        LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+        LLVMValueRef idx[2] = { zero, zero };
+        LLVMValueRef gep = LLVMConstGEP2(strType, global, idx, 2);
+
+        TypeDesc td = Resolve(b, &(TypeName){.name = "string"});
+
+        return ValueMake(gep, td);
+    }
+
     case NodeIdent:
         return EmitIdent(b, (IdentExpr*)n);
 
@@ -1573,12 +1711,30 @@ static void EmitStmt(Builder* b, Node* n)
             }
             else
             {
-                /* Coerce derefs a box value unless the return type is itself
-                   a box, so v.typeDesc.isBox below means a genuine move. */
                 v = UnboxIfBox(b, Coerce(b, raw, b->m_curRet), b->m_curRet);
 
-                /* Returning a box moves it out: null the source so the drop
-                   below does not free it. */
+                if (v.typeDesc.isBox && !v.typeDesc.boxInner && r->value->kind == NodeStrLiteral)
+                {
+                    StrLiteral* lit = AsNode(StrLiteral, r->value);
+                    size_t copyLen = strlen(lit->value) + 1;
+                    LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
+                    LLVMValueRef args2[1] = { size };
+                    StrataAllocFn(b);
+                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args2, 1, "strret");
+                    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+                    LLVMValueRef srcGep = v.value;
+                    LLVMValueRef dstGep = heap;
+                    for (size_t ci = 0; ci < copyLen; ci++)
+                    {
+                        LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
+                        LLVMValueRef srcIdx[1] = { ciVal };
+                        LLVMValueRef dstIdx[1] = { ciVal };
+                        LLVMValueRef byteVal = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "srcr"), "br");
+                        LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "dstr"));
+                    }
+                    v = ValueMake(heap, b->m_curRet);
+                }
+
                 Node* movedReturnNode = v.typeDesc.isBox ? MovableBoxSourceNode(r->value) : NULL;
 
                 if (movedReturnNode)
@@ -1634,10 +1790,10 @@ static void EmitStmt(Builder* b, Node* n)
             {
                 Value value = EmitExpr(b, varDecl->init);
 
-                if (value.typeDesc.isBox)
+                bool isStrLiteral = varDecl->init->kind == NodeStrLiteral;
+
+                if (value.typeDesc.isBox && !isStrLiteral)
                 {
-                    /* Move from another box<T> (or a cast of one): take its
-                       pointer, null the source. */
                     LLVMBuildStore(b->m_builder, value.value, slot);
 
                     Node* movedDeclNode = MovableBoxSourceNode(varDecl->init);
@@ -1652,9 +1808,31 @@ static void EmitStmt(Builder* b, Node* n)
                         }
                     }
                 }
-                else
+                else if (isStrLiteral)
                 {
-                    /* Box a value of the inner type. */
+                    StrLiteral* lit = AsNode(StrLiteral, varDecl->init);
+                    size_t copyLen = strlen(lit->value) + 1;
+                    LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
+                    LLVMValueRef args[1] = { size };
+                    StrataAllocFn(b);
+                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "str");
+                    LLVMBuildStore(b->m_builder, heap, slot);
+
+                    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+                    LLVMValueRef srcGep = value.value;
+                    LLVMValueRef dstGep = heap;
+                    LLVMValueRef idx = LLVMConstInt(I64Ty(b), 0, 0);
+                    for (size_t ci = 0; ci < copyLen; ci++)
+                    {
+                        LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
+                        LLVMValueRef srcIdx[1] = { ciVal };
+                        LLVMValueRef dstIdx[1] = { ciVal };
+                        LLVMValueRef byteVal = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "src"), "b");
+                        LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "dst"));
+                    }
+                }
+                else if (typeDesc.boxInner)
+                {
                     TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)typeDesc.boxInner});
                     LLVMValueRef size = SizeOfConst(b, innerTd.type);
                     LLVMValueRef args[1] = { size };
@@ -1663,6 +1841,10 @@ static void EmitStmt(Builder* b, Node* n)
                     LLVMBuildStore(b->m_builder, heap, slot);
                     LLVMBuildStore(b->m_builder, value.value, heap);
                 }
+            }
+            else
+            {
+                LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
             }
 
             Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
@@ -1877,6 +2059,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     b->m_mod = LLVMModuleCreateWithNameInContext(module->name, b->m_ctx);
     b->m_builder = LLVMCreateBuilderInContext(b->m_ctx);
     b->m_ptrTy = LLVMPointerTypeInContext(b->m_ctx, 0);
+    b->m_strLitCount = 0;
 
     TypeRegistryBuild(&b->m_registry, module);
 

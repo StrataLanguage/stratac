@@ -25,6 +25,7 @@ typedef enum {
     NodeIntLiteral,
     NodeFloatLiteral,
     NodeBoolLiteral,
+    NodeStrLiteral,
     NodeIdent,
     NodeUnary,
     NodeBinary,
@@ -252,6 +253,11 @@ typedef struct {
     Node base;
     bool value;
 } BoolLiteral;
+
+typedef struct {
+    Node base;
+    char* value;
+} StrLiteral;
 
 typedef struct {
     Node base;

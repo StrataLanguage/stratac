@@ -232,6 +232,11 @@ bool IsOwningType(const char* name)
         return false;
     }
 
+    if (strcmp(name, "string") == 0)
+    {
+        return true;
+    }
+
     size_t len = strlen(name);
 
     return len > 5 && strncmp(name, "box<", 4) == 0 && name[len - 1] == '>';
@@ -240,6 +245,11 @@ bool IsOwningType(const char* name)
 Str OwningInnerStr(const char* name)
 {
     if (!IsOwningType(name))
+    {
+        return STR_EMPTY;
+    }
+
+    if (strcmp(name, "string") == 0)
     {
         return STR_EMPTY;
     }

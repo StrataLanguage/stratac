@@ -145,6 +145,8 @@ const char* TokName(TokKind kind)
         return "float-literal";
     case TokBoolLit:
         return "bool-literal";
+    case TokStrLit:
+        return "string-literal";
     default:
         break;
     }

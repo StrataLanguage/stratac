@@ -13,6 +13,7 @@ typedef enum {
     TokIntLit,
     TokFloatLit,
     TokBoolLit,
+    TokStrLit,
 
     TokKwVoid,
     TokKwBool,

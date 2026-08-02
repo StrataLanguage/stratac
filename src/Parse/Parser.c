@@ -1359,6 +1359,57 @@ static Node* ParsePrimary(Parser* p)
         return (Node*)node;
     }
 
+    case TokStrLit:
+    {
+        Advance(p);
+
+        Str sv = ParserIdentText(p, token);
+
+        if (sv.len < 2)
+        {
+            StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
+            node->base.kind = NodeStrLiteral;
+            node->base.range = token.range;
+            node->value = arena_strndup(p->m_arena, "", 0);
+
+            return (Node*)node;
+        }
+
+        char* raw = arena_strndup(p->m_arena, sv.data + 1, sv.len - 2);
+
+        char* dst = raw;
+        for (size_t i = 0; i < sv.len - 2; i++)
+        {
+            if (raw[i] == '\\' && i + 1 < sv.len - 2)
+            {
+                char next = raw[i + 1];
+                switch (next)
+                {
+                case '\\': *dst++ = '\\'; i++; break;
+                case '"':  *dst++ = '"';  i++; break;
+                case 'n':  *dst++ = '\n'; i++; break;
+                case 't':  *dst++ = '\t'; i++; break;
+                case 'r':  *dst++ = '\r'; i++; break;
+                case '0':  *dst++ = '\0'; i++; break;
+                default:   *dst++ = raw[i]; break;
+                }
+            }
+            else
+            {
+                *dst++ = raw[i];
+            }
+        }
+        *dst = '\0';
+        char* value = raw;
+
+        StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
+        node->base.kind = NodeStrLiteral;
+        node->base.range = token.range;
+        node->value = value;
+
+        return (Node*)node;
+    }
+
     case TokIdent:
     {
         Advance(p);
