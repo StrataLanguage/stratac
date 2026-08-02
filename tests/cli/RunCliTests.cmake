@@ -83,7 +83,7 @@ execute_process(
     RESULT_VARIABLE engine_result
     OUTPUT_VARIABLE engine_output
 )
-if(NOT engine_result EQUAL 0 OR NOT engine_output MATCHES "run\\(\\) = -10")
+if(NOT engine_result EQUAL 0 OR NOT engine_output MATCHES "run\\(\\) = -9")
     message(FATAL_ERROR "extern-struct ABI executable failed: ${engine_result}; ${engine_output}")
 endif()
 

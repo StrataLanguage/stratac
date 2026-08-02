@@ -1421,6 +1421,343 @@ STRATA_TEST(box_coerced_to_bare_return_unboxes)
     strataJitDestroy(jit);
 }
 
+/* ===========================================================================
+   Heavy borrow-checker stress tests.
+
+   The scenarios below are modeled on patterns that would be genuinely
+   dangerous in flight software - a stage handed to two consumers at once,
+   a sensor reading extracted twice from a redundant flight computer, a
+   telemetry loop ticking thousands of times, an abort sequence buried in
+   a conditional branch. Each one either (a) must be rejected at compile
+   time because the equivalent C would dereference a null/freed pointer,
+   or (b) must be *allowed and run correctly* because it's a legitimate
+   pattern - both directions matter equally: over-eager rejection is as
+   unusable in real software as under-eager rejection is unsafe.
+   =========================================================================== */
+
+STRATA_TEST(box_same_variable_passed_to_two_owned_params_in_one_call_is_safe)
+{
+    /* What happens if the same box is (mistakenly) handed to two DIFFERENT
+       owned parameters in a single call - e.g. a mis-wired ignition
+       sequence that passes the same stage as both `primary` and `backup`?
+       Every owned/ref box param is passed by the ADDRESS of its source
+       slot (a uniform `T**` ABI), so both parameters end up aliasing the
+       exact same slot: freeing through one nulls the other too, so there
+       is no double-free even though the caller's intent was confused.
+       This test locks in that safety property so a future ABI change
+       can't silently reintroduce a double-free here. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Stage { int fuel; };\n"
+        "int ignite(box<Stage> primary, box<Stage> backup) {\n"
+        "  return primary.fuel + backup.fuel;\n"
+        "}\n"
+        "int entry() {\n"
+        "  box<Stage> stage = Stage { .fuel = 50 };\n"
+        "  return ignite(stage, stage);\n"    /* aliased - both read fuel=50 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 100);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_struct_field_extracted_twice_via_separate_calls_is_an_error)
+{
+    /* Same move-tracking must hold when the box comes from a struct field
+       (a redundant flight computer's primary sensor) rather than a bare
+       local - extracting it into an owned param twice, across two
+       separate statements, must be caught: the second call would
+       otherwise receive a null pointer and crash on first dereference. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Sensor { int reading; };\n"
+        "struct FlightComputer { box<Sensor> primary; };\n"
+        "int read_sensor(box<Sensor> s) { return s.reading; }\n"
+        "int entry() {\n"
+        "  box<FlightComputer> fc = FlightComputer { .primary = Sensor { .reading = 5 } };\n"
+        "  int a = read_sensor(fc.primary);\n"   /* moves fc.primary out */
+        "  int b = read_sensor(fc.primary);\n"   /* error: fc.primary already moved */
+        "  return a + b;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'fc.primary' used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_moved_in_one_branch_of_three_way_if_chain_used_after_is_error)
+{
+    /* A 3-way if/else-if/else chain, moved in only the middle branch (an
+       abort path) - the merge across all three arms must still be
+       conservative: since the middle branch is reachable and moves the
+       box, an unconditional use after the whole chain must be rejected. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Stage { int fuel; };\n"
+        "int jettison(box<Stage> s) { return s.fuel; }\n"
+        "int entry() {\n"
+        "  box<Stage> booster = Stage { .fuel = 12 };\n"
+        "  int mode = 1;\n"
+        "  if (mode == 0) {\n"
+        "    return booster.fuel;\n"
+        "  } else if (mode == 1) {\n"
+        "    jettison(booster);\n"     /* moved only in this arm */
+        "  } else {\n"
+        "    return booster.fuel;\n"
+        "  }\n"
+        "  return booster.fuel;\n"     /* error: maybe moved above */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'booster' used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_moved_inside_loop_guarded_by_break_then_used_after_loop_is_error)
+{
+    /* An abort sequence buried inside `if (i == 3) { abort_stage(booster);
+       break; }` only moves the box on ONE possible iteration - but since
+       the compiler can't prove i==3 never happens, the move must still
+       poison any unconditional use after the loop. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Stage { int fuel; };\n"
+        "int abort_stage(box<Stage> s) { return s.fuel; }\n"
+        "int entry() {\n"
+        "  box<Stage> booster = Stage { .fuel = 20 };\n"
+        "  for (int i = 0; i < 10; i++) {\n"
+        "    if (i == 3) {\n"
+        "      abort_stage(booster);\n"   /* moved on this iteration only */
+        "      break;\n"
+        "    }\n"
+        "  }\n"
+        "  return booster.fuel;\n"         /* error: maybe moved in the loop */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'booster' used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_ref_chain_three_levels_deep_mutates_original_stage)
+{
+    /* A telemetry-relay pattern: a `ref box<T>` borrow passed on through
+       two more levels of `ref box<T>` re-borrow, mutated only at the
+       deepest level. The original caller's box must observe the
+       mutation - a broken re-borrow chain (e.g. accidentally copying
+       instead of re-passing the reference) would silently mutate a
+       throwaway copy instead. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Stage { int fuel; };\n"
+        "void drain_innermost(ref box<Stage> s) { s.fuel = s.fuel - 1; }\n"
+        "void relay_b(ref box<Stage> s) { drain_innermost(s); }\n"
+        "void relay_a(ref box<Stage> s) { relay_b(s); }\n"
+        "int entry() {\n"
+        "  box<Stage> booster = Stage { .fuel = 100 };\n"
+        "  relay_a(booster);\n"
+        "  return booster.fuel;\n"     /* 99 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 99);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_dual_field_struct_drops_both_children_without_crash)
+{
+    /* A struct owning TWO box<T> fields (a redundant flight computer with
+       primary+backup sensors) must drop BOTH children exactly once when
+       it goes out of scope. The existing recursive-drop coverage
+       (box_owning_field_linked_list) only ever exercised a single owning
+       field; a naive drop-emitter that only frees "the" owning field
+       would leak or, worse, alias two fields onto one free. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Sensor { int reading; };\n"
+        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
+        "int entry() {\n"
+        "  box<FlightComputer> fc = FlightComputer {\n"
+        "    .primary = Sensor { .reading = 7 },\n"
+        "    .backup = Sensor { .reading = 13 }\n"
+        "  };\n"
+        "  return fc.primary.reading + fc.backup.reading;\n"    /* 20 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 20);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_extracting_one_field_does_not_block_sibling_field_use)
+{
+    /* Move-tracking is per-field, not per-struct: extracting `primary` out
+       of a redundant flight computer must not falsely poison `backup` -
+       a coarse (struct-level, not field-level) move tracker would reject
+       this legitimate read of the untouched sibling field. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Sensor { int reading; };\n"
+        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
+        "int read_sensor(box<Sensor> s) { return s.reading; }\n"
+        "int entry() {\n"
+        "  box<FlightComputer> fc = FlightComputer {\n"
+        "    .primary = Sensor { .reading = 7 },\n"
+        "    .backup = Sensor { .reading = 13 }\n"
+        "  };\n"
+        "  int p = read_sensor(fc.primary);\n"    /* moves fc.primary only */
+        "  return p + fc.backup.reading;\n"        /* fc.backup untouched -> 20 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 20);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_extracted_field_reused_after_move_is_error_sibling_unaffected)
+{
+    /* The negative counterpart: re-extracting the SAME field a second time
+       must still be rejected even though its sibling field is fine. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Sensor { int reading; };\n"
+        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
+        "int read_sensor(box<Sensor> s) { return s.reading; }\n"
+        "int entry() {\n"
+        "  box<FlightComputer> fc = FlightComputer {\n"
+        "    .primary = Sensor { .reading = 7 },\n"
+        "    .backup = Sensor { .reading = 13 }\n"
+        "  };\n"
+        "  int p = read_sensor(fc.primary);\n"
+        "  int q = read_sensor(fc.primary);\n"   /* error: fc.primary already moved */
+        "  return p + q + fc.backup.reading;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'fc.primary' used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_soak_test_many_iterations_through_ref_no_crash)
+{
+    /* Heavy stress: repeatedly borrow-and-mutate the SAME box thousands of
+       times through a ref parameter - a stand-in for a control loop
+       ticking a shared flight-computer state at high frequency. Must not
+       crash or drift from the exact expected count. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Telemetry { int ticks; };\n"
+        "void tick(ref box<Telemetry> t) { t.ticks = t.ticks + 1; }\n"
+        "int entry() {\n"
+        "  box<Telemetry> state = Telemetry { .ticks = 0 };\n"
+        "  for (int i = 0; i < 10000; i++) {\n"
+        "    tick(state);\n"
+        "  }\n"
+        "  return state.ticks;\n"    /* 10000 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 10000);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_move_and_reassign_every_iteration_over_many_cycles_is_allowed)
+{
+    /* Each iteration moves the box into a consuming call (a "burn"), then
+       immediately refuels/reassigns it before the loop wraps - simulating
+       repeated ignition-and-refuel cycles. Must be allowed on EVERY
+       iteration, not just the first, with no moved-state bleeding across
+       iterations (the loop-carried move-merge logic is exercised at
+       scale here, not just once). */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Stage { int fuel; };\n"
+        "box<Stage> refuel(int amount) { box<Stage> s = Stage { .fuel = amount }; return s; }\n"
+        "int burn(box<Stage> s) { return s.fuel; }\n"
+        "int entry() {\n"
+        "  box<Stage> booster = refuel(5);\n"
+        "  int total = 0;\n"
+        "  for (int i = 0; i < 50; i++) {\n"
+        "    total += burn(booster);\n"   /* moves booster */
+        "    booster = refuel(5);\n"     /* revalidates for next iteration */
+        "  }\n"
+        "  return total;\n"    /* 50 * 5 = 250 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 250);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_borrowed_then_moved_afterward_is_allowed)
+{
+    /* Borrowing (ref) and then, in a LATER, separate statement, fully
+       moving the same box is fine - these are sequential, not
+       simultaneous, uses. A borrow checker that conflated "was ever
+       borrowed" with "still borrowed" would wrongly reject the move. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Stage { int fuel; };\n"
+        "int read_only(ref box<Stage> s) { return s.fuel; }\n"
+        "int consume(box<Stage> s) { return s.fuel; }\n"
+        "int entry() {\n"
+        "  box<Stage> booster = Stage { .fuel = 8 };\n"
+        "  int a = read_only(booster);\n"   /* borrow completes */
+        "  int b = consume(booster);\n"     /* now moves it - fine, borrow already ended */
+        "  return a + b;\n"                  /* 16 */
+        "}\n",
+        &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 16);
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(box_coerced_to_bare_vardecl_copies)
 {
     /* T v = boxVal; copies the pointee — the box is not consumed. */

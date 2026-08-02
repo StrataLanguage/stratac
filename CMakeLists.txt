@@ -388,7 +388,7 @@ if(STRATA_ENABLE_LLVM)
     add_executable(aot_test samples/hosts/engine_api_host.c "${STRATA_AOT_TEST_OBJECT}")
     set_target_properties(aot_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_test COMMAND aot_test)
-    set_tests_properties(aot_test PROPERTIES PASS_REGULAR_EXPRESSION "run\\(\\) = -10")
+    set_tests_properties(aot_test PROPERTIES PASS_REGULAR_EXPRESSION "run\\(\\) = -9")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo PROPERTIES

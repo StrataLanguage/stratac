@@ -1462,22 +1462,35 @@ static Value EmitExpr(Builder* b, Node* n)
             return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
         }
 
-        LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "inc");
-        LLVMValueRef one = lv.typeDesc.isFloat
-            ? LLVMConstReal(lv.typeDesc.type, 1.0)
-            : LLVMConstInt(lv.typeDesc.type, 1, 0);
+        LLVMValueRef valPtr = lv.ptr;
+        TypeDesc valTd = lv.typeDesc;
+
+        if (lv.typeDesc.isBox)
+        {
+            /* lv.ptr is the address of the box pointer slot (ref-adjusted
+               already by EmitLValue); load through it to get the box
+               pointer, then read/write the boxed value through that -
+               same pattern as the box branch in EmitAssign. */
+            valPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "box");
+            valTd = Resolve(b, &(TypeName){.name = (char*)lv.typeDesc.boxInner});
+        }
+
+        LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, valTd.type, valPtr, "inc");
+        LLVMValueRef one = valTd.isFloat
+            ? LLVMConstReal(valTd.type, 1.0)
+            : LLVMConstInt(valTd.type, 1, 0);
 
         LLVMValueRef newVal = inc->isDec
-            ? (lv.typeDesc.isFloat
+            ? (valTd.isFloat
                 ? LLVMBuildFSub(b->m_builder, cur, one, "dec")
                 : LLVMBuildSub(b->m_builder, cur, one, "dec"))
-            : (lv.typeDesc.isFloat
+            : (valTd.isFloat
                 ? LLVMBuildFAdd(b->m_builder, cur, one, "inc")
                 : LLVMBuildAdd(b->m_builder, cur, one, "inc"));
 
-        LLVMBuildStore(b->m_builder, newVal, lv.ptr);
+        LLVMBuildStore(b->m_builder, newVal, valPtr);
 
-        return ValueMake(inc->isPrefix ? newVal : cur, lv.typeDesc);
+        return ValueMake(inc->isPrefix ? newVal : cur, valTd);
     }
 
     case NodeCast:
