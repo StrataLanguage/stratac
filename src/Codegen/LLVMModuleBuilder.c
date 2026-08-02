@@ -289,12 +289,6 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     if (found)
     {
-        if (TypeRegistryIsOwningStruct(&b->m_registry, t->name) && b->m_diag)
-        {
-            DiagErrorFmt(b->m_diag, t->range,
-                         "owning structs are not yet supported by the LLVM backend (use the C/Tcc JIT)");
-        }
-
         return TypeDescMake(found, false, false, false, t->name);
     }
 
@@ -1374,7 +1368,29 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, idx);
         TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
 
-        Value fieldValue = Coerce(b, EmitExpr(b, field->value), fieldTd);
+        Value rawField = EmitExpr(b, field->value);
+        Value fieldValue;
+
+        if (fieldTd.isBox && !rawField.typeDesc.isBox)
+        {
+            /* box<T> field initialized from a bare T value/literal - heap-box
+               it (same as a top-level `box<T> x = T{...};` local), since the
+               field is really a T* in the aggregate's LLVM layout. Inserting
+               the raw T value there instead would insert a value of the
+               wrong type into that slot - reinterpreted as a pointer, it
+               corrupts memory the moment anything dereferences the field. */
+            TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)fieldTd.boxInner});
+            LLVMValueRef size = SizeOfConst(b, innerTd.type);
+            LLVMValueRef args[1] = { size };
+            StrataAllocFn(b);
+            LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "fieldbox");
+            LLVMBuildStore(b->m_builder, rawField.value, heap);
+            fieldValue = ValueMake(heap, fieldTd);
+        }
+        else
+        {
+            fieldValue = Coerce(b, rawField, fieldTd);
+        }
 
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, (unsigned)idx, "ins");
     }

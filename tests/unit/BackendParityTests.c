@@ -169,6 +169,23 @@ STRATA_TEST(llvm_and_tcc_box_move_and_reassign_in_loop_parity)
         250);
 }
 
+STRATA_TEST(llvm_and_tcc_box_dual_owning_field_drop_parity)
+{
+    /* A struct with two owning box<T> fields must drop both without
+       crashing on either backend. */
+    CheckParity(
+        "struct Sensor { int reading; };\n"
+        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
+        "int entry() {\n"
+        "  box<FlightComputer> fc = FlightComputer {\n"
+        "    .primary = Sensor { .reading = 7 },\n"
+        "    .backup = Sensor { .reading = 13 }\n"
+        "  };\n"
+        "  return fc.primary.reading + fc.backup.reading;\n"
+        "}\n",
+        20);
+}
+
 STRATA_TEST(llvm_and_tcc_box_compound_assign_parity)
 {
     /* `val -= amt;` through a `ref box<int>` mutates in place on both backends. */
