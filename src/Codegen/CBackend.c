@@ -363,6 +363,18 @@ static bool IsLValue(const Node* node)
     return node && (node->kind == NodeIdent || node->kind == NodeMember);
 }
 
+/* Unwraps casts to find the lvalue being moved (identifier or field chain),
+   for nulling via EmitLValue. */
+static const Node* MovableBoxSource(const Node* n)
+{
+    while (n && n->kind == NodeCast)
+    {
+        n = ((const CastExpr*)n)->operand;
+    }
+
+    return IsLValue(n) ? n : NULL;
+}
+
 static void EmitExpr(CEmitter* emitter, const Node* node);
 
 static void EmitLValue(CEmitter* emitter, const Node* node)
@@ -708,10 +720,12 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
             EmitExpr(emitter, assign->value);
             SbPuts(&emitter->out, ")");
 
-            if (assign->value->kind == NodeIdent)
+            const Node* movedSource = MovableBoxSource(assign->value);
+
+            if (movedSource)
             {
                 SbPuts(&emitter->out, ", (");
-                SbPuts(&emitter->out, VarName(emitter, ((const IdentExpr*)assign->value)->name));
+                EmitLValue(emitter, movedSource);
                 SbPuts(&emitter->out, " = 0)");
             }
 
@@ -843,11 +857,13 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
         EmitExpr(emitter, sf->value);
         SbPuts(&emitter->out, ";\n");
 
-        /* A box field moved from a variable nulls the source. */
-        if (IsOwningType(fd->type.name) && sf->value->kind == NodeIdent)
+        /* A moved-into box field nulls its source. */
+        const Node* movedFieldSource = IsOwningType(fd->type.name) ? MovableBoxSource(sf->value) : NULL;
+
+        if (movedFieldSource)
         {
             Pad(emitter);
-            SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)sf->value)->name));
+            EmitLValue(emitter, movedFieldSource);
             SbPuts(&emitter->out, " = 0;\n");
         }
     }
@@ -920,7 +936,9 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                 SbPutc(&emitter->out, ';');
             }
 
-            if (declaration->init->kind == NodeIdent)
+            const Node* movedDeclSource = MovableBoxSource(declaration->init);
+
+            if (movedDeclSource)
             {
                 if (semicolon)
                 {
@@ -928,7 +946,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                     Pad(emitter);
                 }
 
-                SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)declaration->init)->name));
+                EmitLValue(emitter, movedDeclSource);
                 SbPuts(&emitter->out, " = 0");
 
                 if (semicolon)
@@ -1147,11 +1165,13 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             return;
         }
 
-        /* A bare box<T> identifier is only a move when the function itself
-           returns box<T>; otherwise it's read (dereferenced), not moved. */
+        /* A bare box<T> identifier is only a move if the function returns
+           box<T>; otherwise it's a deref-read. */
         bool returnsBoxIdent = statement->value && statement->value->kind == NodeIdent
             && IsOwningType(valueType);
-        bool movesBox = returnsBoxIdent && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
+
+        const Node* movedReturnSource = IsOwningType(valueType) ? MovableBoxSource(statement->value) : NULL;
+        bool movesBox = movedReturnSource && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
 
         if (statement->value && emitter->boxVars.count > 0)
         {
@@ -1184,7 +1204,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             if (movesBox)
             {
                 Pad(emitter);
-                SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)statement->value)->name));
+                EmitLValue(emitter, movedReturnSource);
                 SbPuts(&emitter->out, " = 0;\n");
             }
 

@@ -82,7 +82,7 @@ float read_through_ref(ref box<Vec3> v)
     return v.x + v.y + v.z; // v is NOT freed here (borrow)
 }
 
-void take_value(ref box<Vec3> v)
+void take_value(box<Vec3> v)
 {
 }
 
@@ -93,9 +93,7 @@ void take_value(ref box<Vec3> v)
 
 Vec3 return_bare_vec3()
 {
-    box<Vec3> newVec = Vec3 { .x = 123 };
-    take_value(newVec);
-
+    box<Vec3> newVec = { .x = 123 };
     return newVec;   // reads newVec's value, then frees it (not a move)
 }
 
@@ -127,5 +125,5 @@ float entry()
 
     Vec3 bare = return_bare_vec3();
 
-    return bare.x;//a + b + d + i;   // (1+2+0=3) + (1*1+4*4+0*0=17) + (0+3+4=7) + 9 = 36
+    return a + b + d + i + bare.x;
 }

@@ -25,15 +25,17 @@ void BorrowBox(ref box<Pistol> p)
 {
 }
 
+struct Any;
+
 struct HoldBox
 {
-    box<Pistol> gun;
+    box<Any> gun;
 };
 
 int chase(Entity attacker, Entity target, int step)
 {
     box<Pistol> p = MakePistol(100);
-    box<HoldBox> holder = { p };
+    box<HoldBox> holder = { (box<Any>)p };
 
     int ax = get_x(attacker);
     int ay = get_y(attacker);
@@ -55,7 +57,7 @@ int chase(Entity attacker, Entity target, int step)
         move(attacker, dx, dy);
     }
 
-    Shoot(holder.gun);
+    Shoot((box<Pistol>)holder.gun);
 
     return get_x(attacker) + get_y(attacker);
 }

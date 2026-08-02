@@ -793,9 +793,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace)
             {
-                /* `box<T> x = { ... };` infers T (the box's inner type),
-                   not "box<T>" - the struct is boxed at the declaration
-                   (see EmitVarDecl in the backends). */
+                /* `box<T> x = {...};` infers T, not "box<T>". */
                 const char* initTypeName = IsOwningType(type.name)
                     ? OwningInnerCStr(p->m_arena, type.name)
                     : type.name;
@@ -1088,8 +1086,9 @@ static Node* ParseUnary(Parser* p)
                 next.kind == TokKwBool;
 
             bool isHandleCast = next.kind == TokIdent;
+            bool isBoxCast = next.kind == TokKwBox;
 
-            if (isScalarCast || isHandleCast)
+            if (isScalarCast || isHandleCast || isBoxCast)
             {
                 size_t savedPos = LexerPosition(p->m_lex);
                 bool savedPeek = p->m_lex->m_hasPeek;
@@ -1111,7 +1110,7 @@ static Node* ParseUnary(Parser* p)
                         afterRparen.kind == TokTilde || afterRparen.kind == TokInc ||
                         afterRparen.kind == TokDec;
 
-                    if (startsExpr || isScalarCast)
+                    if (startsExpr || isScalarCast || isBoxCast)
                     {
                         Advance(p);
                         Node* operand = ParseUnary(p);
