@@ -91,3 +91,24 @@ STRATA_TEST(sample_control_flow_lowers_in_llvm_backend)
     free(src);
 }
 
+STRATA_TEST(sample_strings_compiles_to_llvm_ir)
+{
+    char* src = LoadSample("strings.strata");
+    STRATA_CHECK(src != NULL);
+    STRATA_CHECK(src[0] != '\0');
+
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod->functions.count >= 5);
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "define i32 @run") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    free(src);
+}
+

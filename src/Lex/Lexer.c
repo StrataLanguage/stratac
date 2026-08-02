@@ -6,6 +6,7 @@ static void SkipWhitespaceAndComments(Lexer* lex);
 static Token LexTokenImpl(Lexer* lex);
 static Token LexIdentOrKeyword(Lexer* lex);
 static Token LexNumber(Lexer* lex);
+static Token LexStringLiteral(Lexer* lex);
 
 static bool IsIdentStart(char c)
 {
@@ -175,6 +176,11 @@ static Token LexTokenImpl(Lexer* lex)
     if (IsIdentStart(c))
     {
         return LexIdentOrKeyword(lex);
+    }
+
+    if (c == '"')
+    {
+        return LexStringLiteral(lex);
     }
 
     if (IsDigit(c))
@@ -465,4 +471,39 @@ static Token LexNumber(Lexer* lex)
     }
 
     return Make(lex, isFloat ? TokFloatLit : TokIntLit, start);
+}
+
+static Token LexStringLiteral(Lexer* lex)
+{
+    size_t start = lex->m_pos;
+    ++lex->m_pos;
+
+    while (lex->m_pos < lex->m_sourceLen)
+    {
+        char c = lex->m_source[lex->m_pos];
+        if (c == '"')
+        {
+            ++lex->m_pos;
+            return Make(lex, TokStrLit, start);
+        }
+
+        if (c == '\\' && (LexerPeek(lex, 1) == '\\' || LexerPeek(lex, 1) == '"'
+            || LexerPeek(lex, 1) == 'n' || LexerPeek(lex, 1) == 't'
+            || LexerPeek(lex, 1) == 'r' || LexerPeek(lex, 1) == '0'))
+        {
+            lex->m_pos += 2;
+            continue;
+        }
+
+        if (c == '\n')
+        {
+            DiagError(lex->m_diag, LexRange(lex, start, (uint16_t)(lex->m_pos - start + 1)), "unterminated string literal");
+            return Make(lex, TokStrLit, start);
+        }
+
+        ++lex->m_pos;
+    }
+
+    DiagError(lex->m_diag, LexRange(lex, start, (uint16_t)(lex->m_pos - start)), "unterminated string literal");
+    return Make(lex, TokStrLit, start);
 }

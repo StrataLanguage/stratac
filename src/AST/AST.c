@@ -171,6 +171,7 @@ void AstDispose(Node* node)
     case NodeIntLiteral:
     case NodeFloatLiteral:
     case NodeBoolLiteral:
+    case NodeStrLiteral:
     case NodeIdent:
         return;
     }

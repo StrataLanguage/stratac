@@ -67,8 +67,14 @@ LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef c, unsigned addressSpace);
 LLVMValueRef LLVMConstNull(LLVMTypeRef ty);
 LLVMValueRef LLVMConstGEP2(LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices);
 LLVMValueRef LLVMConstPtrToInt(LLVMValueRef constantVal, LLVMTypeRef toType);
+LLVMValueRef LLVMBuildPtrToInt(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
 void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
+void LLVMSetLinkage(LLVMValueRef global, int linkage);
+void LLVMSetUnnamedAddr(LLVMValueRef global, LLVMBool hasUnnamedAddr);
+void LLVMSetGlobalConstant(LLVMValueRef global, LLVMBool isConstant);
+LLVMValueRef LLVMConstStringInContext(LLVMContextRef c, const char* str, unsigned length, LLVMBool dontNullTerminate);
+LLVMTypeRef LLVMTypeOf(LLVMValueRef val);
 
 LLVMValueRef LLVMAddFunction(LLVMModuleRef m, const char* name, LLVMTypeRef functionTy);
 LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef c, LLVMValueRef func, const char* name);
@@ -195,6 +201,9 @@ LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef m, const char* name);
 void LLVMAddGlobalMapping(LLVMExecutionEngineRef ee, LLVMValueRef global, void* addr);
 
 #define kReturnStatusAction 1
+
+#define LLVMPrivateLinkage 9
+#define LLVMInternalLinkage 3
 
 #ifdef __cplusplus
 }

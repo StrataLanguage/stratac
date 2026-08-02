@@ -168,6 +168,11 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
 {
     if (IsOwningType(name))
     {
+        if (strcmp(name, "string") == 0)
+        {
+            return "char *";
+        }
+
         const char* inner = OwningInnerCStr(emitter->arena, name);
 
         if (inner)
@@ -284,6 +289,8 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
         return "float";
     case NodeBoolLiteral:
         return "bool";
+    case NodeStrLiteral:
+        return "string";
     case NodeIdent:
     {
         const CSymbol* symbol = (const CSymbol*)StrMapGet(
@@ -697,6 +704,22 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeBoolLiteral:
         SbPuts(&emitter->out, ((const BoolLiteral*)node)->value ? "1" : "0");
         return;
+    case NodeStrLiteral:
+    {
+        const StrLiteral* literal = (const StrLiteral*)node;
+        SbPutc(&emitter->out, '"');
+        for (const char* s = literal->value; *s; s++)
+        {
+            if (*s == '\\') SbPuts(&emitter->out, "\\\\");
+            else if (*s == '"') SbPuts(&emitter->out, "\\\"");
+            else if (*s == '\n') SbPuts(&emitter->out, "\\n");
+            else if (*s == '\t') SbPuts(&emitter->out, "\\t");
+            else if (*s == '\r') SbPuts(&emitter->out, "\\r");
+            else if (*s != '\0') SbPutc(&emitter->out, *s);
+        }
+        SbPutc(&emitter->out, '"');
+        return;
+    }
     case NodeIdent:
         EmitLValue(emitter, node);
         return;
@@ -763,13 +786,24 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
 
         if (boxMove)
         {
-            /* Box move: free the old value, take the new pointer, null the source. */
+            bool isStrLit = strcmp(targetType, "string") == 0
+                && assign->value->kind == NodeStrLiteral;
+
             SbPuts(&emitter->out, "(strata_free(");
             EmitLValue(emitter, assign->target);
             SbPuts(&emitter->out, "), (");
             EmitLValue(emitter, assign->target);
             SbPuts(&emitter->out, " = ");
-            EmitExpr(emitter, assign->value);
+            if (isStrLit)
+            {
+                SbPuts(&emitter->out, "strata_strdup(");
+                EmitExpr(emitter, assign->value);
+                SbPutc(&emitter->out, ')');
+            }
+            else
+            {
+                EmitExpr(emitter, assign->value);
+            }
             SbPuts(&emitter->out, ")");
 
             const Node* movedSource = MovableBoxSource(assign->value);
@@ -1056,6 +1090,47 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
     if (IsOwningType(declaration->type.name))
     {
+        bool isString = strcmp(declaration->type.name, "string") == 0;
+
+        if (isString)
+        {
+            const char* initType = declaration->init ? ExprType(emitter, declaration->init) : "";
+
+            SbPuts(&emitter->out, "char * ");
+            SbPuts(&emitter->out, cName);
+
+            if (initType[0] != '\0' && IsOwningType(initType) && declaration->init->kind != NodeStrLiteral)
+            {
+                SbPuts(&emitter->out, " = ");
+                EmitExpr(emitter, declaration->init);
+            }
+            else if (declaration->init && declaration->init->kind == NodeStrLiteral)
+            {
+                SbPuts(&emitter->out, " = strata_strdup(");
+                EmitExpr(emitter, declaration->init);
+                SbPutc(&emitter->out, ')');
+            }
+            else
+            {
+                SbPuts(&emitter->out, " = 0");
+            }
+
+            if (semicolon)
+            {
+                SbPutc(&emitter->out, ';');
+            }
+
+            AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+            {
+                OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
+                entry->cName = cName;
+                entry->typeName = declaration->type.name;
+                VecPush(&emitter->boxVars, entry);
+            }
+
+            return;
+        }
+
         const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
         const char* innerC = TypeNameC(emitter, inner);
         const char* initType = declaration->init ? ExprType(emitter, declaration->init) : "";
@@ -2046,6 +2121,12 @@ BuiltCModule BuildCModuleWithSources(
         "_Static_assert(sizeof(int) == 4, \"Strata requires 32-bit int\");\n"
         "extern void* strata_alloc(unsigned long);\n"
         "extern void strata_free(void*);\n"
+        "static char* strata_strdup(const char* s) {\n"
+        "  unsigned long n = 0; while (s[n]) n++;\n"
+        "  char* d = (char*)strata_alloc(n + 1);\n"
+        "  if (d) { unsigned long i; for (i = 0; i <= n; i++) d[i] = s[i]; }\n"
+        "  return d;\n"
+        "}\n"
         "extern float fmodf(float, float);\n"
         "extern double fmod(double, double);\n\n");
     EmitTypes(&emitter);

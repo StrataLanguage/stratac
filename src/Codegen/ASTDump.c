@@ -380,6 +380,10 @@ static void Dump(Node* n, int indent, Sb* out)
         SbPuts(out, AsNode(BoolLiteral, n)->value ? "true\n" : "false\n");
         return;
 
+    case NodeStrLiteral:
+        SbPrintf(out, "\"%s\"\n", AsNode(StrLiteral, n)->value);
+        return;
+
     case NodeIdent:
         SbPrintf(out, "%s\n", AsNode(IdentExpr, n)->name);
         return;
