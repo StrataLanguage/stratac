@@ -372,5 +372,24 @@ if(NOT STRATA_SHARED)
     set_target_properties(strata_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
+if(STRATA_ENABLE_LLVM)
+    # AOT smoke test: stratac's default (no --emit-c/--run) path is a real
+    # LLVM object, linked here with a plain C host - not routed through TCC
+    # or the JIT at all.
+    set(STRATA_AOT_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/aot_test${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_AOT_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/engine_api.strata"
+                -o "${STRATA_AOT_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/engine_api.strata"
+        COMMENT "stratac: AOT-compiling engine_api.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_test samples/hosts/engine_api_host.c "${STRATA_AOT_TEST_OBJECT}")
+    set_target_properties(aot_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_test COMMAND aot_test)
+    set_tests_properties(aot_test PROPERTIES PASS_REGULAR_EXPRESSION "run\\(\\) = 15")
+endif()
+
 set_target_properties(stratac jit_demo engine_demo box_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

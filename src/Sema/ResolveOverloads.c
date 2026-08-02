@@ -212,6 +212,33 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
+    /* Already resolved on an earlier pass over this same call (e.g. the
+       warmup walk in WalkLoopBody) - c->callee has been rewritten to the
+       chosen overload's mangled name, so a fresh name lookup below would
+       find nothing. Reuse the cached decl and just redo the move-tracking
+       side effects, which do need to run again for the real pass. */
+    if (c->resolvedDecl)
+    {
+        const FunctionDecl* best = c->resolvedDecl;
+
+        for (size_t j = 0; j < c->args.count && j < best->params.count; j++)
+        {
+            ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
+            Node* arg = (Node*)VecGet(&c->args, j);
+
+            const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone
+                ? MovableBoxSourceKey(r, arg)
+                : NULL;
+
+            if (movedArgKey)
+            {
+                MoveBoxIdent(r, movedArgKey, arg->range);
+            }
+        }
+
+        return;
+    }
+
     bool found = false;
 
     for (size_t i = 0; i < r->m_mod->functions.count; i++)

@@ -83,6 +83,39 @@ STRATA_TEST(box_in_loop_does_not_crash)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(box_passed_to_by_value_scalar_param_derefs)
+{
+    /* box<int> passed to a plain `int` param (a by-value, non-indirect
+       param - handles hit the same path) must be dereferenced to its
+       value. It was previously passed as the box's own heap pointer,
+       which crashes/misbehaves for any real handle-typed param. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "int take(int x) { return x; }\n"
+        "int entry() {\n"
+        "  box<int> b = 41;\n"
+        "  return take(b);\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 41);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(box_returned_as_inner_struct_type_copies_value)
 {
     /* Returning box<Struct> as plain Struct copies the value, then frees the box. */

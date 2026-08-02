@@ -242,7 +242,11 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     Advance(p);
 
     out->name = (char*)name;
-    out->range = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+    out->range = (SourceRange){
+        constRange.start,
+        (uint16_t)(p->m_cur.range.start - constRange.start),
+        constRange.fileId
+    };
     out->isConst = isConst;
 
     return true;
@@ -463,7 +467,7 @@ static Node* ParseFunction(Parser* p)
         return (Node*)gd;
     }
 
-        FunctionDecl* node = AST_NEW(p->m_arena, FunctionDecl);
+    FunctionDecl* node = AST_NEW(p->m_arena, FunctionDecl);
     node->base.kind = NodeFunction;
     node->base.range = SpanFrom((Token){TokIdent, returnType.range}, nameTok);
     node->returnType = returnType;
@@ -528,12 +532,11 @@ static Node* ParseFunction(Parser* p)
         return (Node*)node;
     }
 
-    /* `return { ... };` infers its struct type from the function's return
-       type; for a box<T>-returning function that's T, not "box<T>" - the
-       struct is boxed at the return site (see NodeReturn in the backends). */
+    /* `return { ... };` infers its struct type from the function's return type - for box<T> this is T */
     p->m_returnType = IsOwningType(node->returnType.name)
         ? OwningInnerCStr(p->m_arena, node->returnType.name)
         : node->returnType.name;
+
     node->body = ParseBlock(p);
     p->m_returnType = NULL;
 
