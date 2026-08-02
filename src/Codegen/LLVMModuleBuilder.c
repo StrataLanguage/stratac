@@ -1060,7 +1060,13 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (lvalue.valid)
         {
-            if (lvalue.typeDesc.isBox && n->op == AssignSet)
+            /* `=` rebinds the box only when the value is itself a box (sema
+               already required a matching type); any other assignment into
+               a box<T> - including `=` with a plain T value, e.g. `x = 5;`
+               - mutates its contents instead. */
+            bool boxMove = lvalue.typeDesc.isBox && n->op == AssignSet && rhs.typeDesc.isBox;
+
+            if (boxMove)
             {
                 /* Box move: free the old value, take the new pointer, null the source. */
                 EmitDropOne(b, lvalue.ptr);
@@ -1079,6 +1085,61 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 }
 
                 return rhs;
+            }
+
+            if (lvalue.typeDesc.isBox && !boxMove)
+            {
+                /* Assigning a plain T (or compound-assigning) into a box<T>
+                   mutates its contents in place - not a move - so `x = 5;`
+                   and `val -= amt;` both work even through a `ref box<T>`
+                   param or a box global. lvalue.ptr is the
+                   address of the box pointer slot (ref-adjusted already by
+                   EmitLValue); load through it to get the box pointer, then
+                   read/write the boxed value through that. */
+                LLVMValueRef boxPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lvalue.ptr, "box");
+                TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)lvalue.typeDesc.boxInner});
+                LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, innerTd.type, boxPtr, "boxval");
+                Value result = Coerce(b, rhs, innerTd);
+                bool flt = innerTd.isFloat;
+
+                switch (n->op)
+                {
+                case AssignAdd:
+                    result = ValueMake(flt
+                        ? LLVMBuildFAdd(b->m_builder, cur, result.value, "add")
+                        : LLVMBuildAdd(b->m_builder, cur, result.value, "add"), innerTd);
+                    break;
+                case AssignSub:
+                    result = ValueMake(flt
+                        ? LLVMBuildFSub(b->m_builder, cur, result.value, "sub")
+                        : LLVMBuildSub(b->m_builder, cur, result.value, "sub"), innerTd);
+                    break;
+                case AssignMul:
+                    result = ValueMake(flt
+                        ? LLVMBuildFMul(b->m_builder, cur, result.value, "mul")
+                        : LLVMBuildMul(b->m_builder, cur, result.value, "mul"), innerTd);
+                    break;
+                case AssignDiv:
+                    result = ValueMake(flt
+                        ? LLVMBuildFDiv(b->m_builder, cur, result.value, "div")
+                        : (innerTd.isUnsigned
+                            ? LLVMBuildUDiv(b->m_builder, cur, result.value, "div")
+                            : LLVMBuildSDiv(b->m_builder, cur, result.value, "div")), innerTd);
+                    break;
+                case AssignMod:
+                    result = ValueMake(flt
+                        ? LLVMBuildFRem(b->m_builder, cur, result.value, "mod")
+                        : (innerTd.isUnsigned
+                            ? LLVMBuildURem(b->m_builder, cur, result.value, "mod")
+                            : LLVMBuildSRem(b->m_builder, cur, result.value, "mod")), innerTd);
+                    break;
+                default:
+                    break;
+                }
+
+                LLVMBuildStore(b->m_builder, result.value, boxPtr);
+
+                return result;
             }
 
             Value result = Coerce(b, rhs, lvalue.typeDesc);

@@ -29,10 +29,15 @@ void sub(ref int val, int amt)
     val -= amt;
 }
 
+void drop(box<int> x)
+{
+}
+
 int run()
 {
     Entity e = world_spawn(10, 20);
-    int x_after = relocate(e, 5, 7);        // x = 15
+
+    box<int> x_after = relocate(e, 5, 7);        // x = 15
     world_destroy(e);
 
     sub(x_after, 25);

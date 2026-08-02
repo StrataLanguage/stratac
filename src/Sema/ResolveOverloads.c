@@ -559,7 +559,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         }
         else if (IsOwningType(varType) && IsBoxMoved(r, ident->name))
         {
-            DiagErrorFmt(r->m_diag, ident->base.range, "use of moved box '%s'", ident->name);
+            DiagErrorFmt(r->m_diag, ident->base.range, "'%s' used after move", ident->name);
         }
 
         return;
@@ -583,42 +583,60 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         CheckConstAssign(r, a->target, a->base.range);
 
         const char* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
-        bool boxMove = tt && IsOwningType(tt);
+        bool targetIsBox = tt && IsOwningType(tt);
 
-        if (boxMove)
+        if (targetIsBox)
         {
-            const char* targetName = ((IdentExpr*)a->target)->name;
-
-            if (IsBoxGlobalName(r, targetName))
-            {
-                DiagErrorFmt(r->m_diag, a->base.range,
-                             "box global '%s' cannot be reassigned; only its fields may be mutated",
-                             targetName);
-
-                ResolveExpr(r, a->value, scope);
-
-                return;
-            }
-
-            /* Box move: the value must be a box of the same type. Reading the
-               value validates it is not itself moved; then ownership moves. */
+            /* Resolve the value first (so a call gets its resolvedDecl set)
+               before inferring its type - otherwise an unresolved call's
+               type reads as "", misclassifying the assignment below. */
+            ResolveExpr(r, a->value, scope);
             const char* vt = InferType(r, a->value, scope);
 
-            if (vt[0] != '\0' && strcmp(vt, tt) != 0)
+            /* `=` rebinds the box (moves in a new box of the same type);
+               any other assignment into a box<T> - including `=` with a
+               plain T value, e.g. `x = 5;` - mutates its contents instead. */
+            bool boxMove = a->op == AssignSet && vt[0] != '\0' && strcmp(vt, tt) == 0;
+            const char* targetName = ((IdentExpr*)a->target)->name;
+
+            if (boxMove)
             {
-                DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to box variable '%s'",
-                             vt, targetName);
+                if (IsBoxGlobalName(r, targetName))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "box global '%s' cannot be reassigned; only its fields may be mutated",
+                                 targetName);
+
+                    return;
+                }
+
+                MarkBoxLive(r, targetName);
+
+                const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+
+                if (movedValueKey)
+                {
+                    MoveBoxIdent(r, movedValueKey, a->base.range);
+                }
             }
-
-            ResolveExpr(r, a->value, scope);
-
-            MarkBoxLive(r, targetName);
-
-            const char* movedValueKey = MovableBoxSourceKey(r, a->value);
-
-            if (movedValueKey)
+            else
             {
-                MoveBoxIdent(r, movedValueKey, a->base.range);
+                /* Assigning a plain T (or compound-assigning) into a
+                   box<T> (`x = 5;`, `val -= amt;`) mutates the boxed value
+                   in place - not a move, so it's allowed even for a box
+                   global or a moved-and-revalidated box. */
+                if (IsBoxMoved(r, targetName))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range, "'%s'  used after move", targetName);
+                }
+
+                const char* inner = OwningInnerCStr(r->m_arena, tt);
+
+                if (vt[0] != '\0' && !IsAssignableType(r, inner, vt))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "cannot assign '%s' into box<%s> '%s'", vt, inner, targetName);
+                }
             }
         }
         else
@@ -694,7 +712,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
             if (key && IsBoxMoved(r, key))
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "use of moved box '%s'", key);
+                DiagErrorFmt(r->m_diag, m->base.range, "'%s' used after move", key);
             }
         }
 

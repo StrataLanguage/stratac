@@ -116,6 +116,15 @@ STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
         28);
 }
 
+STRATA_TEST(llvm_and_tcc_box_compound_assign_parity)
+{
+    /* `val -= amt;` through a `ref box<int>` mutates in place on both backends. */
+    CheckParity(
+        "void sub(ref box<int> val, int amt) { val -= amt; }\n"
+        "int entry() { box<int> x = 15; sub(x, 25); return x; }\n",
+        -10);
+}
+
 STRATA_TEST(llvm_and_tcc_box_passed_to_by_value_scalar_param_parity)
 {
     /* A by-value (non-indirect) param - handles hit this same path - must

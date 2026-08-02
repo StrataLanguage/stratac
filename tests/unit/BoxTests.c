@@ -83,6 +83,109 @@ STRATA_TEST(box_in_loop_does_not_crash)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(box_compound_assign_mutates_contents_in_place)
+{
+    /* `val -= amt;` on a box<int> target mutates the boxed value in place -
+       not a move - so it works through a `ref box<T>` param. It was
+       previously misclassified as a full box-move, requiring the RHS to
+       itself be a box<int>. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "void sub(ref box<int> val, int amt) { val -= amt; }\n"
+        "int entry() {\n"
+        "  box<int> x = 15;\n"
+        "  sub(x, 25);\n"
+        "  return x;\n"     /* 15 - 25 = -10 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), -10);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_plain_assign_of_inner_value_mutates_contents)
+{
+    /* `x = 5;` where x is box<int> and 5 is a plain int (not box<int>)
+       also mutates in place - only `=` with a matching box<T> value is a
+       move. It was previously always treated as a move, rejecting any
+       non-box RHS outright. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "void reassign(box<int> x) { x = 5; }\n"
+        "int entry() {\n"
+        "  box<int> x = 15;\n"
+        "  int before = x;\n"
+        "  reassign(x);\n"
+        "  return before;\n"    /* captured before reassign runs -> 15 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 15);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_reassign_from_call_still_moves)
+{
+    /* `a = make(7);` (RHS is itself box<T>, from a call) must still be a
+       real move-rebind, not misclassified as content-assign, since the
+       value's type isn't known until the call is resolved. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct V { int x; };\n"
+        "box<V> make(int n) { box<V> v = V { .x = n }; return v; }\n"
+        "int entry() {\n"
+        "  box<V> a = make(1);\n"
+        "  a = make(7);\n"
+        "  return a.x;\n"    /* 7 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(box_passed_to_by_value_scalar_param_derefs)
 {
     /* box<int> passed to a plain `int` param (a by-value, non-indirect
@@ -515,7 +618,7 @@ STRATA_TEST(box_use_after_struct_field_move_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'p'"));
+    STRATA_CHECK(Contains(d, "'p' used after move"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -658,7 +761,7 @@ STRATA_TEST(box_field_extracted_twice_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'holder.gun'"));
+    STRATA_CHECK(Contains(d, "'holder.gun' used after move"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -794,7 +897,7 @@ STRATA_TEST(box_moved_unconditionally_every_loop_iteration_is_error)
     STRATA_CHECK(DiagHasErrors(&diag));
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'a'"));
+    STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -890,7 +993,7 @@ STRATA_TEST(box_moved_in_one_if_branch_used_unconditionally_after_is_error)
     STRATA_CHECK(DiagHasErrors(&diag));
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'a'"));
+    STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -911,7 +1014,7 @@ STRATA_TEST(box_owned_param_use_after_call_is_error)
     STRATA_CHECK(DiagHasErrors(&diag));
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'a'"));
+    STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -974,7 +1077,7 @@ STRATA_TEST(box_use_after_vardecl_move_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'a'"));
+    STRATA_CHECK(Contains(d, "'a' used after move"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -997,7 +1100,7 @@ STRATA_TEST(box_use_after_assign_move_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "use of moved box 'b'"));
+    STRATA_CHECK(Contains(d, "'b' used after move"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
