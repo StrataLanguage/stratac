@@ -567,7 +567,17 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
 
         if (parameter && ParamIsIndirect(emitter, parameter))
         {
-            if (IsLValue(argument))
+            /* box<T> coerced to T: if the param is a plain struct (not box),
+               and the arg is a box, the heap pointer IS the T* the param wants. */
+            bool paramIsBoxType = IsBoxTypeName(parameter->type.name);
+            const char* argType = ExprType(emitter, argument);
+            bool argIsBox = IsBoxTypeName(argType);
+
+            if (!paramIsBoxType && argIsBox)
+            {
+                EmitExpr(emitter, argument);
+            }
+            else if (IsLValue(argument))
             {
                 SbPuts(&emitter->out, "&(");
                 EmitLValue(emitter, argument);
@@ -993,6 +1003,14 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
     if (declaration->init)
     {
+        /* box<T> -> T coercion: dereference the box pointer. */
+        const char* initType = ExprType(emitter, declaration->init);
+
+        if (IsBoxTypeName(initType))
+        {
+            SbPutc(&emitter->out, '*');
+        }
+
         EmitExpr(emitter, declaration->init);
     }
     else
