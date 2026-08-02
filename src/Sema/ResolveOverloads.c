@@ -191,13 +191,10 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             {
                 score += 1;
             }
-            else if (IsBoxTypeName(argType))
+            else if (IsOwningType(argType))
             {
                 /* box<T> coerces to T (implicit deref / borrow). */
-                char inner[128];
-
-                if (BoxInnerTypeName(argType, inner, sizeof inner)
-                    && strcmp(inner, param->type.name) == 0)
+                if (StrEqC(OwningInnerStr(argType), param->type.name))
                 {
                     score += 1;
                 }
@@ -253,7 +250,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
         Node* arg = (Node*)VecGet(&c->args, j);
 
-        if (IsBoxTypeName(param->type.name) && param->mod == ModNone && arg->kind == NodeIdent)
+        if (IsOwningType(param->type.name) && param->mod == ModNone && arg->kind == NodeIdent)
         {
             MoveBoxIdent(r, ((IdentExpr*)arg)->name, arg->range);
         }
@@ -348,10 +345,10 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
 
         const char* baseName = InferType(r, m->base_node, scope);
 
-        char boxInner[128];
-        if (IsBoxTypeName(baseName) && BoxInnerTypeName(baseName, boxInner, sizeof boxInner))
+        const char* _inner = OwningInnerCStr(r->m_arena, baseName);
+        if (_inner)
         {
-            baseName = boxInner;
+            baseName = _inner;
         }
 
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
@@ -429,7 +426,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
         }
-        else if (IsBoxTypeName(varType) && IsBoxMoved(r, ident->name))
+        else if (IsOwningType(varType) && IsBoxMoved(r, ident->name))
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "use of moved box '%s'", ident->name);
         }
@@ -455,7 +452,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         CheckConstAssign(r, a->target, a->base.range);
 
         const char* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
-        bool boxMove = tt && IsBoxTypeName(tt);
+        bool boxMove = tt && IsOwningType(tt);
 
         if (boxMove)
         {
@@ -534,10 +531,10 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         
         const char* baseName = InferType(r, m->base_node, scope);
 
-        char boxInner[128];
-        if (IsBoxTypeName(baseName) && BoxInnerTypeName(baseName, boxInner, sizeof boxInner))
+        const char* _inner = OwningInnerCStr(r->m_arena, baseName);
+        if (_inner)
         {
-            baseName = boxInner;
+            baseName = _inner;
         }
 
         if (TypeRegistryIsOpaque(&r->m_registry, baseName))
@@ -636,7 +633,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
         }
 
-        if (IsBoxTypeName(vd->type.name) && !vd->init)
+        if (IsOwningType(vd->type.name) && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
         }
@@ -660,24 +657,19 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             bool ok;
 
-            if (IsBoxTypeName(vd->type.name))
+            if (IsOwningType(vd->type.name))
             {
-                char boxInner[128];
-                BoxInnerTypeName(vd->type.name, boxInner, sizeof boxInner);
                 /* Either box a value of the inner type, or move from another box<T>. */
-                ok = strcmp(initType, boxInner) == 0 || strcmp(initType, vd->type.name) == 0;
+                Str _inner = OwningInnerStr(vd->type.name);
+                ok = StrEqC(_inner, initType) || strcmp(initType, vd->type.name) == 0;
             }
             else
             {
                 /* Allow box<T> -> T coercion (implicit deref). */
-                char boxInner[128];
-
                 ok = strcmp(initType, vd->type.name) == 0
                     || (IsNumeric(initType) && IsNumeric(vd->type.name))
                     || HandleExtendsFrom(&r->m_registry, initType, vd->type.name)
-                    || (IsBoxTypeName(initType)
-                        && BoxInnerTypeName(initType, boxInner, sizeof boxInner)
-                        && strcmp(boxInner, vd->type.name) == 0);
+                    || StrEqC(OwningInnerStr(initType), vd->type.name);
             }
 
             if (initType[0] != '\0' && !ok)
@@ -686,7 +678,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             /* A box<T> initialized from another box<T> moves the source. */
-            if (IsBoxTypeName(vd->type.name) && IsBoxTypeName(initType) && vd->init->kind == NodeIdent)
+            if (IsOwningType(vd->type.name) && IsOwningType(initType) && vd->init->kind == NodeIdent)
             {
                 MoveBoxIdent(r, ((IdentExpr*)vd->init)->name, vd->base.range);
             }
@@ -722,7 +714,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                returns box<T>; returning its inner type instead just reads
                the value (unless that type is owning, which can't be
                copied out). */
-            if (IsBoxTypeName(typeName) && rs->value->kind == NodeIdent)
+            if (IsOwningType(typeName) && rs->value->kind == NodeIdent)
             {
                 bool returnsSameBox = r->m_currentReturnType && strcmp(r->m_currentReturnType, typeName) == 0;
 
@@ -732,13 +724,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
                 else
                 {
-                    char boxInner[128];
-                    BoxInnerTypeName(typeName, boxInner, sizeof boxInner);
+                    const char* boxInner = OwningInnerCStr(r->m_arena, typeName);
 
                     bool innerIsOwning = TypeRegistryIsOwningStruct(&r->m_registry, boxInner);
-                    bool innerMatchesReturn = r->m_currentReturnType
-                        && (strcmp(r->m_currentReturnType, boxInner) == 0
-                            || (IsNumeric(boxInner) && IsNumeric(r->m_currentReturnType)));
+                    bool innerMatchesReturn = boxInner
+                        && (r->m_currentReturnType
+                            && (strcmp(r->m_currentReturnType, boxInner) == 0
+                                || (IsNumeric(boxInner) && IsNumeric(r->m_currentReturnType))));
 
                     if (innerIsOwning || !innerMatchesReturn)
                     {
@@ -832,7 +824,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
-        if (IsBoxTypeName(gd->type.name))
+        if (IsOwningType(gd->type.name))
         {
             StrMapPut(&r.m_boxGlobals, gd->name, (void*)gd->type.name);
         }
@@ -957,7 +949,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
-            if (!IsBoxTypeName(gd->type.name))
+            if (!IsOwningType(gd->type.name))
             {
                 continue;
             }
@@ -968,8 +960,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 continue;
             }
 
-            char boxInner[128];
-            BoxInnerTypeName(gd->type.name, boxInner, sizeof boxInner);
+            const char* boxInner = OwningInnerCStr(arena, gd->type.name);
 
             /* No moving from another variable to initialize a box global. */
             if (gd->init->kind == NodeIdent)

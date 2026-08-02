@@ -37,21 +37,6 @@ Str StrNew(Arena* arena, const char* str, size_t len)
     return (Str){strDuped, len};
 }
 
-void StrFree(Arena* arena, Str s)
-{
-    if (!arena)
-    {
-        STRATA_CRASH("Null arena");
-    }
-
-    if (!s.data)
-    {
-        return;
-    }
-
-    arena_free(arena, s.data);
-}
-
 // -- Arena
 
 static void ArenaGrow(Arena* a, size_t need)

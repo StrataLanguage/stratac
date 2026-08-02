@@ -165,11 +165,11 @@ static const char* FunctionName(CEmitter* emitter, const char* name)
 
 static const char* TypeNameC(CEmitter* emitter, const char* name)
 {
-    if (IsBoxTypeName(name))
+    if (IsOwningType(name))
     {
-        char inner[128];
+        const char* inner = OwningInnerCStr(emitter->arena, name);
 
-        if (BoxInnerTypeName(name, inner, sizeof inner))
+        if (inner)
         {
             const char* innerC = TypeNameC(emitter, inner);
             Sb sb;
@@ -239,7 +239,7 @@ static bool IsStructValue(CEmitter* emitter, const char* name)
 
 static bool ParamIsIndirect(CEmitter* emitter, const ParamDecl* param)
 {
-    return ByRef(param->mod) || IsStructValue(emitter, param->type.name) || IsBoxTypeName(param->type.name);
+    return ByRef(param->mod) || IsStructValue(emitter, param->type.name) || IsOwningType(param->type.name);
 }
 
 static void EmitType(CEmitter* emitter, const TypeName* type)
@@ -341,13 +341,8 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
         const MemberExpr* member = (const MemberExpr*)node;
 
         const char* baseName = ExprType(emitter, member->base_node);
-
-        char boxInner[128];
-
-        if (IsBoxTypeName(baseName) && BoxInnerTypeName(baseName, boxInner, sizeof boxInner))
-        {
-            baseName = boxInner;
-        }
+        const char* _inner = OwningInnerCStr(emitter->arena, baseName);
+        if (_inner) baseName = _inner;
 
         const StructType* type = TypeRegistryFind(&emitter->types, baseName);
         int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
@@ -411,7 +406,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     {
         const MemberExpr* member = (const MemberExpr*)node;
         const char* baseType = ExprType(emitter, member->base_node);
-        bool throughBox = IsBoxTypeName(baseType);
+        bool throughBox = IsOwningType(baseType);
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
@@ -569,9 +564,9 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         {
             /* box<T> coerced to T: if the param is a plain struct (not box),
                and the arg is a box, the heap pointer IS the T* the param wants. */
-            bool paramIsBoxType = IsBoxTypeName(parameter->type.name);
+            bool paramIsBoxType = IsOwningType(parameter->type.name);
             const char* argType = ExprType(emitter, argument);
-            bool argIsBox = IsBoxTypeName(argType);
+            bool argIsBox = IsOwningType(argType);
 
             if (!paramIsBoxType && argIsBox)
             {
@@ -608,7 +603,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
    box-to-box move, which need the raw pointer). */
 static void EmitScalarValue(CEmitter* emitter, const Node* node)
 {
-    if (node && node->kind == NodeIdent && IsBoxTypeName(ExprType(emitter, node)))
+    if (node && node->kind == NodeIdent && IsOwningType(ExprType(emitter, node)))
     {
         SbPuts(&emitter->out, "(*");
         EmitLValue(emitter, node);
@@ -651,7 +646,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     {
         const MemberExpr* member = (const MemberExpr*)node;
         const char* baseType = ExprType(emitter, member->base_node);
-        bool throughBox = IsBoxTypeName(baseType);
+        bool throughBox = IsOwningType(baseType);
         SbPutc(&emitter->out, '(');
         EmitExpr(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
@@ -702,7 +697,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
 
         const char* targetType = ExprType(emitter, assign->target);
 
-        if (assign->op == AssignSet && IsBoxTypeName(targetType))
+        if (assign->op == AssignSet && IsOwningType(targetType))
         {
             /* Box move: free the old value, take the new pointer, null the source. */
             SbPuts(&emitter->out, "(strata_free(");
@@ -849,7 +844,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
         SbPuts(&emitter->out, ";\n");
 
         /* A box field moved from a variable nulls the source. */
-        if (IsBoxTypeName(fd->type.name) && sf->value->kind == NodeIdent)
+        if (IsOwningType(fd->type.name) && sf->value->kind == NodeIdent)
         {
             Pad(emitter);
             SbPuts(&emitter->out, VarName(emitter, ((IdentExpr*)sf->value)->name));
@@ -864,7 +859,7 @@ static void EmitBoxGlobalInitStmt(CEmitter* emitter, const char* cName, const ch
 {
     const char* initType = ExprType(emitter, (Node*)init);
 
-    if (initType[0] != '\0' && IsBoxTypeName(initType))
+    if (initType[0] != '\0' && IsOwningType(initType))
     {
         /* A box-returning call: assign the returned pointer directly. */
         Pad(emitter);
@@ -903,10 +898,9 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 {
     const char* cName = VarName(emitter, declaration->name);
 
-    if (IsBoxTypeName(declaration->type.name))
+    if (IsOwningType(declaration->type.name))
     {
-        char inner[128];
-        BoxInnerTypeName(declaration->type.name, inner, sizeof inner);
+        const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
         const char* innerC = TypeNameC(emitter, inner);
         const char* initType = declaration->init ? ExprType(emitter, declaration->init) : "";
 
@@ -915,7 +909,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         SbPutc(&emitter->out, ' ');
         SbPuts(&emitter->out, cName);
 
-        if (initType[0] != '\0' && IsBoxTypeName(initType))
+        if (initType[0] != '\0' && IsOwningType(initType))
         {
             /* Move from another box<T>: take its pointer, null the source. */
             SbPuts(&emitter->out, " = ");
@@ -1006,7 +1000,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         /* box<T> -> T coercion: dereference the box pointer. */
         const char* initType = ExprType(emitter, declaration->init);
 
-        if (IsBoxTypeName(initType))
+        if (IsOwningType(initType))
         {
             SbPutc(&emitter->out, '*');
         }
@@ -1037,10 +1031,8 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
     {
         OwnEntry* e = (OwnEntry*)VecGet(&emitter->boxVars, i);
         const char* var = e->cName;
-        char inner[128];
-        bool owningInner = IsBoxTypeName(e->typeName)
-            && BoxInnerTypeName(e->typeName, inner, sizeof inner)
-            && TypeRegistryIsOwningStruct(&emitter->types, inner);
+        const char* inner = OwningInnerCStr(emitter->arena, e->typeName);
+        bool owningInner = inner && TypeRegistryIsOwningStruct(&emitter->types, inner);
 
         /* For a by-ref box param, the box pointer lives at *var (caller's slot). */
         const char* star = e->byRef ? "*" : "";
@@ -1126,7 +1118,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         /* A bare box<T> identifier is only a move when the function itself
            returns box<T>; otherwise it's read (dereferenced), not moved. */
         bool returnsBoxIdent = statement->value && statement->value->kind == NodeIdent
-            && IsBoxTypeName(ExprType(emitter, statement->value));
+            && IsOwningType(ExprType(emitter, statement->value));
         bool movesBox = returnsBoxIdent
             && emitter->currentReturn
             && strcmp(emitter->currentReturn, ExprType(emitter, statement->value)) == 0;
@@ -1327,14 +1319,13 @@ static const char* DropHelperName(CEmitter* emitter, const char* structName)
 
 static void EmitDropField(CEmitter* emitter, const char* fieldC, const char* fieldType)
 {
-    if (IsBoxTypeName(fieldType))
+    if (IsOwningType(fieldType))
     {
-        char inner[128];
-        BoxInnerTypeName(fieldType, inner, sizeof inner);
+        const char* inner = OwningInnerCStr(emitter->arena, fieldType);
 
         SbPrintf(&emitter->out, "    if (p->%s) { ", fieldC);
 
-        if (TypeRegistryIsOwningStruct(&emitter->types, inner))
+        if (inner && TypeRegistryIsOwningStruct(&emitter->types, inner))
         {
             SbPrintf(&emitter->out, "%s(p->%s); ", DropHelperName(emitter, inner), fieldC);
         }
@@ -1574,7 +1565,7 @@ static void EmitGlobals(CEmitter* emitter)
         SbPuts(&emitter->out, cName);
         SbPuts(&emitter->out, " = ");
 
-        if (IsBoxTypeName(global->type.name))
+        if (IsOwningType(global->type.name))
         {
             /* Boxing requires a runtime alloc, so the real init runs in
                __strata_module_init; the declared storage starts null. */
@@ -1663,7 +1654,7 @@ static void EmitDefinitions(CEmitter* emitter)
             AddSymbol(emitter, param->name, param->type.name, VarName(emitter, param->name), ParamIsIndirect(emitter, param));
 
             /* An owned (non-ref) box parameter is consumed: freed at return. */
-            if (IsBoxTypeName(param->type.name) && param->mod == ModNone)
+            if (IsOwningType(param->type.name) && param->mod == ModNone)
             {
                 OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
                 entry->cName = VarName(emitter, param->name);
@@ -1714,7 +1705,7 @@ static bool ModuleHasBoxGlobals(const CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
-        if (IsBoxTypeName(global->type.name))
+        if (IsOwningType(global->type.name))
         {
             return true;
         }
@@ -1757,13 +1748,12 @@ static void EmitModuleInit(CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
-        if (!IsBoxTypeName(global->type.name) || !global->init)
+        if (!IsOwningType(global->type.name) || !global->init)
         {
             continue;
         }
 
-        char inner[128];
-        BoxInnerTypeName(global->type.name, inner, sizeof inner);
+        const char* inner = OwningInnerCStr(emitter->arena, global->type.name);
         const char* innerC = TypeNameC(emitter, inner);
         const char* cName = GlobalName(emitter, global->name);
 
@@ -1788,7 +1778,7 @@ static void EmitModuleTeardown(CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
-        if (!IsBoxTypeName(global->type.name))
+        if (!IsOwningType(global->type.name))
         {
             continue;
         }
