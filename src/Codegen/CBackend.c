@@ -713,7 +713,13 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
 
         const char* targetType = ExprType(emitter, assign->target);
 
-        if (assign->op == AssignSet && IsOwningType(targetType))
+        /* `=` rebinds the box only when the value is itself a box of the
+           same type; any other assignment into a box<T> - including `=`
+           with a plain T value, e.g. `x = 5;` - mutates its contents. */
+        bool boxMove = assign->op == AssignSet && IsOwningType(targetType)
+            && strcmp(ExprType(emitter, assign->value), targetType) == 0;
+
+        if (boxMove)
         {
             /* Box move: free the old value, take the new pointer, null the source. */
             SbPuts(&emitter->out, "(strata_free(");
@@ -734,6 +740,39 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
             }
 
             SbPuts(&emitter->out, ")");
+
+            return;
+        }
+
+        if (!boxMove && IsOwningType(targetType))
+        {
+            /* Assigning a plain T (or compound-assigning) into a box<T>
+               mutates its contents in place - not a move, so `x = 5;` and
+               `val -= amt;` both work even through a `ref box<T>` param or
+               a box global. */
+            const char* inner = OwningInnerCStr(emitter->arena, targetType);
+
+            if (assign->op == AssignMod && IsFloatType(inner))
+            {
+                SbPuts(&emitter->out, "(*");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, " = ");
+                SbPuts(&emitter->out, strcmp(inner, "double") == 0 ? "fmod(*" : "fmodf(*");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, ", ");
+                EmitScalarValue(emitter, assign->value);
+                SbPuts(&emitter->out, "))");
+
+                return;
+            }
+
+            SbPuts(&emitter->out, "(*");
+            EmitLValue(emitter, assign->target);
+            SbPutc(&emitter->out, ' ');
+            SbPuts(&emitter->out, AssignSpelling(assign->op));
+            SbPutc(&emitter->out, ' ');
+            EmitScalarValue(emitter, assign->value);
+            SbPutc(&emitter->out, ')');
 
             return;
         }

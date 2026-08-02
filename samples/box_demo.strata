@@ -47,7 +47,7 @@ box<Vec3> make_vec3(float x, float y, float z)
 // `a = b` where both are box<T>:
 //   1.  a's old box is freed (strata_free).
 //   2.  b's pointer is copied into a.
-//   3.  b is nulled — using b afterwards is a compile error ("use of moved box").
+//   3.  b is nulled — using b afterwards is a compile error ("'b' used after move").
 
 float move_and_read()
 {
