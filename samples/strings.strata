@@ -1,31 +1,20 @@
-// ---------------------------------------------------------------------------
-// string — owning heap-allocated string type
-// ---------------------------------------------------------------------------
-// `string` is an owning type backed by a heap-allocated, null-terminated
-// char* buffer.  It is move-only, auto-freed at scope end via strata_free,
-// and crosses the host boundary as `const char*`.
+// string — owning heap-allocated string type.
 //
-//   string s = "hello";       // allocates + copies the literal to the heap
-//   s = "world";              // frees old buffer, copies new one
+//   string s = "hello";       // heap-copies the literal
+//   s = "world";              // frees old buffer, copies new
 //   return s;                 // moves ownership to caller
 //   puts(s);                  // extern string params receive const char*
-// ---------------------------------------------------------------------------
 
-// --- Creation from literal ---
-int length_of_hello()
-{
-    string s = "hello";
-    return 5;
-}
+extern int puts(string s);
 
-// --- Move on return ---
+// --- Creation / move on return ---
 string make_greeting()
 {
     string s = "Hello, World!";
     return s;
 }
 
-// --- Reassigning a string ---
+// --- Reassignment ---
 string replace_string()
 {
     string s = "first";
@@ -33,59 +22,18 @@ string replace_string()
     return s;
 }
 
-// --- Owning string param ---
+// --- Owning param ---
 int take_string(string s)
 {
     return 1;
 }
 
-// --- Extern functions with string params receive const char* directly ---
-extern int puts(string s);
-
-extern ulong strlen(string s);
-
-handle FILE;
-extern FILE fopen(string s, string mode);
-extern ulong fwrite(string str, ulong size, ulong count, FILE stream);
-extern int fclose(FILE stream);
-
-struct File { FILE f; };
-
-File open_file(string path, string mode)
-{
-    return File { .f = fopen(path, mode) };
-}
-
-void write(File file, string text)
-{
-    ulong len = strlen(text);
-    fwrite(text, len, 1, file.f);
-}
-
-void close(ref File file)
-{
-    if (file.f == 0)
-    {
-        return;
-    }
-    fclose(file.f);
-    file = File {};
-}
-
-// --- Entry point ---
 int run()
 {
-    int a = length_of_hello();           // 5
-    string g = make_greeting();          // takes ownership of returned string
-
-    puts(g);                             // prints "Hello, World!"
-
-    File f = open_file("foo.txt", "w+");
-    write(f, "Hello world");
-    close(f);
-
-    int hasGreeting = take_string(g);    // 1 (moves g)
-    string r = replace_string();         // "second"
-    int hasReplace = take_string(r);     // 1 (moves r)
-    return a + hasGreeting + hasReplace; // 5 + 1 + 1 = 7
+    string g = make_greeting();   // owns "Hello, World!"
+    puts(g);                      // prints it
+    int x = take_string(g);       // moves g
+    string r = replace_string();  // "second"
+    int y = take_string(r);       // moves r
+    return 5 + x + y;             // 7
 }

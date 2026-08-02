@@ -1,55 +1,21 @@
-// engine_api.strata -- opaque engine handles.
+// engine_api.strata — opaque engine handles cross the host boundary.
 //
-// The engine owns the Entity layout; Strata only holds pointer-sized handles
-// and calls engine functions on them. This is how scripts talk to engine
-// objects without the language knowing anything about them. See
-// hosts/engine_api_host.c.
-//
-//   stratac engine_api.strata -o engine_api.o
-//   clang hosts/engine_api_host.c engine_api.o -o engine_api.exe
-//   ./engine_api.exe
+// The engine owns the Entity layout; Strata holds pointer-sized handles
+// and calls engine functions on them.  See hosts/engine_api_host.c.
 
-handle Entity;                            // engine-provided; layout unknown to Strata
+handle Entity;
 
-extern Entity world_spawn(int x, int y);    // engine creates an entity
+extern Entity world_spawn(int x, int y);
 extern void   world_move(Entity e, int dx, int dy);
 extern int    world_x(Entity e);
 extern int    world_y(Entity e);
 extern void   world_destroy(Entity e);
 
-// Move an entity and report its new x coordinate.
-int relocate(ref Entity e, int dx, int dy)
-{
-    world_move(e, dx, dy);
-    return world_x(e);
-}
-
-void sub(ref int val, int amt)
-{
-    val -= amt;
-}
-
-void drop(box<int> x)
-{
-}
-
-void mutate_box(ref box<int> inVal)
-{
-    inVal++;
-}
-
 int run()
 {
     Entity e = world_spawn(10, 20);
-
-    box<int> x_after = relocate(e, 5, 7);        // x = 15
+    world_move(e, -19, 0);         // x = 10 - 19 = -9
+    int x = world_x(e);
     world_destroy(e);
-
-    sub(x_after, 25);
-    mutate_box(x_after);
-
-    // Would be an error:
-    //drop(x_after);
-
-    return x_after;
+    return x;                      // -9
 }

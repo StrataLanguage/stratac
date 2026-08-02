@@ -1,3 +1,5 @@
+// structs.strata — named struct types with fields, creation, and member access.
+
 struct Vec3
 {
     float x;
@@ -5,16 +7,9 @@ struct Vec3
     float z;
 };
 
-float max(const Vec3 v)
+float dot(const Vec3 a, const Vec3 b)
 {
-    return max(v.x, max(v.y, v.z));
-}
-
-float max(float a, float b)
-{
-    if (a > b) return a;
-
-    return b;
+    return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
 Vec3 add(const Vec3 a, const Vec3 b)
@@ -28,41 +23,17 @@ Vec3 add(const Vec3 a, const Vec3 b)
 
 struct Particle
 {
-    int id;
-    Vec3 pos;
-    Vec3 vel;
+    int   id;
+    Vec3  pos;
     float mass;
 };
 
-float dot(const Vec3 a, const Vec3 b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-// You can declare an opaque type used by your engine using `handle`.
-handle Entity;
-
-// Structs are passed by reference.
-float kinetic_energy(const Particle p)
-{
-    float speed_sq = dot(p.vel, p.vel);
-    return speed_sq * p.mass * 0.5;
-}
-
-float entry()
-{
-    Particle p;
-    p.id = 1;
-    p.pos = Vec3 { 0.0, 0.0, 0.0 };
-    p.vel = Vec3 { 3.0, 4.0, 0.0 };   // speed^2 = 9 + 16 = 25
-    p.mass = 2.0;
-    return kinetic_energy(p);        // 25 * 2.0 * 0.5 = 25.0
-}
-
-// For standalone
 int main()
 {
-    Vec3 v = add(Vec3 { 1,2,3 }, Vec3 { 4,5,6 });
-
-    return max(v);
+    Vec3 v = add(Vec3 { 1, 2, 3 }, Vec3 { 4, 5, 6 });
+    Particle p;
+    p.id = 1;
+    p.pos = v;
+    p.mass = 1.0;
+    return p.id;
 }

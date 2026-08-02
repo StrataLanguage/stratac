@@ -1,49 +1,23 @@
-// control_flow.strata -- control flow and ref parameters.
-//
-// The LLVM back-end handles if/else, while, for, break/continue, recursion,
-// and ref. Run it natively:
-//   stratac control_flow.strata -o control_flow.o
-//   clang control_flow.o -o control_flow.exe && ./control_flow.exe ; echo $?
-// Or inspect the AST:
-//   stratac --ast control_flow.strata
+// control_flow.strata — if/else, while, for, break/continue, recursion.
 
-// Iterative factorial with a while loop.
 int factorial(int n)
 {
     int result = 1;
     int i = 1;
-
     while (i <= n)
     {
         result = result * i;
         i = i + 1;
     }
-
     return result;
 }
 
-// A for loop: sum of squares 1*1 + 2*2 + ... + n*n.
-int sum_squares(int n)
-{
-    int total = 0;
-    for (int i = 1; i <= n; i = i + 1)
-    {
-        total = total + i * i;
-    }
-    return total;
-}
-
-// Recursive Fibonacci.
 int fibonacci(int n)
 {
-    if (n < 2)
-    {
-        return n;
-    }
+    if (n < 2) { return n; }
     return fibonacci(n - 1) + fibonacci(n - 2);
 }
 
-// break and continue: sum of 1..n, skipping multiples of 5.
 int sum_skipping_fives(int n)
 {
     int total = 0;
@@ -58,30 +32,10 @@ int sum_skipping_fives(int n)
     return total;
 }
 
-// ref parameters hand values back to the caller (there are no *EXPLICIT* pointers in
-// Strata; ref is lowered to a pointer internally).
-void minmax(int a, int b, ref int lo, ref int hi)
-{
-    if (a < b)
-    {
-        lo = a;
-        hi = b;
-    }
-    else
-    {
-        lo = b;
-        hi = a;
-    }
-}
-
 int main()
 {
-    int f = factorial(5);          // 120
-    int s = sum_squares(4);        // 30
-    int fib = fibonacci(10);       // 55
+    int f = factorial(5);            // 120
+    int fib = fibonacci(10);         // 55
     int skip = sum_skipping_fives(10); // 1..10 minus 5,10 = 40
-    int lo;
-    int hi;
-    minmax(7, 3, lo, hi);          // lo = 3, hi = 7
-    return f + s + fib + skip + lo + hi;  // 120 + 30 + 55 + 40 + 3 + 7 = 255
+    return f + fib + skip;           // 215
 }
