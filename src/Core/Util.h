@@ -25,6 +25,16 @@
 #define THREAD_LOCAL __thread
 #endif
 
+// -- Platform & Architecture
+
+#if defined(__x86_64__) || defined(__amd64__) || defined(_M_AMD64) || defined(_M_X64)
+#define STRATA_HOST_X64 1
+#elif defined(__aarch64__) || defined(__APPLE__)
+#define STRATA_HOST_ARM64 1
+#else
+#error "Unknown architecture"
+#endif
+
 // -- Arena
 
 typedef struct ArenaChunk {
@@ -155,6 +165,10 @@ void SbPutr(Sb* sb, char c, size_t repeat);
 void SbPrintf(Sb* sb, const char* fmt, ...);
 char* SbFinish(Sb* sb, Arena* arena);
 
+uint64_t HashStr64(const char* s);
+
 // -- Misc
 
 size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);
+
+const char* GenerateId(char* buffer, int size);

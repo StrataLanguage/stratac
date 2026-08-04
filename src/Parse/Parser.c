@@ -1524,6 +1524,8 @@ static Node* ParsePrimary(Parser* p)
         return (Node*)node;
     }
 
+    case TokKwFloat3:
+    case TokKwFloat4:
     case TokIdent:
     {
         Advance(p);

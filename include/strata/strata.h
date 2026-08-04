@@ -66,8 +66,7 @@ typedef struct StrataJit StrataJit;
 
 STRATA_API StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
                                               const char* moduleName, const char** errOut);
-STRATA_API StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path,
-                                           const char** errOut);
+STRATA_API StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut);
 
 STRATA_API void* strataJitGetFunction(StrataJit* jit, const char* name);
 STRATA_API int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name);
@@ -91,6 +90,8 @@ typedef struct
 
 STRATA_API StrataCompiler* strataCompilerCreate(void);
 STRATA_API void strataCompilerDestroy(StrataCompiler* c);
+
+STRATA_API void strataSetArchitecture(StrataCompiler* c, StrataArch arch);
 
 STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,
                                             const char* moduleName, StrataEmitKind emit);
