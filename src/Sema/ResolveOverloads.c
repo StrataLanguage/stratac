@@ -410,7 +410,16 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        return ((IntLiteral*)n)->isUnsigned ? "uint" : "int";
+    {
+        const IntLiteral* lit = (const IntLiteral*)n;
+
+        if (lit->value > 0xFFFFFFFFULL)
+        {
+            return lit->isUnsigned ? "ulong" : "long";
+        }
+
+        return lit->isUnsigned ? "uint" : "int";
+    }
     case NodeFloatLiteral:
         return "float";
     case NodeBoolLiteral:

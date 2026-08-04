@@ -200,13 +200,47 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
         {
             return Encode(emitter, "strata__vec_", name);
         }
-        if (mapped.isVoid) return "void";
-        if (mapped.isFloat && mapped.bits == 32) return "float";
-        if (mapped.isFloat && mapped.bits == 64) return "double";
-        if (mapped.bits == 1) return "_Bool";
-        if (mapped.bits == 8) return mapped.isUnsigned ? "unsigned char" : "signed char";
-        if (mapped.bits == 16) return mapped.isUnsigned ? "unsigned short" : "short";
-        if (mapped.isUnsigned) return "unsigned int";
+
+        if (mapped.isVoid)
+        {
+            return "void";
+        }
+
+        if (mapped.isFloat && mapped.bits == 32)
+        {
+            return "float";
+        }
+
+        if (mapped.isFloat && mapped.bits == 64)
+        {
+            return "double";
+        }
+
+        if (mapped.bits == 1)
+        {
+            return "_Bool";
+        }
+
+        if (mapped.bits == 8)
+        {
+            return mapped.isUnsigned ? "unsigned char" : "signed char";
+        }
+
+        if (mapped.bits == 16)
+        {
+            return mapped.isUnsigned ? "unsigned short" : "short";
+        }
+
+        if (mapped.bits == 64)
+        {
+            return mapped.isUnsigned ? "unsigned long long" : "long long";
+        }
+
+        if (mapped.isUnsigned)
+        {
+            return "unsigned int";
+        }
+
         return "int";
     }
 
@@ -216,6 +250,7 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
     }
 
     DiagErrorFmt(emitter->diag, SRC_INVALID, "don't know '%s'", name);
+
     return "void*";
 }
 
@@ -256,6 +291,7 @@ static void EmitType(CEmitter* emitter, const TypeName* type)
     {
         SbPuts(&emitter->out, "const ");
     }
+
     SbPuts(&emitter->out, TypeNameC(emitter, type->name));
 }
 
@@ -284,7 +320,16 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     switch (node->kind)
     {
     case NodeIntLiteral:
-        return ((const IntLiteral*)node)->isUnsigned ? "uint" : "int";
+    {
+        const IntLiteral* lit = (const IntLiteral*)node;
+
+        if (lit->value > 0xFFFFFFFFULL)
+        {
+            return lit->isUnsigned ? "ulong" : "long";
+        }
+
+        return lit->isUnsigned ? "uint" : "int";
+    }
     case NodeFloatLiteral:
         return "float";
     case NodeBoolLiteral:
@@ -694,7 +739,17 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
     case NodeIntLiteral:
     {
         const IntLiteral* literal = (const IntLiteral*)node;
-        SbPrintf(&emitter->out, "%llu%s", (unsigned long long)literal->value, literal->isUnsigned ? "u" : "");
+
+        if (literal->value > 0xFFFFFFFFULL)
+        {
+            SbPrintf(&emitter->out, "%llu%s", (unsigned long long)literal->value,
+                     literal->isUnsigned ? "ULL" : "LL");
+        }
+        else
+        {
+            SbPrintf(&emitter->out, "%llu%s", (unsigned long long)literal->value,
+                     literal->isUnsigned ? "u" : "");
+        }
 
         return;
     }
