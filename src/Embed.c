@@ -65,6 +65,11 @@ extern "C"
         free(c);
     }
 
+    void strataSetArchitecture(StrataCompiler* c, StrataArch arch)
+    {
+        c->arch = arch;
+    }
+
     static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                     size_t sourceCount, StrataEmitKind emit, const StrataArch arch)
     {

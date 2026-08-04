@@ -2,9 +2,7 @@
 int run(int seed)
 {
 
-    float3 x;
-
-    // float32x4_t x = vld1q_f32(10.0f);
+    float3 x = float3(1.0);
 
     return 5;
 }

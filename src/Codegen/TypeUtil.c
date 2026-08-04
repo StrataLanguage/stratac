@@ -75,36 +75,36 @@ MappedType MapType(const TypeName* t)
     char candidate[32] = {0};
     int vec = 1;
 
-    size_t len = strlen(base);
-    size_t split = len;
+    // size_t len = strlen(base);
+    // size_t split = len;
 
-    while (split > 0 && base[split - 1] >= '0' && base[split - 1] <= '9')
-    {
-        --split;
-    }
+    // while (split > 0 && base[split - 1] >= '0' && base[split - 1] <= '9')
+    // {
+    //     --split;
+    // }
 
-    if (split > 0 && split < len)
-    {
-        int parsedSize = 0;
-        for (size_t i = split; i < len; ++i)
-        {
-            parsedSize = parsedSize * 10 + (base[i] - '0');
-        }
+    // if (split > 0 && split < len)
+    // {
+    //     int parsedSize = 0;
+    //     for (size_t i = split; i < len; ++i)
+    //     {
+    //         parsedSize = parsedSize * 10 + (base[i] - '0');
+    //     }
 
-        if (parsedSize >= 1 && parsedSize <= 4)
-        {
-            size_t clen = split < sizeof(candidate) - 1 ? split : sizeof(candidate) - 1;
-            memcpy(candidate, base, clen);
-            candidate[clen] = '\0';
+    //     if (parsedSize >= 1 && parsedSize <= 4)
+    //     {
+    //         size_t clen = split < sizeof(candidate) - 1 ? split : sizeof(candidate) - 1;
+    //         memcpy(candidate, base, clen);
+    //         candidate[clen] = '\0';
 
-            if (strcmp(candidate, "float") == 0 || strcmp(candidate, "int") == 0 || strcmp(candidate, "uint") == 0
-                || strcmp(candidate, "double") == 0 || strcmp(candidate, "bool") == 0)
-            {
-                base = candidate;
-                vec = parsedSize;
-            }
-        }
-    }
+    //         if (strcmp(candidate, "float") == 0 || strcmp(candidate, "int") == 0 || strcmp(candidate, "uint") == 0
+    //             || strcmp(candidate, "double") == 0 || strcmp(candidate, "bool") == 0)
+    //         {
+    //             base = candidate;
+    //             vec = parsedSize;
+    //         }
+    //     }
+    // }
 
     if (strcmp(base, "void") == 0)
     {

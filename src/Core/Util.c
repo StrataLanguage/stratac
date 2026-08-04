@@ -1,8 +1,8 @@
 #include "Core/Util.h"
 
-#include <stdlib.h>
-#include <stdio.h>
 #include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 // -- C string
 
@@ -47,7 +47,7 @@ static void ArenaGrow(Arena* a, size_t need)
     {
         chunk_size = need + sizeof(ArenaChunk);
     }
-    
+
     chunk_size = (chunk_size + 63) & ~(size_t)63;
 
     ArenaChunk* c = (ArenaChunk*)malloc(chunk_size);
@@ -215,12 +215,12 @@ void VecReserve(Vec* v, size_t n)
     }
 
     size_t newcap = v->cap ? v->cap * 2 : 8;
-    
+
     while (newcap < n)
     {
         newcap *= 2;
     }
-    
+
     v->items = (void**)realloc(v->items, newcap * sizeof(void*));
     if (!v->items)
     {
@@ -251,7 +251,7 @@ void* VecPop(Vec* v)
 
 // -- StrMap
 
-static uint64_t StrMapHash(const char* s)
+uint64_t HashStr64(const char* s)
 {
     uint64_t h = 1469598103934665603ULL;
     while (*s)
@@ -276,7 +276,7 @@ static void StrMapResize(StrMap* m, size_t newcap)
     {
         if (m->keys[i])
         {
-            uint64_t h = StrMapHash(m->keys[i]) & (newcap - 1);
+            uint64_t h = HashStr64(m->keys[i]) & (newcap - 1);
 
             while (newkeys[h])
             {
@@ -308,7 +308,7 @@ void StrMapPut(StrMap* m, const char* key, void* value)
         StrMapResize(m, m->cap * 2);
     }
 
-    uint64_t h = StrMapHash(key) & (m->cap - 1);
+    uint64_t h = HashStr64(key) & (m->cap - 1);
 
     while (m->keys[h])
     {
@@ -334,7 +334,7 @@ void* StrMapGet(const StrMap* m, const char* key)
         return NULL;
     }
 
-    uint64_t h = StrMapHash(key) & (m->cap - 1);
+    uint64_t h = HashStr64(key) & (m->cap - 1);
 
     while (m->keys[h])
     {
@@ -387,7 +387,7 @@ static void SbEnsure(Sb* sb, size_t extra)
     {
         STRATA_OOM();
     }
-    
+
     sb->cap = newcap;
 }
 
@@ -407,10 +407,10 @@ void SbPuts(Sb* sb, const char* s)
     {
         return;
     }
-    
+
     SbEnsure(sb, n);
     memcpy(sb->data + sb->len, s, n);
-    
+
     sb->len += n;
 }
 
@@ -423,7 +423,7 @@ void SbPutn(Sb* sb, const char* s, size_t n)
 
     SbEnsure(sb, n);
     memcpy(sb->data + sb->len, s, n);
-    
+
     sb->len += n;
 }
 
@@ -436,7 +436,7 @@ void SbPutr(Sb* sb, char c, size_t repeat)
 
     SbEnsure(sb, repeat);
     memset(sb->data + sb->len, c, repeat);
-    
+
     sb->len += repeat;
 }
 
@@ -460,7 +460,7 @@ void SbPrintf(Sb* sb, const char* fmt, ...)
 char* SbFinish(Sb* sb, Arena* arena)
 {
     char* result = (char*)arena_alloc(arena, sb->len + 1);
-    
+
     if (sb->data)
     {
         memcpy(result, sb->data, sb->len);
@@ -497,4 +497,25 @@ size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
     }
 
     return lo;
+}
+
+const char* GenerateId(char* buffer, int size)
+{
+    const char charset[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    if (!size)
+    {
+        return buffer;
+    }
+
+    --size;
+
+    for (size_t n = 0; n < size; n++)
+    {
+        int key = rand() % (int)(sizeof(charset) - 1);
+        buffer[n] = charset[key];
+    }
+
+    buffer[size] = '\0';
+
+    return buffer;
 }

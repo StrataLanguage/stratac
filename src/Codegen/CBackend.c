@@ -10,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define MAKE_TEMP_ID(buffer_) GenerateId(buffer_, 8)
+
 typedef struct
 {
     const char* typeName;
@@ -28,6 +30,7 @@ typedef struct
     Vec exports;
     Vec externs;
     bool jitMode;
+    StrataArch arch;
     unsigned indent;
     const SourceManager* sources;
     size_t sourceCount;
@@ -45,6 +48,21 @@ typedef struct
 } OwnEntry;
 
 static const char* DropHelperName(CEmitter* emitter, const char* structName);
+
+static StrataArch ResolveArch(StrataArch arch)
+{
+    // If the arch is set to AUTO, use the hosts architecture
+    if (arch == STRATA_ARCH_AUTO)
+    {
+#if defined(STRATA_HOST_ARM64)
+        return STRATA_ARCH_ARM64;
+#elif defined(STRATA_HOST_X64)
+        return STRATA_ARCH_X64;
+#endif
+    }
+
+    return arch;
+}
 
 static void DisposeMap(StrMap* map)
 {
@@ -176,6 +194,22 @@ static const char* FunctionName(CEmitter* emitter, const char* name)
     return Encode(emitter, "strata__fn_", name);
 }
 
+static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
+{
+    StrataArch arch = ResolveArch(emitter->arch);
+
+    if (arch == STRATA_ARCH_ARM64)
+    {
+        return "float32x4_t";
+    }
+    else if (arch == STRATA_ARCH_ARM64)
+    {
+        return "__m128";
+    }
+
+    return NULL;
+}
+
 static const char* TypeNameC(CEmitter* emitter, const char* name)
 {
     if (IsOwningType(name))
@@ -208,9 +242,14 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
 
     if (mapped.valid)
     {
-        if (mapped.vec > 1)
+        // if (mapped.vec > 1)
+        // {
+        //     return Encode(emitter, "strata__vec_", name);
+        // }
+
+        if (mapped.isSimdVector)
         {
-            return Encode(emitter, "strata__vec_", name);
+            return GetSimdTypeName(emitter, name);
         }
 
         if (mapped.isVoid)
@@ -684,6 +723,84 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
 
 static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
 {
+    StrataArch arch = ResolveArch(emitter->arch);
+
+    if (IsSimdVector(call->callee))
+    {
+        switch (arch)
+        {
+        case STRATA_ARCH_ARM64:
+        {
+            // Single scalar / splat
+            if (call->args.count == 1)
+            {
+                // vdupq_n_f32 ( [scalar] );
+
+                SbPuts(&emitter->out, "vdupq_n_f32(");
+                EmitExpr(emitter, call->args.items[0]);
+                SbPuts(&emitter->out, ")");
+            }
+            else
+            {
+                // This currently uses the C99 syntax for loading into a vector. This is mainly since we can't see into
+                // the future with nodes, so we cannot output a const array of values before an assignment or return.
+                // Since Neon doesn't have a _mm_setr adjacent function, this is our only option for now.
+
+                SbPuts(&emitter->out, "(float32x4_t) {");
+
+                for (int i = 0; i < call->args.count; i++)
+                {
+                    EmitExpr(emitter, call->args.items[i]);
+                    if (i < call->args.count - 1)
+                    {
+                        SbPutc(&emitter->out, ',');
+                    }
+                }
+
+                SbPuts(&emitter->out, "}");
+            }
+            break;
+        }
+
+        case STRATA_ARCH_X64:
+        {
+            // Single scalar / splat
+            if (call->args.count == 1)
+            {
+                // _mm_set1_ps ( [scalar] );
+
+                SbPuts(&emitter->out, "_mm_set1_ps(");
+                EmitExpr(emitter, call->args.items[0]);
+                SbPuts(&emitter->out, ")");
+            }
+            else
+            {
+                // This currently uses the C99 syntax for loading into a vector. This is mainly since we can't see into
+                // the future with nodes, so we cannot output a const array of values before an assignment or return.
+                // Since Neon doesn't have a _mm_setr adjacent function, this is our only option for now.
+
+                SbPuts(&emitter->out, "_mm_setr_ps(");
+
+                for (int i = 0; i < call->args.count; i++)
+                {
+                    EmitExpr(emitter, call->args.items[i]);
+                    if (i < call->args.count - 1)
+                    {
+                        SbPutc(&emitter->out, ',');
+                    }
+                }
+
+                SbPuts(&emitter->out, ")");
+            }
+            break;
+        }
+
+        default:;
+        }
+
+        {
+        }
+    }
 }
 
 static void EmitCall(CEmitter* emitter, const CallExpr* call)
@@ -1902,20 +2019,20 @@ static void EmitTypes(CEmitter* emitter)
 {
     static const char* primitive[] = {"bool", "int", "uint", "float", "double"};
 
-    for (size_t p = 0; p < sizeof(primitive) / sizeof(primitive[0]); ++p)
-    {
-        for (int lanes = 2; lanes <= 4; ++lanes)
-        {
-            const char* vectorName = arena_format(emitter->arena, "%s%d", primitive[p], lanes);
-            const char* elementName = TypeNameC(emitter, primitive[p]);
+    // for (size_t p = 0; p < sizeof(primitive) / sizeof(primitive[0]); ++p)
+    // {
+    //     for (int lanes = 2; lanes <= 4; ++lanes)
+    //     {
+    //         const char* vectorName = arena_format(emitter->arena, "%s%d", primitive[p], lanes);
+    //         const char* elementName = TypeNameC(emitter, primitive[p]);
 
-            SbPuts(&emitter->out, "typedef struct { ");
-            SbPuts(&emitter->out, elementName);
-            SbPrintf(&emitter->out, " lane[%d]; } ", lanes);
-            SbPuts(&emitter->out, TypeNameC(emitter, vectorName));
-            SbPuts(&emitter->out, ";\n");
-        }
-    }
+    //         SbPuts(&emitter->out, "typedef struct { ");
+    //         SbPuts(&emitter->out, elementName);
+    //         SbPrintf(&emitter->out, " lane[%d]; } ", lanes);
+    //         SbPuts(&emitter->out, TypeNameC(emitter, vectorName));
+    //         SbPuts(&emitter->out, ";\n");
+    //     }
+    // }
 
     for (size_t i = 0; i < emitter->types.count; ++i)
     {
@@ -2239,6 +2356,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     emitter.diag = diag;
     emitter.arena = arena;
     emitter.jitMode = jitMode;
+    emitter.arch = arch;
     emitter.sources = sources;
     emitter.sourceCount = sourceCount;
     TypeRegistryInit(&emitter.types);
