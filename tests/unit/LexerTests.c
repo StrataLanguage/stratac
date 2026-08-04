@@ -1,12 +1,12 @@
-#include "Util.h"
 #include "Test.h"
+#include "Util.h"
 
 STRATA_TEST(lexer_keywords_and_idents)
 {
     TokenList t = LexAll("int float4 MyType ref return");
     TokKind* k = Kinds(t);
     STRATA_CHECK(k[0] == TokKwInt);
-    STRATA_CHECK(k[1] == TokIdent);
+    STRATA_CHECK(k[1] == TokKwFloat4);
     STRATA_CHECK(k[2] == TokIdent);
     STRATA_CHECK(k[3] == TokKwRef);
     STRATA_CHECK(k[4] == TokKwReturn);
