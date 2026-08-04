@@ -16,9 +16,11 @@ typedef struct {
     Vec externs;
 } BuiltCModule;
 
+enum StrataArch : int;
+
 void BuiltCModuleInit(BuiltCModule* module);
 void BuiltCModuleDispose(BuiltCModule* module);
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode);
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode, enum StrataArch arch);
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                    const SourceManager* sources, size_t sourceCount, bool jitMode);
+                                    const SourceManager* sources, size_t sourceCount, bool jitMode, enum StrataArch arch);
