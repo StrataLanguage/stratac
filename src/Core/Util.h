@@ -19,6 +19,12 @@
 
 #define STRATA_OOM() STRATA_CRASH("OOM")
 
+#if defined(_MSC_VER)
+#define THREAD_LOCAL __declspec(thread)
+#else
+#define THREAD_LOCAL __thread
+#endif
+
 // -- Arena
 
 typedef struct ArenaChunk {
