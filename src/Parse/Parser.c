@@ -17,25 +17,80 @@ static bool BinaryInfo(TokKind k, int* prec, BinaryOp* op)
 {
     switch (k)
     {
-    case TokPipePipe: *prec = 1;  *op = BinLogicOr;     return true;
-    case TokAmpAmp:   *prec = 2;  *op = BinLogicAnd;    return true;
-    case TokPipe:     *prec = 3;  *op = BinBitOr;       return true;
-    case TokCaret:    *prec = 4;  *op = BinBitXor;      return true;
-    case TokAmp:      *prec = 5;  *op = BinBitAnd;      return true;
-    case TokEqEq:     *prec = 6;  *op = BinEqEq;        return true;
-    case TokNotEq:    *prec = 6;  *op = BinNotEq;       return true;
-    case TokLt:       *prec = 7;  *op = BinLt;          return true;
-    case TokLtEq:     *prec = 7;  *op = BinLtEq;        return true;
-    case TokGt:       *prec = 7;  *op = BinGt;          return true;
-    case TokGtEq:     *prec = 7;  *op = BinGtEq;        return true;
-    case TokShl:      *prec = 8;  *op = BinShl;         return true;
-    case TokShr:      *prec = 8;  *op = BinShr;         return true;
-    case TokPlus:     *prec = 9;  *op = BinAdd;         return true;
-    case TokMinus:    *prec = 9;  *op = BinSub;         return true;
-    case TokStar:     *prec = 10; *op = BinMul;         return true;
-    case TokSlash:    *prec = 10; *op = BinDiv;         return true;
-    case TokPercent:  *prec = 10; *op = BinMod;         return true;
-    default:                                            return false;
+    case TokPipePipe:
+        *prec = 1;
+        *op = BinLogicOr;
+        return true;
+    case TokAmpAmp:
+        *prec = 2;
+        *op = BinLogicAnd;
+        return true;
+    case TokPipe:
+        *prec = 3;
+        *op = BinBitOr;
+        return true;
+    case TokCaret:
+        *prec = 4;
+        *op = BinBitXor;
+        return true;
+    case TokAmp:
+        *prec = 5;
+        *op = BinBitAnd;
+        return true;
+    case TokEqEq:
+        *prec = 6;
+        *op = BinEqEq;
+        return true;
+    case TokNotEq:
+        *prec = 6;
+        *op = BinNotEq;
+        return true;
+    case TokLt:
+        *prec = 7;
+        *op = BinLt;
+        return true;
+    case TokLtEq:
+        *prec = 7;
+        *op = BinLtEq;
+        return true;
+    case TokGt:
+        *prec = 7;
+        *op = BinGt;
+        return true;
+    case TokGtEq:
+        *prec = 7;
+        *op = BinGtEq;
+        return true;
+    case TokShl:
+        *prec = 8;
+        *op = BinShl;
+        return true;
+    case TokShr:
+        *prec = 8;
+        *op = BinShr;
+        return true;
+    case TokPlus:
+        *prec = 9;
+        *op = BinAdd;
+        return true;
+    case TokMinus:
+        *prec = 9;
+        *op = BinSub;
+        return true;
+    case TokStar:
+        *prec = 10;
+        *op = BinMul;
+        return true;
+    case TokSlash:
+        *prec = 10;
+        *op = BinDiv;
+        return true;
+    case TokPercent:
+        *prec = 10;
+        *op = BinMod;
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -43,24 +98,27 @@ static AssignOp MapAssign(TokKind k)
 {
     switch (k)
     {
-    case TokAssign:     return AssignSet;
-    case TokPlusEq:     return AssignAdd;
-    case TokMinusEq:    return AssignSub;
-    case TokStarEq:     return AssignMul;
-    case TokSlashEq:    return AssignDiv;
-    case TokPercentEq:  return AssignMod;
-    default:            return AssignSet;
+    case TokAssign:
+        return AssignSet;
+    case TokPlusEq:
+        return AssignAdd;
+    case TokMinusEq:
+        return AssignSub;
+    case TokStarEq:
+        return AssignMul;
+    case TokSlashEq:
+        return AssignDiv;
+    case TokPercentEq:
+        return AssignMod;
+    default:
+        return AssignSet;
     }
 }
 
 static bool IsAssignOp(TokKind k)
 {
-    return k == TokAssign
-        || k == TokPlusEq
-        || k == TokMinusEq
-        || k == TokStarEq
-        || k == TokSlashEq
-        || k == TokPercentEq;
+    return k == TokAssign || k == TokPlusEq || k == TokMinusEq || k == TokStarEq || k == TokSlashEq
+           || k == TokPercentEq;
 }
 
 static char* ToOwned(Arena* arena, Str s)
@@ -164,6 +222,8 @@ static bool LooksLikeVarDecl(const Parser* p)
     case TokKwUshort:
     case TokKwFloat:
     case TokKwDouble:
+    case TokKwFloat3:
+    case TokKwFloat4:
     case TokKwString:
     case TokKwBox:
         return true;
@@ -224,20 +284,54 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
     switch (p->m_cur.kind)
     {
-    case TokKwVoid:   name = "void";   break;
-    case TokKwBool:   name = "bool";   break;
-    case TokKwInt:    name = "int";    break;
-    case TokKwUint:   name = "uint";   break;
-    case TokKwLong:   name = "long";   break;
-    case TokKwUlong:  name = "ulong";  break;
-    case TokKwByte:   name = "byte";   break;
-    case TokKwSbyte:  name = "sbyte";  break;
-    case TokKwShort:  name = "short";  break;
-    case TokKwUshort: name = "ushort"; break;
-    case TokKwFloat:  name = "float";  break;
-    case TokKwDouble: name = "double"; break;
-    case TokKwString: name = "string"; break;
-    case TokIdent:    name = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur)); break;
+    case TokKwVoid:
+        name = "void";
+        break;
+    case TokKwBool:
+        name = "bool";
+        break;
+    case TokKwInt:
+        name = "int";
+        break;
+    case TokKwUint:
+        name = "uint";
+        break;
+    case TokKwLong:
+        name = "long";
+        break;
+    case TokKwUlong:
+        name = "ulong";
+        break;
+    case TokKwByte:
+        name = "byte";
+        break;
+    case TokKwSbyte:
+        name = "sbyte";
+        break;
+    case TokKwShort:
+        name = "short";
+        break;
+    case TokKwUshort:
+        name = "ushort";
+        break;
+    case TokKwFloat:
+        name = "float";
+        break;
+    case TokKwDouble:
+        name = "double";
+        break;
+    case TokKwFloat3:
+        name = "float3";
+        break;
+    case TokKwFloat4:
+        name = "float4";
+        break;
+    case TokKwString:
+        name = "string";
+        break;
+    case TokIdent:
+        name = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+        break;
     default:
         if (isConst)
         {
@@ -250,11 +344,8 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     Advance(p);
 
     out->name = (char*)name;
-    out->range = (SourceRange){
-        constRange.start,
-        (uint16_t)(p->m_cur.range.start - constRange.start),
-        constRange.fileId
-    };
+    out->range
+        = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
     out->isConst = isConst;
 
     return true;
@@ -405,7 +496,8 @@ static ParamDecl* ParseParam(Parser* p)
 
     ParamDecl* node = AST_NEW(p->m_arena, ParamDecl);
     node->base.kind = NodeParam;
-    node->base.range = (SourceRange){start.start, (uint16_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
+    node->base.range
+        = (SourceRange){start.start, (uint16_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
     node->mod = mod;
     node->type = type;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
@@ -541,9 +633,8 @@ static Node* ParseFunction(Parser* p)
     }
 
     /* `return { ... };` infers its struct type from the function's return type - for box<T> this is T */
-    p->m_returnType = IsOwningType(node->returnType.name)
-        ? OwningInnerCStr(p->m_arena, node->returnType.name)
-        : node->returnType.name;
+    p->m_returnType = IsOwningType(node->returnType.name) ? OwningInnerCStr(p->m_arena, node->returnType.name)
+                                                          : node->returnType.name;
 
     node->body = ParseBlock(p);
     p->m_returnType = NULL;
@@ -558,7 +649,8 @@ static ImportDecl* ParseImport(Parser* p)
 
     if (p->m_cur.kind != TokIdent)
     {
-        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected module path after 'import' but found '%s'", TokSpelling(p->m_cur.kind));
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected module path after 'import' but found '%s'",
+                     TokSpelling(p->m_cur.kind));
         Synchronize(p);
         return NULL;
     }
@@ -805,9 +897,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
             if (p->m_cur.kind == TokLBrace)
             {
                 /* `box<T> x = {...};` infers T, not "box<T>". */
-                const char* initTypeName = IsOwningType(type.name)
-                    ? OwningInnerCStr(p->m_arena, type.name)
-                    : type.name;
+                const char* initTypeName = IsOwningType(type.name) ? OwningInnerCStr(p->m_arena, type.name) : type.name;
 
                 node->init = ParseStructInitBody(p, start, initTypeName);
             }
@@ -1059,10 +1149,18 @@ static Node* ParseUnary(Parser* p)
 
     switch (p->m_cur.kind)
     {
-    case TokMinus: op = UnNeg;      break;
-    case TokPlus:  op = UnPos;      break;
-    case TokBang:  op = UnNot;      break;
-    case TokTilde: op = UnBitNot;   break;
+    case TokMinus:
+        op = UnNeg;
+        break;
+    case TokPlus:
+        op = UnPos;
+        break;
+    case TokBang:
+        op = UnNot;
+        break;
+    case TokTilde:
+        op = UnBitNot;
+        break;
     case TokInc:
     case TokDec:
     {
@@ -1091,12 +1189,10 @@ static Node* ParseUnary(Parser* p)
         {
             Token next = LexerPeekToken(p->m_lex);
 
-            bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint ||
-                next.kind == TokKwLong || next.kind == TokKwUlong ||
-                next.kind == TokKwByte || next.kind == TokKwSbyte ||
-                next.kind == TokKwShort || next.kind == TokKwUshort ||
-                next.kind == TokKwFloat || next.kind == TokKwDouble ||
-                next.kind == TokKwBool;
+            bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint || next.kind == TokKwLong
+                                || next.kind == TokKwUlong || next.kind == TokKwByte || next.kind == TokKwSbyte
+                                || next.kind == TokKwShort || next.kind == TokKwUshort || next.kind == TokKwFloat
+                                || next.kind == TokKwDouble || next.kind == TokKwBool;
 
             bool isHandleCast = next.kind == TokIdent;
             bool isBoxCast = next.kind == TokKwBox;
@@ -1116,12 +1212,12 @@ static Node* ParseUnary(Parser* p)
                 if (ParserTryParseType(p, &castType) && p->m_cur.kind == TokRParen)
                 {
                     Token afterRparen = LexerPeekToken(p->m_lex);
-                    bool startsExpr = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit ||
-                        afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit ||
-                        afterRparen.kind == TokLParen || afterRparen.kind == TokMinus ||
-                        afterRparen.kind == TokPlus || afterRparen.kind == TokBang ||
-                        afterRparen.kind == TokTilde || afterRparen.kind == TokInc ||
-                        afterRparen.kind == TokDec;
+                    bool startsExpr = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
+                                      || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
+                                      || afterRparen.kind == TokLParen || afterRparen.kind == TokMinus
+                                      || afterRparen.kind == TokPlus || afterRparen.kind == TokBang
+                                      || afterRparen.kind == TokTilde || afterRparen.kind == TokInc
+                                      || afterRparen.kind == TokDec;
 
                     if (startsExpr || isScalarCast || isBoxCast)
                     {
@@ -1260,10 +1356,8 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
 
         DiagError(p->m_diag, p->m_cur.range, "expected ',' or '}' in braced initializer");
 
-        while (p->m_cur.kind != TokComma
-            && p->m_cur.kind != TokDot
-            && p->m_cur.kind != TokRBrace
-            && p->m_cur.kind != TokEof)
+        while (p->m_cur.kind != TokComma && p->m_cur.kind != TokDot && p->m_cur.kind != TokRBrace
+               && p->m_cur.kind != TokEof)
         {
             Advance(p);
         }
@@ -1385,13 +1479,33 @@ static Node* ParsePrimary(Parser* p)
                 char next = raw[i + 1];
                 switch (next)
                 {
-                case '\\': *dst++ = '\\'; i++; break;
-                case '"':  *dst++ = '"';  i++; break;
-                case 'n':  *dst++ = '\n'; i++; break;
-                case 't':  *dst++ = '\t'; i++; break;
-                case 'r':  *dst++ = '\r'; i++; break;
-                case '0':  *dst++ = '\0'; i++; break;
-                default:   *dst++ = raw[i]; break;
+                case '\\':
+                    *dst++ = '\\';
+                    i++;
+                    break;
+                case '"':
+                    *dst++ = '"';
+                    i++;
+                    break;
+                case 'n':
+                    *dst++ = '\n';
+                    i++;
+                    break;
+                case 't':
+                    *dst++ = '\t';
+                    i++;
+                    break;
+                case 'r':
+                    *dst++ = '\r';
+                    i++;
+                    break;
+                case '0':
+                    *dst++ = '\0';
+                    i++;
+                    break;
+                default:
+                    *dst++ = raw[i];
+                    break;
                 }
             }
             else
@@ -1420,6 +1534,7 @@ static Node* ParsePrimary(Parser* p)
             call->base.kind = NodeCall;
             call->base.range = token.range;
             call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
+            call->isPseudoCall = false;
             VecInit(&call->args);
 
             Advance(p);
