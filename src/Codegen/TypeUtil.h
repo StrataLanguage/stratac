@@ -9,8 +9,13 @@ typedef struct {
     bool isVoid;
     bool isFloat;
     bool isUnsigned;
+    bool isSimdVector;
     int bits;
     int vec;
+
+    /// The number of lanes if the type is a SIMD vector (2, 4, or 8).
+    int lanes;
+
     char elemIr[16];
     char ir[32];
 } MappedType;
@@ -23,5 +28,6 @@ static inline bool MappedTypeIsVector(const MappedType* m)
 MappedType MapType(const TypeName* t);
 
 bool IsNumeric(const char* t);
+bool IsSimdVector(const char* t);
 bool IsScalarTypeName(const char* t);
 bool IsFloatType(const char* t);
