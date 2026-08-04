@@ -1,5 +1,7 @@
 #include "Codegen/CBackend.h"
 
+#include "strata/strata.h"
+
 #include "Codegen/CodegenBackend.h"
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
@@ -2221,7 +2223,7 @@ void BuiltCModuleDispose(BuiltCModule* module)
 }
 
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                     const SourceManager* sources, size_t sourceCount, bool jitMode)
+                                     const SourceManager* sources, size_t sourceCount, bool jitMode, StrataArch arch)
 {
     BuiltCModule result;
     BuiltCModuleInit(&result);
@@ -2281,12 +2283,12 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     return result;
 }
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode)
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode, StrataArch arch)
 {
-    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, jitMode);
+    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, jitMode, arch);
 }
 
-CodegenResult GenerateC(const Module* mod)
+CodegenResult GenerateC(const Module* mod, StrataArch arch)
 {
     CodegenResult result = {0};
     result.moduleName = mod ? mod->name : NULL;
@@ -2297,7 +2299,7 @@ CodegenResult GenerateC(const Module* mod)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    BuiltCModule module = BuildCModule(mod, &diag, &arena, false);
+    BuiltCModule module = BuildCModule(mod, &diag, &arena, false, arch);
 
     result.ok = !DiagHasErrors(&diag);
     result.output = DupString(module.source ? module.source : "");
