@@ -367,6 +367,16 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
             return "float";
         }
 
+        if (strcmp(lhs, "ulong") == 0 || strcmp(rhs, "ulong") == 0)
+        {
+            return "ulong";
+        }
+
+        if (strcmp(lhs, "long") == 0 || strcmp(rhs, "long") == 0)
+        {
+            return "long";
+        }
+
         if (strcmp(lhs, "uint") == 0 || strcmp(rhs, "uint") == 0)
         {
             return "uint";
