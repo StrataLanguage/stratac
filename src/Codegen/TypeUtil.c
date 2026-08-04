@@ -1,7 +1,27 @@
 #include "Codegen/TypeUtil.h"
 
-#include <string.h>
+#include <assert.h>
 #include <stdio.h>
+#include <string.h>
+
+static inline void BuildLLVMIrType(MappedType* mappedType, int numLanes, const char* elemIr)
+{
+    assert(numLanes >= 1);
+
+    strncpy(mappedType->elemIr, elemIr, sizeof(mappedType->elemIr) - 1);
+
+    // Single scalar value
+    if (numLanes == 1)
+    {
+        strncpy(mappedType->ir, elemIr, sizeof(mappedType->ir) - 1);
+    }
+    // Vector
+    else
+    {
+        // Build the LLVM vector string (e.g <4 x float>)
+        snprintf(mappedType->ir, sizeof(mappedType->ir), "<%d x %s>", numLanes, elemIr);
+    }
+}
 
 static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const char* elemIr, int vec)
 {
@@ -10,18 +30,34 @@ static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const c
     m.valid = true;
     m.isFloat = isFloat;
     m.isUnsigned = isUnsigned;
+    m.isSimdVector = false;
     m.bits = bits;
     m.vec = vec;
-    strncpy(m.elemIr, elemIr, sizeof(m.elemIr) - 1);
 
-    if (vec == 1)
-    {
-        strncpy(m.ir, elemIr, sizeof(m.ir) - 1);
-    }
-    else
-    {
-        snprintf(m.ir, sizeof(m.ir), "<%d x %s>", vec, elemIr);
-    }
+    BuildLLVMIrType(&m, m.vec, elemIr);
+
+    return m;
+}
+
+static MappedType MakeSimdVector(bool isFloat, int bits, int lanes, const char* elemIr)
+{
+    assert(bits >= 32);
+
+    MappedType m = {0};
+
+    m.valid = true;
+    m.isFloat = isFloat;
+    m.isUnsigned = false;
+    m.isSimdVector = true;
+    m.bits = bits;
+
+    // Using a new `lanes` member here instead of `vec` as i want to avoid breaking current functionality with vectors.
+    // TODO: unify to one member and replace existing vector stuff with SIMD vectors.
+    m.vec = 1;
+    m.lanes = lanes;
+
+    // Use `vec.lanes` here as we want the LLVM backend to use <numLanes x type>
+    BuildLLVMIrType(&m, m.lanes, elemIr);
 
     return m;
 }
@@ -61,11 +97,8 @@ MappedType MapType(const TypeName* t)
             memcpy(candidate, base, clen);
             candidate[clen] = '\0';
 
-            if (strcmp(candidate, "float") == 0
-                || strcmp(candidate, "int") == 0
-                || strcmp(candidate, "uint") == 0
-                || strcmp(candidate, "double") == 0
-                || strcmp(candidate, "bool") == 0)
+            if (strcmp(candidate, "float") == 0 || strcmp(candidate, "int") == 0 || strcmp(candidate, "uint") == 0
+                || strcmp(candidate, "double") == 0 || strcmp(candidate, "bool") == 0)
             {
                 base = candidate;
                 vec = parsedSize;
@@ -138,22 +171,33 @@ MappedType MapType(const TypeName* t)
         return MakePrimitive(true, false, 64, "double", vec);
     }
 
+    if (strcmp(base, "float3") == 0)
+    {
+        // Note that float3's still require 4 components
+        return MakeSimdVector(true, 32, 4, "float");
+    }
+
     return m;
 }
 
 bool IsNumeric(const char* t)
 {
-    return strcmp(t, "int") == 0
-        || strcmp(t, "uint") == 0
-        || strcmp(t, "long") == 0
-        || strcmp(t, "ulong") == 0
-        || strcmp(t, "byte") == 0
-        || strcmp(t, "sbyte") == 0
-        || strcmp(t, "short") == 0
-        || strcmp(t, "ushort") == 0
-        || strcmp(t, "float") == 0
-        || strcmp(t, "double") == 0
-        || strcmp(t, "bool") == 0;
+    return strcmp(t, "int") == 0       /* */
+           || strcmp(t, "uint") == 0   /* */
+           || strcmp(t, "long") == 0   /* */
+           || strcmp(t, "ulong") == 0  /* */
+           || strcmp(t, "byte") == 0   /* */
+           || strcmp(t, "sbyte") == 0  /* */
+           || strcmp(t, "short") == 0  /* */
+           || strcmp(t, "ushort") == 0 /* */
+           || strcmp(t, "float") == 0  /* */
+           || strcmp(t, "double") == 0 /* */
+           || strcmp(t, "bool") == 0;
+}
+
+bool IsSimdVector(const char* t)
+{
+    return strcmp(t, "float3") == 0 || strcmp(t, "float4") == 0;
 }
 
 bool IsScalarTypeName(const char* t)
@@ -163,6 +207,5 @@ bool IsScalarTypeName(const char* t)
 
 bool IsFloatType(const char* t)
 {
-    return strcmp(t, "double") == 0
-        || strcmp(t, "float") == 0;
+    return strcmp(t, "double") == 0 || strcmp(t, "float") == 0;
 }
