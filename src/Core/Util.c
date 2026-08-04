@@ -185,7 +185,7 @@ char* arena_format(Arena* a, const char* fmt, ...)
     return result;
 }
 
-static __thread Arena g_scratch;
+static THREAD_LOCAL Arena g_scratch;
 
 Arena* scratch_arena(void)
 {
