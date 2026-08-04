@@ -2,10 +2,11 @@
 #include "Codegen/TypeRegistry.h"
 
 #include <limits.h>
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 
-typedef struct {
+typedef struct
+{
     Module* m_mod;
     DiagnosticEngine* m_diag;
     TypeRegistry m_registry;
@@ -94,9 +95,7 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 
     if (StrMapGet(&r->m_refBoxParams, root))
     {
-        DiagErrorFmt(r->m_diag, range,
-                     "'%s' cannot be moved as it is not owned because it is bound as a ref.",
-                     name);
+        DiagErrorFmt(r->m_diag, range, "'%s' cannot be moved as it is not owned because it is bound as a ref.", name);
 
         return;
     }
@@ -230,9 +229,64 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
     }
 }
 
+/**
+ * @brief Attempt to resolve calls for SIMD types (e.g. `float3(x, y, z)` or `float4(w, x, y, z)`).
+ * @returns True if this was a valid constructor or false if it was malformed.
+ */
+static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    // The function name is the same as the type name, so we can use TypeUtil functions on it.
+    int numLanes = GetSimdVectorLanes(c->callee);
+
+    if (numLanes == 0)
+    {
+        return false;
+    }
+
+    // TODO: replace this when adding integer SIMD vectors
+    const char* requiredArgType = "float";
+
+    // Calls are valid for scalar splatting (e.g. float3(x)) and loads (e.g. float3(x, y, z))
+    const bool isValidCall = (c->args.count == 1 || c->args.count == numLanes);
+
+    if (!isValidCall)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "no matching call to '%s' with %zu arguments", c->callee, c->args.count);
+        return false;
+    }
+
+    for (size_t i = 0; i < c->args.count; i++)
+    {
+        Node* arg = (Node*)VecGet(&c->args, i);
+
+        const char* argType = InferType(r, arg, scope);
+
+        if (argType[0] == '\0')
+        {
+            continue;
+        }
+
+        if (strcmp(argType, "float") != 0)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "expected argument of type 'float' but found '%s'", argType);
+            return false;
+        }
+    }
+
+    c->isPseudoCall = true;
+
+    return true;
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
+    {
+        return;
+    }
+
+    // If the function call is to `float3()` or `float4()`, resolve internally
+    if (c->callee != NULL && ResolveSimdVectorConstruct(r, c, scope))
     {
         return;
     }
@@ -251,10 +305,9 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
             Node* arg = (Node*)VecGet(&c->args, j);
 
-            const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone
-                && !best->isExtern
-                ? MovableBoxSourceKey(r, arg)
-                : NULL;
+            const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone && !best->isExtern
+                                          ? MovableBoxSourceKey(r, arg)
+                                          : NULL;
 
             if (movedArgKey)
             {
@@ -292,7 +345,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     for (size_t i = 0; i < r->m_mod->functions.count; i++)
     {
         FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
-        
+
         if (strcmp(functionDecl->name, c->callee) != 0)
         {
             continue;
@@ -304,7 +357,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         }
 
         int score = 0;
-        
+
         bool viable = true;
 
         for (size_t j = 0; j < c->args.count; j++)
@@ -322,6 +375,10 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             {
             }
             else if (IsNumeric(argType) && IsNumeric(param->type.name))
+            {
+                score += 1;
+            }
+            else if (IsSimdVector(argType) && IsSimdVector(param->type.name))
             {
                 score += 1;
             }
@@ -369,8 +426,8 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!best)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "no matching overload for '%s' with %zu argument(s)",
-                     c->callee, c->args.count);
+        DiagErrorFmt(r->m_diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
+                     c->args.count);
         return;
     }
 
@@ -388,10 +445,9 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
         Node* arg = (Node*)VecGet(&c->args, j);
 
-        const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone
-            && !best->isExtern
-            ? MovableBoxSourceKey(r, arg)
-            : NULL;
+        const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone && !best->isExtern
+                                      ? MovableBoxSourceKey(r, arg)
+                                      : NULL;
 
         if (movedArgKey)
         {
@@ -509,11 +565,13 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
         {
             if (IsIncompleteStruct(&r->m_registry, baseName))
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member, baseName);
+                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member,
+                             baseName);
             }
             else
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member, baseName);
+                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member,
+                             baseName);
             }
 
             return "";
@@ -567,10 +625,26 @@ static bool IsAssignableType(const Resolver* r, const char* targetType, const ch
         return StrEqC(inner, valueType) || strcmp(valueType, targetType) == 0;
     }
 
-    return strcmp(valueType, targetType) == 0
-        || (IsNumeric(valueType) && IsNumeric(targetType))
-        || HandleExtendsFrom(&r->m_registry, valueType, targetType)
-        || StrEqC(OwningInnerStr(valueType), targetType);
+    // Assignable if type is exact match
+    if (strcmp(valueType, targetType) == 0)
+    {
+        return true;
+    }
+
+    // If both types are numeric (and therefore convertible)
+    // TODO: Require explicit casts when performing lossy conversions (e.g. ulong to uint)
+    if (IsNumeric(valueType) && IsNumeric(targetType))
+    {
+        return true;
+    }
+
+    // Assignment to a SIMD vector (vector = scalar, vector = vector)
+    if (IsSimdVector(targetType) && (IsSimdVector(valueType) || IsNumeric(valueType)))
+    {
+        return true;
+    }
+
+    return HandleExtendsFrom(&r->m_registry, valueType, targetType) || StrEqC(OwningInnerStr(valueType), targetType);
 }
 
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
@@ -643,8 +717,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
                 if (IsBoxGlobalName(r, targetName))
                 {
                     DiagErrorFmt(r->m_diag, a->base.range,
-                                 "box global '%s' cannot be reassigned; only its fields may be mutated",
-                                 targetName);
+                                 "box global '%s' cannot be reassigned; only its fields may be mutated", targetName);
 
                     return;
                 }
@@ -689,8 +762,8 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
                 if (vt[0] != '\0' && !IsAssignableType(r, inner, vt))
                 {
-                    DiagErrorFmt(r->m_diag, a->base.range,
-                                 "cannot assign '%s' into box<%s> '%s'", vt, inner, targetName);
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' into box<%s> '%s'", vt, inner,
+                                 targetName);
                 }
             }
         }
@@ -709,9 +782,8 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
                 if (vt[0] != '\0' && !IsAssignableType(r, tt, vt))
                 {
-                    DiagErrorFmt(r->m_diag, a->base.range,
-                                 "cannot assign '%s' to '%s' of type '%s'",
-                                 vt, ((IdentExpr*)a->target)->name, tt);
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to '%s' of type '%s'", vt,
+                                 ((IdentExpr*)a->target)->name, tt);
                 }
             }
         }
@@ -734,15 +806,14 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         const char* dst = cast->type.name;
 
         bool scalarPair = src && dst && IsScalarTypeName(src) && IsScalarTypeName(dst);
-        bool handlePair = src && dst
-            && IsHandleType(&r->m_registry, src) && IsHandleType(&r->m_registry, dst)
-            && (HandleExtendsFrom(&r->m_registry, dst, src)
-                || HandleExtendsFrom(&r->m_registry, src, dst));
+        bool handlePair
+            = src && dst && IsHandleType(&r->m_registry, src) && IsHandleType(&r->m_registry, dst)
+              && (HandleExtendsFrom(&r->m_registry, dst, src) || HandleExtendsFrom(&r->m_registry, src, dst));
 
         /* box<T> -> box<U> only when T or U is opaque (erase/cast-back). */
         bool boxPair = src && dst && IsOwningType(src) && IsOwningType(dst)
-            && (TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, src))
-                || TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, dst)));
+                       && (TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, src))
+                           || TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, dst)));
 
         if (src && src[0] != '\0' && dst && dst[0] != '\0' && !scalarPair && !handlePair && !boxPair)
         {
@@ -755,7 +826,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     {
         MemberExpr* m = (MemberExpr*)n;
         ResolveExpr(r, m->base_node, scope);
-        
+
         const char* baseName = InferType(r, m->base_node, scope);
 
         const char* _inner = OwningInnerCStr(r->m_arena, baseName);
@@ -792,12 +863,12 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeCall:
     {
         CallExpr* c = (CallExpr*)n;
-        
+
         for (size_t i = 0; i < c->args.count; i++)
         {
             ResolveExpr(r, (Node*)VecGet(&c->args, i), scope);
         }
-        
+
         ResolveCall(r, c, scope);
 
         return;
@@ -808,11 +879,13 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (!TypeRegistryIsUserType(&r->m_registry, structInitExpr->typeName))
         {
-            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is not a known aggregate type", structInitExpr->typeName);
+            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is not a known aggregate type",
+                         structInitExpr->typeName);
         }
         else if (TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
         {
-            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is opaque and may not be instantiated", structInitExpr->typeName);
+            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is opaque and may not be instantiated",
+                         structInitExpr->typeName);
         }
 
         size_t positionalCount = 0;
@@ -828,11 +901,13 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
             if (field->name && field->name[0] != '\0')
             {
-                int idx = structType ? TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name) : -1;
+                int idx
+                    = structType ? TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name) : -1;
 
                 if (structType && idx < 0)
                 {
-                    DiagErrorFmt(r->m_diag, structInitExpr->base.range, "struct '%s' has no field named '%s'", structInitExpr->typeName, field->name);
+                    DiagErrorFmt(r->m_diag, structInitExpr->base.range, "struct '%s' has no field named '%s'",
+                                 structInitExpr->typeName, field->name);
                 }
                 else if (structType)
                 {
@@ -843,7 +918,8 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
             {
                 if (structType && positionalCount >= structType->fields.count)
                 {
-                    DiagErrorFmt(r->m_diag, structInitExpr->base.range, "too many initializers for struct '%s'", structInitExpr->typeName);
+                    DiagErrorFmt(r->m_diag, structInitExpr->base.range, "too many initializers for struct '%s'",
+                                 structInitExpr->typeName);
                 }
                 else if (structType)
                 {
@@ -865,9 +941,8 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
                 }
 
                 /* A box<T> field moves its source (identifier/field/cast). */
-                const char* movedFieldKey = IsOwningType(fieldDecl->type.name)
-                    ? MovableBoxSourceKey(r, field->value)
-                    : NULL;
+                const char* movedFieldKey
+                    = IsOwningType(fieldDecl->type.name) ? MovableBoxSourceKey(r, field->value) : NULL;
 
                 if (movedFieldKey)
                 {
@@ -940,8 +1015,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         if (TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range,
-                         "owning struct '%s' must be stored in a box; use 'box<%s>'",
+            DiagErrorFmt(r->m_diag, vd->base.range, "owning struct '%s' must be stored in a box; use 'box<%s>'",
                          vd->type.name, vd->type.name);
         }
 
@@ -954,13 +1028,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             if (initType[0] != '\0' && !ok)
             {
-                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name, initType);
+                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'",
+                             vd->type.name, initType);
             }
 
             /* box<T> init from a box source (identifier/field/cast) moves it. */
-            const char* movedInitKey = IsOwningType(vd->type.name) && IsOwningType(initType)
-                ? MovableBoxSourceKey(r, vd->init)
-                : NULL;
+            const char* movedInitKey
+                = IsOwningType(vd->type.name) && IsOwningType(initType) ? MovableBoxSourceKey(r, vd->init) : NULL;
 
             if (movedInitKey)
             {
@@ -1016,9 +1090,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
                     bool innerIsOwning = TypeRegistryIsOwningStruct(&r->m_registry, boxInner);
                     bool innerMatchesReturn = boxInner
-                        && (r->m_currentReturnType
-                            && (strcmp(r->m_currentReturnType, boxInner) == 0
-                                || (IsNumeric(boxInner) && IsNumeric(r->m_currentReturnType))));
+                                              && (r->m_currentReturnType
+                                                  && (strcmp(r->m_currentReturnType, boxInner) == 0
+                                                      || (IsNumeric(boxInner) && IsNumeric(r->m_currentReturnType))));
 
                     if (innerIsOwning || !innerMatchesReturn)
                     {
@@ -1147,7 +1221,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         if (overloaded && functionDecl->isExtern)
         {
-            DiagErrorFmt(diag, functionDecl->base.range, "extern function '%s' cannot be overloaded", functionDecl->name);
+            DiagErrorFmt(diag, functionDecl->base.range, "extern function '%s' cannot be overloaded",
+                         functionDecl->name);
         }
 
         functionDecl->mangledName = overloaded ? Mangle(arena, functionDecl) : functionDecl->name;
@@ -1240,7 +1315,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             if (IsIncompleteStruct(&r.m_registry, field->type.name))
             {
-                DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name, field->type.name);
+                DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name,
+                             field->type.name);
             }
         }
     }
@@ -1297,8 +1373,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             if (initType[0] != '\0' && !ok)
             {
-                DiagErrorFmt(diag, gd->base.range,
-                             "box global '%s' cannot be initialized by expression of type '%s'",
+                DiagErrorFmt(diag, gd->base.range, "box global '%s' cannot be initialized by expression of type '%s'",
                              gd->name, initType);
             }
         }
@@ -1314,9 +1389,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
 
-            if (IsDefinedStruct(&r.m_registry, p->type.name)
-                && p->type.isConst
-                && p->mod == ModRef)
+            if (IsDefinedStruct(&r.m_registry, p->type.name) && p->type.isConst && p->mod == ModRef)
             {
                 DiagErrorFmt(diag, p->base.range, "'ref' parameter cannot be 'const'");
             }
@@ -1329,7 +1402,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         if (IsIncompleteStruct(&r.m_registry, functionDecl->returnType.name))
         {
-            DiagErrorFmt(diag, functionDecl->base.range, "function cannot return incomplete type '%s'", functionDecl->returnType.name);
+            DiagErrorFmt(diag, functionDecl->base.range, "function cannot return incomplete type '%s'",
+                         functionDecl->returnType.name);
         }
     }
 

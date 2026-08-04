@@ -269,6 +269,7 @@ typedef struct {
     char* callee;
     const FunctionDecl* resolvedDecl;
     Vec args;
+    bool isPseudoCall;
 } CallExpr;
 
 typedef struct {
