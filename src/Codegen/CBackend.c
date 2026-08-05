@@ -403,6 +403,14 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
             return "uint";
         }
 
+        /* Return vector type if LHS is vector and right is convertible to a vector */
+        const bool lhsIsVector = IsSimdVector(lhs);
+        const bool rhsIsVector = IsSimdVector(rhs);
+        if (lhsIsVector && (rhsIsVector || strcmp(rhs, "float") == 0))
+        {
+            return lhs;
+        }
+
         return "int";
     }
     case NodeAssign:
@@ -922,7 +930,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
 
         if (IsSimdVector(resultType))
         {
-            EmitSimdBinaryExpr(emitter, binary);
+            CSimdVectorBinExpr(emitter, binary);
             return;
         }
 

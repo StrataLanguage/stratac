@@ -216,7 +216,7 @@ typedef enum {
     BinLogicOr,
 } BinaryOp;
 
-typedef struct {
+typedef struct BinaryExpr {
     Node base;
     BinaryOp op;
     Node* lhs;

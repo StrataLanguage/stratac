@@ -14,19 +14,14 @@ extern double fmod(double, double);
 #include <arm_neon.h>
 
 
-#line 2 "../samples/simd.strata"
-float32x4_t test1(float32x4_t strata__var_x, float32x4_t strata__var_y);
-#line 8 "../samples/simd.strata"
+#line 3 "../samples/simd.strata"
 int run(int strata__var_seed);
 
-#line 2 "../samples/simd.strata"
-float32x4_t test1(float32x4_t strata__var_x, float32x4_t strata__var_y) {
-    return strata__var_y;
-    }
-
-#line 8 "../samples/simd.strata"
+#line 3 "../samples/simd.strata"
 int run(int strata__var_seed) {
-    float32x4_t strata__var_result = test1((float32x4_t) {1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f}, (float32x4_t) {4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f});
+    float32x4_t strata__var_a = (float32x4_t) {1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f};
+    float32x4_t strata__var_b = (float32x4_t) {4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f};
+    float32x4_t strata__var_result = vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(strata__var_a), vreinterpretq_u32_f32(strata__var_b)));
     return (int){0};
 }
 
