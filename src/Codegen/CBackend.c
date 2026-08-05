@@ -6,6 +6,7 @@
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
 
+#include <assert.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -922,6 +923,15 @@ static void EmitScalarValue(CEmitter* emitter, const Node* node)
     EmitExpr(emitter, node);
 }
 
+static void EmitSimdBinaryExpr(CEmitter* emitter, const BinaryExpr* binary)
+{
+    StrataArch arch = ResolveArch(emitter->arch);
+
+    if (arch == STRATA_ARCH_ARM64)
+    {
+    }
+}
+
 static void EmitExpr(CEmitter* emitter, const Node* node)
 {
     if (!node)
@@ -1027,6 +1037,12 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
             EmitScalarValue(emitter, binary->rhs);
             SbPutc(&emitter->out, ')');
 
+            return;
+        }
+
+        if (IsSimdVector(resultType))
+        {
+            EmitSimdBinaryExpr(emitter, binary);
             return;
         }
 
@@ -2158,6 +2174,52 @@ static void EmitDeclarations(CEmitter* emitter)
     SbPutc(&emitter->out, '\n');
 }
 
+/**
+ * @brief Find a `NodeKind` in a given `Node` and check recursively through nested blocks. This only checks for definite
+ * statements, ignoring any conditional nodes.
+ *
+ * @returns The node of type `kind` if it was found, or NULL otherwise.
+ */
+static const Node* FindDefiniteNodeKind(const Node* node, NodeKind kind)
+{
+    if (node->kind == kind)
+    {
+        return node;
+    }
+
+    if (node->kind == NodeBlock)
+    {
+        const Block* block = (const Block*)node;
+
+        /* Work backwards for faster return block checks. */
+        for (long long i = (long long)block->statements.count - 1; i >= 0; i--)
+        {
+            const Node* result = FindDefiniteNodeKind(block->statements.items[i], kind);
+            if (result != NULL)
+            {
+                return result;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+static bool HasConcludingReturnStmt(const Block* body)
+{
+    /* No statements in definition */
+    if (body->statements.count < 1)
+    {
+        return false;
+    }
+
+    /* Check if there are any return statements that are guaranteed to occur. Note that we cannot just check the final
+       node in the block as there may be a terminating return statement above with dead code below. */
+    const Node* returnStmt = FindDefiniteNodeKind((const Node*)body, NodeReturn);
+
+    return (returnStmt != NULL);
+}
+
 static void EmitDefinitions(CEmitter* emitter)
 {
     for (size_t i = 0; i < emitter->mod->functions.count; ++i)
@@ -2217,15 +2279,20 @@ static void EmitDefinitions(CEmitter* emitter)
 
         Pad(emitter);
 
-        if (strcmp(function->returnType.name, "void") == 0)
+        /* Add a trailing return statment if no returns were provided */
+        if (!HasConcludingReturnStmt(body))
         {
-            SbPuts(&emitter->out, "return;\n");
-        }
-        else
-        {
-            SbPuts(&emitter->out, "return (");
-            SbPuts(&emitter->out, TypeNameC(emitter, function->returnType.name));
-            SbPuts(&emitter->out, "){0};\n");
+
+            if (strcmp(function->returnType.name, "void") == 0)
+            {
+                SbPuts(&emitter->out, "return;\n");
+            }
+            else
+            {
+                SbPuts(&emitter->out, "return (");
+                SbPuts(&emitter->out, TypeNameC(emitter, function->returnType.name));
+                SbPuts(&emitter->out, "){0};\n");
+            }
         }
 
         emitter->indent--;
@@ -2363,6 +2430,11 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
         return result;
     }
 
+    if (arch == STRATA_ARCH_AUTO)
+    {
+        arch = ResolveArch(arch);
+    }
+
     CEmitter emitter = {0};
     emitter.mod = ast;
     emitter.diag = diag;
@@ -2394,6 +2466,20 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
                          "}\n"
                          "extern float fmodf(float, float);\n"
                          "extern double fmod(double, double);\n\n");
+
+    /* Emit includes to SIMD headers */
+    switch (arch)
+    {
+    case STRATA_ARCH_X64:
+        SbPuts(&emitter.out, "#include <immintrin.h>\n");
+        break;
+    case STRATA_ARCH_ARM64:
+        SbPuts(&emitter.out, "#include <arm_neon.h>\n");
+        break;
+    case STRATA_ARCH_AUTO:
+    default:;
+    }
+
     EmitTypes(&emitter);
     EmitDropHelpers(&emitter);
     EmitGlobals(&emitter);

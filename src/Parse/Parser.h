@@ -12,6 +12,7 @@ typedef struct {
     char* m_moduleName;
     Arena* m_arena;
     Token m_cur;
+    bool m_hasReturnStmt;
     const char* m_returnType;
 } Parser;
 
