@@ -134,6 +134,7 @@ void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, con
     p->m_moduleName = arena_strdup(arena, moduleName ? moduleName : "strata_module");
     p->m_cur = LexerNextToken(lex);
     p->m_returnType = NULL;
+    p->m_hasReturnStmt = false;
 }
 
 Str ParserIdentText(const Parser* p, Token t)
@@ -574,6 +575,7 @@ static Node* ParseFunction(Parser* p)
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     node->mangledName = arena_strdup(p->m_arena, node->name);
     node->isExtern = isExtern;
+    node->hasReturnStmt = false;
     VecInit(&node->params);
 
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
@@ -632,12 +634,18 @@ static Node* ParseFunction(Parser* p)
         return (Node*)node;
     }
 
+    p->m_hasReturnStmt = false;
+
     /* `return { ... };` infers its struct type from the function's return type - for box<T> this is T */
     p->m_returnType = IsOwningType(node->returnType.name) ? OwningInnerCStr(p->m_arena, node->returnType.name)
                                                           : node->returnType.name;
 
     node->body = ParseBlock(p);
+
     p->m_returnType = NULL;
+    node->hasReturnStmt = p->m_hasReturnStmt;
+
+    p->m_hasReturnStmt = false;
 
     return (Node*)node;
 }
@@ -933,6 +941,8 @@ static Node* ParseReturn(Parser* p)
 {
     Token token = p->m_cur;
     Advance(p);
+
+    p->m_hasReturnStmt = true;
 
     ReturnStmt* node = AST_NEW(p->m_arena, ReturnStmt);
     node->base.kind = NodeReturn;

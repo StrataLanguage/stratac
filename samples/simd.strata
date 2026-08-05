@@ -1,7 +1,12 @@
 
+float3 test1(float3 x, float3 y)
+{
+    return y;
+}
+
+
 int run(int seed)
 {
-    float3 x = float3(1.0, 2.0, 3.0);
+    float3 result = test1(float3(1.0, 2.0, 3.0), float3(4.0, 5.0, 6.0));
 
-    return 5;
 }

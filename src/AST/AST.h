@@ -111,6 +111,7 @@ typedef struct {
     Vec params;
     Node* body;
     bool isExtern;
+    bool hasReturnStmt;
     char* mangledName;
 } FunctionDecl;
 
