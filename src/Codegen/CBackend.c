@@ -202,7 +202,7 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
     {
         return "float32x4_t";
     }
-    else if (arch == STRATA_ARCH_ARM64)
+    else if (arch == STRATA_ARCH_X64)
     {
         return "__m128";
     }
@@ -747,6 +747,12 @@ static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
                     }
                 }
 
+                // If this is not padded out (only 3 components) then add a padding zero
+                if ((call->args.count % 4) != 0)
+                {
+                    SbPuts(&emitter->out, ", 0.0000f");
+                }
+
                 SbPuts(&emitter->out, "}");
             }
             break;
@@ -778,6 +784,12 @@ static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
                     {
                         SbPutc(&emitter->out, ',');
                     }
+                }
+
+                // If this is not padded out (only 3 components) then add a padding zero
+                if ((call->args.count % 4) != 0)
+                {
+                    SbPuts(&emitter->out, ", 0.0000f");
                 }
 
                 SbPuts(&emitter->out, ")");
