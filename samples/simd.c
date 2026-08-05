@@ -18,7 +18,7 @@ int run(int strata__var_seed);
 
 #line 2 "../samples/simd.strata"
 int run(int strata__var_seed) {
-    float32x4_t strata__var_x = vdupq_n_f32(1.000000000e+00f);
+    __m128 strata__var_x = _mm_setr_ps(1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f);
     return 5;
     return (int){0};
 }

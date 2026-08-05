@@ -1,9 +1,9 @@
 #include "strata/strata.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
 
 static void PrintHelp(void)
 {
@@ -15,6 +15,7 @@ static void PrintHelp(void)
                     "  -o <file>        output object file (default: <input>.o)\n"
                     "  --asm            also emit assembly (<output>.s)\n"
                     "  --ast            also print the AST to stderr\n"
+                    "  --arch           set the output architecture (default: auto, x64, arm64)\n"
                     "  --emit-c         emit portable C source instead of an object\n"
                     "  --run            JIT and run an int(void) entry in memory\n"
                     "  --entry <name>   entry for --run (default: main)\n"
@@ -66,6 +67,8 @@ int main(int argc, char** argv)
     bool run = false;
     const char* entryName = "main";
 
+    StrataArch outputArch = STRATA_ARCH_AUTO;
+
     for (int i = 1; i < argc; i++)
     {
         const char* a = argv[i];
@@ -79,10 +82,12 @@ int main(int argc, char** argv)
         if (strcmp(a, "--version") == 0)
         {
             unsigned capabilities = strataCapabilities();
-            printf("stratac 0.1.0 (C%s%s",
-                   capabilities & STRATA_CAP_TCC_JIT ? ", TinyCC JIT" : "",
+            printf("stratac 0.1.0 (C%s%s", capabilities & STRATA_CAP_TCC_JIT ? ", TinyCC JIT" : "",
                    capabilities & STRATA_CAP_LLVM_AOT ? ", LLVM " : "");
-            if (capabilities & STRATA_CAP_LLVM_AOT) printf("%s", strataLLVMVersion());
+            if (capabilities & STRATA_CAP_LLVM_AOT)
+            {
+                printf("%s", strataLLVMVersion());
+            }
             printf(")\n");
             return 0;
         }
@@ -95,6 +100,35 @@ int main(int argc, char** argv)
                 return 2;
             }
             outFile = argv[++i];
+        }
+
+        else if (strcmp(a, "--arch") == 0)
+        {
+            if (i + 1 >= argc)
+            {
+                fprintf(stderr, "error: --arch needs an argument (auto, x64, arm64)\n");
+                return 2;
+            }
+
+            const char* value = argv[++i];
+
+            if (strcmp(value, "x64") == 0)
+            {
+                outputArch = STRATA_ARCH_X64;
+            }
+            else if (strcmp(value, "arm64") == 0)
+            {
+                outputArch = STRATA_ARCH_ARM64;
+            }
+            else if (strcmp(value, "auto") == 0)
+            {
+                outputArch = STRATA_ARCH_AUTO;
+            }
+            else
+            {
+                fprintf(stderr, "error: unknown architecture\n");
+                return 2;
+            }
         }
         else if (strcmp(a, "--asm") == 0)
         {
@@ -146,6 +180,7 @@ int main(int argc, char** argv)
     }
 
     StrataCompiler* compiler = strataCompilerCreate();
+    strataSetArchitecture(compiler, outputArch);
 
     if (!run && strcmp(entryName, "main") != 0)
     {
@@ -200,8 +235,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "error: --run cannot resolve host externs:");
             for (size_t i = 0; i < externCount; ++i)
             {
-                fprintf(stderr, "%s%s", i ? ", " : " ",
-                        strataJitGetExternSymbolName(jit, i));
+                fprintf(stderr, "%s%s", i ? ", " : " ", strataJitGetExternSymbolName(jit, i));
             }
             fprintf(stderr, "\n");
             strataJitDestroy(jit);
@@ -256,7 +290,10 @@ int main(int argc, char** argv)
         {
             strataResultFree(&result);
             strataCompilerDestroy(compiler);
-            if (outFileOwned) free((void*)outFile);
+            if (outFileOwned)
+            {
+                free((void*)outFile);
+            }
             return 1;
         }
 
@@ -266,7 +303,10 @@ int main(int argc, char** argv)
             fprintf(stderr, "error: cannot open output '%s'\n", outFile);
             strataResultFree(&result);
             strataCompilerDestroy(compiler);
-            if (outFileOwned) free((void*)outFile);
+            if (outFileOwned)
+            {
+                free((void*)outFile);
+            }
             return 1;
         }
         size_t outputLen = strlen(result.output);
@@ -277,12 +317,18 @@ int main(int argc, char** argv)
         {
             fprintf(stderr, "error: failed writing C source '%s'\n", outFile);
             strataCompilerDestroy(compiler);
-            if (outFileOwned) free((void*)outFile);
+            if (outFileOwned)
+            {
+                free((void*)outFile);
+            }
             return 1;
         }
         fprintf(stderr, "wrote C source: %s\n", outFile);
         strataCompilerDestroy(compiler);
-        if (outFileOwned) free((void*)outFile);
+        if (outFileOwned)
+        {
+            free((void*)outFile);
+        }
         return 0;
     }
 
