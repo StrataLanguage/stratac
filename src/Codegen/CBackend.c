@@ -2,6 +2,8 @@
 
 #include "strata/strata.h"
 
+#include "AST/AST.h"
+#include "Codegen/CSimd.h"
 #include "Codegen/CodegenBackend.h"
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
@@ -19,27 +21,6 @@ typedef struct
     const char* cName;
     bool indirect;
 } CSymbol;
-
-typedef struct
-{
-    const Module* mod;
-    DiagnosticEngine* diag;
-    Arena* arena;
-    TypeRegistry types;
-    StrMap symbols;
-    Sb out;
-    Vec exports;
-    Vec externs;
-    bool jitMode;
-    StrataArch arch;
-    unsigned indent;
-    const SourceManager* sources;
-    size_t sourceCount;
-    Vec boxVars;               /* in-scope box-local OwnEntry* (current function) */
-    const char* currentReturn; /* current function's return type name */
-    unsigned retCounter;
-    unsigned boxTmpCounter; /* unique names for inline struct-init field boxing */
-} CEmitter;
 
 typedef struct
 {
@@ -243,11 +224,6 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
 
     if (mapped.valid)
     {
-        // if (mapped.vec > 1)
-        // {
-        //     return Encode(emitter, "strata__vec_", name);
-        // }
-
         if (mapped.isSimdVector)
         {
             return GetSimdTypeName(emitter, name);
@@ -493,7 +469,6 @@ static const Node* MovableBoxSource(const Node* n)
     return IsLValue(n) ? n : NULL;
 }
 
-static void EmitExpr(CEmitter* emitter, const Node* node);
 static void EmitScalarValue(CEmitter* emitter, const Node* node);
 
 static void EmitLValue(CEmitter* emitter, const Node* node)
@@ -697,7 +672,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
                 SbPuts(&emitter->out, ")); *");
                 SbPuts(&emitter->out, tmp);
                 SbPuts(&emitter->out, " = ");
-                EmitExpr(emitter, field->value);
+                CEmitExpr(emitter, field->value);
                 SbPuts(&emitter->out, "; ");
                 SbPuts(&emitter->out, tmp);
                 SbPuts(&emitter->out, "; })");
@@ -706,7 +681,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             }
         }
 
-        EmitExpr(emitter, field->value);
+        CEmitExpr(emitter, field->value);
     }
 
     SbPuts(&emitter->out, " }");
@@ -714,95 +689,10 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
 
 static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
 {
-    StrataArch arch = ResolveArch(emitter->arch);
 
     if (IsSimdVector(call->callee))
     {
-        switch (arch)
-        {
-        case STRATA_ARCH_ARM64:
-        {
-            // Single scalar / splat
-            if (call->args.count == 1)
-            {
-                // vdupq_n_f32 ( [scalar] );
-
-                SbPuts(&emitter->out, "vdupq_n_f32(");
-                EmitExpr(emitter, call->args.items[0]);
-                SbPuts(&emitter->out, ")");
-            }
-            else
-            {
-                // This currently uses the C99 syntax for loading into a vector. This is mainly since we can't see into
-                // the future with nodes, so we cannot output a const array of values before an assignment or return.
-                // Since Neon doesn't have a _mm_setr adjacent function, this is our only option for now.
-
-                SbPuts(&emitter->out, "(float32x4_t) {");
-
-                for (int i = 0; i < call->args.count; i++)
-                {
-                    EmitExpr(emitter, call->args.items[i]);
-                    if (i < call->args.count - 1)
-                    {
-                        SbPutc(&emitter->out, ',');
-                    }
-                }
-
-                // If this is not padded out (only 3 components) then add a padding zero
-                if ((call->args.count % 4) != 0)
-                {
-                    SbPuts(&emitter->out, ", 0.0000f");
-                }
-
-                SbPuts(&emitter->out, "}");
-            }
-            break;
-        }
-
-        case STRATA_ARCH_X64:
-        {
-            // Single scalar / splat
-            if (call->args.count == 1)
-            {
-                // _mm_set1_ps ( [scalar] );
-
-                SbPuts(&emitter->out, "_mm_set1_ps(");
-                EmitExpr(emitter, call->args.items[0]);
-                SbPuts(&emitter->out, ")");
-            }
-            else
-            {
-                // This currently uses the C99 syntax for loading into a vector. This is mainly since we can't see into
-                // the future with nodes, so we cannot output a const array of values before an assignment or return.
-                // Since Neon doesn't have a _mm_setr adjacent function, this is our only option for now.
-
-                SbPuts(&emitter->out, "_mm_setr_ps(");
-
-                for (int i = 0; i < call->args.count; i++)
-                {
-                    EmitExpr(emitter, call->args.items[i]);
-                    if (i < call->args.count - 1)
-                    {
-                        SbPutc(&emitter->out, ',');
-                    }
-                }
-
-                // If this is not padded out (only 3 components) then add a padding zero
-                if ((call->args.count % 4) != 0)
-                {
-                    SbPuts(&emitter->out, ", 0.0000f");
-                }
-
-                SbPuts(&emitter->out, ")");
-            }
-            break;
-        }
-
-        default:;
-        }
-
-        {
-        }
+        CSimdVectorConstruct(emitter, &call->args);
     }
 }
 
@@ -865,7 +755,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
 
             if (!paramIsBoxType && argIsBox)
             {
-                EmitExpr(emitter, argument);
+                CEmitExpr(emitter, argument);
             }
             else if (IsLValue(argument))
             {
@@ -880,7 +770,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
                 SbPuts(&emitter->out, "&((");
                 SbPuts(&emitter->out, typeName);
                 SbPuts(&emitter->out, "[]){ ");
-                EmitExpr(emitter, argument);
+                CEmitExpr(emitter, argument);
                 SbPuts(&emitter->out, " })[0]");
             }
         }
@@ -910,7 +800,7 @@ static void EmitScalarValue(CEmitter* emitter, const Node* node)
         return;
     }
 
-    EmitExpr(emitter, node);
+    CEmitExpr(emitter, node);
 }
 
 static void EmitSimdBinaryExpr(CEmitter* emitter, const BinaryExpr* binary)
@@ -922,7 +812,7 @@ static void EmitSimdBinaryExpr(CEmitter* emitter, const BinaryExpr* binary)
     }
 }
 
-static void EmitExpr(CEmitter* emitter, const Node* node)
+void CEmitExpr(CEmitter* emitter, const Node* node)
 {
     if (!node)
     {
@@ -997,7 +887,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         const char* baseType = ExprType(emitter, member->base_node);
         bool throughBox = IsOwningType(baseType);
         SbPutc(&emitter->out, '(');
-        EmitExpr(emitter, member->base_node);
+        CEmitExpr(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
         SbPuts(&emitter->out, FieldName(emitter, member->member));
 
@@ -1070,12 +960,12 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
             if (isStrLit)
             {
                 SbPuts(&emitter->out, "strata_strdup(");
-                EmitExpr(emitter, assign->value);
+                CEmitExpr(emitter, assign->value);
                 SbPutc(&emitter->out, ')');
             }
             else
             {
-                EmitExpr(emitter, assign->value);
+                CEmitExpr(emitter, assign->value);
             }
             SbPuts(&emitter->out, ")");
 
@@ -1203,7 +1093,7 @@ static void EmitExpr(CEmitter* emitter, const Node* node)
         SbPuts(&emitter->out, "((");
         SbPuts(&emitter->out, TypeNameC(emitter, cast->type.name));
         SbPuts(&emitter->out, ")(");
-        EmitExpr(emitter, cast->operand);
+        CEmitExpr(emitter, cast->operand);
         SbPuts(&emitter->out, "))");
 
         return;
@@ -1290,7 +1180,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             SbPuts(&emitter->out, "->");
             SbPuts(&emitter->out, FieldName(emitter, fd->name));
             SbPuts(&emitter->out, " = ");
-            EmitExpr(emitter, sf->value);
+            CEmitExpr(emitter, sf->value);
             SbPuts(&emitter->out, ";\n");
         }
         else
@@ -1300,7 +1190,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             SbPuts(&emitter->out, "->");
             SbPuts(&emitter->out, FieldName(emitter, fd->name));
             SbPuts(&emitter->out, " = ");
-            EmitExpr(emitter, sf->value);
+            CEmitExpr(emitter, sf->value);
             SbPuts(&emitter->out, ";\n");
         }
 
@@ -1328,7 +1218,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
         Pad(emitter);
         SbPuts(&emitter->out, cName);
         SbPuts(&emitter->out, " = ");
-        EmitExpr(emitter, (Node*)init);
+        CEmitExpr(emitter, (Node*)init);
         SbPuts(&emitter->out, ";\n");
 
         return;
@@ -1353,7 +1243,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
     SbPutc(&emitter->out, '*');
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " = ");
-    EmitExpr(emitter, (Node*)init);
+    CEmitExpr(emitter, (Node*)init);
     SbPuts(&emitter->out, ";\n");
 }
 
@@ -1375,12 +1265,12 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
             if (initType[0] != '\0' && IsOwningType(initType) && declaration->init->kind != NodeStrLiteral)
             {
                 SbPuts(&emitter->out, " = ");
-                EmitExpr(emitter, declaration->init);
+                CEmitExpr(emitter, declaration->init);
             }
             else if (declaration->init && declaration->init->kind == NodeStrLiteral)
             {
                 SbPuts(&emitter->out, " = strata_strdup(");
-                EmitExpr(emitter, declaration->init);
+                CEmitExpr(emitter, declaration->init);
                 SbPutc(&emitter->out, ')');
             }
             else
@@ -1417,7 +1307,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         {
             /* Move from another box<T>: take its pointer, null the source. */
             SbPuts(&emitter->out, " = ");
-            EmitExpr(emitter, declaration->init);
+            CEmitExpr(emitter, declaration->init);
 
             if (semicolon)
             {
@@ -1472,7 +1362,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                     SbPutc(&emitter->out, '*');
                     SbPuts(&emitter->out, cName);
                     SbPuts(&emitter->out, " = ");
-                    EmitExpr(emitter, declaration->init);
+                    CEmitExpr(emitter, declaration->init);
 
                     if (semicolon)
                     {
@@ -1509,7 +1399,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
             SbPutc(&emitter->out, '*');
         }
 
-        EmitExpr(emitter, declaration->init);
+        CEmitExpr(emitter, declaration->init);
     }
     else
     {
@@ -1682,7 +1572,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             }
             else
             {
-                EmitExpr(emitter, statement->value);
+                CEmitExpr(emitter, statement->value);
             }
 
             SbPuts(&emitter->out, ";\n");
@@ -1720,7 +1610,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
                 }
                 else
                 {
-                    EmitExpr(emitter, statement->value);
+                    CEmitExpr(emitter, statement->value);
                 }
             }
 
@@ -1742,7 +1632,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
         if (statement->expr)
         {
-            EmitExpr(emitter, statement->expr);
+            CEmitExpr(emitter, statement->expr);
         }
 
         SbPuts(&emitter->out, ";\n");
@@ -1754,7 +1644,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         const IfStmt* statement = (const IfStmt*)node;
         Pad(emitter);
         SbPuts(&emitter->out, "if (");
-        EmitExpr(emitter, statement->condition);
+        CEmitExpr(emitter, statement->condition);
         SbPuts(&emitter->out, ") ");
         EmitControlledStmt(emitter, statement->thenBranch);
 
@@ -1773,7 +1663,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         const WhileStmt* statement = (const WhileStmt*)node;
         Pad(emitter);
         SbPuts(&emitter->out, "while (");
-        EmitExpr(emitter, statement->condition);
+        CEmitExpr(emitter, statement->condition);
         SbPuts(&emitter->out, ") ");
         EmitControlledStmt(emitter, statement->body);
         SbPutc(&emitter->out, '\n');
@@ -1794,7 +1684,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             }
             else
             {
-                EmitExpr(emitter, statement->init);
+                CEmitExpr(emitter, statement->init);
             }
         }
 
@@ -1802,14 +1692,14 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
         if (statement->condition)
         {
-            EmitExpr(emitter, statement->condition);
+            CEmitExpr(emitter, statement->condition);
         }
 
         SbPuts(&emitter->out, "; ");
 
         if (statement->update)
         {
-            EmitExpr(emitter, statement->update);
+            CEmitExpr(emitter, statement->update);
         }
 
         SbPuts(&emitter->out, ") ");
@@ -1830,7 +1720,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         return;
     default:
         Pad(emitter);
-        EmitExpr(emitter, node);
+        CEmitExpr(emitter, node);
         SbPuts(&emitter->out, ";\n");
 
         return;
@@ -2110,7 +2000,7 @@ static void EmitGlobals(CEmitter* emitter)
         }
         else if (global->init)
         {
-            EmitExpr(emitter, global->init);
+            CEmitExpr(emitter, global->init);
         }
         else
         {
