@@ -99,7 +99,8 @@ Str StrNew(Arena* arena, const char* str, size_t len);
 
 // -- Vec
 
-typedef struct {
+typedef struct Vec
+{
     void** items;
     size_t count;
     size_t cap;

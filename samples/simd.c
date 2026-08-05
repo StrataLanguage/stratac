@@ -11,22 +11,22 @@ static char* strata_strdup(const char* s) {
 extern float fmodf(float, float);
 extern double fmod(double, double);
 
-#include <immintrin.h>
+#include <arm_neon.h>
 
 
 #line 2 "../samples/simd.strata"
-__m128 test1(__m128 strata__var_x, __m128 strata__var_y);
+float32x4_t test1(float32x4_t strata__var_x, float32x4_t strata__var_y);
 #line 8 "../samples/simd.strata"
 int run(int strata__var_seed);
 
 #line 2 "../samples/simd.strata"
-__m128 test1(__m128 strata__var_x, __m128 strata__var_y) {
+float32x4_t test1(float32x4_t strata__var_x, float32x4_t strata__var_y) {
     return strata__var_y;
     }
 
 #line 8 "../samples/simd.strata"
 int run(int strata__var_seed) {
-    __m128 strata__var_result = test1(_mm_setr_ps(1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f), _mm_setr_ps(4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f));
+    float32x4_t strata__var_result = test1((float32x4_t) {1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f}, (float32x4_t) {4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f});
     return (int){0};
 }
 

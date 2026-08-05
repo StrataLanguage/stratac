@@ -32,6 +32,7 @@ set(STRATA_COMMON_SOURCES
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
     src/Codegen/CBackend.c
+    src/Codegen/CSimd.c
     src/Import/ModuleLoader.c
     src/Embed.c
 )
