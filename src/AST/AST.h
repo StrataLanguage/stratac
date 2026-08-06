@@ -273,7 +273,7 @@ typedef struct {
     bool isPseudoCall;
 } CallExpr;
 
-typedef struct {
+typedef struct MemberExpr {
     Node base;
     Node* base_node;
     char* member;

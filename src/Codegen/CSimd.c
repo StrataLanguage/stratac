@@ -5,6 +5,17 @@
 
 #include <strata/strata.h>
 
+#define INVALID_COMPONENTS -1
+
+typedef enum : int
+{
+    VC_NULL = -1,
+    VC_X = 0,
+    VC_Y,
+    VC_Z,
+    VC_W
+} VectorComponent;
+
 /* Emit platform specific code */
 #define EMIT_PLATFORMS(x64_def_, arm64_def_, ...)                                                                      \
     switch (emitter->arch)                                                                                             \
@@ -17,6 +28,48 @@
         break;                                                                                                         \
     default:;                                                                                                          \
     }
+
+static int GetComponentList(VectorComponent* buffer, const char* memberAccess)
+{
+    int count = 0;
+
+    for (int i = 0; i < 4; i++)
+    {
+        buffer[i] = VC_NULL;
+
+        char ch = memberAccess[i];
+        if (ch == '\0')
+        {
+            break;
+        }
+
+        if (ch < 'w' || ch > 'z')
+        {
+            return VC_NULL;
+        }
+
+        switch (ch)
+        {
+        case 'x':
+            buffer[i] = VC_X;
+            break;
+        case 'y':
+            buffer[i] = VC_Y;
+            break;
+        case 'z':
+            buffer[i] = VC_Z;
+            break;
+        case 'w':
+            buffer[i] = VC_W;
+            break;
+        default:;
+        }
+
+        ++count;
+    }
+
+    return count;
+}
 
 /*
  * NEON definitions
@@ -135,10 +188,133 @@ static inline void NEONVectorBinExpr(struct CEmitter* emitter, const struct Bina
     case BinLogicAnd:
     case BinLogicOr:
     case BinMod:
-        DiagError(emitter->diag, binexp->base.range, "Unsupported expression for vector data type");
+        DiagError(emitter->diag, binexp->base.range, "unsupported expression for vector data type");
         break;
         break;
     default:;
+    }
+}
+
+static inline void NEONVectorGetLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane)
+{
+    SbPuts(&emitter->out, "vgetq_lane_f32(");
+    CEmitExpr(emitter, expr->base_node);
+    SbPuts(&emitter->out, ", ");
+    SbPutc(&emitter->out, (const char)lane + '0');
+    SbPutc(&emitter->out, ')');
+}
+
+static inline void NEONVectorSplatLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane)
+{
+    SbPuts(&emitter->out, "vdupq_lane_f32(");
+    CEmitExpr(emitter, expr->base_node);
+    SbPuts(&emitter->out, ", ");
+    SbPutc(&emitter->out, (const char)lane + '0');
+    SbPutc(&emitter->out, ')');
+}
+
+#define MATCHCOMP3(c_, x_, y_, z_) ((c_)[0] == (x_) && (c_)[1] == (y_) && (c_)[2] == (z_))
+#define MATCHCOMP4(c_, x_, y_, z_, w_) ((c_)[0] == (x_) && (c_)[1] == (y_) && (c_)[2] == (z_) && (c_)[3] == (w_))
+
+static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+{
+    VectorComponent c[4];
+
+    int numComponents = GetComponentList(c, expr->member);
+
+    if (numComponents < 1)
+    {
+        DiagError(emitter->diag, expr->base.range, "unknown components in vector destructure");
+        return;
+    }
+
+    if (numComponents == 1)
+    {
+        switch (c[0])
+        {
+        case VC_X:
+            NEONVectorGetLane(emitter, expr, 0);
+            break;
+        case VC_Y:
+            NEONVectorGetLane(emitter, expr, 1);
+            break;
+        case VC_Z:
+            NEONVectorGetLane(emitter, expr, 2);
+            break;
+        case VC_W:
+            NEONVectorGetLane(emitter, expr, 3);
+            break;
+
+        case VC_NULL:
+        default:;
+        }
+
+        return;
+    }
+
+    if (numComponents == 3)
+    {
+        /* vector.xyz */
+        if (MATCHCOMP3(c, VC_X, VC_Y, VC_Z))
+        {
+            CEmitExpr(emitter, expr->base_node);
+            return;
+        }
+        /* vector.xxx */
+        if (MATCHCOMP3(c, VC_X, VC_X, VC_X))
+        {
+            NEONVectorSplatLane(emitter, expr, 0);
+            return;
+        }
+        /* vector.yyy */
+        if (MATCHCOMP3(c, VC_Y, VC_Y, VC_Y))
+        {
+            NEONVectorSplatLane(emitter, expr, 1);
+            return;
+        }
+        /* vector.zzz */
+        if (MATCHCOMP3(c, VC_Z, VC_Z, VC_Z))
+        {
+            NEONVectorSplatLane(emitter, expr, 2);
+            return;
+        }
+        /* vector.www */
+        if (MATCHCOMP3(c, VC_W, VC_W, VC_W))
+        {
+            NEONVectorSplatLane(emitter, expr, 3);
+            return;
+        }
+
+        /*  TODO: add more specializations */
+
+        /* Construct a new vector from the components. This is a bit of a messy fallback, but vtblx is out of the
+           picture at the moment. */
+        {
+            /* (float32x4_t) { vgetq_lane_f32(vector, index_x), ... } */
+
+            SbPuts(&emitter->out, "(float32x4_t) {");
+
+            for (int i = 0; i < 4; i++)
+            {
+
+                SbPuts(&emitter->out, "vgetq_lane_f32(");
+                CEmitExpr(emitter, expr->base_node);
+                SbPutc(&emitter->out, ',');
+
+                int laneIndex = (c[i] == VC_NULL) ? i : c[i];
+                SbPutc(&emitter->out, '0' + laneIndex);
+
+                SbPutc(&emitter->out, ')');
+
+                if (i < 3)
+                {
+                    SbPutc(&emitter->out, ',');
+                }
+            }
+
+            SbPuts(&emitter->out, "}");
+            return;
+        }
     }
 }
 
@@ -244,11 +420,53 @@ static inline void SSEVectorBinExpr(struct CEmitter* emitter, const struct Binar
     case BinLogicAnd:
     case BinLogicOr:
     case BinMod:
-        DiagError(emitter->diag, binexp->base.range, "Unsupported expression for vector data type");
-        break;
+        DiagError(emitter->diag, binexp->base.range, "unsupported expression for vector data type");
         break;
     default:;
     }
+}
+
+static inline void SSEVectorEmitShuffleIndices(struct CEmitter* emitter, VectorComponent* c)
+{
+    SbPuts(&emitter->out, "_MM_SHUFFLE(");
+
+    const int lanes = 4;
+
+    for (int i = lanes - 1; i >= 0; i--)
+    {
+        /* If the swizzle index was not set (e.g. it should be unmodified in the final vector) then use the
+           corresponding index from the vector. */
+
+        int laneIndex = (c[i] == VC_NULL) ? i : c[i];
+
+        SbPutc(&emitter->out, '0' + laneIndex);
+
+        if (i > 0)
+        {
+            SbPutc(&emitter->out, ',');
+        }
+    }
+    SbPutc(&emitter->out, ')');
+}
+
+static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+{
+    VectorComponent c[4];
+
+    int numComponents = GetComponentList(c, expr->member);
+
+    if (numComponents == -1)
+    {
+        DiagError(emitter->diag, expr->base.range, "unknown components in vector destructure");
+        return;
+    }
+
+    /* _mm_permute_ps( vector , _MM_SHUFFLE(ix, iy, iz, iw) ) */
+    SbPuts(&emitter->out, "_mm_permute_ps(");
+    CEmitExpr(emitter, expr->base_node);
+    SbPutc(&emitter->out, ',');
+    SSEVectorEmitShuffleIndices(emitter, c);
+    SbPutc(&emitter->out, ')');
 }
 
 /*
@@ -263,4 +481,9 @@ void CSimdVectorConstruct(struct CEmitter* emitter, const struct Vec* args)
 void CSimdVectorBinExpr(struct CEmitter* emitter, const struct BinaryExpr* binexp)
 {
     EMIT_PLATFORMS(SSEVectorBinExpr, NEONVectorBinExpr, emitter, binexp);
+}
+
+void CSimdVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+{
+    EMIT_PLATFORMS(SSEVectorDestructure, NEONVectorDestructure, emitter, expr);
 }

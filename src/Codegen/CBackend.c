@@ -403,12 +403,14 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
             return "uint";
         }
 
-        /* Return vector type if LHS is vector and right is convertible to a vector */
-        const bool lhsIsVector = IsSimdVector(lhs);
-        const bool rhsIsVector = IsSimdVector(rhs);
-        if (lhsIsVector && (rhsIsVector || strcmp(rhs, "float") == 0))
+        if (strcmp(lhs, "float3") == 0 && (strcmp(lhs, "float3") == 0 || strcmp(rhs, "float") == 0))
         {
-            return lhs;
+            return "float3";
+        }
+
+        if (strcmp(lhs, "float4") == 0 && (strcmp(lhs, "float4") == 0 || strcmp(rhs, "float") == 0))
+        {
+            return "float4";
         }
 
         return "int";
@@ -442,6 +444,25 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
         const MemberExpr* member = (const MemberExpr*)node;
 
         const char* baseName = ExprType(emitter, member->base_node);
+        if (IsSimdVector(baseName))
+        {
+            size_t laneCount = strlen(member->member);
+            switch (laneCount)
+            {
+            case 1:
+                return "float";
+            case 3:
+                return "float3";
+            case 4:
+                return "float4";
+            default:
+                DiagErrorFmt(emitter->diag, node->range, "cannot destructure into larger vector");
+                break;
+            }
+
+            return "float";
+        }
+
         const char* _inner = OwningInnerCStr(emitter->arena, baseName);
         if (_inner)
         {
@@ -520,6 +541,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     {
         const MemberExpr* member = (const MemberExpr*)node;
         const char* baseType = ExprType(emitter, member->base_node);
+
         bool throughBox = IsOwningType(baseType);
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, member->base_node);
@@ -893,6 +915,13 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     {
         const MemberExpr* member = (const MemberExpr*)node;
         const char* baseType = ExprType(emitter, member->base_node);
+
+        if (IsSimdVector(baseType))
+        {
+            CSimdVectorDestructure(emitter, member);
+            return;
+        }
+
         bool throughBox = IsOwningType(baseType);
         SbPutc(&emitter->out, '(');
         CEmitExpr(emitter, member->base_node);
