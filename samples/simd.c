@@ -21,7 +21,7 @@ int run(int strata__var_seed);
 int run(int strata__var_seed) {
     float32x4_t strata__var_a = (float32x4_t) {1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f};
     float32x4_t strata__var_b = (float32x4_t) {4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f};
-    float32x4_t strata__var_result = vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(strata__var_a), vreinterpretq_u32_f32(strata__var_b)));
+    float32x4_t strata__var_result = (float32x4_t) {vgetq_lane_f32(strata__var_a,0),vgetq_lane_f32(strata__var_a,1),vgetq_lane_f32(strata__var_a,1),vgetq_lane_f32(strata__var_a,3)};
     return (int){0};
 }
 
