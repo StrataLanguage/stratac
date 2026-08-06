@@ -1666,6 +1666,13 @@ static inline uint32_t read32le(unsigned char *p) {
 static inline void write32le(unsigned char *p, uint32_t x) {
     write16le(p, x);  write16le(p + 2, x >> 16);
 }
+static inline uint32_t make32le(uint32_t x)
+{
+    return ((x & 0x000000FF) << 24) |
+           ((x & 0x0000FF00) << 8)  |
+           ((x & 0x00FF0000) >> 8)  |
+           ((x & 0xFF000000) >> 24);
+}
 static inline void add32le(unsigned char *p, int32_t x) {
     write32le(p, read32le(p) + x);
 }

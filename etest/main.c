@@ -30,8 +30,8 @@ int main(void)
                        "    float32x4_t r;\n"
                        "    __asm__(\"dup %0.4s, %1.s[0]\" : \"=w\"(r) : \"w\"(a));\n"
                        "    return r.v[2];\n"
-                       "}\n"
-                       "int main() { return (int)f(30.0f); }\n";
+                       "}\n";
+    // "int main() { return (int)f(30.0f); }\n";
 
     if (tcc_compile_string(s, code) < 0)
     {
@@ -40,35 +40,32 @@ int main(void)
         return 1;
     }
 
-    const char* outputFilename = "out";
-    if (tcc_output_file(s, outputFilename) < 0)
+    // const char* outputFilename = "out";
+    // if (tcc_output_file(s, outputFilename) < 0)
+    // {
+    //     fprintf(stderr, "Failed to write output file\n");
+    //     tcc_delete(s);
+    //     return 1;
+    // }
+
+    if (tcc_relocate(s) < 0)
     {
-        fprintf(stderr, "Failed to write output file\n");
+        fprintf(stderr, "Failed to relocate code in memory\n");
         tcc_delete(s);
         return 1;
     }
 
-    // if (tcc_relocate(s) < 0)
-    // {
-    //     fprintf(stderr, "Failed to relocate code in memory\n");
-    //     tcc_delete(s);
-    //     return 1;
-    // }
+    func_f f = (func_f)tcc_get_symbol(s, "f");
+    if (!f)
+    {
+        fprintf(stderr, "Symbol 'f' not found\n");
+        tcc_delete(s);
+        return 1;
+    }
 
-    // func_f f = (func_f)tcc_get_symbol(s, "f");
-    // if (!f)
-    // {
-    //     fprintf(stderr, "Symbol 'f' not found\n");
-    //     tcc_delete(s);
-    //     return 1;
-    // }
+    float result = f(3.14f);
 
-    // float result = f(3.14f);
-
-    // printf("Result vector: [%.2f]\n", result);
-
-    // FILE* fout = fopen("final.bin", "wb");
-    // fwrite(fout);
+    printf("Result vector: [%.2f]\n", result);
 
     // Cleanup memory
     tcc_delete(s);

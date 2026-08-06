@@ -173,6 +173,12 @@ ST_FUNC void gen_expr32(ExprValue* pe)
 /* Emit 32-bit instruction */
 static void emit_instr32(uint32_t val)
 {
+
+    // if (val == (0xfc1f03a0))
+    // {
+    //     __builtin_trap();
+    // }
+
     if (nocode_wanted)
     {
         return;
@@ -1119,6 +1125,9 @@ static void gen_ldst_imm(uint32_t base_opcode, int rt, int rn, int32_t offset, i
         break;
     case ARM64_STR_D:
         unscaled_opcode = ARM64_STUR_D_SIMD;
+        break;
+    case ARM64_STR_Q_VEC:
+        unscaled_opcode = ARM64_STUR_Q_SIMD;
         break;
     }
 
