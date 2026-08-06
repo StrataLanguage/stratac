@@ -26,7 +26,7 @@
 
 #define TOK_ASM_first TOK_ASM_clc
 #define TOK_ASM_last TOK_ASM_emms
-#define TOK_ASM_alllast TOK_ASM_subps
+#define TOK_ASM_alllast TOK_ASM_endbr64
 
 #define OPC_B          0x01  /* only used with OPC_WL */
 #define OPC_WL         0x02  /* accepts w, l or no suffix */
@@ -46,6 +46,13 @@
 
 #define OPC_0F        0x100 /* Is secondary map (0x0f prefix) */
 #define OPC_48        0x200 /* Always has REX prefix */
+#define OPC_VEX       0x400 /* VEX-encoded instruction */
+#define VEX_MAP_0F38  0x800 /* VEX 0F38 opcode map */
+#define VEX_MAP_0F3A  0x1000 /* VEX 0F3A opcode map */
+#define VEX_PP_66     0x2000 /* 0x66 prefix encoded in VEX.pp */
+#define VEX_PP_F3     0x4000 /* 0xF3 prefix encoded in VEX.pp */
+#define VEX_PP_F2     0x6000 /* 0xF2 prefix encoded in VEX.pp */
+#define VEX_W         0x8000 /* VEX.W bit */
 #ifdef TCC_TARGET_X86_64
 # define OPC_WLQ     0x1000  /* accepts w, l, q or no suffix */
 # define OPC_BWLQ    (OPC_B | OPC_WLQ) /* accepts b, w, l, q or no suffix */
@@ -234,6 +241,10 @@ static const ASMInstr asm_instrs[] = {
 #define DEF_ASM_OP1(name, opcode, group, instr_type, op0) { TOK_ASM_ ## name, O(opcode), T(opcode, instr_type, group), 1, { op0 }},
 #define DEF_ASM_OP2(name, opcode, group, instr_type, op0, op1) { TOK_ASM_ ## name, O(opcode), T(opcode, instr_type, group), 2, { op0, op1 }},
 #define DEF_ASM_OP3(name, opcode, group, instr_type, op0, op1, op2) { TOK_ASM_ ## name, O(opcode), T(opcode, instr_type, group), 3, { op0, op1, op2 }},
+#define DEF_ASM_VEX_OP0(name, opcode, group, instr_type) { TOK_ASM_ ## name, opcode, instr_type, 0, { 0 } },
+#define DEF_ASM_VEX_OP1(name, opcode, group, instr_type, op0) { TOK_ASM_ ## name, opcode, instr_type, 1, { op0 }},
+#define DEF_ASM_VEX_OP2(name, opcode, group, instr_type, op0, op1) { TOK_ASM_ ## name, opcode, instr_type, 2, { op0, op1 }},
+#define DEF_ASM_VEX_OP3(name, opcode, group, instr_type, op0, op1, op2) { TOK_ASM_ ## name, opcode, instr_type, 3, { op0, op1, op2 }},
 #ifdef TCC_TARGET_X86_64
 # include "x86_64-asm.h"
 #else
@@ -250,6 +261,10 @@ static const uint16_t op0_codes[] = {
 #define DEF_ASM_OP1(name, opcode, group, instr_type, op0)
 #define DEF_ASM_OP2(name, opcode, group, instr_type, op0, op1)
 #define DEF_ASM_OP3(name, opcode, group, instr_type, op0, op1, op2)
+#define DEF_ASM_VEX_OP0(name, opcode, group, instr_type)
+#define DEF_ASM_VEX_OP1(name, opcode, group, instr_type, op0)
+#define DEF_ASM_VEX_OP2(name, opcode, group, instr_type, op0, op1)
+#define DEF_ASM_VEX_OP3(name, opcode, group, instr_type, op0, op1, op2)
 #ifdef TCC_TARGET_X86_64
 # include "x86_64-asm.h"
 #else
@@ -583,6 +598,90 @@ static inline int asm_modrm(int reg, Operand *op)
 #define REX_R 0x44
 #define REX_X 0x42
 #define REX_B 0x41
+
+/* Emit a 3-byte VEX prefix for AVX-encoded SSE instructions.  For the SSE
+   instructions only SSE (and MMX) operands and memory operands are used, so
+   R\xaf and the high 8-bit register complications are not relevant here.  */
+static void asm_vex(const ASMInstr *pa, Operand *ops, int nb_ops, int *op_type,
+                    int regi, int rmi)
+{
+    int i;
+    unsigned char mmmmm, pp;
+    unsigned char vex1, vex2;
+    int vvvv = 0xf;
+    int saw_high_8bit = 0;
+
+    /* VEX m-mmmm: 00001 = 0F, 00010 = 0F38, 00011 = 0F3A.  */
+    if (pa->instr_type & VEX_MAP_0F3A)
+        mmmmm = 0x03;
+    else if (pa->instr_type & VEX_MAP_0F38)
+        mmmmm = 0x02;
+    else
+        mmmmm = 0x01;
+
+    /* VEX.pp: 00 = none, 01 = 66, 10 = F3, 11 = F2.  */
+    if (pa->instr_type & VEX_PP_F2)
+        pp = 0x03;
+    else if (pa->instr_type & VEX_PP_F3)
+        pp = 0x02;
+    else if (pa->instr_type & VEX_PP_66)
+        pp = 0x01;
+    else
+        pp = 0x00;
+
+    /* Initial VEX byte 1: R\xaf=1, X\xaf=1, B\xaf=1, m-mmmm.  */
+    vex1 = 0xE0 | mmmmm;
+
+    /* For the 2-operand SSE instructions in this table the destination is
+       encoded as VEX.vvvv so the assembler can use the same (src, dst) syntax
+       as the legacy SSE instructions.  3-operand VEX instructions (e.g. the
+       immediate-form vpermilps) leave vvvv as 1111.  */
+    if (pa->nb_ops == 2 && regi != -1 && (op_type[regi] & OP_SSE))
+        vvvv = (~ops[regi].reg) & 0xf;
+
+    /* Compute inverted REX bits and normalize extended registers for the
+       ModR/M encoding that follows the VEX prefix.  */
+    if (regi != -1) {
+        if (op_type[regi] & (OP_REG | OP_MMX | OP_SSE | OP_CR | OP_TR | OP_DB | OP_SEG)) {
+            if (ops[regi].reg >= 8) {
+                vex1 &= ~0x80; /* R\xaf = 0 */
+                ops[regi].reg -= 8;
+            } else if (op_type[regi] & OP_REG8 && ops[regi].reg >= 4)
+                saw_high_8bit = ops[regi].reg;
+        }
+    }
+    if (rmi != -1) {
+        if (ops[rmi].type & (OP_REG | OP_MMX | OP_SSE | OP_CR | OP_TR | OP_DB | OP_SEG | OP_EA)) {
+            if (ops[rmi].reg >= 8) {
+                vex1 &= ~0x20; /* B\xaf = 0 */
+                ops[rmi].reg -= 8;
+            } else if (op_type[rmi] & OP_REG8 && ops[rmi].reg >= 4)
+                saw_high_8bit = ops[rmi].reg;
+        }
+        if (ops[rmi].type & OP_EA && ops[rmi].reg2 >= 8) {
+            vex1 &= ~0x40; /* X\xaf = 0 */
+            ops[rmi].reg2 -= 8;
+        }
+    }
+
+    for (i = 0; i < nb_ops; i++) {
+        if (i != regi && i != rmi &&
+            (op_type[i] & OP_REG8) && ops[i].reg >= 4)
+            saw_high_8bit = ops[i].reg;
+    }
+
+    if (saw_high_8bit)
+        tcc_error("can't encode register %%%ch when VEX prefix is required",
+                  "acdb"[saw_high_8bit - 4]);
+
+    vex2 = ((pa->instr_type & VEX_W) ? 0x80 : 0x00)
+         | (vvvv << 3)
+         | pp;
+
+    g(0xC4);
+    g(vex1);
+    g(vex2);
+}
 
 static void asm_rex(int width64, Operand *ops, int nb_ops, int *op_type,
 		    int regi, int rmi)
@@ -937,16 +1036,18 @@ again:
 #endif
     /* generate data16 prefix if needed */
     p66 = 0;
-    if (s == 1)
-        p66 = 1;
-    else {
-	/* accepting mmx+sse in all operands --> needs 0x66 to
-	   switch to sse mode.  Accepting only sse in an operand --> is
-	   already SSE insn and needs 0x66/f2/f3 handling.  */
-        for (i = 0; i < nb_ops; i++)
-            if ((op_type[i] & (OP_MMX | OP_SSE)) == (OP_MMX | OP_SSE)
-	        && ops[i].type & OP_SSE)
-	        p66 = 1;
+    if (!(pa->instr_type & OPC_VEX)) {
+        if (s == 1)
+            p66 = 1;
+        else {
+	    /* accepting mmx+sse in all operands --> needs 0x66 to
+	       switch to sse mode.  Accepting only sse in an operand --> is
+	       already SSE insn and needs 0x66/f2/f3 handling.  */
+            for (i = 0; i < nb_ops; i++)
+                if ((op_type[i] & (OP_MMX | OP_SSE)) == (OP_MMX | OP_SSE)
+	            && ops[i].type & OP_SSE)
+	            p66 = 1;
+        }
     }
     if (p66)
         g(0x66);
@@ -1040,7 +1141,10 @@ again:
         }
     }
 #ifdef TCC_TARGET_X86_64
-    asm_rex (rex64, ops, nb_ops, op_type, modreg_index, modrm_index);
+    if (pa->instr_type & OPC_VEX)
+        asm_vex (pa, ops, nb_ops, op_type, modreg_index, modrm_index);
+    else
+        asm_rex (rex64, ops, nb_ops, op_type, modreg_index, modrm_index);
 #endif
 
     if (pa->instr_type & OPC_REG) {

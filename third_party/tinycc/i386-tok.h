@@ -313,6 +313,10 @@
 #define DEF_ASM_OP1(name, opcode, group, instr_type, op0)
 #define DEF_ASM_OP2(name, opcode, group, instr_type, op0, op1)
 #define DEF_ASM_OP3(name, opcode, group, instr_type, op0, op1, op2)
+#define DEF_ASM_VEX_OP0(name, opcode, group, instr_type)
+#define DEF_ASM_VEX_OP1(name, opcode, group, instr_type, op0)
+#define DEF_ASM_VEX_OP2(name, opcode, group, instr_type, op0, op1)
+#define DEF_ASM_VEX_OP3(name, opcode, group, instr_type, op0, op1, op2)
 #ifdef TCC_TARGET_X86_64
 # include "x86_64-asm.h"
 #else
@@ -325,6 +329,10 @@
 #define DEF_ASM_OP1(name, opcode, group, instr_type, op0) DEF_ASM(name)
 #define DEF_ASM_OP2(name, opcode, group, instr_type, op0, op1) DEF_ASM(name)
 #define DEF_ASM_OP3(name, opcode, group, instr_type, op0, op1, op2) DEF_ASM(name)
+#define DEF_ASM_VEX_OP0(name, opcode, group, instr_type) DEF_ASM(name)
+#define DEF_ASM_VEX_OP1(name, opcode, group, instr_type, op0) DEF_ASM(name)
+#define DEF_ASM_VEX_OP2(name, opcode, group, instr_type, op0, op1) DEF_ASM(name)
+#define DEF_ASM_VEX_OP3(name, opcode, group, instr_type, op0, op1, op2) DEF_ASM(name)
 #ifdef TCC_TARGET_X86_64
 # include "x86_64-asm.h"
 #else

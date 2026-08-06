@@ -89,6 +89,26 @@ enum {
 #define ARM64_FREG_BASE 20
 #define ARM64_FREG_LAST (ARM64_FREG_BASE + 7)
 
+/* Vector register arrangements / scalar element types */
+enum {
+    VEC_NONE,
+    VEC_B,    /* scalar byte */
+    VEC_H,    /* scalar half */
+    VEC_S,    /* scalar single */
+    VEC_D,    /* scalar double */
+    VEC_8B,
+    VEC_16B,
+    VEC_4H,
+    VEC_8H,
+    VEC_2S,
+    VEC_4S,
+    VEC_1D,
+    VEC_2D,
+};
+
+/* Vector lane specifier: 0-31 for a scalar lane, 0xff for whole vector */
+#define VEC_LANE_WHOLE 0xff
+
 typedef struct Operand {
     uint32_t type;
     int8_t reg;
@@ -97,6 +117,8 @@ typedef struct Operand {
     uint8_t shift;
     uint8_t addr_mode;
     int reg_tok;
+    uint8_t vector_arr; /* VEC_* */
+    uint8_t lane;       /* lane index, or VEC_LANE_WHOLE for whole vector */
     ExprValue e;
 } Operand;
 
@@ -106,8 +128,9 @@ enum {
     ADDR_POST,
 };
 
-/* Forward declaration */
+/* Forward declarations */
 static void parse_addr_operand(TCCState *s1, Operand *op);
+static void gen_neon_three_same(uint32_t opcode, Operand *dst, Operand *src1, Operand *src2);
 
 /* XXX: make it faster ? */
 ST_FUNC void g(int c)
@@ -205,6 +228,298 @@ static uint8_t get_reg_type(int t)
     return REG_X;
 }
 
+/* Forward declaration — defined right below. */
+static int parse_vector_arr(const char *name);
+
+/* Parse a register name possibly followed by a vector suffix from a string.
+   Returns 1 and fills op on success, 0 otherwise.  */
+static int parse_reg_str(const char *name, Operand *op)
+{
+    int reg;
+    int is_simd = 0;
+    char type;
+
+    if (name == NULL || name[0] == '\0' || name[1] == '\0')
+        return 0;
+
+    type = name[0];
+    reg = strtol(name + 1, NULL, 10);
+
+    switch (type) {
+        case 'x': case 'X':
+            if (reg < 0 || reg > 30) return 0;
+            op->reg_type = REG_X;
+            op->reg = reg;
+            break;
+        case 'w': case 'W':
+            if (reg < 0 || reg > 30) return 0;
+            op->reg_type = REG_W;
+            op->reg = reg;
+            break;
+        case 'v': case 'V':
+            if (reg < 0 || reg > 31) return 0;
+            op->reg_type = REG_V;
+            op->reg = reg + 32;
+            is_simd = 1;
+            break;
+        case 'd': case 'D':
+            if (reg < 0 || reg > 31) return 0;
+            op->reg_type = REG_D;
+            op->reg = reg + 32;
+            is_simd = 1;
+            break;
+        case 's': case 'S':
+            if (reg < 0 || reg > 31) return 0;
+            op->reg_type = REG_S;
+            op->reg = reg + 32;
+            is_simd = 1;
+            break;
+        case 'h': case 'H':
+            if (reg < 0 || reg > 31) return 0;
+            op->reg_type = REG_H;
+            op->reg = reg + 32;
+            is_simd = 1;
+            break;
+        case 'b': case 'B':
+            if (reg < 0 || reg > 31) return 0;
+            op->reg_type = REG_B;
+            op->reg = reg + 32;
+            is_simd = 1;
+            break;
+        case 'q': case 'Q':
+            if (reg < 0 || reg > 31) return 0;
+            op->reg_type = REG_V;
+            op->reg = reg + 32;
+            is_simd = 1;
+            break;
+        default:
+            return 0;
+    }
+
+    op->type = OP_REG;
+    op->reg_tok = 0;
+    op->vector_arr = VEC_NONE;
+    op->lane = VEC_LANE_WHOLE;
+
+    if (is_simd) {
+        const char *suffix = name + 1;
+        while (*suffix >= '0' && *suffix <= '9')
+            suffix++;
+        if (suffix[0] == '.') {
+            const char *arr = suffix + 1;
+            const char *lane_start;
+            int len;
+            char arr_name[8];
+            int idx;
+
+            lane_start = strchr(arr, '[');
+            if (lane_start)
+                len = (int)(lane_start - arr);
+            else
+                len = strlen(arr);
+            if (len == 0 || len >= sizeof(arr_name))
+                return 0;
+            memcpy(arr_name, arr, len);
+            arr_name[len] = '\0';
+            idx = parse_vector_arr(arr_name);
+            if (idx == VEC_NONE)
+                return 0;
+            op->vector_arr = idx;
+
+            if (lane_start) {
+                const char *end = strchr(lane_start, ']');
+                if (!end)
+                    return 0;
+                op->lane = strtol(lane_start + 1, NULL, 10) & 0xff;
+            }
+        }
+    }
+
+    return 1;
+}
+
+/* Map a vector arrangement name to its internal code. */
+static int parse_vector_arr(const char *name)
+{
+    if (strcmp(name, "8b") == 0 || strcmp(name, "8B") == 0)
+        return VEC_8B;
+    if (strcmp(name, "16b") == 0 || strcmp(name, "16B") == 0)
+        return VEC_16B;
+    if (strcmp(name, "4h") == 0 || strcmp(name, "4H") == 0)
+        return VEC_4H;
+    if (strcmp(name, "8h") == 0 || strcmp(name, "8H") == 0)
+        return VEC_8H;
+    if (strcmp(name, "2s") == 0 || strcmp(name, "2S") == 0)
+        return VEC_2S;
+    if (strcmp(name, "4s") == 0 || strcmp(name, "4S") == 0)
+        return VEC_4S;
+    if (strcmp(name, "1d") == 0 || strcmp(name, "1D") == 0)
+        return VEC_1D;
+    if (strcmp(name, "2d") == 0 || strcmp(name, "2D") == 0)
+        return VEC_2D;
+    if (strcmp(name, "b") == 0 || strcmp(name, "B") == 0)
+        return VEC_B;
+    if (strcmp(name, "h") == 0 || strcmp(name, "H") == 0)
+        return VEC_H;
+    if (strcmp(name, "s") == 0 || strcmp(name, "S") == 0)
+        return VEC_S;
+    if (strcmp(name, "d") == 0 || strcmp(name, "D") == 0)
+        return VEC_D;
+    return VEC_NONE;
+}
+
+/* Parse a vector register arrangement/lane suffix (e.g. .4s, .s[0]).
+   Inline-asm mode sets '.' as an identifier character, so the whole suffix
+   may arrive as a single token (e.g. ".4s") or as separate tokens
+   (".", "4", "s").  We accept both.  */
+static void parse_vector_suffix(TCCState *s1, Operand *op)
+{
+    char name[8];
+    int idx;
+
+    if (tok == '[') {
+        next();
+        asm_expr(s1, &op->e);
+        op->lane = op->e.v & 0xff;
+        skip(']');
+        return;
+    }
+
+    if (tok == TOK_IDENT || tok == TOK_PPNUM) {
+        /* Suffix absorbed into a single token (e.g. ".4s", ".16b" or ".s").
+           The PPNUM path is needed because the C lexer forms a preprocessor
+           number from '.' plus digits plus an identifier suffix.  */
+        const char *ident = get_tok_str(tok, &tokc);
+        const char *suffix;
+        if (ident[0] == '.')
+            suffix = ident + 1;
+        else if (ident[0] == 'v' || ident[0] == 'V' ||
+                 ident[0] == 'd' || ident[0] == 'D' ||
+                 ident[0] == 's' || ident[0] == 'S' ||
+                 ident[0] == 'h' || ident[0] == 'H' ||
+                 ident[0] == 'b' || ident[0] == 'B' ||
+                 ident[0] == 'q' || ident[0] == 'Q') {
+            /* Suffix absorbed into the register token (e.g. "v0.4s").  */
+            const char *p = ident + 1;
+            while (*p >= '0' && *p <= '9')
+                p++;
+            if (*p != '.') {
+                tcc_error("expected '.' before vector arrangement, got '%s'", ident);
+                return;
+            }
+            suffix = p + 1;
+        } else {
+            tcc_error("expected '.' before vector arrangement, got '%s'", ident);
+            return;
+        }
+        idx = parse_vector_arr(suffix);
+        if (idx == VEC_NONE) {
+            tcc_error("unknown vector arrangement '%s'", suffix);
+            return;
+        }
+        op->vector_arr = idx;
+        next();
+        if (tok == '[') {
+            next();
+            asm_expr(s1, &op->e);
+            op->lane = op->e.v & 0xff;
+            skip(']');
+        }
+        return;
+    }
+
+    if (tok != '.')
+        return;
+    next();
+
+    name[0] = '\0';
+    if (tok == TOK_CINT || tok == TOK_CLLONG) {
+        snprintf(name, sizeof(name), "%d", (int)tokc.i);
+        next();
+    } else if (tok == TOK_PPNUM) {
+        const char *p = get_tok_str(tok, &tokc);
+        char *end;
+        long n = strtol(p, &end, 10);
+        if (end == p) {
+            tcc_error("expected number after '.' in vector suffix");
+            return;
+        }
+        snprintf(name, sizeof(name), "%d", (int)n);
+        if (*end) {
+            strncat(name, end, sizeof(name) - strlen(name) - 1);
+        }
+        next();
+    }
+
+    if (tok >= TOK_IDENT) {
+        const char *ident = get_tok_str(tok, &tokc);
+        strncat(name, ident, sizeof(name) - strlen(name) - 1);
+        next();
+    } else {
+        tcc_error("expected vector arrangement element after '.'");
+        return;
+    }
+
+    idx = parse_vector_arr(name);
+    if (idx == VEC_NONE) {
+        tcc_error("unknown vector arrangement '%s'", name);
+        return;
+    }
+    op->vector_arr = idx;
+
+    if (tok == '[') {
+        next();
+        asm_expr(s1, &op->e);
+        op->lane = op->e.v & 0xff;
+        skip(']');
+    }
+}
+
+/* Return the Advanced SIMD element size (0=B, 1=H, 2=S, 3=D) for an operand.  */
+static int vec_size_from_arr(int arr)
+{
+    switch (arr) {
+    case VEC_B:
+    case VEC_8B:
+    case VEC_16B:
+        return 0;
+    case VEC_H:
+    case VEC_4H:
+    case VEC_8H:
+        return 1;
+    case VEC_S:
+    case VEC_2S:
+    case VEC_4S:
+        return 2;
+    case VEC_D:
+    case VEC_1D:
+    case VEC_2D:
+        return 3;
+    default:
+        return 2;
+    }
+}
+
+/* Return the Q bit (128-bit vector) for a vector arrangement.  */
+static int vec_q_from_arr(int arr)
+{
+    switch (arr) {
+    case VEC_16B:
+    case VEC_8H:
+    case VEC_4S:
+    case VEC_2D:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* Return the imm5 lane encoding for a scalar element of size and lane.  */
+static uint32_t vec_lane_imm5(int size, int lane)
+{
+    return ((uint32_t)(lane << (size + 1)) | (1U << size)) << 16;
+}
+
 /* Parse condition code */
 static int parse_condition(int t)
 {
@@ -281,11 +596,26 @@ static void parse_operand(TCCState *s1, Operand *op)
     op->shift = 0;
     op->addr_mode = ADDR_OFF;
     op->reg_tok = 0;
+    op->vector_arr = VEC_NONE;
+    op->lane = VEC_LANE_WHOLE;
 
     /* Address operand in brackets [xn, ...] */
     if (tok == '[') {
         parse_addr_operand(s1, op);
         return;
+    }
+
+    /* When '.' is treated as an identifier character (GCC inline asm mode),
+       a vector register plus suffix becomes a single token, e.g. "v0.4s".
+       Parse it here.  */
+    if (tok >= TOK_IDENT && arm64_parse_asm_reg(tok) < 0) {
+        const char *name = get_tok_str(tok, &tokc);
+        if (parse_reg_str(name, op)) {
+            next();
+            if (op->reg_type & (REG_V | REG_D | REG_S | REG_H | REG_B))
+                parse_vector_suffix(s1, op);
+            return;
+        }
     }
 
     /* Register */
@@ -296,6 +626,8 @@ static void parse_operand(TCCState *s1, Operand *op)
         op->reg_type = get_reg_type(tok);
         op->reg_tok = tok;
         next();
+        if (op->reg_type & (REG_V | REG_D | REG_S | REG_H | REG_B))
+            parse_vector_suffix(s1, op);
         return;
     }
 
@@ -332,6 +664,8 @@ static void parse_expr_operand(TCCState *s1, Operand *op)
     op->shift = 0;
     op->addr_mode = ADDR_OFF;
     op->reg_tok = 0;
+    op->vector_arr = VEC_NONE;
+    op->lane = VEC_LANE_WHOLE;
 
     if (tok == '#' || tok == ':' || tok == '@' || tok == '$')
         next();
@@ -350,6 +684,8 @@ static void parse_addr_operand(TCCState *s1, Operand *op)
     op->e.sym = NULL;
     op->addr_mode = ADDR_OFF;
     op->reg_tok = 0;
+    op->vector_arr = VEC_NONE;
+    op->lane = VEC_LANE_WHOLE;
 
     skip('[');
     reg = arm64_parse_asm_reg(tok);
@@ -1236,6 +1572,27 @@ static void asm_mov(TCCState *s1)
     rd = op1.reg;
     is_64bit = (op1.reg_type & REG_X);
 
+    /* Vector MOV aliases: MOV Vd, Vn is ORR Vd, Vn, Vn */
+    if ((op1.reg_type & REG_V) && (op2.reg_type & REG_V) &&
+        op1.lane == VEC_LANE_WHOLE && op2.lane == VEC_LANE_WHOLE) {
+        gen_neon_three_same(0x4EA01C00U, &op1, &op2, &op2);
+        return;
+    }
+
+    /* Scalar MOV from vector lane: MOV Rd, Vn.T[index] (UMOV alias) */
+    if ((op1.reg_type & (REG_X | REG_W)) && (op2.reg_type & REG_V) &&
+        op2.lane != VEC_LANE_WHOLE) {
+        int size = vec_size_from_arr(op2.vector_arr);
+        uint32_t instr = 0x0E003C00U;
+        instr |= ((uint32_t)op1.reg_type & REG_X) ? (1U << 30) : 0;
+        instr |= ((uint32_t)size << 22);
+        instr |= vec_lane_imm5(size, op2.lane);
+        instr |= ((uint32_t)op2.reg & 0x1f) << 5;
+        instr |= ((uint32_t)op1.reg & 0x1f);
+        emit_instr32(instr);
+        return;
+    }
+
     if (op2.type & OP_IM) {
         /* Handle immediate: mov x0, #123 */
         if (operand_is_sp(&op1)) {
@@ -1298,6 +1655,26 @@ static void asm_data_proc(TCCState *s1, int token)
         tcc_error("expected register in first operand");
         return;
     }
+
+    /* Advanced SIMD bitwise instructions share mnemonics with GP bitwise.  */
+    if ((token == TOK_ASM_and || token == TOK_ASM_orr || token == TOK_ASM_eor) &&
+        (op1.reg_type & REG_V)) {
+        if (tok == ',') next();
+        parse_operand(s1, &op3);
+        if (!(op2.type & OP_REG) || !(op2.reg_type & REG_V) ||
+            !(op3.type & OP_REG) || !(op3.reg_type & REG_V)) {
+            tcc_error("NEON bitwise instruction requires V register operands");
+            return;
+        }
+        if (token == TOK_ASM_and)
+            gen_neon_three_same(0x4E201C00U, &op1, &op2, &op3);
+        else if (token == TOK_ASM_orr)
+            gen_neon_three_same(0x4EA01C00U, &op1, &op2, &op3);
+        else
+            gen_neon_three_same(0x6E201C00U, &op1, &op2, &op3);
+        return;
+    }
+
     if (!(op2.type & OP_REG)) {
         tcc_error("expected register in second operand");
         return;
@@ -1367,7 +1744,7 @@ static void asm_ldst(TCCState *s1, int token)
         tcc_error("expected register in first operand");
         return;
     }
-    if (op2.type != OP_ADDR) {
+    if (!(op2.type & OP_ADDR)) {
         tcc_error("expected address operand in second operand");
         return;
     }
@@ -1384,11 +1761,14 @@ static void asm_ldst(TCCState *s1, int token)
             } else if (op1.reg_type & REG_W) {
                 base_opcode = ARM64_LDR_W;
                 size_log2 = 2;
+            } else if (op1.reg_type & REG_V) {
+                base_opcode = ARM64_LDR_Q_VEC;
+                size_log2 = 4;
             } else if (op1.reg_type & REG_D) {
                 base_opcode = ARM64_LDR_D;
                 size_log2 = 3;
             } else {
-                tcc_error("ldr requires a w, x, or d register");
+                tcc_error("ldr requires a w, x, d, or v register");
                 return;
             }
             break;
@@ -1407,11 +1787,14 @@ static void asm_ldst(TCCState *s1, int token)
             } else if (op1.reg_type & REG_W) {
                 base_opcode = ARM64_STR_W;
                 size_log2 = 2;
+            } else if (op1.reg_type & REG_V) {
+                base_opcode = ARM64_STR_Q_VEC;
+                size_log2 = 4;
             } else if (op1.reg_type & REG_D) {
                 base_opcode = ARM64_STR_D;
                 size_log2 = 3;
             } else {
-                tcc_error("str requires a w, x, or d register");
+                tcc_error("str requires a w, x, d, or v register");
                 return;
             }
             break;
@@ -1511,6 +1894,198 @@ static void asm_sysreg(TCCState *s1, int token)
         next();
     parse_operand(s1, &op);
     gen_msr(op.reg, sysreg);
+}
+
+/* Encode Advanced SIMD three-register instruction (same arrangement).  */
+static void gen_neon_three_same(uint32_t opcode, Operand *dst, Operand *src1, Operand *src2)
+{
+    int size = vec_size_from_arr(dst->vector_arr);
+    int q = vec_q_from_arr(dst->vector_arr);
+    uint32_t instr = opcode;
+    instr |= ((uint32_t)q << 30);
+    instr |= ((uint32_t)size << 22);
+    instr |= ((uint32_t)src2->reg & 0x1f) << 16;
+    instr |= ((uint32_t)src1->reg & 0x1f) << 5;
+    instr |= ((uint32_t)dst->reg & 0x1f);
+    emit_instr32(instr);
+}
+
+/* Handle Advanced SIMD (NEON) instructions.  */
+static void asm_neon(TCCState *s1, int token)
+{
+    Operand op1, op2, op3;
+    uint32_t instr;
+    int size, q;
+
+    parse_operand(s1, &op1);
+    if (tok == ',') next();
+    parse_operand(s1, &op2);
+    if (tok == ',') {
+        next();
+        parse_operand(s1, &op3);
+    }
+
+    switch (token) {
+    case TOK_ASM_fadd:
+    case TOK_ASM_fsub:
+    case TOK_ASM_fmul:
+    case TOK_ASM_fdiv:
+        if (!(op1.type & OP_REG) || !(op1.reg_type & REG_V)) {
+            tcc_error("NEON destination must be a V register");
+            return;
+        }
+        if (!(op2.type & OP_REG) || !(op2.reg_type & REG_V)) {
+            tcc_error("NEON first source must be a V register");
+            return;
+        }
+        if (!(op3.type & OP_REG) || !(op3.reg_type & REG_V)) {
+            tcc_error("NEON second source must be a V register");
+            return;
+        }
+        if (op1.lane != VEC_LANE_WHOLE || op2.lane != VEC_LANE_WHOLE || op3.lane != VEC_LANE_WHOLE) {
+            tcc_error("NEON three-register instruction requires whole vectors");
+            return;
+        }
+        if (token == TOK_ASM_fadd) {
+            gen_neon_three_same(0x4E20D400U, &op1, &op2, &op3);
+        } else if (token == TOK_ASM_fsub) {
+            gen_neon_three_same(0x4EA0D400U, &op1, &op2, &op3);
+        } else if (token == TOK_ASM_fmul) {
+            gen_neon_three_same(0x6E20DC00U, &op1, &op2, &op3);
+        } else { /* fdiv */
+            gen_neon_three_same(0x6E20FC00U, &op1, &op2, &op3);
+        }
+        break;
+
+    case TOK_ASM_dup:
+        if (!(op1.type & OP_REG) || !(op1.reg_type & REG_V)) {
+            tcc_error("DUP destination must be a V register");
+            return;
+        }
+        if (op1.lane != VEC_LANE_WHOLE) {
+            tcc_error("DUP destination must be a whole vector");
+            return;
+        }
+        size = vec_size_from_arr(op1.vector_arr);
+        q = vec_q_from_arr(op1.vector_arr);
+        printf("RETURNS Q: %d\n", q);
+        if (op2.type & OP_REG && (op2.reg_type & REG_V) && op2.lane != VEC_LANE_WHOLE) {
+            /* DUP Vd.T, Vn.Ts[index] */
+            int src_size = vec_size_from_arr(op2.vector_arr);
+            if (src_size != size) {
+                tcc_error("DUP lane size must match destination element size");
+                return;
+            }
+            instr = 0x0E000400U;
+            instr |= ((uint32_t)(q & 1) << 30);
+            instr |= (vec_lane_imm5(src_size, op2.lane) << 16);
+            instr |= ((uint32_t)op2.reg & 0x1f) << 5;
+            instr |= ((uint32_t)op1.reg & 0x1f);
+            emit_instr32(instr);
+        } else if (op2.type & OP_REG && (op2.reg_type & (REG_X | REG_W))) {
+        	/* DUP Vd.T, Rn (general register) */
+            
+            // Validate general register width against element size
+            if (size == 3 && !(op2.reg_type & REG_X)) {
+                tcc_error("64-bit element DUP requires 64-bit X register");
+                return;
+            }
+        
+            instr = 0x0E000400U;
+            instr |= ((uint32_t)(q & 1) << 30);
+
+            printf("SIZE: %d\n", size);
+            
+            /* 8-bit  (size 0) -> imm5 = 0b00001
+               16-bit (size 1) -> imm5 = 0b00010
+               32-bit (size 2) -> imm5 = 0b00100
+               64-bit (size 3) -> imm5 = 0b01000 
+               Shift over 16 bits as per ARM docs */
+            instr |= (1U << (size + 16));
+        
+            instr |= ((uint32_t)op2.reg & 0x1f) << 5; /* Rn */
+            instr |= ((uint32_t)op1.reg & 0x1f); /* Rd */
+            printf("SIZE: %X\n", instr);
+            
+            emit_instr32(instr);
+        } else {
+            tcc_error("DUP requires a V lane or general register source");
+        }
+        break;
+
+    case TOK_ASM_movi:
+        if (!(op1.type & OP_REG) || !(op1.reg_type & REG_V) || op1.lane != VEC_LANE_WHOLE) {
+            tcc_error("MOVI destination must be a whole vector");
+            return;
+        }
+        if (!(op2.type & OP_IM)) {
+            tcc_error("MOVI requires an immediate operand");
+            return;
+        }
+        if (op2.e.v != 0) {
+            tcc_error("MOVI only supports #0 immediate");
+            return;
+        }
+        if (op1.vector_arr == VEC_4S || op1.vector_arr == VEC_2S) {
+            instr = 0x4F000400U;
+        } else if (op1.vector_arr == VEC_16B || op1.vector_arr == VEC_8B) {
+            instr = 0x4F00E400U;
+        } else if (op1.vector_arr == VEC_2D) {
+            instr = 0x6F00E400U;
+        } else {
+            tcc_error("MOVI unsupported vector arrangement");
+            return;
+        }
+        instr |= ((uint32_t)op1.reg & 0x1f);
+        emit_instr32(instr);
+        break;
+
+    case TOK_ASM_mov:
+        /* MOV (vector) alias of ORR */
+        if (!(op1.type & OP_REG) || !(op1.reg_type & REG_V)) {
+            tcc_error("MOV vector destination must be a V register");
+            return;
+        }
+        if (!(op2.type & OP_REG) || !(op2.reg_type & REG_V)) {
+            tcc_error("MOV vector source must be a V register");
+            return;
+        }
+        gen_neon_three_same(0x4EA01C00U, &op1, &op2, &op2);
+        break;
+
+    case TOK_ASM_addv:
+    case TOK_ASM_faddp:
+    case TOK_ASM_fmaxp:
+    case TOK_ASM_fminp:
+    case TOK_ASM_fmaxnmp:
+    case TOK_ASM_fminnmp:
+    case TOK_ASM_addp:
+    case TOK_ASM_bif:
+    case TOK_ASM_bit:
+    case TOK_ASM_bsl:
+    case TOK_ASM_ext:
+    case TOK_ASM_ins:
+    case TOK_ASM_mvni:
+    case TOK_ASM_not:
+    case TOK_ASM_shl:
+    case TOK_ASM_shll:
+    case TOK_ASM_shll2:
+    case TOK_ASM_sli:
+    case TOK_ASM_sri:
+    case TOK_ASM_sqshl:
+    case TOK_ASM_sqshlu:
+    case TOK_ASM_srshl:
+    case TOK_ASM_sshll:
+    case TOK_ASM_sshll2:
+    case TOK_ASM_sshr:
+    case TOK_ASM_ushll:
+    case TOK_ASM_ushll2:
+    case TOK_ASM_ushr:
+    default:
+        tcc_error("NEON instruction '%s' not yet implemented",
+                  get_tok_str(token, NULL));
+        break;
+    }
 }
 
 /* Get condition code from branch instruction token */
@@ -1807,6 +2382,16 @@ ST_FUNC void asm_opcode(TCCState *s1, int opcode)
 
         case TOK_ASM_nop:
             gen_nop();
+            break;
+
+        /* NEON / Advanced SIMD */
+        case TOK_ASM_fadd:
+        case TOK_ASM_fsub:
+        case TOK_ASM_fmul:
+        case TOK_ASM_fdiv:
+        case TOK_ASM_dup:
+        case TOK_ASM_movi:
+            asm_neon(s1, opcode);
             break;
 
         default:

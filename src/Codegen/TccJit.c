@@ -172,6 +172,9 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
 
     if (tcc_set_output_type(jit->state, TCC_OUTPUT_MEMORY) < 0
         || tcc_set_options(jit->state, "-nostdlib -nostdinc") < 0
+#ifdef STRATA_TCC_INCLUDE_DIR
+        || tcc_add_include_path(jit->state, STRATA_TCC_INCLUDE_DIR) < 0
+#endif
         || tcc_compile_string(jit->state, module->source) < 0)
     {
         if (errorMessage)

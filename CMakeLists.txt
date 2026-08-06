@@ -65,10 +65,16 @@ target_include_directories(strata PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-target_compile_definitions(strata PRIVATE
-    STRATA_HAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
-    STRATA_HAS_TCC=$<BOOL:${STRATA_ENABLE_TCC}>
-)
+    target_compile_definitions(strata PRIVATE
+        STRATA_HAS_LLVM=$<BOOL:${STRATA_ENABLE_LLVM}>
+        STRATA_HAS_TCC=$<BOOL:${STRATA_ENABLE_TCC}>
+    )
+    if(STRATA_ENABLE_TCC)
+        target_compile_definitions(strata PRIVATE
+            STRATA_TCC_INCLUDE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/third_party/tinycc/include"
+        )
+    endif()
+
 
 if(STRATA_ENABLE_TCC)
     if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
