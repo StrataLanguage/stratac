@@ -454,7 +454,7 @@ static void arm64_strv(int sz_, int dst, int bas, uint64_t off)
 {
     uint32_t sz = sz_;
     uint64_t scaled_mask = 0xffful << sz;
-
+    
     if (!(off & ~scaled_mask))
         o(0x3d000000 | dst | bas << 5 | off << (10 - sz) |
           (sz & 4) << 21 | (sz & 3) << 30); // str (s|d|q)(dst),[x(bas),#(off)]
