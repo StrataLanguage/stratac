@@ -30,7 +30,7 @@ typedef enum : int
     }
 
 #define EMIT_PLATFORMS2(def_, ...)                                                                                     \
-    if ((emitter->emitFlags & CEmitNoSIMD) != 0)                                                                       \
+    if ((emitter->emitFlags & CEmitEnableSIMD) == 0)                                                                   \
     {                                                                                                                  \
         None##def_(__VA_ARGS__);                                                                                       \
         return;                                                                                                        \

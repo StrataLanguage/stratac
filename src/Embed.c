@@ -79,11 +79,11 @@ extern "C"
         const char* out = "";
         char* irOwned = NULL;
 
-        CBackendEmitFlags backendEmitFlags = CEmitNone;
+        CBackendEmitFlags backendEmitFlags = CEmitEnableSIMD;
 
         if ((emitFlags & STRATA_EMIT_NO_SIMD) != 0)
         {
-            backendEmitFlags |= CEmitNoSIMD;
+            backendEmitFlags ^= (~CEmitEnableSIMD);
         }
 
         if (!DiagHasErrors(diag) && mod)
@@ -382,7 +382,7 @@ extern "C"
             return NULL;
         }
 
-        BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, true, arch);
+        BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, 0, arch);
 
         if (DiagHasErrors(diag))
         {

@@ -427,7 +427,7 @@ static Timing CompileAst(Module* module, Backend backend, int expected)
     }
     else
     {
-        BuiltCModule built = BuildCModule(module, &diag, &arena, true, STRATA_ARCH_AUTO);
+        BuiltCModule built = BuildCModule(module, &diag, &arena, 0, STRATA_ARCH_AUTO);
         double buildEnd = NowSeconds();
         TccJit jit;
         TccJitInit(&jit);
@@ -570,7 +570,7 @@ static bool LoadScript(Module* module, Backend backend, LoadedScript* script)
     }
     else
     {
-        BuiltCModule built = BuildCModule(module, &diag, &arena, true, STRATA_ARCH_AUTO);
+        BuiltCModule built = BuildCModule(module, &diag, &arena, 0, STRATA_ARCH_AUTO);
         loaded = !DiagHasErrors(&diag) && TccJitLoad(&script->tcc, &built, &error);
         if (loaded)
         {

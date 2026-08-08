@@ -11,7 +11,7 @@ typedef enum CBackendEmitFlags
 {
     CEmitNone = 0,
     CEmitJIT = (1 << 0),
-    CEmitNoSIMD = (1 << 1),
+    CEmitEnableSIMD = (1 << 1),
 } CBackendEmitFlags;
 
 typedef struct {

@@ -10,7 +10,7 @@ STRATA_TEST(c_backend_emits_scalar_control_flow)
     StrataCompiler* compiler = strataCompilerCreate();
     StrataResult result = strataCompileString(
         compiler, "int sum(int n) { int s = 0; for (int i = 0; i < n; i++) { s += i; } return s; }", "c_scalar",
-        STRATA_EMIT_C, 0);
+        STRATA_EMIT_C, STRATA_EMIT_NO_SIMD);
     STRATA_CHECK(result.ok);
     STRATA_CHECK(strstr(result.output, "int sum(int strata__var_n)") != NULL);
     STRATA_CHECK(strstr(result.output, "for (") != NULL);
@@ -28,7 +28,7 @@ STRATA_TEST(c_backend_emits_struct_pointer_abi)
     Module* mod = ParseAndResolve("struct V { float x; float y; };\n"
                                   "float dot(const V a, const V b) { return a.x * b.x + a.y * b.y; }\n",
                                   &diag, &arena);
-    BuiltCModule result = BuildCModule(mod, &diag, &arena, true, STRATA_ARCH_AUTO);
+    BuiltCModule result = BuildCModule(mod, &diag, &arena, 0, STRATA_ARCH_AUTO);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(strstr(result.source, "const strata__type_V* strata__var_a") != NULL);
     STRATA_CHECK(strstr(result.source, "((*strata__var_a)).strata__field_x") != NULL);
@@ -46,7 +46,7 @@ STRATA_TEST(c_backend_emits_typed_extern_slots)
     Module* mod = ParseAndResolve("extern int host_add(int a, int b);\n"
                                   "int entry() { return host_add(20, 22); }\n",
                                   &diag, &arena);
-    BuiltCModule result = BuildCModule(mod, &diag, &arena, true, STRATA_ARCH_AUTO);
+    BuiltCModule result = BuildCModule(mod, &diag, &arena, 0, STRATA_ARCH_AUTO);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(strstr(result.source, "int (*strata__ext_host_add)(int, int) = 0;") != NULL);
     STRATA_CHECK(strstr(result.source, "strata__ext_host_add(20, 22)") != NULL);
@@ -67,7 +67,7 @@ STRATA_TEST(c_backend_emits_forward_struct_when_incomplete)
                                   &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltCModule result = BuildCModule(mod, &diag, &arena, true, STRATA_ARCH_AUTO);
+    BuiltCModule result = BuildCModule(mod, &diag, &arena, 0, STRATA_ARCH_AUTO);
     /* Incomplete struct: forward-declared C struct typedef, no body, and NOT a
        handle pointer typedef. */
     STRATA_CHECK(strstr(result.source, "typedef struct strata__type_Foo strata__type_Foo;") != NULL);
@@ -89,7 +89,7 @@ STRATA_TEST(c_backend_completes_forward_declared_struct)
                                   &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltCModule result = BuildCModule(mod, &diag, &arena, true, STRATA_ARCH_AUTO);
+    BuiltCModule result = BuildCModule(mod, &diag, &arena, 0, STRATA_ARCH_AUTO);
     /* A later body completes the type exactly once. */
     STRATA_CHECK(strstr(result.source, "struct strata__type_Foo {\n") != NULL);
     BuiltCModuleDispose(&result);
