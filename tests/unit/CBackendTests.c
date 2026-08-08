@@ -10,7 +10,7 @@ STRATA_TEST(c_backend_emits_scalar_control_flow)
     StrataCompiler* compiler = strataCompilerCreate();
     StrataResult result = strataCompileString(
         compiler, "int sum(int n) { int s = 0; for (int i = 0; i < n; i++) { s += i; } return s; }", "c_scalar",
-        STRATA_EMIT_C);
+        STRATA_EMIT_C, 0);
     STRATA_CHECK(result.ok);
     STRATA_CHECK(strstr(result.output, "int sum(int strata__var_n)") != NULL);
     STRATA_CHECK(strstr(result.output, "for (") != NULL);
@@ -103,7 +103,7 @@ STRATA_TEST(c_backend_encodes_overload_symbols)
     StrataResult result = strataCompileString(compiler,
                                               "int add(int a, int b) { return a + b; }\n"
                                               "float add(float a, float b) { return a + b; }\n",
-                                              "c_overloads", STRATA_EMIT_C);
+                                              "c_overloads", STRATA_EMIT_C, 0);
     STRATA_CHECK(result.ok);
     STRATA_CHECK(strstr(result.output, "strata__fn_add_x24_int_x24_int") != NULL);
     STRATA_CHECK(strstr(result.output, "strata__fn_add_x24_float_x24_float") != NULL);
@@ -117,7 +117,7 @@ STRATA_TEST(c_backend_orders_struct_value_dependencies)
     StrataResult result = strataCompileString(compiler,
                                               "struct Outer { Inner value; }; struct Inner { int x; }; "
                                               "int entry() { Outer o; o.value.x = 42; return o.value.x; }",
-                                              "struct_order", STRATA_EMIT_C);
+                                              "struct_order", STRATA_EMIT_C, 0);
     STRATA_CHECK(result.ok);
     const char* inner = strstr(result.output, "struct strata__type_Inner {");
     const char* outer = strstr(result.output, "struct strata__type_Outer {");
@@ -132,7 +132,7 @@ STRATA_TEST(c_backend_rejects_struct_value_cycles)
 {
     StrataCompiler* compiler = strataCompilerCreate();
     StrataResult result
-        = strataCompileString(compiler, "struct A { B b; }; struct B { A a; };", "struct_cycle", STRATA_EMIT_C);
+        = strataCompileString(compiler, "struct A { B b; }; struct B { A a; };", "struct_cycle", STRATA_EMIT_C, 0);
     STRATA_CHECK(!result.ok);
     STRATA_CHECK(strstr(result.diagnostics, "by-value dependency cycle") != NULL);
     strataResultFree(&result);
@@ -143,7 +143,7 @@ STRATA_TEST(c_backend_escapes_c_keywords_and_emits_source_lines)
 {
     StrataCompiler* compiler = strataCompilerCreate();
     StrataResult result = strataCompileString(compiler, "int auto() { return 7; } int entry() { return auto(); }",
-                                              "keyword_test.strata", STRATA_EMIT_C);
+                                              "keyword_test.strata", STRATA_EMIT_C, 0);
     STRATA_CHECK(result.ok);
     STRATA_CHECK(strstr(result.output, "strata__fn_auto") != NULL);
     STRATA_CHECK(strstr(result.output, "#line 1 \"keyword_test.strata\"") != NULL);

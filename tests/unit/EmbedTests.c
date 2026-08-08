@@ -8,7 +8,7 @@ STRATA_TEST(embed_compile_string_ok)
 {
     StrataCompiler* c = strataCompilerCreate();
     STRATA_CHECK(c != NULL);
-    StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_LLVM_IR);
+    StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_LLVM_IR, 0);
     STRATA_CHECK_EQ(r.ok, 1);
     STRATA_CHECK_EQ(r.error_count, (unsigned)0);
     STRATA_CHECK(r.output != NULL);
@@ -21,7 +21,7 @@ STRATA_TEST(embed_compile_string_ok)
 STRATA_TEST(embed_compile_string_reports_errors)
 {
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_C);
+    StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_C, 0);
     STRATA_CHECK_EQ(r.ok, 0);
     STRATA_CHECK(r.error_count > 0);
     STRATA_CHECK(r.diagnostics != NULL);
@@ -33,7 +33,7 @@ STRATA_TEST(embed_compile_string_reports_errors)
 STRATA_TEST(embed_ast_emit)
 {
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_AST);
+    StrataResult r = strataCompileString(c, "int f() { return 1; }", "m", STRATA_EMIT_AST, 0);
     STRATA_CHECK_EQ(r.ok, 1);
     STRATA_CHECK(strstr(r.output, "fn int f") != NULL);
     strataResultFree(&r);

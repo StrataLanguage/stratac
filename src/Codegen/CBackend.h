@@ -7,6 +7,13 @@
 
 enum StrataArch : int;
 
+typedef enum CBackendEmitFlags
+{
+    CEmitNone = 0,
+    CEmitJIT = (1 << 0),
+    CEmitNoSIMD = (1 << 1),
+} CBackendEmitFlags;
+
 typedef struct {
     const char* strataName;
     const char* cName;
@@ -29,7 +36,7 @@ typedef struct CEmitter
     Sb out;
     Vec exports;
     Vec externs;
-    bool jitMode;
+    CBackendEmitFlags emitFlags;
     enum StrataArch arch;
     unsigned indent;
     const SourceManager* sources;
@@ -43,8 +50,8 @@ typedef struct CEmitter
 void BuiltCModuleInit(BuiltCModule* module);
 void BuiltCModuleDispose(BuiltCModule* module);
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode, enum StrataArch arch);
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags, enum StrataArch arch);
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                    const SourceManager* sources, size_t sourceCount, bool jitMode, enum StrataArch arch);
+                                    const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags, enum StrataArch arch);
 
 void CEmitExpr(CEmitter* emitter, const Node* node);

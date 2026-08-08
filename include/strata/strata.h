@@ -46,6 +46,11 @@ typedef enum
     STRATA_EMIT_C       = 2,
 } StrataEmitKind;
 
+typedef enum StrataEmitFlags : unsigned int
+{
+    STRATA_EMIT_NO_SIMD = (1U << 0),
+} StrataEmitFlags;
+
 typedef enum
 {
     STRATA_CAP_C_OUTPUT = 1u << 0,
@@ -60,6 +65,7 @@ typedef enum StrataArch : int
     STRATA_ARCH_X64,
     STRATA_ARCH_ARM64,
 } StrataArch;
+
 
 
 typedef struct StrataJit StrataJit;
@@ -94,9 +100,9 @@ STRATA_API void strataCompilerDestroy(StrataCompiler* c);
 STRATA_API void strataSetArchitecture(StrataCompiler* c, StrataArch arch);
 
 STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,
-                                            const char* moduleName, StrataEmitKind emit);
+                                            const char* moduleName, StrataEmitKind emit, StrataEmitFlags emitFlags);
 STRATA_API StrataResult strataCompileFile(StrataCompiler* c, const char* path,
-                                          StrataEmitKind emit);
+                                          StrataEmitKind emit, StrataEmitFlags emitFlags);
 
 STRATA_API int strataCompileToObject(StrataCompiler* c, const char* inputPath,
                                      const char* outputPath, int assembly,

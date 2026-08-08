@@ -11,7 +11,7 @@ static char* strata_strdup(const char* s) {
 extern float fmodf(float, float);
 extern double fmod(double, double);
 
-#include <arm_neon.h>
+typedef struct __strata_float128 { float x; float y; float z; float w; } __strata_float128;
 
 
 #line 3 "../samples/simd.strata"
@@ -19,9 +19,9 @@ int run(int strata__var_seed);
 
 #line 3 "../samples/simd.strata"
 int run(int strata__var_seed) {
-    float32x4_t strata__var_a = (float32x4_t) {1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f};
-    float32x4_t strata__var_b = (float32x4_t) {4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f};
-    float32x4_t strata__var_result = (float32x4_t) {vgetq_lane_f32(strata__var_a,0),vgetq_lane_f32(strata__var_a,1),vgetq_lane_f32(strata__var_a,1),vgetq_lane_f32(strata__var_a,3)};
+    float32x4_t strata__var_a = (__strata_float128){1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f};
+    float32x4_t strata__var_b = (__strata_float128){4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f};
+    float32x4_t strata__var_result = (__strata_float128) {strata__var_a.x+strata__var_b.x,strata__var_a.y+strata__var_b.y,strata__var_a.z+strata__var_b.z,strata__var_a.w+strata__var_b.w};
     return (int){0};
 }
 

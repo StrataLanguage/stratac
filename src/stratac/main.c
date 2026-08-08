@@ -16,6 +16,7 @@ static void PrintHelp(void)
                     "  --asm            also emit assembly (<output>.s)\n"
                     "  --ast            also print the AST to stderr\n"
                     "  --arch           set the output architecture (default: auto, x64, arm64)\n"
+                    "  --no-simd        disable output of SIMD intrinsics or instructions\n"
                     "  --emit-c         emit portable C source instead of an object\n"
                     "  --run            JIT and run an int(void) entry in memory\n"
                     "  --entry <name>   entry for --run (default: main)\n"
@@ -68,6 +69,7 @@ int main(int argc, char** argv)
     const char* entryName = "main";
 
     StrataArch outputArch = STRATA_ARCH_AUTO;
+    StrataEmitFlags emitFlags = 0;
 
     for (int i = 1; i < argc; i++)
     {
@@ -142,6 +144,10 @@ int main(int argc, char** argv)
         {
             emitC = true;
         }
+        else if (strcmp(a, "--no-simd") == 0)
+        {
+            emitFlags |= STRATA_EMIT_NO_SIMD;
+        }
         else if (strcmp(a, "--run") == 0)
         {
             run = true;
@@ -198,7 +204,7 @@ int main(int argc, char** argv)
 
     if (printAst)
     {
-        StrataResult r = strataCompileFile(compiler, inputFile, STRATA_EMIT_AST);
+        StrataResult r = strataCompileFile(compiler, inputFile, STRATA_EMIT_AST, 0);
         if (r.diagnostics && r.diagnostics[0])
         {
             fprintf(stderr, "%s\n", r.diagnostics);
@@ -281,7 +287,7 @@ int main(int argc, char** argv)
             outFileOwned = true;
         }
 
-        StrataResult result = strataCompileFile(compiler, inputFile, STRATA_EMIT_C);
+        StrataResult result = strataCompileFile(compiler, inputFile, STRATA_EMIT_C, emitFlags);
         if (result.diagnostics && result.diagnostics[0])
         {
             fprintf(stderr, "%s\n", result.diagnostics);
