@@ -4,5 +4,5 @@ int run(int seed)
 {
     float3 a = float3(1.0, 2.0, 3.0);
     float3 b = float3(4.0, 5.0, 6.0);
-    float3 result = a.xyy;
+    float3 result = a + b;
 }

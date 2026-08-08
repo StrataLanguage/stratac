@@ -29,6 +29,23 @@ typedef enum : int
     default:;                                                                                                          \
     }
 
+#define EMIT_PLATFORMS2(def_, ...)                                                                                     \
+    if ((emitter->emitFlags & CEmitNoSIMD) != 0)                                                                       \
+    {                                                                                                                  \
+        None##def_(__VA_ARGS__);                                                                                       \
+        return;                                                                                                        \
+    }                                                                                                                  \
+    switch (emitter->arch)                                                                                             \
+    {                                                                                                                  \
+    case STRATA_ARCH_X64:                                                                                              \
+        SSE##def_(__VA_ARGS__);                                                                                        \
+        break;                                                                                                         \
+    case STRATA_ARCH_ARM64:                                                                                            \
+        NEON##def_(__VA_ARGS__);                                                                                       \
+        break;                                                                                                         \
+    default:;                                                                                                          \
+    }
+
 static int GetComponentList(VectorComponent* buffer, const char* memberAccess)
 {
     int count = 0;
@@ -335,10 +352,6 @@ static inline void SSEVectorConstruct(CEmitter* emitter, const Vec* args)
     }
     else
     {
-        /* This currently uses the C99 syntax for loading into a vector. This is mainly since we can't see into
-           the future with nodes, so we cannot output a const array of values before an assignment or return.
-           Since Neon doesn't have a _mm_setr adjacent function, this is our only option for now. */
-
         SbPuts(&emitter->out, "_mm_setr_ps(");
 
         for (int i = 0; i < args->count; i++)
@@ -470,20 +483,194 @@ static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct M
 }
 
 /*
+ * No SIMD specializations
+ */
+
+static inline void NoneVectorConstruct(CEmitter* emitter, const Vec* args)
+{
+    /* Single scalar / splat */
+    if (args->count == 1)
+    {
+        /* (__strata_float128) { [scalar] , [scalar] , [scalar] , [scalar] };  */
+
+        SbPuts(&emitter->out, "(__strata_float128){");
+
+        for (int i = 0; i < 4; i++)
+        {
+            CEmitExpr(emitter, args->items[0]);
+            if (i < 3)
+            {
+                SbPutc(&emitter->out, ',');
+            }
+        }
+
+        SbPuts(&emitter->out, "}");
+    }
+    else
+    {
+        SbPuts(&emitter->out, "(__strata_float128){");
+
+        for (int i = 0; i < args->count; i++)
+        {
+            CEmitExpr(emitter, args->items[i]);
+            if (i < args->count - 1)
+            {
+                SbPutc(&emitter->out, ',');
+            }
+        }
+
+        /* If this is not padded out (only 3 components) then add a padding zero */
+        if ((args->count % 4) != 0)
+        {
+            SbPuts(&emitter->out, ", 0.0000f");
+        }
+
+        SbPuts(&emitter->out, "}");
+    }
+}
+
+static inline char NoneLaneToMember(int lane)
+{
+    switch (lane)
+    {
+    case 0:
+        return 'x';
+    case 1:
+        return 'y';
+    case 2:
+        return 'z';
+    case 3:
+        return 'w';
+    default:;
+    }
+
+    return 'x';
+}
+
+static inline void NoneEmitDirectLane(CEmitter* emitter, Node* node, int lane)
+{
+    if (node->kind == NodeFloatLiteral)
+    {
+        /* Emit the literal value */
+        CEmitExpr(emitter, node);
+    }
+    else
+    {
+        /* Emit the member (e.g.  vector.x) */
+        CEmitExpr(emitter, node);
+        SbPutc(&emitter->out, '.');
+        SbPutc(&emitter->out, NoneLaneToMember(lane));
+    }
+}
+
+static inline void NoneEmitArithOp(const char* op, struct CEmitter* emitter, const struct BinaryExpr* binexp)
+{
+    SbPuts(&emitter->out, "(__strata_float128) {");
+
+    for (int i = 0; i < 4; i++)
+    {
+        NoneEmitDirectLane(emitter, binexp->lhs, i);
+        SbPuts(&emitter->out, op);
+        NoneEmitDirectLane(emitter, binexp->rhs, i);
+
+        if (i < 3)
+        {
+            SbPutc(&emitter->out, ',');
+        }
+    }
+
+    SbPutc(&emitter->out, '}');
+}
+
+static inline void NoneVectorBinExpr(struct CEmitter* emitter, const struct BinaryExpr* binexp)
+{
+    switch (binexp->op)
+    {
+    case BinAdd:
+        NoneEmitArithOp("+", emitter, binexp);
+        break;
+    case BinSub:
+        NoneEmitArithOp("-", emitter, binexp);
+        break;
+    case BinMul:
+        NoneEmitArithOp("*", emitter, binexp);
+        break;
+    case BinDiv:
+        NoneEmitArithOp("/", emitter, binexp);
+        break;
+    case BinBitAnd:
+        NoneEmitArithOp("&", emitter, binexp);
+        break;
+    case BinBitOr:
+        NoneEmitArithOp("|", emitter, binexp);
+        break;
+    case BinBitXor:
+        NoneEmitArithOp("^", emitter, binexp);
+        break;
+    case BinShl:
+    case BinShr:
+    case BinEqEq:
+    case BinNotEq:
+    case BinLt:
+    case BinLtEq:
+    case BinGt:
+    case BinGtEq:
+    case BinLogicAnd:
+    case BinLogicOr:
+    case BinMod:
+        DiagError(emitter->diag, binexp->base.range, "unsupported expression for vector data type");
+        break;
+    default:;
+    }
+}
+
+void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+{
+    VectorComponent c[4];
+
+    int numComponents = GetComponentList(c, expr->member);
+
+    if (numComponents == -1)
+    {
+        DiagError(emitter->diag, expr->base.range, "unknown components in vector destructure");
+        return;
+    }
+
+    SbPuts(&emitter->out, "(__strata_float128) {");
+
+    for (int i = 0; i < 4; i++)
+    {
+
+        CEmitExpr(emitter, expr->base_node);
+        SbPutc(&emitter->out, '.');
+
+        int laneIndex = (c[i] == VC_NULL) ? i : c[i];
+        SbPutc(&emitter->out, NoneLaneToMember(laneIndex));
+
+        if (i < 3)
+        {
+            SbPutc(&emitter->out, ',');
+        }
+    }
+
+    SbPuts(&emitter->out, "}");
+}
+
+/*
  * Platform agnostic definitions
  */
 
 void CSimdVectorConstruct(struct CEmitter* emitter, const struct Vec* args)
 {
-    EMIT_PLATFORMS(SSEVectorConstruct, NEONVectorConstruct, emitter, args);
+    EMIT_PLATFORMS2(VectorConstruct, emitter, args);
 }
 
 void CSimdVectorBinExpr(struct CEmitter* emitter, const struct BinaryExpr* binexp)
 {
-    EMIT_PLATFORMS(SSEVectorBinExpr, NEONVectorBinExpr, emitter, binexp);
+    EMIT_PLATFORMS2(VectorBinExpr, emitter, binexp);
 }
 
 void CSimdVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
 {
-    EMIT_PLATFORMS(SSEVectorDestructure, NEONVectorDestructure, emitter, expr);
+    EMIT_PLATFORMS2(VectorDestructure, emitter, expr);
 }

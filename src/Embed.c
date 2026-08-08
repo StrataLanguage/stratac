@@ -71,12 +71,20 @@ extern "C"
     }
 
     static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
-                                    size_t sourceCount, StrataEmitKind emit, const StrataArch arch)
+                                    size_t sourceCount, StrataEmitKind emit, StrataEmitFlags emitFlags,
+                                    const StrataArch arch)
     {
         StrataResult r = {0};
 
         const char* out = "";
         char* irOwned = NULL;
+
+        CBackendEmitFlags backendEmitFlags = CEmitNone;
+
+        if ((emitFlags & STRATA_EMIT_NO_SIMD) != 0)
+        {
+            backendEmitFlags |= CEmitNoSIMD;
+        }
 
         if (!DiagHasErrors(diag) && mod)
         {
@@ -86,7 +94,8 @@ extern "C"
             }
             else if (emit == STRATA_EMIT_C)
             {
-                BuiltCModule result = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, false, arch);
+                BuiltCModule result
+                    = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, backendEmitFlags, arch);
                 irOwned = DupString(result.source ? result.source : "");
                 out = irOwned ? irOwned : "";
                 BuiltCModuleDispose(&result);
@@ -122,7 +131,7 @@ extern "C"
     }
 
     static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t sourceLen, const char* moduleName,
-                                      StrataEmitKind emit, const StrataArch arch)
+                                      StrataEmitKind emit, StrataEmitFlags emitFlags, const StrataArch arch)
     {
         (void)c;
 
@@ -152,7 +161,7 @@ extern "C"
 
         ResolveOverloads(mod, &diag, &arena);
 
-        StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit, arch);
+        StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit, emitFlags, arch);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -162,7 +171,8 @@ extern "C"
         return r;
     }
 
-    StrataResult strataCompileString(StrataCompiler* c, const char* source, const char* moduleName, StrataEmitKind emit)
+    StrataResult strataCompileString(StrataCompiler* c, const char* source, const char* moduleName, StrataEmitKind emit,
+                                     StrataEmitFlags emitFlags)
     {
         if (!c || !source)
         {
@@ -174,10 +184,11 @@ extern "C"
             return r;
         }
 
-        return CompileSource(c, source, strlen(source), moduleName ? moduleName : "strata_module", emit, c->arch);
+        return CompileSource(c, source, strlen(source), moduleName ? moduleName : "strata_module", emit, emitFlags,
+                             c->arch);
     }
 
-    StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKind emit)
+    StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKind emit, StrataEmitFlags emitFlags)
     {
         if (!c || !path)
         {
@@ -201,7 +212,7 @@ extern "C"
         Module* mod = ModuleLoaderLoad(&loader, path);
         ResolveOverloads(mod, &diag, &arena);
 
-        StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, c->arch);
+        StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, c->arch);
 
         AstDispose((Node*)mod);
         ModuleLoaderDispose(&loader);

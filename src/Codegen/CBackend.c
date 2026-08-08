@@ -766,7 +766,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
     const FunctionDecl* function = call->resolvedDecl;
     const char* callee = FunctionName(emitter, call->callee);
 
-    if (emitter->jitMode && function && function->isExtern)
+    if ((emitter->emitFlags & CEmitJIT) != 0 && function && function->isExtern)
     {
         callee = ExternSlotName(emitter, function->name);
     }
@@ -1503,8 +1503,6 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
     }
 }
 
-static void EmitStmt(CEmitter* emitter, const Node* node);
-
 static void EmitControlledStmt(CEmitter* emitter, const Node* node)
 {
     if (node && node->kind == NodeBlock)
@@ -2073,7 +2071,7 @@ static void EmitDeclarations(CEmitter* emitter)
         const FunctionDecl* function = (const FunctionDecl*)VecGet(&emitter->mod->functions, i);
         EmitLineDirective(emitter, function->base.range);
 
-        if (function->isExtern && emitter->jitMode)
+        if (function->isExtern && (emitter->emitFlags & CEmitJIT) != 0)
         {
             EmitExternSlot(emitter, function);
         }
@@ -2346,7 +2344,8 @@ void BuiltCModuleDispose(BuiltCModule* module)
 }
 
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                     const SourceManager* sources, size_t sourceCount, bool jitMode, StrataArch arch)
+                                     const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags,
+                                     StrataArch arch)
 {
     BuiltCModule result;
     BuiltCModuleInit(&result);
@@ -2366,7 +2365,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     emitter.mod = ast;
     emitter.diag = diag;
     emitter.arena = arena;
-    emitter.jitMode = jitMode;
+    emitter.emitFlags = emitFlags;
     emitter.arch = arch;
     emitter.sources = sources;
     emitter.sourceCount = sourceCount;
@@ -2394,17 +2393,25 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
                          "extern float fmodf(float, float);\n"
                          "extern double fmod(double, double);\n\n");
 
-    /* Emit includes to SIMD headers */
-    switch (arch)
+    if ((emitFlags & CEmitNoSIMD) != 0)
     {
-    case STRATA_ARCH_X64:
-        SbPuts(&emitter.out, "#include <immintrin.h>\n");
-        break;
-    case STRATA_ARCH_ARM64:
-        SbPuts(&emitter.out, "#include <arm_neon.h>\n");
-        break;
-    case STRATA_ARCH_AUTO:
-    default:;
+        SbPuts(&emitter.out,
+               "typedef struct __strata_float128 { float x; float y; float z; float w; } __strata_float128;\n");
+    }
+    else
+    {
+        /* Emit includes to SIMD headers */
+        switch (arch)
+        {
+        case STRATA_ARCH_X64:
+            SbPuts(&emitter.out, "#include <immintrin.h>\n");
+            break;
+        case STRATA_ARCH_ARM64:
+            SbPuts(&emitter.out, "#include <arm_neon.h>\n");
+            break;
+        case STRATA_ARCH_AUTO:
+        default:;
+        }
     }
 
     EmitTypes(&emitter);
@@ -2426,9 +2433,10 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     return result;
 }
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode, StrataArch arch)
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags,
+                          StrataArch arch)
 {
-    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, jitMode, arch);
+    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, emitFlags, arch);
 }
 
 CodegenResult GenerateC(const Module* mod, StrataArch arch)
