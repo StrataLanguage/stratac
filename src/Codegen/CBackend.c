@@ -2383,12 +2383,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
                          "extern float fmodf(float, float);\n"
                          "extern double fmod(double, double);\n\n");
 
-    if ((emitFlags & CEmitNoSIMD) != 0)
-    {
-        SbPuts(&emitter.out,
-               "typedef struct __strata_float128 { float x; float y; float z; float w; } __strata_float128;\n");
-    }
-    else
+    if ((emitFlags & CEmitEnableSIMD) != 0)
     {
         /* Emit includes to SIMD headers */
         switch (arch)
@@ -2402,6 +2397,11 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
         case STRATA_ARCH_AUTO:
         default:;
         }
+    }
+    else
+    {
+        SbPuts(&emitter.out,
+               "typedef struct __strata_float128 { float x; float y; float z; float w; } __strata_float128;\n");
     }
 
     EmitTypes(&emitter);
@@ -2440,7 +2440,7 @@ CodegenResult GenerateC(const Module* mod, StrataArch arch)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    BuiltCModule module = BuildCModule(mod, &diag, &arena, false, arch);
+    BuiltCModule module = BuildCModule(mod, &diag, &arena, 0, arch);
 
     result.ok = !DiagHasErrors(&diag);
     result.output = DupString(module.source ? module.source : "");
