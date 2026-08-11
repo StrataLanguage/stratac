@@ -83,7 +83,7 @@ extern "C"
 
         if ((emitFlags & STRATA_EMIT_NO_SIMD) != 0)
         {
-            backendEmitFlags ^= (~CEmitEnableSIMD);
+            backendEmitFlags &= (~CEmitEnableSIMD);
         }
 
         if (!DiagHasErrors(diag) && mod)
@@ -382,7 +382,7 @@ extern "C"
             return NULL;
         }
 
-        BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, 0, arch);
+        BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, CEmitJIT, arch);
 
         if (DiagHasErrors(diag))
         {

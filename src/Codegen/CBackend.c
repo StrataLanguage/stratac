@@ -2450,7 +2450,7 @@ CodegenResult GenerateC(const Module* mod, StrataArch arch)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    BuiltCModule module = BuildCModule(mod, &diag, &arena, 0, arch);
+    BuiltCModule module = BuildCModule(mod, &diag, &arena, CEmitNone, arch);
 
     result.ok = !DiagHasErrors(&diag);
     result.output = DupString(module.source ? module.source : "");
