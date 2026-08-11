@@ -189,6 +189,11 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
 
     StrataArch arch = ResolveArch(emitter->arch);
 
+    if ((emitter->emitFlags & CEmitEnableSIMD) == 0)
+    {
+        return CSIMD_FALLBACK_VECTOR_NAME;
+    }
+
     if (arch == STRATA_ARCH_ARM64)
     {
         return "float32x4_t";
@@ -198,7 +203,7 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
         return "__m128";
     }
 
-    return "__strata_float128";
+    return CSIMD_FALLBACK_VECTOR_NAME;
 }
 
 static const char* TypeNameC(CEmitter* emitter, const char* name)
@@ -608,7 +613,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     {
         const MemberExpr* member = (const MemberExpr*)node;
         const char* baseType = ExprType(emitter, member->base_node);
-        
+
         /* array.length is a u64 query on the fat struct. */
         if (IsArrayType(baseType) && strcmp(member->member, "length") == 0)
         {
@@ -633,7 +638,8 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
         const IndexExpr* idx = (const IndexExpr*)node;
         const char* baseType = ExprType(emitter, idx->base_node);
         Str inner = ArrayInnerStr(baseType);
-        const char* elemC = TypeNameC(emitter, inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "void");
+        const char* elemC
+            = TypeNameC(emitter, inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "void");
 
         SbPuts(&emitter->out, "((");
         SbPuts(&emitter->out, elemC);
@@ -948,8 +954,7 @@ static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
         return;
     }
 
-    if (strcmp(call->callee, "array_push") == 0
-        || strcmp(call->callee, "array_pop") == 0
+    if (strcmp(call->callee, "array_push") == 0 || strcmp(call->callee, "array_pop") == 0
         || strcmp(call->callee, "array_resize") == 0)
     {
         EmitArrayBuiltin(emitter, call);
@@ -1308,7 +1313,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             CSimdVectorDestructure(emitter, member, false);
             return;
         }
-        
+
         /* array.length is a u64 query on the fat struct. */
         if (IsArrayType(baseType) && strcmp(member->member, "length") == 0)
         {
@@ -1397,8 +1402,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
 
         /* Whole-array rebind: free the old buffer (and owning elements), take
            the new fat struct, and null a moved source. */
-        if (assign->op == AssignSet
-            && IsArrayType(targetType)
+        if (assign->op == AssignSet && IsArrayType(targetType)
             && strcmp(ExprType(emitter, assign->value), targetType) == 0)
         {
             Str inner = ArrayInnerStr(targetType);
@@ -2038,8 +2042,7 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
             const char* ref = e->byRef ? "(*" : "";
             const char* closeRef = e->byRef ? ")" : "";
             Str arrInner = ArrayInnerStr(e->typeName);
-            const char* elemType = arrInner.data
-                ? StrNew(emitter->arena, arrInner.data, arrInner.len).data : "void";
+            const char* elemType = arrInner.data ? StrNew(emitter->arena, arrInner.data, arrInner.len).data : "void";
             const char* elemC = TypeNameC(emitter, elemType);
 
             Pad(emitter);
@@ -2051,9 +2054,8 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
 
             if (IsOwningType(elemType))
             {
-                SbPrintf(&emitter->out,
-                    "{ unsigned long long _i; for (_i = 0; _i < %s%s%s.len; _i++) { ",
-                    ref, var, closeRef);
+                SbPrintf(&emitter->out, "{ unsigned long long _i; for (_i = 0; _i < %s%s%s.len; _i++) { ", ref, var,
+                         closeRef);
 
                 if (TypeRegistryIsOwningStruct(&emitter->types, elemType))
                 {
@@ -3134,8 +3136,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     }
 
     /* Fat {data, len} struct shared by every T[]. */
-    SbPuts(&emitter.out,
-           "typedef struct { void* data; unsigned long long len; } strata__arr;\n\n");
+    SbPuts(&emitter.out, "typedef struct { void* data; unsigned long long len; } strata__arr;\n\n");
 
     EmitTypes(&emitter);
     EmitDropHelpers(&emitter);
