@@ -193,6 +193,12 @@ static void Dump(Node* n, int indent, Sb* out)
             }
             
             ParamDecl* param = (ParamDecl*)VecGet(&function_decl->params, i);
+
+            if (param->type.isConst)
+            {
+                SbPuts(out, "const ");
+            }
+
             SbPuts(out, ParamModSpelling(param->mod));
 
             if (param->mod != ModNone)
