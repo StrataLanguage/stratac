@@ -89,6 +89,7 @@ LLVMValueRef LLVMBuildRet(LLVMBuilderRef b, LLVMValueRef v);
 LLVMValueRef LLVMBuildRetVoid(LLVMBuilderRef b);
 LLVMValueRef LLVMBuildBr(LLVMBuilderRef b, LLVMBasicBlockRef dest);
 LLVMValueRef LLVMBuildCondBr(LLVMBuilderRef b, LLVMValueRef If, LLVMBasicBlockRef T, LLVMBasicBlockRef E);
+LLVMValueRef LLVMBuildUnreachable(LLVMBuilderRef b);
 LLVMValueRef LLVMBuildSelect(LLVMBuilderRef b, LLVMValueRef If, LLVMValueRef Then, LLVMValueRef Else, const char* name);
 LLVMValueRef LLVMBuildAdd(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
 LLVMValueRef LLVMBuildSub(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);

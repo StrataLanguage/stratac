@@ -161,3 +161,28 @@ STRATA_TEST(sample_simd_compiles_via_c_backend)
     free(src);
 }
 
+STRATA_TEST(array_indexing_emits_bounds_check)
+{
+    char* src = LoadSample("arrays.strata");
+    STRATA_CHECK(src != NULL);
+    STRATA_CHECK(src[0] != '\0');
+
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    /* Both backends must emit bounds-checking code (strata_panic calls). */
+    CodegenResult cres = GenerateC(mod, STRATA_ARCH_AUTO);
+    STRATA_CHECK(cres.ok);
+    STRATA_CHECK(strstr(cres.output, "strata_panic") != NULL);
+
+    CodegenResult ires = GenerateLlvmIr(mod);
+    STRATA_CHECK(ires.ok);
+    STRATA_CHECK(strstr(ires.output, "strata_panic") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    free(src);
+}
+

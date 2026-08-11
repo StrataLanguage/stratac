@@ -639,9 +639,11 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
         SbPuts(&emitter->out, elemC);
         SbPuts(&emitter->out, " *)(( ");
         EmitLValue(emitter, idx->base_node);
-        SbPuts(&emitter->out, ").data))[");
+        SbPuts(&emitter->out, ").data))[({ unsigned long long _bi = ");
         CEmitExpr(emitter, idx->index);
-        SbPutc(&emitter->out, ']');
+        SbPuts(&emitter->out, "; if (_bi >= (");
+        EmitLValue(emitter, idx->base_node);
+        SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); _bi; })]");
 
         return;
     }
@@ -2993,6 +2995,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
                          "_Static_assert(sizeof(int) == 4, \"Strata requires 32-bit int\");\n"
                          "extern void* strata_alloc(unsigned long long);\n"
                          "extern void strata_free(void*);\n"
+                         "extern void strata_panic(const char* msg);\n"
                          "static char* strata_strdup(const char* s) {\n"
                          "  unsigned long n = 0; while (s[n]) n++;\n"
                          "  char* d = (char*)strata_alloc(n + 1);\n"

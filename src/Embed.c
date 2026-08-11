@@ -681,6 +681,28 @@ void strataJitDestroy(StrataJit* jit)
 }
 #endif
 
+    static StrataPanicHandler s_panicHandler = NULL;
+
+    void strata_panic(const char* msg)
+    {
+        if (s_panicHandler)
+        {
+            s_panicHandler(msg);
+        }
+        else
+        {
+            fputs("strata panic: ", stderr);
+            fputs(msg, stderr);
+            fputc('\n', stderr);
+            abort();
+        }
+    }
+
+    void strataSetPanicHandler(StrataPanicHandler handler)
+    {
+        s_panicHandler = handler;
+    }
+
     void strataFree(char* s)
     {
         free(s);

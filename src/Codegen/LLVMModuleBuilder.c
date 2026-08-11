@@ -78,6 +78,8 @@ typedef struct {
     LLVMTypeRef m_allocFnType;
     LLVMValueRef m_freeFn;
     LLVMTypeRef m_freeFnType;
+    LLVMValueRef m_panicFn;
+    LLVMTypeRef m_panicFnType;
     Arena* m_arena;
     int m_strLitCount;
 } Builder;
@@ -503,6 +505,51 @@ static LLVMValueRef StrataFreeFn(Builder* b)
     }
 
     return b->m_freeFn;
+}
+
+static LLVMValueRef StrataPanicFn(Builder* b)
+{
+    if (!b->m_panicFn)
+    {
+        LLVMTypeRef params[1] = { b->m_ptrTy };
+        b->m_panicFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
+        b->m_panicFn = LLVMAddFunction(b->m_mod, "strata_panic", b->m_panicFnType);
+    }
+
+    return b->m_panicFn;
+}
+
+/* Emits a bounds check: if index >= length, call strata_panic with the given
+   message and halt (unreachable). Does nothing if index and length are
+   compile-time constants and index < length. */
+static void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length)
+{
+    LLVMValueRef oob = LLVMBuildICmp(b->m_builder, LLVMIntUGE, index, length, "oob");
+    LLVMBasicBlockRef oobBB = NewBb(b, "oob");
+    LLVMBasicBlockRef okBB = NewBb(b, "ok");
+    LLVMBuildCondBr(b->m_builder, oob, oobBB, okBB);
+
+    PositionAtEnd(b, oobBB);
+    {
+        LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, "array index out of bounds", 24, 0);
+        LLVMTypeRef strType = LLVMTypeOf(strConst);
+        char* gName = arena_format(b->m_arena, ".pmsg.%d", b->m_strLitCount++);
+        LLVMValueRef g = LLVMAddGlobal(b->m_mod, strType, gName);
+        LLVMSetInitializer(g, strConst);
+        LLVMSetLinkage(g, LLVMPrivateLinkage);
+        LLVMSetUnnamedAddr(g, 1);
+        LLVMSetGlobalConstant(g, 1);
+        LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+        LLVMValueRef idx[2] = { zero, zero };
+        LLVMValueRef msgGep = LLVMConstGEP2(strType, g, idx, 2);
+
+        LLVMValueRef args[1] = { msgGep };
+        StrataPanicFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args, 1, "");
+        LLVMBuildUnreachable(b->m_builder);
+    }
+    b->m_terminated = true;
+    PositionAtEnd(b, okBB);
 }
 
 static LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
@@ -988,7 +1035,11 @@ static LValue EmitLValue(Builder* b, Node* n)
         TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)base.typeDesc.arrayInner});
         LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
-        LLVMValueRef idxArgs[1] = { AsI64Index(b, EmitExpr(b, ix->index)) };
+        LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+        LLVMValueRef lenVal = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, base.ptr), "len");
+        EmitBoundsCheck(b, idxVal, lenVal);
+
+        LLVMValueRef idxArgs[1] = { idxVal };
         LLVMValueRef elemAddr = LLVMBuildGEP2(b->m_builder, elemTy, dataPtr, idxArgs, 1, "ai");
 
         none.valid = true;
@@ -1115,7 +1166,11 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)base.typeDesc.arrayInner});
     LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
-    LLVMValueRef idxArgs[1] = { AsI64Index(b, EmitExpr(b, n->index)) };
+    LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
+    LLVMValueRef lenVal = LLVMBuildExtractValue(b->m_builder, base.value, 1, "len");
+    EmitBoundsCheck(b, idxVal, lenVal);
+
+    LLVMValueRef idxArgs[1] = { idxVal };
     LLVMValueRef elemAddr = LLVMBuildGEP2(b->m_builder, elemTy, dataPtr, idxArgs, 1, "ai");
     LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elemAddr, "el");
 
@@ -3159,6 +3214,8 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     b.m_allocFnType = NULL;
     b.m_freeFn = NULL;
     b.m_freeFnType = NULL;
+    b.m_panicFn = NULL;
+    b.m_panicFnType = NULL;
     b.m_arrayType = NULL;
 
     TypeRegistryInit(&b.m_registry);
