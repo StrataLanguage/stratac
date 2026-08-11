@@ -11,7 +11,7 @@ static char* strata_strdup(const char* s) {
 extern float fmodf(float, float);
 extern double fmod(double, double);
 
-#include <arm_neon.h>
+#include <immintrin.h>
 
 
 #line 3 "../samples/simd.strata"
@@ -19,10 +19,10 @@ int run(int strata__var_seed);
 
 #line 3 "../samples/simd.strata"
 int run(int strata__var_seed) {
-    float32x4_t strata__var_a = (float32x4_t) {1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f};
-    float32x4_t strata__var_b = (float32x4_t) {4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f};
-    float32x4_t strata__var_z = vdupq_lane_f32(strata__var_a, 0);
-    float32x4_t strata__var_result = vaddq_f32(strata__var_a,strata__var_b);
+    __m128 strata__var_a = _mm_setr_ps(1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f);
+    __m128 strata__var_b = _mm_setr_ps(4.000000000e+00f,5.000000000e+00f,6.000000000e+00f, 0.0000f);
+    __m128 strata__var_z = _mm_permute_ps(strata__var_a,_MM_SHUFFLE(3,0,0,0));
+    __m128 strata__var_result = _mm_add_ps(strata__var_a,strata__var_b);
     return (int){0};
 }
 
