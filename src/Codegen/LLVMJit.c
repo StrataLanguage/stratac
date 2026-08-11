@@ -18,15 +18,6 @@ static void strata_free_impl(void* p)
 
 extern void strata_panic(const char* msg);
 
-static void* strata_strdup_impl(const char* s)
-{
-    size_t n = 0;
-    while (s[n]) n++;
-    char* d = (char*)malloc(n + 1);
-    for (size_t i = 0; i <= n; i++) d[i] = s[i];
-    return d;
-}
-
 static void EnsureTargetsInitialized(void)
 {
     static bool initialized = false;
@@ -52,7 +43,15 @@ void LLVMJitInit(LLVMJit* jit)
     jit->m_ee = NULL;
     jit->m_ctx = NULL;
     jit->m_mod = NULL;
+    jit->allocFn = NULL;
+    jit->freeFn = NULL;
     VecInit(&jit->m_externs);
+}
+
+void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn)
+{
+    jit->allocFn = allocFn;
+    jit->freeFn = freeFn;
 }
 
 void LLVMJitDestroy(LLVMJit* jit)
@@ -150,14 +149,15 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
         if (allocFn)
         {
-            LLVMAddGlobalMapping(jit->m_ee, allocFn, (void*)&strata_alloc_impl);
+            LLVMAddGlobalMapping(jit->m_ee, allocFn,
+                                 jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
         }
 
         LLVMValueRef freeFn = LLVMGetNamedFunction(modRef, "strata_free");
 
         if (freeFn)
         {
-            LLVMAddGlobalMapping(jit->m_ee, freeFn, (void*)&strata_free_impl);
+            LLVMAddGlobalMapping(jit->m_ee, freeFn, jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
         }
 
         LLVMValueRef panicFn = LLVMGetNamedFunction(modRef, "strata_panic");
@@ -167,12 +167,8 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
             LLVMAddGlobalMapping(jit->m_ee, panicFn, (void*)&strata_panic);
         }
 
-        LLVMValueRef strdupFn = LLVMGetNamedFunction(modRef, "strata_strdup");
-
-        if (strdupFn)
-        {
-            LLVMAddGlobalMapping(jit->m_ee, strdupFn, (void*)&strata_strdup_impl);
-        }
+        /* strata_strdup is defined in the module (calling strata_alloc), so
+           no host mapping is needed here. */
     }
 
     /* If the module has owning globals (box<T> / T[]), their runtime

@@ -35,6 +35,8 @@ extern "C"
     struct StrataCompiler
     {
         StrataArch arch;
+        void* allocFn;   /* optional host allocator for JIT mode */
+        void* freeFn;    /* optional host deallocator for JIT mode */
     };
 
 #if STRATA_HAS_TCC
@@ -57,6 +59,8 @@ extern "C"
     {
         StrataCompiler* compiler = (StrataCompiler*)malloc(sizeof(StrataCompiler));
         compiler->arch = STRATA_ARCH_AUTO;
+        compiler->allocFn = NULL;
+        compiler->freeFn = NULL;
         return compiler;
     }
 
@@ -68,6 +72,17 @@ extern "C"
     void strataSetArchitecture(StrataCompiler* c, StrataArch arch)
     {
         c->arch = arch;
+    }
+
+    void strataJitSetAllocFreeFunctions(StrataCompiler* c, void* allocFn, void* freeFn)
+    {
+        if (!c)
+        {
+            return;
+        }
+
+        c->allocFn = allocFn;
+        c->freeFn = freeFn;
     }
 
     static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
@@ -368,7 +383,8 @@ extern "C"
     };
 
     static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
-                                    size_t sourceCount, const char** errOut, const StrataArch arch)
+                                    size_t sourceCount, const char** errOut, const StrataArch arch, void* allocFn,
+                                    void* freeFn)
     {
         char* diagText = DiagFormat(diag, sources, sourceCount, arena);
 
@@ -398,6 +414,11 @@ extern "C"
 
         TccJit* jit = (TccJit*)malloc(sizeof(TccJit));
         TccJitInit(jit);
+
+        if (allocFn || freeFn)
+        {
+            TccJitSetAllocFree(jit, allocFn, freeFn);
+        }
 
         char* err = NULL;
         if (!TccJitLoad(jit, &bm, &err))
@@ -454,7 +475,7 @@ extern "C"
 
         ResolveOverloads(mod, &diag, &arena);
 
-        StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch);
+        StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -515,7 +536,8 @@ extern "C"
         Module* mod = ModuleLoaderLoad(&loader, path);
         ResolveOverloads(mod, &diag, &arena);
 
-        StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch);
+        StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
+                                       c->allocFn, c->freeFn);
 
         AstDispose((Node*)mod);
         ModuleLoaderDispose(&loader);

@@ -54,15 +54,6 @@ static void strata_free_impl(void* p)
 
 extern void strata_panic(const char* msg);
 
-static void* strata_strdup_impl(const char* s)
-{
-    size_t n = 0;
-    while (s[n]) n++;
-    char* d = (char*)malloc(n + 1);
-    for (size_t i = 0; i <= n; i++) d[i] = s[i];
-    return d;
-}
-
 /* libgcc soft-float helpers that TinyCC references for integer<->float
    casts of 64-bit values (e.g. `(float)ulong`, `(ulong)double`). */
 static float  strata___floatundisf(unsigned long long x) { return (float)x; }
@@ -130,6 +121,12 @@ void TccJitInit(TccJit* jit)
     }
 
     arena_init(jit->tccArena, 0);
+}
+
+void TccJitSetAllocFree(TccJit* jit, void* allocFn, void* freeFn)
+{
+    jit->allocFn = allocFn;
+    jit->freeFn = freeFn;
 }
 
 void TccJitDestroy(TccJit* jit)
@@ -212,10 +209,13 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     tcc_add_symbol(jit->state, "printf", (const void*)(uintptr_t)&printf);
     tcc_add_symbol(jit->state, "puts", (const void*)(uintptr_t)&puts);
 
-    tcc_add_symbol(jit->state, "strata_alloc", (const void*)(uintptr_t)&strata_alloc_impl);
-    tcc_add_symbol(jit->state, "strata_free", (const void*)(uintptr_t)&strata_free_impl);
+    tcc_add_symbol(jit->state, "strata_alloc",
+                   jit->allocFn ? jit->allocFn : (const void*)(uintptr_t)&strata_alloc_impl);
+    tcc_add_symbol(jit->state, "strata_free",
+                   jit->freeFn ? jit->freeFn : (const void*)(uintptr_t)&strata_free_impl);
     tcc_add_symbol(jit->state, "strata_panic", (const void*)(uintptr_t)&strata_panic);
-    tcc_add_symbol(jit->state, "strata_strdup", (const void*)(uintptr_t)&strata_strdup_impl);
+
+    /* strata_strdup is defined in the emitted C (calling strata_alloc). */
 
     tcc_add_symbol(jit->state, "__floatundisf", (const void*)(uintptr_t)&strata___floatundisf);
     tcc_add_symbol(jit->state, "__floatundidf", (const void*)(uintptr_t)&strata___floatundidf);

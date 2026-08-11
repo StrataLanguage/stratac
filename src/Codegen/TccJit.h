@@ -23,10 +23,16 @@ typedef struct {
     size_t diagnosticsLen;
     size_t diagnosticsCap;
     Arena* tccArena;
+    void* allocFn;   /* host-provided allocator (NULL = malloc) */
+    void* freeFn;    /* host-provided deallocator (NULL = free) */
 } TccJit;
 
 void TccJitInit(TccJit* jit);
 void TccJitDestroy(TccJit* jit);
+
+/* Set host-provided alloc/free used by the JIT runtime (e.g. a game engine's
+   custom allocator). Must be called before TccJitLoad. NULL restores malloc. */
+void TccJitSetAllocFree(TccJit* jit, void* allocFn, void* freeFn);
 
 bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage);
 bool TccJitAddSymbol(TccJit* jit, const char* name, void* address);

@@ -3485,7 +3485,7 @@ BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* aren
     return BuildCModuleWithSources(ast, diag, arena, NULL, 0, emitFlags, arch);
 }
 
-CodegenResult GenerateC(const Module* mod, StrataArch arch)
+CodegenResult GenerateC(const Module* mod, int arch)
 {
     CodegenResult result = {0};
     result.moduleName = mod ? mod->name : NULL;

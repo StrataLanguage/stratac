@@ -22,6 +22,16 @@
 #define STRATA_SAMPLE_DIR "."
 #endif
 
+void* strata_alloc(size_t sz)
+{
+    return malloc(sz);
+}
+
+void strata_free(void* p)
+{
+    free(p);
+}
+
 /* ---- shared engine API (the "engine" the script calls via extern) -------- */
 typedef struct { int x, y; } Entity;
 
@@ -56,10 +66,10 @@ static int run_scene(int (*chase_fn)(Entity*, Entity*, int))
     return result;
 }
 
-/* ======================================================================== */
 #ifdef USE_JIT
-/* JIT mode: load + compile the script at runtime via the Strata C API.    */
-/* ======================================================================== */
+
+//-- JIT
+
 #include "strata/strata.h"
 
 static void* resolve_extern(const char* name) {
@@ -76,6 +86,8 @@ int main(int argc, char** argv) {
     printf("[JIT] loading %s\n", path);
 
     StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, strata_alloc, strata_free);
+
     const char* err = NULL;
     StrataJit* jit = strataJitCompileFile(c, path, &err);
     if (!jit) {
@@ -101,9 +113,12 @@ int main(int argc, char** argv) {
     return 0;
 }
 
+//--
+
 #else
-/* AOT mode: the script was pre-compiled (stratac) and linked.             */
-/* ======================================================================== */
+
+//-- AOT
+
 extern int chase(Entity* attacker, Entity* target, int step);
 
 int main(void) {
@@ -111,4 +126,7 @@ int main(void) {
     run_scene(chase);
     return 0;
 }
+
+//--
+
 #endif

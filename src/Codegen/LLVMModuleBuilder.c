@@ -1998,6 +1998,76 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
 }
 
+/* Emits the body of strata_strdup. Uses host defined strata_jit and strata_free */
+static void EmitStrataStrdupBody(Builder* b)
+{
+    LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->m_builder);
+
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+    LLVMTypeRef i64Ty = I64Ty(b);
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "entry");
+    LLVMBasicBlockRef lenCond = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "len.cond");
+    LLVMBasicBlockRef lenBody = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "len.body");
+    LLVMBasicBlockRef allocBB = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "alloc");
+    LLVMBasicBlockRef copyCond = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "copy.cond");
+    LLVMBasicBlockRef copyBody = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "copy.body");
+    LLVMBasicBlockRef done = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strdupFn, "done");
+
+    LLVMValueRef s = LLVMGetParam(b->m_strdupFn, 0);
+    LLVMValueRef zero = LLVMConstInt(i64Ty, 0, 0);
+    LLVMValueRef one = LLVMConstInt(i64Ty, 1, 0);
+
+    /* Both loop counters are allocas in the ENTRY block - an alloca in a
+       non-entry block makes LLVM's x86 codegen treat the frame as dynamic and
+       emit a __chkstk stack probe. */
+    LLVMPositionBuilderAtEnd(b->m_builder, entry);
+    LLVMValueRef iSlot = LLVMBuildAlloca(b->m_builder, i64Ty, "i");
+    LLVMValueRef jSlot = LLVMBuildAlloca(b->m_builder, i64Ty, "j");
+    LLVMBuildStore(b->m_builder, zero, iSlot);
+    LLVMBuildBr(b->m_builder, lenCond);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, lenCond);
+    LLVMValueRef i = LLVMBuildLoad2(b->m_builder, i64Ty, iSlot, "i");
+    LLVMValueRef si[1] = { i };
+    LLVMValueRef c = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, s, si, 1, "si"), "c");
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, c, LLVMConstNull(i8Ty), "isn");
+    LLVMBuildCondBr(b->m_builder, isNull, allocBB, lenBody);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, lenBody);
+    LLVMBuildStore(b->m_builder, LLVMBuildAdd(b->m_builder, i, one, "i1"), iSlot);
+    LLVMBuildBr(b->m_builder, lenCond);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, allocBB);
+    LLVMValueRef len = LLVMBuildLoad2(b->m_builder, i64Ty, iSlot, "n");
+    LLVMValueRef allocArgs[1] = { LLVMBuildAdd(b->m_builder, len, one, "size") };
+    StrataAllocFn(b);
+    LLVMValueRef d = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "d");
+    LLVMBuildStore(b->m_builder, zero, jSlot);
+    LLVMBuildBr(b->m_builder, copyCond);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, copyCond);
+    LLVMValueRef j = LLVMBuildLoad2(b->m_builder, i64Ty, jSlot, "j");
+    LLVMValueRef jLe = LLVMBuildICmp(b->m_builder, LLVMIntULE, j, len, "jle");
+    LLVMBuildCondBr(b->m_builder, jLe, copyBody, done);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, copyBody);
+    LLVMValueRef sj[1] = { j };
+    LLVMValueRef dAddr = LLVMBuildGEP2(b->m_builder, i8Ty, d, sj, 1, "dj");
+    LLVMValueRef byte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, s, sj, 1, "sj"), "b");
+    LLVMBuildStore(b->m_builder, byte, dAddr);
+    LLVMBuildStore(b->m_builder, LLVMBuildAdd(b->m_builder, j, one, "j1"), jSlot);
+    LLVMBuildBr(b->m_builder, copyCond);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, done);
+    LLVMBuildRet(b->m_builder, d);
+
+    if (savedBlock)
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, savedBlock);
+    }
+}
+
 static LLVMValueRef StrataStrdupFn(Builder* b)
 {
     if (!b->m_strdupFn)
@@ -2005,6 +2075,7 @@ static LLVMValueRef StrataStrdupFn(Builder* b)
         LLVMTypeRef params[1] = { b->m_ptrTy };
         b->m_strdupFnType = LLVMFunctionType(b->m_ptrTy, params, 1, 0);
         b->m_strdupFn = LLVMAddFunction(b->m_mod, "strata_strdup", b->m_strdupFnType);
+        EmitStrataStrdupBody(b);
     }
     return b->m_strdupFn;
 }

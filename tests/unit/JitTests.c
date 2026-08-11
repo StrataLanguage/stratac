@@ -244,3 +244,42 @@ STRATA_TEST(jit_calls_host_extern_function)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
+
+static int g_customAllocs = 0;
+
+static void* CustomAlloc(unsigned long long n)
+{
+    g_customAllocs++;
+    return malloc((size_t)n);
+}
+
+static void CustomFree(void* p)
+{
+    free(p);
+}
+
+STRATA_TEST(jit_custom_allocator_is_used)
+{
+    /* The host can install a custom allocator; JIT code must call it. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&CustomAlloc, (void*)&CustomFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "int entry() { int[] a = {1, 2, 3}; int[] b = {10, 20}; array_push(a, 4); return a[0] + a[3] + (int)b.length; }",
+        "custom_alloc", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 7);   /* 1 + 4 + 2 */
+        }
+        STRATA_CHECK(g_customAllocs > 0);
+    }
+    strataFree((char*)err);
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
