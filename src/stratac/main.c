@@ -7,6 +7,33 @@
 
 #include <Core/Util.h>
 
+/*
+ * Command builder helpers
+ */
+
+/* Adds an unlabelled separator between options */
+#define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, NULL}
+/* Adds a labelled separator between options */
+#define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, label_}
+
+/* Defines a mode that takes no arguments. (e.g. --emit-c, --run) */
+#define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
+
+/* Same as `COMMAND_MODE`, used for readability */
+#define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                                 \
+    {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
+
+/* Defines a command that writes out information before terminating. (e.g. --version or --help) */
+#define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, MF_NONE, desc_}
+
+/* Defines a general command used to modify internal state or specify values. (e.g. --arch, -o) */
+#define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                                \
+    {short_cmd_, long_cmd_, follower_, func_, CF_NONE, MF_NONE, desc_}
+
+/*
+ *
+ */
+
 typedef enum ResultCode
 {
     RCSuccess = 0,
@@ -32,11 +59,7 @@ typedef struct State
 {
     const char* outputFileName;
     const char* sourceFileName;
-    /* bool emitAsm;
-    bool printAst;
-    bool emitC;
-    bool emitLlvmIr;
-    bool run; */
+
     bool outFileOwned;
     const char* entryName;
     StrataArch outputArch;
@@ -112,26 +135,9 @@ static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, 
 static ResultCode Cmd_PrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode Cmd_SetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+
 static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-
-/* Adds an unlabelled separator between options */
-#define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, NULL}
-/* Adds a labelled separator between options */
-#define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, label_}
-
-/* Defines a mode that takes no arguments. (e.g. --emit-c, --run) */
-#define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
-
-/* Same as `COMMAND_MODE`, used for readability */
-#define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                                 \
-    {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
-
-/* Defines a command that writes out information before terminating. (e.g. --version or --help) */
-#define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, MF_NONE, desc_}
-
-/* Defines a general command used to modify internal state or specify values. (e.g. --arch, -o) */
-#define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                                \
-    {short_cmd_, long_cmd_, follower_, func_, CF_NONE, MF_NONE, desc_}
 
 // clang-format off
 static const CLICommand commands[] = {
@@ -144,7 +150,8 @@ static const CLICommand commands[] = {
     COMMAND_MODE("--asm",    MF_EMIT_ASM, "output asm representation"),
     COMMAND_MODE("--emit-c", MF_EMIT_C,   "emit C code instead of an object file"),
     COMMAND_MODE("--run", MF_RUN, "JIT and run an int(void) entry in memory"),
-    COMMAND_TOGGLE("--no-simd", MF_DISABLE_SIMD, "disable SIMD intrinsics"),
+
+    COMMAND_GENERAL(NULL, "--no-simd", NULL, &Cmd_DisableSimd, "disable SIMD intrinsics"),
 
     COMMAND_GENERAL(NULL, "--entry", "<name>", &Cmd_RunSetEntry, "entry for --run (default: main)"),
     COMMAND_GENERAL(NULL, "--arch", "<value>", &Cmd_SetArch, "set output architecture (default: auto, x64, arm64)"),
@@ -161,7 +168,6 @@ typedef struct CmdImpls
     ResultCode (*func)(State* state, StrataCompiler* compiler);
 } CmdImpls;
 
-static ResultCode Impl_DisableSimd(State* state, StrataCompiler* compiler);
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler);
 static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler);
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
@@ -170,10 +176,9 @@ static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
 /* The implementations for each mode. Note that the higher the command in this list, the higher the precedence (and
  * therefore will be executed earlier.) */
 static const CmdImpls modeImpls[] = {
-    {MF_DISABLE_SIMD, &Impl_DisableSimd},
-    {MF_EMIT_ASM,     &Impl_EmitAsm    },
-    {MF_EMIT_C,       &Impl_EmitC      },
-    {MF_RUN,          &Impl_JitAndRun  },
+    {MF_RUN,      &Impl_JitAndRun},
+    {MF_EMIT_C,   &Impl_EmitC    },
+    {MF_EMIT_ASM, &Impl_EmitAsm  },
 };
 
 const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count)
@@ -366,6 +371,12 @@ static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLIC
         return RCArgumentError;
     }
 
+    return RCSuccess;
+}
+
+static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+{
+    state->emitFlags |= STRATA_EMIT_NO_SIMD;
     return RCSuccess;
 }
 
@@ -571,12 +582,6 @@ static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler)
     return RCSuccess;
 }
 
-static ResultCode Impl_DisableSimd(State* state, StrataCompiler* compiler)
-{
-    state->emitFlags |= STRATA_EMIT_NO_SIMD;
-    return RCSuccess;
-}
-
 int main(int argc, char** argv)
 {
     State state;
@@ -633,7 +638,7 @@ int main(int argc, char** argv)
     }
 
     ExecuteCommands(&state, compiler);
-
     strataCompilerDestroy(compiler);
-    return 0;
+
+    return RCSuccess;
 }

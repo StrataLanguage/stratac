@@ -493,7 +493,7 @@ static inline void NoneVectorConstruct(CEmitter* emitter, const Vec* args)
     {
         /* (__strata_float128) { [scalar] , [scalar] , [scalar] , [scalar] };  */
 
-        SbPuts(&emitter->out, "(__strata_float128){");
+        SbPuts(&emitter->out, "(" CSIMD_FALLBACK_VECTOR_NAME "){");
 
         for (int i = 0; i < 4; i++)
         {
@@ -508,7 +508,7 @@ static inline void NoneVectorConstruct(CEmitter* emitter, const Vec* args)
     }
     else
     {
-        SbPuts(&emitter->out, "(__strata_float128){");
+        SbPuts(&emitter->out, "(" CSIMD_FALLBACK_VECTOR_NAME "){");
 
         for (int i = 0; i < args->count; i++)
         {
@@ -565,7 +565,7 @@ static inline void NoneEmitDirectLane(CEmitter* emitter, Node* node, int lane)
 
 static inline void NoneEmitArithOp(const char* op, struct CEmitter* emitter, const struct BinaryExpr* binexp)
 {
-    SbPuts(&emitter->out, "(__strata_float128) {");
+    SbPuts(&emitter->out, "(" CSIMD_FALLBACK_VECTOR_NAME ") {");
 
     for (int i = 0; i < 4; i++)
     {
@@ -636,7 +636,7 @@ void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* ex
         return;
     }
 
-    SbPuts(&emitter->out, "(__strata_float128) {");
+    SbPuts(&emitter->out, "(" CSIMD_FALLBACK_VECTOR_NAME ") {");
 
     for (int i = 0; i < 4; i++)
     {

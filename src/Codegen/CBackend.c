@@ -180,6 +180,11 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
 {
     StrataArch arch = ResolveArch(emitter->arch);
 
+    if ((emitter->emitFlags & CEmitEnableSIMD) == 0)
+    {
+        return CSIMD_FALLBACK_VECTOR_NAME;
+    }
+
     if (arch == STRATA_ARCH_ARM64)
     {
         return "float32x4_t";
@@ -189,7 +194,7 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
         return "__m128";
     }
 
-    return NULL;
+    return CSIMD_FALLBACK_VECTOR_NAME;
 }
 
 static const char* TypeNameC(CEmitter* emitter, const char* name)
