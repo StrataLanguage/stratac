@@ -12,9 +12,9 @@
  */
 
 /* Adds an unlabelled separator between options */
-#define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, NULL}
+#define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, NULL}
 /* Adds a labelled separator between options */
-#define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, label_}
+#define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, label_}
 
 /* Defines a mode that takes no arguments. (e.g. --emit-c, --run) */
 #define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
@@ -45,7 +45,6 @@ typedef enum ResultCode
 typedef enum ModeFlag : uint64_t
 {
     MF_NONE,
-    MF_DISABLE_SIMD,
     MF_PRINT_AST,
     MF_EMIT_ASM,
     MF_EMIT_C,
@@ -78,11 +77,6 @@ void StateDefault(State* c)
     c->outputFileName = NULL;
     c->sourceFileName = NULL;
 
-    /* c->emitAsm = false;
-    c->printAst = false;
-    c->emitC = false;
-    c->emitLlvmIr = false;
-    c->run = false; */
     c->outFileOwned = false;
     c->entryName = "main";
 
@@ -100,7 +94,8 @@ typedef enum CommandFlags
     CF_NONE = 0,
     /* The program should exit after this command */
     CF_FINAL = (1 << 0),
-    CF_IGNORE = (1 << 1),
+
+    CF_SEPARATOR = (1 << 1),
 } CommandFlags;
 
 /*
@@ -145,16 +140,15 @@ static const CLICommand commands[] = {
     COMMAND_INFO("-v", "--version", &Cmd_Version, "print version and exit"),
 
     COMMAND_GENERAL("-o", NULL,    "<file>", &Cmd_SetOutputFilename, "output object file (default: <input>.o)"),
-    COMMAND_GENERAL(NULL, "--ast", NULL,     &Cmd_PrintAst,       "print ast tree"),
 
+    COMMAND_MODE("--ast",    MF_PRINT_AST, "print ast tree"),
     COMMAND_MODE("--asm",    MF_EMIT_ASM, "output asm representation"),
     COMMAND_MODE("--emit-c", MF_EMIT_C,   "emit C code instead of an object file"),
-    COMMAND_MODE("--run", MF_RUN, "JIT and run an int(void) entry in memory"),
+    COMMAND_MODE("--run",    MF_RUN,      "JIT and run an int(void) entry in memory"),
 
-    COMMAND_GENERAL(NULL, "--no-simd", NULL, &Cmd_DisableSimd, "disable SIMD intrinsics"),
-
-    COMMAND_GENERAL(NULL, "--entry", "<name>", &Cmd_RunSetEntry, "entry for --run (default: main)"),
-    COMMAND_GENERAL(NULL, "--arch", "<value>", &Cmd_SetArch, "set output architecture (default: auto, x64, arm64)"),
+    COMMAND_GENERAL(NULL, "--no-simd", NULL,      &Cmd_DisableSimd, "disable SIMD intrinsics"),
+    COMMAND_GENERAL(NULL, "--entry",   "<name>",  &Cmd_RunSetEntry, "entry for --run (default: main)"),
+    COMMAND_GENERAL(NULL, "--arch",    "<value>", &Cmd_SetArch,     "set output architecture (default: auto, x64, arm64)"),
 };
 // clang-format on
 
@@ -162,23 +156,25 @@ static const CLICommand commands[] = {
  * Command implementations. This run after all of the commands and values are processed, and is mapped directly to
  * `ModeFlag`.
  */
-typedef struct CmdImpls
+typedef struct ModeImpl
 {
     ModeFlag toggle;
     ResultCode (*func)(State* state, StrataCompiler* compiler);
-} CmdImpls;
+} ModeImpl;
 
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler);
 static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler);
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
 static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
+static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler);
 
 /* The implementations for each mode. Note that the higher the command in this list, the higher the precedence (and
  * therefore will be executed earlier.) */
-static const CmdImpls modeImpls[] = {
-    {MF_RUN,      &Impl_JitAndRun},
-    {MF_EMIT_C,   &Impl_EmitC    },
-    {MF_EMIT_ASM, &Impl_EmitAsm  },
+static const ModeImpl modeImpls[] = {
+    {MF_PRINT_AST, &Impl_PrintAst },
+    {MF_RUN,       &Impl_JitAndRun},
+    {MF_EMIT_C,    &Impl_EmitC    },
+    {MF_EMIT_ASM,  &Impl_EmitAsm  },
 };
 
 const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count)
@@ -186,7 +182,7 @@ const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count
     for (int i = 0; i < count; i++)
     {
         const CLICommand* cmd = &cmds[i];
-        if ((cmd->flags & CF_IGNORE) != 0)
+        if ((cmd->flags & CF_SEPARATOR) != 0)
         {
             continue;
         }
@@ -212,7 +208,7 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
 {
     for (int toggleIndex = 0; toggleIndex < sizeof(modeImpls) / sizeof(modeImpls[0]); toggleIndex++)
     {
-        const CmdImpls* impl = &modeImpls[toggleIndex];
+        const ModeImpl* impl = &modeImpls[toggleIndex];
         if (HAS_TOGGLE(state->toggleCommands, impl->toggle))
         {
             ResultCode result = impl->func(state, compiler);
@@ -254,7 +250,7 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
     {
         const CLICommand* cmd = &commands[i];
 
-        if ((cmd->flags & CF_IGNORE) != 0 && cmd->shortCmd == NULL && cmd->longCmd == NULL)
+        if ((cmd->flags & CF_SEPARATOR) != 0 && cmd->shortCmd == NULL && cmd->longCmd == NULL)
         {
             if (cmd->description != NULL)
             {
@@ -393,9 +389,9 @@ static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const 
     return RCSuccess;
 }
 
-static ResultCode Cmd_PrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler)
 {
-    StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_AST, 0);
+    StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_AST, state->emitFlags);
     if (r.diagnostics && r.diagnostics[0])
     {
         fprintf(stderr, "%s\n", r.diagnostics);
@@ -485,9 +481,14 @@ static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler)
 
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 {
-    char* asmFile = ReplaceExt(state->outputFileName, ".s");
+    const char* asmFilename = state->outputFileName;
+
+    if (asmFilename == NULL)
+    {
+        asmFilename = ReplaceExt(state->sourceFileName, ".s");
+    }
     const char* asmErr = NULL;
-    int asmOk = strataCompileToObject(compiler, state->sourceFileName, asmFile, true, &asmErr);
+    int asmOk = strataCompileToObject(compiler, state->sourceFileName, asmFilename, true, &asmErr);
 
     if (!asmOk)
     {
@@ -496,10 +497,10 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
     }
     else
     {
-        fprintf(stderr, "wrote assembly: %s\n", asmFile);
+        fprintf(stderr, "wrote assembly: %s\n", asmFilename);
     }
 
-    free(asmFile);
+    free((void*)asmFilename);
 
     return RCSuccess;
 }
