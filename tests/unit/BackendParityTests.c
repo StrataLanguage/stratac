@@ -353,6 +353,29 @@ STRATA_TEST(llvm_and_tcc_string_global_compiles)
                 7);
 }
 
+STRATA_TEST(llvm_and_tcc_box_global_allocates_and_reads_parity)
+{
+    /* A box<Pt> global is allocated in module_init and freed in teardown;
+       entry() can read it and both backends must agree on the value. */
+    CheckParity("struct Pt { int x; };\n"
+                "box<Pt> g_box = Pt{.x = 42};\n"
+                "int entry() {\n"
+                "  return g_box.x;\n"                /* 42 */
+                "}\n",
+                42);
+}
+
+STRATA_TEST(llvm_and_tcc_array_global_parity)
+{
+    /* An int[] global is filled by module_init (LLVM) / module_init (C),
+       readable from entry(), and freed in teardown — both backends agree. */
+    CheckParity("int[] g_arr = {1, 2, 3};\n"
+                "int entry() {\n"
+                "  return g_arr[0] + g_arr[1] + g_arr[2] + (int)g_arr.length;\n"  /* 1+2+3+3 = 9 */
+                "}\n",
+                9);
+}
+
 STRATA_TEST(llvm_and_tcc_box_owning_struct_array_parity)
 {
     /* An owning struct (holds a string) must be boxed; box<S>[] stores

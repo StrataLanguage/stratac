@@ -42,7 +42,19 @@ struct FooBar
     string str;
 };
 
+int[] testGlobalArray = {65, 100, 80};
+
 extern int puts(string str);
+extern int putchar(int ch);
+
+void PrintAll(ref int[] elems)
+{
+    for (uint i = 0; i < elems.length; i++)
+    {
+        putchar(elems[i]);
+    }
+    puts("");
+}
 
 void PrintAll(ref box<FooBar>[] elems) {
     array_push(elems, FooBar("again"));   // {hello, world, again}
@@ -52,6 +64,8 @@ void PrintAll(ref box<FooBar>[] elems) {
 }
 
 int entry() {
+    PrintAll(testGlobalArray);
+
     box<FooBar>[] fooBars = { FooBar("hello"), FooBar("world") };
     PrintAll(fooBars);
 
