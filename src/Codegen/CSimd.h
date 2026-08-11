@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#define CSIMD_FALLBACK_VECTOR_NAME "__strata_float128"
 
 struct CEmitter;
 struct Vec;
