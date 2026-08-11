@@ -266,3 +266,76 @@ STRATA_TEST(llvm_and_tcc_narrow_int_types_parity)
                 "}\n",
                 44 + (-106) + (-25536) + 4464);
 }
+
+STRATA_TEST(llvm_and_tcc_array_push_parity)
+{
+    CheckParity("int entry() {\n"
+                "  int[] a = {1, 2, 3};\n"
+                "  array_push(a, 4);\n"
+                "  array_push(a, 5);\n"
+                "  int s = 0;\n"
+                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+                "  return s;\n"                       /* 1+2+3+4+5 = 15 */
+                "}\n",
+                15);
+}
+
+STRATA_TEST(llvm_and_tcc_array_push_returns_new_length_parity)
+{
+    CheckParity("int entry() {\n"
+                "  int[] a = {7};\n"
+                "  ulong n = array_push(a, 8);\n"
+                "  return (int)n + (int)a.length;\n"  /* 2 + 2 = 4 */
+                "}\n",
+                4);
+}
+
+STRATA_TEST(llvm_and_tcc_array_pop_parity)
+{
+    CheckParity("int entry() {\n"
+                "  int[] a = {10, 20, 30};\n"
+                "  int last = array_pop(a);\n"
+                "  return last + (int)a.length + a[1];\n" /* 30 + 2 + 20 = 52 */
+                "}\n",
+                52);
+}
+
+STRATA_TEST(llvm_and_tcc_array_resize_parity)
+{
+    CheckParity("int entry() {\n"
+                "  int[] a = {1, 2, 3, 4, 5};\n"
+                "  array_resize(a, 3);\n"
+                "  int s1 = a[0] + a[1] + a[2];\n"     /* 6 */
+                "  array_resize(a, 5);\n"              /* {1,2,3,0,0} */
+                "  int s2 = 0;\n"
+                "  for (ulong i = 0; i < a.length; i = i + 1) { s2 = s2 + a[i]; }\n" /* 6 */
+                "  return s1 + s2;\n"                   /* 12 */
+                "}\n",
+                12);
+}
+
+STRATA_TEST(llvm_and_tcc_array_push_struct_parity)
+{
+    CheckParity("struct Pt { int x; };\n"
+                "int entry() {\n"
+                "  Pt[] a = { Pt{.x = 1}, Pt{.x = 2} };\n"
+                "  array_push(a, Pt{.x = 3});\n"
+                "  int s = 0;\n"
+                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i].x; }\n"
+                "  return s;\n"                        /* 1+2+3 = 6 */
+                "}\n",
+                6);
+}
+
+STRATA_TEST(llvm_and_tcc_array_push_string_move_parity)
+{
+    /* Pushing a string moves it into the array (source nulled); both strings
+       are then freed when the array drops, with no double-free of `s`. */
+    CheckParity("int entry() {\n"
+                "  string[] a = {\"ab\"};\n"
+                "  string s = \"cdef\";\n"
+                "  array_push(a, s);\n"
+                "  return (int)a.length;\n"            /* 2 */
+                "}\n",
+                2);
+}

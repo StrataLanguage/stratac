@@ -7,10 +7,10 @@
 #include <stdlib.h>
 
 // Strata runtime: array/box/string heap allocation
-void* strata_alloc(unsigned long n) { return malloc((size_t)n); }
+void* strata_alloc(size_t n) { return malloc(n); }
 void strata_free(void* p) { free(p); }
 
-// Strata-provided entry (defined in arrays.o).
+// Strata-provided entry (defined in arrays.strata).
 extern int entry(void);
 
 int main(void)

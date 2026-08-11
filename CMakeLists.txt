@@ -427,7 +427,7 @@ if(STRATA_ENABLE_LLVM)
     add_executable(aot_arrays_test samples/hosts/arrays_host.c "${STRATA_ARRAY_TEST_OBJECT}")
     set_target_properties(aot_arrays_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_arrays_test COMMAND aot_arrays_test)
-    set_tests_properties(aot_arrays_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 29")
+    set_tests_properties(aot_arrays_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 54")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES

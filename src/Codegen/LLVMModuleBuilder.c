@@ -1548,8 +1548,235 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
     return slot;
 }
 
+/* Copies `count` elements from srcData to dstData. */
+static void EmitArrayCopyLoop(Builder* b, LLVMValueRef dstData, LLVMValueRef srcData,
+                              LLVMValueRef count, LLVMTypeRef elemTy)
+{
+    LLVMBasicBlockRef cond = NewBb(b, "acp.cond");
+    LLVMBasicBlockRef body = NewBb(b, "acp.body");
+    LLVMBasicBlockRef end = NewBb(b, "acp.end");
+
+    LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "acp.i");
+    LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, cond);
+    LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+    LLVMValueRef cont = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, count, "acplt");
+    LLVMBuildCondBr(b->m_builder, cont, body, end);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, body);
+    LLVMValueRef ep[1] = { i };
+    LLVMValueRef srcEl = LLVMBuildGEP2(b->m_builder, elemTy, srcData, ep, 1, "s");
+    LLVMValueRef dstEl = LLVMBuildGEP2(b->m_builder, elemTy, dstData, ep, 1, "d");
+    LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, elemTy, srcEl, "e"), dstEl);
+    LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "nxt");
+    LLVMBuildStore(b->m_builder, next, iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, end);
+}
+
+/* Zero-initializes elements [start, end) of data (nulls owning slots safely). */
+static void EmitArrayZeroLoop(Builder* b, LLVMValueRef data, LLVMValueRef start,
+                              LLVMValueRef end, LLVMTypeRef elemTy)
+{
+    LLVMBasicBlockRef cond = NewBb(b, "az.cond");
+    LLVMBasicBlockRef body = NewBb(b, "az.body");
+    LLVMBasicBlockRef endBb = NewBb(b, "az.end");
+
+    LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "az.i");
+    LLVMBuildStore(b->m_builder, start, iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, cond);
+    LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+    LLVMValueRef cont = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, end, "azlt");
+    LLVMBuildCondBr(b->m_builder, cont, body, endBb);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, body);
+    LLVMValueRef ep[1] = { i };
+    LLVMValueRef el = LLVMBuildGEP2(b->m_builder, elemTy, data, ep, 1, "z");
+    LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), el);
+    LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "nxt");
+    LLVMBuildStore(b->m_builder, next, iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, endBb);
+}
+
+/* Drops owning elements [start, end) of data before the buffer is freed. */
+static void EmitArrayDropRange(Builder* b, LLVMValueRef data, LLVMValueRef start,
+                               LLVMValueRef end, TypeDesc elemTd, LLVMTypeRef elemTy)
+{
+    LLVMBasicBlockRef cond = NewBb(b, "adr.cond");
+    LLVMBasicBlockRef body = NewBb(b, "adr.body");
+    LLVMBasicBlockRef endBb = NewBb(b, "adr.end");
+
+    LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "adr.i");
+    LLVMBuildStore(b->m_builder, start, iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, cond);
+    LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+    LLVMValueRef cont = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, end, "adrlt");
+    LLVMBuildCondBr(b->m_builder, cont, body, endBb);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, body);
+    LLVMValueRef ep[1] = { i };
+    LLVMValueRef el = LLVMBuildGEP2(b->m_builder, elemTy, data, ep, 1, "drop");
+    EmitDropOne(b, el, elemTd);
+    LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "nxt");
+    LLVMBuildStore(b->m_builder, next, iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, endBb);
+}
+
+/* Inline array helpers: array_push / array_pop / array_resize.
+   Each mutates the array through its lvalue and returns push->ulong, pop->T,
+   resize->void. */
+static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
+{
+    Node* arg0 = (Node*)VecGet(&n->args, 0);
+    LValue arr = EmitLValue(b, arg0);
+
+    TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)arr.typeDesc.arrayInner});
+    LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+    TypeDesc ulongTd = TypeDescMake(I64Ty(b), false, true, false, NULL);
+
+    LLVMValueRef dataPtrPtr = ArrayDataPtr(b, arr.ptr);
+    LLVMValueRef lenPtr = ArrayLenPtr(b, arr.ptr);
+
+    if (strcmp(n->callee, "array_pop") == 0)
+    {
+        LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I64Ty(b), lenPtr, "len");
+        LLVMValueRef one = LLVMConstInt(I64Ty(b), 1, 0);
+        LLVMValueRef lm1 = LLVMBuildSub(b->m_builder, len, one, "lm1");
+        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+        LLVMValueRef idx[1] = { lm1 };
+        LLVMValueRef elAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, idx, 1, "pop");
+        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "popped");
+        LLVMBuildStore(b->m_builder, lm1, lenPtr);
+
+        return ValueMake(v, elemTd);
+    }
+
+    if (strcmp(n->callee, "array_push") == 0)
+    {
+        LLVMValueRef one = LLVMConstInt(I64Ty(b), 1, 0);
+        LLVMValueRef oldLen = LLVMBuildLoad2(b->m_builder, I64Ty(b), lenPtr, "len");
+        LLVMValueRef newLen = LLVMBuildAdd(b->m_builder, oldLen, one, "nlen");
+        LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+
+        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), newLen, "bytes");
+        LLVMValueRef allocArgs[1] = { totalBytes };
+        StrataAllocFn(b);
+        LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "pushbuf");
+
+        EmitArrayCopyLoop(b, newData, oldData, oldLen, elemTy);
+
+        Node* valNode = (Node*)VecGet(&n->args, 1);
+        LLVMValueRef slotIdx[1] = { oldLen };
+        LLVMValueRef elAddr = LLVMBuildGEP2(b->m_builder, elemTy, newData, slotIdx, 1, "pushslot");
+        Value v = EmitExpr(b, valNode);
+
+        if (elemTd.isBox && !elemTd.boxInner && valNode->kind == NodeStrLiteral)
+        {
+            /* string literal -> fresh heap copy (don't store the global ptr). */
+            StrLiteral* lit = AsNode(StrLiteral, valNode);
+            size_t copyLen = strlen(lit->value) + 1;
+            LLVMValueRef sz = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
+            LLVMValueRef args[1] = { sz };
+            StrataAllocFn(b);
+            LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "astr");
+            LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+            for (size_t ci = 0; ci < copyLen; ci++)
+            {
+                LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
+                LLVMValueRef ba[1] = { ciVal };
+                LLVMValueRef byte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, v.value, ba, 1, "s"), "b");
+                LLVMBuildStore(b->m_builder, byte, LLVMBuildGEP2(b->m_builder, i8Ty, heap, ba, 1, "d"));
+            }
+            LLVMBuildStore(b->m_builder, heap, elAddr);
+        }
+        else if (elemTd.isBox && v.typeDesc.isBox)
+        {
+            /* Move an owning source (string/box) into the slot, null it. */
+            LLVMBuildStore(b->m_builder, v.value, elAddr);
+            NullMovedSource(b, valNode);
+        }
+        else if (elemTd.isBox && elemTd.boxInner)
+        {
+            /* box<T> from a bare T literal/value: heap-box it inline. */
+            TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)elemTd.boxInner});
+            LLVMValueRef sz = SizeOfConst(b, innerTd.type);
+            LLVMValueRef args[1] = { sz };
+            StrataAllocFn(b);
+            LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "abox");
+            LLVMBuildStore(b->m_builder, Coerce(b, v, innerTd).value, heap);
+            LLVMBuildStore(b->m_builder, heap, elAddr);
+        }
+        else
+        {
+            LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elAddr);
+        }
+
+        LLVMValueRef freeArgs[1] = { oldData };
+        StrataFreeFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+
+        LLVMBuildStore(b->m_builder, newData, dataPtrPtr);
+        LLVMBuildStore(b->m_builder, newLen, lenPtr);
+
+        return ValueMake(newLen, ulongTd);
+    }
+
+    /* array_resize */
+    LLVMValueRef oldLen = LLVMBuildLoad2(b->m_builder, I64Ty(b), lenPtr, "len");
+    LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+    LLVMValueRef newLen = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+
+    LLVMValueRef cmpLt = LLVMBuildICmp(b->m_builder, LLVMIntULT, oldLen, newLen, "lt");
+    LLVMValueRef copyCount = LLVMBuildSelect(b->m_builder, cmpLt, oldLen, newLen, "cc");
+
+    LLVMValueRef allocBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), newLen, "bytes");
+    LLVMValueRef allocArgs[1] = { allocBytes };
+    StrataAllocFn(b);
+    LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "rszbuf");
+
+    EmitArrayCopyLoop(b, newData, oldData, copyCount, elemTy);
+    EmitArrayZeroLoop(b, newData, copyCount, newLen, elemTy);
+
+    if (arr.typeDesc.arrayInner && IsOwningType(arr.typeDesc.arrayInner))
+    {
+        EmitArrayDropRange(b, oldData, newLen, oldLen, elemTd, elemTy);
+    }
+
+    LLVMValueRef freeArgs[1] = { oldData };
+    StrataFreeFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+
+    LLVMBuildStore(b->m_builder, newData, dataPtrPtr);
+    LLVMBuildStore(b->m_builder, newLen, lenPtr);
+
+    return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
+    // Inline array helpers (array_push / array_pop / array_resize)?
+    if (n->isPseudoCall
+        && (strcmp(n->callee, "array_push") == 0
+            || strcmp(n->callee, "array_pop") == 0
+            || strcmp(n->callee, "array_resize") == 0))
+    {
+        return EmitArrayBuiltin(b, n);
+    }
+
     // Is it a struct initializer call?
     if (StrMapGet(&b->m_structTypes, n->callee) != NULL)
     {

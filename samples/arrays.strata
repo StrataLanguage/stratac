@@ -1,4 +1,11 @@
-/* Arrays: a fat {ptr, u64} owning type. Length is queried via .length. */
+/* Arrays: a fat {ptr, u64} owning type. Length is queried via .length.
+ *
+ * Inline array helpers (compiler intrinsics, polymorphic over the element
+ * type at each call site):
+ *   array_push(arr, value) -> ulong  grow by one element; returns new length
+ *   array_pop(arr)         -> T      remove and return the last element
+ *   array_resize(arr, n)   -> void   grow (zero-init) or shrink (drop) to n
+ */
 
 int sum(ref int[] a) {
     int total = 0;
@@ -8,14 +15,30 @@ int sum(ref int[] a) {
     return total;
 }
 
+/* Exercises array_push / array_pop / array_resize. */
+int helpers() {
+    int[] a = {1, 2, 3};
+    array_push(a, 4);            // {1, 2, 3, 4}
+    array_push(a, 5);            // {1, 2, 3, 4, 5}
+    int popped = array_pop(a);   // 5; a = {1, 2, 3, 4}
+
+    int s = sum(a);              // 1 + 2 + 3 + 4 = 10
+
+    array_resize(a, 2);          // {1, 2}
+    int s2 = sum(a);             // 3
+
+    array_resize(a, 4);          // {1, 2, 0, 0}
+    int s3 = sum(a);             // 3
+
+    return s + popped + s2 + s3 + (int)a.length;  // 10 + 5 + 3 + 3 + 4 = 25
+}
+
 struct FooBar
 {
     string str;
 };
 
-
 extern int puts(string str);
-
 
 void TakeArrayOfFooBars(FooBar[] elems)
 {
@@ -27,11 +50,11 @@ void TakeArrayOfFooBars(FooBar[] elems)
 
 int entry() {
     FooBar[] fooBars = { FooBar("hello"), FooBar("world") };
+    array_push(fooBars, 5);
     TakeArrayOfFooBars(fooBars);
-    
-    //puts(fooBars[1].str);
 
     int[] nums = {1, 2, 3, 4, 5};
     nums[0] = 10;
-    return sum(nums) + (int)nums.length;
+
+    return sum(nums) + (int)nums.length + helpers();  // 29 + 25 = 54
 }

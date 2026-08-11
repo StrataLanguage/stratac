@@ -85,7 +85,7 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     if (IsBoxGlobalName(r, name))
     {
         DiagErrorFmt(r->m_diag, range,
-                     "'%s' cannot be moved as it is not owned because it is global. (use a `ref box<T>` or simply `T`)",
+                     "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref box<T>` or pass `T` by value)",
                      name, name);
 
         return;
@@ -278,6 +278,119 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+//-- Array intrinsics.
+
+/* Result type of an array builtin call, or NULL if `c` isn't one.
+   array_push -> ulong (new length); array_pop -> element type; array_resize -> void. */
+static const char* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee)
+    {
+        return NULL;
+    }
+
+    bool isPush = strcmp(c->callee, "array_push") == 0;
+    bool isResize = strcmp(c->callee, "array_resize") == 0;
+    bool isPop = strcmp(c->callee, "array_pop") == 0;
+
+    if (!isPush && !isResize && !isPop)
+    {
+        return NULL;
+    }
+
+    Node* arg0 = c->args.count > 0 ? (Node*)VecGet(&c->args, 0) : NULL;
+    const char* arrType = arg0 ? InferType(r, arg0, scope) : "";
+    Str inner = ArrayInnerStr(arrType);
+
+    /* arg0 must be an array for this to be a (valid) builtin call. */
+    if (!inner.data)
+    {
+        return NULL;
+    }
+
+    if (isPop)
+    {
+        return StrNew(r->m_arena, inner.data, inner.len).data;
+    }
+
+    return isPush ? "ulong" : "void";
+}
+
+/* Validates an array builtin call and marks it a pseudo-call. Returns true if
+   `c` is one of array_push/pop/resize (regardless of whether it was valid). */
+static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee)
+    {
+        return false;
+    }
+
+    bool isPush = strcmp(c->callee, "array_push") == 0;
+    bool isResize = strcmp(c->callee, "array_resize") == 0;
+    bool isPop = strcmp(c->callee, "array_pop") == 0;
+
+    if (!isPush && !isResize && !isPop)
+    {
+        return false;
+    }
+
+    size_t wantArgs = (isPop) ? 1 : 2;
+
+    if (c->args.count != wantArgs)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects %zu argument(s) but got %zu",
+                     c->callee, wantArgs, c->args.count);
+        return true;
+    }
+
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    ResolveExpr(r, arg0, scope);
+
+    const char* arrType = InferType(r, arg0, scope);
+
+    if (!IsArrayType(arrType))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "'%s' expects an array argument, not '%s'", c->callee, arrType);
+        return true;
+    }
+
+    /* The array is mutated in place, so it must be addressable (an lvalue). */
+    if (arg0->kind != NodeIdent && arg0->kind != NodeMember && arg0->kind != NodeIndex)
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "'%s' array argument must be an lvalue", c->callee);
+        return true;
+    }
+
+    if (isResize)
+    {
+        Node* arg1 = (Node*)VecGet(&c->args, 1);
+        ResolveExpr(r, arg1, scope);
+    }
+    else if (isPush)
+    {
+        Node* arg1 = (Node*)VecGet(&c->args, 1);
+        ResolveExpr(r, arg1, scope);
+
+        /* Pushing an owning value (string/box) moves it into the array. */
+        const char* valueType = InferType(r, arg1, scope);
+
+        if (valueType[0] != '\0' && IsOwningType(valueType))
+        {
+            const char* movedKey = MovableBoxSourceKey(r, arg1);
+
+            if (movedKey)
+            {
+                MoveBoxIdent(r, movedKey, c->base.range);
+            }
+        }
+    }
+
+    c->isPseudoCall = true;
+
+    return true;
+}
+//--
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
@@ -287,6 +400,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     // If the function call is to `float3()` or `float4()`, resolve internally
     if (c->callee != NULL && ResolveSimdVectorConstruct(r, c, scope))
+    {
+        return;
+    }
+
+    // Inline array helpers: array_push / array_pop / array_resize.
+    if (c->callee != NULL && ResolveArrayBuiltin(r, c, scope))
     {
         return;
     }
@@ -388,7 +507,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             }
             else if (IsOwningType(argType))
             {
-                /* box<T> coerces to T (implicit deref / borrow). */
+                /* box<T> coerces to T (implicit deref). */
                 if (StrEqC(OwningInnerStr(argType), param->type.name))
                 {
                     score += 1;
@@ -600,6 +719,13 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
         if (c->resolvedDecl)
         {
             return c->resolvedDecl->returnType.name;
+        }
+
+        const char* builtinType = ArrayBuiltinType(r, c, scope);
+
+        if (builtinType)
+        {
+            return builtinType;
         }
 
         if (TypeRegistryIsUserType(&r->m_registry, c->callee))

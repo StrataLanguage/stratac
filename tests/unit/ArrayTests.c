@@ -277,6 +277,38 @@ STRATA_TEST(array_use_after_move_is_error)
     strataFree((char*)err);
 }
 
+STRATA_TEST(array_push_rejects_non_array_argument)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int x = 5;\n"
+        "  array_push(x, 1);\n"              /* x is not an array */
+        "  return x;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
+STRATA_TEST(array_push_rejects_wrong_arg_count)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[] a = {1, 2, 3};\n"
+        "  array_push(a);\n"                 /* missing value */
+        "  return (int)a.length;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
 STRATA_TEST(array_uninitialized_decl_allowed_empty)
 {
     const char* err = NULL;

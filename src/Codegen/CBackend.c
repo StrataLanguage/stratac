@@ -587,8 +587,8 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     {
         const MemberExpr* member = (const MemberExpr*)node;
         const char* baseType = ExprType(emitter, member->base_node);
-
-        /* array.length → the len field of the fat struct. */
+        
+        /* array.length is a u64 query on the fat struct. */
         if (IsArrayType(baseType) && strcmp(member->member, "length") == 0)
         {
             SbPutc(&emitter->out, '(');
@@ -791,12 +791,135 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
     SbPuts(&emitter->out, " }");
 }
 
+/* Emits an inline array helper (array_push / array_pop / array_resize) as a GNU
+   statement-expression that mutates the array in place through its lvalue. */
+static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
+{
+    const Node* arg0 = (const Node*)VecGet(&call->args, 0);
+    Str innerRaw = ArrayInnerStr(ExprType(emitter, arg0));
+    const char* elemType = StrNew(emitter->arena, innerRaw.data, innerRaw.len).data;
+    const char* elemC = TypeNameC(emitter, elemType);
+    bool elemOwning = IsOwningType(elemType);
+
+    SbPuts(&emitter->out, "({ strata__arr* _a = &(");
+    EmitLValue(emitter, arg0);
+    SbPuts(&emitter->out, "); ");
+
+    if (strcmp(call->callee, "array_push") == 0)
+    {
+        const Node* val = (const Node*)VecGet(&call->args, 1);
+
+        SbPuts(&emitter->out, "unsigned long long _n = _a->len + 1; ");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "* _d = strata_alloc(_n * sizeof(");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, ")); ");
+        SbPuts(&emitter->out, "{ unsigned long long _i; for (_i = 0; _i < _a->len; _i++) _d[_i] = ((");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "*)_a->data)[_i]; } ");
+
+        SbPuts(&emitter->out, "((");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "*)_d)[_a->len] = ");
+
+        if (elemOwning)
+        {
+            const char* vt = ExprType(emitter, val);
+
+            if (strcmp(elemType, "string") == 0 && val->kind == NodeStrLiteral)
+            {
+                SbPuts(&emitter->out, "strata_strdup(");
+                CEmitExpr(emitter, val);
+                SbPutc(&emitter->out, ')');
+            }
+            else if (vt[0] != '\0' && IsOwningType(vt))
+            {
+                /* Move an owning source into the slot, then null it. */
+                CEmitExpr(emitter, val);
+                const Node* moved = MovableBoxSource(val);
+                if (moved)
+                {
+                    SbPuts(&emitter->out, ", (");
+                    EmitLValue(emitter, moved);
+                    SbPuts(&emitter->out, " = 0)");
+                }
+            }
+            else if (strcmp(elemType, "string") != 0)
+            {
+                /* box<T> from a bare T: heap-box it inline. */
+                const char* inner = OwningInnerCStr(emitter->arena, elemType);
+                const char* innerC = TypeNameC(emitter, inner);
+                SbPuts(&emitter->out, "({ ");
+                SbPuts(&emitter->out, innerC);
+                SbPuts(&emitter->out, " *_b = strata_alloc(sizeof(");
+                SbPuts(&emitter->out, innerC);
+                SbPuts(&emitter->out, ")); *_b = ");
+                CEmitExpr(emitter, val);
+                SbPuts(&emitter->out, "; _b; })");
+            }
+            else
+            {
+                CEmitExpr(emitter, val);
+            }
+        }
+        else
+        {
+            CEmitExpr(emitter, val);
+        }
+
+        SbPuts(&emitter->out, "; strata_free(_a->data); _a->data = _d; _a->len = _n; _n; })");
+    }
+    else if (strcmp(call->callee, "array_pop") == 0)
+    {
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, " _v = ((");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "*)_a->data)[_a->len - 1]; _a->len = _a->len - 1; _v; })");
+    }
+    else /* array_resize */
+    {
+        const Node* newLen = (const Node*)VecGet(&call->args, 1);
+
+        SbPuts(&emitter->out, "unsigned long long _n = ");
+        CEmitExpr(emitter, newLen);
+        SbPuts(&emitter->out, "; if (_n != _a->len) { ");
+
+        if (elemOwning)
+        {
+            /* Free the owning elements being truncated away. */
+            SbPuts(&emitter->out, "if (_n < _a->len) { unsigned long long _i; for (_i = _n; _i < _a->len; _i++) ");
+            SbPuts(&emitter->out, "strata_free(((");
+            SbPuts(&emitter->out, elemC);
+            SbPuts(&emitter->out, "*)_a->data)[_i]); } ");
+        }
+
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "* _d = strata_alloc((_n ? _n : 1) * sizeof(");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, ")); ");
+        SbPuts(&emitter->out, "{ unsigned long long _i, _c = _a->len < _n ? _a->len : _n; ");
+        SbPuts(&emitter->out, "for (_i = 0; _i < _c; _i++) _d[_i] = ((");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "*)_a->data)[_i]; ");
+        SbPuts(&emitter->out, "for (; _i < _n; _i++) _d[_i] = 0; } ");
+        SbPuts(&emitter->out, "strata_free(_a->data); _a->data = _d; _a->len = _n; } })");
+    }
+}
+
 static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
 {
 
     if (IsSimdVector(call->callee))
     {
         CSimdVectorConstruct(emitter, &call->args);
+        return;
+    }
+
+    if (strcmp(call->callee, "array_push") == 0
+        || strcmp(call->callee, "array_pop") == 0
+        || strcmp(call->callee, "array_resize") == 0)
+    {
+        EmitArrayBuiltin(emitter, call);
     }
 }
 
@@ -1081,8 +1204,8 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             CSimdVectorDestructure(emitter, member);
             return;
         }
-
-        /* array.length → the len field of the fat struct. */
+        
+        /* array.length is a u64 query on the fat struct. */
         if (IsArrayType(baseType) && strcmp(member->member, "length") == 0)
         {
             SbPutc(&emitter->out, '(');
@@ -2760,7 +2883,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
 
     SbPuts(&emitter.out, "/* Generated by Strata. */\n"
                          "_Static_assert(sizeof(int) == 4, \"Strata requires 32-bit int\");\n"
-                         "extern void* strata_alloc(unsigned long);\n"
+                         "extern void* strata_alloc(unsigned long long);\n"
                          "extern void strata_free(void*);\n"
                          "static char* strata_strdup(const char* s) {\n"
                          "  unsigned long n = 0; while (s[n]) n++;\n"
