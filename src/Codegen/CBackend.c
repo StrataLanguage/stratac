@@ -825,6 +825,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
 
 /* Emits an inline array helper (array_push / array_pop / array_resize) as a GNU
    statement-expression that mutates the array in place through its lvalue. */
+static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call);
 static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
 {
     const Node* arg0 = (const Node*)VecGet(&call->args, 0);
@@ -952,6 +953,65 @@ static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
         || strcmp(call->callee, "array_resize") == 0)
     {
         EmitArrayBuiltin(emitter, call);
+        return;
+    }
+
+    if (strcmp(call->callee, "copy") == 0)
+    {
+        EmitCopyBuiltin(emitter, call);
+    }
+}
+
+/* Emits copy(arg) as a GNU statement-expression returning a deep copy of an
+   owning value (string/box<T>/T[]).  For box<T> and T[] the copy is shallow
+   at the element level (owning inner fields are duplicated, not recursively
+   copied — use box<owning-struct> or a separate copy call on fields). */
+static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
+{
+    const Node* arg0 = (const Node*)VecGet(&call->args, 0);
+    const char* type = ExprType(emitter, arg0);
+
+    if (strcmp(type, "string") == 0)
+    {
+        SbPuts(&emitter->out, "strata_strdup(");
+        CEmitExpr(emitter, arg0);
+        SbPutc(&emitter->out, ')');
+        return;
+    }
+
+    /* box<T>: allocate a new inner value, shallow-copy the pointee. */
+    if (IsOwningType(type) && strcmp(type, "string") != 0 && !IsArrayType(type))
+    {
+        const char* inner = OwningInnerCStr(emitter->arena, type);
+        const char* innerC = TypeNameC(emitter, inner);
+        SbPuts(&emitter->out, "({ ");
+        SbPuts(&emitter->out, innerC);
+        SbPuts(&emitter->out, " *_c = strata_alloc(sizeof(");
+        SbPuts(&emitter->out, innerC);
+        SbPuts(&emitter->out, ")); *_c = *");
+        CEmitExpr(emitter, arg0);
+        SbPuts(&emitter->out, "; _c; })");
+        return;
+    }
+
+    /* T[]: allocate a new buffer and copy every element. */
+    if (IsArrayType(type))
+    {
+        Str innerRaw = ArrayInnerStr(type);
+        const char* elemType = StrNew(emitter->arena, innerRaw.data, innerRaw.len).data;
+        const char* elemC = TypeNameC(emitter, elemType);
+
+        SbPuts(&emitter->out, "({ strata__arr _c; _c.len = (");
+        CEmitExpr(emitter, arg0);
+        SbPuts(&emitter->out, ").len; _c.data = strata_alloc(_c.len * sizeof(");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, ")); { unsigned long long _i; for (_i = 0; _i < _c.len; _i++) ((");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "*)_c.data)[_i] = ((");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "*)(");
+        CEmitExpr(emitter, arg0);
+        SbPuts(&emitter->out, ").data)[_i]; } _c; })");
     }
 }
 

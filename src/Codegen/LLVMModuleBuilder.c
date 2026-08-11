@@ -1904,6 +1904,64 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
 }
 
+/* Emits copy(arg) returning a deep copy of an owning value */
+static Value EmitCopyBuiltin(Builder* b, CallExpr* n)
+{
+    Node* arg0 = (Node*)VecGet(&n->args, 0);
+    Value v = EmitExpr(b, arg0);
+
+    /* string: heap-copy the characters. */
+    if (v.typeDesc.isBox && !v.typeDesc.boxInner)
+    {
+        if (arg0->kind == NodeStrLiteral)
+        {
+            StrLiteral* lit = AsNode(StrLiteral, arg0);
+
+            return ValueMake(HeapCopyString(b, v.value, strlen(lit->value)), v.typeDesc);
+        }
+
+        return v;
+    }
+
+    /* box<T>: allocate new inner, shallow-copy the pointee. */
+    if (v.typeDesc.isBox && v.typeDesc.boxInner)
+    {
+        TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)v.typeDesc.boxInner});
+        LLVMValueRef sz = SizeOfConst(b, innerTd.type);
+        LLVMValueRef args[1] = { sz };
+        StrataAllocFn(b);
+        LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "copyb");
+        LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, v.value, "cv");
+        LLVMBuildStore(b->m_builder, loaded, heap);
+
+        return ValueMake(heap, v.typeDesc);
+    }
+
+    /* T[]: allocate new buffer, copy elements. */
+    if (v.typeDesc.isArray)
+    {
+        TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)v.typeDesc.arrayInner});
+        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+        LLVMValueRef oldLen = LLVMBuildExtractValue(b->m_builder, v.value, 1, "cln");
+        LLVMValueRef oldData = LLVMBuildExtractValue(b->m_builder, v.value, 0, "cdt");
+
+        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), oldLen, "cby");
+        LLVMValueRef allocArgs[1] = { totalBytes };
+        StrataAllocFn(b);
+        LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "copya");
+
+        EmitArrayCopyLoop(b, newData, oldData, oldLen, elemTy);
+
+        LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
+        arr = LLVMBuildInsertValue(b->m_builder, arr, newData, 0, "ci");
+        arr = LLVMBuildInsertValue(b->m_builder, arr, oldLen, 1, "cl");
+
+        return ValueMake(arr, v.typeDesc);
+    }
+
+    return v;
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
     // Inline array helpers (array_push / array_pop / array_resize)?
@@ -1913,6 +1971,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
             || strcmp(n->callee, "array_resize") == 0))
     {
         return EmitArrayBuiltin(b, n);
+    }
+
+    if (n->isPseudoCall && strcmp(n->callee, "copy") == 0)
+    {
+        return EmitCopyBuiltin(b, n);
     }
 
     // Is it a struct initializer call?
