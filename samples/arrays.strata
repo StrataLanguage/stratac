@@ -51,11 +51,7 @@ void PrintAll(ref box<FooBar>[] elems) {
     }
 }
 
-box<FooBar>[] globalArray = {};
-
 int entry() {
-    PrintAll(globalArray);
-
     box<FooBar>[] fooBars = { FooBar("hello"), FooBar("world") };
     PrintAll(fooBars);
 

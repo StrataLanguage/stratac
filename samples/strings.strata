@@ -28,8 +28,12 @@ int take_string(string s)
     return 1;
 }
 
+string globalString = "Test global";
+
 int run()
 {
+    puts(globalString);
+
     string g = make_greeting();   // owns "Hello, World!"
     puts(g);                      // prints it
     int x = take_string(g);       // moves g

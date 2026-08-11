@@ -618,7 +618,15 @@ static Node* ParseFunction(Parser* p)
 
         if (ParserConsume(p, TokAssign))
         {
-            gd->init = ParseExpr(p);
+            if (p->m_cur.kind == TokLBrace && IsArrayType(returnType.name))
+            {
+                Str inner = ArrayInnerStr(returnType.name);
+                gd->init = ParseArrayInitBody(p, p->m_cur, StrNew(p->m_arena, inner.data, inner.len).data);
+            }
+            else
+            {
+                gd->init = ParseExpr(p);
+            }
         }
 
         ParserExpect(p, TokSemicolon, "';'");

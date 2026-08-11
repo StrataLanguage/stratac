@@ -373,6 +373,204 @@ STRATA_TEST(array_uninitialized_decl_allowed_empty)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(global_array_uninitialized_is_empty)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int[] g;\n"
+        "int entry() {\n"
+        "  return (int)g.length;\n"            /* 0 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(global_array_initializer_can_be_read)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int[] g = {1, 2, 3};\n"
+        "int entry() {\n"
+        "  return g[0] + g[1] + g[2] + (int)g.length;\n"   /* 1+2+3 + 3 = 9 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 9);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(global_array_mutations_persist_across_calls)
+{
+    /* A global outlives each function call: pushes from one call are visible
+       to the next. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int[] g = {1, 2};\n"
+        "int add_one() {\n"
+        "  array_push(g, 9);\n"
+        "  return (int)g.length;\n"
+        "}\n"
+        "int entry() {\n"
+        "  int a = add_one();\n"               /* {1,2,9} -> 3 */
+        "  int b = add_one();\n"               /* {1,2,9,9} -> 4 */
+        "  return a + b + g[3];\n"             /* 3 + 4 + 9 = 16 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 16);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(global_array_is_mutable_from_functions)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int[] g = {1, 2, 3};\n"
+        "void setit() {\n"
+        "  g[0] = 99;\n"
+        "}\n"
+        "int entry() {\n"
+        "  setit();\n"
+        "  return g[0] + g[1] + g[2];\n"        /* 99 + 2 + 3 = 104 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 104);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(global_array_resize)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int[] g = {1, 2, 3, 4, 5};\n"
+        "int entry() {\n"
+        "  array_resize(g, 3);\n"
+        "  return g[0] + g[1] + g[2] + (int)g.length;\n"   /* 1+2+3 + 3 = 9 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 9);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(global_array_of_strings_drops_cleanly)
+{
+    /* The module teardown frees every string in the global array; this must
+       not crash or double-free. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "string[] g = {\"alpha\", \"beta\", \"gamma\"};\n"
+        "int entry() {\n"
+        "  return (int)g.length;\n"            /* 3 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(global_array_wrong_initializer_type_is_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int[] g = 5;\n"                       /* not an array initializer */
+        "int entry() {\n"
+        "  return (int)g.length;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
 STRATA_TEST(array_length_is_count)
 {
     const char* err = NULL;

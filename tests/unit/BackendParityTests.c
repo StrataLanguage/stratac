@@ -340,6 +340,19 @@ STRATA_TEST(llvm_and_tcc_array_push_string_move_parity)
                 2);
 }
 
+STRATA_TEST(llvm_and_tcc_string_global_compiles)
+{
+    /* A string global used to crash the compiler (a NULL deref in the owning-
+       global validation). Both backends must now compile and run it. The
+       LLVM backend points the global at a private string constant; the C
+       backend strdup's it in module_init and frees it in teardown. */
+    CheckParity("string g = \"hello\";\n"
+                "int entry() {\n"
+                "  return 7;\n"                      /* global is emitted, not read here */
+                "}\n",
+                7);
+}
+
 STRATA_TEST(llvm_and_tcc_box_owning_struct_array_parity)
 {
     /* An owning struct (holds a string) must be boxed; box<S>[] stores
