@@ -333,6 +333,19 @@ static bool ParamIsIndirect(CEmitter* emitter, const ParamDecl* param)
     return ByRef(param->mod) || IsStructValue(emitter, param->type.name) || IsOwningType(param->type.name);
 }
 
+/* Param pass convention for a specific function. Extern variadic functions
+   (bare `...`) receive string params as const char* by value, matching the
+   LLVM backend and the C varargs ABI the host expects. */
+static bool ParamIsIndirectFor(CEmitter* emitter, const FunctionDecl* function, const ParamDecl* param)
+{
+    if (function && function->isExtern && function->isCVararg && strcmp(param->type.name, "string") == 0)
+    {
+        return false;
+    }
+
+    return ParamIsIndirect(emitter, param);
+}
+
 static void EmitType(CEmitter* emitter, const TypeName* type)
 {
     if (type->isConst)
@@ -1020,6 +1033,8 @@ static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
     }
 }
 
+static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai);
+
 static void EmitCall(CEmitter* emitter, const CallExpr* call)
 {
     if (call->isPseudoCall)
@@ -1058,18 +1073,32 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
     SbPuts(&emitter->out, callee);
     SbPutc(&emitter->out, '(');
 
-    for (size_t i = 0; i < call->args.count; ++i)
+    /* A typed rest param collects the trailing args into one T[] array
+       passed in the rest param's slot, mirroring the LLVM backend. */
+    bool typedRest = function && function->isVariadic && !function->isCVararg && function->params.count > 0;
+    bool cVararg = function && function->isCVararg;
+
+    size_t namedCount = typedRest ? function->params.count - 1 : call->args.count;
+    size_t emitted = 0;
+
+    for (size_t i = 0; i < namedCount; ++i)
     {
-        if (i > 0)
+        if (emitted > 0)
         {
             SbPuts(&emitter->out, ", ");
         }
+
+        emitted++;
 
         const Node* argument = (const Node*)VecGet(&call->args, i);
         const ParamDecl* parameter
             = function && i < function->params.count ? (const ParamDecl*)VecGet(&function->params, i) : NULL;
 
-        if (parameter && ParamIsIndirect(emitter, parameter))
+        /* Variadic extern string params are passed by value (const char*),
+           so they must not go through the indirect (char**) path. */
+        bool isStringByValue = cVararg && parameter && strcmp(parameter->type.name, "string") == 0;
+
+        if (parameter && !isStringByValue && ParamIsIndirectFor(emitter, function, parameter))
         {
             /* box<T> coerced to T: if the param is a plain struct (not box),
                and the arg is a box, the heap pointer IS the T* the param wants. */
@@ -1080,6 +1109,15 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
             if (!paramIsBoxType && argIsBox)
             {
                 CEmitExpr(emitter, argument);
+            }
+            else if (paramIsBoxType && argument->kind == NodeStrLiteral
+                     && strcmp(parameter->type.name, "string") == 0)
+            {
+                /* An owning string param receiving a literal must get a
+                   heap copy the callee can free (mirrors the LLVM backend). */
+                SbPuts(&emitter->out, "&((char*){ strata_strdup(");
+                CEmitExpr(emitter, argument);
+                SbPuts(&emitter->out, ") })");
             }
             else if (IsLValue(argument))
             {
@@ -1100,11 +1138,48 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         }
         else
         {
-            /* A box arg passed to a by-value (non-indirect) param - e.g. a
-               plain handle - must be dereferenced to its value, not passed
-               as the box's own heap pointer. */
-            EmitScalarValue(emitter, argument);
+            const char* argType = ExprType(emitter, argument);
+
+            if (cVararg && strcmp(argType, "string") == 0)
+            {
+                /* Variadic extern: string args pass their char* value. */
+                CEmitExpr(emitter, argument);
+            }
+            else
+            {
+                /* A box arg passed to a by-value (non-indirect) param - e.g. a
+                   plain handle - must be dereferenced to its value, not passed
+                   as the box's own heap pointer. */
+                EmitScalarValue(emitter, argument);
+            }
         }
+    }
+
+    if (typedRest)
+    {
+        if (emitted > 0)
+        {
+            SbPuts(&emitter->out, ", ");
+        }
+
+        const ParamDecl* restParam = (const ParamDecl*)VecGet(&function->params, function->params.count - 1);
+        Str inner = ArrayInnerStr(restParam->type.name);
+        const char* elemName = inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : NULL;
+
+        ArrayInitExpr* ai = (ArrayInitExpr*)arena_alloc(emitter->arena, sizeof(ArrayInitExpr));
+        memset(ai, 0, sizeof(*ai));
+        ai->base.kind = NodeArrayInit;
+        ai->elementType = (char*)elemName;
+        VecInit(&ai->elements);
+
+        for (size_t i = function->params.count - 1; i < call->args.count; ++i)
+        {
+            VecPush(&ai->elements, (void*)VecGet(&call->args, i));
+        }
+
+        SbPuts(&emitter->out, "&((strata__arr[]){ ");
+        EmitArrayInitExpr(emitter, ai);
+        SbPuts(&emitter->out, " })[0]");
     }
 
     SbPutc(&emitter->out, ')');
@@ -2428,11 +2503,21 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
     }
 }
 
-static void EmitParam(CEmitter* emitter, const ParamDecl* param)
+static void EmitParam(CEmitter* emitter, const FunctionDecl* function, const ParamDecl* param)
 {
+    /* Variadic extern string params cross as const char* by value, matching
+       the LLVM backend and the C varargs ABI the host expects. */
+    if (function && function->isExtern && function->isCVararg && strcmp(param->type.name, "string") == 0)
+    {
+        SbPuts(&emitter->out, "const char * ");
+        SbPuts(&emitter->out, VarName(emitter, param->name));
+
+        return;
+    }
+
     EmitType(emitter, &param->type);
 
-    if (ParamIsIndirect(emitter, param))
+    if (ParamIsIndirectFor(emitter, function, param))
     {
         SbPutc(&emitter->out, '*');
     }
@@ -2527,9 +2612,15 @@ static void EmitFunctionSignature(CEmitter* emitter, const FunctionDecl* functio
                 SbPuts(&emitter->out, ", ");
             }
 
-            EmitParam(emitter, (const ParamDecl*)VecGet(&function->params, i));
+            EmitParam(emitter, function, (const ParamDecl*)VecGet(&function->params, i));
         }
     }
+
+    if (function->isCVararg)
+    {
+        SbPuts(&emitter->out, ", ...");
+    }
+
     SbPutc(&emitter->out, ')');
 }
 
@@ -2557,14 +2648,29 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
             }
 
             const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, i);
-            EmitType(emitter, &param->type);
 
-            if (ParamIsIndirect(emitter, param))
+            /* Variadic extern string params cross as const char* by value. */
+            if (function->isCVararg && strcmp(param->type.name, "string") == 0)
             {
-                SbPutc(&emitter->out, '*');
+                SbPuts(&emitter->out, "const char *");
+            }
+            else
+            {
+                EmitType(emitter, &param->type);
+
+                if (ParamIsIndirectFor(emitter, function, param))
+                {
+                    SbPutc(&emitter->out, '*');
+                }
             }
         }
     }
+
+    if (function->isCVararg)
+    {
+        SbPuts(&emitter->out, ", ...");
+    }
+
     SbPuts(&emitter->out, ") = 0;\n");
 
     CBackendSymbol* symbol = (CBackendSymbol*)arena_alloc(emitter->arena, sizeof(CBackendSymbol));

@@ -63,6 +63,17 @@ static void* strata_strdup_impl(const char* s)
     return d;
 }
 
+/* libgcc soft-float helpers that TinyCC references for integer<->float
+   casts of 64-bit values (e.g. `(float)ulong`, `(ulong)double`). */
+static float  strata___floatundisf(unsigned long long x) { return (float)x; }
+static double strata___floatundidf(unsigned long long x) { return (double)x; }
+static float  strata___floatdisf(long long x) { return (float)x; }
+static double strata___floatdidf(long long x) { return (double)x; }
+static unsigned long long strata___fixunssfdi(float x) { return (unsigned long long)x; }
+static unsigned long long strata___fixunsdfdi(double x) { return (unsigned long long)x; }
+static long long strata___fixsfdi(float x) { return (long long)x; }
+static long long strata___fixdfdi(double x) { return (long long)x; }
+
 static void CopySymbols(TccJit* jit, Vec* destination, const Vec* source)
 {
     for (size_t i = 0; i < source->count; ++i)
@@ -201,6 +212,15 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     tcc_add_symbol(jit->state, "strata_free", (const void*)(uintptr_t)&strata_free_impl);
     tcc_add_symbol(jit->state, "strata_panic", (const void*)(uintptr_t)&strata_panic);
     tcc_add_symbol(jit->state, "strata_strdup", (const void*)(uintptr_t)&strata_strdup_impl);
+
+    tcc_add_symbol(jit->state, "__floatundisf", (const void*)(uintptr_t)&strata___floatundisf);
+    tcc_add_symbol(jit->state, "__floatundidf", (const void*)(uintptr_t)&strata___floatundidf);
+    tcc_add_symbol(jit->state, "__floatdisf", (const void*)(uintptr_t)&strata___floatdisf);
+    tcc_add_symbol(jit->state, "__floatdidf", (const void*)(uintptr_t)&strata___floatdidf);
+    tcc_add_symbol(jit->state, "__fixunssfdi", (const void*)(uintptr_t)&strata___fixunssfdi);
+    tcc_add_symbol(jit->state, "__fixunsdfdi", (const void*)(uintptr_t)&strata___fixunsdfdi);
+    tcc_add_symbol(jit->state, "__fixsfdi", (const void*)(uintptr_t)&strata___fixsfdi);
+    tcc_add_symbol(jit->state, "__fixdfdi", (const void*)(uintptr_t)&strata___fixdfdi);
 
     if (tcc_relocate(jit->state) < 0)
     {

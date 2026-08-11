@@ -60,6 +60,7 @@ typedef enum {
     TokSemicolon,
     TokColon,
     TokDot,
+    TokDotDotDot,
     TokArrow,
 
     TokAssign,

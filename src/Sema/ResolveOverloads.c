@@ -29,6 +29,12 @@ static char* Mangle(Arena* arena, const FunctionDecl* f)
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
         SbPutc(&sb, '$');
         SbPuts(&sb, p->type.name);
+
+        /* Distinguish a variadic tail (T...) from a plain T[] param. */
+        if (p->isVarargRest)
+        {
+            SbPuts(&sb, "...");
+        }
     }
 
     return SbFinish(&sb, arena);
@@ -468,6 +474,76 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 }
 //--
 
+/* Types that may be passed through a bare extern `...` (C varargs).
+   Scalars, string (as const char*), handles, and box<T> all reduce to a
+   value the C ABI can carry. Structs, arrays, SIMD vectors, and void can't. */
+static bool IsCVarargCompatible(Resolver* r, const char* type)
+{
+    if (strcmp(type, "void") == 0)
+    {
+        return false;
+    }
+
+    if (IsNumeric(type) || strcmp(type, "string") == 0)
+    {
+        return true;
+    }
+
+    if (IsArrayType(type) || IsSimdVector(type))
+    {
+        return false;
+    }
+
+    if (TypeRegistryIsUserType(&r->m_registry, type))
+    {
+        return TypeRegistryIsOpaque(&r->m_registry, type);
+    }
+
+    /* box<T> (and other owning types) are pointers at the ABI. */
+    return IsOwningType(type);
+}
+
+/* Moves box/string sources into owned (non-ref) params, and into the
+   collected array of a typed rest param when its element type is owning. */
+static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
+{
+    for (size_t j = 0; j < c->args.count; j++)
+    {
+        Node* arg = (Node*)VecGet(&c->args, j);
+
+        const char* targetType = NULL;
+        bool moves = false;
+
+        if (j < best->params.count)
+        {
+            const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
+
+            targetType = param->type.name;
+            moves = IsOwningType(param->type.name) && param->mod == ModNone && !best->isExtern;
+        }
+        else if (best->isVariadic && !best->isCVararg)
+        {
+            const ParamDecl* restParam = (ParamDecl*)VecGet(&best->params, best->params.count - 1);
+            Str inner = ArrayInnerStr(restParam->type.name);
+
+            targetType = inner.data ? StrNew(r->m_arena, inner.data, inner.len).data : NULL;
+            moves = targetType && IsOwningType(targetType) && !best->isExtern;
+        }
+
+        if (!moves || !targetType)
+        {
+            continue;
+        }
+
+        const char* movedArgKey = MovableBoxSourceKey(r, arg);
+
+        if (movedArgKey)
+        {
+            MoveBoxIdent(r, movedArgKey, arg->range);
+        }
+    }
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
@@ -523,20 +599,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         const FunctionDecl* best = c->resolvedDecl;
 
-        for (size_t j = 0; j < c->args.count && j < best->params.count; j++)
-        {
-            ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
-            Node* arg = (Node*)VecGet(&c->args, j);
-
-            const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone && !best->isExtern
-                                          ? MovableBoxSourceKey(r, arg)
-                                          : NULL;
-
-            if (movedArgKey)
-            {
-                MoveBoxIdent(r, movedArgKey, arg->range);
-            }
-        }
+        TrackCallArgMoves(r, best, c);
 
         return;
     }
@@ -574,12 +637,32 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             continue;
         }
 
-        if (functionDecl->params.count != c->args.count)
+        if (functionDecl->isVariadic)
+        {
+            /* A bare extern `...` adds no declared param; a typed rest param
+               is already one of params.count, so its minimal call is one
+               fewer than that. */
+            size_t minArgs = functionDecl->isCVararg ? functionDecl->params.count
+                                                     : functionDecl->params.count - 1;
+
+            if (c->args.count < minArgs)
+            {
+                continue;
+            }
+        }
+        else if (functionDecl->params.count != c->args.count)
         {
             continue;
         }
 
         int score = 0;
+
+        /* Variadic candidates are a fallback: an exact-arity non-variadic
+           overload with the same name always wins when the call fits it. */
+        if (functionDecl->isVariadic)
+        {
+            score += 1;
+        }
 
         bool viable = true;
 
@@ -587,32 +670,65 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         {
             Node* arg = (Node*)VecGet(&c->args, j);
             const char* argType = InferType(r, arg, scope);
-            ParamDecl* param = (ParamDecl*)VecGet(&functionDecl->params, j);
 
             if (argType[0] == '\0')
             {
                 continue;
             }
 
-            if (strcmp(argType, param->type.name) == 0)
+            /* Trailing args beyond the named params are collected by the
+               variadic tail. A bare extern `...` adds no param; a typed rest
+               param already counts as one, so its tail starts one earlier. */
+            bool isTail = functionDecl->isVariadic
+                && j >= (functionDecl->isCVararg ? functionDecl->params.count : functionDecl->params.count - 1);
+
+            if (functionDecl->isCVararg && isTail)
+            {
+                /* Bare extern `...`: no declared element type. The arg must be
+                   representable in a C vararg call. */
+                if (!IsCVarargCompatible(r, argType))
+                {
+                    viable = false;
+                    break;
+                }
+
+                /* Prefer exact-arity non-variadic overloads. */
+                score += 2;
+                continue;
+            }
+
+            const ParamDecl* param = (ParamDecl*)VecGet(
+                &functionDecl->params, isTail ? functionDecl->params.count - 1 : j);
+
+            const char* paramType = param->type.name;
+
+            if (isTail)
+            {
+                /* Typed rest: compare against the element type (T of T[]). */
+                Str inner = ArrayInnerStr(paramType);
+
+                paramType = inner.data ? StrNew(r->m_arena, inner.data, inner.len).data : paramType;
+            }
+
+            if (strcmp(argType, paramType) == 0)
             {
             }
-            else if (IsNumeric(argType) && IsNumeric(param->type.name))
+            else if (IsNumeric(argType) && IsNumeric(paramType))
             {
                 score += 1;
             }
-            else if (IsSimdVector(argType) && IsSimdVector(param->type.name))
+            else if (IsSimdVector(argType) && IsSimdVector(paramType))
             {
                 score += 1;
             }
-            else if (HandleExtendsFrom(&r->m_registry, argType, param->type.name))
+            else if (HandleExtendsFrom(&r->m_registry, argType, paramType))
             {
                 score += 1;
             }
             else if (IsOwningType(argType))
             {
                 /* box<T> coerces to T (implicit deref). */
-                if (StrEqC(OwningInnerStr(argType), param->type.name))
+                if (StrEqC(OwningInnerStr(argType), paramType))
                 {
                     score += 1;
                 }
@@ -662,21 +778,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     c->callee = best->mangledName;
     c->resolvedDecl = best;
 
-    /* Passing a box to an owned (non-ref) box parameter moves it. */
-    for (size_t j = 0; j < c->args.count && j < best->params.count; j++)
-    {
-        ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
-        Node* arg = (Node*)VecGet(&c->args, j);
-
-        const char* movedArgKey = IsOwningType(param->type.name) && param->mod == ModNone && !best->isExtern
-                                      ? MovableBoxSourceKey(r, arg)
-                                      : NULL;
-
-        if (movedArgKey)
-        {
-            MoveBoxIdent(r, movedArgKey, arg->range);
-        }
-    }
+    TrackCallArgMoves(r, best, c);
 }
 
 static const char* InferType(Resolver* r, Node* n, StrMap* scope)
