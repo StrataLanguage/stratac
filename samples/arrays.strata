@@ -83,9 +83,3 @@ int entry() {
 
     return sum(nums) + (int)nums.length + helpers();  // 29 + 25 = 54
 }
-
-int main()
-{
-    return entry();
-    
-}
