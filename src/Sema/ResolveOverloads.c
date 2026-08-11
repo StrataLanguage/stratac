@@ -1573,6 +1573,24 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
+            /* Array globals default to an empty {null, 0} fat struct. */
+            if (IsArrayType(gd->type.name))
+            {
+                if (gd->init)
+                {
+                    ResolveExpr(&r, gd->init, &globalScope);
+                    const char* initType = InferType(&r, gd->init, &globalScope);
+
+                    if (initType[0] != '\0' && strcmp(initType, gd->type.name) != 0)
+                    {
+                        DiagErrorFmt(diag, gd->base.range, "global '%s' of type '%s' cannot be initialized by expression of type '%s'",
+                                     gd->name, gd->type.name, initType);
+                    }
+                }
+
+                continue;
+            }
+
             if (!IsOwningType(gd->type.name))
             {
                 continue;
@@ -1586,13 +1604,13 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             const char* boxInner = OwningInnerCStr(arena, gd->type.name);
 
-            /* A box global can't be initialized by moving a source. */
+            /* An owning global can't be initialized by moving a source. */
             if (MovableBoxSourceKey(&r, gd->init))
             {
                 DiagErrorFmt(diag, gd->base.range,
-                             "box global '%s' cannot be initialized by moving from another variable; "
+                             "global '%s' cannot be initialized by moving from another variable; "
                              "initialize it with a value of '%s' or a call returning '%s'",
-                             gd->name, boxInner, gd->type.name);
+                             gd->name, gd->type.name, gd->type.name);
                 continue;
             }
 
@@ -1600,11 +1618,13 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             const char* initType = InferType(&r, gd->init, &globalScope);
 
-            bool ok = strcmp(initType, boxInner) == 0 || strcmp(initType, gd->type.name) == 0;
+            /* boxInner is NULL for `string` (no box inner), so only compare
+               against it when present; otherwise the bare type must match. */
+            bool ok = (boxInner && strcmp(initType, boxInner) == 0) || strcmp(initType, gd->type.name) == 0;
 
             if (initType[0] != '\0' && !ok)
             {
-                DiagErrorFmt(diag, gd->base.range, "box global '%s' cannot be initialized by expression of type '%s'",
+                DiagErrorFmt(diag, gd->base.range, "global '%s' cannot be initialized by expression of type '%s'",
                              gd->name, initType);
             }
         }

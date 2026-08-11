@@ -2800,14 +2800,54 @@ static void EmitModuleInit(CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
+        if (IsArrayType(global->type.name) && global->init)
+        {
+            /* Array literals need a runtime alloc, so the braced initializer
+               runs here against the (zeroed) global storage. */
+            const char* cName = GlobalName(emitter, global->name);
+
+            AddSymbol(emitter, global->name, global->type.name, cName, false);
+            Pad(emitter);
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, " = ");
+            CEmitExpr(emitter, global->init);
+            SbPuts(&emitter->out, ";\n");
+            continue;
+        }
+
         if (!IsOwningType(global->type.name) || !global->init)
         {
             continue;
         }
 
+        const char* cName = GlobalName(emitter, global->name);
+        AddSymbol(emitter, global->name, global->type.name, cName, false);
+
+        if (strcmp(global->type.name, "string") == 0)
+        {
+            /* A string global owns its buffer: copy a literal (so teardown can
+               free it) or assign a fresh call result. */
+            Pad(emitter);
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, " = ");
+
+            if (global->init->kind == NodeStrLiteral)
+            {
+                SbPuts(&emitter->out, "strata_strdup(");
+                CEmitExpr(emitter, global->init);
+                SbPutc(&emitter->out, ')');
+            }
+            else
+            {
+                CEmitExpr(emitter, global->init);
+            }
+
+            SbPuts(&emitter->out, ";\n");
+            continue;
+        }
+
         const char* inner = OwningInnerCStr(emitter->arena, global->type.name);
         const char* innerC = TypeNameC(emitter, inner);
-        const char* cName = GlobalName(emitter, global->name);
 
         EmitBoxInitStmt(emitter, cName, innerC, inner, global->init);
     }

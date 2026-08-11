@@ -2872,6 +2872,48 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
         TypeDesc typeDesc = Resolve(b, &gd->type);
 
+        /* A string global is a pointer global. AOT has no teardown, so a
+           literal initializer can point directly at a private string constant
+           (which lives for the whole program). */
+        if (strcmp(gd->type.name, "string") == 0)
+        {
+            if (b->m_diag && gd->init && gd->init->kind != NodeStrLiteral)
+            {
+                DiagErrorFmt(b->m_diag, gd->base.range,
+                             "string global '%s' initializer is not supported by the LLVM backend "
+                             "(use a string literal)", gd->name);
+                continue;
+            }
+
+            LLVMValueRef init = LLVMConstNull(b->m_ptrTy);
+
+            if (gd->init && gd->init->kind == NodeStrLiteral)
+            {
+                StrLiteral* lit = AsNode(StrLiteral, gd->init);
+                size_t len = strlen(lit->value);
+                LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, lit->value, (unsigned)len, 0);
+                LLVMTypeRef strType = LLVMTypeOf(strConst);
+                char* gName = arena_format(b->m_arena, ".gstr.%d", b->m_strLitCount++);
+                LLVMValueRef strGlobal = LLVMAddGlobal(b->m_mod, strType, gName);
+                LLVMSetInitializer(strGlobal, strConst);
+                LLVMSetLinkage(strGlobal, LLVMPrivateLinkage);
+                LLVMSetUnnamedAddr(strGlobal, 1);
+                LLVMSetGlobalConstant(strGlobal, 1);
+                LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+                LLVMValueRef idx[2] = { zero, zero };
+                init = LLVMConstGEP2(strType, strGlobal, idx, 2);
+            }
+
+            LLVMValueRef global = LLVMAddGlobal(b->m_mod, b->m_ptrTy, gd->name);
+            LLVMSetInitializer(global, init);
+
+            Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+            sym->value = global;
+            sym->typeDesc = typeDesc;
+            StrMapPut(&b->m_globals, gd->name, sym);
+            continue;
+        }
+
         if (IsOwningType(gd->type.name))
         {
             if (b->m_diag)
