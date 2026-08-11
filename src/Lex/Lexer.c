@@ -220,6 +220,14 @@ static Token LexTokenImpl(Lexer* lex)
     case '^':
         return Make(lex, TokCaret, start);
     case '.':
+        if (LexerPeek(lex, 0) == '.' && LexerPeek(lex, 1) == '.')
+        {
+            ++lex->m_pos;
+            ++lex->m_pos;
+
+            return Make(lex, TokDotDotDot, start);
+        }
+
         return Make(lex, TokDot, start);
     case '-':
         if (LexerPeek(lex, 0) == '-')

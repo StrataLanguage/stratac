@@ -110,6 +110,15 @@ structs/handles/functions/globals/imports into a single `Module`.
 - `const int x` — by value, read-only (const-checked)
 - `const ref int x` — by reference, read-only
 - Structs: always by reference; `const` makes them read-only
+- `int... rest` — typed rest param (only allowed last): trailing call args are
+  collected into a real `int[]`; use `.length`, `[i]`, loops as usual. The
+  callee's ABI is a normal `T[]` param (pointer to the fat struct).
+- `extern int printf(string fmt, ...);` — bare `...` is **extern-only** and
+  call-only: the host provides the body as a real C vararg function. No
+  `va_list`/`va_start` appears in user or generated code. Trailing args must be
+  scalar/`string`/handle/`box<T>`; the LLVM backend applies C default argument
+  promotions (`float`→`double`, small ints→`int`) explicitly, the C backend
+  relies on the C compiler. Variadic string params cross as `const char*`.
 
 ### Operators
 

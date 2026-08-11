@@ -136,6 +136,9 @@ LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destT
 LLVMValueRef LLVMBuildFPToSI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildFPToUI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, LLVMBool isSigned, const char* name);
+LLVMValueRef LLVMBuildSExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+LLVMValueRef LLVMBuildZExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+LLVMValueRef LLVMBuildFPExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 
 LLVMValueRef LLVMGetUndef(LLVMTypeRef ty);
 LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueRef val, unsigned index, const char* name);

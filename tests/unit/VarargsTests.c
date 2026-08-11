@@ -1,0 +1,469 @@
+#include "strata/strata.h"
+
+#include "Codegen/CBackend.h"
+#include "Codegen/CodegenBackend.h"
+#include "Codegen/LLVMJit.h"
+#include "Codegen/LLVMModuleBuilder.h"
+#include "Codegen/TccJit.h"
+#include "Test.h"
+#include "Util.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static bool Contains(const char* hay, const char* needle)
+{
+    return hay && needle && strstr(hay, needle) != NULL;
+}
+
+/* ---- Execution parity: run a source on both the LLVM and TCC JITs ---- */
+
+static void CheckParity(const char* source, int expected)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(source, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true);
+    LLVMJit llvm;
+    LLVMJitInit(&llvm);
+    char* llvmError = NULL;
+    bool llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
+    STRATA_CHECK(llvmOk);
+
+    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+    TccJit tcc;
+    TccJitInit(&tcc);
+    char* tccError = NULL;
+    bool tccOk = TccJitLoad(&tcc, &cModule, &tccError);
+    STRATA_CHECK(tccOk);
+
+    if (llvmOk && tccOk)
+    {
+        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
+        int (*tccEntry)(void) = (int (*)(void))TccJitGetAddress(&tcc, "entry");
+        STRATA_CHECK(llvmEntry != NULL);
+        STRATA_CHECK(tccEntry != NULL);
+        if (llvmEntry && tccEntry)
+        {
+            STRATA_CHECK_EQ(llvmEntry(), expected);
+            STRATA_CHECK_EQ(tccEntry(), expected);
+            STRATA_CHECK_EQ(llvmEntry(), tccEntry());
+        }
+    }
+
+    free(llvmError);
+    free(tccError);
+    TccJitDestroy(&tcc);
+    BuiltCModuleDispose(&cModule);
+    LLVMJitDestroy(&llvm);
+    BuiltModuleDispose(&llvmModule);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ---- Host functions for bare extern `...` calls ---- */
+
+static int HostVSum(int count, ...)
+{
+    va_list ap;
+    va_start(ap, count);
+    int total = 0;
+    for (int i = 0; i < count; i++)
+    {
+        total += va_arg(ap, int);
+    }
+    va_end(ap);
+
+    return total;
+}
+
+static int HostVMean10(int count, ...)
+{
+    va_list ap;
+    va_start(ap, count);
+    int total = 0;
+    for (int i = 0; i < count; i++)
+    {
+        total += (int)(va_arg(ap, double) * 10.0);
+    }
+    va_end(ap);
+
+    return total;
+}
+
+static void CheckVarargExtern(const char* source, const char* symbol, void* hostFn, int expected)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(source, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true);
+    LLVMJit llvm;
+    LLVMJitInit(&llvm);
+    char* llvmError = NULL;
+    bool llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
+    STRATA_CHECK(llvmOk);
+    if (llvmOk)
+    {
+        STRATA_CHECK_EQ(LLVMJitAddSymbol(&llvm, symbol, hostFn), 1);
+    }
+
+    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+    TccJit tcc;
+    TccJitInit(&tcc);
+    char* tccError = NULL;
+    bool tccOk = TccJitLoad(&tcc, &cModule, &tccError);
+    STRATA_CHECK(tccOk);
+    if (tccOk)
+    {
+        STRATA_CHECK_EQ(TccJitAddSymbol(&tcc, symbol, hostFn), 1);
+    }
+
+    if (llvmOk && tccOk)
+    {
+        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
+        int (*tccEntry)(void) = (int (*)(void))TccJitGetAddress(&tcc, "entry");
+        STRATA_CHECK(llvmEntry != NULL);
+        STRATA_CHECK(tccEntry != NULL);
+        if (llvmEntry && tccEntry)
+        {
+            STRATA_CHECK_EQ(llvmEntry(), expected);
+            STRATA_CHECK_EQ(tccEntry(), expected);
+            STRATA_CHECK_EQ(llvmEntry(), tccEntry());
+        }
+    }
+
+    free(llvmError);
+    free(tccError);
+    TccJitDestroy(&tcc);
+    BuiltCModuleDispose(&cModule);
+    LLVMJitDestroy(&llvm);
+    BuiltModuleDispose(&llvmModule);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ---- Parser / sema ---- */
+
+STRATA_TEST(parser_typed_rest_param)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("int sum(int first, int... rest) { return first; }", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod != NULL);
+    if (mod)
+    {
+        FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
+        STRATA_CHECK(fn->isVariadic);
+        STRATA_CHECK(!fn->isCVararg);
+        STRATA_CHECK_EQ((long)fn->params.count, 2);
+        ParamDecl* rest = (ParamDecl*)VecGet(&fn->params, 1);
+        STRATA_CHECK(rest->isVarargRest);
+        STRATA_CHECK(strcmp(rest->type.name, "int[]") == 0);
+    }
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_bare_cvararg_extern)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("extern int printf(string fmt, ...);", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod != NULL);
+    if (mod)
+    {
+        FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
+        STRATA_CHECK(fn->isExtern);
+        STRATA_CHECK(fn->isVariadic);
+        STRATA_CHECK(fn->isCVararg);
+    }
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_rest_param_must_be_last)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f(int... rest, int b) { return 1; }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_bare_cvararg_requires_extern)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f(int a, ...) { return 1; }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_bare_cvararg_requires_named_param)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("extern int f(...);", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_rest_param_rejects_modifiers)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f(ref int... rest) { return 1; }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_rest_element_type_mismatch_errors)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int sum(int... rest) { return 0; } int entry() { return sum(1, \"oops\"); }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_variadic_too_few_args_errors)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int sum(int first, int... rest) { return 0; } int entry() { return sum(); }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_struct_in_cvararg_position_errors)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Pt { int x; };\n"
+                    "extern int host_vsum(int count, ...);\n"
+                    "int entry() { Pt p = {.x = 1}; return host_vsum(1, p); }",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ---- Typed rest: execution on both backends ---- */
+
+STRATA_TEST(varargs_typed_rest_int_parity)
+{
+    CheckParity("int sum(int first, int... rest)\n"
+                "{\n"
+                "    int total = first;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum(1, 2, 3, 4, 5); }\n",
+                15);
+}
+
+STRATA_TEST(varargs_typed_rest_zero_args_parity)
+{
+    CheckParity("int sum(int first, int... rest)\n"
+                "{\n"
+                "    int total = first;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum(9); }\n",
+                9);
+}
+
+STRATA_TEST(varargs_typed_rest_float_parity)
+{
+    CheckParity("float avg(float first, float... rest)\n"
+                "{\n"
+                "    float total = first;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total / ((float)rest.length + 1.0f);\n"
+                "}\n"
+                "int entry() { float a = avg(1.0f, 2.0f, 3.0f, 4.0f); return (int)(a * 10.0f); }\n",
+                25);
+}
+
+STRATA_TEST(varargs_typed_rest_struct_parity)
+{
+    CheckParity("struct Pt { int x; };\n"
+                "int sum_pts(int first, Pt... rest)\n"
+                "{\n"
+                "    int total = first;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].x; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum_pts(0, Pt{.x = 1}, Pt{.x = 2}, Pt{.x = 3}); }\n",
+                6);
+}
+
+STRATA_TEST(varargs_typed_rest_string_owns_elements_parity)
+{
+    /* Strings are moved into the collected array; the array is dropped on
+       return with no crash or double-free on either backend. */
+    CheckParity("int count_strings(string first, string... rest)\n"
+                "{\n"
+                "    return (int)rest.length + 1;\n"
+                "}\n"
+                "int entry() { return count_strings(\"a\", \"b\", \"c\", \"d\"); }\n",
+                4);
+}
+
+STRATA_TEST(varargs_typed_rest_overload_prefers_exact_parity)
+{
+    CheckParity("int f(int a) { return 1; }\n"
+                "int f(int a, int... rest) { return 2; }\n"
+                "int entry() { return f(5) + f(5, 6, 7); }\n",
+                3);
+}
+
+STRATA_TEST(varargs_typed_rest_numeric_widening_parity)
+{
+    CheckParity("int sum_rest(int... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum_rest(1, 2, 3); }\n",
+                6);
+}
+
+/* ---- Bare extern `...` : execution on both backends ---- */
+
+STRATA_TEST(varargs_extern_cvararg_ints_parity)
+{
+    CheckVarargExtern("extern int host_vsum(int count, ...);\n"
+                      "int entry() { return host_vsum(4, 10, 20, 30, 40); }\n",
+                      "host_vsum", (void*)&HostVSum, 100);
+}
+
+STRATA_TEST(varargs_extern_cvararg_float_promotes_to_double_parity)
+{
+    /* float variadic args must follow C default promotions (widen to double),
+       identically on both backends. The host reads doubles via va_arg. */
+    CheckVarargExtern("extern int host_vmean10(int count, ...);\n"
+                      "int entry() { return host_vmean10(3, 1.5f, 2.5f, 3.0f); }\n",
+                      "host_vmean10", (void*)&HostVMean10, 70);
+}
+
+STRATA_TEST(varargs_extern_cvararg_zero_variadic_args_parity)
+{
+    CheckVarargExtern("extern int host_vsum(int count, ...);\n"
+                      "int entry() { return host_vsum(0); }\n",
+                      "host_vsum", (void*)&HostVSum, 0);
+}
+
+/* ---- IR / C emission shapes ---- */
+
+STRATA_TEST(llvm_vararg_extern_declared_variadic)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("extern int printf(string fmt, ...);", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "@printf"));
+    STRATA_CHECK(Contains(res.output, ", ...)"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(c_backend_vararg_extern_signature)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("extern int printf(string fmt, ...);", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "printf(const char *"));
+    STRATA_CHECK(Contains(res.output, ", ...)"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(c_backend_typed_rest_collects_array)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("int sum(int first, int... rest) { return first; }\n"
+                                  "int entry() { return sum(1, 2, 3); }",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "strata__arr[]"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(ast_dump_shows_ellipsis)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("extern int printf(string fmt, ...);\n"
+                                  "int sum(int first, int... rest) { return first; }",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    char* dump = DumpAst(mod, &arena);
+    STRATA_CHECK(Contains(dump, "..."));
+    STRATA_CHECK(Contains(dump, "int... rest"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}

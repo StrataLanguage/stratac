@@ -280,7 +280,19 @@ static LLVMValueRef EntryAlloca(Builder* b, LLVMTypeRef type, const char* name)
     }
     else
     {
-        LLVMPositionBuilderAtEnd(b->m_builder, b->m_entryBlock);
+        /* The entry block may already be terminated (e.g. drop code emitted
+           on a return before any alloca was created). Insert before the
+           terminator so the alloca stays in the entry prologue. */
+        LLVMValueRef term = LLVMGetBasicBlockTerminator(b->m_entryBlock);
+
+        if (term)
+        {
+            LLVMPositionBuilderBefore(b->m_builder, term);
+        }
+        else
+        {
+            LLVMPositionBuilderAtEnd(b->m_builder, b->m_entryBlock);
+        }
     }
 
     LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, type, name);
@@ -321,6 +333,7 @@ static LValue EmitLValue(Builder* b, Node* n);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
+static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements);
 static LLVMValueRef AsI64Index(Builder* b, Value v);
 static Value EmitUnary(Builder* b, UnaryExpr* n);
 static Value EmitBinary(Builder* b, BinaryExpr* n);
@@ -768,7 +781,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
     }
 
-    info->type = LLVMFunctionType(info->returnType.type, params, (unsigned)pcount, 0);
+    info->type = LLVMFunctionType(info->returnType.type, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
     if (b->m_jitMode && f->isExtern)
     {
@@ -2050,6 +2063,34 @@ static Value EmitCopyBuiltin(Builder* b, CallExpr* n)
     return EmitCopyValue(b, v, v.typeDesc);
 }
 
+/* Applies C default argument promotions to a value passed through a bare
+   extern `...` (C varargs): bool and small integers widen to int, float
+   widens to double. Mirrors what the C compiler does implicitly, so the
+   LLVM and C backends stay in parity. */
+static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
+{
+    LLVMTypeRef ty = v.typeDesc.type;
+
+    if (ty == I1Ty(b))
+    {
+        return LLVMBuildZExt(b->m_builder, v.value, I32Ty(b), "vap");
+    }
+
+    if (ty == LLVMInt8TypeInContext(b->m_ctx) || ty == LLVMInt16TypeInContext(b->m_ctx))
+    {
+        return v.typeDesc.isUnsigned
+            ? LLVMBuildZExt(b->m_builder, v.value, I32Ty(b), "vap")
+            : LLVMBuildSExt(b->m_builder, v.value, I32Ty(b), "vap");
+    }
+
+    if (ty == LLVMFloatTypeInContext(b->m_ctx))
+    {
+        return LLVMBuildFPExt(b->m_builder, v.value, LLVMDoubleTypeInContext(b->m_ctx), "vap");
+    }
+
+    return v.value;
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
     // Inline array helpers (array_push / array_pop / array_resize)?
@@ -2129,7 +2170,16 @@ static Value EmitCall(Builder* b, CallExpr* n)
         return ZeroInt(b);
     }
 
-    size_t nargs = n->args.count;
+    const FunctionDecl* fd = n->resolvedDecl;
+
+    /* A typed rest param collects the trailing call args into one T[] array
+       passed in the rest param's slot, so the LLVM call has exactly
+       `params.count` args. A bare extern `...` passes every arg straight
+       through as a real C vararg call. */
+    bool typedRest = fd && fd->isVariadic && !fd->isCVararg && fd->params.count > 0;
+    bool cVararg = fd && fd->isCVararg;
+
+    size_t nargs = typedRest ? fd->params.count : n->args.count;
     LLVMValueRef* args = NULL;
 
     if (nargs > 0)
@@ -2137,10 +2187,31 @@ static Value EmitCall(Builder* b, CallExpr* n)
         args = (LLVMValueRef*)arena_alloc(b->m_arena, nargs * sizeof(LLVMValueRef));
     }
 
-    const FunctionDecl* fd = n->resolvedDecl;
-
     for (size_t k = 0; k < nargs; k++)
     {
+        /* Typed rest slot: gather the trailing call args into a T[]. */
+        if (typedRest && k == fd->params.count - 1)
+        {
+            const ParamDecl* restParam = (ParamDecl*)VecGet(&fd->params, fd->params.count - 1);
+            Str inner = ArrayInnerStr(restParam->type.name);
+            const char* elemName = inner.data ? StrNew(b->m_arena, inner.data, inner.len).data : NULL;
+
+            Vec tail;
+            VecInit(&tail);
+
+            for (size_t i = fd->params.count - 1; i < n->args.count; i++)
+            {
+                VecPush(&tail, VecGet(&n->args, i));
+            }
+
+            Value arr = EmitArrayFromNodes(b, elemName, &tail);
+
+            LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "rest");
+            LLVMBuildStore(b->m_builder, arr.value, slot);
+            args[k] = slot;
+            continue;
+        }
+
         bool shouldPassByPtr = k < info->paramByPtrCount && info->paramByPtr[k];
         Node* argNode = (Node*)VecGet(&n->args, k);
 
@@ -2211,7 +2282,17 @@ static Value EmitCall(Builder* b, CallExpr* n)
             /* A box arg passed to a by-value (non-indirect) param - e.g. a
                plain handle - must be dereferenced to its value, not passed
                as the box's own heap pointer. */
-            args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : DerefBoxValue(b, EmitExpr(b, argNode)).value;
+            Value v = EmitExpr(b, argNode);
+
+            if (cVararg && k >= fd->params.count)
+            {
+                /* Bare extern `...` trailing args follow C default promotions. */
+                args[k] = ApplyCVarargPromotion(b, DerefBoxValue(b, v));
+            }
+            else
+            {
+                args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : DerefBoxValue(b, v).value;
+            }
         }
     }
 
@@ -2233,16 +2314,18 @@ static Value EmitCall(Builder* b, CallExpr* n)
     return ValueMake(call, info->returnType);
 }
 
-static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
+/* Builds a T[] array value from a list of element expressions. Shared by
+   array literals and typed rest params (the collected trailing call args). */
+static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements)
 {
-    TypeDesc elemTd = Resolve(b, &(TypeName){.name = n->elementType});
+    TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)elementType});
 
     /* The LLVM type of one element slot in the backing buffer. Arrays and
        boxes/strings both reduce to a pointer; structs/scalars use their
        own type. */
     LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
-    size_t count = n->elements.count;
+    size_t count = elements->count;
     LLVMValueRef dataPtr = LLVMConstNull(b->m_ptrTy);
 
     if (count > 0)
@@ -2258,7 +2341,7 @@ static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 
         for (size_t i = 0; i < count; i++)
         {
-            Node* eNode = (Node*)VecGet(&n->elements, i);
+            Node* eNode = (Node*)VecGet(elements, i);
             Value v = EmitExpr(b, eNode);
 
             LLVMValueRef idxArg[1] = { LLVMConstInt(I64Ty(b), (unsigned long long)i, 0) };
@@ -2342,9 +2425,14 @@ static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
     TypeDesc td = {0};
     td.type = ArrayStructType(b);
     td.isArray = true;
-    td.arrayInner = arena_strdup(b->m_arena, n->elementType);
+    td.arrayInner = arena_strdup(b->m_arena, elementType);
 
     return ValueMake(arr, td);
+}
+
+static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
+{
+    return EmitArrayFromNodes(b, n->elementType, &n->elements);
 }
 
 static Value EmitStructInit(Builder* b, StructInitExpr* n)

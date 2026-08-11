@@ -86,6 +86,7 @@ typedef struct {
     ParamMod mod;
     TypeName type;
     char* name;
+    bool isVarargRest;
 } ParamDecl;
 
 typedef struct {
@@ -115,6 +116,12 @@ typedef struct {
     bool isExtern;
     bool hasReturnStmt;
     char* mangledName;
+    /* Accepts a variable number of trailing arguments.
+       If isCVararg is set, the function is extern and takes bare `...`
+       (call-only; the host provides the body). Otherwise the last param
+       is a typed rest param (isVarargRest) collecting the extras into a T[]. */
+    bool isVariadic;
+    bool isCVararg;
 } FunctionDecl;
 
 typedef struct {

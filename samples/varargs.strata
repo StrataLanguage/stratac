@@ -1,0 +1,48 @@
+// varargs.strata -- variadic functions.
+//
+// Two forms:
+//   1. Typed rest param `T... name`: the trailing args are collected into a
+//      real T[] array; read it like any array (.length, [i], loops, etc.).
+//   2. Bare extern `...`: call host C-variadic functions (printf etc.). The
+//      host provides the body; Strata only ever calls it -- no va_start in
+//      user code.
+//
+// Build and run the whole thing (AOT object linked against the host + libc):
+//   stratac varargs.strata -o varargs.o
+//   clang hosts/varargs_host.c varargs.o -o varargs.exe
+//   ./varargs.exe
+
+extern int printf(string fmt, ...);
+
+// Typed rest: trailing ints become an int[].
+int sum(int first, int... rest)
+{
+    int total = first;
+    for (ulong i = 0; i < rest.length; i = i + 1)
+    {
+        total = total + rest[i];
+    }
+    return total;
+}
+
+// Typed rest with a float element type.
+float avg(float first, float... rest)
+{
+    float total = first;
+    for (ulong i = 0; i < rest.length; i = i + 1)
+    {
+        total = total + rest[i];
+    }
+    return total / ((float)rest.length + 1.0f);
+}
+
+int entry()
+{
+    printf("sum=%d\n", sum(1, 2, 3, 4, 5));
+    printf("avg=%.2f\n", (double)avg(1.0f, 2.0f, 3.0f));
+    printf("pi=%d %.2f %s\n", 42, 3.14f, "str");
+
+    printf("Hello %s\n", "world");
+
+    return sum(10, 20, 30) + (int)avg(2.0f, 4.0f);   // 60 + 3 = 63
+}

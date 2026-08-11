@@ -340,6 +340,7 @@ if(NOT STRATA_SHARED)
         )
         if(STRATA_ENABLE_TCC)
             list(APPEND STRATA_TEST_SOURCES tests/unit/BackendParityTests.c)
+            list(APPEND STRATA_TEST_SOURCES tests/unit/VarargsTests.c)
         endif()
     endif()
     add_executable(strata_tests ${STRATA_TEST_SOURCES})
@@ -428,6 +429,20 @@ if(STRATA_ENABLE_LLVM)
     set_target_properties(aot_arrays_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_arrays_test COMMAND aot_arrays_test)
     set_tests_properties(aot_arrays_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 54")
+
+    set(STRATA_VARARGS_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/varargs_test${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_VARARGS_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/varargs.strata"
+                -o "${STRATA_VARARGS_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/varargs.strata"
+        COMMENT "stratac: AOT-compiling varargs.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_varargs_test samples/hosts/varargs_host.c "${STRATA_VARARGS_TEST_OBJECT}")
+    set_target_properties(aot_varargs_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_varargs_test COMMAND aot_varargs_test)
+    set_tests_properties(aot_varargs_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 63")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES

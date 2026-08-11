@@ -1,5 +1,6 @@
 #include "AST/AST.h"
 #include "Codegen/CodegenBackend.h"
+#include "Codegen/TypeRegistry.h"
 
 static const char* UnaryOpSpelling(UnaryOp op)
 {
@@ -194,6 +195,22 @@ static void Dump(Node* n, int indent, Sb* out)
             
             ParamDecl* param = (ParamDecl*)VecGet(&function_decl->params, i);
 
+            if (param->isVarargRest)
+            {
+                Str inner = ArrayInnerStr(param->type.name);
+
+                if (inner.data)
+                {
+                    SbPrintf(out, "%.*s... %s", (int)inner.len, inner.data, param->name);
+                }
+                else
+                {
+                    SbPrintf(out, "%s... %s", param->type.name, param->name);
+                }
+
+                continue;
+            }
+
             if (param->type.isConst)
             {
                 SbPuts(out, "const ");
@@ -207,6 +224,11 @@ static void Dump(Node* n, int indent, Sb* out)
             }
 
             SbPrintf(out, "%s %s", param->type.name, param->name);
+        }
+
+        if (function_decl->isCVararg)
+        {
+            SbPuts(out, ", ...");
         }
 
         SbPutc(out, ')');

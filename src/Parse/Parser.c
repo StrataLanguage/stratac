@@ -542,6 +542,20 @@ static ParamDecl* ParseParam(Parser* p)
         return NULL;
     }
 
+    bool isVarargRest = false;
+
+    if (ParserConsume(p, TokDotDotDot))
+    {
+        isVarargRest = true;
+
+        if (mod != ModNone || isConst)
+        {
+            DiagError(p->m_diag, start, "rest parameter cannot use 'ref' or 'const'");
+        }
+
+        type.name = arena_format(p->m_arena, "%s[]", type.name);
+    }
+
     if (p->m_cur.kind != TokIdent)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected a parameter name");
@@ -559,6 +573,7 @@ static ParamDecl* ParseParam(Parser* p)
     type.isConst = isConst || type.isConst;
     node->type = type;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->isVarargRest = isVarargRest;
 
     return node;
 }
@@ -649,6 +664,11 @@ static Node* ParseFunction(Parser* p)
         return (Node*)node;
     }
 
+    if (p->m_cur.kind == TokDotDotDot)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "bare '...' requires at least one named parameter");
+    }
+
     if (p->m_cur.kind != TokRParen)
     {
         while (true)
@@ -666,11 +686,40 @@ static Node* ParseFunction(Parser* p)
 
             if (ParserConsume(p, TokComma))
             {
+                /* Bare '...' (extern C-style varargs): must end the list. */
+                if (p->m_cur.kind == TokDotDotDot)
+                {
+                    Advance(p);
+                    node->isVariadic = true;
+                    node->isCVararg = true;
+                    break;
+                }
+
                 continue;
             }
 
             break;
         }
+    }
+
+    for (size_t i = 0; i < node->params.count; i++)
+    {
+        ParamDecl* param = (ParamDecl*)VecGet(&node->params, i);
+
+        if (param->isVarargRest)
+        {
+            node->isVariadic = true;
+
+            if (i + 1 != node->params.count)
+            {
+                DiagError(p->m_diag, param->base.range, "rest parameter must be the last parameter");
+            }
+        }
+    }
+
+    if (node->isCVararg && !isExtern)
+    {
+        DiagError(p->m_diag, node->base.range, "bare '...' is only allowed on extern functions");
     }
 
     ParserExpect(p, TokRParen, "')'");

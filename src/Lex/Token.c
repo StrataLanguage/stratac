@@ -55,6 +55,7 @@ static const Spelling punct[] = {
     { TokSemicolon, ";" },
     { TokColon, ":" },
     { TokDot, "." },
+    { TokDotDotDot, "..." },
     { TokArrow, "->" },
     { TokAssign, "=" },
     { TokPlus, "+" },
