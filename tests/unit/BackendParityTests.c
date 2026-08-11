@@ -30,7 +30,7 @@ static void CheckParity(const char* source, int expected)
     }
     STRATA_CHECK(llvmOk);
 
-    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, 0, STRATA_ARCH_AUTO);
+    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
     TccJit tcc;
     TccJitInit(&tcc);
     char* tccError = NULL;
