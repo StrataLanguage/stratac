@@ -2162,13 +2162,30 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         emitter->indent++;
 
         size_t boxMark = emitter->boxVars.count;
+        emitter->terminated = false;
 
         for (size_t i = 0; i < block->statements.count; ++i)
         {
-            EmitStmt(emitter, (const Node*)VecGet(&block->statements, i));
+            const Node* stmt = (const Node*)VecGet(&block->statements, i);
+
+            if (emitter->terminated)
+            {
+                break;
+            }
+
+            EmitStmt(emitter, stmt);
+
+            if (stmt->kind == NodeIf || stmt->kind == NodeWhile || stmt->kind == NodeFor)
+            {
+                emitter->terminated = false;
+            }
         }
 
-        EmitDrops(emitter, boxMark);
+        if (!emitter->terminated)
+        {
+            EmitDrops(emitter, boxMark);
+        }
+
         emitter->boxVars.count = boxMark;
 
         emitter->indent--;
@@ -2211,6 +2228,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, tmp);
             SbPuts(&emitter->out, ";\n");
 
+            emitter->terminated = true;
             return;
         }
 
@@ -2262,9 +2280,19 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, "return ");
             SbPuts(&emitter->out, tmp);
             SbPuts(&emitter->out, ";\n");
+
+            emitter->terminated = true;
         }
         else
         {
+            /* Drop live owning locals before a plain return (a return inside
+               a nested block must not fall through to a later block-level
+               drop). */
+            if (emitter->boxVars.count > 0)
+            {
+                EmitDrops(emitter, 0);
+            }
+
             Pad(emitter);
             SbPuts(&emitter->out, "return");
 
@@ -2287,6 +2315,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, ";\n");
         }
 
+        emitter->terminated = true;
         return;
     }
     case NodeVarDecl:
@@ -2825,31 +2854,49 @@ static void EmitDefinitions(CEmitter* emitter)
         emitter->indent++;
 
         const Block* body = (const Block*)function->body;
+        emitter->terminated = false;
+
         for (size_t j = 0; j < body->statements.count; ++j)
         {
-            EmitStmt(emitter, (const Node*)VecGet(&body->statements, j));
+            const Node* stmt = (const Node*)VecGet(&body->statements, j);
+
+            if (emitter->terminated)
+            {
+                break;
+            }
+
+            EmitStmt(emitter, stmt);
+
+            if (stmt->kind == NodeIf || stmt->kind == NodeWhile || stmt->kind == NodeFor)
+            {
+                emitter->terminated = false;
+            }
         }
 
-        EmitDrops(emitter, 0);
-        emitter->boxVars.count = 0;
-
-        Pad(emitter);
-
-        /* Add a trailing return statment if no returns were provided */
-        if (!HasConcludingReturnStmt(body))
+        if (!emitter->terminated)
         {
+            EmitDrops(emitter, 0);
 
-            if (strcmp(function->returnType.name, "void") == 0)
+            Pad(emitter);
+
+            /* Add a trailing return statment if no returns were provided */
+            if (!HasConcludingReturnStmt(body))
             {
-                SbPuts(&emitter->out, "return;\n");
-            }
-            else
-            {
-                SbPuts(&emitter->out, "return (");
-                SbPuts(&emitter->out, TypeNameC(emitter, function->returnType.name));
-                SbPuts(&emitter->out, "){0};\n");
+
+                if (strcmp(function->returnType.name, "void") == 0)
+                {
+                    SbPuts(&emitter->out, "return;\n");
+                }
+                else
+                {
+                    SbPuts(&emitter->out, "return (");
+                    SbPuts(&emitter->out, TypeNameC(emitter, function->returnType.name));
+                    SbPuts(&emitter->out, "){0};\n");
+                }
             }
         }
+
+        emitter->boxVars.count = 0;
 
         emitter->indent--;
 
