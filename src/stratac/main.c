@@ -76,6 +76,7 @@ typedef enum ModeFlag : uint64_t
     MF_PRINT_AST,
     MF_EMIT_ASM,
     MF_EMIT_C,
+    MF_EMIT_IR,
     MF_RUN,
 } ModeFlag;
 
@@ -169,10 +170,11 @@ static const CLICommand commands[] = {
 
     COMMAND_GENERAL("-o", NULL,    "<file>", &Cmd_SetOutputFilename, "output object file (default: <input>.o)"),
 
-    COMMAND_MODE("--ast",    MF_PRINT_AST, "print ast tree"),
-    COMMAND_MODE("--asm",    MF_EMIT_ASM, "output asm representation"),
-    COMMAND_MODE("--emit-c", MF_EMIT_C,   "emit C code instead of an object file"),
-    COMMAND_MODE("--run",    MF_RUN,      "JIT and run an int(void) entry in memory"),
+    COMMAND_MODE("--ast",     MF_PRINT_AST, "print ast tree"),
+    COMMAND_MODE("--asm",     MF_EMIT_ASM,  "output asm representation"),
+    COMMAND_MODE("--emit-c",  MF_EMIT_C,    "emit C code instead of an object file"),
+    COMMAND_MODE("--emit-ir", MF_EMIT_IR,   "emit LLVM IR"),
+    COMMAND_MODE("--run",     MF_RUN,       "JIT and run an int(void) entry in memory"),
 
     COMMAND_GENERAL(NULL, "--no-simd", NULL,      &Cmd_DisableSimd, "disable SIMD intrinsics"),
     COMMAND_GENERAL(NULL, "--entry",   "<name>",  &Cmd_RunSetEntry, "entry for --run (default: main)"),
@@ -192,6 +194,7 @@ typedef struct ModeImpl
 
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler);
 static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler);
+static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler);
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
 static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
 static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler);
@@ -203,6 +206,7 @@ static const ModeImpl modeImpls[] = {
     {MF_RUN,       &Impl_JitAndRun},
     {MF_EMIT_C,    &Impl_EmitC    },
     {MF_EMIT_ASM,  &Impl_EmitAsm  },
+    {MF_EMIT_IR,   &Impl_EmitIr   },
 };
 
 const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count)
@@ -532,6 +536,24 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 
     return RCSuccess;
 }
+
+static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler)
+{
+    StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_LLVM_IR, state->emitFlags);
+    if (r.diagnostics && r.diagnostics[0])
+    {
+        fprintf(stderr, "%s\n", r.diagnostics);
+    }
+    if (r.ok && r.output)
+    {
+        fprintf(stderr, "%s\n", r.output);
+    }
+
+    strataResultFree(&r);
+
+    return RCSuccess;
+}
+
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
 {
     if (!(strataCapabilities() & STRATA_CAP_TCC_JIT))
