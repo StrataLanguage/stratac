@@ -1435,10 +1435,10 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
 
-            if (IsDefinedStruct(&r.m_registry, p->type.name) && p->type.isConst && p->mod == ModRef)
-            {
-                DiagErrorFmt(diag, p->base.range, "'ref' parameter cannot be 'const'");
-            }
+            /* `const ref T` is a non-owning view to an immutable. For structs
+               (always passed by reference) it is equivalent to `const T`, so we
+               allow the explicit spelling rather than rejecting it. */
+            (void)p;
         }
 
         if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))

@@ -508,10 +508,25 @@ static ParamDecl* ParseParam(Parser* p)
 {
     SourceRange start = p->m_cur.range;
     ParamMod mod = ModNone;
+    bool isConst = false;
 
-    if (ParserConsume(p, TokKwRef))
+    /* Parameter modifiers: 'const' and 'ref' may appear together in either
+       order (`const ref int x`, `ref const int x`). Each may appear once. */
+    for (int i = 0; i < 2; i++)
     {
-        mod = ModRef;
+        if (ParserConsume(p, TokKwRef))
+        {
+            mod = ModRef;
+            continue;
+        }
+
+        if (ParserConsume(p, TokKwConst))
+        {
+            isConst = true;
+            continue;
+        }
+
+        break;
     }
 
     TypeName type = {0};
@@ -536,6 +551,7 @@ static ParamDecl* ParseParam(Parser* p)
     node->base.range
         = (SourceRange){start.start, (uint16_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
     node->mod = mod;
+    type.isConst = isConst || type.isConst;
     node->type = type;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
 
