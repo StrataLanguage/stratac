@@ -5,6 +5,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef enum ResultCode
+{
+    RCSuccess = 0,
+    RCIOError = 1,
+    RCArgumentError = 2,
+} ResultCode;
+
 static void PrintHelp(void)
 {
     unsigned capabilities = strataCapabilities();
@@ -18,6 +25,7 @@ static void PrintHelp(void)
                     "  --arch           set the output architecture (default: auto, x64, arm64)\n"
                     "  --no-simd        disable output of SIMD intrinsics or instructions\n"
                     "  --emit-c         emit portable C source instead of an object\n"
+                    "  --emit-ir        emit LLVM IR instead of an object\n"
                     "  --run            JIT and run an int(void) entry in memory\n"
                     "  --entry <name>   entry for --run (default: main)\n"
                     "  --version        print version and exit\n"
@@ -57,19 +65,118 @@ static char* ReplaceExt(const char* path, const char* ext)
     return result;
 }
 
+typedef struct State
+{
+    const char* outFileName;
+    const char* inFileName;
+
+    bool emitAsm;
+    bool printAst;
+    bool emitC;
+    bool emitLlvmIr;
+    bool run;
+    bool outFileOwned;
+    const char* entryName;
+    StrataArch outputArch;
+    StrataEmitFlags emitFlags;
+} State;
+
+void StateDefault(State* c)
+{
+    memset(c, 0, sizeof(State));
+
+    c->outFileName = NULL;
+    c->inFileName = NULL;
+
+    c->emitAsm = false;
+    c->printAst = false;
+    c->emitC = false;
+    c->emitLlvmIr = false;
+    c->run = false;
+    c->outFileOwned = false;
+    c->entryName = "main";
+
+    c->outputArch = STRATA_ARCH_AUTO;
+    c->emitFlags = 0;
+}
+
+static ResultCode EmitC(State* state, StrataCompiler* compiler)
+{
+    if (state->emitAsm)
+    {
+        fprintf(stderr, "error: --asm cannot be combined with --emit-c\n");
+        return RCArgumentError;
+    }
+
+    if (!state->outFileName)
+    {
+        state->outFileName = ReplaceExt(state->inFileName, ".c");
+        state->outFileOwned = true;
+    }
+
+    StrataResult result = strataCompileFile(compiler, state->inFileName, STRATA_EMIT_C, state->emitFlags);
+    if (result.diagnostics && result.diagnostics[0])
+    {
+        fprintf(stderr, "%s\n", result.diagnostics);
+    }
+    if (!result.ok)
+    {
+        strataResultFree(&result);
+
+        if (state->outFileOwned)
+        {
+            free((void*)state->outFileName);
+        }
+
+        return RCIOError;
+    }
+
+    FILE* output = fopen(state->outFileName, "wb");
+
+    if (output == NULL)
+    {
+        fprintf(stderr, "error: cannot open output '%s'\n", state->outFileName);
+        strataResultFree(&result);
+
+        if (state->outFileOwned)
+        {
+            free((void*)state->outFileName);
+        }
+
+        return RCIOError;
+    }
+
+    size_t outputLen = strlen(result.output);
+    bool wrote = fwrite(result.output, 1, outputLen, output) == outputLen;
+
+    strataResultFree(&result);
+
+    if (!wrote || fclose(output) != 0)
+    {
+        fprintf(stderr, "error: failed writing C source '%s'\n", state->outFileName);
+
+        if (state->outFileOwned)
+        {
+            free((void*)state->outFileName);
+        }
+
+        return RCIOError;
+    }
+
+    fprintf(stderr, "wrote C source: %s\n", state->outFileName);
+
+    if (state->outFileOwned)
+    {
+        free((void*)state->outFileName);
+    }
+
+    return RCSuccess;
+}
+
 int main(int argc, char** argv)
 {
-    const char* outFile = NULL;
-    const char* inputFile = NULL;
-    bool emitAsm = false;
-    bool printAst = false;
-    bool emitC = false;
-    bool outFileOwned = false;
-    bool run = false;
-    const char* entryName = "main";
-
-    StrataArch outputArch = STRATA_ARCH_AUTO;
-    StrataEmitFlags emitFlags = 0;
+    State state;
+    StateDefault(&state);
 
     for (int i = 1; i < argc; i++)
     {
@@ -101,7 +208,8 @@ int main(int argc, char** argv)
                 fprintf(stderr, "error: -o needs an argument\n");
                 return 2;
             }
-            outFile = argv[++i];
+
+            state.outFileName = argv[++i];
         }
 
         else if (strcmp(a, "--arch") == 0)
@@ -116,15 +224,15 @@ int main(int argc, char** argv)
 
             if (strcmp(value, "x64") == 0)
             {
-                outputArch = STRATA_ARCH_X64;
+                state.outputArch = STRATA_ARCH_X64;
             }
             else if (strcmp(value, "arm64") == 0)
             {
-                outputArch = STRATA_ARCH_ARM64;
+                state.outputArch = STRATA_ARCH_ARM64;
             }
             else if (strcmp(value, "auto") == 0)
             {
-                outputArch = STRATA_ARCH_AUTO;
+                state.outputArch = STRATA_ARCH_AUTO;
             }
             else
             {
@@ -134,23 +242,27 @@ int main(int argc, char** argv)
         }
         else if (strcmp(a, "--asm") == 0)
         {
-            emitAsm = true;
+            state.emitAsm = true;
         }
         else if (strcmp(a, "--ast") == 0)
         {
-            printAst = true;
+            state.printAst = true;
         }
         else if (strcmp(a, "--emit-c") == 0)
         {
-            emitC = true;
+            state.emitC = true;
+        }
+        else if (strcmp(a, "--emit-ir") == 0)
+        {
+            state.emitLlvmIr = true;
         }
         else if (strcmp(a, "--no-simd") == 0)
         {
-            emitFlags |= STRATA_EMIT_NO_SIMD;
+            state.emitFlags |= STRATA_EMIT_NO_SIMD;
         }
         else if (strcmp(a, "--run") == 0)
         {
-            run = true;
+            state.run = true;
         }
         else if (strcmp(a, "--entry") == 0)
         {
@@ -159,7 +271,7 @@ int main(int argc, char** argv)
                 fprintf(stderr, "error: --entry needs an argument\n");
                 return 2;
             }
-            entryName = argv[++i];
+            state.entryName = argv[++i];
         }
         else if (a[0] == '-' && a[1] != '\0')
         {
@@ -169,16 +281,16 @@ int main(int argc, char** argv)
         }
         else
         {
-            if (inputFile)
+            if (state.inFileName)
             {
                 fprintf(stderr, "error: multiple input files are not supported\n");
                 return 2;
             }
-            inputFile = a;
+            state.inFileName = a;
         }
     }
 
-    if (!inputFile)
+    if (!state.inFileName)
     {
         fprintf(stderr, "error: no input file\n");
         PrintHelp();
@@ -186,25 +298,25 @@ int main(int argc, char** argv)
     }
 
     StrataCompiler* compiler = strataCompilerCreate();
-    strataSetArchitecture(compiler, outputArch);
+    strataSetArchitecture(compiler, state.outputArch);
 
-    if (!run && strcmp(entryName, "main") != 0)
+    if (!state.run && strcmp(state.entryName, "main") != 0)
     {
         fprintf(stderr, "error: --entry requires --run\n");
         strataCompilerDestroy(compiler);
         return 2;
     }
 
-    if (run && (emitC || emitAsm || outFile))
+    if (state.run && (state.emitC || state.emitAsm || state.outFileName))
     {
         fprintf(stderr, "error: --run cannot be combined with --emit-c, --asm, or -o\n");
         strataCompilerDestroy(compiler);
         return 2;
     }
 
-    if (printAst)
+    if (state.printAst)
     {
-        StrataResult r = strataCompileFile(compiler, inputFile, STRATA_EMIT_AST, 0);
+        StrataResult r = strataCompileFile(compiler, state.inFileName, STRATA_EMIT_AST, 0);
         if (r.diagnostics && r.diagnostics[0])
         {
             fprintf(stderr, "%s\n", r.diagnostics);
@@ -216,7 +328,7 @@ int main(int argc, char** argv)
         strataResultFree(&r);
     }
 
-    if (run)
+    if (state.run)
     {
         if (!(strataCapabilities() & STRATA_CAP_TCC_JIT))
         {
@@ -226,7 +338,7 @@ int main(int argc, char** argv)
         }
 
         const char* error = NULL;
-        StrataJit* jit = strataJitCompileFile(compiler, inputFile, &error);
+        StrataJit* jit = strataJitCompileFile(compiler, state.inFileName, &error);
         if (!jit)
         {
             fprintf(stderr, "%s\n", error ? error : "JIT compilation failed");
@@ -249,18 +361,18 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        if (!strataJitCanInvokeIntVoid(jit, entryName))
+        if (!strataJitCanInvokeIntVoid(jit, state.entryName))
         {
-            fprintf(stderr, "error: entry '%s' must be a defined int(void) function\n", entryName);
+            fprintf(stderr, "error: entry '%s' must be a defined int(void) function\n", state.entryName);
             strataJitDestroy(jit);
             strataCompilerDestroy(compiler);
             return 1;
         }
 
-        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, entryName);
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, state.entryName);
         if (!entry)
         {
-            fprintf(stderr, "error: entry '%s' was not found\n", entryName);
+            fprintf(stderr, "error: entry '%s' was not found\n", state.entryName);
             strataJitDestroy(jit);
             strataCompilerDestroy(compiler);
             return 1;
@@ -272,100 +384,46 @@ int main(int argc, char** argv)
         return exitCode;
     }
 
-    if (emitC)
+    if (state.emitLlvmIr)
     {
-        if (emitAsm)
-        {
-            fprintf(stderr, "error: --asm cannot be combined with --emit-c\n");
-            strataCompilerDestroy(compiler);
-            return 2;
-        }
-
-        if (!outFile)
-        {
-            outFile = ReplaceExt(inputFile, ".c");
-            outFileOwned = true;
-        }
-
-        StrataResult result = strataCompileFile(compiler, inputFile, STRATA_EMIT_C, emitFlags);
-        if (result.diagnostics && result.diagnostics[0])
-        {
-            fprintf(stderr, "%s\n", result.diagnostics);
-        }
-        if (!result.ok)
-        {
-            strataResultFree(&result);
-            strataCompilerDestroy(compiler);
-            if (outFileOwned)
-            {
-                free((void*)outFile);
-            }
-            return 1;
-        }
-
-        FILE* output = fopen(outFile, "wb");
-        if (!output)
-        {
-            fprintf(stderr, "error: cannot open output '%s'\n", outFile);
-            strataResultFree(&result);
-            strataCompilerDestroy(compiler);
-            if (outFileOwned)
-            {
-                free((void*)outFile);
-            }
-            return 1;
-        }
-        size_t outputLen = strlen(result.output);
-        bool wrote = fwrite(result.output, 1, outputLen, output) == outputLen;
-        wrote = fclose(output) == 0 && wrote;
-        strataResultFree(&result);
-        if (!wrote)
-        {
-            fprintf(stderr, "error: failed writing C source '%s'\n", outFile);
-            strataCompilerDestroy(compiler);
-            if (outFileOwned)
-            {
-                free((void*)outFile);
-            }
-            return 1;
-        }
-        fprintf(stderr, "wrote C source: %s\n", outFile);
-        strataCompilerDestroy(compiler);
-        if (outFileOwned)
-        {
-            free((void*)outFile);
-        }
-        return 0;
     }
 
-    if (!outFile)
+    if (state.emitC)
     {
-        outFile = ReplaceExt(inputFile, ".o");
-        outFileOwned = true;
+        ResultCode result = EmitC(&state, compiler);
+        strataCompilerDestroy(compiler);
+
+        return result;
+    }
+
+    if (!state.outFileName)
+    {
+        state.outFileName = ReplaceExt(state.inFileName, ".o");
+        state.outFileOwned = true;
     }
 
     const char* err = NULL;
-    int ok = strataCompileToObject(compiler, inputFile, outFile, 0, &err);
+    int ok = strataCompileToObject(compiler, state.inFileName, state.outFileName, 0, &err);
 
     if (!ok)
     {
         fprintf(stderr, "%s\n", err ? err : "compilation failed");
         strataFree((char*)err);
         strataCompilerDestroy(compiler);
-        if (outFileOwned)
+        if (state.outFileOwned)
         {
-            free((void*)outFile);
+            free((void*)state.outFileName);
         }
         return 1;
     }
 
-    fprintf(stderr, "wrote object: %s\n", outFile);
+    fprintf(stderr, "wrote object: %s\n", state.outFileName);
 
-    if (emitAsm)
+    if (state.emitAsm)
     {
-        char* asmFile = ReplaceExt(outFile, ".s");
+        char* asmFile = ReplaceExt(state.outFileName, ".s");
         const char* asmErr = NULL;
-        int asmOk = strataCompileToObject(compiler, inputFile, asmFile, 1, &asmErr);
+        int asmOk = strataCompileToObject(compiler, state.inFileName, asmFile, 1, &asmErr);
 
         if (!asmOk)
         {
@@ -380,9 +438,9 @@ int main(int argc, char** argv)
         free(asmFile);
     }
 
-    if (outFileOwned)
+    if (state.outFileOwned)
     {
-        free((void*)outFile);
+        free((void*)state.outFileName);
     }
 
     strataCompilerDestroy(compiler);
