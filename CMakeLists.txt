@@ -321,6 +321,7 @@ if(NOT STRATA_SHARED)
             tests/unit/OperatorTests.c
             tests/unit/BoxTests.c
             tests/unit/StringTests.c
+            tests/unit/ArrayTests.c
         )
     endif()
 
@@ -405,6 +406,20 @@ if(STRATA_ENABLE_LLVM)
     set_target_properties(aot_strings_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_strings_test COMMAND aot_strings_test)
     set_tests_properties(aot_strings_test PROPERTIES PASS_REGULAR_EXPRESSION "run\\(\\) = 7")
+
+    set(STRATA_ARRAY_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/array_test${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_ARRAY_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/arrays.strata"
+                -o "${STRATA_ARRAY_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/arrays.strata"
+        COMMENT "stratac: AOT-compiling arrays.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_arrays_test samples/hosts/arrays_host.c "${STRATA_ARRAY_TEST_OBJECT}")
+    set_target_properties(aot_arrays_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_arrays_test COMMAND aot_arrays_test)
+    set_tests_properties(aot_arrays_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 29")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo PROPERTIES

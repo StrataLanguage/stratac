@@ -36,6 +36,8 @@ typedef enum {
     NodeIncDec,
     NodeCast,
     NodeGlobal,
+    NodeIndex,
+    NodeArrayInit,
 } NodeKind;
 
 typedef struct {
@@ -309,6 +311,22 @@ typedef struct {
     char* name;
     Node* init;
 } GlobalDecl;
+
+/* arr[index] — indexing into an array (or array-typed member/expr). Usable
+   as both an rvalue (element load) and an lvalue (element store). */
+typedef struct {
+    Node base;
+    Node* base_node;
+    Node* index;
+} IndexExpr;
+
+/* { e0, e1, ... } — array literal. elementType is the parsed element type
+   name (e.g. "int"); elements holds the initializer expressions. */
+typedef struct {
+    Node base;
+    char* elementType;
+    Vec elements;
+} ArrayInitExpr;
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);

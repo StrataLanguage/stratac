@@ -237,6 +237,11 @@ bool IsOwningType(const char* name)
         return true;
     }
 
+    if (IsArrayType(name))
+    {
+        return true;
+    }
+
     size_t len = strlen(name);
 
     return len > 5 && strncmp(name, "box<", 4) == 0 && name[len - 1] == '>';
@@ -250,6 +255,13 @@ Str OwningInnerStr(const char* name)
     }
 
     if (strcmp(name, "string") == 0)
+    {
+        return STR_EMPTY;
+    }
+
+    /* Arrays have no box inner; their element type is retrieved via
+       ArrayInnerStr. OwningInnerStr is the box<T> inner slice only. */
+    if (IsArrayType(name))
     {
         return STR_EMPTY;
     }
@@ -269,4 +281,29 @@ const char* OwningInnerCStr(Arena* arena, const char* name)
     }
 
     return StrNew(arena, s.data, s.len).data;
+}
+
+bool IsArrayType(const char* name)
+{
+    if (!name)
+    {
+        return false;
+    }
+
+    size_t len = strlen(name);
+
+    /* "[]" postfix (length >= 3 so there is a non-empty element type). */
+    return len >= 3 && name[len - 2] == '[' && name[len - 1] == ']';
+}
+
+Str ArrayInnerStr(const char* name)
+{
+    if (!IsArrayType(name))
+    {
+        return STR_EMPTY;
+    }
+
+    size_t len = strlen(name);
+
+    return (Str){name, len - 2};
 }
