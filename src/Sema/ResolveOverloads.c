@@ -1163,7 +1163,20 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         for (size_t i = 0; i < ai->elements.count; i++)
         {
-            ResolveExpr(r, (Node*)VecGet(&ai->elements, i), scope);
+            Node* elem = (Node*)VecGet(&ai->elements, i);
+            ResolveExpr(r, elem, scope);
+
+            /* An owning value (string/box) stored in an array literal moves
+               its source, so mark it moved just like a var-decl move. */
+            if (ai->elementType[0] != '\0' && IsOwningType(ai->elementType))
+            {
+                const char* movedKey = MovableBoxSourceKey(r, elem);
+
+                if (movedKey)
+                {
+                    MoveBoxIdent(r, movedKey, elem->range);
+                }
+            }
         }
 
         return;

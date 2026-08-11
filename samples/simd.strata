@@ -19,12 +19,15 @@ int run()
     float3 sum = add(a, b);         // {11, 22, 33}
     float3 splat = float3(5.0);     // {5, 5, 5}
     float3 combo = sum + splat;     // {16, 27, 38}
-    float3 sw = a.zyx;              // swizzle {3, 2, 1}
 
     // Testing of box simd
     box<float3> boxA = float3(1.0, 2.0, 3.0);
     box<float3> boxB = float3(4.0, 5.0, 6.0);
     box<float3> boxC = add(boxA, boxB);
+
+    box<float3>[] vecs = { a, b };
+    
+    float3 sw = vecs[0].zyx;              // swizzle {3, 2, 1}
 
     return (int)(combo.x + combo.y + combo.z)   // 16 + 27 + 38 = 81
          + (int)(sw.x + sw.y + sw.z);           // 3 + 2 + 1 = 6  => 87
