@@ -513,8 +513,38 @@ static LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
     return LLVMConstPtrToInt(gep, I64Ty(b));
 }
 
+/* Heap-copies a string (srcPtr, NUL-terminated, `len` chars) into a fresh
+   allocation so the copy can be owned and freed. Used when a string literal
+   flows into an owning location (struct field, array element). */
+static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
+{
+    size_t copyLen = len + 1;
+    LLVMValueRef sz = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
+    LLVMValueRef args[1] = { sz };
+    StrataAllocFn(b);
+    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "str");
+
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+
+    for (size_t ci = 0; ci < copyLen; ci++)
+    {
+        LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
+        LLVMValueRef ba[1] = { ciVal };
+        LLVMValueRef byte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcPtr, ba, 1, "s"), "b");
+        LLVMBuildStore(b->m_builder, byte, LLVMBuildGEP2(b->m_builder, i8Ty, heap, ba, 1, "d"));
+    }
+
+    return heap;
+}
+
+/* Drops the owning fields of a by-value struct at `structPtr` (used when
+   dropping a box<StructType> - the pointed-to struct's owning fields must be
+   freed before the struct allocation itself). */
+static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName);
+
 /* Drops (frees) the owning value held in 'slot', typed 'td'.
-   - box<T> / string: 'slot' is the address of a pointer; free it.
+   - box<T> / string: 'slot' is the address of a pointer; free it (and, for a
+     box<owning struct>, the struct's owning fields first).
    - T[]: 'slot' is the address of a {ptr, u64} struct; free the backing
      buffer, and when the element type is itself owning (box/string/array),
      drop each element first via a loop. */
@@ -566,10 +596,63 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
 
     /* box / string */
     LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "box");
+
+    /* box<owning struct>: free the struct's owning fields (e.g. a string
+       field) before freeing the struct allocation itself. */
+    if (td.boxInner && TypeRegistryIsOwningStruct(&b->m_registry, td.boxInner))
+    {
+        EmitDropStructFields(b, ptr, td.boxInner);
+    }
+
     LLVMValueRef args[1] = { ptr };
     StrataFreeFn(b);
     LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, args, 1, "");
     LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
+}
+
+static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName)
+{
+    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+
+    if (!st)
+    {
+        return;
+    }
+
+    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, structName);
+
+    if (!structTy)
+    {
+        return;
+    }
+
+    for (size_t j = 0; j < st->fields.count; j++)
+    {
+        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
+        bool fieldOwning = IsOwningType(f->type.name);
+
+        /* A plain owning struct held by value is normally rejected (must be
+           boxed), but handle it defensively for completeness. */
+        bool fieldOwningStruct = TypeRegistryIsOwningStruct(&b->m_registry, f->type.name);
+
+        if (!fieldOwning && !fieldOwningStruct)
+        {
+            continue;
+        }
+
+        LLVMValueRef idxs[2] = { IdxConst(b, 0), IdxConst(b, (unsigned)j) };
+        LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "fd");
+
+        if (fieldOwning)
+        {
+            TypeDesc fieldTd = Resolve(b, &f->type);
+            EmitDropOne(b, fieldAddr, fieldTd);
+        }
+        else
+        {
+            EmitDropStructFields(b, fieldAddr, f->type.name);
+        }
+    }
 }
 
 static void EmitDrops(Builder* b, size_t fromIndex)
@@ -1799,7 +1882,20 @@ static Value EmitCall(Builder* b, CallExpr* n)
             FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, i);
             TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
 
-            Value argValue = Coerce(b, EmitExpr(b, (Node*)VecGet(&n->args, i)), fieldTd);
+            Node* argNode = (Node*)VecGet(&n->args, i);
+            Value rawArg = EmitExpr(b, argNode);
+            Value argValue;
+
+            /* An owning string field takes a heap copy of a literal so the
+               field can be freed without freeing a string global. */
+            if (fieldTd.isBox && !fieldTd.boxInner && argNode->kind == NodeStrLiteral)
+            {
+                argValue = ValueMake(HeapCopyString(b, rawArg.value, strlen(((StrLiteral*)argNode)->value)), fieldTd);
+            }
+            else
+            {
+                argValue = Coerce(b, rawArg, fieldTd);
+            }
 
             agg = LLVMBuildInsertValue(b->m_builder, agg, argValue.value, (unsigned)i, "ins");
         }
@@ -2081,7 +2177,12 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         Value rawField = EmitExpr(b, field->value);
         Value fieldValue;
 
-        if (fieldTd.isBox && !rawField.typeDesc.isBox)
+        if (fieldTd.isBox && !fieldTd.boxInner && field->value->kind == NodeStrLiteral)
+        {
+            /* owning string field from a literal -> heap copy (safe to free). */
+            fieldValue = ValueMake(HeapCopyString(b, rawField.value, strlen(((StrLiteral*)field->value)->value)), fieldTd);
+        }
+        else if (fieldTd.isBox && !rawField.typeDesc.isBox)
         {
             /* box<T> field initialized from a bare T value/literal - heap-box
                it (same as a top-level `box<T> x = T{...};` local), since the

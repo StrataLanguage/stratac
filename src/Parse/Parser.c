@@ -259,6 +259,21 @@ static bool LooksLikeVarDecl(Parser* p)
     }
 }
 
+/* Consume well-formed postfix `[]` pairs (e.g. `int[]`, `box<S>[]`, `int[][]`).
+   Leaves a `[` intact (e.g. `foo[3]`) so speculative type-parse is safe. */
+static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
+{
+    while (p->m_cur.kind == TokLBracket && LexerPeekToken(p->m_lex).kind == TokRBracket)
+    {
+        Advance(p);  /* '[' */
+        Advance(p);  /* ']' */
+
+        out->name = arena_format(p->m_arena, "%s[]", out->name);
+        out->range
+            = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+    }
+}
+
 bool ParserTryParseType(Parser* p, TypeName* out)
 {
     bool isConst = false;
@@ -298,6 +313,8 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         out->name = arena_format(p->m_arena, "box<%s>", inner.name);
         out->range = (SourceRange){boxRange.start, (uint16_t)(p->m_cur.range.start - boxRange.start), boxRange.fileId};
         out->isConst = isConst;
+
+        ApplyArrayBrackets(p, out, constRange);
 
         return true;
     }
@@ -369,19 +386,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->range
         = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
 
-    /* Postfix array brackets: `int[]`, `Vec3[]`, `box<int>[]`, even
-       `int[][]` (nested). Each `[]` wraps the current type. Only consume
-       well-formed `[]` pairs so an indexing expression like `foo[3]` is left
-       intact when this is tried speculatively. */
-    while (p->m_cur.kind == TokLBracket && LexerPeekToken(p->m_lex).kind == TokRBracket)
-    {
-        Advance(p);  /* '[' */
-        Advance(p);  /* ']' */
-
-        out->name = arena_format(p->m_arena, "%s[]", out->name);
-        out->range
-            = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
-    }
+    ApplyArrayBrackets(p, out, constRange);
 
     out->isConst = isConst;
 

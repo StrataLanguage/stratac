@@ -309,6 +309,42 @@ STRATA_TEST(array_push_rejects_wrong_arg_count)
     strataFree((char*)err);
 }
 
+STRATA_TEST(array_push_owning_value_from_index_is_error)
+{
+    /* Pushing an owning value read out of an array element would duplicate
+       ownership (double-free); it must be rejected. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  string[] s = {\"a\", \"b\"};\n"
+        "  array_push(s, s[0]);\n"           /* borrowed owning value */
+        "  return (int)s.length;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
+STRATA_TEST(array_of_owning_struct_must_be_boxed)
+{
+    /* A struct holding an owning field is itself owning; holding it by value
+       as an array element would leak its fields, so it must be boxed. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct S { string s; };\n"
+        "int entry() {\n"
+        "  S[] arr = { S{.s = \"a\"} };\n"   /* illegal: use box<S>[] */
+        "  return (int)arr.length;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
 STRATA_TEST(array_uninitialized_decl_allowed_empty)
 {
     const char* err = NULL;
