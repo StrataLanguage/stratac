@@ -1123,7 +1123,19 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
         }
         else
         {
-            CEmitExpr(emitter, eNode);
+            const char* valueType = ExprType(emitter, eNode);
+
+            /* box<T> stored in a T[] array element: unbox the pointer. */
+            if (valueType[0] != '\0' && IsOwningType(valueType) && !elemOwning)
+            {
+                SbPuts(&emitter->out, "(*");
+                CEmitExpr(emitter, eNode);
+                SbPutc(&emitter->out, ')');
+            }
+            else
+            {
+                CEmitExpr(emitter, eNode);
+            }
         }
 
         SbPutc(&emitter->out, ';');
