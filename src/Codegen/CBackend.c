@@ -753,6 +753,15 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
         {
             const char* valueType = ExprType(emitter, field->value);
 
+            /* owning string field from a literal -> heap copy (safe to free). */
+            if (strcmp(declaration->type.name, "string") == 0 && field->value->kind == NodeStrLiteral)
+            {
+                SbPuts(&emitter->out, "strata_strdup(");
+                CEmitExpr(emitter, field->value);
+                SbPutc(&emitter->out, ')');
+                continue;
+            }
+
             if (valueType[0] != '\0' && !IsOwningType(valueType))
             {
                 /* box<T> field initialized from a bare T value/literal -
@@ -1593,7 +1602,20 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             SbPuts(&emitter->out, "->");
             SbPuts(&emitter->out, FieldName(emitter, fd->name));
             SbPuts(&emitter->out, " = ");
-            CEmitExpr(emitter, sf->value);
+
+            /* An owning string field takes a heap-owned copy of a literal so
+               the field can be freed on drop without freeing a string global. */
+            if (IsOwningType(fd->type.name) && sf->value->kind == NodeStrLiteral)
+            {
+                SbPuts(&emitter->out, "strata_strdup(");
+                CEmitExpr(emitter, sf->value);
+                SbPutc(&emitter->out, ')');
+            }
+            else
+            {
+                CEmitExpr(emitter, sf->value);
+            }
+
             SbPuts(&emitter->out, ";\n");
         }
 

@@ -316,6 +316,21 @@ static const char* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     return isPush ? "ulong" : "void";
 }
 
+static bool IsAssignableType(const Resolver* r, const char* targetType, const char* valueType);
+
+/* True if `n` (after unwrapping casts) is an array-element read like `arr[i]`:
+   a borrow whose owner (the array) retains the value. Such a value cannot be
+   moved, so pushing it into an array would duplicate ownership. */
+static bool IsArrayElementBorrow(Node* n)
+{
+    while (n && n->kind == NodeCast)
+    {
+        n = ((CastExpr*)n)->operand;
+    }
+
+    return n && n->kind == NodeIndex;
+}
+
 /* Validates an array builtin call and marks it a pseudo-call. Returns true if
    `c` is one of array_push/pop/resize (regardless of whether it was valid). */
 static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
@@ -365,15 +380,45 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
         ResolveExpr(r, arg1, scope);
+
+        const char* sizeType = InferType(r, arg1, scope);
+
+        if (sizeType[0] != '\0' && !IsNumeric(sizeType))
+        {
+            DiagErrorFmt(r->m_diag, arg1->range,
+                         "'array_resize' size must be an integer, not '%s'", sizeType);
+        }
     }
     else if (isPush)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
         ResolveExpr(r, arg1, scope);
 
-        /* Pushing an owning value (string/box) moves it into the array. */
         const char* valueType = InferType(r, arg1, scope);
 
+        /* The value must be assignable to the array's element type. */
+        Str innerRaw = ArrayInnerStr(arrType);
+        const char* elemType = innerRaw.data ? StrNew(r->m_arena, innerRaw.data, innerRaw.len).data : "";
+
+        if (valueType[0] != '\0' && elemType[0] != '\0' && !IsAssignableType(r, elemType, valueType))
+        {
+            DiagErrorFmt(r->m_diag, arg1->range,
+                         "cannot push a value of type '%s' into '%s' (element type '%s')",
+                         valueType, arrType, elemType);
+        }
+
+        /* Pushing an owning value that is itself read out of an array element
+           (a borrow) would duplicate the owning pointer - the source array
+           keeps it too, so both would free it. Move it into a local first. */
+        if (valueType[0] != '\0' && IsOwningType(valueType) && IsArrayElementBorrow(arg1))
+        {
+            DiagErrorFmt(r->m_diag, arg1->range,
+                         "cannot push '%s' read from an array element - it would be owned by two arrays; "
+                         "move it into a variable first",
+                         valueType);
+        }
+
+        /* Pushing an owning value (string/box) moves it into the array. */
         if (valueType[0] != '\0' && IsOwningType(valueType))
         {
             const char* movedKey = MovableBoxSourceKey(r, arg1);
@@ -1189,6 +1234,20 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "owning struct '%s' must be stored in a box; use 'box<%s>'",
                          vd->type.name, vd->type.name);
+        }
+
+        /* An owning struct held by value as an array element would leak its
+           owning fields on drop - it must be boxed too (box<S>[]). */
+        {
+            Str arrInner = ArrayInnerStr(vd->type.name);
+
+            if (arrInner.data && TypeRegistryIsOwningStruct(&r->m_registry, StrNew(r->m_arena, arrInner.data, arrInner.len).data))
+            {
+                const char* innerC = StrNew(r->m_arena, arrInner.data, arrInner.len).data;
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "owning struct '%s' must be stored in a box; use 'box<%s>[]'",
+                             innerC, innerC);
+            }
         }
 
         if (vd->init)

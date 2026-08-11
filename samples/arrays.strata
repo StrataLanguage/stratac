@@ -5,6 +5,10 @@
  *   array_push(arr, value) -> ulong  grow by one element; returns new length
  *   array_pop(arr)         -> T      remove and return the last element
  *   array_resize(arr, n)   -> void   grow (zero-init) or shrink (drop) to n
+ *
+ * A struct holding any owning field (string/box<T>/T[]) is itself "owning" and
+ * must be boxed - so an array of FooBars is written box<FooBar>[]. Dropping a
+ * box<FooBar> frees the FooBar's string field recursively.
  */
 
 int sum(ref int[] a) {
@@ -40,18 +44,20 @@ struct FooBar
 
 extern int puts(string str);
 
-void TakeArrayOfFooBars(FooBar[] elems)
-{
-    for (uint i = 0; i < elems.length; i++)
-    {
+void PrintAll(ref box<FooBar>[] elems) {
+    array_push(elems, FooBar("again"));   // {hello, world, again}
+    for (uint i = 0; i < elems.length; i++) {
         puts(elems[i].str);
     }
 }
 
+box<FooBar>[] globalArray = {};
+
 int entry() {
-    FooBar[] fooBars = { FooBar("hello"), FooBar("world") };
-    array_push(fooBars, 5);
-    TakeArrayOfFooBars(fooBars);
+    PrintAll(globalArray);
+
+    box<FooBar>[] fooBars = { FooBar("hello"), FooBar("world") };
+    PrintAll(fooBars);
 
     int[] nums = {1, 2, 3, 4, 5};
     nums[0] = 10;

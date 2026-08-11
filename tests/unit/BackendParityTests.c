@@ -339,3 +339,18 @@ STRATA_TEST(llvm_and_tcc_array_push_string_move_parity)
                 "}\n",
                 2);
 }
+
+STRATA_TEST(llvm_and_tcc_box_owning_struct_array_parity)
+{
+    /* An owning struct (holds a string) must be boxed; box<S>[] stores
+       box<S> elements, each heap-owning its string. Pushing a bare S boxes it,
+       and dropping the array recursively frees every S's string in both
+       backends without a crash or double-free. */
+    CheckParity("struct S { string s; };\n"
+                "int entry() {\n"
+                "  box<S>[] arr = { S{.s = \"a\"}, S{.s = \"bb\"} };\n"
+                "  array_push(arr, S{.s = \"ccc\"});\n"
+                "  return (int)arr.length;\n"          /* 3 */
+                "}\n",
+                3);
+}
