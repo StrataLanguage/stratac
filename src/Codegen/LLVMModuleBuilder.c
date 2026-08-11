@@ -80,6 +80,8 @@ typedef struct {
     LLVMTypeRef m_freeFnType;
     LLVMValueRef m_panicFn;
     LLVMTypeRef m_panicFnType;
+    LLVMValueRef m_strdupFn;
+    LLVMTypeRef m_strdupFnType;
     Arena* m_arena;
     int m_strLitCount;
 } Builder;
@@ -1904,62 +1906,131 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
 }
 
-/* Emits copy(arg) returning a deep copy of an owning value */
+static LLVMValueRef StrataStrdupFn(Builder* b)
+{
+    if (!b->m_strdupFn)
+    {
+        LLVMTypeRef params[1] = { b->m_ptrTy };
+        b->m_strdupFnType = LLVMFunctionType(b->m_ptrTy, params, 1, 0);
+        b->m_strdupFn = LLVMAddFunction(b->m_mod, "strata_strdup", b->m_strdupFnType);
+    }
+    return b->m_strdupFn;
+}
+
+static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
+{
+    if (td.isBox && !td.boxInner)
+    {
+        StrataStrdupFn(b);
+        LLVMValueRef args[1] = { src.value };
+        LLVMValueRef copy = LLVMBuildCall2(b->m_builder, b->m_strdupFnType, b->m_strdupFn, args, 1, "cpstr");
+        return ValueMake(copy, td);
+    }
+
+    if (td.isBox && td.boxInner)
+    {
+        TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)td.boxInner});
+        LLVMValueRef sz = SizeOfConst(b, innerTd.type);
+        LLVMValueRef args[1] = { sz };
+        StrataAllocFn(b);
+        LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "cpbox");
+
+        const StructType* st = TypeRegistryFind(&b->m_registry, td.boxInner);
+        LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, td.boxInner) : NULL;
+
+        if (st && structTy)
+        {
+            for (size_t j = 0; j < st->fields.count; j++)
+            {
+                FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
+                TypeDesc fieldTd = Resolve(b, &f->type);
+                LLVMValueRef idxs[2] = { IdxConst(b, 0), IdxConst(b, (unsigned)j) };
+                LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
+                LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
+
+                if (IsOwningType(f->type.name))
+                {
+                    Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
+                    Value copied = EmitCopyValue(b, fv, fieldTd);
+                    LLVMBuildStore(b->m_builder, copied.value, dstField);
+                }
+                else
+                {
+                    LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
+                    LLVMBuildStore(b->m_builder, loaded, dstField);
+                }
+            }
+        }
+        else
+        {
+            LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv");
+            LLVMBuildStore(b->m_builder, loaded, heap);
+        }
+
+        return ValueMake(heap, td);
+    }
+
+    if (td.isArray)
+    {
+        TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)td.arrayInner});
+        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+        LLVMValueRef oldLen = LLVMBuildExtractValue(b->m_builder, src.value, 1, "cln");
+        LLVMValueRef oldData = LLVMBuildExtractValue(b->m_builder, src.value, 0, "cdt");
+
+        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), oldLen, "cby");
+        LLVMValueRef allocArgs[1] = { totalBytes };
+        StrataAllocFn(b);
+        LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "cpya");
+
+        if (IsOwningType(td.arrayInner))
+        {
+            LLVMBasicBlockRef cond = NewBb(b, "ccp.cond");
+            LLVMBasicBlockRef body = NewBb(b, "ccp.body");
+            LLVMBasicBlockRef end = NewBb(b, "ccp.end");
+            LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "ccp.i");
+            LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
+            Br(b, cond);
+
+            PositionAtEnd(b, cond);
+            LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+            LLVMValueRef cnt = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, oldLen, "cclt");
+            LLVMBuildCondBr(b->m_builder, cnt, body, end);
+            b->m_terminated = true;
+
+            PositionAtEnd(b, body);
+            LLVMValueRef ep[1] = { i };
+            LLVMValueRef srcElem = LLVMBuildGEP2(b->m_builder, elemTy, oldData, ep, 1, "cse");
+            LLVMValueRef dstElem = LLVMBuildGEP2(b->m_builder, elemTy, newData, ep, 1, "cde");
+            Value elemVal = ValueMake(LLVMBuildLoad2(b->m_builder, elemTy, srcElem, "ev"), elemTd);
+            Value copied = EmitCopyValue(b, elemVal, elemTd);
+            LLVMBuildStore(b->m_builder, copied.value, dstElem);
+            LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "nxt");
+            LLVMBuildStore(b->m_builder, next, iSlot);
+            Br(b, cond);
+
+            PositionAtEnd(b, end);
+        }
+        else
+        {
+            EmitArrayCopyLoop(b, newData, oldData, oldLen, elemTy);
+        }
+
+        LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
+        arr = LLVMBuildInsertValue(b->m_builder, arr, newData, 0, "ci");
+        arr = LLVMBuildInsertValue(b->m_builder, arr, oldLen, 1, "cl");
+        return ValueMake(arr, td);
+    }
+
+    return src;
+}
+
+/* Emits copy(arg) returning a deep copy of an owning value. */
 static Value EmitCopyBuiltin(Builder* b, CallExpr* n)
 {
     Node* arg0 = (Node*)VecGet(&n->args, 0);
     Value v = EmitExpr(b, arg0);
 
-    /* string: heap-copy the characters. */
-    if (v.typeDesc.isBox && !v.typeDesc.boxInner)
-    {
-        if (arg0->kind == NodeStrLiteral)
-        {
-            StrLiteral* lit = AsNode(StrLiteral, arg0);
-
-            return ValueMake(HeapCopyString(b, v.value, strlen(lit->value)), v.typeDesc);
-        }
-
-        return v;
-    }
-
-    /* box<T>: allocate new inner, shallow-copy the pointee. */
-    if (v.typeDesc.isBox && v.typeDesc.boxInner)
-    {
-        TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)v.typeDesc.boxInner});
-        LLVMValueRef sz = SizeOfConst(b, innerTd.type);
-        LLVMValueRef args[1] = { sz };
-        StrataAllocFn(b);
-        LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "copyb");
-        LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, v.value, "cv");
-        LLVMBuildStore(b->m_builder, loaded, heap);
-
-        return ValueMake(heap, v.typeDesc);
-    }
-
-    /* T[]: allocate new buffer, copy elements. */
-    if (v.typeDesc.isArray)
-    {
-        TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)v.typeDesc.arrayInner});
-        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
-        LLVMValueRef oldLen = LLVMBuildExtractValue(b->m_builder, v.value, 1, "cln");
-        LLVMValueRef oldData = LLVMBuildExtractValue(b->m_builder, v.value, 0, "cdt");
-
-        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), oldLen, "cby");
-        LLVMValueRef allocArgs[1] = { totalBytes };
-        StrataAllocFn(b);
-        LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "copya");
-
-        EmitArrayCopyLoop(b, newData, oldData, oldLen, elemTy);
-
-        LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
-        arr = LLVMBuildInsertValue(b->m_builder, arr, newData, 0, "ci");
-        arr = LLVMBuildInsertValue(b->m_builder, arr, oldLen, 1, "cl");
-
-        return ValueMake(arr, v.typeDesc);
-    }
-
-    return v;
+    return EmitCopyValue(b, v, v.typeDesc);
 }
 
 static Value EmitCall(Builder* b, CallExpr* n)
@@ -3279,6 +3350,8 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     b.m_freeFnType = NULL;
     b.m_panicFn = NULL;
     b.m_panicFnType = NULL;
+    b.m_strdupFn = NULL;
+    b.m_strdupFnType = NULL;
     b.m_arrayType = NULL;
 
     TypeRegistryInit(&b.m_registry);

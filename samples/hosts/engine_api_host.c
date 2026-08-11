@@ -13,6 +13,8 @@ void* strata_alloc(unsigned long n) { return malloc((size_t)n); }
 void strata_free(void* p) { free(p); }
 void strata_panic(const char* msg) { fprintf(stderr, "strata panic: %s\n", msg); abort(); }
 
+char* strata_strdup(const char* s) { size_t n = 0; while (s[n]) n++; char* d = (char*)malloc(n + 1); for (size_t i = 0; i <= n; i++) d[i] = s[i]; return d; }
+
 /* The engine's real entity type; Strata never sees inside it. */
 typedef struct { int x, y; } Entity;
 
