@@ -20,6 +20,7 @@ typedef struct
     const char* typeName;
     const char* cName;
     bool indirect;
+    bool aliased; /* ref T... rest: element slots hold pointers to sources */
 } CSymbol;
 
 typedef struct
@@ -347,6 +348,28 @@ static bool ParamIsIndirectFor(CEmitter* emitter, const FunctionDecl* function, 
     return ParamIsIndirect(emitter, param);
 }
 
+/* A `ref T... rest` with non-owning elements collects POINTERS to the source
+   arguments, so element writes through the ref propagate back to the caller
+   (true ref semantics). Owning (box<T>) element rests stay a borrow. */
+static bool ParamIsAliasedRest(CEmitter* emitter, const ParamDecl* param)
+{
+    if (!param->isVarargRest || param->mod != ModRef)
+    {
+        return false;
+    }
+
+    Str inner = ArrayInnerStr(param->type.name);
+
+    if (!inner.data)
+    {
+        return false;
+    }
+
+    const char* elem = StrNew(emitter->arena, inner.data, inner.len).data;
+
+    return !IsOwningType(elem);
+}
+
 static void EmitType(CEmitter* emitter, const TypeName* type)
 {
     if (type->isConst)
@@ -586,6 +609,20 @@ static const Node* MovableBoxSource(const Node* n)
 
 static void EmitScalarValue(CEmitter* emitter, const Node* node);
 
+/* True if 'base' is a `ref T...` rest array whose slots hold pointers to the
+   source arguments (element access must deref the slot). */
+static bool IsAliasedRestArray(const CEmitter* emitter, const Node* base)
+{
+    if (base && base->kind == NodeIdent)
+    {
+        const CSymbol* sym = (const CSymbol*)StrMapGet(&emitter->symbols, ((const IdentExpr*)base)->name);
+
+        return sym && sym->aliased;
+    }
+
+    return false;
+}
+
 static void EmitLValue(CEmitter* emitter, const Node* node)
 {
     if (!node)
@@ -655,15 +692,32 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
         const char* elemC
             = TypeNameC(emitter, inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "void");
 
-        SbPuts(&emitter->out, "((");
-        SbPuts(&emitter->out, elemC);
-        SbPuts(&emitter->out, " *)(( ");
-        EmitLValue(emitter, idx->base_node);
-        SbPuts(&emitter->out, ").data))[({ unsigned long long _bi = ");
-        CEmitExpr(emitter, idx->index);
-        SbPuts(&emitter->out, "; if (_bi >= (");
-        EmitLValue(emitter, idx->base_node);
-        SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); _bi; })]");
+        if (IsAliasedRestArray(emitter, idx->base_node))
+        {
+            /* Aliased ref rest: the data is a T* array; each slot points at
+               the source argument, so deref the slot. */
+            SbPuts(&emitter->out, "(*(( ");
+            SbPuts(&emitter->out, elemC);
+            SbPuts(&emitter->out, " **)(( ");
+            EmitLValue(emitter, idx->base_node);
+            SbPuts(&emitter->out, ").data))[({ unsigned long long _bi = ");
+            CEmitExpr(emitter, idx->index);
+            SbPuts(&emitter->out, "; if (_bi >= (");
+            EmitLValue(emitter, idx->base_node);
+            SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); _bi; })])");
+        }
+        else
+        {
+            SbPuts(&emitter->out, "((");
+            SbPuts(&emitter->out, elemC);
+            SbPuts(&emitter->out, " *)(( ");
+            EmitLValue(emitter, idx->base_node);
+            SbPuts(&emitter->out, ").data))[({ unsigned long long _bi = ");
+            CEmitExpr(emitter, idx->index);
+            SbPuts(&emitter->out, "; if (_bi >= (");
+            EmitLValue(emitter, idx->base_node);
+            SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); _bi; })]");
+        }
 
         return;
     }
@@ -1105,6 +1159,33 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
 
     const char* valueType = ExprType(emitter, eNode);
 
+    if (borrow)
+    {
+        /* Aliased `ref T...`: the slot holds a POINTER to the source storage
+           so element writes through the ref propagate to the caller. */
+        if (valueType[0] != '\0' && IsOwningType(valueType))
+        {
+            /* box<T> arg: the box pointer already IS the address of the value. */
+            CEmitExpr(emitter, eNode);
+        }
+        else if (IsLValue(eNode))
+        {
+            SbPuts(&emitter->out, "&(");
+            EmitLValue(emitter, eNode);
+            SbPutc(&emitter->out, ')');
+        }
+        else
+        {
+            SbPuts(&emitter->out, "&((");
+            SbPuts(&emitter->out, elemC);
+            SbPuts(&emitter->out, "){ ");
+            CEmitExpr(emitter, eNode);
+            SbPuts(&emitter->out, " })");
+        }
+
+        return;
+    }
+
     /* box<T> stored in a T[] element: unbox the pointer. */
     if (valueType[0] != '\0' && IsOwningType(valueType))
     {
@@ -1250,11 +1331,19 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         const char* elemName = inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : NULL;
         const char* elemC = TypeNameC(emitter, elemName);
         bool borrow = restParam->mod == ModRef;
+        bool aliased = borrow && !IsOwningType(elemName);
 
         /* A stack-allocated {data, len}: the backing buffer is a compound
-           literal array (automatic storage, alive through the call). */
+           literal array (automatic storage, alive through the call). An
+           aliased ref rest stores T* (pointers to the source arguments). */
         SbPuts(&emitter->out, "&((strata__arr){ .data = (");
         SbPuts(&emitter->out, elemC);
+
+        if (aliased)
+        {
+            SbPuts(&emitter->out, "*");
+        }
+
         SbPuts(&emitter->out, "[]){ ");
 
         size_t tail = call->args.count - (function->params.count - 1);
@@ -3059,6 +3148,14 @@ static void EmitDefinitions(CEmitter* emitter)
 
             AddSymbol(emitter, param->name, param->type.name, VarName(emitter, param->name),
                       ParamIsIndirect(emitter, param));
+
+            {
+                CSymbol* sym = (CSymbol*)StrMapGet(&emitter->symbols, param->name);
+                if (sym)
+                {
+                    sym->aliased = ParamIsAliasedRest(emitter, param);
+                }
+            }
 
             /* An owned (non-ref) box parameter is consumed: freed at return.
                A vararg rest array is stack-backed: drop its owning elements

@@ -155,3 +155,29 @@ STRATA_TEST(vector_ref_rest_reassign_elements)
         675);
 }
 
+STRATA_TEST(vector_ref_rest_aliases_sources)
+{
+    /* A ref float3... rest aliases the source variables: reassigning an
+       element writes through to the caller's variable, and the mutation is
+       visible in a later call with the same arguments. */
+    run_int(
+        "void set_all(ref float3... vecs)\n"
+        "{\n"
+        "  for (uint i = 0; i < vecs.length; i++)\n"
+        "  {\n"
+        "    vecs[i] = float3(9.0, 9.0, 9.0);\n"
+        "  }\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  float3 a = float3(1.0, 2.0, 3.0);\n"
+        "  float3 b = float3(10.0, 20.0, 30.0);\n"
+        "  set_all(a, b);\n"
+        "  int s = (int)(a.x + a.y + a.z) + (int)(b.x + b.y + b.z);\n"   /* 27 + 27 = 54 */
+        "  set_all(a, b);\n"
+        "  int t = (int)(a.x + a.y + a.z) + (int)(b.x + b.y + b.z);\n"   /* 54 */
+        "  return s + t;\n"                                               /* 108 */
+        "}\n",
+        108);
+}
+

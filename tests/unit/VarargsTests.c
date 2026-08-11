@@ -506,6 +506,42 @@ STRATA_TEST(varargs_typed_rest_ref_reassign_mixed_rw_parity)
                 208);
 }
 
+STRATA_TEST(varargs_typed_rest_ref_aliases_scalars_parity)
+{
+    /* A ref int... rest aliases the source variables: element writes mutate
+       the caller's variables, and the mutation persists across calls. */
+    CheckParity("void set_all(ref int... rest)\n"
+                "{\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { rest[i] = 99; }\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "    int x = 1;\n"
+                "    int y = 2;\n"
+                "    set_all(x, y);\n"
+                "    int s = x + y;\n"      /* 198 */
+                "    set_all(x, y);\n"
+                "    int t = x + y;\n"      /* 198 */
+                "    return s + t;\n"       /* 396 */
+                "}\n",
+                396);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_aliases_box_parity)
+{
+    /* A box<T> arg to a ref Foo... rest aliases the boxed value. */
+    CheckParity("struct Foo { int v; };\n"
+                "void set_first(ref Foo... rest) { rest[0].v = 99; }\n"
+                "int entry()\n"
+                "{\n"
+                "    box<Foo> a = Foo{.v = 1};\n"
+                "    Foo b = Foo{.v = 2};\n"
+                "    set_first(a, b);\n"
+                "    return a.v + b.v;\n"   /* 99 + 2 = 101 */
+                "}\n",
+                101);
+}
+
 STRATA_TEST(sema_typed_rest_ref_rebind_rejected)
 {
     /* A ref rest borrows the caller's stack array; the binding itself can't

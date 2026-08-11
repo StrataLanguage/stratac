@@ -28,6 +28,11 @@ void print_vectors(ref float3... vecs)
     }
 }
 
+void mutate_vector(ref float3 v)
+{
+    v = float3(99.0f,99.0f,99.0f);
+}
+
 int run()
 {
     box<float3> a = float3(1.0, 2.0, 3.0);
@@ -35,6 +40,8 @@ int run()
     float3 sum = add(a, b);         // {11, 22, 33}
     float3 splat = float3(5.0);     // {5, 5, 5}
     float3 combo = sum + splat;     // {16, 27, 38}
+
+    mutate_vector(a);
 
     print_vectors(a, b, sum);
     print_vectors(a, b, sum);

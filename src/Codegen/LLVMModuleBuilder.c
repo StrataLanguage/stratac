@@ -18,6 +18,7 @@ typedef struct {
     const char* boxInner;
     bool isArray;
     const char* arrayInner;  /* element type name (arena-owned) */
+    bool aliasedArray;       /* ref T... rest: slots hold pointers to sources */
 } TypeDesc;
 
 typedef struct {
@@ -865,6 +866,23 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
             sym->value = LLVMGetParam(b->m_curFn, (unsigned)i);
             sym->typeDesc = typeDesc;
 
+            /* A `ref T... rest` with non-owning elements collects pointers to
+               the source arguments; element access derefs the slot. */
+            if (p->isVarargRest && p->mod == ModRef)
+            {
+                Str inner = ArrayInnerStr(p->type.name);
+
+                if (inner.data)
+                {
+                    const char* elem = StrNew(b->m_arena, inner.data, inner.len).data;
+
+                    if (!IsOwningType(elem))
+                    {
+                        sym->typeDesc.aliasedArray = true;
+                    }
+                }
+            }
+
             /* An owned (non-ref) box/array parameter is consumed: freed at return.
                A vararg rest array is stack-backed: its owning ELEMENTS are
                dropped, but the caller's stack buffer is not freed. */
@@ -1102,6 +1120,20 @@ static LValue EmitLValue(Builder* b, Node* n)
         EmitBoundsCheck(b, idxVal, lenVal);
 
         LLVMValueRef idxArgs[1] = { idxVal };
+
+        if (base.typeDesc.aliasedArray)
+        {
+            /* Aliased ref rest: data is a T* slot array; load the slot to get
+               the source argument's address, which is the element lvalue. */
+            LLVMValueRef slotAddr = LLVMBuildGEP2(b->m_builder, b->m_ptrTy, dataPtr, idxArgs, 1, "ais");
+
+            none.valid = true;
+            none.ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slotAddr, "alias");
+            none.typeDesc = elemTd;
+
+            return none;
+        }
+
         LLVMValueRef elemAddr = LLVMBuildGEP2(b->m_builder, elemTy, dataPtr, idxArgs, 1, "ai");
 
         none.valid = true;
@@ -2361,6 +2393,11 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
        own type. */
     LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
+    /* A `ref T... rest` with non-owning elements holds POINTERS to the source
+       arguments (aliased), so element writes propagate to the caller. */
+    bool aliased = stackBuffer && borrow && !IsOwningType(elementType);
+    LLVMTypeRef slotTy = aliased ? b->m_ptrTy : elemTy;
+
     size_t count = elements->count;
     LLVMValueRef dataPtr = LLVMConstNull(b->m_ptrTy);
 
@@ -2370,7 +2407,7 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
         {
             /* Fixed-size stack buffer (count is a compile-time constant). */
             size_t n = count;
-            LLVMTypeRef arrTy = LLVMArrayType(elemTy, (unsigned)n);
+            LLVMTypeRef arrTy = LLVMArrayType(slotTy, (unsigned)n);
             LLVMValueRef bufSlot = EntryAlloca(b, arrTy, "varargs");
 
             LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
@@ -2395,7 +2432,35 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
             Value v = EmitExpr(b, eNode);
 
             LLVMValueRef idxArg[1] = { LLVMConstInt(I64Ty(b), (unsigned long long)i, 0) };
-            LLVMValueRef elemAddr = LLVMBuildGEP2(b->m_builder, elemTy, dataPtr, idxArg, 1, "ael");
+            LLVMValueRef elemAddr = LLVMBuildGEP2(b->m_builder, slotTy, dataPtr, idxArg, 1, "ael");
+
+            if (aliased)
+            {
+                /* Store a POINTER to the source argument. A box arg already
+                   is the value's address; lvalues yield their address; a
+                   non-lvalue is materialized into a stack temp. */
+                if (v.typeDesc.isBox)
+                {
+                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                }
+                else
+                {
+                    LValue lv = EmitLValue(b, eNode);
+
+                    if (lv.valid)
+                    {
+                        LLVMBuildStore(b->m_builder, lv.ptr, elemAddr);
+                    }
+                    else
+                    {
+                        LLVMValueRef temp = EntryAlloca(b, elemTy, "aliastemp");
+                        LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, temp);
+                        LLVMBuildStore(b->m_builder, temp, elemAddr);
+                    }
+                }
+
+                continue;
+            }
 
             if (elemTd.isArray)
             {
@@ -2489,6 +2554,7 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
     td.type = ArrayStructType(b);
     td.isArray = true;
     td.arrayInner = arena_strdup(b->m_arena, elementType);
+    td.aliasedArray = aliased;
 
     return ValueMake(arr, td);
 }
