@@ -173,3 +173,5 @@ uint64_t HashStr64(const char* s);
 size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);
 
 const char* GenerateId(char* buffer, int size);
+
+char* ReplaceExt(const char* path, const char* ext);

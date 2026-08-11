@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <Core/Util.h>
+
 typedef enum ResultCode
 {
     RCSuccess = 0,
@@ -12,21 +14,63 @@ typedef enum ResultCode
     RCArgumentError = 2,
 } ResultCode;
 
-typedef enum ToggleCommands : uint64_t
+/* Modes and toggles to be executed after all arguments are parsed. */
+typedef enum ModeFlag : uint64_t
 {
-    TC_NONE,
-    TC_EMIT_ASM,
-    TC_PRINT_AST,
-    TC_EMIT_C,
-    TC_RUN,
-    TC_DISABLE_SIMD,
-} ToggleCommands;
+    MF_NONE,
+    MF_DISABLE_SIMD,
+    MF_PRINT_AST,
+    MF_EMIT_ASM,
+    MF_EMIT_C,
+    MF_RUN,
+} ModeFlag;
 
-#define TC_BIT(cmd_) (1 << (cmd_))
+#define MF_BIT(cmd_) (1 << (cmd_))
+#define HAS_TOGGLE(modes_, cmd_) (((modes_) & MF_BIT(cmd_)) != 0)
 
-#define HAS_TOGGLE(toggles_, cmd_) (((toggles_) & TC_BIT(cmd_)) != 0)
+typedef struct State
+{
+    const char* outputFileName;
+    const char* sourceFileName;
+    /* bool emitAsm;
+    bool printAst;
+    bool emitC;
+    bool emitLlvmIr;
+    bool run; */
+    bool outFileOwned;
+    const char* entryName;
+    StrataArch outputArch;
+    StrataEmitFlags emitFlags;
+    ModeFlag toggleCommands;
 
-typedef struct State State;
+    char** arguments;
+    int argumentIndex;
+    int argumentCount;
+} State;
+
+void StateDefault(State* c)
+{
+    memset(c, 0, sizeof(State));
+
+    c->outputFileName = NULL;
+    c->sourceFileName = NULL;
+
+    /* c->emitAsm = false;
+    c->printAst = false;
+    c->emitC = false;
+    c->emitLlvmIr = false;
+    c->run = false; */
+    c->outFileOwned = false;
+    c->entryName = "main";
+
+    c->outputArch = STRATA_ARCH_AUTO;
+    c->emitFlags = 0;
+    c->toggleCommands = MF_NONE;
+
+    c->arguments = NULL;
+    c->argumentIndex = 0;
+    c->argumentCount = 0;
+}
 
 typedef enum CommandFlags
 {
@@ -53,7 +97,7 @@ typedef struct CLICommand
     /* */
     CommandFlags flags;
 
-    ToggleCommands toggleValue;
+    ModeFlag modeValue;
 
     const char* description;
 } CLICommand;
@@ -62,50 +106,58 @@ typedef struct CLICommand
  * Command Definitions
  */
 
-static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdOutputFileName(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdPrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdToggleSetting(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdSetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdRunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_PrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_SetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 
-#define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_IGNORE, NULL}
-#define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_IGNORE, ST_NONE, label_}
+/* Adds an unlabelled separator between options */
+#define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, NULL}
+/* Adds a labelled separator between options */
+#define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_IGNORE, MF_NONE, label_}
 
+/* Defines a mode that takes no arguments. (e.g. --emit-c, --run) */
+#define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
+
+/* Same as `COMMAND_MODE`, used for readability */
 #define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                                 \
-    {NULL, long_cmd_, NULL, &CmdToggleSetting, CF_NONE, toggle_flag_, desc_}
+    {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
 
-#define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, TC_NONE, desc_}
+/* Defines a command that writes out information before terminating. (e.g. --version or --help) */
+#define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, MF_NONE, desc_}
 
+/* Defines a general command used to modify internal state or specify values. (e.g. --arch, -o) */
 #define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                                \
-    {short_cmd_, long_cmd_, follower_, func_, CF_NONE, TC_NONE, desc_}
+    {short_cmd_, long_cmd_, follower_, func_, CF_NONE, MF_NONE, desc_}
 
 // clang-format off
 static const CLICommand commands[] = {
-    /* Info commands */
-    COMMAND_INFO("-h", "--help",    &CmdHelp,    "show available commands and usage"),
-    COMMAND_INFO("-v", "--version", &CmdVersion, "print version and exit"),
-    COMMAND_GENERAL("-o", NULL,    "<file>", &CmdOutputFileName, "output object file (default: <input>.o)"),
-    COMMAND_GENERAL(NULL, "--ast", NULL,     &CmdPrintAst,       "print ast tree"),
+    COMMAND_INFO("-h", "--help",    &Cmd_Help,    "show available commands and usage"),
+    COMMAND_INFO("-v", "--version", &Cmd_Version, "print version and exit"),
 
-    COMMAND_TOGGLE("--asm",    TC_EMIT_ASM, "output asm representation"),
-    COMMAND_TOGGLE("--emit-c", TC_EMIT_C,   "emit C code instead of an object file"),
-    COMMAND_TOGGLE("--no-simd", TC_DISABLE_SIMD, "disable SIMD intrinsics"),
-    COMMAND_TOGGLE("--run", TC_RUN, "JIT and run an int(void) entry in memory"),
+    COMMAND_GENERAL("-o", NULL,    "<file>", &Cmd_SetOutputFilename, "output object file (default: <input>.o)"),
+    COMMAND_GENERAL(NULL, "--ast", NULL,     &Cmd_PrintAst,       "print ast tree"),
 
-    COMMAND_GENERAL(NULL, "--entry", "<name>", &CmdRunSetEntry, "entry for --run (default: main)"),
-    COMMAND_GENERAL(NULL, "--arch", "<value>", &CmdSetArch, "set output architecture (default: auto, x64, arm64)"),
+    COMMAND_MODE("--asm",    MF_EMIT_ASM, "output asm representation"),
+    COMMAND_MODE("--emit-c", MF_EMIT_C,   "emit C code instead of an object file"),
+    COMMAND_MODE("--run", MF_RUN, "JIT and run an int(void) entry in memory"),
+    COMMAND_TOGGLE("--no-simd", MF_DISABLE_SIMD, "disable SIMD intrinsics"),
+
+    COMMAND_GENERAL(NULL, "--entry", "<name>", &Cmd_RunSetEntry, "entry for --run (default: main)"),
+    COMMAND_GENERAL(NULL, "--arch", "<value>", &Cmd_SetArch, "set output architecture (default: auto, x64, arm64)"),
 };
 // clang-format on
 
 /*
  * Command implementations. This run after all of the commands and values are processed, and is mapped directly to
- * `ToggleCommands`.
+ * `ModeFlag`.
  */
 typedef struct CmdImpls
 {
-    ToggleCommands toggle;
+    ModeFlag toggle;
     ResultCode (*func)(State* state, StrataCompiler* compiler);
 } CmdImpls;
 
@@ -115,12 +167,13 @@ static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler);
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
 static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
 
-static const CmdImpls cmdImpls[] = {
-    {TC_EMIT_ASM,     &Impl_EmitAsm    },
-
-    {TC_DISABLE_SIMD, &Impl_DisableSimd},
-    {TC_EMIT_C,       &Impl_EmitC      },
-    {TC_RUN,          &Impl_JitAndRun  },
+/* The implementations for each mode. Note that the higher the command in this list, the higher the precedence (and
+ * therefore will be executed earlier.) */
+static const CmdImpls modeImpls[] = {
+    {MF_DISABLE_SIMD, &Impl_DisableSimd},
+    {MF_EMIT_ASM,     &Impl_EmitAsm    },
+    {MF_EMIT_C,       &Impl_EmitC      },
+    {MF_RUN,          &Impl_JitAndRun  },
 };
 
 const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count)
@@ -147,7 +200,40 @@ const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count
     return NULL;
 }
 
-static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+/**
+ * @brief Executes all mode commands that were found during argument parsing
+ */
+void ExecuteCommands(State* state, StrataCompiler* compiler)
+{
+    for (int toggleIndex = 0; toggleIndex < sizeof(modeImpls) / sizeof(modeImpls[0]); toggleIndex++)
+    {
+        const CmdImpls* impl = &modeImpls[toggleIndex];
+        if (HAS_TOGGLE(state->toggleCommands, impl->toggle))
+        {
+            ResultCode result = impl->func(state, compiler);
+
+            if (result != RCSuccess)
+            {
+                strataCompilerDestroy(compiler);
+                exit(result);
+            }
+        }
+    }
+
+    /* If there were no emit modes specified, compile and emit the object file */
+    if ((state->toggleCommands & (MF_BIT(MF_EMIT_ASM) | MF_BIT(MF_EMIT_C))) == 0)
+    {
+        ResultCode result = Impl_CompileToObject(state, compiler);
+
+        if (result != RCSuccess)
+        {
+            strataCompilerDestroy(compiler);
+            exit(result);
+        }
+    }
+}
+
+static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     /* Show preamble */
     fprintf(stderr, "stratac - Strata compiler\n"
@@ -217,139 +303,8 @@ static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLIComma
 
     return RCSuccess;
 }
-/*
-static void PrintHelp(void)
-{
-    unsigned capabilities = strataCapabilities();
-    fprintf(stderr, "stratac - Strata compiler\n"
-                    "Usage: stratac [options] <file.strata>\n"
-                    "Emits a relocatable object file (.o) by default.\n"
-                    "Options:\n"
-                    "  -o <file>        output object file (default: <input>.o)\n"
-                    "  --asm            also emit assembly (<output>.s)\n"
-                    "  --ast            also print the AST to stderr\n"
-                    "  --arch           set the output architecture (default: auto, x64, "
-                    "arm64)\n"
-                    "  --no-simd        disable output of SIMD intrinsics or instructions\n"
-                    "  --emit-c         emit portable C source instead of an object\n"
-                    "  --emit-ir        emit LLVM IR instead of an object\n"
-                    "  --run            JIT and run an int(void) entry in memory\n"
-                    "  --entry <name>   entry for --run (default: main)\n"
-                    "  --version        print version and exit\n"
-                    "  -h, --help       show this help\n");
-    if (!(capabilities & STRATA_CAP_LLVM_AOT))
-    {
-        fprintf(stderr, "This build has no LLVM object/assembly backend.\n");
-    }
-    if (!(capabilities & STRATA_CAP_TCC_JIT))
-    {
-        fprintf(stderr, "This build has no in-memory TinyCC backend.\n");
-    }
-} */
 
-static char* ReplaceExt(const char* path, const char* ext)
-{
-    char* slash = strrchr(path, '/');
-    char* bslash = strrchr(path, '\\');
-    char* lastSep = bslash > slash ? bslash : slash;
-
-    char* dot = strrchr(path, '.');
-    if (dot && (!lastSep || dot > lastSep))
-    {
-        size_t baseLen = dot - path;
-        size_t extLen = strlen(ext);
-        char* result = malloc(baseLen + extLen + 1);
-        memcpy(result, path, baseLen);
-        memcpy(result + baseLen, ext, extLen + 1);
-        return result;
-    }
-
-    size_t len = strlen(path);
-    size_t extLen = strlen(ext);
-    char* result = malloc(len + extLen + 1);
-    memcpy(result, path, len);
-    memcpy(result + len, ext, extLen + 1);
-    return result;
-}
-
-typedef struct State
-{
-    const char* outputFileName;
-    const char* sourceFileName;
-    /* bool emitAsm;
-    bool printAst;
-    bool emitC;
-    bool emitLlvmIr;
-    bool run; */
-    bool outFileOwned;
-    const char* entryName;
-    StrataArch outputArch;
-    StrataEmitFlags emitFlags;
-    ToggleCommands toggleCommands;
-
-    char** arguments;
-    int* argumentIndex;
-    int argumentCount;
-} State;
-
-void StateDefault(State* c)
-{
-    memset(c, 0, sizeof(State));
-
-    c->outputFileName = NULL;
-    c->sourceFileName = NULL;
-
-    /* c->emitAsm = false;
-    c->printAst = false;
-    c->emitC = false;
-    c->emitLlvmIr = false;
-    c->run = false; */
-    c->outFileOwned = false;
-    c->entryName = "main";
-
-    c->outputArch = STRATA_ARCH_AUTO;
-    c->emitFlags = 0;
-    c->toggleCommands = TC_NONE;
-
-    c->arguments = NULL;
-    c->argumentIndex = NULL;
-    c->argumentCount = 0;
-}
-
-/**
- * @brief Execute all mode commands that were found during argument parsing
- */
-void ExecuteCommands(State* state, StrataCompiler* compiler)
-{
-    for (int toggleIndex = 0; toggleIndex < sizeof(cmdImpls) / sizeof(cmdImpls[0]); toggleIndex++)
-    {
-        const CmdImpls* impl = &cmdImpls[toggleIndex];
-        if (HAS_TOGGLE(state->toggleCommands, impl->toggle))
-        {
-            ResultCode result = impl->func(state, compiler);
-
-            if (result != RCSuccess)
-            {
-                strataCompilerDestroy(compiler);
-                exit(result);
-            }
-        }
-    }
-
-    /* If there were no emit modes specified, compile and emit the object file */
-    if ((state->toggleCommands & (TC_BIT(TC_EMIT_ASM) | TC_BIT(TC_EMIT_C))) == 0)
-    {
-        ResultCode result = Impl_CompileToObject(state, compiler);
-
-        if (result != RCSuccess)
-        {
-            strataCompilerDestroy(compiler);
-            exit(result);
-        }
-    }
-}
-
-static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     unsigned capabilities = strataCapabilities();
 
@@ -364,36 +319,34 @@ static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICo
     return RCSuccess;
 }
 
-static ResultCode CmdOutputFileName(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
-    if ((*state->argumentIndex) + 1 >= state->argumentCount)
+    if (state->argumentIndex + 1 >= state->argumentCount)
     {
         fprintf(stderr, "error: -o needs an argument\n");
         return RCArgumentError;
     }
 
-    (*state->argumentIndex)++;
-    state->outputFileName = state->arguments[*state->argumentIndex];
+    state->outputFileName = state->arguments[++state->argumentIndex];
 
     return RCSuccess;
 }
 
-static ResultCode CmdToggleSetting(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Cmd_SetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
-    state->toggleCommands |= TC_BIT(cmd->toggleValue);
+    state->toggleCommands |= MF_BIT(cmd->modeValue);
     return RCSuccess;
 }
 
-static ResultCode CmdSetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
-    if ((*state->argumentIndex) + 1 >= state->argumentCount)
+    if (state->argumentIndex + 1 >= state->argumentCount)
     {
         fprintf(stderr, "error: --arch needs an argument (x64, arm64, auto)\n");
         return RCArgumentError;
     }
 
-    (*state->argumentIndex)++;
-    const char* value = state->arguments[*state->argumentIndex];
+    const char* value = state->arguments[++state->argumentIndex];
 
     if (strcmp(value, "x64") == 0)
     {
@@ -416,21 +369,20 @@ static ResultCode CmdSetArch(State* state, StrataCompiler* compiler, const CLICo
     return RCSuccess;
 }
 
-static ResultCode CmdRunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
-    if ((*state->argumentIndex) + 1 >= state->argumentCount)
+    if (state->argumentIndex + 1 >= state->argumentCount)
     {
         fprintf(stderr, "error: --entry needs an argument\n");
         return RCArgumentError;
     }
 
-    (*state->argumentIndex)++;
-    state->entryName = state->arguments[*state->argumentIndex];
+    state->entryName = state->arguments[++state->argumentIndex];
 
     return RCSuccess;
 }
 
-static ResultCode CmdPrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode Cmd_PrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_AST, 0);
     if (r.diagnostics && r.diagnostics[0])
@@ -449,7 +401,7 @@ static ResultCode CmdPrintAst(State* state, StrataCompiler* compiler, const CLIC
 
 static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler)
 {
-    if (HAS_TOGGLE(state->toggleCommands, TC_EMIT_ASM))
+    if (HAS_TOGGLE(state->toggleCommands, MF_EMIT_ASM))
     {
         fprintf(stderr, "error: --asm cannot be combined with --emit-c\n");
         return RCArgumentError;
@@ -635,13 +587,11 @@ int main(int argc, char** argv)
 
     StrataCompiler* compiler = strataCompilerCreate();
 
-    for (int i = 1; i < argc; i++)
+    for (state.argumentIndex = 1; state.argumentIndex < argc; state.argumentIndex++)
     {
-        state.argumentIndex = &i;
+        const char* argument = argv[state.argumentIndex];
 
-        const char* a = argv[i];
-
-        const CLICommand* foundCommand = FindCommand(a, commands, sizeof(commands) / sizeof(commands[0]));
+        const CLICommand* foundCommand = FindCommand(argument, commands, sizeof(commands) / sizeof(commands[0]));
 
         if (foundCommand)
         {
@@ -656,10 +606,10 @@ int main(int argc, char** argv)
 
             continue;
         }
-        else if (a[0] == '-' && a[1] != '\0')
+        else if (argument[0] == '-' && argument[1] != '\0')
         {
-            fprintf(stderr, "error: unknown option '%s'\n", a);
-            CmdHelp(&state, compiler, NULL);
+            fprintf(stderr, "error: unknown option '%s'\n", argument);
+            Cmd_Help(&state, compiler, NULL);
             return RCArgumentError;
         }
         else
@@ -670,14 +620,14 @@ int main(int argc, char** argv)
                 return RCArgumentError;
             }
 
-            state.sourceFileName = a;
+            state.sourceFileName = argument;
         }
     }
 
     if (!state.sourceFileName)
     {
         fprintf(stderr, "error: no input file\n");
-        CmdHelp(&state, compiler, NULL);
+        Cmd_Help(&state, compiler, NULL);
         strataCompilerDestroy(compiler);
         return RCArgumentError;
     }
