@@ -646,6 +646,17 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
     /* box / string */
     LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "box");
 
+    /* Skip if null (e.g. moved-out binding). Mirrors the C backend's
+       `if (v) { ... }` guard. */
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, ptr, LLVMConstNull(b->m_ptrTy), "null");
+    LLVMBasicBlockRef skipBB = NewBb(b, "drop.skip");
+    LLVMBasicBlockRef doBB = NewBb(b, "drop.do");
+    LLVMBasicBlockRef endBB = NewBb(b, "drop.end");
+    LLVMBuildCondBr(b->m_builder, isNull, skipBB, doBB);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, doBB);
+
     /* box<owning struct>: free the struct's owning fields (e.g. a string
        field) before freeing the struct allocation itself. */
     if (td.boxInner && TypeRegistryIsOwningStruct(&b->m_registry, td.boxInner))
@@ -656,6 +667,12 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
     LLVMValueRef args[1] = { ptr };
     StrataFreeFn(b);
     LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, args, 1, "");
+    Br(b, endBB);
+
+    PositionAtEnd(b, skipBB);
+    Br(b, endBB);
+
+    PositionAtEnd(b, endBB);
     LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
 }
 
@@ -2087,6 +2104,14 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
 
             agg = LLVMBuildInsertValue(b->m_builder, agg, argValue.value, (unsigned)i, "ins");
+
+            /* If an owning field was moved from an owning lvalue source,
+               null the source so its scope-exit drop is a no-op. */
+            if (fieldTd.isBox && rawArg.typeDesc.isBox
+                && argNode->kind != NodeStrLiteral)
+            {
+                NullMovedSource(b, argNode);
+            }
         }
 
         return ValueMake(agg, typeDesc);
@@ -2393,6 +2418,14 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         }
 
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, (unsigned)idx, "ins");
+
+        /* If an owning field was moved from an owning lvalue source (string
+           or box<T>), null the source so its scope-exit drop is a no-op. */
+        if (fieldTd.isBox && rawField.typeDesc.isBox
+            && field->value->kind != NodeStrLiteral)
+        {
+            NullMovedSource(b, field->value);
+        }
     }
 
     return ValueMake(agg, typeDesc);
