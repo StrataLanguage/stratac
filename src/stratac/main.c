@@ -1,11 +1,39 @@
 #include "strata/strata.h"
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include <Core/Util.h>
+/* Replaces a path's file extension (or appends one if it has none) and
+   returns a freshly malloc'd string. Local to the CLI so it only depends on
+   the public API. */
+static char* ReplaceExt(const char* path, const char* ext)
+{
+    const char* slash = strrchr(path, '/');
+    const char* bslash = strrchr(path, '\\');
+    const char* lastSep = bslash > slash ? bslash : slash;
+
+    const char* dot = strrchr(path, '.');
+
+    if (dot && (!lastSep || dot > lastSep))
+    {
+        size_t baseLen = (size_t)(dot - path);
+        size_t extLen = strlen(ext);
+        char* result = (char*)malloc(baseLen + extLen + 1);
+        memcpy(result, path, baseLen);
+        memcpy(result + baseLen, ext, extLen + 1);
+        return result;
+    }
+
+    size_t len = strlen(path);
+    size_t extLen = strlen(ext);
+    char* result = (char*)malloc(len + extLen + 1);
+    memcpy(result, path, len);
+    memcpy(result + len, ext, extLen + 1);
+    return result;
+}
 
 /*
  * Command builder helpers

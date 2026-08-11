@@ -3387,7 +3387,7 @@ void BuiltCModuleDispose(BuiltCModule* module)
 
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
                                      const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags,
-                                     StrataArch arch)
+                                     int arch)
 {
     BuiltCModule result;
     BuiltCModuleInit(&result);
@@ -3480,7 +3480,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
 }
 
 BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags,
-                          StrataArch arch)
+                          int arch)
 {
     return BuildCModuleWithSources(ast, diag, arena, NULL, 0, emitFlags, arch);
 }

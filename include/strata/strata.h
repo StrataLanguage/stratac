@@ -46,7 +46,7 @@ typedef enum
     STRATA_EMIT_C       = 2,
 } StrataEmitKind;
 
-typedef enum StrataEmitFlags : unsigned int
+typedef enum StrataEmitFlags
 {
     STRATA_EMIT_NO_SIMD = (1U << 0),
 } StrataEmitFlags;
@@ -59,7 +59,7 @@ typedef enum
     STRATA_CAP_LLVM_AOT = 1u << 3,
 } StrataCapability;
 
-typedef enum StrataArch : int
+typedef enum StrataArch
 {
     STRATA_ARCH_AUTO,
     STRATA_ARCH_X64,

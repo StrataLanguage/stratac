@@ -5,8 +5,6 @@
 #include "TypeRegistry.h"
 #include "Core/Util.h"
 
-enum StrataArch : int;
-
 typedef enum CBackendEmitFlags
 {
     CEmitNone = 0,
@@ -37,7 +35,7 @@ typedef struct CEmitter
     Vec exports;
     Vec externs;
     CBackendEmitFlags emitFlags;
-    enum StrataArch arch;
+    int arch;
     unsigned indent;
     const SourceManager* sources;
     size_t sourceCount;
@@ -51,8 +49,8 @@ typedef struct CEmitter
 void BuiltCModuleInit(BuiltCModule* module);
 void BuiltCModuleDispose(BuiltCModule* module);
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags, enum StrataArch arch);
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags, int arch);
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                    const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags, enum StrataArch arch);
+                                    const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags, int arch);
 
 void CEmitExpr(CEmitter* emitter, const Node* node);
