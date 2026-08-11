@@ -24,6 +24,8 @@ extern int printf(const char * strata__var_fmt, ...);
 #line 17 "samples/simd.strata"
 void print_vector(__m128 strata__var_inVec);
 #line 22 "samples/simd.strata"
+void print_vectors(strata__arr* strata__var_vecs);
+#line 30 "samples/simd.strata"
 int run(void);
 
 #line 10 "samples/simd.strata"
@@ -38,6 +40,15 @@ void print_vector(__m128 strata__var_inVec) {
 }
 
 #line 22 "samples/simd.strata"
+void print_vectors(strata__arr* strata__var_vecs) {
+    for (unsigned int strata__var_i = 0; (strata__var_i < ((*strata__var_vecs)).len); (strata__var_i++)) {
+        print_vector(((__m128 *)(( (*strata__var_vecs)).data))[({ unsigned long long _bi = strata__var_i; if (_bi >= ((*strata__var_vecs)).len) strata_panic("array index out of bounds"); _bi; })]);
+    }
+    if ((*strata__var_vecs).data) { (*strata__var_vecs).data = 0; (*strata__var_vecs).len = 0; }
+    return;
+}
+
+#line 30 "samples/simd.strata"
 int run(void) {
     __m128 * strata__var_a = strata_alloc(sizeof(__m128));
     *strata__var_a = _mm_setr_ps(1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f);
@@ -45,7 +56,7 @@ int run(void) {
     __m128 strata__var_sum = add(strata__var_a, &(strata__var_b));
     __m128 strata__var_splat = _mm_set1_ps(5.000000000e+00f);
     __m128 strata__var_combo = _mm_add_ps(strata__var_sum,strata__var_splat);
-    print_vector(strata__var_b);
+    print_vectors(&((strata__arr){ .data = (__m128[]){ (*strata__var_a), strata__var_b, strata__var_sum }, .len = 3 }));
     __m128 * strata__var_boxA = strata_alloc(sizeof(__m128));
     *strata__var_boxA = _mm_setr_ps(1.000000000e+00f,2.000000000e+00f,3.000000000e+00f, 0.0000f);
     __m128 * strata__var_boxB = strata_alloc(sizeof(__m128));

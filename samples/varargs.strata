@@ -2,7 +2,9 @@
 //
 // Two forms:
 //   1. Typed rest param `T... name`: the trailing args are collected into a
-//      real T[] array; read it like any array (.length, [i], loops, etc.).
+//      stack-allocated {ptr, len} and exposed as a real T[] (read it like any
+//      array: .length, [i], loops, ...). `ref` borrows the stack array
+//      (mutable, non-owning); `const` makes it read-only.
 //   2. Bare extern `...`: call host C-variadic functions (printf etc.). The
 //      host provides the body; Strata only ever calls it -- no va_start in
 //      user code.
@@ -36,6 +38,29 @@ float avg(float first, float... rest)
     return total / ((float)rest.length + 1.0f);
 }
 
+// ref rest: borrows the collected stack array; elements are mutable.
+int bump(ref int... rest)
+{
+    int total = 0;
+    for (ulong i = 0; i < rest.length; i = i + 1)
+    {
+        rest[i] = rest[i] + 1;
+        total = total + rest[i];
+    }
+    return total;
+}
+
+// const rest: read-only view of the collected stack array.
+int sum_const(const int... rest)
+{
+    int total = 0;
+    for (ulong i = 0; i < rest.length; i = i + 1)
+    {
+        total = total + rest[i];
+    }
+    return total;
+}
+
 int entry()
 {
     printf("sum=%d\n", sum(1, 2, 3, 4, 5));
@@ -43,6 +68,9 @@ int entry()
     printf("pi=%d %.2f %s\n", 42, 3.14f, "str");
 
     printf("Hello %s\n", "world");
+
+    printf("bump=%d\n", bump(1, 2, 3));          // {2,3,4} -> 9
+    printf("sum_const=%d\n", sum_const(10, 20, 30));  // 60
 
     return sum(10, 20, 30) + (int)avg(2.0f, 4.0f);   // 60 + 3 = 63
 }

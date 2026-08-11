@@ -27,6 +27,7 @@ typedef struct
     const char* cName;
     const char* typeName;
     bool byRef; /* by-ref box param: cName is a pointer to the caller's box slot */
+    bool stackBuffer; /* T[] rest param: array backing is the caller's stack */
 } OwnEntry;
 
 static const char* DropHelperName(CEmitter* emitter, const char* structName);
@@ -1035,6 +1036,88 @@ static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
 
 static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai);
 
+/* Emits one element expression for a stack-backed vararg rest collection.
+   The backing array is a compound literal at the call site; each element is a
+   plain C expression. Owning elements are moved (pointer captured, source
+   nulled) unless borrow is set (ref rest), in which case they're borrowed. */
+static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* elemType, bool borrow)
+{
+    bool elemOwning = IsOwningType(elemType);
+    const char* elemC = TypeNameC(emitter, elemType);
+
+    if (elemOwning)
+    {
+        if (borrow)
+        {
+            /* ref rest: store the pointer, keep the source alive. */
+            CEmitExpr(emitter, eNode);
+
+            return;
+        }
+
+        const char* valueType = ExprType(emitter, eNode);
+
+        if (strcmp(elemType, "string") == 0 && eNode->kind == NodeStrLiteral)
+        {
+            SbPuts(&emitter->out, "strata_strdup(");
+            CEmitExpr(emitter, eNode);
+            SbPutc(&emitter->out, ')');
+
+            return;
+        }
+
+        if (valueType[0] != '\0' && IsOwningType(valueType))
+        {
+            /* Move an owning source: capture its pointer, null the source. */
+            SbPrintf(&emitter->out, "({ %s _t = ", elemC);
+            CEmitExpr(emitter, eNode);
+            SbPuts(&emitter->out, "; ");
+
+            const Node* moved = MovableBoxSource(eNode);
+
+            if (moved)
+            {
+                EmitLValue(emitter, moved);
+                SbPuts(&emitter->out, " = 0");
+            }
+
+            SbPuts(&emitter->out, "; _t; })");
+
+            return;
+        }
+
+        /* box<T> from a bare T: heap-box it inline. */
+        {
+            const char* inner = OwningInnerCStr(emitter->arena, elemType);
+            const char* innerC = inner ? TypeNameC(emitter, inner) : "void";
+
+            SbPuts(&emitter->out, "({ ");
+            SbPuts(&emitter->out, innerC);
+            SbPuts(&emitter->out, " *_b = strata_alloc(sizeof(");
+            SbPuts(&emitter->out, innerC);
+            SbPuts(&emitter->out, ")); *_b = ");
+            CEmitExpr(emitter, eNode);
+            SbPuts(&emitter->out, "; _b; })");
+        }
+
+        return;
+    }
+
+    const char* valueType = ExprType(emitter, eNode);
+
+    /* box<T> stored in a T[] element: unbox the pointer. */
+    if (valueType[0] != '\0' && IsOwningType(valueType))
+    {
+        SbPuts(&emitter->out, "(*");
+        CEmitExpr(emitter, eNode);
+        SbPutc(&emitter->out, ')');
+    }
+    else
+    {
+        CEmitExpr(emitter, eNode);
+    }
+}
+
 static void EmitCall(CEmitter* emitter, const CallExpr* call)
 {
     if (call->isPseudoCall)
@@ -1165,21 +1248,37 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         const ParamDecl* restParam = (const ParamDecl*)VecGet(&function->params, function->params.count - 1);
         Str inner = ArrayInnerStr(restParam->type.name);
         const char* elemName = inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : NULL;
+        const char* elemC = TypeNameC(emitter, elemName);
+        bool borrow = restParam->mod == ModRef;
 
-        ArrayInitExpr* ai = (ArrayInitExpr*)arena_alloc(emitter->arena, sizeof(ArrayInitExpr));
-        memset(ai, 0, sizeof(*ai));
-        ai->base.kind = NodeArrayInit;
-        ai->elementType = (char*)elemName;
-        VecInit(&ai->elements);
+        /* A stack-allocated {data, len}: the backing buffer is a compound
+           literal array (automatic storage, alive through the call). */
+        SbPuts(&emitter->out, "&((strata__arr){ .data = (");
+        SbPuts(&emitter->out, elemC);
+        SbPuts(&emitter->out, "[]){ ");
 
-        for (size_t i = function->params.count - 1; i < call->args.count; ++i)
+        size_t tail = call->args.count - (function->params.count - 1);
+
+        if (tail == 0)
         {
-            VecPush(&ai->elements, (void*)VecGet(&call->args, i));
+            SbPuts(&emitter->out, "0");
+        }
+        else
+        {
+            for (size_t i = function->params.count - 1; i < call->args.count; ++i)
+            {
+                if (i > function->params.count - 1)
+                {
+                    SbPuts(&emitter->out, ", ");
+                }
+
+                EmitRestElement(emitter, (const Node*)VecGet(&call->args, i), elemName, borrow);
+            }
         }
 
-        SbPuts(&emitter->out, "&((strata__arr[]){ ");
-        EmitArrayInitExpr(emitter, ai);
-        SbPuts(&emitter->out, " })[0]");
+        SbPuts(&emitter->out, " }, .len = ");
+        SbPrintf(&emitter->out, "%llu", (unsigned long long)tail);
+        SbPuts(&emitter->out, " })");
     }
 
     SbPutc(&emitter->out, ')');
@@ -1288,10 +1387,14 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
 
 static void EmitScalarValue(CEmitter* emitter, const Node* node)
 {
-    if (node && node->kind == NodeIdent && IsOwningType(ExprType(emitter, node)))
+    /* A box-typed expression used as a plain value (by-value call arg,
+       unary/binary operand, assignment RHS) is dereferenced to its pointee.
+       Handles idents, array elements, member chains, and box-returning calls
+       uniformly; for an ident CEmitExpr already yields the box pointer. */
+    if (node && IsOwningType(ExprType(emitter, node)))
     {
         SbPuts(&emitter->out, "(*");
-        EmitLValue(emitter, node);
+        CEmitExpr(emitter, node);
         SbPutc(&emitter->out, ')');
 
         return;
@@ -2157,19 +2260,17 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
                 SbPuts(&emitter->out, "} } ");
             }
 
-            SbPuts(&emitter->out, "strata_free(");
-            SbPuts(&emitter->out, ref);
-            SbPuts(&emitter->out, var);
-            SbPuts(&emitter->out, closeRef);
-            SbPuts(&emitter->out, ".data); ");
-            SbPuts(&emitter->out, ref);
-            SbPuts(&emitter->out, var);
-            SbPuts(&emitter->out, closeRef);
-            SbPuts(&emitter->out, ".data = 0; ");
-            SbPuts(&emitter->out, ref);
-            SbPuts(&emitter->out, var);
-            SbPuts(&emitter->out, closeRef);
-            SbPuts(&emitter->out, ".len = 0; }\n");
+            if (!e->stackBuffer)
+            {
+                SbPuts(&emitter->out, "strata_free(");
+                SbPuts(&emitter->out, ref);
+                SbPuts(&emitter->out, var);
+                SbPuts(&emitter->out, closeRef);
+                SbPuts(&emitter->out, ".data); ");
+            }
+
+            SbPutc(&emitter->out, '}');
+            SbPutc(&emitter->out, '\n');
 
             continue;
         }
@@ -2515,6 +2616,17 @@ static void EmitParam(CEmitter* emitter, const FunctionDecl* function, const Par
         return;
     }
 
+    /* A typed rest param crosses as a strata__arr* (stack-backed). Emitted
+       without `const` even for `const T... rest` - the read-only rule is
+       enforced by sema, and the owned-drop mutates the fat struct. */
+    if (param->isVarargRest)
+    {
+        SbPuts(&emitter->out, "strata__arr* ");
+        SbPuts(&emitter->out, VarName(emitter, param->name));
+
+        return;
+    }
+
     EmitType(emitter, &param->type);
 
     if (ParamIsIndirectFor(emitter, function, param))
@@ -2653,6 +2765,10 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
             if (function->isCVararg && strcmp(param->type.name, "string") == 0)
             {
                 SbPuts(&emitter->out, "const char *");
+            }
+            else if (param->isVarargRest)
+            {
+                SbPuts(&emitter->out, "strata__arr*");
             }
             else
             {
@@ -2944,13 +3060,16 @@ static void EmitDefinitions(CEmitter* emitter)
             AddSymbol(emitter, param->name, param->type.name, VarName(emitter, param->name),
                       ParamIsIndirect(emitter, param));
 
-            /* An owned (non-ref) box parameter is consumed: freed at return. */
+            /* An owned (non-ref) box parameter is consumed: freed at return.
+               A vararg rest array is stack-backed: drop its owning elements
+               but not the caller's stack buffer. */
             if (IsOwningType(param->type.name) && param->mod == ModNone)
             {
                 OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
                 entry->cName = VarName(emitter, param->name);
                 entry->typeName = param->type.name;
                 entry->byRef = true;
+                entry->stackBuffer = param->isVarargRest;
                 VecPush(&emitter->boxVars, entry);
             }
         }

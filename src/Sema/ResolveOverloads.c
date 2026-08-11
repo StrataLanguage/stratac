@@ -220,9 +220,17 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope);
 static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
 {
     Node* base = target;
-    while (base->kind == NodeMember)
+
+    while (base->kind == NodeMember || base->kind == NodeIndex)
     {
-        base = ((MemberExpr*)base)->base_node;
+        if (base->kind == NodeMember)
+        {
+            base = ((MemberExpr*)base)->base_node;
+        }
+        else
+        {
+            base = ((IndexExpr*)base)->base_node;
+        }
     }
 
     if (base->kind == NodeIdent)
@@ -561,7 +569,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
             Str inner = ArrayInnerStr(restParam->type.name);
 
             targetType = inner.data ? StrNew(r->m_arena, inner.data, inner.len).data : NULL;
-            moves = targetType && IsOwningType(targetType) && !best->isExtern;
+            moves = targetType && IsOwningType(targetType) && restParam->mod == ModNone && !best->isExtern;
         }
 
         if (!moves || !targetType)
@@ -772,11 +780,13 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                     break;
                 }
             }
-            else if (isTail && IsOwningType(paramType) && StrEqC(OwningInnerStr(paramType), argType))
+            else if (isTail && param->mod == ModNone && IsOwningType(paramType)
+                     && StrEqC(OwningInnerStr(paramType), argType))
             {
                 /* T coerces to box<T> (implicit boxing), matching array
-                   literals. Only valid for typed-rest tail args, where the
-                   collector boxes each element inline. */
+                   literals. Only valid for owned (non-ref) typed-rest tail
+                   args, where the collector boxes each element inline and the
+                   callee owns it; a ref rest borrows, so it can't box. */
                 score += 1;
             }
             else

@@ -63,6 +63,7 @@ LLVMValueRef LLVMConstInt(LLVMTypeRef intTy, unsigned long long n, LLVMBool sign
 LLVMValueRef LLVMConstReal(LLVMTypeRef ty, double v);
 LLVMValueRef LLVMGetUndef(LLVMTypeRef ty);
 LLVMTypeRef LLVMStructTypeInContext(LLVMContextRef c, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
+LLVMTypeRef LLVMArrayType(LLVMTypeRef elementType, unsigned elementCount);
 LLVMValueRef LLVMGetParam(LLVMValueRef func, unsigned index);
 
 LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef c, unsigned addressSpace);

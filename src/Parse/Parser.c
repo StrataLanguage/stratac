@@ -548,11 +548,8 @@ static ParamDecl* ParseParam(Parser* p)
     {
         isVarargRest = true;
 
-        if (mod != ModNone || isConst)
-        {
-            DiagError(p->m_diag, start, "rest parameter cannot use 'ref' or 'const'");
-        }
-
+        /* `ref int... rest` borrows the collected stack array (non-owning);
+           `const int... rest` makes the view read-only. Both are allowed. */
         type.name = arena_format(p->m_arena, "%s[]", type.name);
     }
 

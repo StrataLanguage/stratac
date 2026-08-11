@@ -233,14 +233,22 @@ STRATA_TEST(parser_bare_cvararg_requires_named_param)
     arena_free(&arena);
 }
 
-STRATA_TEST(parser_rest_param_rejects_modifiers)
+STRATA_TEST(parser_rest_param_accepts_modifiers)
 {
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
-    ParseAndResolve("int f(ref int... rest) { return 1; }", &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    Module* mod = ParseAndResolve("int f(ref int... rest) { return 1; }", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod != NULL);
+    if (mod)
+    {
+        FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
+        ParamDecl* rest = (ParamDecl*)VecGet(&fn->params, 0);
+        STRATA_CHECK(rest->isVarargRest);
+        STRATA_CHECK(rest->mod == ModRef);
+    }
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -430,6 +438,186 @@ STRATA_TEST(varargs_typed_rest_box_move_then_reassign_parity)
                 "    return s + a.v;\n"            /* 30 + 5 = 35 */
                 "}\n",
                 35);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_scalar_mutates_parity)
+{
+    /* ref int... rest borrows the stack array and mutates its elements. */
+    CheckParity("int bump(ref int... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1)\n"
+                "    {\n"
+                "        rest[i] = rest[i] + 1;\n"
+                "        total = total + rest[i];\n"
+                "    }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return bump(1, 2, 3); }\n",   /* {2,3,4} -> 9 */
+                9);
+}
+
+STRATA_TEST(varargs_typed_rest_const_scalar_readonly_parity)
+{
+    /* const int... rest reads the stack array. */
+    CheckParity("int sum_const(const int... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum_const(10, 20, 30); }\n",   /* 60 */
+                60);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_reassign_elements_parity)
+{
+    /* Reassign every element of a ref rest through direct writes, then read
+       them back. */
+    CheckParity("int overwrite(ref int... rest)\n"
+                "{\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1)\n"
+                "    {\n"
+                "        rest[i] = (int)i * 10 + 1;\n"
+                "    }\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1)\n"
+                "    {\n"
+                "        total = total + rest[i];\n"
+                "    }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return overwrite(1, 2, 3); }\n",   /* {1,11,21} -> 33 */
+                33);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_reassign_mixed_rw_parity)
+{
+    /* Interleave reads and writes through a ref rest: overwrite an element,
+       then read a later one, then write again. */
+    CheckParity("int mix(ref int... rest)\n"
+                "{\n"
+                "    rest[0] = rest[0] + 100;\n"
+                "    int a = rest[1];\n"
+                "    rest[2] = rest[0] + rest[1];\n"
+                "    return rest[0] + rest[1] + rest[2] + a;\n"
+                "}\n"
+                "int entry() { return mix(1, 2, 3); }\n",   /* {101,2,103}, a=2 -> 101+2+103+2 = 208 */
+                208);
+}
+
+STRATA_TEST(sema_typed_rest_ref_rebind_rejected)
+{
+    /* A ref rest borrows the caller's stack array; the binding itself can't
+       be reassigned (assign its inner value instead). */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f(ref int... rest) { int[] local = {9, 9}; rest = local; return 0; }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_typed_rest_const_element_write_rejected)
+{
+    /* Writing through a const rest's elements is rejected. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f(const int... rest) { rest[0] = 5; return rest[0]; }", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_box_borrow_parity)
+{
+    /* ref box<Foo>... rest borrows the boxes: the sources stay alive. */
+    CheckParity("struct Foo { int v; };\n"
+                "int read_boxes(ref box<Foo>... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "    box<Foo> a = Foo{.v = 5};\n"
+                "    box<Foo> b = Foo{.v = 7};\n"
+                "    int s = read_boxes(a, b);\n"
+                "    return s + a.v + b.v;\n"     /* 12 + 5 + 7 = 24 */
+                "}\n",
+                24);
+}
+
+STRATA_TEST(varargs_typed_rest_struct_stack_buffer_parity)
+{
+    /* A struct-element rest is stack-collected too. */
+    CheckParity("struct Pt { int x; };\n"
+                "int sum_pts(Pt... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].x; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum_pts(Pt{.x = 1}, Pt{.x = 2}, Pt{.x = 3}); }\n",   /* 6 */
+                6);
+}
+
+STRATA_TEST(c_backend_box_array_element_to_by_value_param_parity)
+{
+    /* A box<T> array element (e.g. `box<int>[] a; a[0]`) passed to a by-value
+       T param auto-derefs, like a box ident. */
+    CheckParity("int read(int x) { return x; }\n"
+                "int entry()\n"
+                "{\n"
+                "    box<int>[] a = { 7 };\n"
+                "    return read(a[0]);\n"
+                "}\n",
+                7);
+}
+
+STRATA_TEST(c_backend_rest_stack_buffer_no_heap_alloc)
+{
+    /* The rest collection must be a stack compound literal, not a
+       strata_alloc'd heap buffer. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("int sum(int first, int... rest) { return first; }\n"
+                                  "int entry() { return sum(1, 2, 3); }",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "(int[]){ 2, 3 }"));
+    STRATA_CHECK(Contains(res.output, ".len = 2"));
+    STRATA_CHECK(!Contains(res.output, "strata_alloc(2*sizeof(int)"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_ref_rest_rejects_implicit_boxing)
+{
+    /* A ref box<T>... rest borrows; a bare T can't be boxed inline (it would
+       be an owned heap box nobody drops). */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo { int v; };\n"
+                    "int read_boxes(ref box<Foo>... rest) { return 0; }\n"
+                    "int entry() { return read_boxes(Foo{.v = 1}); }",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
 }
 
 STRATA_TEST(sema_typed_rest_box_used_after_move_error)
@@ -643,7 +831,9 @@ STRATA_TEST(c_backend_typed_rest_collects_array)
 
     CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "strata__arr[]"));
+    /* The rest array is a stack-allocated {data, len} compound literal. */
+    STRATA_CHECK(Contains(res.output, "(strata__arr){ .data = ("));
+    STRATA_CHECK(Contains(res.output, ".len = 2"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

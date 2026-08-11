@@ -119,9 +119,22 @@ void take_entity(box<BaseEntity> be)
 extern void get_entity(ref Entity outEntity);
 extern void print_entity_name(Entity entity);
 
+struct Person
+{
+    string name;
+};
+
+void take_name(string name)
+{
+}
+
 // Entrypoint
 float entry()
 {
+    box<Person> bob = { .name = "Bob" };
+    take_name(bob.name);
+    // bob.name is NULL! oh no.
+
     Entity e;
     get_entity(e);
 

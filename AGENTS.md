@@ -111,8 +111,12 @@ structs/handles/functions/globals/imports into a single `Module`.
 - `const ref int x` — by reference, read-only
 - Structs: always by reference; `const` makes them read-only
 - `int... rest` — typed rest param (only allowed last): trailing call args are
-  collected into a real `int[]`; use `.length`, `[i]`, loops as usual. The
-  callee's ABI is a normal `T[]` param (pointer to the fat struct).
+  collected into a **stack-allocated** `{ptr, len}` and exposed as a real
+  `int[]` (use `.length`, `[i]`, loops as usual). `ref`/`const` are allowed:
+  `ref int... rest` borrows the stack array (mutable, non-owning, elements not
+  moved); `const int... rest` is a read-only view. Default (no mod) is owned:
+  owning elements are moved in and dropped at return, but the stack buffer is
+  never freed. The callee's ABI is a pointer to the fat struct either way.
 - `extern int printf(string fmt, ...);` — bare `...` is **extern-only** and
   call-only: the host provides the body as a real C vararg function. No
   `va_list`/`va_start` appears in user or generated code. Trailing args must be

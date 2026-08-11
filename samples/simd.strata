@@ -19,11 +19,12 @@ void print_vector(float3 inVec)
     printf("x=%f, y=%f, z=%f\n", inVec.x, inVec.y, inVec.z);
 }
 
-void print_vectors(ref box<float3>... vecs)
+void print_vectors(ref float3... vecs)
 {
     for (uint i = 0; i < vecs.length; i++)
     {
         print_vector(vecs[i]);
+        vecs[i] = vecs[0];
     }
 }
 
@@ -35,6 +36,7 @@ int run()
     float3 splat = float3(5.0);     // {5, 5, 5}
     float3 combo = sum + splat;     // {16, 27, 38}
 
+    print_vectors(a, b, sum);
     print_vectors(a, b, sum);
 
     // Testing of box simd

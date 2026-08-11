@@ -45,6 +45,7 @@ typedef struct {
 typedef struct {
     LLVMValueRef slot;
     TypeDesc td;
+    bool stackBuffer;   /* array backing is caller's stack: drop elems, not buffer */
 } OwnLocal;
 
 typedef struct {
@@ -333,7 +334,8 @@ static LValue EmitLValue(Builder* b, Node* n);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
-static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements);
+static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements, bool stackBuffer,
+                                bool borrow);
 static LLVMValueRef AsI64Index(Builder* b, Value v);
 static Value EmitUnary(Builder* b, UnaryExpr* n);
 static Value EmitBinary(Builder* b, BinaryExpr* n);
@@ -609,8 +611,10 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
      box<owning struct>, the struct's owning fields first).
    - T[]: 'slot' is the address of a {ptr, u64} struct; free the backing
      buffer, and when the element type is itself owning (box/string/array),
-     drop each element first via a loop. */
-static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
+     drop each element first via a loop.
+   A stack-backed array (freeArrayBuffer=false, used for vararg rest params)
+   drops its owning elements but not the caller's stack buffer. */
+static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool freeArrayBuffer)
 {
     if (td.isArray)
     {
@@ -639,7 +643,7 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
             PositionAtEnd(b, body);
             LLVMValueRef epIdx[1] = { i };
             LLVMValueRef elemPtr = LLVMBuildGEP2(b->m_builder, elemTy, dataPtr, epIdx, 1, "aelem");
-            EmitDropOne(b, elemPtr, elemTd);
+            EmitDropOneInternal(b, elemPtr, elemTd, true);
             LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "next");
             LLVMBuildStore(b->m_builder, next, iSlot);
             Br(b, cond);
@@ -647,11 +651,14 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
             PositionAtEnd(b, end);
         }
 
-        LLVMValueRef args[1] = { dataPtr };
-        StrataFreeFn(b);
-        LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, args, 1, "");
-        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), ArrayDataPtr(b, slot));
-        LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), ArrayLenPtr(b, slot));
+        if (freeArrayBuffer)
+        {
+            LLVMValueRef args[1] = { dataPtr };
+            StrataFreeFn(b);
+            LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, args, 1, "");
+            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), ArrayDataPtr(b, slot));
+            LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), ArrayLenPtr(b, slot));
+        }
 
         return;
     }
@@ -687,6 +694,18 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
 
     PositionAtEnd(b, endBB);
     LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
+}
+
+static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
+{
+    EmitDropOneInternal(b, slot, td, true);
+}
+
+/* Drops the owning ELEMENTS of a stack-backed T[] (vararg rest) without
+   freeing the caller's stack buffer. */
+static void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td)
+{
+    EmitDropOneInternal(b, slot, td, false);
 }
 
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName)
@@ -739,7 +758,15 @@ static void EmitDrops(Builder* b, size_t fromIndex)
     for (size_t i = fromIndex; i < b->m_owningLocals.count; i++)
     {
         OwnLocal* ol = (OwnLocal*)VecGet(&b->m_owningLocals, i);
-        EmitDropOne(b, ol->slot, ol->td);
+
+        if (ol->stackBuffer)
+        {
+            EmitDropOneStack(b, ol->slot, ol->td);
+        }
+        else
+        {
+            EmitDropOne(b, ol->slot, ol->td);
+        }
     }
 }
 
@@ -838,12 +865,15 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
             sym->value = LLVMGetParam(b->m_curFn, (unsigned)i);
             sym->typeDesc = typeDesc;
 
-            /* An owned (non-ref) box/array parameter is consumed: freed at return. */
+            /* An owned (non-ref) box/array parameter is consumed: freed at return.
+               A vararg rest array is stack-backed: its owning ELEMENTS are
+               dropped, but the caller's stack buffer is not freed. */
             if (boxParam && p->mod == ModNone)
             {
                 OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
                 ol->slot = sym->value;
                 ol->td = typeDesc;
+                ol->stackBuffer = p->isVarargRest;
                 VecPush(&b->m_owningLocals, ol);
             }
         }
@@ -2189,7 +2219,9 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
     for (size_t k = 0; k < nargs; k++)
     {
-        /* Typed rest slot: gather the trailing call args into a T[]. */
+        /* Typed rest slot: gather the trailing call args into a T[]. The
+           buffer is stack-allocated; a `ref` rest borrows owning elements
+           instead of moving them. */
         if (typedRest && k == fd->params.count - 1)
         {
             const ParamDecl* restParam = (ParamDecl*)VecGet(&fd->params, fd->params.count - 1);
@@ -2204,7 +2236,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 VecPush(&tail, VecGet(&n->args, i));
             }
 
-            Value arr = EmitArrayFromNodes(b, elemName, &tail);
+            Value arr = EmitArrayFromNodes(b, elemName, &tail, true, restParam->mod == ModRef);
 
             LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "rest");
             LLVMBuildStore(b->m_builder, arr.value, slot);
@@ -2315,8 +2347,12 @@ static Value EmitCall(Builder* b, CallExpr* n)
 }
 
 /* Builds a T[] array value from a list of element expressions. Shared by
-   array literals and typed rest params (the collected trailing call args). */
-static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements)
+   array literals (heap-backed) and typed rest params. A rest param is
+   stack-backed (stackBuffer=true): the buffer is an alloca in the entry
+   block. borrow=true (ref rest) stores owning element pointers without
+   nulling/moving the sources. */
+static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements, bool stackBuffer,
+                                bool borrow)
 {
     TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)elementType});
 
@@ -2330,12 +2366,26 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
 
     if (count > 0)
     {
-        LLVMValueRef elemSize = SizeOfConst(b, elemTy);
-        LLVMValueRef countConst = LLVMConstInt(I64Ty(b), (unsigned long long)count, 0);
-        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, elemSize, countConst, "bytes");
-        LLVMValueRef allocArgs[1] = { totalBytes };
-        StrataAllocFn(b);
-        dataPtr = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "arrbuf");
+        if (stackBuffer)
+        {
+            /* Fixed-size stack buffer (count is a compile-time constant). */
+            size_t n = count;
+            LLVMTypeRef arrTy = LLVMArrayType(elemTy, (unsigned)n);
+            LLVMValueRef bufSlot = EntryAlloca(b, arrTy, "varargs");
+
+            LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
+            LLVMValueRef idx[2] = { zero, zero };
+            dataPtr = LLVMBuildGEP2(b->m_builder, arrTy, bufSlot, idx, 2, "varargsdata");
+        }
+        else
+        {
+            LLVMValueRef elemSize = SizeOfConst(b, elemTy);
+            LLVMValueRef countConst = LLVMConstInt(I64Ty(b), (unsigned long long)count, 0);
+            LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, elemSize, countConst, "bytes");
+            LLVMValueRef allocArgs[1] = { totalBytes };
+            StrataAllocFn(b);
+            dataPtr = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "arrbuf");
+        }
 
         LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
 
@@ -2365,9 +2415,17 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
                 /* box<T> element. */
                 if (v.typeDesc.isBox)
                 {
-                    /* Move from a box source: take its pointer, null the source. */
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                    NullMovedSource(b, eNode);
+                    if (borrow)
+                    {
+                        /* ref rest: borrow the box, keep the source alive. */
+                        LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                    }
+                    else
+                    {
+                        /* Move from a box source: take its pointer, null the source. */
+                        LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                        NullMovedSource(b, eNode);
+                    }
                 }
                 else
                 {
@@ -2384,7 +2442,12 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
             else if (elemTd.isBox)
             {
                 /* string element. */
-                if (eNode->kind == NodeStrLiteral)
+                if (borrow)
+                {
+                    /* ref rest: borrow the string, keep the source alive. */
+                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                }
+                else if (eNode->kind == NodeStrLiteral)
                 {
                     StrLiteral* lit = AsNode(StrLiteral, eNode);
                     size_t copyLen = strlen(lit->value) + 1;
@@ -2432,7 +2495,7 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
 
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 {
-    return EmitArrayFromNodes(b, n->elementType, &n->elements);
+    return EmitArrayFromNodes(b, n->elementType, &n->elements, false, false);
 }
 
 static Value EmitStructInit(Builder* b, StructInitExpr* n)

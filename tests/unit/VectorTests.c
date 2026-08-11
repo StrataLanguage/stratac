@@ -128,3 +128,30 @@ STRATA_TEST(vector_divide_lanes)
         "}\n",
         30);
 }
+
+STRATA_TEST(vector_ref_rest_reassign_elements)
+{
+    /* ref float3... borrows the collected stack array mutably; each element
+       can be reassigned through the ref and read back. */
+    run_int(
+        "float3 bump(ref float3... vecs)\n"
+        "{\n"
+        "  for (uint i = 0; i < vecs.length; i++)\n"
+        "  {\n"
+        "    vecs[i] = vecs[i] + float3(1.0, 1.0, 1.0);\n"
+        "  }\n"
+        "  float3 total = float3(0.0, 0.0, 0.0);\n"
+        "  for (uint i = 0; i < vecs.length; i++)\n"
+        "  {\n"
+        "    total = total + vecs[i];\n"
+        "  }\n"
+        "  return total;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  float3 r = bump(float3(1.0, 2.0, 3.0), float3(10.0, 20.0, 30.0), float3(100.0, 200.0, 300.0));\n"
+        "  return (int)(r.x + r.y + r.z);\n"       /* {114, 225, 336} -> 675 */
+        "}\n",
+        675);
+}
+
