@@ -69,3 +69,4 @@ SpacesInAngles:       Never
 SpaceInEmptyBlock:    false
 
 AlignArrayOfStructures: Left
+
