@@ -302,7 +302,6 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     Node* arg0 = (Node*)VecGet(&c->args, 0);
-    ResolveExpr(r, arg0, scope);
     const char* argType = InferType(r, arg0, scope);
 
     if (!argType || argType[0] == '\0' || !IsOwningType(argType))
@@ -395,7 +394,6 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     Node* arg0 = (Node*)VecGet(&c->args, 0);
-    ResolveExpr(r, arg0, scope);
 
     const char* arrType = InferType(r, arg0, scope);
 
@@ -415,7 +413,6 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     if (isResize)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
-        ResolveExpr(r, arg1, scope);
 
         const char* sizeType = InferType(r, arg1, scope);
 
@@ -428,7 +425,6 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     else if (isPush)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
-        ResolveExpr(r, arg1, scope);
 
         const char* valueType = InferType(r, arg1, scope);
 
@@ -485,8 +481,6 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         {
             FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
-
-            ResolveExpr(r, arg, scope);
 
             if (IsOwningType(fd->type.name))
             {
