@@ -7,7 +7,7 @@
 
 #define INVALID_COMPONENTS -1
 
-typedef enum : int
+typedef enum
 {
     VC_NULL = -1,
     VC_X = 0,
