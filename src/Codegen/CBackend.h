@@ -42,6 +42,7 @@ typedef struct CEmitter
     const SourceManager* sources;
     size_t sourceCount;
     Vec boxVars;               /* in-scope box-local OwnEntry* (current function) */
+    bool terminated;           /* the current block ended in a definite return */
     const char* currentReturn; /* current function's return type name */
     unsigned retCounter;
     unsigned boxTmpCounter; /* unique names for inline struct-init field boxing */
