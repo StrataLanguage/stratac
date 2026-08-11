@@ -85,7 +85,7 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     if (IsBoxGlobalName(r, name))
     {
         DiagErrorFmt(r->m_diag, range,
-                     "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref box<T>` or pass `T` by value)",
+                     "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref box<T>`, copy() it, or pass `T` by value)",
                      name, name);
 
         return;
@@ -280,6 +280,42 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 
 //-- Array intrinsics.
 
+/* Returns the result type of `copy(arg)`, or NULL if this isn't one.
+   copy returns the same type as its argument (e.g. copy(string) → string). */
+static const char* CopyBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || strcmp(c->callee, "copy") != 0) return NULL;
+    if (c->args.count != 1) return NULL;
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    const char* t = InferType(r, arg0, scope);
+    return (t && t[0]) ? arena_strdup(r->m_arena, t) : NULL;
+}
+
+static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || strcmp(c->callee, "copy") != 0) return false;
+
+    if (c->args.count != 1)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'copy' expects 1 argument, got %zu", c->args.count);
+        return true;
+    }
+
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    ResolveExpr(r, arg0, scope);
+    const char* argType = InferType(r, arg0, scope);
+
+    if (!argType || argType[0] == '\0' || !IsOwningType(argType))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range,
+                     "'copy' expects an owning type (string, box<T>, T[]) — not '%s'", argType);
+        return true;
+    }
+
+    c->isPseudoCall = true;
+    return true;
+}
+
 /* Result type of an array builtin call, or NULL if `c` isn't one.
    array_push -> ulong (new length); array_pop -> element type; array_resize -> void. */
 static const char* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
@@ -440,6 +476,29 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
     {
+        /* Constructor call FooBar(arg): an owning field initialized from an
+           owning source is a move — enforce the same rules as var-decl and
+           array_push (globals / ref params can't be moved). */
+        const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
+
+        for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
+        {
+            FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
+            Node* arg = (Node*)VecGet(&c->args, j);
+
+            ResolveExpr(r, arg, scope);
+
+            if (IsOwningType(fd->type.name))
+            {
+                const char* movedKey = MovableBoxSourceKey(r, arg);
+
+                if (movedKey)
+                {
+                    MoveBoxIdent(r, movedKey, arg->range);
+                }
+            }
+        }
+
         return;
     }
 
@@ -451,6 +510,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     // Inline array helpers: array_push / array_pop / array_resize.
     if (c->callee != NULL && ResolveArrayBuiltin(r, c, scope))
+    {
+        return;
+    }
+
+    // copy(string/box<T>/T[]): deep-copy an owning value.
+    if (c->callee != NULL && ResolveCopyBuiltin(r, c, scope))
     {
         return;
     }
@@ -767,6 +832,13 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
         }
 
         const char* builtinType = ArrayBuiltinType(r, c, scope);
+
+        if (builtinType)
+        {
+            return builtinType;
+        }
+
+        builtinType = CopyBuiltinType(r, c, scope);
 
         if (builtinType)
         {

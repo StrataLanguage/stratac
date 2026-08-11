@@ -62,10 +62,8 @@ void PrintAll(ref int[] elems)
 }
 
 void PrintAll(ref box<FooBar>[] elems) {
-    //string localCopy = testGlobalString;
-    /// FAILS TO COMPILE! (cannot be moved as it is not owned):    array_push(elems, FooBar(localCopy));   // {hello, world, again}
-    /// CRASHES!     array_push(elems, FooBar(testGlobalString));   // {hello, world, again}
-    array_push(elems, FooBar("again"));   // {hello, world, again}
+    array_push(elems, FooBar(copy(testGlobalString)));
+    array_push(elems, FooBar("again"));
     for (uint i = 0; i < elems.length; i++) {
         puts(elems[i].str);
     }
