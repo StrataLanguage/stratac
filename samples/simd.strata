@@ -1,8 +1,26 @@
+// simd.strata - SIMD vector sample.
+//
+// float3 / float4 are 128-bit SIMD vectors. They support per-lane arithmetic
+// (+, -, *, /), construction float3(x, y, z), splatting float3(s), swizzles
+// (.xyz, .zyx, .yyy, ...), and single-lane reads (.x, .y, .z, .w).
+//
+// The C backend lowers these to SSE intrinsics (x64) or NEON (arm64) when SIMD
+// is enabled, or to a plain __strata_float128 struct otherwise (used by the JIT).
 
+float3 add(ref float3 a, ref float3 b)
+{
+    return a + b;
+}
 
-int run(int seed)
+int run()
 {
     float3 a = float3(1.0, 2.0, 3.0);
-    float3 b = float3(4.0, 5.0, 6.0);
-    float3 result = a + b;
+    float3 b = float3(10.0, 20.0, 30.0);
+    float3 sum = add(a, b);         // {11, 22, 33}
+    float3 splat = float3(5.0);     // {5, 5, 5}
+    float3 combo = sum + splat;     // {16, 27, 38}
+    float3 sw = a.zyx;              // swizzle {3, 2, 1}
+
+    return (int)(combo.x + combo.y + combo.z)   // 16 + 27 + 38 = 81
+         + (int)(sw.x + sw.y + sw.z);           // 3 + 2 + 1 = 6  => 87
 }

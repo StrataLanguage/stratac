@@ -263,6 +263,12 @@ target_compile_definitions(box_demo PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(box_demo)
 
+add_executable(simd_demo samples/hosts/simd_demo_host.c)
+target_link_libraries(simd_demo PRIVATE strata)
+target_compile_definitions(simd_demo PRIVATE
+    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
+strata_stage_dll(simd_demo)
+
 if(STRATA_ENABLE_LLVM AND STRATA_ENABLE_TCC)
     set(STRATA_BENCH_FIXTURE_DIR "${CMAKE_CURRENT_BINARY_DIR}/bench-fixtures")
     file(MAKE_DIRECTORY "${STRATA_BENCH_FIXTURE_DIR}")
@@ -322,6 +328,7 @@ if(NOT STRATA_SHARED)
             tests/unit/BoxTests.c
             tests/unit/StringTests.c
             tests/unit/ArrayTests.c
+            tests/unit/VectorTests.c
         )
     endif()
 
@@ -422,5 +429,5 @@ if(STRATA_ENABLE_LLVM)
     set_tests_properties(aot_arrays_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 29")
 endif()
 
-set_target_properties(stratac jit_demo engine_demo box_demo PROPERTIES
+set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

@@ -1,5 +1,6 @@
 #include "Util.h"
 #include "Codegen/CodegenBackend.h"
+#include "strata/strata.h"
 #include "Test.h"
 
 #include <string.h>
@@ -131,6 +132,29 @@ STRATA_TEST(sample_arrays_lower_in_llvm_backend)
     STRATA_CHECK(strstr(res.output, "{ ptr, i64 }") != NULL);
     STRATA_CHECK(strstr(res.output, "define i32 @entry") != NULL);
     STRATA_CHECK(strstr(res.output, "strata_alloc") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    free(src);
+}
+
+STRATA_TEST(sample_simd_compiles_via_c_backend)
+{
+    char* src = LoadSample("simd.strata");
+    STRATA_CHECK(src != NULL);
+    STRATA_CHECK(src[0] != '\0');
+
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod->functions.count >= 2);
+
+    /* SIMD is C-backend-only; with SIMD disabled (the default GenerateC path)
+       it lowers to the __strata_float128 struct fallback. */
+    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "__strata_float128") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
