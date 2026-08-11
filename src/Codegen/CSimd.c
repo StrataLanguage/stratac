@@ -212,19 +212,23 @@ static inline void NEONVectorBinExpr(struct CEmitter* emitter, const struct Bina
     }
 }
 
-static inline void NEONVectorGetLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane)
+static inline void NEONVectorGetLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane, bool throughBox)
 {
     SbPuts(&emitter->out, "vgetq_lane_f32(");
+    if (throughBox) { SbPuts(&emitter->out, "(*"); }
     CEmitExpr(emitter, expr->base_node);
+    if (throughBox) { SbPutc(&emitter->out, ')'); }
     SbPuts(&emitter->out, ", ");
     SbPutc(&emitter->out, (const char)lane + '0');
     SbPutc(&emitter->out, ')');
 }
 
-static inline void NEONVectorSplatLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane)
+static inline void NEONVectorSplatLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane, bool throughBox)
 {
     SbPuts(&emitter->out, "vdupq_lane_f32(");
+    if (throughBox) { SbPuts(&emitter->out, "(*"); }
     CEmitExpr(emitter, expr->base_node);
+    if (throughBox) { SbPutc(&emitter->out, ')'); }
     SbPuts(&emitter->out, ", ");
     SbPutc(&emitter->out, (const char)lane + '0');
     SbPutc(&emitter->out, ')');
@@ -233,7 +237,7 @@ static inline void NEONVectorSplatLane(struct CEmitter* emitter, const struct Me
 #define MATCHCOMP3(c_, x_, y_, z_) ((c_)[0] == (x_) && (c_)[1] == (y_) && (c_)[2] == (z_))
 #define MATCHCOMP4(c_, x_, y_, z_, w_) ((c_)[0] == (x_) && (c_)[1] == (y_) && (c_)[2] == (z_) && (c_)[3] == (w_))
 
-static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr, bool throughBox)
 {
     VectorComponent c[4];
 
@@ -250,16 +254,16 @@ static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct 
         switch (c[0])
         {
         case VC_X:
-            NEONVectorGetLane(emitter, expr, 0);
+            NEONVectorGetLane(emitter, expr, 0, throughBox);
             break;
         case VC_Y:
-            NEONVectorGetLane(emitter, expr, 1);
+            NEONVectorGetLane(emitter, expr, 1, throughBox);
             break;
         case VC_Z:
-            NEONVectorGetLane(emitter, expr, 2);
+            NEONVectorGetLane(emitter, expr, 2, throughBox);
             break;
         case VC_W:
-            NEONVectorGetLane(emitter, expr, 3);
+            NEONVectorGetLane(emitter, expr, 3, throughBox);
             break;
 
         case VC_NULL:
@@ -274,31 +278,33 @@ static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct 
         /* vector.xyz */
         if (MATCHCOMP3(c, VC_X, VC_Y, VC_Z))
         {
+            if (throughBox) { SbPuts(&emitter->out, "(*"); }
             CEmitExpr(emitter, expr->base_node);
+            if (throughBox) { SbPutc(&emitter->out, ')'); }
             return;
         }
         /* vector.xxx */
         if (MATCHCOMP3(c, VC_X, VC_X, VC_X))
         {
-            NEONVectorSplatLane(emitter, expr, 0);
+            NEONVectorSplatLane(emitter, expr, 0, throughBox);
             return;
         }
         /* vector.yyy */
         if (MATCHCOMP3(c, VC_Y, VC_Y, VC_Y))
         {
-            NEONVectorSplatLane(emitter, expr, 1);
+            NEONVectorSplatLane(emitter, expr, 1, throughBox);
             return;
         }
         /* vector.zzz */
         if (MATCHCOMP3(c, VC_Z, VC_Z, VC_Z))
         {
-            NEONVectorSplatLane(emitter, expr, 2);
+            NEONVectorSplatLane(emitter, expr, 2, throughBox);
             return;
         }
         /* vector.www */
         if (MATCHCOMP3(c, VC_W, VC_W, VC_W))
         {
-            NEONVectorSplatLane(emitter, expr, 3);
+            NEONVectorSplatLane(emitter, expr, 3, throughBox);
             return;
         }
 
@@ -315,7 +321,9 @@ static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct 
             {
 
                 SbPuts(&emitter->out, "vgetq_lane_f32(");
+                if (throughBox) { SbPuts(&emitter->out, "(*"); }
                 CEmitExpr(emitter, expr->base_node);
+                if (throughBox) { SbPutc(&emitter->out, ')'); }
                 SbPutc(&emitter->out, ',');
 
                 int laneIndex = (c[i] == VC_NULL) ? i : c[i];
@@ -462,7 +470,7 @@ static inline void SSEVectorEmitShuffleIndices(struct CEmitter* emitter, VectorC
     SbPutc(&emitter->out, ')');
 }
 
-static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr, bool throughBox)
 {
     VectorComponent c[4];
 
@@ -476,7 +484,9 @@ static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct M
 
     /* _mm_permute_ps( vector , _MM_SHUFFLE(ix, iy, iz, iw) ) */
     SbPuts(&emitter->out, "_mm_permute_ps(");
+    if (throughBox) { SbPuts(&emitter->out, "(*"); }
     CEmitExpr(emitter, expr->base_node);
+    if (throughBox) { SbPutc(&emitter->out, ')'); }
     SbPutc(&emitter->out, ',');
     SSEVectorEmitShuffleIndices(emitter, c);
     SbPutc(&emitter->out, ')');
@@ -624,7 +634,7 @@ static inline void NoneVectorBinExpr(struct CEmitter* emitter, const struct Bina
     }
 }
 
-void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr, bool throughBox)
 {
     VectorComponent c[4];
 
@@ -639,7 +649,9 @@ void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* ex
     /* Single component (.x/.y/.z/.w) reads one lane as a scalar float. */
     if (numComponents == 1)
     {
+        if (throughBox) { SbPuts(&emitter->out, "(*"); }
         CEmitExpr(emitter, expr->base_node);
+        if (throughBox) { SbPutc(&emitter->out, ')'); }
         SbPutc(&emitter->out, '.');
         SbPutc(&emitter->out, NoneLaneToMember(c[0]));
         return;
@@ -649,17 +661,18 @@ void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* ex
 
     for (int i = 0; i < 4; i++)
     {
+        if (i > 0)
+        {
+            SbPutc(&emitter->out, ',');
+        }
 
+        if (throughBox) { SbPuts(&emitter->out, "(*"); }
         CEmitExpr(emitter, expr->base_node);
+        if (throughBox) { SbPutc(&emitter->out, ')'); }
         SbPutc(&emitter->out, '.');
 
         int laneIndex = (c[i] == VC_NULL) ? i : c[i];
         SbPutc(&emitter->out, NoneLaneToMember(laneIndex));
-
-        if (i < 3)
-        {
-            SbPutc(&emitter->out, ',');
-        }
     }
 
     SbPuts(&emitter->out, "}");
@@ -679,7 +692,7 @@ void CSimdVectorBinExpr(struct CEmitter* emitter, const struct BinaryExpr* binex
     EMIT_PLATFORMS2(VectorBinExpr, emitter, binexp);
 }
 
-void CSimdVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr)
+void CSimdVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr, bool throughBox)
 {
-    EMIT_PLATFORMS2(VectorDestructure, emitter, expr);
+    EMIT_PLATFORMS2(VectorDestructure, emitter, expr, throughBox);
 }

@@ -502,6 +502,27 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
             baseName = _inner;
         }
 
+        /* If unwrapping a box revealed a SIMD vector, the member is a lane
+           or swizzle, not a struct field. */
+        if (IsSimdVector(baseName))
+        {
+            size_t laneCount = strlen(member->member);
+            switch (laneCount)
+            {
+            case 1:
+                return "float";
+            case 3:
+                return "float3";
+            case 4:
+                return "float4";
+            default:
+                DiagErrorFmt(emitter->diag, node->range, "cannot destructure into larger vector");
+                break;
+            }
+
+            return "float";
+        }
+
         const StructType* type = TypeRegistryFind(&emitter->types, baseName);
         int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
 
@@ -1210,7 +1231,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
 
         if (IsSimdVector(baseType))
         {
-            CSimdVectorDestructure(emitter, member);
+            CSimdVectorDestructure(emitter, member, false);
             return;
         }
         
@@ -1222,6 +1243,19 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, ").len");
 
             return;
+        }
+
+        /* box<simd>.swizzle or box<simd>.lane: unpack the box and route
+           through the SIMD destructure. */
+        {
+            bool throughBox = IsOwningType(baseType);
+            const char* inner = throughBox ? OwningInnerCStr(emitter->arena, baseType) : NULL;
+
+            if (inner && IsSimdVector(inner))
+            {
+                CSimdVectorDestructure(emitter, member, true);
+                return;
+            }
         }
 
         bool throughBox = IsOwningType(baseType);
