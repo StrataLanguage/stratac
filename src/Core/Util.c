@@ -519,3 +519,28 @@ const char* GenerateId(char* buffer, int size)
 
     return buffer;
 }
+
+char* ReplaceExt(const char* path, const char* ext)
+{
+    char* slash = strrchr(path, '/');
+    char* bslash = strrchr(path, '\\');
+    char* lastSep = bslash > slash ? bslash : slash;
+
+    char* dot = strrchr(path, '.');
+    if (dot && (!lastSep || dot > lastSep))
+    {
+        size_t baseLen = dot - path;
+        size_t extLen = strlen(ext);
+        char* result = malloc(baseLen + extLen + 1);
+        memcpy(result, path, baseLen);
+        memcpy(result + baseLen, ext, extLen + 1);
+        return result;
+    }
+
+    size_t len = strlen(path);
+    size_t extLen = strlen(ext);
+    char* result = malloc(len + extLen + 1);
+    memcpy(result, path, len);
+    memcpy(result + len, ext, extLen + 1);
+    return result;
+}
