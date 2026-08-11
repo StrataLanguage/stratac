@@ -335,6 +335,197 @@ STRATA_TEST(varargs_typed_rest_struct_parity)
                 6);
 }
 
+STRATA_TEST(varargs_typed_rest_box_elements_parity)
+{
+    /* box<Foo>... moves each box source into the collected box<Foo>[]. */
+    CheckParity("struct Foo { int v; };\n"
+                "int sum_box(box<Foo>... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "    box<Foo> a = Foo{.v = 10};\n"
+                "    box<Foo> b = Foo{.v = 20};\n"
+                "    return sum_box(a, b);\n"   /* 30 */
+                "}\n",
+                30);
+}
+
+STRATA_TEST(varargs_typed_rest_implicit_box_parity)
+{
+    /* Bare T args to a box<T>... rest are boxed inline, like array literals. */
+    CheckParity("struct Foo { int v; };\n"
+                "int sum_box(box<Foo>... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry() { return sum_box(Foo{.v = 10}, Foo{.v = 20}); }\n",
+                30);
+}
+
+STRATA_TEST(varargs_typed_rest_box_arg_coerces_to_scalar_parity)
+{
+    /* box<int> args to an int... rest deref to their value (implicit deref),
+       NOT a move: the boxes stay usable afterwards. */
+    CheckParity("int sum_int(int... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "    box<int> x = 5;\n"
+                "    box<int> y = 7;\n"
+                "    int s = sum_int(1, x, y);\n"
+                "    return s + x;\n"          /* 13 + 5 = 18 */
+                "}\n",
+                18);
+}
+
+STRATA_TEST(varargs_typed_rest_box_arg_not_moved_for_nonowning_element_parity)
+{
+    /* box<Pt> to a Pt... rest derefs into the array (a copy), not a move:
+       the box stays live for later use. */
+    CheckParity("struct Pt { int x; };\n"
+                "int sum_pts(Pt... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].x; }\n"
+                "    return total;\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "    box<Pt> p = Pt{.x = 10};\n"
+                "    int s = sum_pts(p, Pt{.x = 20});\n"
+                "    return s + p.x;\n"        /* 30 + 10 = 40 */
+                "}\n",
+                40);
+}
+
+STRATA_TEST(varargs_typed_rest_box_move_then_reassign_parity)
+{
+    /* Passing boxes to a box<Foo>... rest moves them out (source nulled).
+       The moved box can be re-livened by rebinding a fresh box value; no
+       double-free or leak on either backend. */
+    CheckParity("struct Foo { int v; };\n"
+                "int sum_box(box<Foo>... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
+                "    return total;\n"
+                "}\n"
+                "box<Foo> make_box() { box<Foo> x = Foo{.v = 5}; return x; }\n"
+                "int entry()\n"
+                "{\n"
+                "    box<Foo> a = Foo{.v = 10};\n"
+                "    box<Foo> b = Foo{.v = 20};\n"
+                "    int s = sum_box(a, b);\n"
+                "    a = make_box();\n"
+                "    return s + a.v;\n"            /* 30 + 5 = 35 */
+                "}\n",
+                35);
+}
+
+STRATA_TEST(sema_typed_rest_box_used_after_move_error)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo { int v; };\n"
+                    "int sum_box(box<Foo>... rest) { return 0; }\n"
+                    "int entry() { box<Foo> a = Foo{.v = 1}; int s = sum_box(a); return a.v; }",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_typed_rest_ref_box_move_error)
+{
+    /* A ref box<T> can't be moved into a box<T>... rest. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo { int v; };\n"
+                    "int sum_box(box<Foo>... rest) { return 0; }\n"
+                    "int via_ref(ref box<Foo> b) { return sum_box(b); }\n"
+                    "int entry() { box<Foo> f = Foo{.v = 1}; return via_ref(f); }",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(sema_typed_rest_global_box_move_error)
+{
+    /* A global box<T> can't be moved into a box<T>... rest. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo { int v; };\n"
+                    "int sum_box(box<Foo>... rest) { return 0; }\n"
+                    "box<Foo> g = Foo{.v = 1};\n"
+                    "int entry() { return sum_box(g); }",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_scalar_copies_parity)
+{
+    /* A plain ref int value is copied into the int... rest array. */
+    CheckParity("int sum_int(int... rest)\n"
+                "{\n"
+                "    int total = 0;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
+                "    return total;\n"
+                "}\n"
+                "int via_ref(ref int x, ref int y) { return sum_int(1, x, y); }\n"
+                "int entry() { int a = 5; int b = 7; return via_ref(a, b); }\n",   /* 13 */
+                13);
+}
+
+STRATA_TEST(varargs_typed_rest_ref_struct_copies_parity)
+{
+    /* A plain ref struct value is copied into the Pt... rest array. */
+    CheckParity("struct Pt { int x; };\n"
+                "int sum_pts(int first, Pt... rest)\n"
+                "{\n"
+                "    int total = first;\n"
+                "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].x; }\n"
+                "    return total;\n"
+                "}\n"
+                "int via_ref(ref Pt p, ref Pt q) { return sum_pts(0, p, q); }\n"
+                "int entry() { Pt a = {.x = 5}; Pt b = {.x = 7}; return via_ref(a, b); }\n",   /* 12 */
+                12);
+}
+
+STRATA_TEST(sema_cvararg_box_struct_rejected)
+{
+    /* A boxed struct can't cross a bare extern `...` by value. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo { int v; };\n"
+                    "extern int host_vsum(int count, ...);\n"
+                    "int entry() { box<Foo> f = Foo{.v = 1}; return host_vsum(1, f); }",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(varargs_typed_rest_string_owns_elements_parity)
 {
     /* Strings are moved into the collected array; the array is dropped on
@@ -390,6 +581,15 @@ STRATA_TEST(varargs_extern_cvararg_zero_variadic_args_parity)
     CheckVarargExtern("extern int host_vsum(int count, ...);\n"
                       "int entry() { return host_vsum(0); }\n",
                       "host_vsum", (void*)&HostVSum, 0);
+}
+
+STRATA_TEST(varargs_extern_cvararg_box_scalar_derefs_parity)
+{
+    /* A box<int> arg through bare extern `...` derefs to its value (same
+       coercion as any by-value box argument), on both backends. */
+    CheckVarargExtern("extern int host_vsum(int count, ...);\n"
+                      "int entry() { box<int> b = 9; return host_vsum(1, b); }\n",
+                      "host_vsum", (void*)&HostVSum, 9);
 }
 
 /* ---- IR / C emission shapes ---- */

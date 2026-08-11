@@ -474,16 +474,11 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 }
 //--
 
-/* Types that may be passed through a bare extern `...` (C varargs).
-   Scalars, string (as const char*), handles, and box<T> all reduce to a
-   value the C ABI can carry. Structs, arrays, SIMD vectors, and void can't. */
-static bool IsCVarargCompatible(Resolver* r, const char* type)
+/* Types the C ABI can carry through a bare extern `...` as a plain value:
+   scalars, string (const char*), and handles. Structs, arrays, SIMD
+   vectors, and void can't. */
+static bool IsCVarargScalarish(Resolver* r, const char* type)
 {
-    if (strcmp(type, "void") == 0)
-    {
-        return false;
-    }
-
     if (IsNumeric(type) || strcmp(type, "string") == 0)
     {
         return true;
@@ -499,14 +494,53 @@ static bool IsCVarargCompatible(Resolver* r, const char* type)
         return TypeRegistryIsOpaque(&r->m_registry, type);
     }
 
-    /* box<T> (and other owning types) are pointers at the ABI. */
-    return IsOwningType(type);
+    return false;
+}
+
+/* Types that may be passed through a bare extern `...` (C varargs).
+   Scalars, string, handles, and box<T> (which derefs to its value) reduce
+   to something the C ABI can carry; box<T> is only allowed when T itself is
+   scalar/string/handle, since a boxed struct would have to cross by value. */
+static bool IsCVarargCompatible(Resolver* r, const char* type)
+{
+    if (strcmp(type, "void") == 0)
+    {
+        return false;
+    }
+
+    if (IsCVarargScalarish(r, type))
+    {
+        return true;
+    }
+
+    if (IsOwningType(type))
+    {
+        Str inner = OwningInnerStr(type);
+
+        if (!inner.data)
+        {
+            return false;
+        }
+
+        const char* innerC = StrNew(r->m_arena, inner.data, inner.len).data;
+
+        return IsCVarargScalarish(r, innerC);
+    }
+
+    return false;
 }
 
 /* Moves box/string sources into owned (non-ref) params, and into the
    collected array of a typed rest param when its element type is owning. */
 static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
 {
+    /* For a typed rest, the last param is the collected T[] array itself, so
+       the arg at that slot is really the first ELEMENT. Only args before it
+       map to named params; everything from the rest slot onward moves only if
+       the ELEMENT type is owning (e.g. box<T>...), not because T[] is. */
+    bool typedRest = best->isVariadic && !best->isCVararg;
+    size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
+
     for (size_t j = 0; j < c->args.count; j++)
     {
         Node* arg = (Node*)VecGet(&c->args, j);
@@ -514,14 +548,14 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
         const char* targetType = NULL;
         bool moves = false;
 
-        if (j < best->params.count)
+        if (j < namedCount)
         {
             const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
 
             targetType = param->type.name;
             moves = IsOwningType(param->type.name) && param->mod == ModNone && !best->isExtern;
         }
-        else if (best->isVariadic && !best->isCVararg)
+        else if (typedRest)
         {
             const ParamDecl* restParam = (ParamDecl*)VecGet(&best->params, best->params.count - 1);
             Str inner = ArrayInnerStr(restParam->type.name);
@@ -737,6 +771,13 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                     viable = false;
                     break;
                 }
+            }
+            else if (isTail && IsOwningType(paramType) && StrEqC(OwningInnerStr(paramType), argType))
+            {
+                /* T coerces to box<T> (implicit boxing), matching array
+                   literals. Only valid for typed-rest tail args, where the
+                   collector boxes each element inline. */
+                score += 1;
             }
             else
             {
