@@ -2914,15 +2914,18 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             continue;
         }
 
+        /* box<T> / T[] globals: storage starts null (box) or zero (array).
+           The runtime init (__strata_module_init) fills them. */
         if (IsOwningType(gd->type.name))
         {
-            if (b->m_diag)
-            {
-                DiagErrorFmt(b->m_diag, gd->base.range,
-                             "global '%s' has box type, which is not yet supported by the LLVM backend "
-                             "(use the C/Tcc JIT)", gd->name);
-            }
+            LLVMValueRef init = LLVMConstNull(typeDesc.type);
+            LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
+            LLVMSetInitializer(global, init);
 
+            Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+            sym->value = global;
+            sym->typeDesc = typeDesc;
+            StrMapPut(&b->m_globals, gd->name, sym);
             continue;
         }
 
@@ -2969,6 +2972,128 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     {
         FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
         DefineFunction(b, f);
+    }
+
+    /* Emit __strata_module_init + __strata_module_teardown when the module has
+       owning globals (box<T> / T[]) that need runtime initialization.  String
+       globals are excluded — they already point at a string-constant global
+       and don't need teardown in the LLVM backend. */
+    {
+        bool hasOwningGlobal = false;
+
+        for (size_t i = 0; i < module->globals.count; i++)
+        {
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
+
+            if (strcmp(gd->type.name, "string") != 0 && IsOwningType(gd->type.name))
+            {
+                hasOwningGlobal = true;
+                break;
+            }
+        }
+
+        if (hasOwningGlobal)
+        {
+            LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
+            LLVMTypeRef initTy = LLVMFunctionType(voidTy, NULL, 0, 0);
+
+            /* ---- __strata_module_init ---- */
+            LLVMValueRef initFn = LLVMAddFunction(b->m_mod, "__strata_module_init", initTy);
+            b->m_curFn = initFn;
+            StrMapClear(&b->m_symbols);
+            b->m_terminated = false;
+            b->m_loops.count = 0;
+            b->m_owningLocals.count = 0;
+            LLVMBasicBlockRef initEntry = LLVMAppendBasicBlockInContext(b->m_ctx, initFn, "entry");
+            b->m_entryBlock = initEntry;
+            b->m_entryAllocaPt = NULL;
+            LLVMPositionBuilderAtEnd(b->m_builder, initEntry);
+
+            for (size_t i = 0; i < module->globals.count; i++)
+            {
+                GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
+
+                if (strcmp(gd->type.name, "string") == 0 || !IsOwningType(gd->type.name))
+                {
+                    continue;
+                }
+
+                if (!gd->init)
+                {
+                    continue;
+                }
+
+                Value* sym = (Value*)StrMapGet(&b->m_globals, gd->name);
+
+                if (!sym)
+                {
+                    continue;
+                }
+
+                TypeDesc td = sym->typeDesc;
+
+                if (td.isArray && gd->init->kind == NodeArrayInit)
+                {
+                    LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
+                    LLVMBuildStore(b->m_builder, arr, sym->value);
+                }
+                else if (td.isBox && td.boxInner)
+                {
+                    TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)td.boxInner});
+                    Value val = EmitExpr(b, gd->init);
+
+                    if (val.typeDesc.isBox)
+                    {
+                        LLVMBuildStore(b->m_builder, val.value, sym->value);
+                    }
+                    else
+                    {
+                        LLVMValueRef sz = SizeOfConst(b, innerTd.type);
+                        LLVMValueRef args[1] = { sz };
+                        StrataAllocFn(b);
+                        LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn,
+                                                            args, 1, "boxgl");
+                        LLVMBuildStore(b->m_builder, Coerce(b, val, innerTd).value, heap);
+                        LLVMBuildStore(b->m_builder, heap, sym->value);
+                    }
+                }
+            }
+
+            LLVMBuildRetVoid(b->m_builder);
+
+            /* ---- __strata_module_teardown ---- */
+            LLVMValueRef tdFn = LLVMAddFunction(b->m_mod, "__strata_module_teardown", initTy);
+            b->m_curFn = tdFn;
+            StrMapClear(&b->m_symbols);
+            b->m_terminated = false;
+            b->m_loops.count = 0;
+            b->m_owningLocals.count = 0;
+            LLVMBasicBlockRef tdEntry = LLVMAppendBasicBlockInContext(b->m_ctx, tdFn, "entry");
+            b->m_entryBlock = tdEntry;
+            b->m_entryAllocaPt = NULL;
+            LLVMPositionBuilderAtEnd(b->m_builder, tdEntry);
+
+            for (size_t i = 0; i < module->globals.count; i++)
+            {
+                GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
+
+                if (strcmp(gd->type.name, "string") == 0 || !IsOwningType(gd->type.name))
+                {
+                    continue;
+                }
+
+                Value* sym = (Value*)StrMapGet(&b->m_globals, gd->name);
+
+                if (!sym)
+                {
+                    continue;
+                }
+
+                EmitDropOne(b, sym->value, sym->typeDesc);
+            }
+
+            LLVMBuildRetVoid(b->m_builder);
+        }
     }
 
     for (size_t i = 0; i < module->functions.count; i++)

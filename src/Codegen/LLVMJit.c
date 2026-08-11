@@ -48,6 +48,19 @@ void LLVMJitDestroy(LLVMJit* jit)
 {
     if (jit->m_ee)
     {
+        /* If the module has owning globals, their teardown was emitted as
+           __strata_module_teardown.  Call it before we unload. */
+        typedef void (*VoidFn)(void);
+        VoidFn td = (VoidFn)(uintptr_t)LLVMGetFunctionAddress(jit->m_ee, "__strata_module_teardown");
+
+        if (td)
+        {
+            td();
+        }
+    }
+
+    if (jit->m_ee)
+    {
         LLVMDisposeExecutionEngine(jit->m_ee);
         jit->m_ee = NULL;
     }
@@ -134,6 +147,18 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         if (freeFn)
         {
             LLVMAddGlobalMapping(jit->m_ee, freeFn, (void*)&strata_free_impl);
+        }
+    }
+
+    /* If the module has owning globals (box<T> / T[]), their runtime
+       initialisation was emitted as __strata_module_init.  Call it now. */
+    {
+        typedef void (*VoidFn)(void);
+        VoidFn init = (VoidFn)(uintptr_t)LLVMGetFunctionAddress(jit->m_ee, "__strata_module_init");
+
+        if (init)
+        {
+            init();
         }
     }
 
