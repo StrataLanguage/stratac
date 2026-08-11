@@ -178,6 +178,15 @@ static const char* FunctionName(CEmitter* emitter, const char* name)
 
 static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
 {
+    /* When SIMD intrinsics are disabled (e.g. the TCC JIT, or --no-simd), the
+       operation emitters produce __strata_float128 struct values - so the
+       declared type must match or the generated C is inconsistent. Only use
+       the native vector types when intrinsics are actually emitted. */
+    if ((emitter->emitFlags & CEmitEnableSIMD) == 0)
+    {
+        return "__strata_float128";
+    }
+
     StrataArch arch = ResolveArch(emitter->arch);
 
     if (arch == STRATA_ARCH_ARM64)
@@ -189,7 +198,7 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
         return "__m128";
     }
 
-    return NULL;
+    return "__strata_float128";
 }
 
 static const char* TypeNameC(CEmitter* emitter, const char* name)

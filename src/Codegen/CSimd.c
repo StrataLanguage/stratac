@@ -636,6 +636,15 @@ void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* ex
         return;
     }
 
+    /* Single component (.x/.y/.z/.w) reads one lane as a scalar float. */
+    if (numComponents == 1)
+    {
+        CEmitExpr(emitter, expr->base_node);
+        SbPutc(&emitter->out, '.');
+        SbPutc(&emitter->out, NoneLaneToMember(c[0]));
+        return;
+    }
+
     SbPuts(&emitter->out, "(__strata_float128) {");
 
     for (int i = 0; i < 4; i++)

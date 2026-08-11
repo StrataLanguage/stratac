@@ -177,6 +177,11 @@ MappedType MapType(const TypeName* t)
         return MakeSimdVector(true, 32, 4, "float");
     }
 
+    if (strcmp(base, "float4") == 0)
+    {
+        return MakeSimdVector(true, 32, 4, "float");
+    }
+
     return m;
 }
 
