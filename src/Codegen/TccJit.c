@@ -208,6 +208,10 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     tcc_add_symbol(jit->state, "memmove", (const void*)(uintptr_t)&memmove);
     tcc_add_symbol(jit->state, "fmodf", (const void*)(uintptr_t)&fmodf);
     tcc_add_symbol(jit->state, "fmod", (const void*)(uintptr_t)&fmod);
+
+    tcc_add_symbol(jit->state, "printf", (const void*)(uintptr_t)&printf);
+    tcc_add_symbol(jit->state, "puts", (const void*)(uintptr_t)&puts);
+
     tcc_add_symbol(jit->state, "strata_alloc", (const void*)(uintptr_t)&strata_alloc_impl);
     tcc_add_symbol(jit->state, "strata_free", (const void*)(uintptr_t)&strata_free_impl);
     tcc_add_symbol(jit->state, "strata_panic", (const void*)(uintptr_t)&strata_panic);

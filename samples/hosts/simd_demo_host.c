@@ -6,6 +6,18 @@
 #include "strata/strata.h"
 
 #include <stdio.h>
+#include <string.h>
+
+/* Resolve a script `extern` to a host function. simd.strata declares printf. */
+static void* resolve_extern(const char* name)
+{
+    if (strcmp(name, "printf") == 0)
+    {
+        return (void*)printf;
+    }
+
+    return NULL;
+}
 
 int main(void)
 {
@@ -22,6 +34,18 @@ int main(void)
         strataFree((char*)err);
         strataCompilerDestroy(c);
         return 1;
+    }
+
+    /* Discover what the script declared as `extern` and bind each one. */
+    for (size_t i = 0; i < strataJitGetExternSymbolCount(jit); ++i)
+    {
+        const char* name = strataJitGetExternSymbolName(jit, i);
+        void* fn = resolve_extern(name);
+
+        if (!fn || !strataJitAddSymbol(jit, name, fn))
+        {
+            fprintf(stderr, "no host binding for extern '%s'\n", name);
+        }
     }
 
     int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");

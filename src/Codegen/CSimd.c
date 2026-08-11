@@ -472,7 +472,7 @@ static inline void SSEVectorEmitShuffleIndices(struct CEmitter* emitter, VectorC
 
 static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr, bool throughBox)
 {
-    VectorComponent c[4];
+    VectorComponent c[4] = {VC_NULL,VC_NULL,VC_NULL,VC_NULL};
 
     int numComponents = GetComponentList(c, expr->member);
 
