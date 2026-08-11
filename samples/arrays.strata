@@ -11,16 +11,20 @@
  * box<FooBar> frees the FooBar's string field recursively.
  */
 
-int sum(ref int[] a) {
+int sum(ref int[] a)
+{
     int total = 0;
-    for (ulong i = 0; i < a.length; i = i + 1) {
+    for (ulong i = 0; i < a.length; i = i + 1)
+    {
         total = total + a[i];
     }
+    
     return total;
 }
 
 /* Exercises array_push / array_pop / array_resize. */
-int helpers() {
+int helpers()
+{
     int[] a = {1, 2, 3};
     array_push(a, 4);            // {1, 2, 3, 4}
     array_push(a, 5);            // {1, 2, 3, 4, 5}
@@ -43,6 +47,7 @@ struct FooBar
 };
 
 int[] testGlobalArray = {65, 100, 80};
+string testGlobalString = "again";
 
 extern int puts(string str);
 extern int putchar(int ch);
@@ -57,6 +62,9 @@ void PrintAll(ref int[] elems)
 }
 
 void PrintAll(ref box<FooBar>[] elems) {
+    //string localCopy = testGlobalString;
+    /// FAILS TO COMPILE! (cannot be moved as it is not owned):    array_push(elems, FooBar(localCopy));   // {hello, world, again}
+    /// CRASHES!     array_push(elems, FooBar(testGlobalString));   // {hello, world, again}
     array_push(elems, FooBar("again"));   // {hello, world, again}
     for (uint i = 0; i < elems.length; i++) {
         puts(elems[i].str);

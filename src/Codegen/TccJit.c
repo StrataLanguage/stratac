@@ -52,6 +52,8 @@ static void strata_free_impl(void* p)
     free(p);
 }
 
+extern void strata_panic(const char* msg);
+
 static void CopySymbols(TccJit* jit, Vec* destination, const Vec* source)
 {
     for (size_t i = 0; i < source->count; ++i)
@@ -188,6 +190,7 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     tcc_add_symbol(jit->state, "fmod", (const void*)(uintptr_t)&fmod);
     tcc_add_symbol(jit->state, "strata_alloc", (const void*)(uintptr_t)&strata_alloc_impl);
     tcc_add_symbol(jit->state, "strata_free", (const void*)(uintptr_t)&strata_free_impl);
+    tcc_add_symbol(jit->state, "strata_panic", (const void*)(uintptr_t)&strata_panic);
 
     if (tcc_relocate(jit->state) < 0)
     {

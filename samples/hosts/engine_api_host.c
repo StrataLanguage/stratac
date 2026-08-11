@@ -11,6 +11,7 @@
 // Needed for the AOT test since we use box<T>
 void* strata_alloc(unsigned long n) { return malloc((size_t)n); }
 void strata_free(void* p) { free(p); }
+void strata_panic(const char* msg) { fprintf(stderr, "strata panic: %s\n", msg); abort(); }
 
 /* The engine's real entity type; Strata never sees inside it. */
 typedef struct { int x, y; } Entity;

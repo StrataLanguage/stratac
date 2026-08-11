@@ -66,6 +66,9 @@ typedef enum StrataArch : int
     STRATA_ARCH_ARM64,
 } StrataArch;
 
+typedef void (*StrataPanicHandler)(const char* msg);
+
+STRATA_API void strataSetPanicHandler(StrataPanicHandler handler);
 
 
 typedef struct StrataJit StrataJit;

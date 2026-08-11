@@ -16,6 +16,8 @@ static void strata_free_impl(void* p)
     free(p);
 }
 
+extern void strata_panic(const char* msg);
+
 static void EnsureTargetsInitialized(void)
 {
     static bool initialized = false;
@@ -147,6 +149,13 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         if (freeFn)
         {
             LLVMAddGlobalMapping(jit->m_ee, freeFn, (void*)&strata_free_impl);
+        }
+
+        LLVMValueRef panicFn = LLVMGetNamedFunction(modRef, "strata_panic");
+
+        if (panicFn)
+        {
+            LLVMAddGlobalMapping(jit->m_ee, panicFn, (void*)&strata_panic);
         }
     }
 

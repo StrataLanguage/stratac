@@ -9,6 +9,7 @@
 // Strata runtime: array/box/string heap allocation
 void* strata_alloc(size_t n) { return malloc(n); }
 void strata_free(void* p) { free(p); }
+void strata_panic(const char* msg) { fprintf(stderr, "strata panic: %s\n", msg); abort(); }
 
 // Strata-provided entry (defined in arrays.strata).
 extern int entry(void);
