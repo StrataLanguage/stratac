@@ -27,7 +27,7 @@ int run()
 
     box<float3>[] vecs = { b };
     array_push(vecs, a);
-    
+
     float3 sw = vecs[vecs.length - 1].zyx;              // swizzle {3, 2, 1}
 
     return (int)(combo.x + combo.y + combo.z)   // 16 + 27 + 38 = 81
