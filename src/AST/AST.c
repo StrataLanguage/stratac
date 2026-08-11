@@ -163,6 +163,22 @@ void AstDispose(Node* node)
     case NodeGlobal:
         AstDispose(((GlobalDecl*)node)->init);
         return;
+    case NodeIndex:
+    {
+        IndexExpr* idx = (IndexExpr*)node;
+        AstDispose(idx->base_node);
+        AstDispose(idx->index);
+        return;
+    }
+    case NodeArrayInit:
+    {
+        ArrayInitExpr* ai = (ArrayInitExpr*)node;
+        for (size_t i = 0; i < ai->elements.count; i++)
+        {
+            AstDispose((Node*)VecGet(&ai->elements, i));
+        }
+        return;
+    }
     case NodeImport:
     case NodeHandle:
     case NodeParam:

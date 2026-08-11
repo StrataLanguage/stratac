@@ -611,6 +611,18 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
     }
     case NodeStructInit:
         return ((StructInitExpr*)n)->typeName;
+    case NodeIndex:
+    {
+        const char* baseName = InferType(r, ((IndexExpr*)n)->base_node, scope);
+        Str inner = ArrayInnerStr(baseName);
+
+        return inner.data ? StrNew(r->m_arena, inner.data, inner.len).data : "";
+    }
+    case NodeArrayInit:
+    {
+        const char* et = ((ArrayInitExpr*)n)->elementType;
+        return (et && et[0]) ? arena_format(r->m_arena, "%s[]", et) : "";
+    }
     default:
         return "";
     }
@@ -700,6 +712,20 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (targetIsBox)
         {
+            /* A bare braced array literal RHS (`a = {1,2,3};`) carries no
+               element type from the parser - infer it from the array target
+               so codegen and the type checks below see a real type. */
+            if (IsArrayType(tt) && a->value->kind == NodeArrayInit)
+            {
+                ArrayInitExpr* ai = (ArrayInitExpr*)a->value;
+
+                if (ai->elementType[0] == '\0')
+                {
+                    Str inner = ArrayInnerStr(tt);
+                    ai->elementType = StrNew(r->m_arena, inner.data, inner.len).data;
+                }
+            }
+
             /* Resolve the value first (so a call gets its resolvedDecl set)
                before inferring its type - otherwise an unresolved call's
                type reads as "", misclassifying the assignment below. */
@@ -953,6 +979,24 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 
         return;
     }
+    case NodeIndex:
+    {
+        IndexExpr* ix = (IndexExpr*)n;
+        ResolveExpr(r, ix->base_node, scope);
+        ResolveExpr(r, ix->index, scope);
+        return;
+    }
+    case NodeArrayInit:
+    {
+        ArrayInitExpr* ai = (ArrayInitExpr*)n;
+
+        for (size_t i = 0; i < ai->elements.count; i++)
+        {
+            ResolveExpr(r, (Node*)VecGet(&ai->elements, i), scope);
+        }
+
+        return;
+    }
     default:
         return;
     }
@@ -1003,7 +1047,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
         }
 
-        if (IsOwningType(vd->type.name) && !vd->init)
+        /* Owning types must be initialized so they hold a valid heap pointer
+           - except arrays, which default to an empty {null, 0} fat struct. */
+        if (IsOwningType(vd->type.name) && !IsArrayType(vd->type.name) && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
         }

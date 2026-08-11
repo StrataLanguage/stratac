@@ -505,6 +505,32 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     }
 
+    case NodeIndex:
+    {
+        IndexExpr* idx = AsNode(IndexExpr, n);
+        SbPuts(out, "([] ");
+        Dump(idx->base_node, 0, out);
+        SbPutc(out, ' ');
+        Dump(idx->index, 0, out);
+        SbPutc(out, ')');
+        return;
+    }
+
+    case NodeArrayInit:
+    {
+        ArrayInitExpr* ai = AsNode(ArrayInitExpr, n);
+        SbPrintf(out, "(array-init %s", ai->elementType);
+
+        for (size_t i = 0; i < ai->elements.count; i++)
+        {
+            SbPutc(out, ' ');
+            Dump((Node*)VecGet(&ai->elements, i), 0, out);
+        }
+
+        SbPutc(out, ')');
+        return;
+    }
+
     case NodeParam:
         SbPuts(out, "(param)\n");
         return;

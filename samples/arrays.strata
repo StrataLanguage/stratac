@@ -1,0 +1,37 @@
+/* Arrays: a fat {ptr, u64} owning type. Length is queried via .length. */
+
+int sum(ref int[] a) {
+    int total = 0;
+    for (ulong i = 0; i < a.length; i = i + 1) {
+        total = total + a[i];
+    }
+    return total;
+}
+
+struct FooBar
+{
+    string str;
+};
+
+
+extern int puts(string str);
+
+
+void TakeArrayOfFooBars(FooBar[] elems)
+{
+    for (uint i = 0; i < elems.length; i++)
+    {
+        puts(elems[i].str);
+    }
+}
+
+int entry() {
+    FooBar[] fooBars = { FooBar("hello"), FooBar("world") };
+    TakeArrayOfFooBars(fooBars);
+    
+    //puts(fooBars[1].str);
+
+    int[] nums = {1, 2, 3, 4, 5};
+    nums[0] = 10;
+    return sum(nums) + (int)nums.length;
+}

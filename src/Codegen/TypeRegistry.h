@@ -29,11 +29,16 @@ bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
 /* Owning (heap-allocated, move-only) type helpers.
- * Currently only box<T>; will extend to string, T[], etc. */
+ * Covers box<T>, string, and T[] (arrays own their backing buffer). */
 bool IsOwningType(const char* name);
-Str  OwningInnerStr(const char* name);             /* Str slice — no alloc */
+Str  OwningInnerStr(const char* name);             /* Str slice — no alloc (box inner only) */
 const char* OwningInnerCStr(Arena* arena, const char* name); /* null-terminated arena copy */
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
+
+/* Array type helpers. An array type name is encoded as "<inner>[]"
+ * (e.g. "int[]"). Internally a fat {ptr, u64} struct: heap data + length. */
+bool IsArrayType(const char* name);
+Str  ArrayInnerStr(const char* name);              /* Str slice of the element type — no alloc */
 
 // -- Helpers
 

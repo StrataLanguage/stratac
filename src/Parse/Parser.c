@@ -206,7 +206,7 @@ static void Synchronize(Parser* p)
     }
 }
 
-static bool LooksLikeVarDecl(const Parser* p)
+static bool LooksLikeVarDecl(Parser* p)
 {
     switch (p->m_cur.kind)
     {
@@ -230,8 +230,29 @@ static bool LooksLikeVarDecl(const Parser* p)
         return true;
     case TokIdent:
     {
-        Token next = LexerPeekToken(p->m_lex);
-        return next.kind == TokIdent;
+        /* A user-type decl may carry postfix array brackets before the name
+           (`Pt[] pts`, `Vec3[][] grid`), so a one-token peek isn't enough.
+           Speculatively parse a type and see whether an identifier follows,
+           then restore the parser/lexer state. */
+        size_t savedPos = LexerPosition(p->m_lex);
+        bool savedHasPeek = p->m_lex->m_hasPeek;
+        Token savedPeeked = p->m_lex->m_peeked;
+        Token savedCur = p->m_cur;
+
+        TypeName tn = {0};
+        bool isDecl = false;
+
+        if (ParserTryParseType(p, &tn) && tn.name)
+        {
+            isDecl = p->m_cur.kind == TokIdent;
+        }
+
+        p->m_lex->m_pos = savedPos;
+        p->m_lex->m_hasPeek = savedHasPeek;
+        p->m_lex->m_peeked = savedPeeked;
+        p->m_cur = savedCur;
+
+        return isDecl;
     }
     default:
         return false;
@@ -347,6 +368,21 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->name = (char*)name;
     out->range
         = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+
+    /* Postfix array brackets: `int[]`, `Vec3[]`, `box<int>[]`, even
+       `int[][]` (nested). Each `[]` wraps the current type. Only consume
+       well-formed `[]` pairs so an indexing expression like `foo[3]` is left
+       intact when this is tried speculatively. */
+    while (p->m_cur.kind == TokLBracket && LexerPeekToken(p->m_lex).kind == TokRBracket)
+    {
+        Advance(p);  /* '[' */
+        Advance(p);  /* ']' */
+
+        out->name = arena_format(p->m_arena, "%s[]", out->name);
+        out->range
+            = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+    }
+
     out->isConst = isConst;
 
     return true;
@@ -515,6 +551,7 @@ static Node* ParseUnary(Parser* p);
 static Node* ParsePostfix(Parser* p);
 static Node* ParsePrimary(Parser* p);
 static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName);
+static Node* ParseArrayInitBody(Parser* p, Token startTok, const char* elementType);
 
 static Node* ParseFunction(Parser* p)
 {
@@ -636,9 +673,14 @@ static Node* ParseFunction(Parser* p)
 
     p->m_hasReturnStmt = false;
 
-    /* `return { ... };` infers its struct type from the function's return type - for box<T> this is T */
-    p->m_returnType = IsOwningType(node->returnType.name) ? OwningInnerCStr(p->m_arena, node->returnType.name)
-                                                          : node->returnType.name;
+    /* `return { ... };` infers its struct type from the function's return type.
+       For box<T>/string this is the inner T; for T[] the whole array type is
+       kept so a braced return is parsed as an array literal. */
+    p->m_returnType = IsArrayType(node->returnType.name)
+        ? node->returnType.name
+        : (IsOwningType(node->returnType.name)
+            ? OwningInnerCStr(p->m_arena, node->returnType.name)
+            : node->returnType.name);
 
     node->body = ParseBlock(p);
 
@@ -904,10 +946,20 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace)
             {
-                /* `box<T> x = {...};` infers T, not "box<T>". */
-                const char* initTypeName = IsOwningType(type.name) ? OwningInnerCStr(p->m_arena, type.name) : type.name;
+                if (IsArrayType(type.name))
+                {
+                    Str inner = ArrayInnerStr(type.name);
+                    node->init = ParseArrayInitBody(p, start, StrNew(p->m_arena, inner.data, inner.len).data);
+                }
+                else
+                {
+                    /* `box<T> x = {...};` infers T, not "box<T>". */
+                    const char* initTypeName = IsOwningType(type.name)
+                        ? OwningInnerCStr(p->m_arena, type.name)
+                        : type.name;
 
-                node->init = ParseStructInitBody(p, start, initTypeName);
+                    node->init = ParseStructInitBody(p, start, initTypeName);
+                }
             }
             else
             {
@@ -952,7 +1004,15 @@ static Node* ParseReturn(Parser* p)
     {
         if (p->m_cur.kind == TokLBrace && p->m_returnType)
         {
-            node->value = ParseStructInitBody(p, p->m_cur, p->m_returnType);
+            if (IsArrayType(p->m_returnType))
+            {
+                Str inner = ArrayInnerStr(p->m_returnType);
+                node->value = ParseArrayInitBody(p, p->m_cur, StrNew(p->m_arena, inner.data, inner.len).data);
+            }
+            else
+            {
+                node->value = ParseStructInitBody(p, p->m_cur, p->m_returnType);
+            }
         }
         else
         {
@@ -1102,7 +1162,18 @@ static Node* ParseAssign(Parser* p)
         Token opToken = p->m_cur;
         Advance(p);
 
-        Node* rhs = ParseAssign(p);
+        /* `arr = { ... };` — a bare braced RHS is an array literal whose
+           element type is inferred from the target during sema. */
+        Node* rhs;
+
+        if (p->m_cur.kind == TokLBrace)
+        {
+            rhs = ParseArrayInitBody(p, p->m_cur, "");
+        }
+        else
+        {
+            rhs = ParseAssign(p);
+        }
 
         AssignExpr* node = AST_NEW(p->m_arena, AssignExpr);
         node->base.kind = NodeAssign;
@@ -1278,8 +1349,29 @@ static Node* ParsePostfix(Parser* p)
 {
     Node* e = ParsePrimary(p);
 
-    while (e && (p->m_cur.kind == TokDot || p->m_cur.kind == TokInc || p->m_cur.kind == TokDec))
+    while (e && (p->m_cur.kind == TokDot
+                || p->m_cur.kind == TokInc
+                || p->m_cur.kind == TokDec
+                || p->m_cur.kind == TokLBracket))
     {
+        if (p->m_cur.kind == TokLBracket)
+        {
+            Token lbr = p->m_cur;
+            Advance(p);
+
+            Node* index = ParseExpr(p);
+            Token close = ParserExpect(p, TokRBracket, "']'");
+
+            IndexExpr* node = AST_NEW(p->m_arena, IndexExpr);
+            node->base.kind = NodeIndex;
+            node->base.range = SpanFrom(lbr, close);
+            node->base_node = e;
+            node->index = index;
+
+            e = (Node*)node;
+            continue;
+        }
+
         if (p->m_cur.kind == TokInc || p->m_cur.kind == TokDec)
         {
             Token token = p->m_cur;
@@ -1368,6 +1460,53 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
 
         while (p->m_cur.kind != TokComma && p->m_cur.kind != TokDot && p->m_cur.kind != TokRBrace
                && p->m_cur.kind != TokEof)
+        {
+            Advance(p);
+        }
+
+        ParserConsume(p, TokComma);
+    }
+
+    Token close = ParserExpect(p, TokRBrace, "'}'");
+    init->base.range = SpanFrom(startTok, close);
+
+    return (Node*)init;
+}
+
+static Node* ParseArrayInitBody(Parser* p, Token startTok, const char* elementType)
+{
+    ArrayInitExpr* init = AST_NEW(p->m_arena, ArrayInitExpr);
+    init->base.kind = NodeArrayInit;
+    init->base.range = startTok.range;
+    init->elementType = arena_strdup(p->m_arena, elementType ? elementType : "");
+    VecInit(&init->elements);
+
+    Advance(p);  /* consume '{' */
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        Node* elem = ParseExpr(p);
+
+        if (elem)
+        {
+            VecPush(&init->elements, elem);
+        }
+
+        if (ParserConsume(p, TokComma))
+        {
+            continue;
+        }
+
+        if (p->m_cur.kind == TokRBrace || p->m_cur.kind == TokEof)
+        {
+            break;
+        }
+
+        DiagError(p->m_diag, p->m_cur.range, "expected ',' or '}' in array initializer");
+
+        while (p->m_cur.kind != TokComma
+            && p->m_cur.kind != TokRBrace
+            && p->m_cur.kind != TokEof)
         {
             Advance(p);
         }

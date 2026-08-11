@@ -112,3 +112,28 @@ STRATA_TEST(sample_strings_compiles_to_llvm_ir)
     free(src);
 }
 
+STRATA_TEST(sample_arrays_lower_in_llvm_backend)
+{
+    char* src = LoadSample("arrays.strata");
+    STRATA_CHECK(src != NULL);
+    STRATA_CHECK(src[0] != '\0');
+
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod->functions.count >= 2);
+
+    /* The fat {ptr, i64} array struct is shared by every T[] and used by
+       the index/length operations emitted in the IR. */
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "{ ptr, i64 }") != NULL);
+    STRATA_CHECK(strstr(res.output, "define i32 @entry") != NULL);
+    STRATA_CHECK(strstr(res.output, "strata_alloc") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    free(src);
+}
+
