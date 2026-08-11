@@ -18,6 +18,15 @@ static void strata_free_impl(void* p)
 
 extern void strata_panic(const char* msg);
 
+static void* strata_strdup_impl(const char* s)
+{
+    size_t n = 0;
+    while (s[n]) n++;
+    char* d = (char*)malloc(n + 1);
+    for (size_t i = 0; i <= n; i++) d[i] = s[i];
+    return d;
+}
+
 static void EnsureTargetsInitialized(void)
 {
     static bool initialized = false;
@@ -156,6 +165,13 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         if (panicFn)
         {
             LLVMAddGlobalMapping(jit->m_ee, panicFn, (void*)&strata_panic);
+        }
+
+        LLVMValueRef strdupFn = LLVMGetNamedFunction(modRef, "strata_strdup");
+
+        if (strdupFn)
+        {
+            LLVMAddGlobalMapping(jit->m_ee, strdupFn, (void*)&strata_strdup_impl);
         }
     }
 

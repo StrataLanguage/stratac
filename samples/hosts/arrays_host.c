@@ -11,6 +11,8 @@ void* strata_alloc(size_t n) { return malloc(n); }
 void strata_free(void* p) { free(p); }
 void strata_panic(const char* msg) { fprintf(stderr, "strata panic: %s\n", msg); abort(); }
 
+char* strata_strdup(const char* s) { size_t n = 0; while (s[n]) n++; char* d = (char*)malloc(n + 1); for (size_t i = 0; i <= n; i++) d[i] = s[i]; return d; }
+
 // Strata-provided entry (defined in arrays.strata).
 extern int entry(void);
 
