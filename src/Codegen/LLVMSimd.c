@@ -6,35 +6,82 @@
 #include <assert.h>
 #include <string.h>
 
-#if 0
-typedef enum LSimdIntrinsic
+#define ER_MALFORMED -1
+
+typedef enum VecC
 {
-    LSID_MAX,
-} LSimdIntrinsic;
+    VC_NULL = -1,
+    VC_X = 0,
+    VC_Y,
+    VC_Z,
+    VC_W
+} VecC;
 
-static unsigned int intrinIdCache[LSID_MAX];
-
-const char* intrinInstrs[] = {};
-
-static unsigned int LSimdGetIntrinsicID(LSimdIntrinsic id)
+/**
+ * @brief Build a list of components from a member string.
+ * @returns ER_MALFORMED on error, or the number of components otherwise.
+ */
+static int BuildComponents(VecC* buffer, const char* memberAccess)
 {
-    assert(id < (sizeof(intrinInstrs) / sizeof(intrinInstrs[0])));
-    assert(id >= 0);
+    int count = 0;
 
-    /* Check if the value is not zero- LLVM's `not_intrinsic`, and the default initialized value for statics. */
-    if (intrinIdCache[id] > 0)
+    /* Set all components to null */
+    for (int i = 0; i < 4; i++)
     {
-        return intrinIdCache[id];
+        buffer[i] = VC_NULL;
     }
 
-    const char* name = intrinInstrs[id];
+    for (int i = 0; i < 4; i++)
+    {
+        char ch = memberAccess[i];
+        if (ch == '\0')
+        {
+            break;
+        }
 
-    const unsigned int intrin = LLVMLookupIntrinsicID(name, strlen(name));
-    intrinIdCache[id] = intrin;
+        if (ch < 'w' || ch > 'z')
+        {
+            return ER_MALFORMED;
+        }
 
-    return intrin;
+        switch (ch)
+        {
+        case 'x':
+            buffer[i] = VC_X;
+            break;
+        case 'y':
+            buffer[i] = VC_Y;
+            break;
+        case 'z':
+            buffer[i] = VC_Z;
+            break;
+        case 'w':
+            buffer[i] = VC_W;
+            break;
+        default:;
+        }
+
+        ++count;
+    }
+
+    return count;
 }
-#endif
+
+LLVMValueRef LSimdVectorShuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, VecC x, VecC y, VecC z, VecC w)
+{
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+    LLVMValueRef maskV[] = {
+        LLVMConstInt(intType, (x != VC_NULL) ? x : VC_X, 0),
+        LLVMConstInt(intType, (y != VC_NULL) ? y : VC_Y, 0),
+        LLVMConstInt(intType, (z != VC_NULL) ? z : VC_Z, 0),
+        LLVMConstInt(intType, (w != VC_NULL) ? w : VC_W, 0),
+    };
+
+    LLVMValueRef mask = LLVMConstVector(maskV, 4);
+
+    return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
+}
 
 LLVMValueRef LSimdVectorBroadcast(struct Builder* b, LLVMValueRef scalar)
 {
@@ -49,18 +96,8 @@ LLVMValueRef LSimdVectorBroadcast(struct Builder* b, LLVMValueRef scalar)
     LLVMValueRef singleComp
         = LLVMBuildInsertElement(b->m_builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
 
-    /* Build permute mask XXXX */
-    LLVMValueRef maskV[] = {
-        LLVMConstInt(intType, 0, 0),
-        LLVMConstInt(intType, 0, 0),
-        LLVMConstInt(intType, 0, 0),
-        LLVMConstInt(intType, 0, 0),
-    };
-
-    LLVMValueRef mask = LLVMConstVector(maskV, 4);
-
-    LLVMValueRef dup = LLVMBuildShuffleVector(b->m_builder, singleComp, poisonVec, mask, "dup");
-    return dup;
+    /* Reorder to XXXX */
+    return LSimdVectorShuffle(b, singleComp, poisonVec, VC_X, VC_X, VC_X, VC_X);
 }
 
 LLVMValueRef LSimdVectorConstruct(struct Builder* b, CallExpr* n)
@@ -176,4 +213,41 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
     }
 
     return NULL; /* unreachable if op is valid */
+}
+
+LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const struct MemberExpr* expr)
+{
+    VecC c[4];
+    int numComponents = BuildComponents(c, expr->member);
+
+    if (numComponents == ER_MALFORMED)
+    {
+        DiagError(b->m_diag, expr->base.range, "malformed components in vector destructure");
+        return NULL;
+    }
+
+    /* Single lane extract */
+    if (numComponents == 1)
+    {
+        VecC index = c[0];
+
+        /* numComponents should be ER_MALFORMED or 0 if there are no valid components */
+        assert(index != VC_NULL);
+
+        LLVMValueRef idx = LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), index, 0);
+        return LLVMBuildExtractElement(b->m_builder, vec, idx, "vecext");
+    }
+
+    if (numComponents == 3)
+    {
+        return LSimdVectorShuffle(b, vec, vec, c[0], c[1], c[2], VC_W);
+    }
+
+    if (numComponents == 4)
+    {
+        return LSimdVectorShuffle(b, vec, vec, c[0], c[1], c[2], c[3]);
+    }
+
+    DiagError(b->m_diag, expr->base.range, "malformed components in vector destructure");
+    return NULL;
 }
