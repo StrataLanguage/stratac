@@ -19,7 +19,16 @@ struct LLVMOpaqueTarget;
 struct LLVMOpaqueTargetMachine;
 struct LLVMOpaqueMemoryBuffer;
 struct LLVMOpaqueTargetData;
-struct LLVMOpaqueExecutionEngine;
+struct LLVMOpaqueError;
+struct LLVMOrcOpaqueThreadSafeContext;
+struct LLVMOrcOpaqueThreadSafeModule;
+struct LLVMOrcOpaqueJITTargetMachineBuilder;
+struct LLVMOrcOpaqueJITDylib;
+struct LLVMOrcOpaqueExecutionSession;
+struct LLVMOrcOpaqueDefinitionGenerator;
+struct LLVMOrcOpaqueSymbolStringPoolEntry;
+struct LLVMOrcOpaqueLLJITBuilder;
+struct LLVMOrcOpaqueLLJIT;
 
 typedef struct LLVMOpaqueContext* LLVMContextRef;
 typedef struct LLVMOpaqueModule* LLVMModuleRef;
@@ -31,7 +40,17 @@ typedef struct LLVMOpaqueTarget* LLVMTargetRef;
 typedef struct LLVMOpaqueTargetMachine* LLVMTargetMachineRef;
 typedef struct LLVMOpaqueMemoryBuffer* LLVMMemoryBufferRef;
 typedef struct LLVMOpaqueTargetData* LLVMTargetDataRef;
-typedef struct LLVMOpaqueExecutionEngine* LLVMExecutionEngineRef;
+typedef struct LLVMOpaqueError* LLVMErrorRef;
+typedef struct LLVMOrcOpaqueThreadSafeContext* LLVMOrcThreadSafeContextRef;
+typedef struct LLVMOrcOpaqueThreadSafeModule* LLVMOrcThreadSafeModuleRef;
+typedef struct LLVMOrcOpaqueJITTargetMachineBuilder* LLVMOrcJITTargetMachineBuilderRef;
+typedef struct LLVMOrcOpaqueJITDylib* LLVMOrcJITDylibRef;
+typedef struct LLVMOrcOpaqueExecutionSession* LLVMOrcExecutionSessionRef;
+typedef struct LLVMOrcOpaqueDefinitionGenerator* LLVMOrcDefinitionGeneratorRef;
+typedef struct LLVMOrcOpaqueSymbolStringPoolEntry* LLVMOrcSymbolStringPoolEntryRef;
+typedef struct LLVMOrcOpaqueLLJITBuilder* LLVMOrcLLJITBuilderRef;
+typedef struct LLVMOrcOpaqueLLJIT* LLVMOrcLLJITRef;
+typedef uint64_t LLVMOrcExecutorAddress;
 
 
 typedef enum {
@@ -236,12 +255,73 @@ LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef t, LLVMModuleR
                                              char** errorMessage, LLVMMemoryBufferRef* outMemBuf);
 void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef memBuf);
 
-LLVMBool LLVMCreateExecutionEngineForModule(LLVMExecutionEngineRef* outEe, LLVMModuleRef m, char** outError);
-void LLVMDisposeExecutionEngine(LLVMExecutionEngineRef ee);
-uint64_t LLVMGetFunctionAddress(LLVMExecutionEngineRef ee, const char* name);
-uint64_t LLVMGetGlobalValueAddress(LLVMExecutionEngineRef ee, const char* name);
 LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef m, const char* name);
-void LLVMAddGlobalMapping(LLVMExecutionEngineRef ee, LLVMValueRef global, void* addr);
+
+/* --- llvm-c/Error.h --- */
+char* LLVMGetErrorMessage(LLVMErrorRef err);
+void LLVMDisposeErrorMessage(char* errMsg);
+void LLVMConsumeError(LLVMErrorRef err);
+
+/* --- llvm-c/Orc.h (ORCv2) --- */
+typedef enum {
+    LLVMJITSymbolGenericFlagsNone = 0,
+    LLVMJITSymbolGenericFlagsExported = 1U << 0,
+    LLVMJITSymbolGenericFlagsWeak = 1U << 1,
+    LLVMJITSymbolGenericFlagsCallable = 1U << 2,
+    LLVMJITSymbolGenericFlagsMaterializationSideEffectsOnly = 1U << 3
+} LLVMJITSymbolGenericFlags;
+
+typedef struct {
+    uint8_t GenericFlags;
+    uint8_t TargetFlags;
+} LLVMJITSymbolFlags;
+
+typedef struct {
+    LLVMOrcExecutorAddress Address;
+    LLVMJITSymbolFlags Flags;
+} LLVMJITEvaluatedSymbol;
+
+typedef struct {
+    LLVMOrcSymbolStringPoolEntryRef Name;
+    LLVMJITEvaluatedSymbol Sym;
+} LLVMOrcCSymbolMapPair;
+
+typedef LLVMOrcCSymbolMapPair* LLVMOrcCSymbolMapPairs;
+
+typedef int (*LLVMOrcSymbolPredicate)(void* ctx, LLVMOrcSymbolStringPoolEntryRef sym);
+
+typedef struct LLVMOrcOpaqueMaterializationUnit* LLVMOrcMaterializationUnitRef;
+
+LLVMOrcThreadSafeContextRef LLVMOrcCreateNewThreadSafeContextFromLLVMContext(LLVMContextRef ctx);
+void LLVMOrcDisposeThreadSafeContext(LLVMOrcThreadSafeContextRef tsCtx);
+LLVMOrcThreadSafeModuleRef LLVMOrcCreateNewThreadSafeModule(LLVMModuleRef m, LLVMOrcThreadSafeContextRef tsCtx);
+void LLVMOrcDisposeThreadSafeModule(LLVMOrcThreadSafeModuleRef tsm);
+
+LLVMErrorRef LLVMOrcJITTargetMachineBuilderDetectHost(LLVMOrcJITTargetMachineBuilderRef* outResult);
+void LLVMOrcDisposeJITTargetMachineBuilder(LLVMOrcJITTargetMachineBuilderRef jtmb);
+
+LLVMErrorRef LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
+    LLVMOrcDefinitionGeneratorRef* outResult, char globalPrefix,
+    LLVMOrcSymbolPredicate filter, void* filterCtx);
+void LLVMOrcJITDylibAddGenerator(LLVMOrcJITDylibRef jd, LLVMOrcDefinitionGeneratorRef dg);
+
+LLVMOrcMaterializationUnitRef LLVMOrcAbsoluteSymbols(LLVMOrcCSymbolMapPairs syms, size_t numPairs);
+LLVMErrorRef LLVMOrcJITDylibDefine(LLVMOrcJITDylibRef jd, LLVMOrcMaterializationUnitRef mu);
+
+/* --- llvm-c/LLJIT.h (ORCv2 LLJIT) --- */
+LLVMOrcLLJITBuilderRef LLVMOrcCreateLLJITBuilder(void);
+void LLVMOrcDisposeLLJITBuilder(LLVMOrcLLJITBuilderRef builder);
+void LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(LLVMOrcLLJITBuilderRef builder, LLVMOrcJITTargetMachineBuilderRef jtmb);
+
+LLVMErrorRef LLVMOrcCreateLLJIT(LLVMOrcLLJITRef* outResult, LLVMOrcLLJITBuilderRef builder);
+LLVMErrorRef LLVMOrcDisposeLLJIT(LLVMOrcLLJITRef j);
+
+LLVMOrcJITDylibRef LLVMOrcLLJITGetMainJITDylib(LLVMOrcLLJITRef j);
+char LLVMOrcLLJITGetGlobalPrefix(LLVMOrcLLJITRef j);
+LLVMOrcSymbolStringPoolEntryRef LLVMOrcLLJITMangleAndIntern(LLVMOrcLLJITRef j, const char* unmangledName);
+
+LLVMErrorRef LLVMOrcLLJITAddLLVMIRModule(LLVMOrcLLJITRef j, LLVMOrcJITDylibRef jd, LLVMOrcThreadSafeModuleRef tsm);
+LLVMErrorRef LLVMOrcLLJITLookup(LLVMOrcLLJITRef j, LLVMOrcExecutorAddress* outResult, const char* name);
 
 #define kReturnStatusAction 1
 

@@ -4,9 +4,7 @@
 
 
 typedef struct {
-    LLVMExecutionEngineRef m_ee;
-    LLVMContextRef m_ctx;
-    LLVMModuleRef m_mod;
+    LLVMOrcLLJITRef m_jit;
     Vec m_externs;
     void* allocFn;   /* host-provided allocator (NULL = malloc) */
     void* freeFn;    /* host-provided deallocator (NULL = free) */

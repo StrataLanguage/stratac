@@ -38,11 +38,48 @@ static void EnsureTargetsInitialized(void)
     }
 }
 
+/* Converts an LLVMErrorRef into a malloc-owned string (freed by the caller
+   with free(), matching this file's errorMessage out-param convention),
+   consuming/disposing the LLVM-owned message. Returns NULL for a null/success
+   error. */
+static char* TakeOrcError(LLVMErrorRef err)
+{
+    if (!err)
+    {
+        return NULL;
+    }
+
+    char* llvmMsg = LLVMGetErrorMessage(err);
+    char* copy = DupString(llvmMsg ? llvmMsg : "(no message)");
+
+    if (llvmMsg)
+    {
+        LLVMDisposeErrorMessage(llvmMsg);
+    }
+
+    return copy;
+}
+
+static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
+{
+    LLVMOrcExecutorAddress addr = 0;
+    LLVMErrorRef err = LLVMOrcLLJITLookup(jit, &addr, name);
+
+    if (err)
+    {
+        LLVMConsumeError(err);
+
+        return false;
+    }
+
+    *outAddr = (uint64_t)addr;
+
+    return true;
+}
+
 void LLVMJitInit(LLVMJit* jit)
 {
-    jit->m_ee = NULL;
-    jit->m_ctx = NULL;
-    jit->m_mod = NULL;
+    jit->m_jit = NULL;
     jit->allocFn = NULL;
     jit->freeFn = NULL;
     VecInit(&jit->m_externs);
@@ -56,29 +93,26 @@ void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn)
 
 void LLVMJitDestroy(LLVMJit* jit)
 {
-    if (jit->m_ee)
+    if (jit->m_jit)
     {
         /* If the module has owning globals, their teardown was emitted as
            __strata_module_teardown.  Call it before we unload. */
         typedef void (*VoidFn)(void);
-        VoidFn td = (VoidFn)(uintptr_t)LLVMGetFunctionAddress(jit->m_ee, "__strata_module_teardown");
+        uint64_t tdAddr = 0;
 
-        if (td)
+        if (OrcLookup(jit->m_jit, "__strata_module_teardown", &tdAddr) && tdAddr)
         {
-            td();
+            ((VoidFn)(uintptr_t)tdAddr)();
         }
-    }
 
-    if (jit->m_ee)
-    {
-        LLVMDisposeExecutionEngine(jit->m_ee);
-        jit->m_ee = NULL;
-    }
+        LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(jit->m_jit);
 
-    if (jit->m_ctx)
-    {
-        LLVMContextDispose(jit->m_ctx);
-        jit->m_ctx = NULL;
+        if (disposeErr)
+        {
+            LLVMConsumeError(disposeErr);
+        }
+
+        jit->m_jit = NULL;
     }
 
     for (size_t i = 0; i < jit->m_externs.count; i++)
@@ -89,8 +123,6 @@ void LLVMJitDestroy(LLVMJit* jit)
 
     free(jit->m_externs.items);
     VecInit(&jit->m_externs);
-
-    jit->m_mod = NULL;
 }
 
 bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
@@ -110,75 +142,140 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         VecPush(&jit->m_externs, DupString(sym));
     }
 
-    LLVMContextRef context = bm->ctx;
-    LLVMModuleRef modRef = bm->mod;
-    bm->ctx = NULL;
-    bm->mod = NULL;
+    LLVMOrcJITTargetMachineBuilderRef jtmb = NULL;
+    LLVMErrorRef err = LLVMOrcJITTargetMachineBuilderDetectHost(&jtmb);
 
-    jit->m_ctx = context;
-
-    char* error = NULL;
-
-    if (LLVMCreateExecutionEngineForModule(&jit->m_ee, modRef, &error))
+    if (err)
     {
-        const char* msg = error ? error : "(no message)";
+        char* msg = TakeOrcError(err);
         int needed = snprintf(NULL, 0, "could not create execution engine: %s", msg);
         char* buf = (char*)malloc((size_t)needed + 1);
         snprintf(buf, (size_t)needed + 1, "could not create execution engine: %s", msg);
         *errorMessage = buf;
+        free(msg);
 
-        if (error)
-        {
-            LLVMDisposeMessage(error);
-        }
-
-        LLVMDisposeModule(modRef);
-        jit->m_ee = NULL;
-        LLVMContextDispose(jit->m_ctx);
-        jit->m_ctx = NULL;
+        LLVMDisposeModule(bm->mod);
+        LLVMContextDispose(bm->ctx);
+        bm->mod = NULL;
+        bm->ctx = NULL;
 
         return false;
     }
 
-    jit->m_mod = modRef;
+    LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
+    LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(builder, jtmb);
+
+    LLVMOrcLLJITRef llj = NULL;
+    err = LLVMOrcCreateLLJIT(&llj, builder);
+
+    if (err)
+    {
+        char* msg = TakeOrcError(err);
+        int needed = snprintf(NULL, 0, "could not create execution engine: %s", msg);
+        char* buf = (char*)malloc((size_t)needed + 1);
+        snprintf(buf, (size_t)needed + 1, "could not create execution engine: %s", msg);
+        *errorMessage = buf;
+        free(msg);
+
+        LLVMDisposeModule(bm->mod);
+        LLVMContextDispose(bm->ctx);
+        bm->mod = NULL;
+        bm->ctx = NULL;
+
+        return false;
+    }
+
+    jit->m_jit = llj;
+
+    LLVMOrcJITDylibRef mainJd = LLVMOrcLLJITGetMainJITDylib(llj);
+
+    /* Reflect process symbols (e.g. libcalls like memcpy/memset that LLVM
+       may lower struct-copy or vector code into) into the main dylib, since
+       a bare JITDylib does not resolve these automatically. */
+    {
+        LLVMOrcDefinitionGeneratorRef gen = NULL;
+        LLVMErrorRef genErr = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
+            &gen, LLVMOrcLLJITGetGlobalPrefix(llj), NULL, NULL);
+
+        if (!genErr)
+        {
+            LLVMOrcJITDylibAddGenerator(mainJd, gen);
+        }
+        else
+        {
+            LLVMConsumeError(genErr);
+        }
+    }
 
     /* Map the compiler-internal heap runtime to the host so generated box
        code can allocate without the user binding symbols. */
     {
-        LLVMValueRef allocFn = LLVMGetNamedFunction(modRef, "strata_alloc");
+        LLVMOrcCSymbolMapPair pairs[3];
 
-        if (allocFn)
+        pairs[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_alloc");
+        pairs[0].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
+        pairs[0].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[0].Sym.Flags.TargetFlags = 0;
+
+        pairs[1].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_free");
+        pairs[1].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
+        pairs[1].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[1].Sym.Flags.TargetFlags = 0;
+
+        pairs[2].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_panic");
+        pairs[2].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&strata_panic;
+        pairs[2].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[2].Sym.Flags.TargetFlags = 0;
+
+        LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 3);
+        LLVMErrorRef defineErr = LLVMOrcJITDylibDefine(mainJd, mu);
+
+        if (defineErr)
         {
-            LLVMAddGlobalMapping(jit->m_ee, allocFn, jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
+            LLVMConsumeError(defineErr);
+        }
+    }
+
+    LLVMOrcThreadSafeContextRef tsCtx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(bm->ctx);
+    LLVMOrcThreadSafeModuleRef tsm = LLVMOrcCreateNewThreadSafeModule(bm->mod, tsCtx);
+    LLVMOrcDisposeThreadSafeContext(tsCtx);
+    bm->ctx = NULL;
+    bm->mod = NULL;
+
+    err = LLVMOrcLLJITAddLLVMIRModule(llj, mainJd, tsm);
+
+    if (err)
+    {
+        char* msg = TakeOrcError(err);
+        int needed = snprintf(NULL, 0, "could not add module to execution engine: %s", msg);
+        char* buf = (char*)malloc((size_t)needed + 1);
+        snprintf(buf, (size_t)needed + 1, "could not add module to execution engine: %s", msg);
+        *errorMessage = buf;
+        free(msg);
+
+        LLVMOrcDisposeThreadSafeModule(tsm);
+
+        LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(llj);
+
+        if (disposeErr)
+        {
+            LLVMConsumeError(disposeErr);
         }
 
-        LLVMValueRef freeFn = LLVMGetNamedFunction(modRef, "strata_free");
+        jit->m_jit = NULL;
 
-        if (freeFn)
-        {
-            LLVMAddGlobalMapping(jit->m_ee, freeFn, jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
-        }
-
-        LLVMValueRef panicFn = LLVMGetNamedFunction(modRef, "strata_panic");
-
-        if (panicFn)
-        {
-            LLVMAddGlobalMapping(jit->m_ee, panicFn, (void*)&strata_panic);
-        }
-
-        /* strata_strdup is defined in the module (calling strata_alloc), so
-           no host mapping is needed here. */
+        return false;
     }
 
     /* If the module has owning globals (box<T> / T[]), their runtime
        initialisation was emitted as __strata_module_init.  Call it now. */
     {
         typedef void (*VoidFn)(void);
-        VoidFn init = (VoidFn)(uintptr_t)LLVMGetFunctionAddress(jit->m_ee, "__strata_module_init");
+        uint64_t initAddr = 0;
 
-        if (init)
+        if (OrcLookup(llj, "__strata_module_init", &initAddr) && initAddr)
         {
-            init();
+            ((VoidFn)(uintptr_t)initAddr)();
         }
     }
 
@@ -187,16 +284,17 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
 bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr)
 {
-    if (!jit->m_ee || !name || !addr)
+    if (!jit->m_jit || !name || !addr)
     {
         return false;
     }
 
     char slot[256];
     snprintf(slot, sizeof(slot), "__strata_ext_%s", name);
-    uint64_t slotAddr = LLVMGetGlobalValueAddress(jit->m_ee, slot);
 
-    if (slotAddr == 0)
+    uint64_t slotAddr = 0;
+
+    if (!OrcLookup(jit->m_jit, slot, &slotAddr) || slotAddr == 0)
     {
         return false;
     }
@@ -208,10 +306,17 @@ bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr)
 
 uint64_t LLVMJitGetAddress(LLVMJit* jit, const char* name)
 {
-    if (!jit->m_ee || !name)
+    if (!jit->m_jit || !name)
     {
         return 0;
     }
 
-    return (uint64_t)LLVMGetFunctionAddress(jit->m_ee, name);
+    uint64_t addr = 0;
+
+    if (!OrcLookup(jit->m_jit, name, &addr))
+    {
+        return 0;
+    }
+
+    return addr;
 }

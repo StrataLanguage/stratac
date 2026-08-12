@@ -46,7 +46,7 @@ src/                           All internal headers + sources
     LLVMCApi.h                 Curated forward-decls of the LLVM C API
     LLVMModuleBuilder.h/.c     AST → LLVM IR (shared by AOT, JIT, IR text)
     LLVMAot.h/.c               Object/assembly emission (TargetMachine)
-    LLVMJit.h/.c               MCJIT execution engine
+    LLVMJit.h/.c               ORCv2 (LLJIT) execution engine
     LLVMCBackend.c             GenerateLlvmIr (IR text via LLVMPrintModuleToString)
     ASTDump.c                  Pretty-print the AST
   Import/ModuleLoader.c        `import` directive resolution + module merging
@@ -83,7 +83,7 @@ Source → Lexer → Parser → Module (AST) → ResolveOverloads (sema) → LLV
                                                                               ↓
                                                                     ┌─────────────┐
                                                                     │ AOT: .o/.s  │
-                                                                    │ JIT: MCJIT  │
+                                                                    │ JIT: LLJIT  │
                                                                     │ IR: text    │
                                                                     └─────────────┘
 ```
