@@ -37,6 +37,9 @@ extern "C"
         StrataArch arch;
         void* allocFn;   /* optional host allocator for JIT mode */
         void* freeFn;    /* optional host deallocator for JIT mode */
+
+        StrataImportResolverFn importResolver;      /* optional import resolver */
+        void* importResolverUserData;
     };
 
 #if STRATA_HAS_TCC
@@ -61,6 +64,8 @@ extern "C"
         compiler->arch = STRATA_ARCH_AUTO;
         compiler->allocFn = NULL;
         compiler->freeFn = NULL;
+        compiler->importResolver = NULL;
+        compiler->importResolverUserData = NULL;
         return compiler;
     }
 
@@ -83,6 +88,17 @@ extern "C"
 
         c->allocFn = allocFn;
         c->freeFn = freeFn;
+    }
+
+    void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn resolver, void* userData)
+    {
+        if (!c)
+        {
+            return;
+        }
+
+        c->importResolver = resolver;
+        c->importResolverUserData = userData;
     }
 
     static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
@@ -151,7 +167,32 @@ extern "C"
     static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t sourceLen, const char* moduleName,
                                       StrataEmitKind emit, StrataEmitFlags emitFlags, const StrataArch arch)
     {
-        (void)c;
+        if (c && c->importResolver)
+        {
+            /* A resolver is installed: route through the module loader so that
+               `import X;` directives are resolved by the host. */
+            Arena arena;
+            arena_init(&arena, 0);
+
+            DiagnosticEngine diag;
+            DiagnosticEngineInit(&diag);
+
+            ModuleLoader loader;
+            ModuleLoaderInit(&loader, &arena, &diag);
+            ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+
+            Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
+            ResolveOverloads(mod, &diag, &arena);
+
+            StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, arch);
+
+            AstDispose((Node*)mod);
+            ModuleLoaderDispose(&loader);
+            DiagnosticEngineFree(&diag);
+            arena_free(&arena);
+
+            return r;
+        }
 
         Arena arena;
         arena_init(&arena, 0);
@@ -174,7 +215,8 @@ extern "C"
         if (mod && mod->imports.count > 0)
         {
             DiagErrorFmt(&diag, SRC_INVALID,
-                         "imports are not supported when compiling from a string; use strataCompileFile");
+                         "imports are not supported when compiling from a string; use strataCompileFile or "
+                         "strataSetImportResolver");
         }
 
         ResolveOverloads(mod, &diag, &arena);
@@ -226,6 +268,7 @@ extern "C"
 
         ModuleLoader loader;
         ModuleLoaderInit(&loader, &arena, &diag);
+        ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
         ResolveOverloads(mod, &diag, &arena);
@@ -276,6 +319,7 @@ extern "C"
 
     ModuleLoader loader;
     ModuleLoaderInit(&loader, &arena, &diag);
+    ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
 
     Module* mod = ModuleLoaderLoad(&loader, inputPath);
     ResolveOverloads(mod, &diag, &arena);
@@ -450,7 +494,34 @@ extern "C"
     static StrataJit* JitCompileString(StrataCompiler* c, const char* source, size_t sourceLen, const char* moduleName,
                                        const char** errOut, const StrataArch arch)
     {
-        (void)c;
+        if (c && c->importResolver)
+        {
+            /* A resolver is installed: route through the module loader so that
+               `import X;` directives are resolved by the host. */
+            Arena arena;
+            arena_init(&arena, 0);
+
+            DiagnosticEngine diag;
+            DiagnosticEngineInit(&diag);
+
+            ModuleLoader loader;
+            ModuleLoaderInit(&loader, &arena, &diag);
+            ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+
+            Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
+            ResolveOverloads(mod, &diag, &arena);
+
+            StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
+                                              c->allocFn, c->freeFn);
+
+            AstDispose((Node*)mod);
+            ModuleLoaderDispose(&loader);
+            DiagnosticEngineFree(&diag);
+
+            arena_free(&arena);
+
+            return handle;
+        }
 
         Arena arena;
         arena_init(&arena, 0);
@@ -473,7 +544,8 @@ extern "C"
         if (mod && mod->imports.count > 0)
         {
             DiagErrorFmt(&diag, SRC_INVALID,
-                         "imports are not supported when compiling from a string; use strataJitCompileFile");
+                         "imports are not supported when compiling from a string; use strataJitCompileFile or "
+                         "strataSetImportResolver");
         }
 
         ResolveOverloads(mod, &diag, &arena);
@@ -535,6 +607,7 @@ extern "C"
 
         ModuleLoader loader;
         ModuleLoaderInit(&loader, &arena, &diag);
+        ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
         ResolveOverloads(mod, &diag, &arena);

@@ -132,25 +132,24 @@ static void AppendItems(Module* root, const Module* src)
     }
 }
 
-static void LoadInto(ModuleLoader* loader, const char* path)
+/* Forward declarations. */
+static void LoadModule(ModuleLoader* loader, const char* name, const char* text, size_t textLen, bool textOwned);
+static void ResolveImport(ModuleLoader* loader, const char* importerName, const char* importPath);
+
+static void LoadModule(ModuleLoader* loader, const char* name, const char* text, size_t textLen, bool textOwned)
 {
-    if (AlreadyVisited(loader, path))
+    if (AlreadyVisited(loader, name))
     {
         return;
     }
 
-    const char* pathKey = arena_strdup(loader->arena, path);
-    PushVisited(loader, pathKey);
+    const char* nameKey = arena_strdup(loader->arena, name);
+    PushVisited(loader, nameKey);
 
-    size_t fileLen = 0;
-    char* source = ReadFileAlloc(path, &fileLen);
-    if (!source)
+    if (textOwned)
     {
-        DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", path);
-        return;
+        PushBuffer(loader, (char*)text);
     }
-
-    PushBuffer(loader, source);
 
     if (loader->sourceCount >= loader->sourceCap)
     {
@@ -162,7 +161,7 @@ static void LoadInto(ModuleLoader* loader, const char* path)
 
     SourceManager* sm = &loader->sources[fileId];
     SourceManagerInit(sm);
-    SourceManagerSetSource(sm, source, fileLen, pathKey);
+    SourceManagerSetSource(sm, text, textLen, nameKey);
 
     loader->sourceCount++;
 
@@ -170,7 +169,7 @@ static void LoadInto(ModuleLoader* loader, const char* path)
     LexerInit(&lex, sm->m_text, sm->m_textLen, loader->diag, fileId);
 
     Parser parser;
-    ParserInit(&parser, &lex, loader->diag, loader->arena, pathKey);
+    ParserInit(&parser, &lex, loader->diag, loader->arena, nameKey);
 
     Module* fileMod = ParserParseModule(&parser);
     if (!fileMod)
@@ -181,19 +180,79 @@ static void LoadInto(ModuleLoader* loader, const char* path)
     for (size_t i = 0; i < fileMod->imports.count; i++)
     {
         ImportDecl* imp = (ImportDecl*)VecGet(&fileMod->imports, i);
-        char* childPath = ResolveImportPath(loader->arena, path, imp->importPath);
-        LoadInto(loader, childPath);
+        ResolveImport(loader, nameKey, imp->importPath);
     }
 
     AppendItems(loader->root, fileMod);
     AstReleaseModuleLists(fileMod);
 }
 
+static void ResolveImport(ModuleLoader* loader, const char* importerName, const char* importPath)
+{
+    if (loader->resolver)
+    {
+        StrataResolvedModule resolved = {0};
+        int ok = loader->resolver(loader->resolverUserData, importerName, importPath, &resolved);
+
+        if (!ok || !resolved.text)
+        {
+            DiagErrorFmt(loader->diag, SRC_INVALID, "cannot resolve import '%s'", importPath);
+            return;
+        }
+
+        const char* childName = resolved.name ? resolved.name : importPath;
+
+        /* `name` is copied inside LoadModule; `text` is borrowed for the
+           duration of the compile (the host owns it). */
+        LoadModule(loader, childName, resolved.text, resolved.length, false);
+        return;
+    }
+
+    char* childPath = ResolveImportPath(loader->arena, importerName, importPath);
+
+    /* Skip re-reading disk files we've already loaded. */
+    if (AlreadyVisited(loader, childPath))
+    {
+        return;
+    }
+
+    size_t fileLen = 0;
+    char* source = ReadFileAlloc(childPath, &fileLen);
+    if (!source)
+    {
+        DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", childPath);
+        return;
+    }
+
+    LoadModule(loader, childPath, source, fileLen, true);
+}
+
+static Module* NewRootModule(Arena* arena, const char* name)
+{
+    Module* root = AST_NEW(arena, Module);
+    root->base.kind = NodeModule;
+    root->base.range = SRC_INVALID;
+    root->name = arena_strdup(arena, name);
+    VecInit(&root->structs);
+    VecInit(&root->handles);
+    VecInit(&root->functions);
+    VecInit(&root->globals);
+    VecInit(&root->imports);
+
+    return root;
+}
+
 void ModuleLoaderInit(ModuleLoader* loader, Arena* arena, DiagnosticEngine* diag)
 {
-    *loader= (ModuleLoader){0};
+    *loader = (ModuleLoader){0};
     loader->arena = arena;
     loader->diag = diag;
+}
+
+void ModuleLoaderSetResolver(ModuleLoader* loader, StrataImportResolverFn fn, void* userData)
+{
+    loader->resolver = fn;
+    loader->resolverUserData = userData;
 }
 
 void ModuleLoaderDispose(ModuleLoader* loader)
@@ -218,17 +277,30 @@ void ModuleLoaderDispose(ModuleLoader* loader)
 
 Module* ModuleLoaderLoad(ModuleLoader* loader, const char* mainPath)
 {
-    loader->root = AST_NEW(loader->arena, Module);
-    loader->root->base.kind = NodeModule;
-    loader->root->base.range = SRC_INVALID;
-    loader->root->name = arena_strdup(loader->arena, mainPath);
-    VecInit(&loader->root->structs);
-    VecInit(&loader->root->handles);
-    VecInit(&loader->root->functions);
-    VecInit(&loader->root->globals);
-    VecInit(&loader->root->imports);
+    loader->root = NewRootModule(loader->arena, mainPath);
 
-    LoadInto(loader, mainPath);
+    /* The main file is always supplied by the caller from disk; only its
+       imports are routed through the resolver (if one is set). */
+    size_t fileLen = 0;
+    char* source = ReadFileAlloc(mainPath, &fileLen);
+    if (!source)
+    {
+        DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", mainPath);
+        return loader->root;
+    }
+
+    LoadModule(loader, mainPath, source, fileLen, true);
+
+    return loader->root;
+}
+
+Module* ModuleLoaderLoadSource(ModuleLoader* loader, const char* name, const char* text, size_t textLen)
+{
+    loader->root = NewRootModule(loader->arena, name ? name : "<string>");
+
+    /* The main source is the caller's string (borrowed). Imports require a
+       resolver since there is no filesystem context for relative resolution. */
+    LoadModule(loader, loader->root->name, text, textLen, false);
 
     return loader->root;
 }

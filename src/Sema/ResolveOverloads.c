@@ -1960,9 +1960,12 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             (void)p;
         }
 
-        if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))
+        if (functionDecl->isExtern &&
+            (IsDefinedStruct(&r.m_registry, functionDecl->returnType.name) ||
+             IsSimdVector(functionDecl->returnType.name)))
         {
-            DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
+            DiagError(diag, functionDecl->base.range,
+                      "extern function cannot return a struct or vector type by value; use a 'ref' parameter instead");
         }
 
         if (IsIncompleteStruct(&r.m_registry, functionDecl->returnType.name))

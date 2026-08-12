@@ -92,6 +92,41 @@ Source → Lexer → Parser → Module (AST) → ResolveOverloads (sema) → LLV
 directives: it parses each imported file, resolves relative paths, merges
 structs/handles/functions/globals/imports into a single `Module`.
 
+### Custom import resolver
+
+A host can take over `import` resolution by installing a callback on the
+compiler before compiling:
+
+```c
+typedef struct {
+    const char* text;    /* module source (BORROWED until the compile ends) */
+    size_t      length;
+    const char* name;    /* canonical name for diagnostics + cycle dedup (copied) */
+} StrataResolvedModule;
+
+typedef int (*StrataImportResolverFn)(void* userData,
+                                      const char* importerName,
+                                      const char* importPath,
+                                      StrataResolvedModule* out);
+/* return 1 = resolved (fill `out`), 0 = not found (hard error, no FS fallback) */
+
+void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn fn, void* userData);
+```
+
+When set, the resolver is authoritative for EVERY `import X;` (the main
+entry file/source is still supplied by the caller as usual). `importPath` is
+the path as written (no `.strata` appended); `importerName` is the canonical
+name of the module doing the import (for relative-style resolution). Returning
+0 is a hard error — there is no filesystem fallback, so a host that wants
+hybrid disk+virtual resolution implements the disk lookup itself.
+
+This also lifts the "imports not supported from a string" restriction:
+`strataCompileString`/`strataJitCompileString` accept imports when a resolver
+is installed, letting a host compile a fully virtual module graph with no disk
+access. `ModuleLoaderLoad` (disk main) and `ModuleLoaderLoadSource` (in-memory
+main) are the internal entry points.
+
+
 ## Language features
 
 ### Types

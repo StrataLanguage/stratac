@@ -70,6 +70,23 @@ typedef void (*StrataPanicHandler)(const char* msg);
 
 STRATA_API void strataSetPanicHandler(StrataPanicHandler handler);
 
+typedef struct
+{
+    const char* text;   /* module source text (borrowed; not freed by the library) */
+    size_t      length; /* length of text (in bytes) */
+    const char* name;   /* diagnostic name - copied by the library */
+} StrataResolvedModule;
+
+/* Returns 1 if the module was resolved (`out` filled in), 0 if not available.
+ * `importerName` is the canonical name of the module performing the import.
+ * `importPath` is the path as written in `import X;` (extension not added). */
+typedef int (*StrataImportResolverFn)(void* userData,
+                                      const char* importerName,
+                                      const char* importPath,
+                                      StrataResolvedModule* out);
+
+STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn resolver, void* userData);
+
 
 typedef struct StrataJit StrataJit;
 
