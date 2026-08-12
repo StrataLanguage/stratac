@@ -51,7 +51,12 @@ static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
     return t && t->opaque && t->incomplete;
 }
 
-/* Move-state tracking for box locals (value 1 = moved, 2 = re-live). */
+/* Move-state tracking for box locals.
+ *   value 1 = fully moved (value/field is gone)
+ *   value 2 = re-live (reassigned as a whole)
+ *   value 3 = partially moved (a descendant field was moved out; whole-
+ *             value use is rejected but non-moved fields are accessible)
+ */
 static bool IsBoxMoved(const Resolver* r, const char* name)
 {
     return StrMapGet(&r->m_movedBoxes, name) == (void*)1;
@@ -62,8 +67,42 @@ static void MarkBoxMoved(Resolver* r, const char* name)
     StrMapPut(&r->m_movedBoxes, name, (void*)1);
 }
 
+/* A value is unusable as a whole if fully moved (1) or partially moved (3).
+   Individual non-moved field access into a partially-moved value is still
+   allowed (handled by the context-sensitive base resolution). */
+static bool IsBoxUnusable(const Resolver* r, const char* name)
+{
+    void* v = StrMapGet(&r->m_movedBoxes, name);
+    return v == (void*)1 || v == (void*)3;
+}
+
+/* Clears `key` and all its `key.*` descendants from the move-state map.
+   Used when a whole-value reassignment re-lives the binding. */
+static void ClearBoxSubtree(Resolver* r, const char* key)
+{
+    StrMap* m = &r->m_movedBoxes;
+    size_t klen = strlen(key);
+
+    for (size_t i = 0; i < m->cap; i++)
+    {
+        if (!m->keys[i])
+        {
+            continue;
+        }
+
+        const char* k = m->keys[i];
+
+        if (strcmp(k, key) == 0 ||
+            (strncmp(k, key, klen) == 0 && k[klen] == '.'))
+        {
+            m->values[i] = NULL;
+        }
+    }
+}
+
 static void MarkBoxLive(Resolver* r, const char* name)
 {
+    ClearBoxSubtree(r, name);
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
 }
 
@@ -80,6 +119,21 @@ static const char* KeyRoot(Arena* arena, const char* key)
     const char* dot = strchr(key, '.');
 
     return dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
+}
+
+/* Marks every proper dotted prefix of `key` as partially moved (value 3),
+   unless already fully moved (1). For "a.b.c": marks "a.b" and "a". */
+static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
+{
+    for (const char* dot = strchr(key, '.'); dot; dot = strchr(dot + 1, '.'))
+    {
+        char* prefix = arena_strndup(r->m_arena, key, (size_t)(dot - key));
+
+        if (StrMapGet(&r->m_movedBoxes, prefix) != (void*)1)
+        {
+            StrMapPut(&r->m_movedBoxes, prefix, (void*)3);
+        }
+    }
 }
 
 /* Marks 'name' moved, unless it's a box global or rooted in a `ref box<T>`
@@ -107,6 +161,7 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     }
 
     MarkBoxMoved(r, name);
+    MarkBoxPartiallyMoved(r, name);
 }
 
 /* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
@@ -186,6 +241,10 @@ static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
         {
             StrMapPut(dst, other->keys[i], (void*)1);
         }
+        else if (otherVal == (void*)3 || dstVal == (void*)3)
+        {
+            StrMapPut(dst, other->keys[i], (void*)3);
+        }
         else if (otherVal == (void*)2 || dstVal == (void*)2)
         {
             StrMapPut(dst, other->keys[i], (void*)2);
@@ -214,6 +273,7 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope);
 
 static void WalkBlock(Resolver* r, Block* b, StrMap* scope);
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope);
+static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
 static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope);
 
@@ -1051,6 +1111,11 @@ static bool IsAssignableType(const Resolver* r, const char* targetType, const ch
 
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 {
+    ResolveExprImpl(r, n, scope, false);
+}
+
+static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase)
+{
     if (!n)
     {
         return;
@@ -1072,9 +1137,19 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
         }
-        else if (IsOwningType(varType) && IsBoxMoved(r, ident->name))
+        else if (IsOwningType(varType))
         {
-            DiagErrorFmt(r->m_diag, ident->base.range, "'%s' used after move", ident->name);
+            /* Whole-value use (asMemberBase=false): reject if fully OR
+               partially moved. Member-base use (asMemberBase=true): reject
+               only if fully moved — allows descending into a partially
+               moved struct to access non-moved fields. */
+            bool blocked = asMemberBase ? IsBoxMoved(r, ident->name)
+                                        : IsBoxUnusable(r, ident->name);
+
+            if (blocked)
+            {
+                DiagErrorFmt(r->m_diag, ident->base.range, "'%s' used after move", ident->name);
+            }
         }
 
         return;
@@ -1241,7 +1316,7 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
-        ResolveExpr(r, m->base_node, scope);
+        ResolveExprImpl(r, m->base_node, scope, true);
 
         const char* baseName = InferType(r, m->base_node, scope);
 
@@ -1263,12 +1338,14 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
-        /* A box-typed field can be moved out too - check the same way. */
+        /* A box-typed field can be moved out too - check the same way.
+           IsBoxUnusable catches both fully-moved (exact field moved) and
+           partially-moved (a descendant of this field was moved). */
         if (IsOwningType(InferType(r, n, scope)))
         {
             const char* key = MovableBoxSourceKey(r, n);
 
-            if (key && IsBoxMoved(r, key))
+            if (key && IsBoxUnusable(r, key))
             {
                 DiagErrorFmt(r->m_diag, m->base.range, "'%s' used after move", key);
             }
@@ -1376,8 +1453,8 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
     case NodeIndex:
     {
         IndexExpr* ix = (IndexExpr*)n;
-        ResolveExpr(r, ix->base_node, scope);
-        ResolveExpr(r, ix->index, scope);
+        ResolveExprImpl(r, ix->base_node, scope, true);
+        ResolveExprImpl(r, ix->index, scope, false);
         return;
     }
     case NodeArrayInit:
@@ -1511,8 +1588,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         /* Fresh binding: clear any stale moved-state a same-named variable
            left behind (e.g. from a prior loop iteration or an earlier,
-           unrelated declaration in this function). */
-        StrMapPut(&r->m_movedBoxes, vd->name, NULL);
+           unrelated declaration in this function) — including field-level
+           partial-move markers. */
+        ClearBoxSubtree(r, vd->name);
         StrMapPut(scope, vd->name, (void*)vd->type.name);
 
         return;

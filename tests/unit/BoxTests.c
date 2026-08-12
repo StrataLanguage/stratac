@@ -1792,3 +1792,217 @@ STRATA_TEST(box_coerced_to_bare_vardecl_copies)
     if (entry) STRATA_CHECK_EQ(entry(), 7);
     strataJitDestroy(jit);
 }
+
+/* ===========================================================================
+   Rust-style partial moves.
+
+   Moving an owning FIELD out of a struct (e.g. take(p.name)) marks the
+   struct variable as "partially moved" — whole-value uses are rejected
+   (pass to owned param, return, move into a var), but non-moved sibling
+   fields remain accessible.
+   =========================================================================== */
+
+STRATA_TEST(partial_move_field_then_use_sibling_field_is_allowed)
+{
+    /* Moving p.name must not block p.age — the sibling is untouched. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Person { string name; int age; };\n"
+        "int take(string s) { return 7; }\n"
+        "int entry() {\n"
+        "  box<Person> p = Person { .name = \"Alice\", .age = 30 };\n"
+        "  int r = take(p.name);\n"          /* moves p.name */
+        "  return r + p.age;\n"             /* p.age still accessible: 7 + 30 = 37 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 37);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
+{
+    /* After p.name is moved, p is partially moved: can't pass it whole. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Person { string name; int age; };\n"
+        "int take(string s) { return 1; }\n"
+        "int consume(box<Person> p) { return 1; }\n"
+        "int entry() {\n"
+        "  box<Person> p = Person { .name = \"A\", .age = 1 };\n"
+        "  take(p.name);\n"
+        "  return consume(p);\n"     /* error: p partially moved */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(partial_move_field_then_return_whole_is_error)
+{
+    /* After p.name is moved, can't return p whole. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Person { string name; int age; };\n"
+        "int take(string s) { return 1; }\n"
+        "box<Person> give() {\n"
+        "  box<Person> p = Person { .name = \"A\", .age = 1 };\n"
+        "  take(p.name);\n"
+        "  return p;\n"             /* error: p partially moved */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(partial_move_field_then_move_whole_to_var_is_error)
+{
+    /* After p.name is moved, can't move p into another var. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Person { string name; int age; };\n"
+        "int take(string s) { return 1; }\n"
+        "int entry() {\n"
+        "  box<Person> p = Person { .name = \"A\", .age = 1 };\n"
+        "  take(p.name);\n"
+        "  box<Person> q = p;\n"     /* error: p partially moved */
+        "  return q.age;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(partial_move_reassign_re_lives)
+{
+    /* Reassigning p as a whole re-lives it: p.name marker cleared, p usable. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Person { string name; int age; };\n"
+        "int take(string s) { return 1; }\n"
+        "box<Person> make() { box<Person> p = Person { .name = \"new\", .age = 99 }; return p; }\n"
+        "int entry() {\n"
+        "  box<Person> p = Person { .name = \"old\", .age = 1 };\n"
+        "  take(p.name);\n"          /* p.name moved, p partially moved */
+        "  p = make();\n"           /* re-live: clears subtree */
+        "  return p.age + take(p.name);\n"  /* both usable again: 99 + 1 = 100 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
+    int (*entry)(void) = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 100);
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(partial_move_nested_field_poisons_chain)
+{
+    /* Moving a.b.c poisons a.b and a. Using a.b.d (sibling of c) is fine,
+       using a.x (sibling of b) is fine, but moving a.b as a whole is error. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Leaf { string tag; };\n"
+        "struct Mid { box<Leaf> c; box<Leaf> d; };\n"
+        "struct Root { box<Mid> a_b; box<Leaf> x; };\n"
+        "int take(string s) { return 1; }\n"
+        "int entry() {\n"
+        "  box<Root> r = Root {\n"
+        "    .a_b = Mid { .c = Leaf { .tag = \"c\" }, .d = Leaf { .tag = \"d\" } },\n"
+        "    .x = Leaf { .tag = \"x\" }\n"
+        "  };\n"
+        "  take(r.a_b.c.tag);\n"   /* moves r.a_b.c.tag → poisons r.a_b.c, r.a_b, r */
+        "  int a = take(r.a_b.d.tag);\n"  /* OK: sibling d not moved */
+        "  int b = take(r.x.tag);\n"      /* OK: sibling x not moved */
+        "  return a + b;\n"
+        "}\n",
+        &diag, &arena);
+    if (!DiagHasErrors(&diag))
+    {
+        printf("  partial_move_nested: expected OK but got errors\n");
+    }
+
+    /* The positive part above should compile. Now test the negative: move
+       r.a_b as a whole after r.a_b.c.tag was moved. */
+    DiagnosticEngineFree(&diag);
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Leaf { string tag; };\n"
+        "struct Mid { box<Leaf> c; };\n"
+        "struct Root { box<Mid> a_b; };\n"
+        "int take(string s) { return 1; }\n"
+        "int consume(box<Mid> m) { return 1; }\n"
+        "int entry() {\n"
+        "  box<Root> r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
+        "  take(r.a_b.c.tag);\n"   /* poisons r.a_b */
+        "  return consume(r.a_b);\n"  /* error: r.a_b partially moved */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(partial_move_whole_field_then_access_descendant_is_error)
+{
+    /* Moving a.b as a whole, then accessing a.b.c — the base is fully
+       moved, so descending into it must be rejected. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Leaf { string tag; };\n"
+        "struct Mid { box<Leaf> c; };\n"
+        "struct Root { box<Mid> a_b; };\n"
+        "int consume(box<Mid> m) { return 1; }\n"
+        "int entry() {\n"
+        "  box<Root> r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
+        "  consume(r.a_b);\n"          /* moves r.a_b as a whole */
+        "  return take(r.a_b.c.tag);\n"  /* error: r.a_b fully moved */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(partial_move_two_fields_both_moved)
+{
+    /* Moving two different fields: both are individually tracked. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Pair { string a; string b; };\n"
+        "int take(string s) { return 1; }\n"
+        "int entry() {\n"
+        "  box<Pair> p = Pair { .a = \"x\", .b = \"y\" };\n"
+        "  take(p.a);\n"
+        "  take(p.b);\n"
+        "  return take(p.a);\n"  /* error: p.a already moved */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
