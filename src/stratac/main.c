@@ -69,8 +69,10 @@ typedef enum ResultCode
     RCArgumentError = 2,
 } ResultCode;
 
+typedef uint64_t ModeFlag;
+
 /* Modes and toggles to be executed after all arguments are parsed. */
-typedef enum ModeFlag : uint64_t
+typedef enum MOde : uint64_t
 {
     MF_NONE,
     MF_PRINT_AST,
@@ -78,7 +80,7 @@ typedef enum ModeFlag : uint64_t
     MF_EMIT_C,
     MF_EMIT_IR,
     MF_RUN,
-} ModeFlag;
+} Mode;
 
 #define MF_BIT(cmd_) (1 << (cmd_))
 #define HAS_TOGGLE(modes_, cmd_) (((modes_) & MF_BIT(cmd_)) != 0)
@@ -144,7 +146,7 @@ typedef struct CLICommand
     /* */
     CommandFlags flags;
 
-    ModeFlag modeValue;
+    Mode modeValue;
 
     const char* description;
 } CLICommand;

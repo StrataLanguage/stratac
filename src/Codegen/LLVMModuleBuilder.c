@@ -2,31 +2,12 @@
 #include "AST/AST.h"
 #include "Codegen/LLVMCApi.h"
 #include "Core/Diagnostics.h"
+#include "LLVMSimd.h"
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct
-{
-    LLVMTypeRef type;
-    bool isFloat;
-    bool isUnsigned;
-    bool isVoid;
-    const char* structTypeName;
-    bool isBox;
-    const char* boxInner;
-    bool isArray;
-    const char* arrayInner; /* element type name (arena-owned) */
-    bool aliasedArray;      /* ref T... rest: slots hold pointers to sources */
-} TypeDesc;
-
-typedef struct
-{
-    LLVMValueRef value;
-    TypeDesc typeDesc;
-} Value;
 
 typedef struct
 {
@@ -59,41 +40,6 @@ typedef struct
     LLVMBasicBlockRef cont;
     LLVMBasicBlockRef end;
 } Loop;
-
-typedef struct
-{
-    DiagnosticEngine* m_diag;
-    LLVMContextRef m_ctx;
-    LLVMModuleRef m_mod;
-    LLVMBuilderRef m_builder;
-    LLVMTypeRef m_ptrTy;
-    TypeRegistry m_registry;
-    StrMap m_structTypes;
-    StrMap m_funcs;
-    StrMap m_symbols;
-    StrMap m_globals;
-    StrMap m_externSlots;
-    Vec m_externNames;
-    TypeDesc m_curRet;
-    bool m_terminated;
-    bool m_jitMode;
-    LLVMValueRef m_curFn;
-    LLVMBasicBlockRef m_entryBlock;
-    LLVMValueRef m_entryAllocaPt;
-    Vec m_loops;
-    Vec m_owningLocals;
-    LLVMTypeRef m_arrayType; /* cached {ptr, i64} fat struct for T[] */
-    LLVMValueRef m_allocFn;
-    LLVMTypeRef m_allocFnType;
-    LLVMValueRef m_freeFn;
-    LLVMTypeRef m_freeFnType;
-    LLVMValueRef m_panicFn;
-    LLVMTypeRef m_panicFnType;
-    LLVMValueRef m_strdupFn;
-    LLVMTypeRef m_strdupFnType;
-    Arena* m_arena;
-    int m_strLitCount;
-} Builder;
 
 static TypeDesc TypeDescMake(LLVMTypeRef type, bool isFloat, bool isUnsigned, bool isVoid, const char* structTypeName)
 {
@@ -155,12 +101,12 @@ static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
     }
     else if (strcmp(t->elemIr, "float") == 0)
     {
+        elem = LLVMFloatTypeInContext(ctx);
+
         if (t->isSimdVector)
         {
             return LLVMVectorType(elem, (unsigned int)t->lanes);
         }
-
-        elem = LLVMFloatTypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "double") == 0)
     {
@@ -360,7 +306,7 @@ static Value ZeroInt(Builder* b);
 static Value Coerce(Builder* b, Value value, TypeDesc target);
 static LLVMValueRef ToI1(Builder* b, Value v);
 static void EmitStmt(Builder* b, Node* n);
-static Value EmitExpr(Builder* b, Node* n);
+Value EmitExpr(Builder* b, Node* n);
 static Value EmitIdent(Builder* b, IdentExpr* n);
 static LValue EmitLValue(Builder* b, Node* n);
 static Value EmitMember(Builder* b, MemberExpr* n);
@@ -2266,6 +2212,18 @@ static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
     return v.value;
 }
 
+static Value EmitVectorConstruct(Builder* b, CallExpr* n)
+{
+    TypeName tn = MakeTypeName(n->callee);
+    TypeDesc typeDesc = Resolve(b, &tn);
+
+    Value v;
+    v.value = LSimdVectorConstruct(b, n);
+    v.typeDesc = typeDesc;
+
+    return v;
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
     // Inline array helpers (array_push / array_pop / array_resize)?
@@ -2279,6 +2237,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
     if (n->isPseudoCall && strcmp(n->callee, "copy") == 0)
     {
         return EmitCopyBuiltin(b, n);
+    }
+
+    if (n->isPseudoCall && strcmp(n->callee, "float3") == 0)
+    {
+        return EmitVectorConstruct(b, n);
     }
 
     // Is it a struct initializer call?
@@ -2739,7 +2702,7 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
     return ValueMake(agg, typeDesc);
 }
 
-static Value EmitExpr(Builder* b, Node* n)
+Value EmitExpr(Builder* b, Node* n)
 {
     if (!n)
     {
