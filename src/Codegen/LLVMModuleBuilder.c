@@ -1244,6 +1244,14 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         }
     }
 
+    if (base.typeDesc.isBox && base.typeDesc.boxInner && IsSimdVector(base.typeDesc.boxInner))
+    {
+        /* Resolve a box (surrounding a vector) down to the vector type. */
+        TypeDesc innerType = Resolve(b, &(TypeName){.name = (char*)base.typeDesc.boxInner});
+        base.value = LLVMBuildLoad2(b->m_builder, innerType.type, base.value, "boxvec");
+        base.typeDesc = innerType;
+    }
+
     if (base.typeDesc.isSimdVector)
     {
         LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
