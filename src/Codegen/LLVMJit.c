@@ -149,8 +149,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
         if (allocFn)
         {
-            LLVMAddGlobalMapping(jit->m_ee, allocFn,
-                                 jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
+            LLVMAddGlobalMapping(jit->m_ee, allocFn, jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
         }
 
         LLVMValueRef freeFn = LLVMGetNamedFunction(modRef, "strata_free");

@@ -3,6 +3,8 @@
 #include "AST/AST.h"
 #include "Core/Util.h"
 
+#include <strata/strata.h>
+
 typedef struct {
     bool ok;
     char* output;

@@ -1,9 +1,12 @@
 #pragma once
 
 #include "AST/AST.h"
+
 #include "Codegen/LLVMCApi.h"
 #include "Core/Diagnostics.h"
 #include "Core/Util.h"
+
+#include "TypeRegistry.h"
 
 typedef struct {
     LLVMContextRef ctx;
@@ -11,7 +14,64 @@ typedef struct {
     Vec externSymbols;
 } BuiltModule;
 
+typedef struct
+{
+    LLVMTypeRef type;
+    bool isFloat;
+    bool isUnsigned;
+    bool isVoid;
+    const char* structTypeName;
+    bool isBox;
+    const char* boxInner;
+    bool isArray;
+    const char* arrayInner; /* element type name (arena-owned) */
+    bool aliasedArray;      /* ref T... rest: slots hold pointers to sources */
+} TypeDesc;
+
+typedef struct
+{
+    LLVMValueRef value;
+    TypeDesc typeDesc;
+} Value;
+
+typedef struct Builder
+{
+    DiagnosticEngine* m_diag;
+    LLVMContextRef m_ctx;
+    LLVMModuleRef m_mod;
+    LLVMBuilderRef m_builder;
+    LLVMTypeRef m_ptrTy;
+    TypeRegistry m_registry;
+    StrMap m_structTypes;
+    StrMap m_funcs;
+    StrMap m_symbols;
+    StrMap m_globals;
+    StrMap m_externSlots;
+    Vec m_externNames;
+    TypeDesc m_curRet;
+    bool m_terminated;
+    bool m_jitMode;
+    LLVMValueRef m_curFn;
+    LLVMBasicBlockRef m_entryBlock;
+    LLVMValueRef m_entryAllocaPt;
+    Vec m_loops;
+    Vec m_owningLocals;
+    LLVMTypeRef m_arrayType; /* cached {ptr, i64} fat struct for T[] */
+    LLVMValueRef m_allocFn;
+    LLVMTypeRef m_allocFnType;
+    LLVMValueRef m_freeFn;
+    LLVMTypeRef m_freeFnType;
+    LLVMValueRef m_panicFn;
+    LLVMTypeRef m_panicFnType;
+    LLVMValueRef m_strdupFn;
+    LLVMTypeRef m_strdupFnType;
+    Arena* m_arena;
+    int m_strLitCount;
+} Builder;
+
 void BuiltModuleInit(BuiltModule* bm);
 void BuiltModuleDispose(BuiltModule* bm);
 
 BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode);
+
+Value EmitExpr(Builder* b, Node* n);
