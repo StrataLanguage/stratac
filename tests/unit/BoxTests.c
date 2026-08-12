@@ -182,6 +182,20 @@ STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(box_string_moves_owned_string_source)
+{
+    /* string is owned (like a box), so boxing a string value into box<string>
+       is a move: the source string is consumed, like boxing a box<T>. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("extern int puts(string s);\n"
+                    "int entry() { string src = \"world\"; box<string> b = src; return puts(src); }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(box_ref_param_inner_value_assign_mutates_in_place)
 {
     /* The legitimate way to write through a ref box<T>: assign its INNER

@@ -791,6 +791,102 @@ STRATA_TEST(varargs_extern_cvararg_ints_parity)
                       "host_vsum", (void*)&HostVSum, 100);
 }
 
+STRATA_TEST(box_string_reads_correctly_via_printf)
+{
+    /* box<string> reads as its string: printf's return value (chars written)
+       proves the content is correct on both backends. Covers literal creation,
+       moving a string into a box, box moves, and box reassignment. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry()\n"
+                      "{\n"
+                      "  box<string> a = \"hello\";\n"
+                      "  int n1 = printf(\"box=%s\\n\", a);\n"
+                      "  string src = \"world\";\n"
+                      "  box<string> b = src;\n"
+                      "  int n2 = printf(\"box2=%s\\n\", b);\n"
+                      "  box<string> c = a;\n"
+                      "  int n3 = printf(\"box3=%s\\n\", c);\n"
+                      "  box<string> d = \"test\";\n"
+                      "  d = c;\n"
+                      "  int n4 = printf(\"box4=%s\\n\", d);\n"
+                      "  return n1 + n2 + n3 + n4;\n"
+                      "}\n",
+                      "printf", (void*)&printf, 43);
+}
+
+STRATA_TEST(box_string_global_reads_correctly_via_printf)
+{
+    /* A box<string> global initialized from a literal reads correctly. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "box<string> g = \"Hello!\";\n"
+                      "int entry() { return printf(\"g=%s\\n\", g); }\n",   /* 9 */
+                      "printf", (void*)&printf, 9);
+}
+
+STRATA_TEST(box_string_passes_to_extern_string_param)
+{
+    /* box<string> passed to an extern `string` param (by-value const char*)
+       reads correctly on both backends. */
+    CheckVarargExtern("extern int puts(string s);\n"
+                      "box<string> g = \"Hello!\";\n"
+                      "int entry() { puts(g); box<string> l = \"world\"; puts(l); return 0; }\n",
+                      "puts", (void*)&puts, 0);
+}
+
+/* ---- box<string> and box<T> to extern `...` (C varargs) ---- */
+
+STRATA_TEST(box_string_to_extern_cvararg_parity)
+{
+    /* box<string> arg in extern `...` position derefs to its char* and
+       printf reads it correctly on both backends. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry() {\n"
+                      "  box<string> a = \"alpha\";\n"
+                      "  box<string> b = \"beta\";\n"
+                      "  return printf(\"%s %s\", a, b);\n"   /* 10 */
+                      "}\n",
+                      "printf", (void*)&printf, 10);
+}
+
+STRATA_TEST(box_string_from_return_to_extern_parity)
+{
+    /* box<string> returned from a function then passed to extern: the
+       returned box must be readable by printf. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "box<string> make(string s) { box<string> b = s; return b; }\n"
+                      "int entry() {\n"
+                      "  box<string> g = make(\"gamma\");\n"
+                      "  return printf(\"%s\", g);\n"         /* 5 */
+                      "}\n",
+                      "printf", (void*)&printf, 5);
+}
+
+STRATA_TEST(box_string_multiple_extern_calls_parity)
+{
+    /* Multiple sequential extern calls with box<string> verify the box
+       survives each call (borrow, not moved) when passed to string param. */
+    CheckVarargExtern("extern int puts(string s);\n"
+                      "int entry() {\n"
+                      "  box<string> b = \"shared\";\n"
+                      "  puts(b);\n"
+                      "  puts(b);\n"
+                      "  puts(b);\n"
+                      "  return 0;\n"
+                      "}\n",
+                      "puts", (void*)&puts, 0);
+}
+
+STRATA_TEST(box_int_to_extern_int_param_parity)
+{
+    /* box<int> passed to an extern int param derefs to its value. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry() {\n"
+                      "  box<int> b = 42;\n"
+                      "  return printf(\"%d\", b);\n"        /* 2 */
+                      "}\n",
+                      "printf", (void*)&printf, 2);
+}
+
 STRATA_TEST(varargs_extern_cvararg_float_promotes_to_double_parity)
 {
     /* float variadic args must follow C default promotions (widen to double),

@@ -30,9 +30,16 @@ int take_string(string s)
 
 string globalString = "Test global";
 
+box<string> boxedString = "Hello!";
+box<string>[] arrayOfBoxedStrings;
+
 int run()
 {
+    //puts(boxedString);
     puts(globalString);
+
+    array_push(arrayOfBoxedStrings, "hi");
+    puts(arrayOfBoxedStrings[0]);
 
     string g = make_greeting();   // owns "Hello, World!"
     puts(g);                      // prints it

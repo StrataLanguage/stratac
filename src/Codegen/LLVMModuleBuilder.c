@@ -678,11 +678,22 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
 
     PositionAtEnd(b, doBB);
 
-    /* box<owning struct>: free the struct's owning fields (e.g. a string
-       field) before freeing the struct allocation itself. */
-    if (td.boxInner && TypeRegistryIsOwningStruct(&b->m_registry, td.boxInner))
+    /* A box of an owning inner owns that inner too. An owning struct drops
+       its fields recursively; an owning primitive (string) is a single heap
+       pointer freed directly; a plain value (int) needs no inner drop. */
+    if (td.boxInner)
     {
-        EmitDropStructFields(b, ptr, td.boxInner);
+        if (TypeRegistryIsOwningStruct(&b->m_registry, td.boxInner))
+        {
+            EmitDropStructFields(b, ptr, td.boxInner);
+        }
+        else if (IsOwningType(td.boxInner))
+        {
+            LLVMValueRef innerPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ptr, "bin");
+            LLVMValueRef iargs[1] = { innerPtr };
+            StrataFreeFn(b);
+            LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, iargs, 1, "");
+        }
     }
 
     LLVMValueRef args[1] = { ptr };
@@ -1003,6 +1014,30 @@ static void NullMovedSource(Builder* b, Node* n)
     {
         LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
     }
+}
+
+/* Produces an owned value of 'innerType' from an already-evaluated expression.
+   This is the single point that encapsulates ownership construction:
+   - Non-owning inner (int, struct value, ...): returned as-is.
+   - Owning inner + string literal: heap-copied so the destination owns it.
+   - Owning inner + movable source (ident/field): value taken, source nulled.
+   - Owning inner + non-movable (call result): value taken as-is.
+   Used for string vars, box<T> inners, struct fields, return values, etc. */
+static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const char* innerType)
+{
+    if (!IsOwningType(innerType))
+    {
+        return evaluated.value;
+    }
+
+    if (init->kind == NodeStrLiteral)
+    {
+        StrLiteral* lit = AsNode(StrLiteral, init);
+        return HeapCopyString(b, evaluated.value, strlen(lit->value));
+    }
+
+    NullMovedSource(b, init);
+    return evaluated.value;
 }
 
 static LValue EmitLValue(Builder* b, Node* n)
@@ -2684,20 +2719,21 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
             /* owning string field from a literal -> heap copy (safe to free). */
             fieldValue = ValueMake(HeapCopyString(b, rawField.value, strlen(((StrLiteral*)field->value)->value)), fieldTd);
         }
-        else if (fieldTd.isBox && !rawField.typeDesc.isBox)
+        else if (fieldTd.isBox && fieldTd.boxInner
+                 && !(rawField.typeDesc.isBox && rawField.typeDesc.boxInner
+                      && strcmp(rawField.typeDesc.boxInner, fieldTd.boxInner) == 0))
         {
-            /* box<T> field initialized from a bare T value/literal - heap-box
-               it (same as a top-level `box<T> x = T{...};` local), since the
-               field is really a T* in the aggregate's LLVM layout. Inserting
-               the raw T value there instead would insert a value of the
-               wrong type into that slot - reinterpreted as a pointer, it
-               corrupts memory the moment anything dereferences the field. */
+            /* box<T> field from a non-box<T> value (bare T, string literal,
+               string variable into box<string>): allocate a T slot, construct
+               the owned inner value, store it. Same pattern as a top-level
+               box<T> init. */
             TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)fieldTd.boxInner});
             LLVMValueRef size = SizeOfConst(b, innerTd.type);
             LLVMValueRef args[1] = { size };
             StrataAllocFn(b);
             LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "fieldbox");
-            LLVMBuildStore(b->m_builder, rawField.value, heap);
+            LLVMValueRef inner = EmitOwnedValue(b, rawField, field->value, fieldTd.boxInner);
+            LLVMBuildStore(b->m_builder, inner, heap);
             fieldValue = ValueMake(heap, fieldTd);
         }
         else
@@ -2918,26 +2954,12 @@ static void EmitStmt(Builder* b, Node* n)
             {
                 v = UnboxIfBox(b, Coerce(b, raw, b->m_curRet), b->m_curRet);
 
-                if (v.typeDesc.isBox && !v.typeDesc.boxInner && r->value->kind == NodeStrLiteral)
+                if (v.typeDesc.isBox && !v.typeDesc.boxInner)
                 {
-                    StrLiteral* lit = AsNode(StrLiteral, r->value);
-                    size_t copyLen = strlen(lit->value) + 1;
-                    LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
-                    LLVMValueRef args2[1] = { size };
-                    StrataAllocFn(b);
-                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args2, 1, "strret");
-                    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
-                    LLVMValueRef srcGep = v.value;
-                    LLVMValueRef dstGep = heap;
-                    for (size_t ci = 0; ci < copyLen; ci++)
-                    {
-                        LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
-                        LLVMValueRef srcIdx[1] = { ciVal };
-                        LLVMValueRef dstIdx[1] = { ciVal };
-                        LLVMValueRef byteVal = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "srcr"), "br");
-                        LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "dstr"));
-                    }
-                    v = ValueMake(heap, b->m_curRet);
+                    /* Return type is string: construct the owned value (heap-copy
+                       literal, move source). */
+                    LLVMValueRef owned = EmitOwnedValue(b, v, r->value, "string");
+                    v = ValueMake(owned, b->m_curRet);
                 }
 
                 Node* movedReturnNode = (v.typeDesc.isBox || v.typeDesc.isArray)
@@ -3050,57 +3072,44 @@ static void EmitStmt(Builder* b, Node* n)
             if (varDecl->init)
             {
                 Value value = EmitExpr(b, varDecl->init);
+                bool isLiteral = varDecl->init->kind == NodeStrLiteral;
 
-                bool isStrLiteral = varDecl->init->kind == NodeStrLiteral;
+                /* Direct move: source and destination are the same owning type
+                   (string=string, box<T>=box<T>). Copy the pointer, null the
+                   source. No allocation needed. */
+                bool sameOwningType = value.typeDesc.isBox && !isLiteral
+                    && ((typeDesc.boxInner == NULL && value.typeDesc.boxInner == NULL)
+                        || (typeDesc.boxInner && value.typeDesc.boxInner
+                            && strcmp(typeDesc.boxInner, value.typeDesc.boxInner) == 0));
 
-                if (value.typeDesc.isBox && !isStrLiteral)
+                if (sameOwningType)
                 {
                     LLVMBuildStore(b->m_builder, value.value, slot);
-
-                    Node* movedDeclNode = MovableBoxSourceNode(varDecl->init);
-
-                    if (movedDeclNode)
-                    {
-                        LValue src = EmitLValue(b, movedDeclNode);
-
-                        if (src.valid)
-                        {
-                            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
-                        }
-                    }
-                }
-                else if (isStrLiteral)
-                {
-                    StrLiteral* lit = AsNode(StrLiteral, varDecl->init);
-                    size_t copyLen = strlen(lit->value) + 1;
-                    LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
-                    LLVMValueRef args[1] = { size };
-                    StrataAllocFn(b);
-                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "str");
-                    LLVMBuildStore(b->m_builder, heap, slot);
-
-                    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
-                    LLVMValueRef srcGep = value.value;
-                    LLVMValueRef dstGep = heap;
-                    LLVMValueRef idx = LLVMConstInt(I64Ty(b), 0, 0);
-                    for (size_t ci = 0; ci < copyLen; ci++)
-                    {
-                        LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
-                        LLVMValueRef srcIdx[1] = { ciVal };
-                        LLVMValueRef dstIdx[1] = { ciVal };
-                        LLVMValueRef byteVal = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "src"), "b");
-                        LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "dst"));
-                    }
+                    NullMovedSource(b, varDecl->init);
                 }
                 else if (typeDesc.boxInner)
                 {
+                    /* box<T>: allocate a T slot, construct the inner value
+                       (with ownership), and store it. For box<string> this
+                       is: construct a string (heap-copy literal / move source),
+                       then box it up — identical to box<int> but the inner
+                       happens to be owning. */
                     TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)typeDesc.boxInner});
                     LLVMValueRef size = SizeOfConst(b, innerTd.type);
                     LLVMValueRef args[1] = { size };
                     StrataAllocFn(b);
                     LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "heap");
                     LLVMBuildStore(b->m_builder, heap, slot);
-                    LLVMBuildStore(b->m_builder, value.value, heap);
+
+                    LLVMValueRef inner = EmitOwnedValue(b, value, varDecl->init, typeDesc.boxInner);
+                    LLVMBuildStore(b->m_builder, inner, heap);
+                }
+                else
+                {
+                    /* string (owning primitive, no box inner): construct the
+                       owned value directly into the slot. */
+                    LLVMValueRef owned = EmitOwnedValue(b, value, varDecl->init, "string");
+                    LLVMBuildStore(b->m_builder, owned, slot);
                 }
             }
             else
@@ -3552,19 +3561,26 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                     TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)td.boxInner});
                     Value val = EmitExpr(b, gd->init);
 
-                    if (val.typeDesc.isBox)
+                    /* Direct move from the same box<T> kind: take pointer. */
+                    bool sameBoxKind = val.typeDesc.boxInner
+                        && strcmp(val.typeDesc.boxInner, td.boxInner) == 0;
+
+                    if (sameBoxKind)
                     {
                         LLVMBuildStore(b->m_builder, val.value, sym->value);
                     }
                     else
                     {
+                        /* Box up the inner value (owning or not). */
                         LLVMValueRef sz = SizeOfConst(b, innerTd.type);
                         LLVMValueRef args[1] = { sz };
                         StrataAllocFn(b);
                         LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn,
                                                             args, 1, "boxgl");
-                        LLVMBuildStore(b->m_builder, Coerce(b, val, innerTd).value, heap);
                         LLVMBuildStore(b->m_builder, heap, sym->value);
+
+                        LLVMValueRef inner = EmitOwnedValue(b, val, gd->init, td.boxInner);
+                        LLVMBuildStore(b->m_builder, inner, heap);
                     }
                 }
             }

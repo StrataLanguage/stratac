@@ -1356,9 +1356,13 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
                                  fieldDecl->name, structInitExpr->typeName, fieldValueType);
                 }
 
-                /* A box<T> field moves its source (identifier/field/cast). */
+                /* A box<T> field moves its source — but only when the source
+                   value itself is owning (box<T> into box<T>, string into
+                   box<string>). A bare T boxed into a box<T> field is a copy. */
                 const char* movedFieldKey
-                    = IsOwningType(fieldDecl->type.name) ? MovableBoxSourceKey(r, field->value) : NULL;
+                    = (IsOwningType(fieldDecl->type.name)
+                       && fieldValueType[0] != '\0' && IsOwningType(fieldValueType))
+                      ? MovableBoxSourceKey(r, field->value) : NULL;
 
                 if (movedFieldKey)
                 {

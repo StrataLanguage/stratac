@@ -102,10 +102,6 @@ STRATA_API void strataCompilerDestroy(StrataCompiler* c);
 
 STRATA_API void strataSetArchitecture(StrataCompiler* c, StrataArch arch);
 
-/* Optionally install a custom heap allocator/deallocator for JIT-compiled
-   code (e.g. a game engine's allocator). NULL uses malloc/free. Set on the
-   compiler before strataJitCompileString/File; the values are passed to the
-   JIT when it is initialized. */
 STRATA_API void strataJitSetAllocFreeFunctions(StrataCompiler* c, void* allocFn, void* freeFn);
 
 STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,

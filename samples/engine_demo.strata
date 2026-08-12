@@ -28,6 +28,8 @@ void BorrowBox(ref box<Pistol> p)
 struct Any;
 struct Wrapper { box<Any> target; };
 
+extern int printf(string str, ...);
+
 int chase(Entity attacker, Entity target, int step)
 {
     box<Pistol> p = MakePistol(100);

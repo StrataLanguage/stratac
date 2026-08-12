@@ -340,7 +340,9 @@ static bool ParamIsIndirect(CEmitter* emitter, const ParamDecl* param)
    LLVM backend and the C varargs ABI the host expects. */
 static bool ParamIsIndirectFor(CEmitter* emitter, const FunctionDecl* function, const ParamDecl* param)
 {
-    if (function && function->isExtern && function->isCVararg && strcmp(param->type.name, "string") == 0)
+    /* Extern string params cross as const char* by value, matching the LLVM
+       backend and libc-style hosts (puts, printf, strlen, ...). */
+    if (function && function->isExtern && strcmp(param->type.name, "string") == 0)
     {
         return false;
     }
@@ -1258,9 +1260,10 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         const ParamDecl* parameter
             = function && i < function->params.count ? (const ParamDecl*)VecGet(&function->params, i) : NULL;
 
-        /* Variadic extern string params are passed by value (const char*),
-           so they must not go through the indirect (char**) path. */
-        bool isStringByValue = cVararg && parameter && strcmp(parameter->type.name, "string") == 0;
+        /* Extern string params cross by value (const char*), so they must not
+           go through the indirect (char**) path. */
+        bool isStringByValue = function && function->isExtern && parameter
+            && strcmp(parameter->type.name, "string") == 0;
 
         if (parameter && !isStringByValue && ParamIsIndirectFor(emitter, function, parameter))
         {
@@ -1304,7 +1307,20 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         {
             const char* argType = ExprType(emitter, argument);
 
-            if (cVararg && strcmp(argType, "string") == 0)
+            if (isStringByValue)
+            {
+                /* Extern string param: a plain string arg passes its char*
+                   value; a box<string> derefs to its char*. */
+                if (strcmp(argType, "string") == 0)
+                {
+                    CEmitExpr(emitter, argument);
+                }
+                else
+                {
+                    EmitScalarValue(emitter, argument);
+                }
+            }
+            else if (cVararg && strcmp(argType, "string") == 0)
             {
                 /* Variadic extern: string args pass their char* value. */
                 CEmitExpr(emitter, argument);
@@ -1897,6 +1913,42 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     }
 }
 
+/* Emits a C expression that produces an owned value of 'innerType' from
+   'init'. This is the C-backend mirror of the LLVM backend's EmitOwnedValue:
+   - Non-owning inner: evaluate the expression as-is.
+   - Owning inner + string literal: wrap in strata_strdup (heap-copy).
+   - Owning inner + movable source: evaluate, then null the source via a
+     comma expression:  (expr, (src = 0))
+   - Owning inner + non-movable (call result): evaluate as-is.
+   Used for string vars, box<T> inners, struct fields, return values, etc. */
+static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* innerType)
+{
+    if (!IsOwningType(innerType))
+    {
+        CEmitExpr(emitter, init);
+        return;
+    }
+
+    if (init->kind == NodeStrLiteral)
+    {
+        SbPuts(&emitter->out, "strata_strdup(");
+        CEmitExpr(emitter, init);
+        SbPutc(&emitter->out, ')');
+        return;
+    }
+
+    CEmitExpr(emitter, init);
+
+    const Node* moved = MovableBoxSource(init);
+
+    if (moved)
+    {
+        SbPuts(&emitter->out, ", (");
+        EmitLValue(emitter, moved);
+        SbPuts(&emitter->out, " = 0)");
+    }
+}
+
 /* Box a struct value by allocating it and assigning each init field, so that
    box<T> fields move their source (nulling it). Omitted fields stay zero/null. */
 static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char* innerC, const char* inner,
@@ -1939,21 +1991,22 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             continue;
         }
 
-        bool fieldNeedsBoxing = IsOwningType(fd->type.name);
+        /* For a box<T> field, determine whether we need to box up the value
+           (alloc + store) or can do a direct pointer move. Boxing is needed
+           whenever the value type differs from the field type — a bare T
+           into box<T>, a string literal into box<string>, etc. Only
+           box<T> from the same box<T> is a direct move. */
+        const char* valueType = ExprType(emitter, sf->value);
+        bool fieldIsOwning = IsOwningType(fd->type.name);
+        bool sameOwningType = fieldIsOwning && valueType[0] != '\0'
+            && strcmp(valueType, fd->type.name) == 0;
 
-        if (fieldNeedsBoxing)
+        if (fieldIsOwning && !sameOwningType)
         {
-            const char* valueType = ExprType(emitter, sf->value);
-            fieldNeedsBoxing = valueType[0] != '\0' && !IsOwningType(valueType);
-        }
-
-        if (fieldNeedsBoxing)
-        {
-            /* box<T> field initialized from a bare T value/literal - heap-box
-               it, same as a top-level `box<T> x = T{...};` local. Without
-               this, the field (really a T*) would be assigned a raw T
-               value: a C type mismatch that, if silently coerced, would
-               corrupt the struct. */
+            /* Box up the inner value. For box<string> from a literal this is:
+               alloc char* slot, strdup the literal into it. For box<int> from
+               an int this is: alloc int slot, store the int. Same path for
+               any T into box<T>. */
             const char* fieldInner = OwningInnerCStr(emitter->arena, fd->type.name);
             const char* fieldInnerC = TypeNameC(emitter, fieldInner);
 
@@ -1971,35 +2024,28 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             SbPuts(&emitter->out, "->");
             SbPuts(&emitter->out, FieldName(emitter, fd->name));
             SbPuts(&emitter->out, " = ");
-            CEmitExpr(emitter, sf->value);
+            CEmitOwnedValue(emitter, sf->value, fieldInner);
             SbPuts(&emitter->out, ";\n");
         }
         else
         {
+            /* Direct assignment: same box<T> move, or a non-owning field. */
             Pad(emitter);
             SbPuts(&emitter->out, cName);
             SbPuts(&emitter->out, "->");
             SbPuts(&emitter->out, FieldName(emitter, fd->name));
             SbPuts(&emitter->out, " = ");
-
-            /* An owning string field takes a heap-owned copy of a literal so
-               the field can be freed on drop without freeing a string global. */
-            if (IsOwningType(fd->type.name) && sf->value->kind == NodeStrLiteral)
-            {
-                SbPuts(&emitter->out, "strata_strdup(");
-                CEmitExpr(emitter, sf->value);
-                SbPutc(&emitter->out, ')');
-            }
-            else
-            {
-                CEmitExpr(emitter, sf->value);
-            }
-
+            CEmitExpr(emitter, sf->value);
             SbPuts(&emitter->out, ";\n");
         }
 
-        /* A moved-into box field nulls its source. */
-        const Node* movedFieldSource = IsOwningType(fd->type.name) ? MovableBoxSource(sf->value) : NULL;
+        /* A moved-into box field nulls its source — but only when the
+           source itself is owning AND the same type (a real move, not a
+           boxing copy). A bare T boxed into a box<T> field is a copy,
+           not a move: the source stays live. */
+        const Node* movedFieldSource = (sameOwningType
+            && sf->value->kind != NodeStrLiteral)
+            ? MovableBoxSource(sf->value) : NULL;
 
         if (movedFieldSource)
         {
@@ -2016,9 +2062,9 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
 {
     const char* initType = ExprType(emitter, (Node*)init);
 
-    if (initType[0] != '\0' && IsOwningType(initType))
+    /* Direct move from another box<T> of the same kind: take pointer. */
+    if (initType[0] != '\0' && IsOwningType(initType) && OwningInnerStr(initType).data)
     {
-        /* A box-returning call: assign the returned pointer directly. */
         Pad(emitter);
         SbPuts(&emitter->out, cName);
         SbPuts(&emitter->out, " = ");
@@ -2037,6 +2083,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
         return;
     }
 
+    /* Box up the inner value (generic for any T, owning or not). */
     Pad(emitter);
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " = strata_alloc(sizeof(");
@@ -2047,7 +2094,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
     SbPutc(&emitter->out, '*');
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " = ");
-    CEmitExpr(emitter, (Node*)init);
+    CEmitOwnedValue(emitter, init, inner);
     SbPuts(&emitter->out, ";\n");
 }
 
@@ -2133,21 +2180,13 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
         if (isString)
         {
-            const char* initType = declaration->init ? ExprType(emitter, declaration->init) : "";
-
             SbPuts(&emitter->out, "char * ");
             SbPuts(&emitter->out, cName);
 
-            if (initType[0] != '\0' && IsOwningType(initType) && declaration->init->kind != NodeStrLiteral)
+            if (declaration->init)
             {
                 SbPuts(&emitter->out, " = ");
-                CEmitExpr(emitter, declaration->init);
-            }
-            else if (declaration->init && declaration->init->kind == NodeStrLiteral)
-            {
-                SbPuts(&emitter->out, " = strata_strdup(");
-                CEmitExpr(emitter, declaration->init);
-                SbPutc(&emitter->out, ')');
+                CEmitOwnedValue(emitter, declaration->init, "string");
             }
             else
             {
@@ -2179,9 +2218,9 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         SbPutc(&emitter->out, ' ');
         SbPuts(&emitter->out, cName);
 
-        if (initType[0] != '\0' && IsOwningType(initType))
+        if (initType[0] != '\0' && IsOwningType(initType) && strcmp(initType, declaration->type.name) == 0)
         {
-            /* Move from another box<T>: take its pointer, null the source. */
+            /* Direct move from the same box<T> type: take pointer, null source. */
             SbPuts(&emitter->out, " = ");
             CEmitExpr(emitter, declaration->init);
 
@@ -2209,41 +2248,37 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                 }
             }
         }
+        else if (declaration->init && TypeRegistryIsOwningStruct(&emitter->types, inner)
+                 && declaration->init->kind == NodeStructInit)
+        {
+            EmitBoxedStructInit(emitter, cName, innerC, inner, (const StructInitExpr*)declaration->init);
+        }
         else
         {
-            /* Box a value of the inner type. (var already declared above) */
-            if (declaration->init && TypeRegistryIsOwningStruct(&emitter->types, inner)
-                && declaration->init->kind == NodeStructInit)
-            {
-                EmitBoxedStructInit(emitter, cName, innerC, inner, (const StructInitExpr*)declaration->init);
-            }
-            else
-            {
-                SbPuts(&emitter->out, " = strata_alloc(sizeof(");
-                SbPuts(&emitter->out, innerC);
-                SbPuts(&emitter->out, "));");
+            /* Box up the inner value. For box<string> this is:
+               construct a string (strdup literal / move source), then store
+               into the allocated slot — identical to box<int> but the inner
+               happens to be owning. */
+            SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+            SbPuts(&emitter->out, innerC);
+            SbPuts(&emitter->out, "));");
 
+            if (declaration->init)
+            {
                 if (semicolon)
                 {
                     SbPutc(&emitter->out, '\n');
                 }
 
-                if (declaration->init)
+                Pad(emitter);
+                SbPutc(&emitter->out, '*');
+                SbPuts(&emitter->out, cName);
+                SbPuts(&emitter->out, " = ");
+                CEmitOwnedValue(emitter, declaration->init, inner);
+
+                if (semicolon)
                 {
-                    if (semicolon)
-                    {
-                        Pad(emitter);
-                    }
-
-                    SbPutc(&emitter->out, '*');
-                    SbPuts(&emitter->out, cName);
-                    SbPuts(&emitter->out, " = ");
-                    CEmitExpr(emitter, declaration->init);
-
-                    if (semicolon)
-                    {
-                        SbPutc(&emitter->out, ';');
-                    }
+                    SbPutc(&emitter->out, ';');
                 }
             }
         }
@@ -2365,7 +2400,6 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
         }
 
         const char* inner = OwningInnerCStr(emitter->arena, e->typeName);
-        bool owningInner = inner && TypeRegistryIsOwningStruct(&emitter->types, inner);
 
         /* For a by-ref box param, the box pointer lives at *var (caller's slot). */
         const char* star = e->byRef ? "*" : "";
@@ -2376,13 +2410,27 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
         SbPuts(&emitter->out, var);
         SbPuts(&emitter->out, ") { ");
 
-        if (owningInner)
+        /* A box of an owning inner owns that inner too. An owning struct
+           drops its fields recursively; an owning primitive (string) is a
+           single heap pointer freed directly; a plain value (int) needs no
+           inner drop. */
+        if (inner)
         {
-            SbPuts(&emitter->out, DropHelperName(emitter, inner));
-            SbPuts(&emitter->out, "(");
-            SbPuts(&emitter->out, star);
-            SbPuts(&emitter->out, var);
-            SbPuts(&emitter->out, "); ");
+            if (TypeRegistryIsOwningStruct(&emitter->types, inner))
+            {
+                SbPuts(&emitter->out, DropHelperName(emitter, inner));
+                SbPuts(&emitter->out, "(");
+                SbPuts(&emitter->out, star);
+                SbPuts(&emitter->out, var);
+                SbPuts(&emitter->out, "); ");
+            }
+            else if (IsOwningType(inner))
+            {
+                SbPuts(&emitter->out, "strata_free(*");
+                SbPuts(&emitter->out, star);
+                SbPuts(&emitter->out, var);
+                SbPuts(&emitter->out, "); ");
+            }
         }
 
         SbPuts(&emitter->out, "strata_free(");
@@ -2501,10 +2549,15 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
         /* A bare box<T> identifier is only a move if the function returns
            box<T>; otherwise it's a deref-read. */
-        bool returnsBoxIdent = statement->value && statement->value->kind == NodeIdent && IsOwningType(valueType);
-
         const Node* movedReturnSource = IsOwningType(valueType) ? MovableBoxSource(statement->value) : NULL;
         bool movesBox = movedReturnSource && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
+
+        /* An owning value returned as a non-owning type (e.g. box<int>
+           field access returned as int) must be dereferenced to read.
+           Arrays are excluded: they're returned by value as a {ptr, len}
+           struct, not through a pointer deref. */
+        bool needsBoxDeref = statement->value && valueType[0] != '\0'
+            && IsOwningType(valueType) && !IsArrayType(valueType) && !movesBox;
 
         if (statement->value && emitter->boxVars.count > 0)
         {
@@ -2519,10 +2572,10 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, tmp);
             SbPuts(&emitter->out, " = ");
 
-            if (returnsBoxIdent && !movesBox)
+            if (needsBoxDeref)
             {
                 SbPuts(&emitter->out, "(*");
-                EmitLValue(emitter, statement->value);
+                CEmitExpr(emitter, statement->value);
                 SbPutc(&emitter->out, ')');
             }
             else
@@ -2567,10 +2620,10 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             {
                 SbPutc(&emitter->out, ' ');
 
-                if (returnsBoxIdent && !movesBox)
+                if (needsBoxDeref)
                 {
                     SbPuts(&emitter->out, "(*");
-                    EmitLValue(emitter, statement->value);
+                    CEmitExpr(emitter, statement->value);
                     SbPutc(&emitter->out, ')');
                 }
                 else
@@ -2695,9 +2748,9 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
 static void EmitParam(CEmitter* emitter, const FunctionDecl* function, const ParamDecl* param)
 {
-    /* Variadic extern string params cross as const char* by value, matching
-       the LLVM backend and the C varargs ABI the host expects. */
-    if (function && function->isExtern && function->isCVararg && strcmp(param->type.name, "string") == 0)
+    /* Extern string params cross as const char* by value, matching the LLVM
+       backend and libc-style hosts. */
+    if (function && function->isExtern && strcmp(param->type.name, "string") == 0)
     {
         SbPuts(&emitter->out, "const char * ");
         SbPuts(&emitter->out, VarName(emitter, param->name));
@@ -2743,6 +2796,10 @@ static void EmitDropField(CEmitter* emitter, const char* fieldC, const char* fie
         if (inner && TypeRegistryIsOwningStruct(&emitter->types, inner))
         {
             SbPrintf(&emitter->out, "%s(p->%s); ", DropHelperName(emitter, inner), fieldC);
+        }
+        else if (inner && IsOwningType(inner))
+        {
+            SbPrintf(&emitter->out, "strata_free(*(p->%s)); ", fieldC);
         }
 
         SbPrintf(&emitter->out, "strata_free(p->%s); p->%s = 0; }\n", fieldC, fieldC);
@@ -2850,8 +2907,8 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
 
             const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, i);
 
-            /* Variadic extern string params cross as const char* by value. */
-            if (function->isCVararg && strcmp(param->type.name, "string") == 0)
+            /* Extern string params cross as const char* by value. */
+            if (function->isExtern && strcmp(param->type.name, "string") == 0)
             {
                 SbPuts(&emitter->out, "const char *");
             }
