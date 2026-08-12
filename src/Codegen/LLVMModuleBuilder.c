@@ -610,6 +610,17 @@ static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
    freed before the struct allocation itself). */
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName);
 
+/* Returns (creating if needed) a per-struct-type LLVM function that drops
+   the owning fields of `structName` given a pointer to it. Used instead of
+   inlining EmitDropStructFields at box<StructType> drop sites: a
+   self-referential or mutually recursive owning struct (e.g.
+   `struct Node { box<Node> next; }`) would otherwise make EmitDropStructFields
+   recurse into itself without bound at IR-generation time, since the
+   compile-time recursion follows the *type* graph, not the (possibly null,
+   runtime-only-known) data. A real function call terminates at runtime via
+   the null check in the callee, following the actual chain length instead. */
+static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
+
 /* Drops (frees) the owning value held in 'slot', typed 'td'.
    - box<T> / string: 'slot' is the address of a pointer; free it (and, for a
      box<owning struct>, the struct's owning fields first).
@@ -688,7 +699,10 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
     {
         if (TypeRegistryIsOwningStruct(&b->m_registry, td.boxInner))
         {
-            EmitDropStructFields(b, ptr, td.boxInner);
+            LLVMValueRef dropFn = GetOrCreateStructDropFn(b, td.boxInner);
+            LLVMTypeRef dropFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), &b->m_ptrTy, 1, 0);
+            LLVMValueRef dropArgs[1] = {ptr};
+            LLVMBuildCall2(b->m_builder, dropFnTy, dropFn, dropArgs, 1, "");
         }
         else if (IsOwningType(td.boxInner))
         {
@@ -766,6 +780,84 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
             EmitDropStructFields(b, fieldAddr, f->type.name);
         }
     }
+}
+
+/* Builds the body of a per-struct-type drop function: `if (!p) return;`
+   followed by EmitDropStructFields(p, structName). May run while another
+   function's body is mid-emission (a box<T> drop site can be reached from
+   anywhere), so the enclosing function-build context is saved and restored
+   around it. */
+static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* structName)
+{
+    LLVMValueRef savedCurFn = b->m_curFn;
+    LLVMBasicBlockRef savedEntryBlock = b->m_entryBlock;
+    LLVMValueRef savedEntryAllocaPt = b->m_entryAllocaPt;
+    bool savedTerminated = b->m_terminated;
+    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->m_builder);
+
+    b->m_curFn = fn;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "entry");
+    PositionAtEnd(b, entry);
+    b->m_entryBlock = entry;
+    b->m_entryAllocaPt = NULL;
+
+    LLVMValueRef p = LLVMGetParam(fn, 0);
+
+    LLVMBasicBlockRef nullBB = NewBb(b, "sdrop.null");
+    LLVMBasicBlockRef doBB = NewBb(b, "sdrop.do");
+
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, p, LLVMConstNull(b->m_ptrTy), "isnull");
+    LLVMBuildCondBr(b->m_builder, isNull, nullBB, doBB);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, nullBB);
+    LLVMBuildRetVoid(b->m_builder);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, doBB);
+
+    EmitDropStructFields(b, p, structName);
+
+    if (!b->m_terminated)
+    {
+        LLVMBuildRetVoid(b->m_builder);
+        b->m_terminated = true;
+    }
+
+    b->m_curFn = savedCurFn;
+    b->m_entryBlock = savedEntryBlock;
+    b->m_entryAllocaPt = savedEntryAllocaPt;
+    b->m_terminated = savedTerminated;
+
+    if (savedInsertBlock)
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, savedInsertBlock);
+    }
+}
+
+static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
+{
+    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->m_dropFns, structName);
+
+    if (existing)
+    {
+        return existing;
+    }
+
+    LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), &b->m_ptrTy, 1, 0);
+    char* fnName = arena_format(b->m_arena, "__strata_drop_%s", structName);
+    LLVMValueRef fn = LLVMAddFunction(b->m_mod, fnName, fnTy);
+    LLVMSetLinkage(fn, LLVMInternalLinkage);
+
+    /* Register before emitting the body: a self-referential or mutually
+       recursive struct's own drop body will look this function back up
+       (cache hit) instead of triggering another EmitStructDropFnBody call. */
+    StrMapPut(&b->m_dropFns, structName, (void*)fn);
+
+    EmitStructDropFnBody(b, fn, structName);
+
+    return fn;
 }
 
 static void EmitDrops(Builder* b, size_t fromIndex)
@@ -3666,6 +3758,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_symbols);
     StrMapInit(&b.m_globals);
     StrMapInit(&b.m_externSlots);
+    StrMapInit(&b.m_dropFns);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
     VecInit(&b.m_owningLocals);
@@ -3687,6 +3780,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_symbols);
     StrMapFree(&b.m_globals);
     StrMapFree(&b.m_externSlots);
+    StrMapFree(&b.m_dropFns);
     free(b.m_loops.items);
     free(b.m_owningLocals.items);
     TypeRegistryFree(&b.m_registry);

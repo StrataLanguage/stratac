@@ -37,12 +37,12 @@ extern "C"
         StrataArch arch;
         void* allocFn;   /* optional host allocator for JIT mode */
         void* freeFn;    /* optional host deallocator for JIT mode */
+        StrataJitBackend jitBackend;
 
         StrataImportResolverFn importResolver;      /* optional import resolver */
         void* importResolverUserData;
     };
 
-#if STRATA_HAS_TCC
     static char* ConcatOwned(const char* a, const char* b)
     {
         size_t na = strlen(a);
@@ -56,7 +56,6 @@ extern "C"
         }
         return buf;
     }
-#endif
 
     StrataCompiler* strataCompilerCreate(void)
     {
@@ -64,6 +63,7 @@ extern "C"
         compiler->arch = STRATA_ARCH_AUTO;
         compiler->allocFn = NULL;
         compiler->freeFn = NULL;
+        compiler->jitBackend = STRATA_JIT_BACKEND_AUTO;
         compiler->importResolver = NULL;
         compiler->importResolverUserData = NULL;
         return compiler;
@@ -88,6 +88,16 @@ extern "C"
 
         c->allocFn = allocFn;
         c->freeFn = freeFn;
+    }
+
+    void strataJitSetBackend(StrataCompiler* c, StrataJitBackend backend)
+    {
+        if (!c)
+        {
+            return;
+        }
+
+        c->jitBackend = backend;
     }
 
     void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn resolver, void* userData)
@@ -414,7 +424,7 @@ extern "C"
     {
         unsigned capabilities = STRATA_CAP_C_OUTPUT;
 #if STRATA_HAS_LLVM
-        capabilities |= STRATA_CAP_LLVM_IR | STRATA_CAP_LLVM_AOT;
+        capabilities |= STRATA_CAP_LLVM_IR | STRATA_CAP_LLVM_AOT | STRATA_CAP_LLVM_JIT;
 #endif
 #if STRATA_HAS_TCC
         capabilities |= STRATA_CAP_TCC_JIT;
@@ -422,29 +432,63 @@ extern "C"
         return capabilities;
     }
 
-#if STRATA_HAS_TCC
+    typedef enum
+    {
+        STRATA_JIT_KIND_NONE = 0,
+        STRATA_JIT_KIND_TCC,
+        STRATA_JIT_KIND_LLVM,
+    } StrataJitKind;
+
     struct StrataJit
     {
-        TccJit* jit;
+        StrataJitKind kind;
+        void* backend;   /* TccJit* or LLVMJit*, per kind; NULL if kind == NONE */
         char* diagnostics;
+#if STRATA_HAS_LLVM
+        Vec llvmExports; /* LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM */
+#endif
     };
 
-    static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
-                                    size_t sourceCount, const char** errOut, const StrataArch arch, void* allocFn,
-                                    void* freeFn)
+#if STRATA_HAS_LLVM
+    typedef struct
     {
-        char* diagText = DiagFormat(diag, sources, sourceCount, arena);
+        char* name;
+        bool isIntVoid;
+    } LlvmJitExport;
+#endif
 
-        if (DiagHasErrors(diag) || !mod)
+    static StrataJit* UnavailableJit(const char** errOut)
+    {
+        if (errOut)
         {
-            if (errOut)
-            {
-                *errOut = ConcatOwned("parse errors:\n", diagText);
-            }
-
-            return NULL;
+            *errOut = DupString("JIT backend not built");
         }
 
+        return NULL;
+    }
+
+    static StrataJitKind ResolveJitKind(StrataJitBackend want)
+    {
+#if STRATA_HAS_TCC
+        if (want == STRATA_JIT_BACKEND_TCC || want == STRATA_JIT_BACKEND_AUTO)
+        {
+            return STRATA_JIT_KIND_TCC;
+        }
+#endif
+#if STRATA_HAS_LLVM
+        if (want == STRATA_JIT_BACKEND_LLVM || want == STRATA_JIT_BACKEND_AUTO)
+        {
+            return STRATA_JIT_KIND_LLVM;
+        }
+#endif
+        return STRATA_JIT_KIND_NONE;
+    }
+
+#if STRATA_HAS_TCC
+    static StrataJit* JitFromModuleTcc(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
+                                       size_t sourceCount, const char* diagText, const char** errOut,
+                                       const StrataArch arch, void* allocFn, void* freeFn)
+    {
         BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, CEmitJIT, arch);
 
         if (DiagHasErrors(diag))
@@ -485,10 +529,123 @@ extern "C"
         BuiltCModuleDispose(&bm);
 
         StrataJit* handle = (StrataJit*)calloc(1, sizeof(StrataJit));
-        handle->jit = jit;
+        handle->kind = STRATA_JIT_KIND_TCC;
+        handle->backend = jit;
         handle->diagnostics = DupString(diagText);
 
         return handle;
+    }
+#endif
+
+#if STRATA_HAS_LLVM
+    static StrataJit* JitFromModuleLlvm(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
+                                        size_t sourceCount, const char* diagText, const char** errOut, void* allocFn,
+                                        void* freeFn)
+    {
+        BuiltModule bm = BuildLlvmModule(mod, diag, arena, true);
+
+        if (DiagHasErrors(diag))
+        {
+            if (errOut)
+            {
+                char* allDiag = DiagFormat(diag, sources, sourceCount, arena);
+                *errOut = ConcatOwned("codegen errors:\n", allDiag);
+            }
+
+            BuiltModuleDispose(&bm);
+            return NULL;
+        }
+
+        StrataJit* handle = (StrataJit*)calloc(1, sizeof(StrataJit));
+        VecInit(&handle->llvmExports);
+
+        for (size_t i = 0; i < mod->functions.count; i++)
+        {
+            const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
+
+            if (fn->isExtern)
+            {
+                continue;
+            }
+
+            LlvmJitExport* exp = (LlvmJitExport*)malloc(sizeof(LlvmJitExport));
+            exp->name = DupString(fn->mangledName);
+            exp->isIntVoid = strcmp(fn->returnType.name, "int") == 0 && fn->params.count == 0;
+            VecPush(&handle->llvmExports, exp);
+        }
+
+        LLVMJit* jit = (LLVMJit*)malloc(sizeof(LLVMJit));
+        LLVMJitInit(jit);
+
+        if (allocFn || freeFn)
+        {
+            LLVMJitSetAllocFree(jit, allocFn, freeFn);
+        }
+
+        char* err = NULL;
+        if (!LLVMJitLoad(jit, &bm, &err))
+        {
+            if (errOut)
+            {
+                *errOut = ConcatOwned("JIT error: ", err ? err : "(unknown)");
+            }
+
+            free(err);
+            LLVMJitDestroy(jit);
+            free(jit);
+            BuiltModuleDispose(&bm);
+
+            for (size_t i = 0; i < handle->llvmExports.count; i++)
+            {
+                LlvmJitExport* exp = (LlvmJitExport*)handle->llvmExports.items[i];
+                free(exp->name);
+                free(exp);
+            }
+            free(handle->llvmExports.items);
+            free(handle);
+
+            return NULL;
+        }
+
+        BuiltModuleDispose(&bm);
+
+        handle->kind = STRATA_JIT_KIND_LLVM;
+        handle->backend = jit;
+        handle->diagnostics = DupString(diagText);
+
+        return handle;
+    }
+#endif
+
+    static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
+                                    size_t sourceCount, const char** errOut, const StrataArch arch, void* allocFn,
+                                    void* freeFn, StrataJitBackend want)
+    {
+        char* diagText = DiagFormat(diag, sources, sourceCount, arena);
+
+        if (DiagHasErrors(diag) || !mod)
+        {
+            if (errOut)
+            {
+                *errOut = ConcatOwned("parse errors:\n", diagText);
+            }
+
+            return NULL;
+        }
+
+        switch (ResolveJitKind(want))
+        {
+#if STRATA_HAS_TCC
+        case STRATA_JIT_KIND_TCC:
+            return JitFromModuleTcc(mod, diag, arena, sources, sourceCount, diagText, errOut, arch, allocFn, freeFn);
+#endif
+#if STRATA_HAS_LLVM
+        case STRATA_JIT_KIND_LLVM:
+            return JitFromModuleLlvm(mod, diag, arena, sources, sourceCount, diagText, errOut, allocFn, freeFn);
+#endif
+        default:
+            return UnavailableJit(errOut);
+        }
     }
 
     static StrataJit* JitCompileString(StrataCompiler* c, const char* source, size_t sourceLen, const char* moduleName,
@@ -512,7 +669,7 @@ extern "C"
             ResolveOverloads(mod, &diag, &arena);
 
             StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
-                                              c->allocFn, c->freeFn);
+                                              c->allocFn, c->freeFn, c->jitBackend);
 
             AstDispose((Node*)mod);
             ModuleLoaderDispose(&loader);
@@ -550,7 +707,8 @@ extern "C"
 
         ResolveOverloads(mod, &diag, &arena);
 
-        StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn);
+        StrataJit* handle
+            = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn, c->jitBackend);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -613,7 +771,7 @@ extern "C"
         ResolveOverloads(mod, &diag, &arena);
 
         StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
-                                       c->allocFn, c->freeFn);
+                                       c->allocFn, c->freeFn, c->jitBackend);
 
         AstDispose((Node*)mod);
         ModuleLoaderDispose(&loader);
@@ -626,51 +784,120 @@ extern "C"
 
     void* strataJitGetFunction(StrataJit* jit, const char* name)
     {
-        if (!jit || !jit->jit || !name)
+        if (!jit || !jit->backend || !name)
         {
             return NULL;
         }
 
-        return TccJitGetAddress(jit->jit, name);
+#if STRATA_HAS_TCC
+        if (jit->kind == STRATA_JIT_KIND_TCC)
+        {
+            return TccJitGetAddress((TccJit*)jit->backend, name);
+        }
+#endif
+#if STRATA_HAS_LLVM
+        if (jit->kind == STRATA_JIT_KIND_LLVM)
+        {
+            return (void*)(uintptr_t)LLVMJitGetAddress((LLVMJit*)jit->backend, name);
+        }
+#endif
+        return NULL;
     }
 
     int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
     {
-        if (!jit || !jit->jit || !name)
+        if (!jit || !jit->backend || !name)
         {
             return 0;
         }
-        return TccJitCanInvokeIntVoid(jit->jit, name) ? 1 : 0;
+
+#if STRATA_HAS_TCC
+        if (jit->kind == STRATA_JIT_KIND_TCC)
+        {
+            return TccJitCanInvokeIntVoid((TccJit*)jit->backend, name) ? 1 : 0;
+        }
+#endif
+#if STRATA_HAS_LLVM
+        if (jit->kind == STRATA_JIT_KIND_LLVM)
+        {
+            for (size_t i = 0; i < jit->llvmExports.count; i++)
+            {
+                const LlvmJitExport* exp = (const LlvmJitExport*)jit->llvmExports.items[i];
+
+                if (strcmp(exp->name, name) == 0)
+                {
+                    return exp->isIntVoid ? 1 : 0;
+                }
+            }
+        }
+#endif
+        return 0;
     }
 
     int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
     {
-        if (!jit || !jit->jit || !name || !fn)
+        if (!jit || !jit->backend || !name || !fn)
         {
             return 0;
         }
 
-        return TccJitAddSymbol(jit->jit, name, fn) ? 1 : 0;
+#if STRATA_HAS_TCC
+        if (jit->kind == STRATA_JIT_KIND_TCC)
+        {
+            return TccJitAddSymbol((TccJit*)jit->backend, name, fn) ? 1 : 0;
+        }
+#endif
+#if STRATA_HAS_LLVM
+        if (jit->kind == STRATA_JIT_KIND_LLVM)
+        {
+            return LLVMJitAddSymbol((LLVMJit*)jit->backend, name, fn) ? 1 : 0;
+        }
+#endif
+        return 0;
     }
 
     size_t strataJitGetExternSymbolCount(StrataJit* jit)
     {
-        if (!jit || !jit->jit)
+        if (!jit || !jit->backend)
         {
             return 0;
         }
 
-        return TccJitExternCount(jit->jit);
+#if STRATA_HAS_TCC
+        if (jit->kind == STRATA_JIT_KIND_TCC)
+        {
+            return TccJitExternCount((TccJit*)jit->backend);
+        }
+#endif
+#if STRATA_HAS_LLVM
+        if (jit->kind == STRATA_JIT_KIND_LLVM)
+        {
+            return LLVMJitExternCount((LLVMJit*)jit->backend);
+        }
+#endif
+        return 0;
     }
 
     const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
     {
-        if (!jit || !jit->jit)
+        if (!jit || !jit->backend)
         {
             return NULL;
         }
 
-        return TccJitExternName(jit->jit, index);
+#if STRATA_HAS_TCC
+        if (jit->kind == STRATA_JIT_KIND_TCC)
+        {
+            return TccJitExternName((TccJit*)jit->backend, index);
+        }
+#endif
+#if STRATA_HAS_LLVM
+        if (jit->kind == STRATA_JIT_KIND_LLVM)
+        {
+            return LLVMJitExternName((LLVMJit*)jit->backend, index);
+        }
+#endif
+        return NULL;
     }
 
     const char* strataJitDiagnostics(StrataJit* jit)
@@ -690,94 +917,35 @@ extern "C"
             return;
         }
 
-        if (jit->jit)
+#if STRATA_HAS_TCC
+        if (jit->kind == STRATA_JIT_KIND_TCC && jit->backend)
         {
-            TccJitDestroy(jit->jit);
-            free(jit->jit);
+            TccJitDestroy((TccJit*)jit->backend);
+            free(jit->backend);
         }
+#endif
+#if STRATA_HAS_LLVM
+        if (jit->kind == STRATA_JIT_KIND_LLVM)
+        {
+            if (jit->backend)
+            {
+                LLVMJitDestroy((LLVMJit*)jit->backend);
+                free(jit->backend);
+            }
+
+            for (size_t i = 0; i < jit->llvmExports.count; i++)
+            {
+                LlvmJitExport* exp = (LlvmJitExport*)jit->llvmExports.items[i];
+                free(exp->name);
+                free(exp);
+            }
+            free(jit->llvmExports.items);
+        }
+#endif
 
         free(jit->diagnostics);
         free(jit);
     }
-
-#else
-
-struct StrataJit
-{
-    char unused;
-};
-
-static StrataJit* UnavailableJit(const char** errOut)
-{
-    if (errOut)
-    {
-        *errOut = DupString("JIT backend not built");
-    }
-
-    return NULL;
-}
-
-StrataJit* strataJitCompileString(StrataCompiler* c, const char* source, const char* moduleName, const char** errOut)
-{
-    (void)c;
-    (void)source;
-    (void)moduleName;
-    return UnavailableJit(errOut);
-}
-
-StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut)
-{
-    (void)c;
-    (void)path;
-    return UnavailableJit(errOut);
-}
-
-void* strataJitGetFunction(StrataJit* jit, const char* name)
-{
-    (void)jit;
-    (void)name;
-    return NULL;
-}
-
-int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
-{
-    (void)jit;
-    (void)name;
-    return 0;
-}
-
-int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)
-{
-    (void)jit;
-    (void)name;
-    (void)fn;
-    return 0;
-}
-
-size_t strataJitGetExternSymbolCount(StrataJit* jit)
-{
-    (void)jit;
-    return 0;
-}
-
-const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index)
-{
-    (void)jit;
-    (void)index;
-    return NULL;
-}
-
-const char* strataJitDiagnostics(StrataJit* jit)
-{
-    (void)jit;
-    return "";
-}
-
-void strataJitDestroy(StrataJit* jit)
-{
-    (void)jit;
-}
-#endif
 
     static StrataPanicHandler s_panicHandler = NULL;
 

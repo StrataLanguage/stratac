@@ -320,3 +320,23 @@ uint64_t LLVMJitGetAddress(LLVMJit* jit, const char* name)
 
     return addr;
 }
+
+size_t LLVMJitExternCount(const LLVMJit* jit)
+{
+    if (!jit)
+    {
+        return 0;
+    }
+
+    return jit->m_externs.count;
+}
+
+const char* LLVMJitExternName(const LLVMJit* jit, size_t index)
+{
+    if (!jit || index >= jit->m_externs.count)
+    {
+        return NULL;
+    }
+
+    return (const char*)jit->m_externs.items[index];
+}

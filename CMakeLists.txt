@@ -321,6 +321,13 @@ if(NOT STRATA_SHARED)
         list(APPEND STRATA_TEST_SOURCES
             tests/unit/TccJitTests.c
             tests/unit/TccLifecycleTests.c
+        )
+    endif()
+
+    # These exercise the public strataJit* embed API, which works with
+    # either JIT backend (TinyCC or LLVM/ORCv2) - see src/Embed.c.
+    if(STRATA_ENABLE_TCC OR STRATA_ENABLE_LLVM)
+        list(APPEND STRATA_TEST_SOURCES
             tests/unit/JitTests.c
             tests/unit/StructTests.c
             tests/unit/ControlFlowTests.c

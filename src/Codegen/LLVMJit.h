@@ -21,3 +21,6 @@ void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn);
 bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage);
 bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr);
 uint64_t LLVMJitGetAddress(LLVMJit* jit, const char* name);
+
+size_t LLVMJitExternCount(const LLVMJit* jit);
+const char* LLVMJitExternName(const LLVMJit* jit, size_t index);

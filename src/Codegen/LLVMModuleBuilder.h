@@ -48,6 +48,7 @@ typedef struct Builder
     StrMap m_symbols;
     StrMap m_globals;
     StrMap m_externSlots;
+    StrMap m_dropFns; /* structName -> LLVMValueRef, per-type struct-field drop helper */
     Vec m_externNames;
     TypeDesc m_curRet;
     bool m_terminated;

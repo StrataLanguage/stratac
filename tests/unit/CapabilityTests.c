@@ -15,9 +15,11 @@ STRATA_TEST(build_capabilities_match_configuration)
 #if STRATA_TEST_HAS_LLVM
     STRATA_CHECK((capabilities & STRATA_CAP_LLVM_IR) != 0);
     STRATA_CHECK((capabilities & STRATA_CAP_LLVM_AOT) != 0);
+    STRATA_CHECK((capabilities & STRATA_CAP_LLVM_JIT) != 0);
 #else
     STRATA_CHECK((capabilities & STRATA_CAP_LLVM_IR) == 0);
     STRATA_CHECK((capabilities & STRATA_CAP_LLVM_AOT) == 0);
+    STRATA_CHECK((capabilities & STRATA_CAP_LLVM_JIT) == 0);
     STRATA_CHECK(strcmp(strataLLVMVersion(), "disabled") == 0);
 #endif
 }
@@ -27,7 +29,7 @@ STRATA_TEST(no_llvm_apis_fail_explicitly)
 {
     StrataCompiler* compiler = strataCompilerCreate();
     StrataResult result = strataCompileString(
-        compiler, "int entry() { return 1; }", "no_llvm", STRATA_EMIT_LLVM_IR);
+        compiler, "int entry() { return 1; }", "no_llvm", STRATA_EMIT_LLVM_IR, 0);
     STRATA_CHECK(!result.ok);
     STRATA_CHECK(strstr(result.diagnostics, "LLVM backend not built") != NULL);
     strataResultFree(&result);

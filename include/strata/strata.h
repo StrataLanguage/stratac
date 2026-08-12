@@ -57,7 +57,15 @@ typedef enum
     STRATA_CAP_TCC_JIT  = 1u << 1,
     STRATA_CAP_LLVM_IR  = 1u << 2,
     STRATA_CAP_LLVM_AOT = 1u << 3,
+    STRATA_CAP_LLVM_JIT = 1u << 4,
 } StrataCapability;
+
+typedef enum
+{
+    STRATA_JIT_BACKEND_AUTO = 0,
+    STRATA_JIT_BACKEND_TCC  = 1,
+    STRATA_JIT_BACKEND_LLVM = 2,
+} StrataJitBackend;
 
 typedef enum StrataArch
 {
@@ -120,6 +128,7 @@ STRATA_API void strataCompilerDestroy(StrataCompiler* c);
 STRATA_API void strataSetArchitecture(StrataCompiler* c, StrataArch arch);
 
 STRATA_API void strataJitSetAllocFreeFunctions(StrataCompiler* c, void* allocFn, void* freeFn);
+STRATA_API void strataJitSetBackend(StrataCompiler* c, StrataJitBackend backend);
 
 STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,
                                             const char* moduleName, StrataEmitKind emit, StrataEmitFlags emitFlags);

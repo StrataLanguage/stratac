@@ -46,3 +46,35 @@ STRATA_TEST(embed_version_is_reported)
     STRATA_CHECK(v != NULL);
     STRATA_CHECK(v[0] != '\0');
 }
+
+#if STRATA_TEST_HAS_LLVM
+STRATA_TEST(jit_explicit_llvm_backend_selection)
+{
+    /* Proves STRATA_JIT_BACKEND_LLVM works via strataJit* regardless of
+       whether TCC is also compiled in (where AUTO would otherwise pick it). */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetBackend(c, STRATA_JIT_BACKEND_LLVM);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c, "int add(int a, int b) { return a + b; }", "explicit_llvm", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*add)(int, int) = (int (*)(int, int))strataJitGetFunction(jit, "add");
+        STRATA_CHECK(add != NULL);
+        if (add)
+        {
+            STRATA_CHECK_EQ(add(2, 3), 5);
+        }
+
+        STRATA_CHECK(strataJitCanInvokeIntVoid(jit, "add") == 0);
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        strataFree((char*)err);
+    }
+
+    strataCompilerDestroy(c);
+}
+#endif
