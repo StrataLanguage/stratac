@@ -2588,13 +2588,22 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
             SbPuts(&emitter->out, ";\n");
 
-            /* Returning a box moves it out: null the source so the drop below
-               does not free it. */
+            /* Returning an owning value moves it out: null the source so the
+               drop below does not free it. */
             if (movesBox)
             {
                 Pad(emitter);
                 EmitLValue(emitter, movedReturnSource);
-                SbPuts(&emitter->out, " = 0;\n");
+                if (IsArrayType(valueType))
+                {
+                    /* An array is a {ptr, len} struct: zero the whole struct,
+                       not just the pointer. */
+                    SbPuts(&emitter->out, " = (strata__arr){0};\n");
+                }
+                else
+                {
+                    SbPuts(&emitter->out, " = 0;\n");
+                }
             }
 
             EmitDrops(emitter, 0);

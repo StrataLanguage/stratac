@@ -129,6 +129,53 @@ STRATA_TEST(vector_divide_lanes)
         30);
 }
 
+STRATA_TEST(host_calls_float3_returning_function)
+{
+    /* Host C code calls a strata function that returns a float3 and reads
+       the .x/.y/.z lanes out of the returned value. Under the JIT the C
+       backend lowers float3 to a plain {float x, y, z, w} struct (no SIMD
+       intrinsics), so the host declares a layout-identical struct and
+       receives it by value; the 16-byte struct return crosses via sret on
+       both TinyCC and the MinGW host, so this runs on the TinyCC JIT. */
+    typedef struct
+    {
+        float x;
+        float y;
+        float z;
+        float w;
+    } HostF3;
+
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "float3 make(int n) {\n"
+        "  return float3((float)n, (float)(n + 1), (float)(n + 2));\n"
+        "}\n",
+        "f3", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    HostF3 (*make)(int) = (HostF3 (*)(int))strataJitGetFunction(jit, "make");
+    STRATA_CHECK(make != NULL);
+    if (make)
+    {
+        HostF3 v = make(4);                 /* {4, 5, 6} */
+        printf("  float3 make(4) = x=%g y=%g z=%g\n", v.x, v.y, v.z);
+        STRATA_CHECK(v.x == 4.0f);
+        STRATA_CHECK(v.y == 5.0f);
+        STRATA_CHECK(v.z == 6.0f);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 STRATA_TEST(vector_ref_rest_reassign_elements)
 {
     /* ref float3... borrows the collected stack array mutably; each element

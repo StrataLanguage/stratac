@@ -5,6 +5,12 @@
 #include <stdio.h>
 #include <string.h>
 
+#if STRATA_TEST_HAS_LLVM
+#include "Codegen/LLVMJit.h"
+#include "Codegen/LLVMModuleBuilder.h"
+#include <stdint.h>
+#endif
+
 static StrataJit* CompileArr(const char* src, const char** err)
 {
     StrataCompiler* c = strataCompilerCreate();
@@ -660,3 +666,151 @@ STRATA_TEST(array_iterate_and_sum)
 
     strataJitDestroy(jit);
 }
+
+/* ---- Allocation/free balance for arrays returned from functions ---- */
+
+static int g_arrAllocs = 0;
+static int g_arrFrees = 0;
+
+static void* ArrCountAlloc(unsigned long long n)
+{
+    g_arrAllocs++;
+    return malloc((size_t)n);
+}
+
+/* Only non-null frees count as real frees: the LLVM backend emits an
+   unconditional strata_free(NULL) after a moved-out source is nulled,
+   which is harmless but would otherwise skew the balance. */
+static void ArrCountFree(void* p)
+{
+    if (p)
+    {
+        g_arrFrees++;
+    }
+    free(p);
+}
+
+STRATA_TEST(array_return_cleans_up_memory)
+{
+    /* One function returns an array to another that hands it back to the
+       caller. Every buffer must be freed exactly once: no leak, no
+       double-free. Returning an array moves it out of the callee (the
+       source slot is zeroed), and the caller owns the buffer until scope
+       exit. The C backend must zero the moved source as a whole
+       (strata__arr){0} struct, not a bare pointer zero. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&ArrCountAlloc, (void*)&ArrCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "int[] build(int n) {\n"
+        "  int[] a = {1, 2, 3};\n"
+        "  array_push(a, n);\n"              /* reallocates: alloc + free */
+        "  return a;\n"                      /* moves a out */
+        "}\n"
+        "int[] relay(int n) {\n"
+        "  int[] a = build(n);\n"            /* owns build's array */
+        "  return a;\n"                      /* moves it out again */
+        "}\n"
+        "int sum(ref int[] a) {\n"
+        "  int total = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { total = total + a[i]; }\n"
+        "  return total;\n"
+        "}\n"
+        "int entry() {\n"
+        "  int[] a = relay(4);\n"            /* {1, 2, 3, 4} */
+        "  int s = sum(a);\n"                /* 10; a borrowed, still live */
+        "  return s + a[0] + a[3];\n"        /* 10 + 1 + 4 = 15 */
+        "}\n",
+        "arrclean", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    g_arrAllocs = 0;
+    g_arrFrees = 0;
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 15);
+        STRATA_CHECK(g_arrAllocs > 0);
+        STRATA_CHECK_EQ(g_arrAllocs, g_arrFrees);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+#if STRATA_TEST_HAS_LLVM
+STRATA_TEST(array_return_cleans_up_memory_llvm)
+{
+    /* The same chained array return through the LLVM backend: the caller
+       owns the buffer until scope exit, and every buffer is freed exactly
+       once (null frees are not counted). */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "int[] build(int n) {\n"
+        "  int[] a = {1, 2, 3};\n"
+        "  array_push(a, n);\n"
+        "  return a;\n"
+        "}\n"
+        "int[] relay(int n) {\n"
+        "  int[] a = build(n);\n"
+        "  return a;\n"
+        "}\n"
+        "int sum(ref int[] a) {\n"
+        "  int total = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { total = total + a[i]; }\n"
+        "  return total;\n"
+        "}\n"
+        "int entry() {\n"
+        "  int[] a = relay(4);\n"
+        "  int s = sum(a);\n"
+        "  return s + a[0] + a[3];\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, true);
+    LLVMJit jit;
+    LLVMJitInit(&jit);
+    LLVMJitSetAllocFree(&jit, (void*)&ArrCountAlloc, (void*)&ArrCountFree);
+    char* err = NULL;
+    bool ok = LLVMJitLoad(&jit, &bm, &err);
+    if (!ok)
+    {
+        printf("  LLVM JIT failed: %s\n", err ? err : "(none)");
+    }
+    STRATA_CHECK(ok);
+
+    g_arrAllocs = 0;
+    g_arrFrees = 0;
+
+    if (ok)
+    {
+        int (*entry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 15);
+            STRATA_CHECK(g_arrAllocs > 0);
+            STRATA_CHECK_EQ(g_arrAllocs, g_arrFrees);
+        }
+    }
+
+    free(err);
+    LLVMJitDestroy(&jit);
+    BuiltModuleDispose(&bm);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+#endif

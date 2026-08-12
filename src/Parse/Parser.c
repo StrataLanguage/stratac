@@ -1269,6 +1269,11 @@ static Node* ParseBinary(Parser* p, int minPrec)
 {
     Node* lhs = ParseUnary(p);
 
+    if (!lhs)
+    {
+        return NULL;
+    }
+
     while (true)
     {
         int prec = 0;
