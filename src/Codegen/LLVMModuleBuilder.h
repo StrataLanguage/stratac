@@ -24,6 +24,7 @@ typedef struct
     bool isBox;
     const char* boxInner;
     bool isArray;
+    bool isSimdVector;
     const char* arrayInner; /* element type name (arena-owned) */
 } TypeDesc;
 

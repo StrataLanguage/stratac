@@ -1,10 +1,10 @@
 
-int run()
+int main()
 {
-    float3 x = float3(5.0);
-    float3 y = float3(8.0);
+    float3 x = float3(1.0, 2.0, 3.0);
+    float3 y = float3(4.0, 5.0, 6.0);
 
-    float3 result = x + y;
+    float3 result = x.xxx + y.yyy;
 
-    return 5;
+    return result.x;
 }
