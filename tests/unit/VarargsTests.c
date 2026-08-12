@@ -887,6 +887,90 @@ STRATA_TEST(box_int_to_extern_int_param_parity)
                       "printf", (void*)&printf, 2);
 }
 
+/* ---- box<string>[] array element to extern ---- */
+
+STRATA_TEST(box_string_array_element_to_puts_parity)
+{
+    /* The original crash bug: array_push of a string literal into box<string>[]
+       stored a raw char* into a char** slot. puts(arr[0]) then dereferenced
+       garbage. This test verifies the element is properly boxed and its
+       string content is readable via puts. */
+    CheckVarargExtern("extern int puts(string s);\n"
+                      "int entry() {\n"
+                      "  box<string>[] arr;\n"
+                      "  array_push(arr, \"hello\");\n"
+                      "  puts(arr[0]);\n"
+                      "  return 0;\n"
+                      "}\n",
+                      "puts", (void*)&puts, 0);
+}
+
+STRATA_TEST(box_string_array_element_to_printf_parity)
+{
+    /* printf("%s", arr[0]) verifies the element's string content is intact
+       (not just non-crashing). The return value is the character count. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry() {\n"
+                      "  box<string>[] arr;\n"
+                      "  array_push(arr, \"world\");\n"
+                      "  return printf(\"%s\", arr[0]);\n"   /* 5 */
+                      "}\n",
+                      "printf", (void*)&printf, 5);
+}
+
+STRATA_TEST(box_string_array_multiple_elements_to_printf_parity)
+{
+    /* Multiple pushes, each must be independently readable. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry() {\n"
+                      "  box<string>[] arr;\n"
+                      "  array_push(arr, \"ab\");\n"
+                      "  array_push(arr, \"cd\");\n"
+                      "  array_push(arr, \"ef\");\n"
+                      "  return printf(\"%s%s%s\", arr[0], arr[1], arr[2]);\n"  /* 6 */
+                      "}\n",
+                      "printf", (void*)&printf, 6);
+}
+
+STRATA_TEST(box_string_array_literal_element_to_printf_parity)
+{
+    /* box<string>[] initialized from a literal, then element passed to
+       printf — verifies the literal init path boxes each string correctly. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry() {\n"
+                      "  box<string>[] arr = { \"hi\" };\n"
+                      "  return printf(\"%s\", arr[0]);\n"   /* 2 */
+                      "}\n",
+                      "printf", (void*)&printf, 2);
+}
+
+STRATA_TEST(box_string_array_push_var_then_read_parity)
+{
+    /* Push a box<string> variable (move), then read it back via printf. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "int entry() {\n"
+                      "  box<string>[] arr;\n"
+                      "  box<string> a = \"moved\";\n"
+                      "  array_push(arr, a);\n"
+                      "  return printf(\"%s\", arr[0]);\n"   /* 5 */
+                      "}\n",
+                      "printf", (void*)&printf, 5);
+}
+
+STRATA_TEST(box_string_in_struct_array_to_printf_parity)
+{
+    /* A box<Holder> where Holder has a box<string> field, stored in a
+       box<Holder>[], then the nested string read via printf. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Holder { box<string> name; };\n"
+                      "int entry() {\n"
+                      "  box<Holder>[] arr;\n"
+                      "  array_push(arr, Holder { .name = \"nested\" });\n"
+                      "  return printf(\"%s\", arr[0].name);\n"   /* 6 */
+                      "}\n",
+                      "printf", (void*)&printf, 6);
+}
+
 STRATA_TEST(varargs_extern_cvararg_float_promotes_to_double_parity)
 {
     /* float variadic args must follow C default promotions (widen to double),

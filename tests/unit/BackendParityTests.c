@@ -808,3 +808,124 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_loop_soak_parity)
                 "}\n",
                 4950);
 }
+
+/* ---- box<string>[] array operations ---- */
+
+STRATA_TEST(llvm_and_tcc_box_string_array_push_literal_parity)
+{
+    /* array_push of a string literal into box<string>[] must box the literal
+       (strata_strdup + alloc char* slot), not store the raw char*.  Reading
+       the element back and dereferencing must not crash. */
+    CheckParity("int entry() {\n"
+                "  box<string>[] arr;\n"
+                "  array_push(arr, \"hello\");\n"
+                "  array_push(arr, \"world\");\n"
+                "  return (int)arr.length;\n"      /* 2 */
+                "}\n",
+                2);
+}
+
+STRATA_TEST(llvm_and_tcc_box_string_array_push_move_parity)
+{
+    /* Pushing a box<string> variable moves it into the array element
+       (pointer move, source nulled). */
+    CheckParity("int entry() {\n"
+                "  box<string>[] arr;\n"
+                "  box<string> a = \"first\";\n"
+                "  array_push(arr, a);\n"
+                "  return (int)arr.length;\n"      /* 1 */
+                "}\n",
+                1);
+}
+
+STRATA_TEST(llvm_and_tcc_box_string_array_literal_init_parity)
+{
+    /* box<string>[] initialized from a literal: each string literal is
+       boxed properly. */
+    CheckParity("int entry() {\n"
+                "  box<string>[] arr = { \"alpha\", \"beta\", \"gamma\" };\n"
+                "  return (int)arr.length;\n"      /* 3 */
+                "}\n",
+                3);
+}
+
+STRATA_TEST(llvm_and_tcc_box_string_array_push_then_pop_parity)
+{
+    /* Push then pop: the popped box<string> is returned and dropped. */
+    CheckParity("int entry() {\n"
+                "  box<string>[] arr;\n"
+                "  array_push(arr, \"first\");\n"
+                "  array_push(arr, \"second\");\n"
+                "  array_pop(arr);\n"
+                "  return (int)arr.length;\n"      /* 1 */
+                "}\n",
+                1);
+}
+
+STRATA_TEST(llvm_and_tcc_box_string_array_loop_soak_parity)
+{
+    /* Push a box<string> each iteration, drop the whole array at the end.
+       Verifies alloc/free balance at scale on both backends. */
+    CheckParity("int entry() {\n"
+                "  box<string>[] arr;\n"
+                "  for (int i = 0; i < 50; i++) {\n"
+                "    array_push(arr, \"item\");\n"
+                "  }\n"
+                "  return (int)arr.length;\n"      /* 50 */
+                "}\n",
+                50);
+}
+
+STRATA_TEST(llvm_and_tcc_box_struct_array_push_literal_parity)
+{
+    /* array_push of a bare struct value into box<T>[] must box it inline
+       (alloc T slot, store value, store slot pointer). */
+    CheckParity("struct Cell { int v; };\n"
+                "int entry() {\n"
+                "  box<Cell>[] arr;\n"
+                "  array_push(arr, Cell { .v = 10 });\n"
+                "  array_push(arr, Cell { .v = 20 });\n"
+                "  return arr[0].v + arr[1].v;\n"  /* 30 */
+                "}\n",
+                30);
+}
+
+STRATA_TEST(llvm_and_tcc_box_struct_array_push_box_var_parity)
+{
+    /* Pushing a box<T> variable moves it into the array. */
+    CheckParity("struct Cell { int v; };\n"
+                "int entry() {\n"
+                "  box<Cell>[] arr;\n"
+                "  box<Cell> a = Cell { .v = 7 };\n"
+                "  array_push(arr, a);\n"
+                "  return arr[0].v;\n"             /* 7 */
+                "}\n",
+                7);
+}
+
+STRATA_TEST(llvm_and_tcc_box_string_array_global_push_parity)
+{
+    /* A box<string>[] global, pushed to from a function, readable later. */
+    CheckParity("box<string>[] g_arr;\n"
+                "void add_item() { array_push(g_arr, \"global\"); }\n"
+                "int entry() {\n"
+                "  add_item();\n"
+                "  add_item();\n"
+                "  return (int)g_arr.length;\n"    /* 2 */
+                "}\n",
+                2);
+}
+
+STRATA_TEST(llvm_and_tcc_box_owning_struct_array_push_parity)
+{
+    /* Pushing a box<owning struct> moves it; the array's drop frees each
+       element's inner box recursively. */
+    CheckParity("struct Owns { box<int> child; };\n"
+                "int entry() {\n"
+                "  box<Owns>[] arr;\n"
+                "  array_push(arr, Owns { .child = 10 });\n"
+                "  array_push(arr, Owns { .child = 20 });\n"
+                "  return arr[0].child + arr[1].child;\n"  /* 30 */
+                "}\n",
+                30);
+}

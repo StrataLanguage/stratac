@@ -610,6 +610,7 @@ static const Node* MovableBoxSource(const Node* n)
 }
 
 static void EmitScalarValue(CEmitter* emitter, const Node* node);
+static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* innerType);
 
 /* True if 'base' is a `ref T...` rest array whose slots hold pointers to the
    source arguments (element access must deref the slot). */
@@ -851,26 +852,29 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
         if (declaration && IsOwningType(declaration->type.name))
         {
             const char* valueType = ExprType(emitter, field->value);
+            bool sameOwningType = valueType[0] != '\0' && IsOwningType(valueType)
+                && strcmp(valueType, declaration->type.name) == 0;
+            const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
 
-            /* owning string field from a literal -> heap copy (safe to free). */
-            if (strcmp(declaration->type.name, "string") == 0 && field->value->kind == NodeStrLiteral)
+            if (sameOwningType && field->value->kind != NodeStrLiteral)
             {
-                SbPuts(&emitter->out, "strata_strdup(");
+                /* Same owning type: move (take pointer, null source). */
                 CEmitExpr(emitter, field->value);
-                SbPutc(&emitter->out, ')');
-                continue;
-            }
 
-            if (valueType[0] != '\0' && !IsOwningType(valueType))
+                const Node* moved = MovableBoxSource(field->value);
+
+                if (moved)
+                {
+                    SbPuts(&emitter->out, ", (");
+                    EmitLValue(emitter, moved);
+                    SbPuts(&emitter->out, " = 0)");
+                }
+            }
+            else if (inner)
             {
-                /* box<T> field initialized from a bare T value/literal -
-                   heap-box it inline. A raw `.field = (T){...}` here would
-                   be a type mismatch in C (the field is really T*), and
-                   silently truncating/reinterpreting it would corrupt the
-                   struct - so allocate storage for it via a GNU statement
-                   expression, which is valid in any expression position
-                   (including a nested struct-init field). */
-                const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
+                /* box<T> field from a non-box<T> value: heap-box it inline
+                   via a GNU statement expression. CEmitOwnedValue handles
+                   strdup for literals, move for owning sources. */
                 const char* innerC = TypeNameC(emitter, inner);
                 char tmp[32];
                 snprintf(tmp, sizeof tmp, "strata__boxtmp%u", emitter->boxTmpCounter++);
@@ -884,13 +888,19 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
                 SbPuts(&emitter->out, ")); *");
                 SbPuts(&emitter->out, tmp);
                 SbPuts(&emitter->out, " = ");
-                CEmitExpr(emitter, field->value);
+                CEmitOwnedValue(emitter, field->value, inner);
                 SbPuts(&emitter->out, "; ");
                 SbPuts(&emitter->out, tmp);
                 SbPuts(&emitter->out, "; })");
-
-                continue;
             }
+            else
+            {
+                /* string field: construct owned value (strdup literal,
+                   move source). */
+                CEmitOwnedValue(emitter, field->value, declaration->type.name);
+            }
+
+            continue;
         }
 
         CEmitExpr(emitter, field->value);
@@ -935,17 +945,14 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
         {
             const char* vt = ExprType(emitter, val);
 
-            if (strcmp(elemType, "string") == 0 && val->kind == NodeStrLiteral)
+            if (vt[0] != '\0' && IsOwningType(vt) && strcmp(vt, elemType) == 0
+                && val->kind != NodeStrLiteral)
             {
-                SbPuts(&emitter->out, "strata_strdup(");
+                /* Same owning type, not a literal: move (take pointer, null source). */
                 CEmitExpr(emitter, val);
-                SbPutc(&emitter->out, ')');
-            }
-            else if (vt[0] != '\0' && IsOwningType(vt))
-            {
-                /* Move an owning source into the slot, then null it. */
-                CEmitExpr(emitter, val);
+
                 const Node* moved = MovableBoxSource(val);
+
                 if (moved)
                 {
                     SbPuts(&emitter->out, ", (");
@@ -953,22 +960,26 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
                     SbPuts(&emitter->out, " = 0)");
                 }
             }
-            else if (strcmp(elemType, "string") != 0)
+            else if (elemType && IsArrayType(elemType) == false && OwningInnerCStr(emitter->arena, elemType))
             {
-                /* box<T> from a bare T: heap-box it inline. */
+                /* box<T> element from a non-box<T> value: box it up.
+                   CEmitOwnedValue handles strdup for literals, move for
+                   owning sources. */
                 const char* inner = OwningInnerCStr(emitter->arena, elemType);
                 const char* innerC = TypeNameC(emitter, inner);
+
                 SbPuts(&emitter->out, "({ ");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, " *_b = strata_alloc(sizeof(");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, ")); *_b = ");
-                CEmitExpr(emitter, val);
+                CEmitOwnedValue(emitter, val, inner);
                 SbPuts(&emitter->out, "; _b; })");
             }
             else
             {
-                CEmitExpr(emitter, val);
+                /* string element or other owning primitive. */
+                CEmitOwnedValue(emitter, val, elemType);
             }
         }
         else
@@ -1428,16 +1439,10 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
         {
             const char* valueType = ExprType(emitter, eNode);
 
-            if (strcmp(elemType, "string") == 0 && eNode->kind == NodeStrLiteral)
+            if (valueType[0] != '\0' && IsOwningType(valueType) && strcmp(valueType, elemType) == 0
+                && eNode->kind != NodeStrLiteral)
             {
-                SbPuts(&emitter->out, "strata_strdup(");
-                CEmitExpr(emitter, eNode);
-                SbPutc(&emitter->out, ')');
-            }
-            else if (valueType[0] != '\0' && IsOwningType(valueType))
-            {
-                /* Move an owning source (string/box) by taking its pointer
-                   and nulling the source binding. */
+                /* Same owning type, not a literal: move. */
                 CEmitExpr(emitter, eNode);
 
                 const Node* moved = MovableBoxSource(eNode);
@@ -1449,22 +1454,24 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
                     SbPuts(&emitter->out, " = 0)");
                 }
             }
-            else if (strcmp(elemType, "string") != 0)
+            else if (OwningInnerCStr(emitter->arena, elemType))
             {
-                /* box<T> from a bare T: heap-box it inline. */
+                /* box<T> element from a non-box<T> value: box it up. */
                 const char* inner = OwningInnerCStr(emitter->arena, elemType);
                 const char* innerC = TypeNameC(emitter, inner);
+
                 SbPuts(&emitter->out, "({ ");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, " *_b = strata_alloc(sizeof(");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, ")); *_b = ");
-                CEmitExpr(emitter, eNode);
+                CEmitOwnedValue(emitter, eNode, inner);
                 SbPuts(&emitter->out, "; _b; })");
             }
             else
             {
-                CEmitExpr(emitter, eNode);
+                /* string element: construct owned value (strdup literal). */
+                CEmitOwnedValue(emitter, eNode, elemType);
             }
         }
         else
