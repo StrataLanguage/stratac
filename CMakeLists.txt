@@ -16,6 +16,7 @@ set(LLVM_C_DIR "" CACHE PATH
 
 # allow env var to set LLVM_C_DIR
 if(DEFINED ENV{LLVM_DIR})
+    message(STATUS "Using environment LLVM_DIR: $ENV{LLVM_DIR}")
     set(LLVM_C_DIR "$ENV{LLVM_DIR}")
 endif()
 
