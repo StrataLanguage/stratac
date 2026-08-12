@@ -14,6 +14,11 @@ endif()
 set(LLVM_C_DIR "" CACHE PATH
     "Directory of the x64 LLVM distribution (lib/LLVM-C.*, bin/LLVM-C.dll)")
 
+# allow env var to set LLVM_C_DIR
+if(DEFINED ENV{LLVM_DIR})
+    set(LLVM_C_DIR "$ENV{LLVM_DIR}")
+endif()
+
 option(STRATA_SHARED "Build Strata as a shared library (DLL)" OFF)
 option(STRATA_ENABLE_LLVM "Build the LLVM IR, AOT, and LLVM JIT backends" ON)
 option(STRATA_ENABLE_TCC "Build the vendored TinyCC runtime backend" ON)
