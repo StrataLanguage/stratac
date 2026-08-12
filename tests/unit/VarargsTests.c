@@ -971,6 +971,108 @@ STRATA_TEST(box_string_in_struct_array_to_printf_parity)
                       "printf", (void*)&printf, 6);
 }
 
+/* ---- string member of a struct passed to functions ---- */
+
+STRATA_TEST(string_member_passed_to_extern_via_printf_parity)
+{
+    /* A struct with a string field, boxed. The string member is passed to
+       printf — verifies the field is strdup'd at init and deref'd correctly
+       when passed to an extern string param. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Person { string name; };\n"
+                      "int entry() {\n"
+                      "  box<Person> p = Person { .name = \"Alice\" };\n"
+                      "  return printf(\"%s\", p.name);\n"     /* 5 */
+                      "}\n",
+                      "printf", (void*)&printf, 5);
+}
+
+STRATA_TEST(string_member_passed_to_owned_string_param_parity)
+{
+    /* Pass a string struct field to a function that takes an owned string
+       param (moves the string). The field is consumed — the struct must
+       still be droppable without double-free. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Person { string name; };\n"
+                      "int take(string s) { return printf(\"%s\", s); }\n"
+                      "int entry() {\n"
+                      "  box<Person> p = Person { .name = \"Bob\" };\n"
+                      "  return take(p.name);\n"              /* 3 */
+                      "}\n",
+                      "printf", (void*)&printf, 3);
+}
+
+STRATA_TEST(string_member_passed_to_ref_string_param_parity)
+{
+    /* Pass a string struct field by ref — the string is borrowed, the
+       struct still owns it afterward. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Person { string name; };\n"
+                      "int read(ref string s) { return printf(\"%s\", s); }\n"
+                      "int entry() {\n"
+                      "  box<Person> p = Person { .name = \"Carol\" };\n"
+                      "  int n = read(p.name);\n"
+                      "  return n + printf(\" again\", p.name);\n"  /* 5 + 6 = 11 */
+                      "}\n",
+                      "printf", (void*)&printf, 11);
+}
+
+STRATA_TEST(box_string_member_passed_to_extern_via_printf_parity)
+{
+    /* A struct with a box<string> field. The member is passed to printf —
+       the nested box<string> must deref through two levels to char*. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Wrapper { box<string> title; };\n"
+                      "int entry() {\n"
+                      "  box<Wrapper> w = Wrapper { .title = \"hello\" };\n"
+                      "  return printf(\"%s\", w.title);\n"   /* 5 */
+                      "}\n",
+                      "printf", (void*)&printf, 5);
+}
+
+STRATA_TEST(string_member_reassigned_then_read_parity)
+{
+    /* Reassign the string member of a boxed struct, then read it via
+       printf — the old string must be freed and the new one readable. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Person { string name; };\n"
+                      "int entry() {\n"
+                      "  box<Person> p = Person { .name = \"old\" };\n"
+                      "  p.name = \"new\";\n"
+                      "  return printf(\"%s\", p.name);\n"    /* 3 */
+                      "}\n",
+                      "printf", (void*)&printf, 3);
+}
+
+STRATA_TEST(two_string_members_both_readable_parity)
+{
+    /* A struct with two string fields — both must be independently strdup'd
+       and readable. */
+    CheckVarargExtern("extern int printf(string fmt, ...);\n"
+                      "struct Pair { string a; string b; };\n"
+                      "int entry() {\n"
+                      "  box<Pair> p = Pair { .a = \"first\", .b = \"second\" };\n"
+                      "  return printf(\"%s %s\", p.a, p.b);\n"  /* 12 */
+                      "}\n",
+                      "printf", (void*)&printf, 12);
+}
+
+STRATA_TEST(string_member_passed_to_user_function_parity)
+{
+    /* A user-defined (non-extern) function that takes a string param.
+       The string member is moved into the function, and the function
+       drops it. The struct must still be droppable without double-free. */
+    CheckParity("struct Item { string label; int qty; };\n"
+                "int process(string label, int qty) {\n"
+                "  return qty;\n"
+                "}\n"
+                "int entry() {\n"
+                "  box<Item> item = Item { .label = \"widget\", .qty = 10 };\n"
+                "  return process(item.label, item.qty);\n"  /* 10 */
+                "}\n",
+                10);
+}
+
 STRATA_TEST(varargs_extern_cvararg_float_promotes_to_double_parity)
 {
     /* float variadic args must follow C default promotions (widen to double),

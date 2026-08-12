@@ -2010,10 +2010,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
 
         if (fieldIsOwning && !sameOwningType)
         {
-            /* Box up the inner value. For box<string> from a literal this is:
-               alloc char* slot, strdup the literal into it. For box<int> from
-               an int this is: alloc int slot, store the int. Same path for
-               any T into box<T>. */
+            /* box<T> field from a non-box<T> value: box it up. */
             const char* fieldInner = OwningInnerCStr(emitter->arena, fd->type.name);
             const char* fieldInnerC = TypeNameC(emitter, fieldInner);
 
@@ -2036,30 +2033,29 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
         }
         else
         {
-            /* Direct assignment: same box<T> move, or a non-owning field. */
+            /* Direct assignment: same box<T> move, string field, or non-owning.
+               For owning fields, CEmitOwnedValue handles strdup for literals
+               and move+null for variables (the comma-expression works because
+               = binds tighter than ,). */
             Pad(emitter);
             SbPuts(&emitter->out, cName);
             SbPuts(&emitter->out, "->");
             SbPuts(&emitter->out, FieldName(emitter, fd->name));
             SbPuts(&emitter->out, " = ");
-            CEmitExpr(emitter, sf->value);
+
+            if (fieldIsOwning)
+            {
+                CEmitOwnedValue(emitter, sf->value, fd->type.name);
+            }
+            else
+            {
+                CEmitExpr(emitter, sf->value);
+            }
+
             SbPuts(&emitter->out, ";\n");
         }
 
-        /* A moved-into box field nulls its source — but only when the
-           source itself is owning AND the same type (a real move, not a
-           boxing copy). A bare T boxed into a box<T> field is a copy,
-           not a move: the source stays live. */
-        const Node* movedFieldSource = (sameOwningType
-            && sf->value->kind != NodeStrLiteral)
-            ? MovableBoxSource(sf->value) : NULL;
-
-        if (movedFieldSource)
-        {
-            Pad(emitter);
-            EmitLValue(emitter, movedFieldSource);
-            SbPuts(&emitter->out, " = 0;\n");
-        }
+        /* CEmitOwnedValue already handles source nulling for owning fields. */
     }
 }
 
