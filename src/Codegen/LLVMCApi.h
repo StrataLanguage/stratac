@@ -178,6 +178,7 @@ LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueR
 LLVMValueRef LLVMBuildShuffleVector(LLVMBuilderRef b, LLVMValueRef v1, LLVMValueRef v2, LLVMValueRef mask, const char *name);
 LLVMValueRef LLVMBuildInsertElement(LLVMBuilderRef b, LLVMValueRef v, LLVMValueRef eltVal, LLVMValueRef index, const char *name);
 LLVMValueRef LLVMBuildExtractValue(LLVMBuilderRef b, LLVMValueRef agg, unsigned index, const char* name);
+LLVMValueRef LLVMBuildExtractElement(LLVMBuilderRef b, LLVMValueRef vecVal, LLVMValueRef index, const char *name);
 LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices, const char* name);
 LLVMValueRef LLVMBuildPhi(LLVMBuilderRef b, LLVMTypeRef ty, const char* name);
 void LLVMAddIncoming(LLVMValueRef phiNode, LLVMValueRef* incomingValues, LLVMBasicBlockRef* incomingBlocks, unsigned count);

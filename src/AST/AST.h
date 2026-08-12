@@ -52,6 +52,7 @@ typedef struct {
     char* name;
     SourceRange range;
     bool isConst;
+    bool isVector;
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)

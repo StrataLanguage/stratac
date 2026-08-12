@@ -41,13 +41,22 @@ typedef struct
     LLVMBasicBlockRef end;
 } Loop;
 
-static TypeDesc TypeDescMake(LLVMTypeRef type, bool isFloat, bool isUnsigned, bool isVoid, const char* structTypeName)
+typedef enum TypeDescFlag
+{
+    TD_FLOAT = (1 << 0),
+    TD_UNSIGNED = (1 << 1),
+    TD_VOID = (1 << 2),
+    TD_VECTOR = (1 << 3),
+} TypeDescFlag;
+
+static TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlag flags, const char* structTypeName)
 {
     TypeDesc td = {0};
     td.type = type;
-    td.isFloat = isFloat;
-    td.isUnsigned = isUnsigned;
-    td.isVoid = isVoid;
+    td.isFloat = (flags & TD_FLOAT);
+    td.isUnsigned = (flags & TD_UNSIGNED);
+    td.isVoid = (flags & TD_VOID);
+    td.isSimdVector = (flags & TD_VECTOR);
     td.structTypeName = structTypeName;
 
     return td;
@@ -330,14 +339,32 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     if (mapped.valid)
     {
-        return TypeDescMake(ScalarLlvmType(b->m_ctx, &mapped), mapped.isFloat, mapped.isUnsigned, mapped.isVoid, NULL);
+        TypeDescFlag flags = 0;
+        if (mapped.isFloat)
+        {
+            flags |= TD_FLOAT;
+        }
+        if (mapped.isUnsigned)
+        {
+            flags |= TD_UNSIGNED;
+        }
+        if (mapped.isVoid)
+        {
+            flags |= TD_VOID;
+        }
+        if (mapped.isSimdVector)
+        {
+            flags |= TD_VECTOR;
+        }
+
+        return TypeDescMake(ScalarLlvmType(b->m_ctx, &mapped), flags, NULL);
     }
 
     LLVMTypeRef found = (LLVMTypeRef)StrMapGet(&b->m_structTypes, t->name);
 
     if (found)
     {
-        return TypeDescMake(found, false, false, false, t->name);
+        return TypeDescMake(found, 0, t->name);
     }
 
     Str arrInner = ArrayInnerStr(t->name);
@@ -357,7 +384,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     if (IsOwningType(t->name))
     {
-        TypeDesc td = TypeDescMake(b->m_ptrTy, false, false, false, NULL);
+        TypeDesc td = TypeDescMake(b->m_ptrTy, 0, NULL);
         Str _inner = OwningInnerStr(t->name);
 
         if (_inner.data)
@@ -378,7 +405,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         DiagErrorFmt(b->m_diag, t->range, "unknown type '%s'", t->name);
     }
 
-    return TypeDescMake(b->m_ptrTy, false, false, false, NULL);
+    return TypeDescMake(b->m_ptrTy, 0, NULL);
 }
 
 static LLVMValueRef ZeroOf(TypeDesc typeDesc)
@@ -388,7 +415,7 @@ static LLVMValueRef ZeroOf(TypeDesc typeDesc)
 
 static Value ZeroInt(Builder* b)
 {
-    return ValueMake(LLVMConstNull(I32Ty(b)), TypeDescMake(I32Ty(b), false, false, false, NULL));
+    return ValueMake(LLVMConstNull(I32Ty(b)), TypeDescMake(I32Ty(b), 0, NULL));
 }
 
 /* Reads a box value's inner value through the pointer, leaving the box
@@ -1063,7 +1090,7 @@ static LValue EmitLValue(Builder* b, Node* n)
         {
             none.valid = true;
             none.ptr = ArrayLenPtr(b, base.ptr);
-            none.typeDesc = TypeDescMake(I64Ty(b), false, true, false, NULL); /* ulong */
+            none.typeDesc = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL); /* ulong */
             return none;
         }
 
@@ -1192,7 +1219,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     if (base.typeDesc.isArray && strcmp(n->member, "length") == 0)
     {
         LLVMValueRef len = LLVMBuildExtractValue(b->m_builder, base.value, 1, "len");
-        return ValueMake(len, TypeDescMake(I64Ty(b), false, true, false, NULL));
+        return ValueMake(len, TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL));
     }
 
     if (base.typeDesc.isBox && base.typeDesc.boxInner)
@@ -1214,6 +1241,18 @@ static Value EmitMember(Builder* b, MemberExpr* n)
             LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
 
             return ValueMake(v, fieldTypeDesc);
+        }
+    }
+
+    if (base.typeDesc.isSimdVector)
+    {
+        LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
+
+        LLVMValueRef dsValue = LSimdVectorDestructure(b, base.value, n);
+
+        if (dsValue != NULL)
+        {
+            return (Value){dsValue, TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL)};
         }
     }
 
@@ -1305,7 +1344,7 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
     {
         LLVMValueRef ref = LLVMBuildXor(b->m_builder, e.value, LLVMConstInt(I1Ty(b), 1, 0), "not");
 
-        return ValueMake(ref, TypeDescMake(I1Ty(b), false, false, false, NULL));
+        return ValueMake(ref, TypeDescMake(I1Ty(b), 0, NULL));
     }
 
     case UnBitNot:
@@ -1383,7 +1422,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         LLVMValueRef incomingVals[2] = {shortCircuit, rhsCond};
         LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
 
-        return ValueMake(phi, TypeDescMake(I1Ty(b), false, false, false, NULL));
+        return ValueMake(phi, TypeDescMake(I1Ty(b), 0, NULL));
     }
 
     Value l = DerefBoxValue(b, EmitExpr(b, n->lhs));
@@ -1418,7 +1457,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     LLVMValueRef out = NULL;
     bool flt = typeDesc.isFloat;
 
-    TypeDesc boolTypeDesc = TypeDescMake(I1Ty(b), false, false, false, NULL);
+    TypeDesc boolTypeDesc = TypeDescMake(I1Ty(b), 0, NULL);
 
     /* For comparisons involving pointer types (string, box, handle), convert
        both operands to i64 so that icmp works correctly. */
@@ -1432,7 +1471,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         case BinLtEq:
         case BinGt:
         case BinGtEq:
-            typeDesc = TypeDescMake(I64Ty(b), false, false, false, NULL);
+            typeDesc = TypeDescMake(I64Ty(b), 0, NULL);
             flt = false;
             if (l.typeDesc.type == b->m_ptrTy)
             {
@@ -1872,7 +1911,7 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 
     TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)arr.typeDesc.arrayInner});
     LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
-    TypeDesc ulongTd = TypeDescMake(I64Ty(b), false, true, false, NULL);
+    TypeDesc ulongTd = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
 
     LLVMValueRef dataPtrPtr = ArrayDataPtr(b, arr.ptr);
     LLVMValueRef lenPtr = ArrayLenPtr(b, arr.ptr);
@@ -1984,7 +2023,7 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     LLVMBuildStore(b->m_builder, newData, dataPtrPtr);
     LLVMBuildStore(b->m_builder, newLen, lenPtr);
 
-    return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
+    return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
 }
 
 /* Emits the body of strata_strdup. Uses host defined strata_jit and strata_free */
@@ -2717,12 +2756,12 @@ Value EmitExpr(Builder* b, Node* n)
 
         if (literal->value > 0xFFFFFFFFULL)
         {
-            TypeDesc typeDesc = TypeDescMake(I64Ty(b), false, literal->isUnsigned, false, NULL);
+            TypeDesc typeDesc = TypeDescMake(I64Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
 
             return ValueMake(LLVMConstInt(I64Ty(b), literal->value, 1), typeDesc);
         }
 
-        TypeDesc typeDesc = TypeDescMake(I32Ty(b), false, literal->isUnsigned, false, NULL);
+        TypeDesc typeDesc = TypeDescMake(I32Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
 
         return ValueMake(LLVMConstInt(I32Ty(b), literal->value, 1), typeDesc);
     }
@@ -2732,7 +2771,7 @@ Value EmitExpr(Builder* b, Node* n)
         FloatLiteral* literal = (FloatLiteral*)n;
 
         LLVMTypeRef fty = LLVMFloatTypeInContext(b->m_ctx);
-        TypeDesc typeDesc = TypeDescMake(fty, true, false, false, NULL);
+        TypeDesc typeDesc = TypeDescMake(fty, TD_FLOAT, NULL);
 
         return ValueMake(LLVMConstReal(fty, literal->value), typeDesc);
     }
@@ -2741,7 +2780,7 @@ Value EmitExpr(Builder* b, Node* n)
     {
         BoolLiteral* literal = (BoolLiteral*)n;
 
-        TypeDesc typeDesc = TypeDescMake(I1Ty(b), false, false, false, NULL);
+        TypeDesc typeDesc = TypeDescMake(I1Ty(b), 0, NULL);
 
         return ValueMake(LLVMConstInt(I1Ty(b), (unsigned long long)literal->value, 0), typeDesc);
     }
@@ -2809,7 +2848,7 @@ Value EmitExpr(Builder* b, Node* n)
                 DiagError(b->m_diag, inc->base.range, "increment/decrement of non-lvalue");
             }
 
-            return ValueMake(NULL, TypeDescMake(NULL, false, false, true, NULL));
+            return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
         }
 
         LLVMValueRef valPtr = lv.ptr;
