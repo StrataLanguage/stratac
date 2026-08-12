@@ -1,6 +1,9 @@
 #pragma once
 
+
 #include <stdint.h>
+
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +33,31 @@ typedef struct LLVMOpaqueMemoryBuffer* LLVMMemoryBufferRef;
 typedef struct LLVMOpaqueTargetData* LLVMTargetDataRef;
 typedef struct LLVMOpaqueExecutionEngine* LLVMExecutionEngineRef;
 
+
+typedef enum {
+  LLVMVoidTypeKind = 0,     /**< type with no size */
+  LLVMHalfTypeKind = 1,     /**< 16 bit floating point type */
+  LLVMFloatTypeKind = 2,    /**< 32 bit floating point type */
+  LLVMDoubleTypeKind = 3,   /**< 64 bit floating point type */
+  LLVMX86_FP80TypeKind = 4, /**< 80 bit floating point type (X87) */
+  LLVMFP128TypeKind = 5, /**< 128 bit floating point type (112-bit mantissa)*/
+  LLVMPPC_FP128TypeKind = 6, /**< 128 bit floating point type (two 64-bits) */
+  LLVMLabelTypeKind = 7,     /**< Labels */
+  LLVMIntegerTypeKind = 8,   /**< Arbitrary bit width integers */
+  LLVMFunctionTypeKind = 9,  /**< Functions */
+  LLVMStructTypeKind = 10,   /**< Structures */
+  LLVMArrayTypeKind = 11,    /**< Arrays */
+  LLVMPointerTypeKind = 12,  /**< Pointers */
+  LLVMVectorTypeKind = 13,   /**< Fixed width SIMD vector type */
+  LLVMMetadataTypeKind = 14, /**< Metadata */
+                             /* 15 previously used by LLVMX86_MMXTypeKind */
+  LLVMTokenTypeKind = 16,    /**< Tokens */
+  LLVMScalableVectorTypeKind = 17, /**< Scalable SIMD vector type */
+  LLVMBFloatTypeKind = 18,         /**< 16 bit brain floating point type */
+  LLVMX86_AMXTypeKind = 19,        /**< X86 AMX */
+  LLVMTargetExtTypeKind = 20,      /**< Target extension type */
+} LLVMTypeKind;
+
 typedef int LLVMBool;
 
 void LLVMGetVersion(unsigned* major, unsigned* minor, unsigned* patch);
@@ -53,7 +81,6 @@ LLVMTypeRef LLVMFloatTypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMDoubleTypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMVectorType(LLVMTypeRef elementType, unsigned elementCount);
-
 LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef c, const char* name);
 LLVMBool LLVMStructSetBody(LLVMTypeRef structTy, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
 
@@ -62,10 +89,12 @@ LLVMTypeRef LLVMFunctionType(LLVMTypeRef returnType, LLVMTypeRef* paramTypes, un
 LLVMValueRef LLVMConstInt(LLVMTypeRef intTy, unsigned long long n, LLVMBool signExtend);
 LLVMValueRef LLVMConstReal(LLVMTypeRef ty, double v);
 LLVMValueRef LLVMGetUndef(LLVMTypeRef ty);
+LLVMValueRef LLVMGetPoison(LLVMTypeRef ty);
 LLVMTypeRef LLVMStructTypeInContext(LLVMContextRef c, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
 LLVMValueRef LLVMGetParam(LLVMValueRef func, unsigned index);
 
 LLVMTypeRef LLVMPointerTypeInContext(LLVMContextRef c, unsigned addressSpace);
+LLVMValueRef LLVMConstVector(LLVMValueRef* maskv, int ncomp);
 LLVMValueRef LLVMConstNull(LLVMTypeRef ty);
 LLVMValueRef LLVMConstGEP2(LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices);
 LLVMValueRef LLVMConstPtrToInt(LLVMValueRef constantVal, LLVMTypeRef toType);
@@ -77,6 +106,7 @@ void LLVMSetUnnamedAddr(LLVMValueRef global, LLVMBool hasUnnamedAddr);
 void LLVMSetGlobalConstant(LLVMValueRef global, LLVMBool isConstant);
 LLVMValueRef LLVMConstStringInContext(LLVMContextRef c, const char* str, unsigned length, LLVMBool dontNullTerminate);
 LLVMTypeRef LLVMTypeOf(LLVMValueRef val);
+LLVMTypeKind LLVMGetTypeKind(LLVMTypeRef Ty);
 
 LLVMValueRef LLVMAddFunction(LLVMModuleRef m, const char* name, LLVMTypeRef functionTy);
 LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef c, LLVMValueRef func, const char* name);
@@ -101,6 +131,7 @@ LLVMValueRef LLVMBuildAlloca(LLVMBuilderRef b, LLVMTypeRef ty, const char* name)
 LLVMValueRef LLVMBuildStore(LLVMBuilderRef b, LLVMValueRef val, LLVMValueRef ptr);
 LLVMValueRef LLVMBuildLoad2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef ptr, const char* name);
 LLVMValueRef LLVMBuildCall2(LLVMBuilderRef b, LLVMTypeRef fnTy, LLVMValueRef fn, LLVMValueRef* args, unsigned numArgs, const char* name);
+LLVMValueRef LLVMBuildBitCast(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char *name);
 
 typedef enum {
     LLVMIntEQ = 32, LLVMIntNE, LLVMIntUGT, LLVMIntUGE, LLVMIntULT, LLVMIntULE,
@@ -113,6 +144,7 @@ typedef enum {
     LLVMRealUNO = 8, LLVMRealUEQ = 9, LLVMRealUGT = 10, LLVMRealUGE = 11,
     LLVMRealULT = 12, LLVMRealULE = 13, LLVMRealUNE = 14, LLVMRealPredicateTrue = 15
 } LLVMRealPredicate;
+
 
 LLVMValueRef LLVMBuildSDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
 LLVMValueRef LLVMBuildUDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
@@ -136,9 +168,10 @@ LLVMValueRef LLVMBuildUIToFP(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destT
 LLVMValueRef LLVMBuildFPToSI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildFPToUI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, LLVMBool isSigned, const char* name);
-
-LLVMValueRef LLVMGetUndef(LLVMTypeRef ty);
-LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueRef val, unsigned index, const char* name);
+LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueRef val, unsigned index,
+                                  const char* name);
+LLVMValueRef LLVMBuildShuffleVector(LLVMBuilderRef b, LLVMValueRef v1, LLVMValueRef v2, LLVMValueRef mask, const char *name);
+LLVMValueRef LLVMBuildInsertElement(LLVMBuilderRef b, LLVMValueRef v, LLVMValueRef eltVal, LLVMValueRef index, const char *name);
 LLVMValueRef LLVMBuildExtractValue(LLVMBuilderRef b, LLVMValueRef agg, unsigned index, const char* name);
 LLVMValueRef LLVMBuildGEP2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices, const char* name);
 LLVMValueRef LLVMBuildPhi(LLVMBuilderRef b, LLVMTypeRef ty, const char* name);

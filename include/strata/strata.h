@@ -59,7 +59,7 @@ typedef enum
     STRATA_CAP_LLVM_AOT = 1u << 3,
 } StrataCapability;
 
-typedef enum StrataArch : int
+typedef enum StrataArch
 {
     STRATA_ARCH_AUTO,
     STRATA_ARCH_X64,

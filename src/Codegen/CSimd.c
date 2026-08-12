@@ -7,7 +7,7 @@
 
 #define INVALID_COMPONENTS -1
 
-typedef enum : int
+typedef enum
 {
     VC_NULL = -1,
     VC_X = 0,
@@ -215,20 +215,33 @@ static inline void NEONVectorBinExpr(struct CEmitter* emitter, const struct Bina
 static inline void NEONVectorGetLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane, bool throughBox)
 {
     SbPuts(&emitter->out, "vgetq_lane_f32(");
-    if (throughBox) { SbPuts(&emitter->out, "(*"); }
+    if (throughBox)
+    {
+        SbPuts(&emitter->out, "(*");
+    }
     CEmitExpr(emitter, expr->base_node);
-    if (throughBox) { SbPutc(&emitter->out, ')'); }
+    if (throughBox)
+    {
+        SbPutc(&emitter->out, ')');
+    }
     SbPuts(&emitter->out, ", ");
     SbPutc(&emitter->out, (const char)lane + '0');
     SbPutc(&emitter->out, ')');
 }
 
-static inline void NEONVectorSplatLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane, bool throughBox)
+static inline void NEONVectorSplatLane(struct CEmitter* emitter, const struct MemberExpr* expr, int lane,
+                                       bool throughBox)
 {
     SbPuts(&emitter->out, "vdupq_lane_f32(");
-    if (throughBox) { SbPuts(&emitter->out, "(*"); }
+    if (throughBox)
+    {
+        SbPuts(&emitter->out, "(*");
+    }
     CEmitExpr(emitter, expr->base_node);
-    if (throughBox) { SbPutc(&emitter->out, ')'); }
+    if (throughBox)
+    {
+        SbPutc(&emitter->out, ')');
+    }
     SbPuts(&emitter->out, ", ");
     SbPutc(&emitter->out, (const char)lane + '0');
     SbPutc(&emitter->out, ')');
@@ -278,9 +291,15 @@ static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct 
         /* vector.xyz */
         if (MATCHCOMP3(c, VC_X, VC_Y, VC_Z))
         {
-            if (throughBox) { SbPuts(&emitter->out, "(*"); }
+            if (throughBox)
+            {
+                SbPuts(&emitter->out, "(*");
+            }
             CEmitExpr(emitter, expr->base_node);
-            if (throughBox) { SbPutc(&emitter->out, ')'); }
+            if (throughBox)
+            {
+                SbPutc(&emitter->out, ')');
+            }
             return;
         }
         /* vector.xxx */
@@ -321,9 +340,15 @@ static inline void NEONVectorDestructure(struct CEmitter* emitter, const struct 
             {
 
                 SbPuts(&emitter->out, "vgetq_lane_f32(");
-                if (throughBox) { SbPuts(&emitter->out, "(*"); }
+                if (throughBox)
+                {
+                    SbPuts(&emitter->out, "(*");
+                }
                 CEmitExpr(emitter, expr->base_node);
-                if (throughBox) { SbPutc(&emitter->out, ')'); }
+                if (throughBox)
+                {
+                    SbPutc(&emitter->out, ')');
+                }
                 SbPutc(&emitter->out, ',');
 
                 int laneIndex = (c[i] == VC_NULL) ? i : c[i];
@@ -472,7 +497,7 @@ static inline void SSEVectorEmitShuffleIndices(struct CEmitter* emitter, VectorC
 
 static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* expr, bool throughBox)
 {
-    VectorComponent c[4];
+    VectorComponent c[4] = {VC_NULL, VC_NULL, VC_NULL, VC_NULL};
 
     int numComponents = GetComponentList(c, expr->member);
 
@@ -482,11 +507,38 @@ static inline void SSEVectorDestructure(struct CEmitter* emitter, const struct M
         return;
     }
 
+    if (numComponents == 1)
+    {
+        /* _mm_extract_ps( vector , lane ) */
+        SbPuts(&emitter->out, "_mm_extract_ps(");
+        if (throughBox)
+        {
+            SbPuts(&emitter->out, "(*");
+        }
+        CEmitExpr(emitter, expr->base_node);
+        if (throughBox)
+        {
+            SbPutc(&emitter->out, ')');
+        }
+        SbPutc(&emitter->out, ',');
+
+        SbPutc(&emitter->out, '0' + c[0]);
+        SbPutc(&emitter->out, ')');
+
+        return;
+    }
+
     /* _mm_permute_ps( vector , _MM_SHUFFLE(ix, iy, iz, iw) ) */
     SbPuts(&emitter->out, "_mm_permute_ps(");
-    if (throughBox) { SbPuts(&emitter->out, "(*"); }
+    if (throughBox)
+    {
+        SbPuts(&emitter->out, "(*");
+    }
     CEmitExpr(emitter, expr->base_node);
-    if (throughBox) { SbPutc(&emitter->out, ')'); }
+    if (throughBox)
+    {
+        SbPutc(&emitter->out, ')');
+    }
     SbPutc(&emitter->out, ',');
     SSEVectorEmitShuffleIndices(emitter, c);
     SbPutc(&emitter->out, ')');
@@ -628,9 +680,9 @@ static inline void NoneVectorBinExpr(struct CEmitter* emitter, const struct Bina
     case BinLogicAnd:
     case BinLogicOr:
     case BinMod:
+    default:;
         DiagError(emitter->diag, binexp->base.range, "unsupported expression for vector data type");
         break;
-    default:;
     }
 }
 
@@ -649,15 +701,21 @@ void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* ex
     /* Single component (.x/.y/.z/.w) reads one lane as a scalar float. */
     if (numComponents == 1)
     {
-        if (throughBox) { SbPuts(&emitter->out, "(*"); }
+        if (throughBox)
+        {
+            SbPuts(&emitter->out, "(*");
+        }
         CEmitExpr(emitter, expr->base_node);
-        if (throughBox) { SbPutc(&emitter->out, ')'); }
+        if (throughBox)
+        {
+            SbPutc(&emitter->out, ')');
+        }
         SbPutc(&emitter->out, '.');
         SbPutc(&emitter->out, NoneLaneToMember(c[0]));
         return;
     }
 
-    SbPuts(&emitter->out, "("CSIMD_FALLBACK_VECTOR_NAME") {");
+    SbPuts(&emitter->out, "(" CSIMD_FALLBACK_VECTOR_NAME ") {");
 
     for (int i = 0; i < 4; i++)
     {
@@ -666,9 +724,15 @@ void NoneVectorDestructure(struct CEmitter* emitter, const struct MemberExpr* ex
             SbPutc(&emitter->out, ',');
         }
 
-        if (throughBox) { SbPuts(&emitter->out, "(*"); }
+        if (throughBox)
+        {
+            SbPuts(&emitter->out, "(*");
+        }
         CEmitExpr(emitter, expr->base_node);
-        if (throughBox) { SbPutc(&emitter->out, ')'); }
+        if (throughBox)
+        {
+            SbPutc(&emitter->out, ')');
+        }
         SbPutc(&emitter->out, '.');
 
         int laneIndex = (c[i] == VC_NULL) ? i : c[i];

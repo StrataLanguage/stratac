@@ -5,7 +5,7 @@
 #include "TypeRegistry.h"
 #include "Core/Util.h"
 
-enum StrataArch : int;
+#include <strata/strata.h>
 
 typedef enum CBackendEmitFlags
 {

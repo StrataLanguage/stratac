@@ -42,6 +42,7 @@ if(STRATA_ENABLE_TCC)
 endif()
 
 set(STRATA_LLVM_SOURCES
+    src/Codegen/LLVMSimd.c
     src/Codegen/LLVMCBackend.c
     src/Codegen/LLVMModuleBuilder.c
     src/Codegen/LLVMAot.c

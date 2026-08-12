@@ -3,14 +3,15 @@
 #include "AST/AST.h"
 #include "Core/Util.h"
 
+#include <strata/strata.h>
+
 typedef struct {
     bool ok;
     char* output;
     char* moduleName;
 } CodegenResult;
 
-enum StrataArch : int;
 
 CodegenResult GenerateLlvmIr(const Module* mod);
-CodegenResult GenerateC(const Module* mod, enum StrataArch arch);
+CodegenResult GenerateC(const Module* mod, StrataArch arch);
 char* DumpAst(const Module* mod, Arena* arena);

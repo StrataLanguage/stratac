@@ -267,7 +267,7 @@ typedef struct {
     char* name;
 } IdentExpr;
 
-typedef struct {
+typedef struct CallExpr {
     Node base;
     char* callee;
     const FunctionDecl* resolvedDecl;

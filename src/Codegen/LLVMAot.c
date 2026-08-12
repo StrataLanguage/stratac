@@ -25,12 +25,7 @@ static void EnsureTargetsInitialized(void)
     }
 }
 
-bool EmitNativeFile(
-    BuiltModule* bm,
-    const char* path,
-    bool assembly,
-    char** errorMessage,
-    const char* targetTriple)
+bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** errorMessage, const char* targetTriple)
 {
     if (!bm->mod)
     {
@@ -81,14 +76,8 @@ bool EmitNativeFile(
         return false;
     }
 
-    LLVMTargetMachineRef targetMachine = LLVMCreateTargetMachine(
-        target,
-        triple,
-        "",
-        "",
-        LLVMCodeGenLevelDefault,
-        LLVMRelocDefault,
-        LLVMCodeModelDefault);
+    LLVMTargetMachineRef targetMachine = LLVMCreateTargetMachine(target, triple, "", "", LLVMCodeGenLevelDefault,
+                                                                 LLVMRelocDefault, LLVMCodeModelDefault);
 
     if (defaultTriple)
     {

@@ -126,7 +126,10 @@ extern "C"
         r.error_count = DiagErrorCount(diag);
         r.ok = !DiagHasErrors(diag) ? 1 : 0;
 
-        free(irOwned);
+        if (r.ok)
+        {
+            free(irOwned);
+        }
         return r;
     }
 
