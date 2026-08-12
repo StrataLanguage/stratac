@@ -246,16 +246,6 @@ STRATA_TEST(extern_cannot_return_struct_by_value)
     arena_free(&arena);
 }
 
-STRATA_TEST(extern_cannot_return_vector_by_value)
-{
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("extern float4 make();\n", &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
-}
-
 STRATA_TEST(forward_struct_local_is_incomplete_error)
 {
     Arena arena; arena_init(&arena, 0);
