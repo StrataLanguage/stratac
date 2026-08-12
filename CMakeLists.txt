@@ -156,10 +156,10 @@ if(STRATA_ENABLE_TCC)
 endif()
 
 if(STRATA_ENABLE_LLVM)
-    find_package(LLVM REQUIRED CONFIG)
-
     # If there is no custom path provided, use the path pulled by find_package
     if(LLVM_C_DIR STREQUAL "")
+        find_package(LLVM REQUIRED CONFIG)
+
         get_filename_component(LLVM_C_DIR "${LLVM_DIR}/../../.." ABSOLUTE)
     endif()
 
