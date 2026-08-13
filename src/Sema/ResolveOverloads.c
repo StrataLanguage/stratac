@@ -1209,7 +1209,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 if (IsBoxPartiallyMoved(r, ident->name))
                 {
                     DiagErrorFmt(r->m_diag, ident->base.range,
-                                 "'%s' used after partial move (a field was moved out); its non-moved fields are still accessible",
+                                 "'%s' is poisoned",
                                  ident->name);
                 }
                 else
@@ -1483,7 +1483,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 if (IsBoxPartiallyMoved(r, key))
                 {
                     DiagErrorFmt(r->m_diag, m->base.range,
-                                 "'%s' used after partial move (a field was moved out); its non-moved fields are still accessible",
+                                 "'%s' is poisoned",
                                  key);
                 }
                 else
