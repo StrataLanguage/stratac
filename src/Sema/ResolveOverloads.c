@@ -1780,6 +1780,16 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
             }
 
+            /* Validate the returned expression against the function's declared return type */
+            if (r->m_currentReturnType && r->m_currentReturnType[0] != '\0'
+                && strcmp(r->m_currentReturnType, "void") != 0 && typeName[0] != '\0'
+                && !IsAssignableType(r, r->m_currentReturnType, typeName))
+            {
+                DiagErrorFmt(r->m_diag, rs->base.range,
+                             "cannot return a value of type '%s' from a function returning '%s'", typeName,
+                             r->m_currentReturnType);
+            }
+
             /* Only a move if the function itself returns box<T>; otherwise
                it's a read (unless the inner type is owning). */
             const char* movedReturnKey = IsOwningType(typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;

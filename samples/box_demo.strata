@@ -145,6 +145,10 @@ float entry()
     globalStringArrayBox[0] = "goodbye";
     printf("globalStringArrayBox[0] = %s\n", globalStringArrayBox[0]);
 
+    box<string> sCopy = copy(globalStringArrayBox[0]);
+    printf("sCopy = %s\n", sCopy);
+
+
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);
     globalStringArray[0] = "goodbye";
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);

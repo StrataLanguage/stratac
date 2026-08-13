@@ -169,6 +169,44 @@ STRATA_TEST(returning_void_value_is_an_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(returning_mismatched_type_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int f() { return \"hello\"; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot return a value of type 'string' from a function returning 'int'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(returning_array_of_wrong_element_type_is_an_error)
+{
+    /* Returning box<string>[] from a string[] function must be a compile-time
+       type error, not a miscompile that crashes at runtime (the elements are
+       char**, not char*). */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "box<string>[] g = { \"Hi\" };\n"
+        "string[] f() { return g; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot return a value of type 'box<string>[]'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(constructor_call_is_not_unknown)
 {
     Arena arena; arena_init(&arena, 0);
