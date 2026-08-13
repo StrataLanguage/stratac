@@ -183,6 +183,39 @@ main) are the internal entry points.
 - Structs cross the boundary as pointers (`ptr`); handles are already
   pointer-sized and pass by value.
 
+## Panic unwinding (LLVM JIT)
+
+With `StrataProfile.panicUnwind` (default 1; ignored by the TCC JIT and AOT),
+a panic unwinds the JIT'd stack instead of crashing the host:
+
+- `EmitPanic` sites call `__strata_raise` (not `strata_panic`), which
+  longjmps to the innermost unwind frame on a `_Thread_local` chain in
+  `src/Codegen/PanicUnwind.c`.
+- Every JIT'd function that owns heap values installs a frame at entry
+  (`push` + `setjmp` + branch) and emits a landing pad that drops *all* its
+  owning locals (`EmitDrops(0)` — safe because drops null their slots),
+  pops the frame, and re-throws to the parent pad. Normal returns also pop
+  (`EmitUnwindFramePop`) so the chain never holds stale frames.
+- The host boundary is a per-function wrapper `__strata_entry_<mangled>`
+  with the function's signature: `strataJitGetFunction` returns it, so the
+  host API is unchanged. On panic the wrapper restores the TLS chain, calls
+  the panic handler *once, after the unwind*, and returns a zeroed value if
+  the handler returns.
+- Windows: the wrappers are TCC-compiled (`BuildEntryWrappersC` in
+  CBackend.c + a TccJit on the `StrataJit` handle) because TCC registers
+  unwind info via `RtlAddFunctionTable` (tccrun.c) — msvcrt's `longjmp`
+  unwinds through `RtlUnwind`, and RTDyld never registers the JIT'd code's
+  `.pdata`, so a JIT'd wrapper would make a longjmp panic handler crash.
+  With TCC disabled (or for SIMD signatures, which TCC can't ABI-match),
+  the JIT'd wrapper is used as a fallback. The wrapper's `_setjmp` passes a
+  null frame address, keeping the jump-buffer Frame slot null so raise/
+  rethrow longjmps are plain register restores (no unwind-table walk across
+  unregistered JIT frames). Non-Windows platforms use the JIT'd wrapper and
+  the plain-register longjmps of POSIX CRTs.
+- Panics outside any boundary (`__strata_module_init/teardown`, TCC JIT,
+  AOT) fall back to the legacy behavior: handler at the panic site, abort
+  if it returns.
+
 ## Adding a language feature (typical path)
 
 1. **Tokens**: `src/Lex/Token.h` (enum) + `src/Lex/Token.c` (keyword table)

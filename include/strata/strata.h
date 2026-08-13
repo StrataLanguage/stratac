@@ -81,6 +81,16 @@ typedef struct StrataProfile
 {
     unsigned boundsCheck;    /* array index bounds check + panic on out-of-bounds */
     unsigned nullExternCall; /* panic on calling an extern that was never bound */
+
+    /* LLVM JIT only: on panic, unwind the JIT'd stack frame by frame, freeing
+       every owning value (box<T>/string/T[]) held by each frame, until the
+       host boundary (the function pointer returned by strataJitGetFunction)
+       is reached. The panic handler then runs once, after the unwind; if it
+       returns, the entry function returns a zeroed value to the host instead
+       of crashing. With this off (or on the TCC JIT / AOT), strata_panic
+       behaves as before: the handler runs at the panic site and the process
+       aborts if it returns. */
+    unsigned panicUnwind;
 } StrataProfile;
 
 STRATA_API StrataProfile strataProfileDefault(void);

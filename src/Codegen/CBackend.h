@@ -59,4 +59,9 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
                                     const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags,
                                     int arch, const StrataProfile* profile);
 
+/* Emits C source for the panic-unwind host-boundary wrappers, plus the
+   exports/externs tables (arena-owned; dispose the returned module with
+   BuiltCModuleDispose). See the implementation comment in CBackend.c. */
+BuiltCModule BuildEntryWrappersC(const Module* ast, DiagnosticEngine* diag, Arena* arena);
+
 void CEmitExpr(CEmitter* emitter, const Node* node);

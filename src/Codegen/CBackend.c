@@ -3663,6 +3663,252 @@ BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* aren
     return BuildCModuleWithSources(ast, diag, arena, NULL, 0, emitFlags, arch, profile);
 }
 
+/* Emits just the parameter types (names omitted) of `function`, used for
+   the extern-slot declarations in the boundary-wrapper C. */
+static void EmitParamListTypes(CEmitter* emitter, const FunctionDecl* function)
+{
+    if (function->params.count == 0)
+    {
+        SbPuts(&emitter->out, "void");
+    }
+    else
+    {
+        for (size_t i = 0; i < function->params.count; ++i)
+        {
+            const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, i);
+
+            if (i > 0)
+            {
+                SbPuts(&emitter->out, ", ");
+            }
+
+            if (function->isExtern && strcmp(param->type.name, "string") == 0)
+            {
+                SbPuts(&emitter->out, "const char *");
+            }
+            else if (param->isVarargRest)
+            {
+                SbPuts(&emitter->out, "strata__arr*");
+            }
+            else
+            {
+                EmitType(emitter, &param->type);
+
+                if (ParamIsIndirectFor(emitter, function, param))
+                {
+                    SbPutc(&emitter->out, '*');
+                }
+            }
+        }
+    }
+
+    if (function->isCVararg)
+    {
+        SbPuts(&emitter->out, ", ...");
+    }
+}
+
+/* Emits C source for the panic-unwind host-boundary wrappers: for each
+   non-extern function, a `__strata_entry_<mangled>` function with the same
+   signature that installs the outermost unwind frame (push + _setjmp), calls
+   the real function (through a null-initialized slot the host fills), and on
+   panic pops, notifies the host panic handler, and returns a zeroed value.
+
+   This C is compiled with the vendored TCC backend on Windows: TCC registers
+   the wrapper's unwind info with RtlAddFunctionTable (tccrun.c), so a host
+   panic handler's longjmp (msvcrt longjmp unwinds via RtlUnwind) can walk
+   the wrapper frame — the LLVM JIT's own code has no registered unwind info,
+   so a JIT'd wrapper would make that longjmp unreliable. The _setjmp call
+   passes a null frame address, keeping the saved Frame slot null: panics
+   raised from JIT'd code then longjmp here with a plain register restore
+   (no RtlUnwind walk across the unregistered JIT frames in between).
+
+   Only meaningful on Windows x64 with the msvcrt jmp_buf layout; callers
+   gate it on platform. */
+BuiltCModule BuildEntryWrappersC(const Module* ast, DiagnosticEngine* diag, Arena* arena)
+{
+    BuiltCModule result;
+    BuiltCModuleInit(&result);
+
+    if (!ast)
+    {
+        return result;
+    }
+
+    CEmitter emitter = {0};
+    emitter.mod = ast;
+    emitter.diag = diag;
+    emitter.arena = arena;
+    emitter.emitFlags = CEmitJIT;
+    emitter.arch = STRATA_ARCH_AUTO;
+    emitter.currentReturn = "int";
+    TypeRegistryInit(&emitter.types);
+    TypeRegistryBuild(&emitter.types, ast);
+    StrMapInit(&emitter.symbols);
+    SbInit(&emitter.out);
+    VecInit(&emitter.exports);
+    VecInit(&emitter.externs);
+    VecInit(&emitter.boxVars);
+
+    bool hasWrappers = false;
+
+    for (size_t i = 0; i < ast->functions.count; i++)
+    {
+        if (!((FunctionDecl*)VecGet(&ast->functions, i))->isExtern)
+        {
+            hasWrappers = true;
+            break;
+        }
+    }
+
+    if (!hasWrappers)
+    {
+        TypeRegistryFree(&emitter.types);
+        return result;
+    }
+
+    SbPuts(&emitter.out,
+           "/* Strata panic-unwind boundary wrappers. */\n"
+           "typedef struct { void* data; unsigned long long len; } strata__arr;\n"
+           "typedef struct __strata_float128 { float x; float y; float z; float w; } __strata_float128;\n"
+           "\n"
+           "/* Unwind frame; layout matches StrataUnwindFrame in PanicUnwind.h:\n"
+           "   a 496-byte jmp area (msvcrt x64 jmp_buf is 256 bytes), the chain\n"
+           "   pointer at offset 496, padded to a 16-byte multiple. */\n"
+           "typedef struct StrataUnwindFrameC {\n"
+           "    __attribute__((aligned(16))) unsigned long long jmp_storage[62];\n"
+           "    struct StrataUnwindFrameC* prev;\n"
+           "    unsigned long long _pad;\n"
+           "} StrataUnwindFrameC;\n"
+           "\n"
+           "extern void __strata_unwind_push(void* f);\n"
+           "extern void __strata_unwind_pop_to(void* f);\n"
+           "extern const char* __strata_panic_message(void);\n"
+           "extern void strata_panic(const char* msg);\n"
+           "extern int _setjmp(void* buf, void* frame);\n"
+           "\n");
+
+    for (size_t i = 0; i < ast->functions.count; i++)
+    {
+        const FunctionDecl* function = (const FunctionDecl*)VecGet(&ast->functions, i);
+
+        if (function->isExtern || !function->body)
+        {
+            continue;
+        }
+
+        /* SIMD vector params/returns cross by value with a vector ABI in the
+           LLVM JIT, which TCC cannot reproduce with a C signature — leave
+           those functions on the JIT'd wrapper. */
+        bool hasSimd = IsSimdVector(function->returnType.name);
+
+        for (size_t p = 0; p < function->params.count && !hasSimd; ++p)
+        {
+            hasSimd = IsSimdVector(((const ParamDecl*)VecGet(&function->params, p))->type.name);
+        }
+
+        if (hasSimd)
+        {
+            continue;
+        }
+
+        /* The real function lives in the LLVM JIT; the wrapper reaches it
+           through a null-initialized function-pointer slot that Embed.c
+           fills via TccJitAddSymbol once the JIT addresses are known. */
+        const char* slotName = ExternSlotName(&emitter, function->mangledName);
+
+        EmitType(&emitter, &function->returnType);
+        SbPrintf(&emitter.out, " (*%s)(", slotName);
+        EmitParamListTypes(&emitter, function);
+        SbPuts(&emitter.out, ") = 0;\n");
+
+        CBackendSymbol* symbol = (CBackendSymbol*)arena_alloc(arena, sizeof(CBackendSymbol));
+        symbol->strataName = function->mangledName;
+        symbol->cName = slotName;
+        symbol->isIntVoid = false;
+        VecPush(&emitter.externs, symbol);
+
+        char* wrapperName = arena_format(arena, "__strata_entry_%s", function->mangledName);
+        const char* wrapperCName = FunctionName(&emitter, wrapperName);
+        EmitFunctionSignature(&emitter, function, wrapperCName);
+        SbPuts(&emitter.out, "\n{\n");
+
+        CBackendSymbol* export = (CBackendSymbol*)arena_alloc(arena, sizeof(CBackendSymbol));
+        export->strataName = wrapperName;
+        export->cName = wrapperCName;
+        export->isIntVoid = strcmp(function->returnType.name, "int") == 0 && function->params.count == 0;
+        VecPush(&emitter.exports, export);
+        SbPuts(&emitter.out, "    StrataUnwindFrameC _uw;\n");
+        SbPuts(&emitter.out, "    __strata_unwind_push(&_uw);\n");
+        SbPuts(&emitter.out, "    if (_setjmp(_uw.jmp_storage, 0) == 0) {\n");
+        SbPrintf(&emitter.out, "        if (!%s) strata_panic(\"call to unbound JIT function\");\n", slotName);
+
+        bool isVoid = strcmp(function->returnType.name, "void") == 0;
+
+        if (!isVoid)
+        {
+            SbPuts(&emitter.out, "        ");
+            EmitType(&emitter, &function->returnType);
+            SbPuts(&emitter.out, " _uw_ret = ");
+        }
+        else
+        {
+            SbPuts(&emitter.out, "        ");
+        }
+
+        SbPrintf(&emitter.out, "%s(", slotName);
+
+        if (function->params.count > 0)
+        {
+            for (size_t p = 0; p < function->params.count; ++p)
+            {
+                const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, p);
+
+                if (p > 0)
+                {
+                    SbPuts(&emitter.out, ", ");
+                }
+
+                SbPuts(&emitter.out, VarName(&emitter, param->name));
+            }
+        }
+
+        SbPuts(&emitter.out, ");\n");
+        SbPuts(&emitter.out, "        __strata_unwind_pop_to(&_uw);\n");
+
+        if (!isVoid)
+        {
+            SbPuts(&emitter.out, "        return _uw_ret;\n");
+        }
+        else
+        {
+            SbPuts(&emitter.out, "        return;\n");
+        }
+
+        SbPuts(&emitter.out, "    }\n");
+        SbPuts(&emitter.out, "    __strata_unwind_pop_to(&_uw);\n");
+        SbPuts(&emitter.out, "    strata_panic(__strata_panic_message());\n");
+
+        if (!isVoid)
+        {
+            SbPuts(&emitter.out, "    return (");
+            EmitType(&emitter, &function->returnType);
+            SbPuts(&emitter.out, "){0};\n");
+        }
+
+        SbPuts(&emitter.out, "}\n\n");
+    }
+
+    result.source = SbFinish(&emitter.out, arena);
+    result.exports = emitter.exports;
+    result.externs = emitter.externs;
+
+    DisposeMap(&emitter.symbols);
+    TypeRegistryFree(&emitter.types);
+
+    return result;
+}
+
 CodegenResult GenerateC(const Module* mod, int arch)
 {
     CodegenResult result = {0};

@@ -1,5 +1,6 @@
 #include "LLVMJit.h"
 #include "Codegen/LLVMCApi.h"
+#include "Codegen/PanicUnwind.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -207,10 +208,11 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         }
     }
 
-    /* Map the compiler-internal heap runtime to the host so generated box
-       code can allocate without the user binding symbols. */
+    /* Map the compiler-internal heap runtime and the panic-unwind runtime to
+       the host so generated code can allocate and unwind without the user
+       binding symbols. */
     {
-        LLVMOrcCSymbolMapPair pairs[3];
+        LLVMOrcCSymbolMapPair pairs[8];
 
         pairs[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_alloc");
         pairs[0].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
@@ -227,12 +229,61 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         pairs[2].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
         pairs[2].Sym.Flags.TargetFlags = 0;
 
-        LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 3);
+        pairs[3].Name = LLVMOrcLLJITMangleAndIntern(llj, "__strata_raise");
+        pairs[3].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&__strata_raise;
+        pairs[3].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[3].Sym.Flags.TargetFlags = 0;
+
+        pairs[4].Name = LLVMOrcLLJITMangleAndIntern(llj, "__strata_rethrow");
+        pairs[4].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&__strata_rethrow;
+        pairs[4].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[4].Sym.Flags.TargetFlags = 0;
+
+        pairs[5].Name = LLVMOrcLLJITMangleAndIntern(llj, "__strata_unwind_push");
+        pairs[5].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&__strata_unwind_push;
+        pairs[5].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[5].Sym.Flags.TargetFlags = 0;
+
+        pairs[6].Name = LLVMOrcLLJITMangleAndIntern(llj, "__strata_unwind_pop_to");
+        pairs[6].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&__strata_unwind_pop_to;
+        pairs[6].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[6].Sym.Flags.TargetFlags = 0;
+
+        pairs[7].Name = LLVMOrcLLJITMangleAndIntern(llj, "__strata_panic_message");
+        pairs[7].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&__strata_panic_message;
+        pairs[7].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[7].Sym.Flags.TargetFlags = 0;
+
+        LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 8);
         LLVMErrorRef defineErr = LLVMOrcJITDylibDefine(mainJd, mu);
 
         if (defineErr)
         {
             LLVMConsumeError(defineErr);
+        }
+    }
+
+    /* Map the CRT setjmp the generated unwind prologues call. It must be the
+       host CRT's own _setjmp so frames saved in JIT'd code are compatible
+       with the _longjmp issued by __strata_raise/__strata_rethrow. */
+    {
+        LLVMOrcCSymbolMapPair sj[1];
+        uintptr_t setjmpAddr = StrataJitSetJmpAddress();
+
+        if (setjmpAddr)
+        {
+            sj[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "__strata_setjmp");
+            sj[0].Sym.Address = (LLVMOrcExecutorAddress)setjmpAddr;
+            sj[0].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+            sj[0].Sym.Flags.TargetFlags = 0;
+
+            LLVMOrcMaterializationUnitRef sjmu = LLVMOrcAbsoluteSymbols(sj, 1);
+            LLVMErrorRef sjErr = LLVMOrcJITDylibDefine(mainJd, sjmu);
+
+            if (sjErr)
+            {
+                LLVMConsumeError(sjErr);
+            }
         }
     }
 

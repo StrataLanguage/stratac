@@ -27,6 +27,7 @@ static StrataJit* CompileJit(const char* source, StrataJitBackend backend, int c
     StrataProfile profile;
     profile.boundsCheck = (unsigned)checksOn;
     profile.nullExternCall = (unsigned)checksOn;
+    profile.panicUnwind = (unsigned)checksOn;
 
     StrataCompiler* c = strataCompilerCreate();
     strataJitSetBackend(c, backend);
