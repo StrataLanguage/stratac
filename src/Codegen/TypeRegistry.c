@@ -154,6 +154,11 @@ bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
 
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name)
 {
+    if (!reg || !name)
+    {
+        return NULL;
+    }
+
     for (size_t i = 0; i < reg->count; i++)
     {
         if (strcmp(reg->types[i].name, name) == 0)

@@ -622,13 +622,15 @@ static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler)
         fprintf(stderr, "%s\n", err ? err : "compilation failed");
 
         strataFree((char*)err);
-        strataCompilerDestroy(compiler);
 
         if (state->outFileOwned)
         {
             free((void*)state->outputFileName);
         }
 
+        /* Ownership of `compiler` stays with main()/ExecuteCommands, which
+           destroy it on the non-success path. Do NOT destroy it here or the
+           caller frees it a second time (double free). */
         return RCArgumentError;
     }
 

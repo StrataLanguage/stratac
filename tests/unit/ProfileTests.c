@@ -126,6 +126,61 @@ STRATA_TEST(profile_bounds_check_panics_on_oob_tcc)
                  "array index out of bounds");
 }
 
+/* An errored module must be rejected cleanly (NULL jit + message), never
+   crash the compiler — a return that reads out a NULL box-inner used to
+   pass NULL into TypeRegistryIsOwningStruct and crash mid-resolve. */
+static void CheckErrorRejected(StrataJitBackend backend, const char* source, const char* expectMsg)
+{
+    unsigned caps = strataCapabilities();
+
+    if (backend == STRATA_JIT_BACKEND_TCC && !(caps & STRATA_CAP_TCC_JIT))
+    {
+        return;
+    }
+
+    if (backend == STRATA_JIT_BACKEND_LLVM && !(caps & STRATA_CAP_LLVM_JIT))
+    {
+        return;
+    }
+
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetBackend(c, backend);
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c, source, "err", &err);
+
+    STRATA_CHECK(jit == NULL);
+    if (err)
+    {
+        STRATA_CHECK(strstr(err, expectMsg) != NULL);
+    }
+
+    strataFree((char*)err);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(errored_module_rejected_cleanly_tcc)
+{
+    CheckErrorRejected(STRATA_JIT_BACKEND_TCC,
+                       "box<string>[] g = { \"Hi\" };\n"
+                       "string[] f() { return g; }\n",
+                       "cannot return a value of type 'box<string>[]'");
+}
+
+STRATA_TEST(errored_module_rejected_cleanly_llvm)
+{
+    CheckErrorRejected(STRATA_JIT_BACKEND_LLVM,
+                       "box<string>[] g = { \"Hi\" };\n"
+                       "string[] f() { return g; }\n",
+                       "cannot return a value of type 'box<string>[]'");
+}
+
+STRATA_TEST(errored_module_rejected_cleanly_string_mismatch)
+{
+    CheckErrorRejected(STRATA_JIT_BACKEND_TCC,
+                       "int f() { string s = \"x\"; return s; }\n",
+                       "cannot return a value of type 'string'");
+}
+
 STRATA_TEST(profile_bounds_check_panics_on_oob_llvm)
 {
     RunPanicPair(STRATA_JIT_BACKEND_LLVM,

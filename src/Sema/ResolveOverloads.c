@@ -1804,13 +1804,18 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
                 else
                 {
+                    /* Owning values without a box inner (string, T[]) have
+                       nothing to "read out" into a differently-typed return,
+                       so boxInner is NULL and no inner matching applies. The
+                       type-mismatch diagnostic was already emitted above. */
                     const char* boxInner = OwningInnerCStr(r->m_arena, typeName);
 
-                    bool innerIsOwning = TypeRegistryIsOwningStruct(&r->m_registry, boxInner);
+                    bool innerIsOwning = boxInner && TypeRegistryIsOwningStruct(&r->m_registry, boxInner);
                     bool innerMatchesReturn = boxInner
                                               && (r->m_currentReturnType
                                                   && (strcmp(r->m_currentReturnType, boxInner) == 0
-                                                      || (IsNumeric(boxInner) && IsNumeric(r->m_currentReturnType))));
+                                                      || (IsNumeric(boxInner)
+                                                          && IsNumeric(r->m_currentReturnType))));
 
                     if (innerIsOwning || !innerMatchesReturn)
                     {
