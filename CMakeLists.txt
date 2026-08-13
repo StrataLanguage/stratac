@@ -37,6 +37,7 @@ set(STRATA_COMMON_SOURCES
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
+    src/Codegen/PanicUnwind.c
     src/Codegen/CBackend.c
     src/Codegen/CSimd.c
     src/Import/ModuleLoader.c
@@ -351,6 +352,7 @@ if(NOT STRATA_SHARED)
         list(APPEND STRATA_TEST_SOURCES
             tests/unit/CodegenTests.c
             tests/unit/SampleTests.c
+            tests/unit/PanicUnwindTests.c
         )
         if(STRATA_ENABLE_TCC)
             list(APPEND STRATA_TEST_SOURCES tests/unit/BackendParityTests.c)

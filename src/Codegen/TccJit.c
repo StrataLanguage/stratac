@@ -1,5 +1,6 @@
 #include "Codegen/TccJit.h"
 
+#include "Codegen/PanicUnwind.h"
 #include "Core/Util.h"
 #include "libtcc.h"
 
@@ -214,6 +215,18 @@ bool TccJitLoad(TccJit* jit, const BuiltCModule* module, char** errorMessage)
     tcc_add_symbol(jit->state, "strata_free",
                    jit->freeFn ? jit->freeFn : (const void*)(uintptr_t)&strata_free_impl);
     tcc_add_symbol(jit->state, "strata_panic", (const void*)(uintptr_t)&strata_panic);
+
+    /* Panic-unwind runtime, used by the host-boundary wrappers the LLVM JIT
+       path compiles with TinyCC on Windows (TCC registers unwind info, so a
+       host panic handler's longjmp can unwind the wrapper frame). Harmless
+       no-ops for plain TCC modules, which never reference them. */
+    tcc_add_symbol(jit->state, "__strata_unwind_push", (const void*)(uintptr_t)&__strata_unwind_push);
+    tcc_add_symbol(jit->state, "__strata_unwind_pop_to", (const void*)(uintptr_t)&__strata_unwind_pop_to);
+    tcc_add_symbol(jit->state, "__strata_panic_message", (const void*)(uintptr_t)&__strata_panic_message);
+
+    /* The host CRT's setjmp, used by the boundary wrappers' unwind frames.
+       Must be the same CRT function __strata_raise longjmps against. */
+    tcc_add_symbol(jit->state, "_setjmp", (const void*)(uintptr_t)StrataJitSetJmpAddress());
 
     /* strata_strdup is defined in the emitted C (calling strata_alloc). */
 

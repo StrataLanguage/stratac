@@ -20,6 +20,7 @@ struct LLVMOpaqueTargetMachine;
 struct LLVMOpaqueMemoryBuffer;
 struct LLVMOpaqueTargetData;
 struct LLVMOpaqueError;
+struct LLVMOpaqueAttributeRef;
 struct LLVMOrcOpaqueThreadSafeContext;
 struct LLVMOrcOpaqueThreadSafeModule;
 struct LLVMOrcOpaqueJITTargetMachineBuilder;
@@ -131,6 +132,15 @@ LLVMTypeKind LLVMGetTypeKind(LLVMTypeRef Ty);
 LLVMValueRef LLVMAddFunction(LLVMModuleRef m, const char* name, LLVMTypeRef functionTy);
 LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef c, LLVMValueRef func, const char* name);
 
+typedef struct LLVMOpaqueAttributeRef* LLVMAttributeRef;
+#define LLVMAttributeFunctionIndex (~0U)
+unsigned LLVMGetEnumAttributeKindForName(const char* name, size_t SLen);
+LLVMAttributeRef LLVMCreateEnumAttribute(LLVMContextRef C, unsigned KindID, uint64_t Val);
+LLVMAttributeRef LLVMCreateStringAttribute(LLVMContextRef C, const char* K, unsigned KLength,
+                                           const char* V, unsigned VLength);
+void LLVMAddAttributeAtIndex(LLVMValueRef F, unsigned Idx, LLVMAttributeRef A);
+void LLVMSetAlignment(LLVMValueRef V, unsigned Bytes);
+
 LLVMBuilderRef LLVMCreateBuilderInContext(LLVMContextRef c);
 void LLVMDisposeBuilder(LLVMBuilderRef b);
 void LLVMPositionBuilderAtEnd(LLVMBuilderRef b, LLVMBasicBlockRef block);
@@ -151,6 +161,7 @@ LLVMValueRef LLVMBuildAlloca(LLVMBuilderRef b, LLVMTypeRef ty, const char* name)
 LLVMValueRef LLVMBuildStore(LLVMBuilderRef b, LLVMValueRef val, LLVMValueRef ptr);
 LLVMValueRef LLVMBuildLoad2(LLVMBuilderRef b, LLVMTypeRef ty, LLVMValueRef ptr, const char* name);
 LLVMValueRef LLVMBuildCall2(LLVMBuilderRef b, LLVMTypeRef fnTy, LLVMValueRef fn, LLVMValueRef* args, unsigned numArgs, const char* name);
+LLVMValueRef LLVMBuildMemSet(LLVMBuilderRef b, LLVMValueRef ptr, LLVMValueRef val, LLVMValueRef size, unsigned align);
 LLVMValueRef LLVMBuildBitCast(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char *name);
 
 typedef enum {

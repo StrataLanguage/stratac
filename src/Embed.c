@@ -107,6 +107,7 @@ extern "C"
         StrataProfile p;
         p.boundsCheck = 1;
         p.nullExternCall = 1;
+        p.panicUnwind = 1;
         return p;
     }
 
@@ -464,6 +465,13 @@ extern "C"
         StrataJitKind kind;
         void* backend;   /* TccJit* or LLVMJit*, per kind; NULL if kind == NONE */
         char* diagnostics;
+        StrataProfile profile; /* profile the module was JIT-compiled with */
+
+        /* TccJit* holding the panic-unwind boundary wrappers (Windows: the
+           wrappers are TCC-compiled so their unwind info is registered and a
+           host panic handler's longjmp can unwind them; the LLVM JIT's own
+           code has no registered unwind info). NULL when not built. */
+        void* entryWrapperJit;
 #if STRATA_HAS_LLVM
         Vec llvmExports; /* LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM */
 #endif
@@ -552,6 +560,7 @@ extern "C"
         handle->kind = STRATA_JIT_KIND_TCC;
         handle->backend = jit;
         handle->diagnostics = DupString(diagText);
+        handle->profile = *profile;
 
         return handle;
     }
@@ -632,7 +641,66 @@ extern "C"
         handle->kind = STRATA_JIT_KIND_LLVM;
         handle->backend = jit;
         handle->diagnostics = DupString(diagText);
+        handle->profile = *profile;
 
+        /* Panic-unwind boundary wrappers. On Windows the wrappers are
+           compiled with TinyCC: TCC registers the wrapper's unwind info with
+           RtlAddFunctionTable, so a host panic handler's longjmp (msvcrt
+           longjmp unwinds via RtlUnwind) can unwind the wrapper frame — the
+           LLVM JIT's own code never registers unwind info. The wrappers
+           install the outermost unwind frame; a panic raised anywhere in the
+           JIT'd call tree unwinds frame by frame (each landing pad frees its
+           owning locals) back to the wrapper, which pops, notifies the panic
+           handler, and returns a zeroed value. */
+#if STRATA_HAS_TCC && defined(_WIN32)
+        if (profile && profile->panicUnwind)
+        {
+            BuiltCModule wm = BuildEntryWrappersC(mod, diag, arena);
+
+            if (wm.source && !DiagHasErrors(diag))
+            {
+                TccJit* wj = (TccJit*)malloc(sizeof(TccJit));
+                TccJitInit(wj);
+
+                if (allocFn || freeFn)
+                {
+                    TccJitSetAllocFree(wj, allocFn, freeFn);
+                }
+
+                char* werr = NULL;
+
+                if (TccJitLoad(wj, &wm, &werr))
+                {
+                    for (size_t i = 0; i < mod->functions.count; i++)
+                    {
+                        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
+
+                        if (fn->isExtern)
+                        {
+                            continue;
+                        }
+
+                        uint64_t addr = LLVMJitGetAddress(jit, fn->mangledName);
+
+                        if (addr)
+                        {
+                            TccJitAddSymbol(wj, fn->mangledName, (void*)(uintptr_t)addr);
+                        }
+                    }
+
+                    handle->entryWrapperJit = wj;
+                }
+                else
+                {
+                    free(werr);
+                    TccJitDestroy(wj);
+                    free(wj);
+                }
+            }
+
+            BuiltCModuleDispose(&wm);
+        }
+#endif
         return handle;
     }
 #endif
@@ -821,7 +889,51 @@ extern "C"
 #if STRATA_HAS_LLVM
         if (jit->kind == STRATA_JIT_KIND_LLVM)
         {
-            return (void*)(uintptr_t)LLVMJitGetAddress((LLVMJit*)jit->backend, name);
+            /* Panic unwinding on: prefer the TCC-compiled boundary wrapper
+               (unwind info registered, so a host panic handler's longjmp can
+               cross it), then the JIT'd wrapper, then the raw function. */
+#if STRATA_HAS_TCC && defined(_WIN32)
+            if (jit->entryWrapperJit && jit->profile.panicUnwind)
+            {
+                size_t needed = strlen(name) + 16;
+                char* wrapped = (char*)malloc(needed);
+
+                if (wrapped)
+                {
+                    snprintf(wrapped, needed, "__strata_entry_%s", name);
+                    void* addr = TccJitGetAddress((TccJit*)jit->entryWrapperJit, wrapped);
+                    free(wrapped);
+
+                    if (addr)
+                    {
+                        return addr;
+                    }
+                }
+            }
+#endif
+
+            LLVMJit* llj = (LLVMJit*)jit->backend;
+
+            if (jit->profile.panicUnwind)
+            {
+                size_t needed = strlen(name) + 16;
+                char* wrapped = (char*)malloc(needed);
+                uint64_t addr = 0;
+
+                if (wrapped)
+                {
+                    snprintf(wrapped, needed, "__strata_entry_%s", name);
+                    addr = LLVMJitGetAddress(llj, wrapped);
+                    free(wrapped);
+                }
+
+                if (addr)
+                {
+                    return (void*)(uintptr_t)addr;
+                }
+            }
+
+            return (void*)(uintptr_t)LLVMJitGetAddress(llj, name);
         }
 #endif
         return NULL;
@@ -955,6 +1067,14 @@ extern "C"
                 LLVMJitDestroy((LLVMJit*)jit->backend);
                 free(jit->backend);
             }
+
+#if STRATA_HAS_TCC && defined(_WIN32)
+            if (jit->entryWrapperJit)
+            {
+                TccJitDestroy((TccJit*)jit->entryWrapperJit);
+                free(jit->entryWrapperJit);
+            }
+#endif
 
             for (size_t i = 0; i < jit->llvmExports.count; i++)
             {

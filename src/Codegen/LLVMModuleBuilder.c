@@ -322,7 +322,7 @@ static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
 static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements, bool stackBuffer,
-                                bool borrow);
+                                bool borrow, LLVMValueRef earlySlot);
 static LLVMValueRef AsI64Index(Builder* b, Value v);
 static Value EmitUnary(Builder* b, UnaryExpr* n);
 static Value EmitBinary(Builder* b, BinaryExpr* n);
@@ -539,9 +539,133 @@ static LLVMValueRef StrataPanicFn(Builder* b)
     return b->m_panicFn;
 }
 
+/* Adds an enum (string-named) function attribute such as "noreturn",
+   "returns_twice", or "noinline" to `fn`. */
+static void AttrEnum(Builder* b, LLVMValueRef fn, const char* attrName)
+{
+    unsigned kind = LLVMGetEnumAttributeKindForName(attrName, strlen(attrName));
+    LLVMAttributeRef attr = LLVMCreateEnumAttribute(b->m_ctx, kind, 0);
+    LLVMAddAttributeAtIndex(fn, LLVMAttributeFunctionIndex, attr);
+}
+
+static LLVMValueRef StrataRaiseFn(Builder* b)
+{
+    if (!b->m_raiseFn)
+    {
+        LLVMTypeRef params[1] = {b->m_ptrTy};
+        b->m_raiseFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
+        b->m_raiseFn = LLVMAddFunction(b->m_mod, "__strata_raise", b->m_raiseFnType);
+        AttrEnum(b, b->m_raiseFn, "noreturn");
+    }
+
+    return b->m_raiseFn;
+}
+
+static LLVMValueRef StrataUnwindPushFn(Builder* b)
+{
+    if (!b->m_pushFn)
+    {
+        LLVMTypeRef params[1] = {b->m_ptrTy};
+        b->m_pushFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
+        b->m_pushFn = LLVMAddFunction(b->m_mod, "__strata_unwind_push", b->m_pushFnType);
+    }
+
+    return b->m_pushFn;
+}
+
+static LLVMValueRef StrataUnwindPopFn(Builder* b)
+{
+    if (!b->m_popFn)
+    {
+        LLVMTypeRef params[1] = {b->m_ptrTy};
+        b->m_popFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
+        b->m_popFn = LLVMAddFunction(b->m_mod, "__strata_unwind_pop_to", b->m_popFnType);
+    }
+
+    return b->m_popFn;
+}
+
+static LLVMValueRef StrataUnwindRethrowFn(Builder* b)
+{
+    if (!b->m_rethrowFn)
+    {
+        b->m_rethrowFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), NULL, 0, 0);
+        b->m_rethrowFn = LLVMAddFunction(b->m_mod, "__strata_rethrow", b->m_rethrowFnType);
+        AttrEnum(b, b->m_rethrowFn, "noreturn");
+    }
+
+    return b->m_rethrowFn;
+}
+
+static LLVMValueRef StrataPanicMessageFn(Builder* b)
+{
+    if (!b->m_panicMsgFn)
+    {
+        b->m_panicMsgFnType = LLVMFunctionType(b->m_ptrTy, NULL, 0, 0);
+        b->m_panicMsgFn = LLVMAddFunction(b->m_mod, "__strata_panic_message", b->m_panicMsgFnType);
+    }
+
+    return b->m_panicMsgFn;
+}
+
+/* The host CRT's setjmp (mapped to _setjmp by LLVMJit.c). Declared with
+   returns_twice so the optimizer keeps memory state conservative around it,
+   exactly like a C frontend compiling <setjmp.h> usage. The mingw-w64 x64
+   CRT variant takes an extra frame-address argument; pass null (generated
+   frames have no SEH frame for it to track). */
+static LLVMValueRef StrataSetJmpFn(Builder* b)
+{
+    if (!b->m_setjmpFn)
+    {
+#if defined(_WIN32) && defined(__GNUC__) && !defined(__aarch64__)
+        LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
+        b->m_setjmpFnType = LLVMFunctionType(I32Ty(b), params, 2, 0);
+#else
+        LLVMTypeRef params[1] = {b->m_ptrTy};
+        b->m_setjmpFnType = LLVMFunctionType(I32Ty(b), params, 1, 0);
+#endif
+        b->m_setjmpFn = LLVMAddFunction(b->m_mod, "__strata_setjmp", b->m_setjmpFnType);
+        AttrEnum(b, b->m_setjmpFn, "returns_twice");
+    }
+
+    return b->m_setjmpFn;
+}
+
+static LLVMValueRef BuildSetJmpCall(Builder* b, LLVMValueRef frame, const char* name)
+{
+    StrataSetJmpFn(b);
+
+#if defined(_WIN32) && defined(__GNUC__) && !defined(__aarch64__)
+    LLVMValueRef sargs[2] = {frame, LLVMConstNull(b->m_ptrTy)};
+    return LLVMBuildCall2(b->m_builder, b->m_setjmpFnType, b->m_setjmpFn, sargs, 2, name);
+#else
+    LLVMValueRef sargs[1] = {frame};
+    return LLVMBuildCall2(b->m_builder, b->m_setjmpFnType, b->m_setjmpFn, sargs, 1, name);
+#endif
+}
+
+/* The unwind frame struct shared with PanicUnwind.c: a CRT jmp_buf storage
+   area (62 x i64 covers every platform), the chain pointer, and a pad slot
+   keeping the total size a multiple of 16 (496 + 8 + 8 = 512), so a
+   16-aligned alloca also 16-aligns the jmp_buf at offset 0. */
+static LLVMTypeRef UnwindFrameTy(Builder* b)
+{
+    if (!b->m_unwindFrameTy)
+    {
+        LLVMTypeRef fields[3] = {LLVMArrayType(I64Ty(b), 62), b->m_ptrTy, I64Ty(b)};
+        b->m_unwindFrameTy = LLVMStructTypeInContext(b->m_ctx, fields, 3, 0);
+    }
+
+    return b->m_unwindFrameTy;
+}
+
 /* Emits a call to strata_panic(message) followed by an unreachable terminator.
    Shared by bounds checks, null-extern-call checks, and any other runtime
-   abort the profile emits. The current block must be terminated. */
+   abort the profile emits. The current block must be terminated.
+   In JIT unwind mode the call goes to __strata_raise instead: it longjmps to
+   the innermost unwind frame (a landing pad or the entry wrapper), so the
+   stack is unwound and owning locals are dropped before the host's panic
+   handler runs. The unreachable stays — __strata_raise is noreturn. */
 static void EmitPanic(Builder* b, const char* message)
 {
     size_t len = strlen(message);
@@ -558,6 +682,15 @@ static void EmitPanic(Builder* b, const char* message)
     LLVMValueRef msgGep = LLVMConstGEP2(strType, g, idx, 2);
 
     LLVMValueRef args[1] = {msgGep};
+
+    if (b->m_panicUnwind)
+    {
+        StrataRaiseFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_raiseFnType, b->m_raiseFn, args, 1, "");
+        LLVMBuildUnreachable(b->m_builder);
+        return;
+    }
+
     StrataPanicFn(b);
     LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args, 1, "");
     LLVMBuildUnreachable(b->m_builder);
@@ -650,6 +783,17 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
     {
         LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, slot), "adrop");
 
+        /* Guard the whole array drop on the buffer pointer: a moved-out or
+           never-built slot holds {null, 0} and must not free(null) or walk
+           elements of a null buffer (mirrors the box path's null guard). */
+        LLVMBasicBlockRef doArrBB = NewBb(b, "adrop.guard.do");
+        LLVMBasicBlockRef endArrBB = NewBb(b, "adrop.guard.end");
+        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, dataPtr, LLVMConstNull(b->m_ptrTy), "adnull");
+        LLVMBuildCondBr(b->m_builder, isNull, endArrBB, doArrBB);
+        b->m_terminated = true;
+
+        PositionAtEnd(b, doArrBB);
+
         if (td.arrayInner && IsOwningType(td.arrayInner))
         {
             LLVMValueRef lenVal = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, slot), "adlen");
@@ -689,6 +833,9 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
             LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), ArrayDataPtr(b, slot));
             LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), ArrayLenPtr(b, slot));
         }
+
+        Br(b, endArrBB);
+        PositionAtEnd(b, endArrBB);
 
         return;
     }
@@ -807,10 +954,12 @@ static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* struct
     LLVMValueRef savedCurFn = b->m_curFn;
     LLVMBasicBlockRef savedEntryBlock = b->m_entryBlock;
     LLVMValueRef savedEntryAllocaPt = b->m_entryAllocaPt;
+    LLVMValueRef savedPadFrame = b->m_curPadFrame;
     bool savedTerminated = b->m_terminated;
     LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->m_builder);
 
     b->m_curFn = fn;
+    b->m_curPadFrame = NULL;
 
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "entry");
     PositionAtEnd(b, entry);
@@ -843,6 +992,7 @@ static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* struct
     b->m_curFn = savedCurFn;
     b->m_entryBlock = savedEntryBlock;
     b->m_entryAllocaPt = savedEntryAllocaPt;
+    b->m_curPadFrame = savedPadFrame;
     b->m_terminated = savedTerminated;
 
     if (savedInsertBlock)
@@ -873,6 +1023,16 @@ static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
     EmitStructDropFnBody(b, fn, structName);
 
     return fn;
+}
+
+static void RegisterOwningLocal(Builder* b, OwnLocal* ol)
+{
+    VecPush(&b->m_owningLocals, ol);
+
+    if (b->m_owningLocals.count > b->m_owningLocalsMax)
+    {
+        b->m_owningLocalsMax = b->m_owningLocals.count;
+    }
 }
 
 static void EmitDrops(Builder* b, size_t fromIndex)
@@ -952,6 +1112,83 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     StrMapPut(&b->m_funcs, f->mangledName, info);
 }
 
+/* True if any statement in `n` declares an owning local (box<T>/string/T[]),
+   which registers an OwnLocal whose slot a panic landing pad must drop.
+   Mirrors the two registration sites in the var-decl emitter; rest-param
+   handling lives in FunctionNeedsUnwindPad below. */
+static bool StmtNeedsUnwindPad(Node* n)
+{
+    if (!n)
+    {
+        return false;
+    }
+
+    switch (n->kind)
+    {
+    case NodeVarDecl:
+        return IsOwningType(AsNode(VarDeclStmt, n)->type.name);
+
+    case NodeBlock:
+    {
+        Block* blk = AsNode(Block, n);
+
+        for (size_t i = 0; i < blk->statements.count; i++)
+        {
+            if (StmtNeedsUnwindPad((Node*)VecGet(&blk->statements, i)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    case NodeIf:
+        return StmtNeedsUnwindPad(AsNode(IfStmt, n)->thenBranch) || StmtNeedsUnwindPad(AsNode(IfStmt, n)->elseBranch);
+
+    case NodeWhile:
+        return StmtNeedsUnwindPad(AsNode(WhileStmt, n)->body);
+
+    case NodeFor:
+        return StmtNeedsUnwindPad(AsNode(ForStmt, n)->init) || StmtNeedsUnwindPad(AsNode(ForStmt, n)->body);
+
+    default:
+        return false;
+    }
+}
+
+/* A function needs a panic landing pad iff it holds an owning local at any
+   point: an owned (non-ref) box/array/rest parameter (dropped at return), or
+   an owning var decl anywhere in the body. */
+static bool FunctionNeedsUnwindPad(const FunctionDecl* f)
+{
+    for (size_t i = 0; i < f->params.count; i++)
+    {
+        ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
+
+        if (p->mod == ModNone && IsOwningType(p->type.name))
+        {
+            return true;
+        }
+    }
+
+    return StmtNeedsUnwindPad(f->body);
+}
+
+/* Emits __strata_unwind_pop_to(frame) — the normal-return counterpart of
+   the landing pad's pop, keeping the TLS unwind chain free of stale frames. */
+static void EmitUnwindFramePop(Builder* b)
+{
+    if (!b->m_curPadFrame)
+    {
+        return;
+    }
+
+    LLVMValueRef popArgs[1] = {b->m_curPadFrame};
+    StrataUnwindPopFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_popFnType, b->m_popFn, popArgs, 1, "");
+}
+
 static void DefineFunction(Builder* b, const FunctionDecl* f)
 {
     if (!f->body)
@@ -964,6 +1201,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_curRet = Resolve(b, &f->returnType);
     b->m_loops.count = 0;
     b->m_owningLocals.count = 0;
+    b->m_owningLocalsMax = 0;
+    b->m_curPadFrame = NULL;
 
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
     b->m_curFn = info ? info->function : NULL;
@@ -972,6 +1211,33 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_entryBlock = entry;
     b->m_entryAllocaPt = NULL;
     LLVMPositionBuilderAtEnd(b->m_builder, entry);
+
+    /* Panic-unwind prologue: install an unwind frame (alloca + TLS push +
+       setjmp). A panic longjmps here; the landing pad (uw.pad) drops every
+       owning local of the frame, pops the frame, and re-throws to the
+       caller's pad (or the entry wrapper at the host boundary). */
+    LLVMBasicBlockRef padBB = NULL;
+    LLVMValueRef frame = NULL;
+
+    if (b->m_panicUnwind && FunctionNeedsUnwindPad(f))
+    {
+        padBB = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "uw.pad");
+        LLVMBasicBlockRef bodyBB = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "uw.body");
+
+        frame = LLVMBuildAlloca(b->m_builder, UnwindFrameTy(b), "uw.frame");
+        LLVMSetAlignment(frame, 16);
+        b->m_curPadFrame = frame;
+
+        LLVMValueRef pargs[1] = {frame};
+        StrataUnwindPushFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_pushFnType, b->m_pushFn, pargs, 1, "");
+
+        LLVMValueRef sj = BuildSetJmpCall(b, frame, "uw.sj");
+        LLVMValueRef isPanic = LLVMBuildICmp(b->m_builder, LLVMIntNE, sj, LLVMConstInt(I32Ty(b), 0, 0), "uw.isp");
+        LLVMBuildCondBr(b->m_builder, isPanic, padBB, bodyBB);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, bodyBB);
+    }
 
     for (size_t i = 0; i < f->params.count; i++)
     {
@@ -1015,7 +1281,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
                 ol->slot = sym->value;
                 ol->td = typeDesc;
                 ol->stackBuffer = p->isVarargRest;
-                VecPush(&b->m_owningLocals, ol);
+                RegisterOwningLocal(b, ol);
             }
         }
         else
@@ -1046,6 +1312,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     if (!b->m_terminated)
     {
         EmitDrops(b, 0);
+        EmitUnwindFramePop(b);
 
         if (b->m_curRet.isVoid)
         {
@@ -1055,6 +1322,168 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         {
             LLVMBuildRet(b->m_builder, ZeroOf(b->m_curRet));
         }
+    }
+
+    /* Landing pad: reached via longjmp from a panic anywhere in the call
+       tree below this frame. Drop every owning local the function has ever
+       registered — not just the ones still in lexical scope at the function
+       end (m_owningLocals.count is scope-truncated by block exits, so the
+       pad uses the high-water mark). Re-dropping is safe: drops null their
+       slots and scope-exit drops already nulled out-of-scope ones. Then pop
+       this frame off the TLS chain and re-throw to the caller's pad. */
+    if (padBB)
+    {
+        PositionAtEnd(b, padBB);
+
+        size_t savedOwningCount = b->m_owningLocals.count;
+        b->m_owningLocals.count = b->m_owningLocalsMax;
+        EmitDrops(b, 0);
+        b->m_owningLocals.count = savedOwningCount;
+
+        LLVMBasicBlockRef popBB = NewBb(b, "uw.pop");
+        Br(b, popBB);
+        PositionAtEnd(b, popBB);
+
+        LLVMValueRef popArgs[1] = {frame};
+        StrataUnwindPopFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_popFnType, b->m_popFn, popArgs, 1, "");
+        StrataUnwindRethrowFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_rethrowFnType, b->m_rethrowFn, NULL, 0, "");
+        LLVMBuildUnreachable(b->m_builder);
+        b->m_terminated = true;
+    }
+
+    b->m_curPadFrame = NULL;
+}
+
+/* Emits the host-boundary wrapper `__strata_entry_<mangled>` for a non-extern
+   function. Same signature as the real function; strataJitGetFunction hands
+   hosts the wrapper when panicUnwind is on. The wrapper installs the
+   outermost unwind frame and is the "last known good location": a panic
+   unwinds (frame by frame, each pad dropping its owning locals) back to this
+   setjmp; the wrapper then restores the TLS chain, notifies the host's panic
+   handler — which may longjmp safely, state already restored — and returns a
+   zeroed value of the return type if the handler returns.
+   noinline + disable-tail-calls keep the wrapper's frame alive (a tail call
+   into the real function would replace it while the setjmp target must stay
+   valid). */
+static void EmitEntryWrapper(Builder* b, const FunctionDecl* f)
+{
+    FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
+
+    if (!info || !info->function)
+    {
+        return;
+    }
+
+    LLVMValueRef savedCurFn = b->m_curFn;
+    LLVMBasicBlockRef savedEntryBlock = b->m_entryBlock;
+    LLVMValueRef savedEntryAllocaPt = b->m_entryAllocaPt;
+    LLVMValueRef savedPadFrame = b->m_curPadFrame;
+    bool savedTerminated = b->m_terminated;
+    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->m_builder);
+
+    char* name = arena_format(b->m_arena, "__strata_entry_%s", f->mangledName);
+    LLVMValueRef wrapper = LLVMAddFunction(b->m_mod, name, info->type);
+    AttrEnum(b, wrapper, "noinline");
+    {
+        LLVMAttributeRef a = LLVMCreateStringAttribute(b->m_ctx, "disable-tail-calls", 18, "true", 4);
+        LLVMAddAttributeAtIndex(wrapper, LLVMAttributeFunctionIndex, a);
+    }
+
+    /* On Windows the primary boundary is the TCC-compiled wrapper (TCC
+       registers unwind info via RtlAddFunctionTable). This JIT'd wrapper is
+       the fallback (llvm-only builds, SIMD signatures) — its frames have no
+       registered unwind info, so give it a classic push-rbp prologue on the
+       off chance ntdll's unwind heuristic copes with it. */
+    {
+        LLVMAttributeRef a = LLVMCreateStringAttribute(b->m_ctx, "frame-pointer", 13, "all", 3);
+        LLVMAddAttributeAtIndex(wrapper, LLVMAttributeFunctionIndex, a);
+    }
+
+    b->m_curFn = wrapper;
+    b->m_curPadFrame = NULL;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, wrapper, "entry");
+    LLVMBasicBlockRef panBB = LLVMAppendBasicBlockInContext(b->m_ctx, wrapper, "uw.boundary");
+    LLVMBasicBlockRef okBB = LLVMAppendBasicBlockInContext(b->m_ctx, wrapper, "uw.call");
+
+    b->m_entryBlock = entry;
+    b->m_entryAllocaPt = NULL;
+    LLVMPositionBuilderAtEnd(b->m_builder, entry);
+
+    LLVMValueRef frame = LLVMBuildAlloca(b->m_builder, UnwindFrameTy(b), "uw.frame");
+    LLVMSetAlignment(frame, 16);
+
+    LLVMValueRef pargs[1] = {frame};
+    StrataUnwindPushFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_pushFnType, b->m_pushFn, pargs, 1, "");
+
+    LLVMValueRef sj = BuildSetJmpCall(b, frame, "uw.sj");
+    LLVMValueRef isPanic = LLVMBuildICmp(b->m_builder, LLVMIntNE, sj, LLVMConstInt(I32Ty(b), 0, 0), "uw.isp");
+    LLVMBuildCondBr(b->m_builder, isPanic, panBB, okBB);
+
+    /* Normal path: forward the args unchanged, restore the TLS chain, return
+       the real result. */
+    LLVMPositionBuilderAtEnd(b->m_builder, okBB);
+
+    LLVMValueRef* args = NULL;
+    size_t pcount = f->params.count;
+
+    if (pcount > 0)
+    {
+        args = (LLVMValueRef*)arena_alloc(b->m_arena, pcount * sizeof(LLVMValueRef));
+    }
+
+    for (size_t i = 0; i < pcount; i++)
+    {
+        args[i] = LLVMGetParam(wrapper, (unsigned)i);
+    }
+
+    LLVMValueRef result
+        = LLVMBuildCall2(b->m_builder, info->type, info->function, args, (unsigned)pcount, "uw.ret");
+    StrataUnwindPopFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_popFnType, b->m_popFn, pargs, 1, "");
+
+    if (info->returnType.isVoid)
+    {
+        LLVMBuildRetVoid(b->m_builder);
+    }
+    else
+    {
+        LLVMBuildRet(b->m_builder, result);
+    }
+
+    /* Panic boundary: TLS chain restored first so the host handler may
+       longjmp or re-enter the JIT freely; then notify, then zero-return. */
+    LLVMPositionBuilderAtEnd(b->m_builder, panBB);
+    StrataUnwindPopFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_popFnType, b->m_popFn, pargs, 1, "");
+
+    StrataPanicMessageFn(b);
+    LLVMValueRef msg = LLVMBuildCall2(b->m_builder, b->m_panicMsgFnType, b->m_panicMsgFn, NULL, 0, "uw.msg");
+    LLVMValueRef nargs[1] = {msg};
+    StrataPanicFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, nargs, 1, "");
+
+    if (info->returnType.isVoid)
+    {
+        LLVMBuildRetVoid(b->m_builder);
+    }
+    else
+    {
+        LLVMBuildRet(b->m_builder, ZeroOf(info->returnType));
+    }
+
+    b->m_curFn = savedCurFn;
+    b->m_entryBlock = savedEntryBlock;
+    b->m_entryAllocaPt = savedEntryAllocaPt;
+    b->m_curPadFrame = savedPadFrame;
+    b->m_terminated = savedTerminated;
+
+    if (savedInsertBlock)
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, savedInsertBlock);
     }
 }
 
@@ -2508,7 +2937,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 VecPush(&tail, VecGet(&n->args, i));
             }
 
-            Value arr = EmitArrayFromNodes(b, elemName, &tail, true, restParam->mod == ModRef);
+            Value arr = EmitArrayFromNodes(b, elemName, &tail, true, restParam->mod == ModRef, NULL);
 
             LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "rest");
             LLVMBuildStore(b->m_builder, arr.value, slot);
@@ -2649,7 +3078,14 @@ static Value EmitCall(Builder* b, CallExpr* n)
    stack-backed (stackBuffer=true): the buffer is an alloca in the entry
    block. borrow=true (ref rest) stores owning element pointers without
    nulling/moving the sources. */
-static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements, bool stackBuffer, bool borrow)
+/* Builds a T[] value from its element expressions. When `earlySlot` is
+   non-NULL (JIT unwind mode, var-decl initializer), the {ptr,len} struct is
+   stored into the slot BEFORE the elements are evaluated, and the backing
+   buffer is zero-filled first: a panic mid-construction then finds the slot
+   registered and holding the partial array, so the landing pad frees the
+   buffer and the elements built so far (unbuilt owning slots read null). */
+static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* elements, bool stackBuffer, bool borrow,
+                                LLVMValueRef earlySlot)
 {
     TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)elementType});
 
@@ -2687,6 +3123,21 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
             LLVMValueRef allocArgs[1] = {totalBytes};
             StrataAllocFn(b);
             dataPtr = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "arrbuf");
+        }
+
+        if (earlySlot)
+        {
+            /* Zero the buffer so the landing pad's element loop reads null
+               owning pointers for slots the panic left unbuilt. */
+            LLVMValueRef elemSize = SizeOfConst(b, elemTy);
+            LLVMValueRef countConst = LLVMConstInt(I64Ty(b), (unsigned long long)count, 0);
+            LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, elemSize, countConst, "zbytes");
+            LLVMBuildMemSet(b->m_builder, dataPtr, LLVMConstInt(LLVMInt8TypeInContext(b->m_ctx), 0, 0), totalBytes, 8);
+
+            LLVMValueRef partial = LLVMGetUndef(ArrayStructType(b));
+            partial = LLVMBuildInsertValue(b->m_builder, partial, dataPtr, 0, "zptri");
+            partial = LLVMBuildInsertValue(b->m_builder, partial, countConst, 1, "zleni");
+            LLVMBuildStore(b->m_builder, partial, earlySlot);
         }
 
         LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
@@ -2805,7 +3256,7 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
 
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 {
-    return EmitArrayFromNodes(b, n->elementType, &n->elements, false, false);
+    return EmitArrayFromNodes(b, n->elementType, &n->elements, false, false, NULL);
 }
 
 static Value EmitStructInit(Builder* b, StructInitExpr* n)
@@ -3118,6 +3569,7 @@ static void EmitStmt(Builder* b, Node* n)
         }
 
         EmitDrops(b, 0);
+        EmitUnwindFramePop(b);
 
         if (r->value)
         {
@@ -3154,12 +3606,33 @@ static void EmitStmt(Builder* b, Node* n)
         {
             LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "arr");
 
+            /* In unwind mode a panic can reach the landing pad before this
+               decl's initializer ran; null the slot so the pad's drop is a
+               no-op instead of freeing an uninitialized stack value. */
+            if (b->m_panicUnwind)
+            {
+                LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), slot);
+            }
+
             if (varDecl->init)
             {
                 if (varDecl->init->kind == NodeArrayInit)
                 {
-                    LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, varDecl->init)).value;
-                    LLVMBuildStore(b->m_builder, arr, slot);
+                    if (b->m_panicUnwind)
+                    {
+                        /* Store the buffer into the slot BEFORE evaluating
+                           elements: a panic mid-literal finds the partial
+                           array registered, and the pad frees the buffer plus
+                           the elements built so far (unbuilt owning slots are
+                           zero-filled). */
+                        EmitArrayFromNodes(b, AsNode(ArrayInitExpr, varDecl->init)->elementType,
+                                           &AsNode(ArrayInitExpr, varDecl->init)->elements, false, false, slot);
+                    }
+                    else
+                    {
+                        LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, varDecl->init)).value;
+                        LLVMBuildStore(b->m_builder, arr, slot);
+                    }
                 }
                 else
                 {
@@ -3192,7 +3665,7 @@ static void EmitStmt(Builder* b, Node* n)
             OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
             ol->slot = slot;
             ol->td = typeDesc;
-            VecPush(&b->m_owningLocals, ol);
+            RegisterOwningLocal(b, ol);
 
             return;
         }
@@ -3200,6 +3673,14 @@ static void EmitStmt(Builder* b, Node* n)
         if (typeDesc.isBox)
         {
             LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "box");
+
+            /* Unwind mode: null the slot before evaluating the initializer so
+               a panic inside it lets the landing pad drop a no-op instead of
+               an uninitialized pointer. */
+            if (b->m_panicUnwind)
+            {
+                LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
+            }
 
             if (varDecl->init)
             {
@@ -3258,7 +3739,7 @@ static void EmitStmt(Builder* b, Node* n)
             OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
             ol->slot = slot;
             ol->td = typeDesc;
-            VecPush(&b->m_owningLocals, ol);
+            RegisterOwningLocal(b, ol);
 
             return;
         }
@@ -3464,6 +3945,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     b->m_jitMode = jitMode;
     b->m_boundsCheck = !profile || profile->boundsCheck;
     b->m_nullExternCheck = !profile || profile->nullExternCall;
+    b->m_panicUnwind = jitMode && (!profile || profile->panicUnwind);
     b->m_ctx = LLVMContextCreate();
     b->m_mod = LLVMModuleCreateWithNameInContext(module->name, b->m_ctx);
     b->m_builder = LLVMCreateBuilderInContext(b->m_ctx);
@@ -3629,6 +4111,24 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         DefineFunction(b, f);
     }
 
+    /* JIT unwind mode: emit the host-boundary wrapper for every non-extern
+       function. strataJitGetFunction resolves __strata_entry_<name> and
+       hands the host the wrapper. */
+    if (b->m_panicUnwind)
+    {
+        for (size_t i = 0; i < module->functions.count; i++)
+        {
+            FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
+
+            if (f->isExtern)
+            {
+                continue;
+            }
+
+            EmitEntryWrapper(b, f);
+        }
+    }
+
     /* Emit __strata_module_init + __strata_module_teardown when the module has
        owning globals (box<T> / T[]) that need runtime initialization.  String
        globals are excluded — they already point at a string-constant global
@@ -3659,6 +4159,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             b->m_terminated = false;
             b->m_loops.count = 0;
             b->m_owningLocals.count = 0;
+            b->m_owningLocalsMax = 0;
+            b->m_curPadFrame = NULL;
             LLVMBasicBlockRef initEntry = LLVMAppendBasicBlockInContext(b->m_ctx, initFn, "entry");
             b->m_entryBlock = initEntry;
             b->m_entryAllocaPt = NULL;
@@ -3729,6 +4231,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             b->m_terminated = false;
             b->m_loops.count = 0;
             b->m_owningLocals.count = 0;
+            b->m_owningLocalsMax = 0;
+            b->m_curPadFrame = NULL;
             LLVMBasicBlockRef tdEntry = LLVMAppendBasicBlockInContext(b->m_ctx, tdFn, "entry");
             b->m_entryBlock = tdEntry;
             b->m_entryAllocaPt = NULL;
@@ -3824,6 +4328,19 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     b.m_freeFnType = NULL;
     b.m_panicFn = NULL;
     b.m_panicFnType = NULL;
+    b.m_raiseFn = NULL;
+    b.m_raiseFnType = NULL;
+    b.m_pushFn = NULL;
+    b.m_pushFnType = NULL;
+    b.m_popFn = NULL;
+    b.m_popFnType = NULL;
+    b.m_rethrowFn = NULL;
+    b.m_rethrowFnType = NULL;
+    b.m_panicMsgFn = NULL;
+    b.m_panicMsgFnType = NULL;
+    b.m_setjmpFn = NULL;
+    b.m_setjmpFnType = NULL;
+    b.m_unwindFrameTy = NULL;
     b.m_strdupFn = NULL;
     b.m_strdupFnType = NULL;
     b.m_arrayType = NULL;
