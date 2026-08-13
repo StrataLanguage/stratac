@@ -49,8 +49,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
 {
     reg->count = 0;
 
-    /* Complete struct definitions first: a full body wins over a forward decl,
-       and the first definition of a given name is kept. */
+    /* Structs */
     for (size_t i = 0; i < m->structs.count; i++)
     {
         StructDecl* sd = (StructDecl*)VecGet((Vec*)&m->structs, i);
@@ -71,8 +70,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->fields = sd->fields;
     }
 
-    /* Forward declarations for structs that never received a body: they stay
-       incomplete (usable as an opaque reference, but not instantiable). */
+    /* Forward declarations for structs (incomplete types) */
     for (size_t i = 0; i < m->structs.count; i++)
     {
         StructDecl* sd = (StructDecl*)VecGet((Vec*)&m->structs, i);
@@ -107,7 +105,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->extendsFrom = hd->extendsName;
     }
 
-    /* Fixpoint: a struct is owning if it has a box<T> field or an owning field. */
+    /* a struct is owning if it has a box<T> field or an owning field. */
     bool changed = true;
 
     while (changed)

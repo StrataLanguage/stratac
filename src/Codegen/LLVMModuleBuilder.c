@@ -2335,9 +2335,7 @@ static Value EmitCopyBuiltin(Builder* b, CallExpr* n)
 }
 
 /* Applies C default argument promotions to a value passed through a bare
-   extern `...` (C varargs): bool and small integers widen to int, float
-   widens to double. Mirrors what the C compiler does implicitly, so the
-   LLVM and C backends stay in parity. */
+   extern varargs */
 static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
 {
     LLVMTypeRef ty = v.typeDesc.type;
