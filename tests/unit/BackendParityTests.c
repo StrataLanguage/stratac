@@ -973,3 +973,40 @@ STRATA_TEST(llvm_and_tcc_local_owning_array_element_move_parity)
                 "}\n",
                 7);
 }
+
+STRATA_TEST(llvm_and_tcc_copy_box_string_deep_parity)
+{
+    /* copy(box<string>) must duplicate the inner string: the copied box owns
+       a fresh buffer. An aliasing copy double-frees the shared string when
+       both boxes drop, crashing both backends. */
+    CheckParity("int entry() {\n"
+                "  box<string> a = \"hello\";\n"
+                "  box<string> b = copy(a);\n"
+                "  return 7;\n"
+                "}\n",
+                7);
+}
+
+STRATA_TEST(llvm_and_tcc_copy_string_array_deep_parity)
+{
+    /* copy(string[]) must duplicate each element string. The old C backend
+       flat-copied elements, so the copied array aliased the source's strings
+       and double-freed on drop. */
+    CheckParity("int entry() {\n"
+                "  string[] a = { \"x\", \"yy\" };\n"
+                "  string[] b = copy(a);\n"
+                "  return (int)b.length;\n"          /* 2 */
+                "}\n",
+                2);
+}
+
+STRATA_TEST(llvm_and_tcc_copy_box_string_array_deep_parity)
+{
+    /* copy(box<string>[]) must duplicate each box AND its inner string. */
+    CheckParity("int entry() {\n"
+                "  box<string>[] a = { \"alpha\", \"beta\" };\n"
+                "  box<string>[] b = copy(a);\n"
+                "  return (int)b.length;\n"          /* 2 */
+                "}\n",
+                2);
+}

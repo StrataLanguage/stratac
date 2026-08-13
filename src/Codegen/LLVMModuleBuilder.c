@@ -2279,8 +2279,12 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         }
         else
         {
-            LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv");
-            LLVMBuildStore(b->m_builder, loaded, heap);
+            /* Inner is not a registered struct: a scalar, or a bare owning
+               value such as string (box<string>), another box, or an array.
+               Deep-copy it. */
+            Value innerVal = ValueMake(LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv"), innerTd);
+            Value copied = EmitCopyValue(b, innerVal, innerTd);
+            LLVMBuildStore(b->m_builder, copied.value, heap);
         }
 
         return ValueMake(heap, td);

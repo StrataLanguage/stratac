@@ -1045,57 +1045,83 @@ static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
     }
 }
 
-/* Emits copy(arg) as a GNU statement-expression returning a deep copy of an
-   owning value (string/box<T>/T[]).  For box<T> and T[] the copy is shallow
-   at the element level (owning inner fields are duplicated, not recursively
-   copied — use box<owning-struct> or a separate copy call on fields). */
-static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
+/* Deep copy */
+static void CEmitCopyText(CEmitter* emitter, const char* type, const char* accessor)
 {
-    const Node* arg0 = (const Node*)VecGet(&call->args, 0);
-    const char* type = ExprType(emitter, arg0);
-
     if (strcmp(type, "string") == 0)
     {
         SbPuts(&emitter->out, "strata_strdup(");
-        CEmitExpr(emitter, arg0);
+        SbPuts(&emitter->out, accessor);
         SbPutc(&emitter->out, ')');
         return;
     }
 
-    /* box<T>: allocate a new inner value, shallow-copy the pointee. */
-    if (IsOwningType(type) && strcmp(type, "string") != 0 && !IsArrayType(type))
+    if (IsOwningType(type) && !IsArrayType(type))
     {
         const char* inner = OwningInnerCStr(emitter->arena, type);
         const char* innerC = TypeNameC(emitter, inner);
+        char* innerAccessor = arena_format(emitter->arena, "(*%s)", accessor);
+
         SbPuts(&emitter->out, "({ ");
         SbPuts(&emitter->out, innerC);
         SbPuts(&emitter->out, " *_c = strata_alloc(sizeof(");
         SbPuts(&emitter->out, innerC);
-        SbPuts(&emitter->out, ")); *_c = *");
-        CEmitExpr(emitter, arg0);
+        SbPuts(&emitter->out, ")); *_c = ");
+        CEmitCopyText(emitter, inner, innerAccessor);
         SbPuts(&emitter->out, "; _c; })");
         return;
     }
 
-    /* T[]: allocate a new buffer and copy every element. */
     if (IsArrayType(type))
     {
         Str innerRaw = ArrayInnerStr(type);
         const char* elemType = StrNew(emitter->arena, innerRaw.data, innerRaw.len).data;
         const char* elemC = TypeNameC(emitter, elemType);
+        char* elemAccessor = arena_format(emitter->arena, "((%s*)(%s).data)[_i]", elemC, accessor);
 
         SbPuts(&emitter->out, "({ strata__arr _c; _c.len = (");
-        CEmitExpr(emitter, arg0);
+        SbPuts(&emitter->out, accessor);
         SbPuts(&emitter->out, ").len; _c.data = strata_alloc(_c.len * sizeof(");
         SbPuts(&emitter->out, elemC);
         SbPuts(&emitter->out, ")); { unsigned long long _i; for (_i = 0; _i < _c.len; _i++) ((");
         SbPuts(&emitter->out, elemC);
-        SbPuts(&emitter->out, "*)_c.data)[_i] = ((");
-        SbPuts(&emitter->out, elemC);
-        SbPuts(&emitter->out, "*)(");
-        CEmitExpr(emitter, arg0);
-        SbPuts(&emitter->out, ").data)[_i]; } _c; })");
+        SbPuts(&emitter->out, "*)_c.data)[_i] = ");
+
+        if (IsOwningType(elemType))
+        {
+            CEmitCopyText(emitter, elemType, elemAccessor);
+        }
+        else
+        {
+            SbPuts(&emitter->out, elemAccessor);
+        }
+
+        SbPuts(&emitter->out, "; } _c; })");
+        return;
     }
+
+    SbPuts(&emitter->out, accessor);
+}
+
+/* Emits copy(arg) returning a deep copy of an owning value
+   (string/box<T>/T[]). */
+static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
+{
+    const Node* arg0 = (const Node*)VecGet(&call->args, 0);
+    const char* type = ExprType(emitter, arg0);
+
+    /* Capture the source expression's C text so the recursive copy below can
+       reference it (a nested statement-expression references it in-place). */
+    Sb saved = emitter->out;
+    Sb tmp;
+    SbInit(&tmp);
+    emitter->out = tmp;
+    CEmitExpr(emitter, arg0);
+    tmp = emitter->out;
+    emitter->out = saved;
+
+    char* srcText = SbFinish(&tmp, emitter->arena);
+    CEmitCopyText(emitter, type, srcText);
 }
 
 static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai);
