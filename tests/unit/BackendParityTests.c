@@ -929,3 +929,47 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_array_push_parity)
                 "}\n",
                 30);
 }
+
+STRATA_TEST(llvm_and_tcc_box_string_content_assign_parity)
+{
+    /* Content-assigning a string literal into an existing box<string>
+       (`box<string> = "x"`) must drop the old inner value in place and
+       store a freshly owned copy — not free the entire box, and not store a
+       raw pointer. The buggy C backend emitted `*box = *"goodbye"` (the
+       literal's first character), corrupting the inner pointer to 0x67 so
+       teardown crashed freeing it; the buggy LLVM backend dropped the whole
+       box. Both backends must run and drop cleanly. */
+    CheckParity("box<string> g = \"hi\";\n"
+                "int entry() {\n"
+                "  g = \"goodbye\";\n"
+                "  return 42;\n"
+                "}\n",
+                42);
+}
+
+STRATA_TEST(llvm_and_tcc_box_string_array_element_content_assign_parity)
+{
+    /* The same content-assign through a global box<string>[] element — the
+       exact box_demo crash: element content-assigned, dropped at teardown
+       without corruption or freeing the box allocation itself. */
+    CheckParity("box<string>[] g = { \"hi\" };\n"
+                "int entry() {\n"
+                "  g[0] = \"goodbye\";\n"
+                "  return 7;\n"
+                "}\n",
+                7);
+}
+
+STRATA_TEST(llvm_and_tcc_local_owning_array_element_move_parity)
+{
+    /* Moving an owning element out of a LOCAL array (`string s = arr[0]`)
+       steals the pointer and must null the source slot, so the array drop
+       skips it — no double-free on either backend. */
+    CheckParity("int entry() {\n"
+                "  string[] arr = { \"alpha\", \"beta\", \"gamma\" };\n"
+                "  string s = arr[0];\n"
+                "  string s2 = arr[2];\n"
+                "  return 7;\n"
+                "}\n",
+                7);
+}

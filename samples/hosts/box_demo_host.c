@@ -58,6 +58,7 @@ int main(void)
     strataJitAddSymbol(jit, "host_length_sq", (void*)&host_length_sq);
     strataJitAddSymbol(jit, "get_entity", (void*)&get_entity);
     strataJitAddSymbol(jit, "print_entity_name", (void*)&print_entity_name);
+    strataJitAddSymbol(jit, "printf", (void*)&printf);
 
     float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
 

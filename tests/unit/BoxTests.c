@@ -810,6 +810,28 @@ STRATA_TEST(box_global_returned_is_an_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(box_string_array_global_element_moved_to_local_is_an_error)
+{
+    /* Moving an owning element out of a global array must be rejected, even
+       when the element is a box<string> that auto-derefs to string. This
+       exercises the transitive global-root check across globals + arrays +
+       the boxed string type (box<string> is char**; string is char*). */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "box<string>[] boxStrings = { \"\" };\n"
+        "int entry() { string str = boxStrings[0]; return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is global"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(box_owning_field_linked_list)
 {
     /* A recursive owning struct: box<Node> with a box<Node> next field.

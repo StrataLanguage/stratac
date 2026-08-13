@@ -116,6 +116,8 @@ void take_entity(box<BaseEntity> be)
 {
 }
 
+extern int printf(string fmt, ...);
+
 extern void get_entity(ref Entity outEntity);
 extern void print_entity_name(Entity entity);
 
@@ -130,12 +132,18 @@ void take_name(string name)
 
 void say_hi_to_person(ref Person person)
 {
-    // printf("hello, %s\n", person.name);
+    printf("hello, %s\n", person.name);
 }
+
+box<string>[] globalStringArray = { "hi" };
 
 // Entrypoint
 float entry()
 {
+    printf("globalStringArray[0] = %s\n", globalStringArray[0]);
+    globalStringArray[0] = "goodbye";
+    printf("globalStringArray[0] = %s\n", globalStringArray[0]);
+
     box<Person> bob = { .name = "Bob" };
     take_name(bob.name);
     // bob.name is NULL! oh no.

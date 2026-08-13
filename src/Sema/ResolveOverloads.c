@@ -169,14 +169,24 @@ static bool IsBoxGlobalName(const Resolver* r, const char* name)
     return StrMapGet(&r->m_boxGlobals, name) != NULL;
 }
 
-/* The identifier a dotted move key is rooted in - "holder.gun" -> "holder",
-   "p" -> "p". Used to check the underlying binding (e.g. a ref box<T>
-   param), not just the literal field-access text. */
+/* The identifier a move key is rooted in - "holder.gun" -> "holder",
+   "arr[]" -> "arr", "g.arr[]" -> "g". Used to check the underlying binding
+   (a global, or a ref box<T> param), not just the literal access text, so
+   the move ban applies transitively through struct fields and array
+   elements. */
 static const char* KeyRoot(Arena* arena, const char* key)
 {
     const char* dot = strchr(key, '.');
+    const char* base = dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
 
-    return dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
+    size_t len = strlen(base);
+
+    if (len >= 2 && base[len - 1] == ']' && base[len - 2] == '[')
+    {
+        return arena_strndup(arena, base, len - 2);
+    }
+
+    return base;
 }
 
 /* Marks every proper dotted prefix of `key` as partially moved (value 3),
@@ -200,16 +210,16 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
    to see a move that happens inside a different function). */
 static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 {
-    if (IsBoxGlobalName(r, name))
+    const char* root = KeyRoot(r->m_arena, name);
+
+    if (IsBoxGlobalName(r, root))
     {
         DiagErrorFmt(r->m_diag, range,
                      "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref box<T>`, copy() it, or pass `T` by value)",
-                     name, name);
+                     name);
 
         return;
     }
-
-    const char* root = KeyRoot(r->m_arena, name);
 
     if (StrMapGet(&r->m_refBoxParams, root))
     {
@@ -247,6 +257,19 @@ static const char* MovableBoxSourceKey(Resolver* r, Node* n)
         const char* baseKey = MovableBoxSourceKey(r, m->base_node);
 
         return baseKey ? arena_format(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
+    }
+
+    if (n->kind == NodeIndex)
+    {
+        IndexExpr* ix = (IndexExpr*)n;
+        const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
+
+        /* An owning array element is movable: reading it into an owning
+           binding steals the element's pointer. The "[]" marker keeps
+           element-moves distinct from whole-array moves in the moved-state
+           map, while KeyRoot still reduces "base[]" to "base" for the
+           global / ref-param ownership check. */
+        return baseKey ? arena_format(r->m_arena, "%s[]", baseKey) : NULL;
     }
 
     return NULL;

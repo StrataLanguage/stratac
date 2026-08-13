@@ -13,6 +13,11 @@ static StrataJit* CompileStr(const char* src, const char** err)
     return jit;
 }
 
+static bool Contains(const char* h, const char* n)
+{
+    return strstr(h, n) != NULL;
+}
+
 STRATA_TEST(string_var_decl_and_use)
 {
     const char* err = NULL;
@@ -162,19 +167,67 @@ STRATA_TEST(string_type_check_rejects_int_init)
     DiagnosticEngineFree(&diag);
 }
 
-STRATA_TEST(global_string_array_element_assigned_to_local)
+STRATA_TEST(global_string_array_element_move_is_an_error)
 {
-    /* A global string[] holding a single empty string; reading that element
-       into a local owning string must copy the empty string correctly (and
-       not double-free on teardown). Verified through a host strlen. */
+    /* Reading an owning element out of a global array steals its pointer,
+       leaving the slot dangling for the next reader (and double-freeing on
+       teardown). Reject it with the same transitive global-move error as a
+       whole-global move. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "string[] g = {\"hi\"};\n"
+        "int entry() {\n"
+        "  string s = g[0];\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "g[]' cannot be moved as it is not owned because it is global"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(global_owning_field_move_is_an_error)
+{
+    /* Transitive through a struct field: moving an owning field out of a
+       global struct is rejected with the same error. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Cell { string name; };\n"
+        "box<Cell> g = Cell { .name = \"hi\" };\n"
+        "int entry() {\n"
+        "  string s = g.name;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is global"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(global_string_array_element_copy_is_allowed)
+{
+    /* copy() is the escape hatch: it deep-copies the element so the global
+       array keeps its value and the local independently owns its copy. */
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
         "extern ulong strlen(string s);\n"
-        "string[] g = {\"\"};\n"
+        "string[] g = {\"hi\"};\n"
         "int entry() {\n"
-        "  string s = g[0];\n"
-        "  return (int)strlen(s);\n"            /* empty -> 0 */
+        "  string s = copy(g[0]);\n"
+        "  return (int)strlen(s);\n"            /* "hi" -> 2 */
         "}\n",
         "str", &err);
 
@@ -193,7 +246,7 @@ STRATA_TEST(global_string_array_element_assigned_to_local)
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(entry(), 2);
     }
 
     strataJitDestroy(jit);

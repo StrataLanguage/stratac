@@ -1091,7 +1091,7 @@ static Node* MovableBoxSourceNode(Node* n)
         n = ((CastExpr*)n)->operand;
     }
 
-    return (n && (n->kind == NodeIdent || n->kind == NodeMember)) ? n : NULL;
+    return (n && (n->kind == NodeIdent || n->kind == NodeMember || n->kind == NodeIndex)) ? n : NULL;
 }
 
 /* Nulls the owning binding (box/string/array ident or member chain) behind a
@@ -1730,11 +1730,16 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 return ValueMake(rhs.value, lvalue.typeDesc);
             }
 
-            /* `=` rebinds the box only when the value is itself a box (sema
-               already required a matching type); any other assignment into
-               a box<T> - including `=` with a plain T value, e.g. `x = 5;`
-               - mutates its contents instead. */
-            bool boxMove = lvalue.typeDesc.isBox && n->op == AssignSet && rhs.typeDesc.isBox;
+            /* `=` rebinds the box only when the value is itself a box of the
+               SAME kind (string=string, box<T>=box<T>); any other assignment
+               into a box<T> - including `=` with a plain T value (`x = 5;`)
+               or a string value/ literal into box<string> - mutates its
+               contents instead. */
+            bool rhsIsSameBoxKind = rhs.typeDesc.isBox
+                                 && ((lvalue.typeDesc.boxInner == NULL && rhs.typeDesc.boxInner == NULL)
+                                     || (lvalue.typeDesc.boxInner && rhs.typeDesc.boxInner
+                                         && strcmp(lvalue.typeDesc.boxInner, rhs.typeDesc.boxInner) == 0));
+            bool boxMove = lvalue.typeDesc.isBox && n->op == AssignSet && rhsIsSameBoxKind;
             bool boxMoveFromLiteral = boxMove && !lvalue.typeDesc.boxInner && n->value->kind == NodeStrLiteral;
 
             if (boxMove && !boxMoveFromLiteral)
@@ -1795,7 +1800,24 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                    EmitLValue); load through it to get the box pointer, then
                    read/write the boxed value through that. */
                 LLVMValueRef boxPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lvalue.ptr, "box");
-                TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)lvalue.typeDesc.boxInner});
+                const char* innerName = lvalue.typeDesc.boxInner;
+                TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)innerName});
+
+                if (IsOwningType(innerName))
+                {
+                    /* Content-assigning an OWNING inner (e.g. box<string> =
+                       "x" / someString): drop only the old inner value (free
+                       it in place — NOT the box allocation itself), then
+                       construct a fresh owned inner into the existing box:
+                       heap-copy a literal, move a movable source. Mirrors
+                       `box<int> = 5`, except the replaced inner is owning so
+                       the old value is freed first. */
+                    EmitDropOne(b, boxPtr, innerTd);
+                    LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerName);
+                    LLVMBuildStore(b->m_builder, owned, boxPtr);
+                    return ValueMake(owned, innerTd);
+                }
+
                 LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, innerTd.type, boxPtr, "boxval");
                 Value result = Coerce(b, rhs, innerTd);
                 bool flt = innerTd.isFloat;

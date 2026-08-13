@@ -1805,6 +1805,28 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
                a box global. */
             const char* inner = OwningInnerCStr(emitter->arena, targetType);
 
+            if (IsOwningType(inner))
+            {
+                /* Content-assigning an OWNING inner (box<string> = "x" /
+                   someString): drop only the old inner value in place (free
+                   it), then store a freshly owned inner - strata_strdup a
+                   literal, move a movable source. The box allocation itself
+                   is kept, mirroring `box<int> = 5` except the replaced
+                   inner is owning so it's freed first. */
+                SbPuts(&emitter->out, "({ if (*");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, ") strata_free(*");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, "); *");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, " = ");
+                CEmitOwnedValue(emitter, assign->value, inner);
+                SbPuts(&emitter->out, "; *");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, "; })");
+                return;
+            }
+
             if (assign->op == AssignMod && IsFloatType(inner))
             {
                 SbPuts(&emitter->out, "(*");
