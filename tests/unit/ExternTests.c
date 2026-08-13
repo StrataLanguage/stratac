@@ -248,7 +248,7 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
 
     if (mode == CheckBothBackends)
     {
-        llvmModule = BuildLlvmModule(mod, &diag, &arena, true);
+        llvmModule = BuildLlvmModule(mod, &diag, &arena, true, NULL);
         llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
         if (!llvmOk)
         {
@@ -271,7 +271,7 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
     char* tccError = NULL;
     bool tccOk = false;
 
-    cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+    cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
     tccOk = TccJitLoad(&tcc, &cModule, &tccError);
     if (!tccOk)
     {

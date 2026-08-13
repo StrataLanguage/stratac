@@ -15,7 +15,7 @@ CodegenResult GenerateLlvmIr(const Module* mod)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, scratch_arena(), false);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, scratch_arena(), false, NULL);
 
     if (DiagHasErrors(&diag))
     {

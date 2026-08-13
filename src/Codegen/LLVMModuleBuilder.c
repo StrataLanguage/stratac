@@ -539,11 +539,41 @@ static LLVMValueRef StrataPanicFn(Builder* b)
     return b->m_panicFn;
 }
 
+/* Emits a call to strata_panic(message) followed by an unreachable terminator.
+   Shared by bounds checks, null-extern-call checks, and any other runtime
+   abort the profile emits. The current block must be terminated. */
+static void EmitPanic(Builder* b, const char* message)
+{
+    size_t len = strlen(message);
+    LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, message, (unsigned)len, 0);
+    LLVMTypeRef strType = LLVMTypeOf(strConst);
+    char* gName = arena_format(b->m_arena, ".pmsg.%d", b->m_strLitCount++);
+    LLVMValueRef g = LLVMAddGlobal(b->m_mod, strType, gName);
+    LLVMSetInitializer(g, strConst);
+    LLVMSetLinkage(g, LLVMPrivateLinkage);
+    LLVMSetUnnamedAddr(g, 1);
+    LLVMSetGlobalConstant(g, 1);
+    LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+    LLVMValueRef idx[2] = {zero, zero};
+    LLVMValueRef msgGep = LLVMConstGEP2(strType, g, idx, 2);
+
+    LLVMValueRef args[1] = {msgGep};
+    StrataPanicFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args, 1, "");
+    LLVMBuildUnreachable(b->m_builder);
+}
+
 /* Emits a bounds check: if index >= length, call strata_panic with the given
    message and halt (unreachable). Does nothing if index and length are
-   compile-time constants and index < length. */
+   compile-time constants and index < length. Skipped entirely when the
+   StrataProfile disables bounds checking. */
 static void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length)
 {
+    if (!b->m_boundsCheck)
+    {
+        return;
+    }
+
     LLVMValueRef oob = LLVMBuildICmp(b->m_builder, LLVMIntUGE, index, length, "oob");
     LLVMBasicBlockRef oobBB = NewBb(b, "oob");
     LLVMBasicBlockRef okBB = NewBb(b, "ok");
@@ -551,22 +581,7 @@ static void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length)
 
     PositionAtEnd(b, oobBB);
     {
-        LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, "array index out of bounds", 24, 0);
-        LLVMTypeRef strType = LLVMTypeOf(strConst);
-        char* gName = arena_format(b->m_arena, ".pmsg.%d", b->m_strLitCount++);
-        LLVMValueRef g = LLVMAddGlobal(b->m_mod, strType, gName);
-        LLVMSetInitializer(g, strConst);
-        LLVMSetLinkage(g, LLVMPrivateLinkage);
-        LLVMSetUnnamedAddr(g, 1);
-        LLVMSetGlobalConstant(g, 1);
-        LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
-        LLVMValueRef idx[2] = {zero, zero};
-        LLVMValueRef msgGep = LLVMConstGEP2(strType, g, idx, 2);
-
-        LLVMValueRef args[1] = {msgGep};
-        StrataPanicFn(b);
-        LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args, 1, "");
-        LLVMBuildUnreachable(b->m_builder);
+        EmitPanic(b, "array index out of bounds");
     }
     b->m_terminated = true;
     PositionAtEnd(b, okBB);
@@ -2583,6 +2598,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
     }
 
     LLVMValueRef callee = info->function;
+    bool slotExtern = false;
 
     if (b->m_jitMode)
     {
@@ -2590,12 +2606,36 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
         if (slot)
         {
+            slotExtern = true;
             LLVMValueRef fnPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "extfn");
             callee = fnPtr;
         }
     }
 
-    LLVMValueRef call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+    LLVMValueRef call;
+
+    if (slotExtern && b->m_nullExternCheck)
+    {
+        /* JIT extern slots start null; a call before strataJitAddSymbol bound
+           the host function would jump to address 0. Under the profile's
+           nullExternCall check, panic with the unbound name instead. */
+        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "extnull");
+        LLVMBasicBlockRef nullBB = NewBb(b, "ext.null");
+        LLVMBasicBlockRef callBB = NewBb(b, "ext.call");
+        LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
+        b->m_terminated = true;
+
+        PositionAtEnd(b, nullBB);
+        EmitPanic(b, arena_format(b->m_arena, "call to null extern function '%s'", n->callee));
+        b->m_terminated = true;
+
+        PositionAtEnd(b, callBB);
+        call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+    }
+    else
+    {
+        call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+    }
 
     return ValueMake(call, info->returnType);
 }
@@ -3413,10 +3453,13 @@ static void EmitStmt(Builder* b, Node* n)
     }
 }
 
-static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngine* diag, bool jitMode)
+static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngine* diag, bool jitMode,
+                                const StrataProfile* profile)
 {
     b->m_diag = diag;
     b->m_jitMode = jitMode;
+    b->m_boundsCheck = !profile || profile->boundsCheck;
+    b->m_nullExternCheck = !profile || profile->nullExternCall;
     b->m_ctx = LLVMContextCreate();
     b->m_mod = LLVMModuleCreateWithNameInContext(module->name, b->m_ctx);
     b->m_builder = LLVMCreateBuilderInContext(b->m_ctx);
@@ -3757,7 +3800,8 @@ void BuiltModuleDispose(BuiltModule* bm)
     }
 }
 
-BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode)
+BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
+                            const StrataProfile* profile)
 {
     Builder b = {0};
     b.m_arena = arena;
@@ -3782,7 +3826,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
 
     TypeRegistryInit(&b.m_registry);
 
-    BuiltModule module = BuilderBuild(&b, ast, diag, jitMode);
+    BuiltModule module = BuilderBuild(&b, ast, diag, jitMode, profile);
     StrMapFree(&b.m_structTypes);
     StrMapFree(&b.m_funcs);
     StrMapFree(&b.m_symbols);

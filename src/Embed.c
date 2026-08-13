@@ -38,6 +38,7 @@ extern "C"
         void* allocFn;   /* optional host allocator for JIT mode */
         void* freeFn;    /* optional host deallocator for JIT mode */
         StrataJitBackend jitBackend;
+        StrataProfile profile; /* JIT runtime checks (default: all on) */
 
         StrataImportResolverFn importResolver;      /* optional import resolver */
         void* importResolverUserData;
@@ -64,6 +65,7 @@ extern "C"
         compiler->allocFn = NULL;
         compiler->freeFn = NULL;
         compiler->jitBackend = STRATA_JIT_BACKEND_AUTO;
+        compiler->profile = strataProfileDefault();
         compiler->importResolver = NULL;
         compiler->importResolverUserData = NULL;
         return compiler;
@@ -98,6 +100,24 @@ extern "C"
         }
 
         c->jitBackend = backend;
+    }
+
+    StrataProfile strataProfileDefault(void)
+    {
+        StrataProfile p;
+        p.boundsCheck = 1;
+        p.nullExternCall = 1;
+        return p;
+    }
+
+    void strataJitSetProfile(StrataCompiler* c, const StrataProfile* profile)
+    {
+        if (!c || !profile)
+        {
+            return;
+        }
+
+        c->profile = *profile;
     }
 
     void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn resolver, void* userData)
@@ -136,7 +156,7 @@ extern "C"
             else if (emit == STRATA_EMIT_C)
             {
                 BuiltCModule result
-                    = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, backendEmitFlags, arch);
+                    = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, backendEmitFlags, arch, NULL);
                 irOwned = DupString(result.source ? result.source : "");
                 out = irOwned ? irOwned : "";
                 BuiltCModuleDispose(&result);
@@ -352,7 +372,7 @@ extern "C"
         return 0;
     }
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false, NULL);
 
     if (DiagHasErrors(&diag))
     {
@@ -487,9 +507,9 @@ extern "C"
 #if STRATA_HAS_TCC
     static StrataJit* JitFromModuleTcc(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                        size_t sourceCount, const char* diagText, const char** errOut,
-                                       const StrataArch arch, void* allocFn, void* freeFn)
+                                       const StrataArch arch, void* allocFn, void* freeFn, const StrataProfile* profile)
     {
-        BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, CEmitJIT, arch);
+        BuiltCModule bm = BuildCModuleWithSources(mod, diag, arena, sources, sourceCount, CEmitJIT, arch, profile);
 
         if (DiagHasErrors(diag))
         {
@@ -540,9 +560,9 @@ extern "C"
 #if STRATA_HAS_LLVM
     static StrataJit* JitFromModuleLlvm(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                         size_t sourceCount, const char* diagText, const char** errOut, void* allocFn,
-                                        void* freeFn)
+                                        void* freeFn, const StrataProfile* profile)
     {
-        BuiltModule bm = BuildLlvmModule(mod, diag, arena, true);
+        BuiltModule bm = BuildLlvmModule(mod, diag, arena, true, profile);
 
         if (DiagHasErrors(diag))
         {
@@ -619,7 +639,7 @@ extern "C"
 
     static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                     size_t sourceCount, const char** errOut, const StrataArch arch, void* allocFn,
-                                    void* freeFn, StrataJitBackend want)
+                                    void* freeFn, StrataJitBackend want, const StrataProfile* profile)
     {
         char* diagText = DiagFormat(diag, sources, sourceCount, arena);
 
@@ -637,11 +657,13 @@ extern "C"
         {
 #if STRATA_HAS_TCC
         case STRATA_JIT_KIND_TCC:
-            return JitFromModuleTcc(mod, diag, arena, sources, sourceCount, diagText, errOut, arch, allocFn, freeFn);
+            return JitFromModuleTcc(mod, diag, arena, sources, sourceCount, diagText, errOut, arch, allocFn, freeFn,
+                                    profile);
 #endif
 #if STRATA_HAS_LLVM
         case STRATA_JIT_KIND_LLVM:
-            return JitFromModuleLlvm(mod, diag, arena, sources, sourceCount, diagText, errOut, allocFn, freeFn);
+            return JitFromModuleLlvm(mod, diag, arena, sources, sourceCount, diagText, errOut, allocFn, freeFn,
+                                     profile);
 #endif
         default:
             return UnavailableJit(errOut);
@@ -669,7 +691,7 @@ extern "C"
             ResolveOverloads(mod, &diag, &arena);
 
             StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
-                                              c->allocFn, c->freeFn, c->jitBackend);
+                                              c->allocFn, c->freeFn, c->jitBackend, &c->profile);
 
             AstDispose((Node*)mod);
             ModuleLoaderDispose(&loader);
@@ -708,7 +730,8 @@ extern "C"
         ResolveOverloads(mod, &diag, &arena);
 
         StrataJit* handle
-            = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn, c->jitBackend);
+            = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn, c->jitBackend,
+                            &c->profile);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -771,7 +794,7 @@ extern "C"
         ResolveOverloads(mod, &diag, &arena);
 
         StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
-                                       c->allocFn, c->freeFn, c->jitBackend);
+                                       c->allocFn, c->freeFn, c->jitBackend, &c->profile);
 
         AstDispose((Node*)mod);
         ModuleLoaderDispose(&loader);

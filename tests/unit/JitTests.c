@@ -103,7 +103,7 @@ STRATA_TEST(aot_emits_native_object_file)
     Module* mod = ParseModule("int add(int a, int b) { return a + b; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false, NULL);
     const char* path = "strata_aot_test.o";
     char* err = NULL;
     bool ok = EmitNativeFile(&bm, path, false, &err, NULL);
@@ -135,7 +135,7 @@ STRATA_TEST(aot_emits_assembly_file)
     Module* mod = ParseModule("int forty_two() { return 42; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false, NULL);
     const char* path = "strata_aot_test.s";
     char* err = NULL;
     bool ok = EmitNativeFile(&bm, path, true, &err, NULL);

@@ -397,7 +397,7 @@ static Timing CompileAst(Module* module, Backend backend, int expected)
     double buildStart = totalStart;
     if (backend == BackendLlvm)
     {
-        BuiltModule built = BuildLlvmModule(module, &diag, &arena, true);
+        BuiltModule built = BuildLlvmModule(module, &diag, &arena, true, NULL);
         double buildEnd = NowSeconds();
         LLVMJit jit;
         LLVMJitInit(&jit);
@@ -427,7 +427,7 @@ static Timing CompileAst(Module* module, Backend backend, int expected)
     }
     else
     {
-        BuiltCModule built = BuildCModule(module, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+        BuiltCModule built = BuildCModule(module, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
         double buildEnd = NowSeconds();
         TccJit jit;
         TccJitInit(&jit);
@@ -560,7 +560,7 @@ static bool LoadScript(Module* module, Backend backend, LoadedScript* script)
 
     if (backend == BackendLlvm)
     {
-        BuiltModule built = BuildLlvmModule(module, &diag, &arena, true);
+        BuiltModule built = BuildLlvmModule(module, &diag, &arena, true, NULL);
         loaded = !DiagHasErrors(&diag) && LLVMJitLoad(&script->llvm, &built, &error);
         if (loaded)
         {
@@ -570,7 +570,7 @@ static bool LoadScript(Module* module, Backend backend, LoadedScript* script)
     }
     else
     {
-        BuiltCModule built = BuildCModule(module, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+        BuiltCModule built = BuildCModule(module, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
         loaded = !DiagHasErrors(&diag) && TccJitLoad(&script->tcc, &built, &error);
         if (loaded)
         {

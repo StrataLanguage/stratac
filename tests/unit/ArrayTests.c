@@ -780,7 +780,7 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
         "}\n",
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, true);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, true, NULL);
     LLVMJit jit;
     LLVMJitInit(&jit);
     LLVMJitSetAllocFree(&jit, (void*)&ArrCountAlloc, (void*)&ArrCountFree);

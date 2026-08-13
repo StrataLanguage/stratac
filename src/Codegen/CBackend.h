@@ -5,6 +5,8 @@
 #include "TypeRegistry.h"
 #include "Core/Util.h"
 
+#include "strata/strata.h"
+
 typedef enum CBackendEmitFlags
 {
     CEmitNone = 0,
@@ -44,13 +46,17 @@ typedef struct CEmitter
     const char* currentReturn; /* current function's return type name */
     unsigned retCounter;
     unsigned boxTmpCounter; /* unique names for inline struct-init field boxing */
+    bool boundsCheck;       /* emit array bounds checks (StrataProfile) */
+    bool nullExternCall;    /* panic on calling a null extern slot (StrataProfile) */
 } CEmitter;
 
 void BuiltCModuleInit(BuiltCModule* module);
 void BuiltCModuleDispose(BuiltCModule* module);
 
-BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags, int arch);
+BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags, int arch,
+                          const StrataProfile* profile);
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
-                                    const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags, int arch);
+                                    const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags,
+                                    int arch, const StrataProfile* profile);
 
 void CEmitExpr(CEmitter* emitter, const Node* node);

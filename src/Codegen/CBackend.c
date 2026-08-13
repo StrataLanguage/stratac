@@ -688,9 +688,16 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
             EmitLValue(emitter, idx->base_node);
             SbPuts(&emitter->out, ").data))[({ unsigned long long _bi = ");
             CEmitExpr(emitter, idx->index);
-            SbPuts(&emitter->out, "; if (_bi >= (");
-            EmitLValue(emitter, idx->base_node);
-            SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); _bi; })])");
+            SbPuts(&emitter->out, "; ");
+            
+            if (emitter->boundsCheck)
+            {
+                SbPuts(&emitter->out, "if (_bi >= (");
+                EmitLValue(emitter, idx->base_node);
+                SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); ");
+            }
+
+            SbPuts(&emitter->out, "_bi; })])");
         }
         else
         {
@@ -700,9 +707,16 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
             EmitLValue(emitter, idx->base_node);
             SbPuts(&emitter->out, ").data))[({ unsigned long long _bi = ");
             CEmitExpr(emitter, idx->index);
-            SbPuts(&emitter->out, "; if (_bi >= (");
-            EmitLValue(emitter, idx->base_node);
-            SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); _bi; })]");
+            SbPuts(&emitter->out, "; ");
+            
+            if (emitter->boundsCheck)
+            {
+                SbPuts(&emitter->out, "if (_bi >= (");
+                EmitLValue(emitter, idx->base_node);
+                SbPuts(&emitter->out, ").len) strata_panic(\"array index out of bounds\"); ");
+            }
+
+            SbPuts(&emitter->out, "_bi; })]");
         }
 
         return;
@@ -1224,10 +1238,25 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
 
     const FunctionDecl* function = call->resolvedDecl;
     const char* callee = FunctionName(emitter, call->callee);
+    bool nullCheck = false;
 
     if ((emitter->emitFlags & CEmitJIT) != 0 && function && function->isExtern)
     {
         callee = ExternSlotName(emitter, function->name);
+        nullCheck = emitter->nullExternCall;
+    }
+
+    if (nullCheck)
+    {
+        /* JIT extern slots start null; panic on calling an unbound extern
+           instead of jumping to address 0. Guarded via a comma expression so
+           the call's result (of any type) flows through, and the form is
+           accepted by both TCC and clang. */
+        SbPuts(&emitter->out, "(strata__ext_check(");
+        SbPuts(&emitter->out, callee);
+        SbPuts(&emitter->out, ", \"call to null extern function '");
+        SbPuts(&emitter->out, function->name);
+        SbPuts(&emitter->out, "'\"), ");
     }
 
     SbPuts(&emitter->out, callee);
@@ -1381,6 +1410,11 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
     }
 
     SbPutc(&emitter->out, ')');
+
+    if (nullCheck)
+    {
+        SbPutc(&emitter->out, ')');
+    }
 }
 
 /* Emits a box-typed identifier dereferenced to its value, for use as a
@@ -3495,7 +3529,7 @@ void BuiltCModuleDispose(BuiltCModule* module)
 
 BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, Arena* arena,
                                      const SourceManager* sources, size_t sourceCount, CBackendEmitFlags emitFlags,
-                                     int arch)
+                                     int arch, const StrataProfile* profile)
 {
     BuiltCModule result;
     BuiltCModuleInit(&result);
@@ -3519,6 +3553,8 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     emitter.arch = arch;
     emitter.sources = sources;
     emitter.sourceCount = sourceCount;
+    emitter.boundsCheck = !profile || profile->boundsCheck;
+    emitter.nullExternCall = !profile || profile->nullExternCall;
     TypeRegistryInit(&emitter.types);
     TypeRegistryBuild(&emitter.types, ast);
     StrMapInit(&emitter.symbols);
@@ -3543,6 +3579,14 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
                          "}\n"
                          "extern float fmodf(float, float);\n"
                          "extern double fmod(double, double);\n\n");
+
+    if ((emitFlags & CEmitJIT) != 0 && emitter.nullExternCall)
+    {
+        /* Guards a JIT extern call against an unbound (null) slot. */
+        SbPuts(&emitter.out,
+               "static void strata__ext_check(void* _slot, const char* _name) { if (!_slot) "
+               "strata_panic(_name); }\n\n");
+    }
 
     if ((emitFlags & CEmitEnableSIMD) != 0)
     {
@@ -3588,9 +3632,9 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
 }
 
 BuiltCModule BuildCModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, CBackendEmitFlags emitFlags,
-                          int arch)
+                          int arch, const StrataProfile* profile)
 {
-    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, emitFlags, arch);
+    return BuildCModuleWithSources(ast, diag, arena, NULL, 0, emitFlags, arch, profile);
 }
 
 CodegenResult GenerateC(const Module* mod, int arch)
@@ -3604,7 +3648,9 @@ CodegenResult GenerateC(const Module* mod, int arch)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    BuiltCModule module = BuildCModule(mod, &diag, &arena, CEmitNone, arch);
+    StrataProfile profile = strataProfileDefault();
+
+    BuiltCModule module = BuildCModule(mod, &diag, &arena, CEmitNone, arch, &profile);
 
     result.ok = !DiagHasErrors(&diag);
     result.output = DupString(module.source ? module.source : "");

@@ -391,7 +391,7 @@ STRATA_TEST(aot_emits_struct_object)
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false, NULL);
     const char* path = "strata_struct_test.o";
     char* err = NULL;
     bool ok = EmitNativeFile(&bm, path, false, &err, NULL);

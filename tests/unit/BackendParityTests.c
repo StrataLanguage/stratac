@@ -19,7 +19,7 @@ static void CheckParity(const char* source, int expected)
     Module* mod = ParseAndResolve(source, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true);
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true, NULL);
     LLVMJit llvm;
     LLVMJitInit(&llvm);
     char* llvmError = NULL;
@@ -30,7 +30,7 @@ static void CheckParity(const char* source, int expected)
     }
     STRATA_CHECK(llvmOk);
 
-    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
     TccJit tcc;
     TccJitInit(&tcc);
     char* tccError = NULL;

@@ -74,6 +74,17 @@ typedef enum StrataArch
     STRATA_ARCH_ARM64,
 } StrataArch;
 
+/* A set of JIT-mode runtime checks. Each field is enabled (1) by default;
+   set a field to 0 to disable that check. Obtained via strataProfileDefault()
+   or customized by the host. */
+typedef struct StrataProfile
+{
+    unsigned boundsCheck;    /* array index bounds check + panic on out-of-bounds */
+    unsigned nullExternCall; /* panic on calling an extern that was never bound */
+} StrataProfile;
+
+STRATA_API StrataProfile strataProfileDefault(void);
+
 typedef void (*StrataPanicHandler)(const char* msg);
 
 STRATA_API void strataSetPanicHandler(StrataPanicHandler handler);
@@ -129,6 +140,11 @@ STRATA_API void strataSetArchitecture(StrataCompiler* c, StrataArch arch);
 
 STRATA_API void strataJitSetAllocFreeFunctions(StrataCompiler* c, void* allocFn, void* freeFn);
 STRATA_API void strataJitSetBackend(StrataCompiler* c, StrataJitBackend backend);
+
+/* Configures the runtime checks emitted into JIT-compiled code. Pass
+   &strataProfileDefault() (the default) for all checks, or a customized
+   profile. Must be called before strataJitCompileString/strataJitCompileFile. */
+STRATA_API void strataJitSetProfile(StrataCompiler* c, const StrataProfile* profile);
 
 STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,
                                             const char* moduleName, StrataEmitKind emit, StrataEmitFlags emitFlags);

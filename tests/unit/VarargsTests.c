@@ -29,14 +29,14 @@ static void CheckParity(const char* source, int expected)
     Module* mod = ParseAndResolve(source, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true);
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true, NULL);
     LLVMJit llvm;
     LLVMJitInit(&llvm);
     char* llvmError = NULL;
     bool llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
     STRATA_CHECK(llvmOk);
 
-    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
     TccJit tcc;
     TccJitInit(&tcc);
     char* tccError = NULL;
@@ -106,7 +106,7 @@ static void CheckVarargExtern(const char* source, const char* symbol, void* host
     Module* mod = ParseAndResolve(source, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true);
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, true, NULL);
     LLVMJit llvm;
     LLVMJitInit(&llvm);
     char* llvmError = NULL;
@@ -117,7 +117,7 @@ static void CheckVarargExtern(const char* source, const char* symbol, void* host
         STRATA_CHECK_EQ(LLVMJitAddSymbol(&llvm, symbol, hostFn), 1);
     }
 
-    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO);
+    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
     TccJit tcc;
     TccJitInit(&tcc);
     char* tccError = NULL;

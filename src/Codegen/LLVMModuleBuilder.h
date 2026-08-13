@@ -8,6 +8,8 @@
 
 #include "TypeRegistry.h"
 
+#include "strata/strata.h"
+
 typedef struct {
     LLVMContextRef ctx;
     LLVMModuleRef mod;
@@ -53,6 +55,8 @@ typedef struct Builder
     TypeDesc m_curRet;
     bool m_terminated;
     bool m_jitMode;
+    bool m_boundsCheck;     /* emit array bounds checks (StrataProfile) */
+    bool m_nullExternCheck; /* panic on calling a null extern slot (StrataProfile) */
     LLVMValueRef m_curFn;
     LLVMBasicBlockRef m_entryBlock;
     LLVMValueRef m_entryAllocaPt;
@@ -74,6 +78,7 @@ typedef struct Builder
 void BuiltModuleInit(BuiltModule* bm);
 void BuiltModuleDispose(BuiltModule* bm);
 
-BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode);
+BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
+                            const StrataProfile* profile);
 
 Value EmitExpr(Builder* b, Node* n);
