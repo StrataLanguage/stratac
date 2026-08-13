@@ -1,0 +1,64 @@
+/* panic_demo.strata -- panic-driven stack unwinding showcase (LLVM JIT).
+
+The host calls explode(): owning values (arrays, strings, boxes) are built
+across a chain of calls, then the deepest frame panics with an out-of-bounds
+array index. Panic unwinding (StrataProfile.panicUnwind, on by default)
+walks the JIT'd stack back out frame by frame, freeing every owning value
+each frame holds, until the host boundary wrapper catches it: the panic
+handler runs once, and the entry function returns a zeroed value to the
+host instead of crashing the process. The host can then keep using the
+module (see safe()).
+*/
+
+extern void host_note(string tag);
+
+struct Payload
+{
+    box<int> child;
+};
+
+string make_tag(string prefix)
+{
+    string s = prefix;
+    return s;
+}
+
+/* Deepest frame: owns a box<Payload> and a string. Panics here. */
+int deepest(int[] data)
+{
+    box<Payload> p = Payload { .child = data[0] };
+    string tag = make_tag("inner");
+    host_note(tag);
+    return data[99]; /* panic: index 99 out of bounds */
+}
+
+/* Middle frame: owns an int[], a string[], and a box<Payload>[]. */
+int middle(int scale)
+{
+    int[] nums = {1, 2, 3, 4};
+    string[] tags = { make_tag("a"), make_tag("b") };
+    box<Payload>[] payloads = { Payload { .child = scale }, Payload { .child = scale + 1 } };
+    host_note("middle built 3 arrays + 2 boxes");
+    return deepest(nums);
+}
+
+/* Host entry: panics through the chain, unwinds everything. */
+int explode()
+{
+    string s = make_tag("outer");
+    return middle(3) + 1;
+}
+
+/* Host entry: completes normally, all values freed at scope exit. */
+int safe()
+{
+    int[] nums = {10, 20, 30};
+    int sum = 0;
+    int i = 0;
+    while (i < nums.length)
+    {
+        sum = sum + nums[i];
+        i = i + 1;
+    }
+    return sum;
+}

@@ -16,7 +16,7 @@ build/default/bin/strata_tests  # run tests directly (or: ctest --preset default
 ```
 
 Binaries land in `build/default/bin/` (`stratac`, `strata_tests`, `jit_demo`,
-`engine_demo`). `LLVM-C.dll` is copied next to them automatically.
+`panic_demo`, `engine_demo`). `LLVM-C.dll` is copied next to them automatically.
 
 `STRATA_SHARED=ON` (the default) builds `strata.dll`; `-DSTRATA_SHARED=OFF`
 builds `libstrata.a`. The test executable compiles all sources directly (with

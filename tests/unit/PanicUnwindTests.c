@@ -447,3 +447,245 @@ STRATA_TEST(panic_unwind_normal_path_unaffected)
 
     strataJitDestroy(jit);
 }
+
+/* Array-focused unwind coverage. */
+
+/* Owning locals declared in NESTED scopes (loop bodies, if branches) must be
+   dropped by the landing pad: m_owningLocals.count is scope-truncated at
+   block exits, so the pad drops by the registration high-water mark instead.
+   Iteration 1's array is freed by its scope-exit drop; iteration 2's array
+   and the if-branch array are freed by entry's pad. */
+STRATA_TEST(panic_unwind_array_in_nested_scopes)
+{
+    StrataJit* jit = CompileLlvm(
+        "int entry() {\n"
+        "  int i = 0;\n"
+        "  while (i < 3) {\n"
+        "    int[] a = {i, i + 1};\n"
+        "    i = i + 1;\n"
+        "    if (i == 2) {\n"
+        "      int[] b = {9};\n"
+        "      return b[9];\n" /* panic with a and b live in nested scopes */
+        "    }\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r = entry();
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r, 0);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK(strstr(s_panicMsg, "array index out of bounds") != NULL);
+        STRATA_CHECK_EQ(s_allocs, s_frees);
+        STRATA_CHECK_EQ(s_allocs, 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* A panic while evaluating an array literal must not leak the partially
+   built value: the buffer is stored into the slot (and zero-filled) before
+   element evaluation, so the pad frees the buffer plus the elements built
+   so far, and reads null for the rest. */
+STRATA_TEST(panic_unwind_array_mid_literal_construction)
+{
+    StrataJit* jit = CompileLlvm(
+        "string boom() {\n"
+        "  int[] a = {1};\n"
+        "  int x = a[9];\n"
+        "  return \"never\";\n"
+        "}\n"
+        "int entry() { string[] s = { \"kept\", boom(), \"never\" }; return 0; }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r = entry();
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r, 0);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK_EQ(s_allocs, s_frees);
+        /* buffer + "kept" heap copy + boom's array */
+        STRATA_CHECK_EQ(s_allocs, 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* An array moved into a frame from a function return is owned by that frame;
+   the pad frees it exactly once, and the moved-out source slot (nulled by
+   the move) must not produce a stray free(null). */
+STRATA_TEST(panic_unwind_array_moved_from_return)
+{
+    StrataJit* jit = CompileLlvm(
+        "int[] make() { int[] a = {1, 2}; return a; }\n"
+        "int boom() { int[] a = {5}; return a[9]; }\n"
+        "int entry() { int[] a = make(); return boom(); }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r = entry();
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r, 0);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK_EQ(s_allocs, s_frees);
+        STRATA_CHECK_EQ(s_allocs, 2);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* string[] elements are heap copies owned by the array; the pad drops each
+   element and then frees the backing buffer. */
+STRATA_TEST(panic_unwind_string_array_elements)
+{
+    StrataJit* jit = CompileLlvm(
+        "int boom() { int[] a = {1}; return a[9]; }\n"
+        "int entry() { string[] s = {\"aa\", \"bb\", \"cc\"}; return boom(); }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r = entry();
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r, 0);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK_EQ(s_allocs, s_frees);
+        /* buffer + 3 heap-copied strings + boom's array */
+        STRATA_CHECK_EQ(s_allocs, 5);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* box<S>[] of owning structs: the pad drops each element via the per-type
+   struct drop helper, freeing the inner box then the element box. */
+STRATA_TEST(panic_unwind_box_array_of_owning_structs)
+{
+    StrataJit* jit = CompileLlvm(
+        "struct Owns { box<int> child; };\n"
+        "int boom() { int[] a = {1}; return a[9]; }\n"
+        "int entry() {\n"
+        "  box<Owns>[] s = { Owns { .child = 1 }, Owns { .child = 2 } };\n"
+        "  return boom();\n"
+        "}\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r = entry();
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r, 0);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK_EQ(s_allocs, s_frees);
+        /* buffer + 2 element boxes + 2 inner boxes + boom's array */
+        STRATA_CHECK_EQ(s_allocs, 6);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* Reassigning an array frees the old buffer at the assignment; the pad then
+   frees the new one exactly once. */
+STRATA_TEST(panic_unwind_array_reassigned_before_panic)
+{
+    StrataJit* jit = CompileLlvm(
+        "int boom() { int[] a = {1}; return a[9]; }\n"
+        "int entry() { int[] a = {1}; a = {2, 3}; return boom(); }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r = entry();
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r, 0);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK_EQ(s_allocs, s_frees);
+        STRATA_CHECK_EQ(s_allocs, 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
