@@ -149,7 +149,7 @@ float entry()
     printf("sCopy = %s\n", sCopy);
 
 
-    printf("globalStringArray[0] = %s\n", globalStringArray[0]);
+    printf("globalStringArray[0] = %s\n", globalStringArray[0]); // testing panic
     globalStringArray[0] = "goodbye";
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);
 

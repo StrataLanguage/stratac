@@ -258,6 +258,12 @@ target_compile_definitions(jit_demo PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(jit_demo)
 
+add_executable(panic_demo samples/hosts/panic_demo_host.c)
+target_link_libraries(panic_demo PRIVATE strata)
+target_compile_definitions(panic_demo PRIVATE
+    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
+strata_stage_dll(panic_demo)
+
 add_executable(engine_demo samples/hosts/engine_demo_host.c)
 target_link_libraries(engine_demo PRIVATE strata)
 target_compile_definitions(engine_demo PRIVATE
@@ -463,5 +469,5 @@ if(STRATA_ENABLE_LLVM)
     set_tests_properties(aot_varargs_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 63")
 endif()
 
-set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES
+set_target_properties(stratac jit_demo panic_demo engine_demo box_demo simd_demo PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
