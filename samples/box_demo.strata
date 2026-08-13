@@ -128,12 +128,23 @@ void take_name(string name)
 {
 }
 
+void say_hi_to_person(ref Person person)
+{
+    // printf("hello, %s\n", person.name);
+}
+
 // Entrypoint
 float entry()
 {
     box<Person> bob = { .name = "Bob" };
     take_name(bob.name);
     // bob.name is NULL! oh no.
+    // Luckily, we 'poison' the object, so we can only use other fields; until bob.name is reassigned.
+    //// ERROR: 'bob' is used after move
+    //say_hi_to_person(bob); 
+    bob.name = "Bob 2.0";
+    // fine!
+    say_hi_to_person(bob);
 
     Entity e;
     get_entity(e);

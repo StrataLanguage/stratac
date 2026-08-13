@@ -76,6 +76,14 @@ static bool IsBoxUnusable(const Resolver* r, const char* name)
     return v == (void*)1 || v == (void*)3;
 }
 
+/* A descendant field was moved out of `name`, but `name` itself was not moved
+   as a whole: non-moved fields are still accessible, only whole-value use is
+   rejected. */
+static bool IsBoxPartiallyMoved(const Resolver* r, const char* name)
+{
+    return StrMapGet(&r->m_movedBoxes, name) == (void*)3;
+}
+
 /* Clears `key` and all its `key.*` descendants from the move-state map.
    Used when a whole-value reassignment re-lives the binding. */
 static void ClearBoxSubtree(Resolver* r, const char* key)
@@ -104,6 +112,56 @@ static void MarkBoxLive(Resolver* r, const char* name)
 {
     ClearBoxSubtree(r, name);
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
+}
+
+/* Reassigning a single owning field (e.g. `bob.name = ...`) re-lives that
+   field. Each partially-moved (3) ancestor prefix whose moved descendants
+   have all been restored is cleared too, so a whole-value use of the parent
+   becomes valid again once every moved field has been reassigned. */
+static void RevalidateOwningField(Resolver* r, const char* key)
+{
+    ClearBoxSubtree(r, key);
+
+    StrMap* m = &r->m_movedBoxes;
+
+    /* Walk every dotted ancestor prefix of `key` (bob.name -> bob;
+       holder.gun.ammo -> holder.gun, holder). */
+    for (const char* dot = strchr(key, '.'); dot; dot = strchr(dot + 1, '.'))
+    {
+        const char* prefix = arena_strndup(r->m_arena, key, (size_t)(dot - key));
+
+        /* Only a partially-moved (3) ancestor can be restored this way; a
+           fully-moved (1) or re-live (2) one is left untouched. */
+        if (StrMapGet(m, prefix) != (void*)3)
+        {
+            continue;
+        }
+
+        size_t plen = strlen(prefix);
+        bool hasMovedDescendant = false;
+
+        for (size_t i = 0; i < m->cap; i++)
+        {
+            const char* k = m->keys[i];
+
+            if (!k || m->values[i] == NULL)
+            {
+                continue;
+            }
+
+            if ((m->values[i] == (void*)1 || m->values[i] == (void*)3)
+                && strncmp(k, prefix, plen) == 0 && k[plen] == '.')
+            {
+                hasMovedDescendant = true;
+                break;
+            }
+        }
+
+        if (!hasMovedDescendant)
+        {
+            StrMapPut(m, prefix, NULL);
+        }
+    }
 }
 
 static bool IsBoxGlobalName(const Resolver* r, const char* name)
@@ -1148,7 +1206,16 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (blocked)
             {
-                DiagErrorFmt(r->m_diag, ident->base.range, "'%s' used after move", ident->name);
+                if (IsBoxPartiallyMoved(r, ident->name))
+                {
+                    DiagErrorFmt(r->m_diag, ident->base.range,
+                                 "'%s' used after partial move (a field was moved out); its non-moved fields are still accessible",
+                                 ident->name);
+                }
+                else
+                {
+                    DiagErrorFmt(r->m_diag, ident->base.range, "'%s' used after move", ident->name);
+                }
             }
         }
 
@@ -1174,6 +1241,24 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         const char* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
         bool targetIsBox = tt && IsOwningType(tt);
+
+        /* An owning struct field target (`bob.name = ...` where `name` is a
+           string/box/array) is reassigned, not read - so it must re-life the
+           field rather than trip the "used after move" check that a plain
+           read of the target would. */
+        const char* fieldKey = NULL;
+        bool targetIsOwningField = false;
+
+        if (a->target->kind == NodeMember)
+        {
+            const char* ft = InferType(r, a->target, scope);
+
+            if (ft && ft[0] != '\0' && IsOwningType(ft))
+            {
+                targetIsOwningField = true;
+                fieldKey = MovableBoxSourceKey(r, a->target);
+            }
+        }
 
         if (targetIsBox)
         {
@@ -1246,7 +1331,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                    global or a moved-and-revalidated box. */
                 if (IsBoxMoved(r, targetName))
                 {
-                    DiagErrorFmt(r->m_diag, a->base.range, "'%s'  used after move", targetName);
+                    DiagErrorFmt(r->m_diag, a->base.range, "'%s' used after move", targetName);
                 }
 
                 const char* inner = OwningInnerCStr(r->m_arena, tt);
@@ -1255,6 +1340,54 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 {
                     DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' into box<%s> '%s'", vt, inner,
                                  targetName);
+                }
+            }
+        }
+        else if (targetIsOwningField)
+        {
+            /* Writing to an owning field re-lives it. Only the root binding
+               needs a move-check: a fully-moved root can't be written to, but
+               a partially-moved root (or a partially-moved ancestor of a
+               deeper field) is fine - one of its fields is being restored.
+               Intermediate members are not read here, so their partially-
+               moved state must not block the write. */
+            Node* root = a->target;
+
+            while (root->kind == NodeMember || root->kind == NodeIndex)
+            {
+                root = (root->kind == NodeMember) ? ((MemberExpr*)root)->base_node
+                                                  : ((IndexExpr*)root)->base_node;
+            }
+
+            if (root->kind == NodeIdent)
+            {
+                ResolveExprImpl(r, root, scope, true);
+            }
+
+            if (a->op == AssignSet)
+            {
+                /* Plain `=` re-lives the field and any ancestor that no
+                   longer has a moved descendant. */
+                RevalidateOwningField(r, fieldKey);
+            }
+            else
+            {
+                /* Compound assign (+=, ...) reads the field first, so it's
+                   only allowed while the field is still live. */
+                ResolveExpr(r, a->target, scope);
+            }
+
+            ResolveExpr(r, a->value, scope);
+
+            if (a->op == AssignSet)
+            {
+                /* If the RHS is itself an owning binding, it moves out of
+                   that source - same as a box-to-box assignment. */
+                const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+
+                if (movedValueKey)
+                {
+                    MoveBoxIdent(r, movedValueKey, a->base.range);
                 }
             }
         }
@@ -1347,7 +1480,16 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (key && IsBoxUnusable(r, key))
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "'%s' used after move", key);
+                if (IsBoxPartiallyMoved(r, key))
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range,
+                                 "'%s' used after partial move (a field was moved out); its non-moved fields are still accessible",
+                                 key);
+                }
+                else
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range, "'%s' used after move", key);
+                }
             }
         }
 

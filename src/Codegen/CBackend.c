@@ -2189,7 +2189,20 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
             if (declaration->init)
             {
                 SbPuts(&emitter->out, " = ");
-                CEmitOwnedValue(emitter, declaration->init, "string");
+                if (declaration->init->kind == NodeStrLiteral)
+                {
+                    SbPuts(&emitter->out, "strata_strdup(");
+                    CEmitExpr(emitter, declaration->init);
+                    SbPutc(&emitter->out, ')');
+                }
+                else
+                {
+                    /* Emit the owning source value. The move-out (nulling the
+                       source so it isn't double-freed) is emitted below as a
+                       separate statement — a bare comma here would parse as a
+                       second declarator: `char * s = a, (b = 0);`. */
+                    CEmitExpr(emitter, declaration->init);
+                }
             }
             else
             {
@@ -2199,6 +2212,27 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
             if (semicolon)
             {
                 SbPutc(&emitter->out, ';');
+            }
+
+            if (declaration->init && declaration->init->kind != NodeStrLiteral)
+            {
+                const Node* movedSrc = MovableBoxSource(declaration->init);
+                if (movedSrc)
+                {
+                    if (semicolon)
+                    {
+                        SbPutc(&emitter->out, '\n');
+                        Pad(emitter);
+                    }
+
+                    EmitLValue(emitter, movedSrc);
+                    SbPuts(&emitter->out, " = 0");
+
+                    if (semicolon)
+                    {
+                        SbPutc(&emitter->out, ';');
+                    }
+                }
             }
 
             AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);

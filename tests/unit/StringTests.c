@@ -161,3 +161,41 @@ STRATA_TEST(string_type_check_rejects_int_init)
     arena_free(&arena);
     DiagnosticEngineFree(&diag);
 }
+
+STRATA_TEST(global_string_array_element_assigned_to_local)
+{
+    /* A global string[] holding a single empty string; reading that element
+       into a local owning string must copy the empty string correctly (and
+       not double-free on teardown). Verified through a host strlen. */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "extern ulong strlen(string s);\n"
+        "string[] g = {\"\"};\n"
+        "int entry() {\n"
+        "  string s = g[0];\n"
+        "  return (int)strlen(s);\n"            /* empty -> 0 */
+        "}\n",
+        "str", &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "strlen", (void*)&strlen), 1);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}

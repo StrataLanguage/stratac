@@ -1843,7 +1843,7 @@ STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "used after move"));
+    STRATA_CHECK(Contains(d, "used after partial move"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -1959,7 +1959,7 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "used after move"));
+    STRATA_CHECK(Contains(d, "used after partial move"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
