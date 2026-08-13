@@ -135,11 +135,16 @@ void say_hi_to_person(ref Person person)
     printf("hello, %s\n", person.name);
 }
 
-box<string>[] globalStringArray = { "hi" };
+box<string>[] globalStringArrayBox = { "hi" };
+string[] globalStringArray = { "hi" };
 
 // Entrypoint
 float entry()
 {
+    printf("globalStringArrayBox[0] = %s\n", globalStringArrayBox[0]);
+    globalStringArrayBox[0] = "goodbye";
+    printf("globalStringArrayBox[0] = %s\n", globalStringArrayBox[0]);
+
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);
     globalStringArray[0] = "goodbye";
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);

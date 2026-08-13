@@ -236,32 +236,30 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
    Identifier -> its name; member chain -> dotted key ("holder.gun"). */
 static const char* MovableBoxSourceKey(Resolver* r, Node* n)
 {
-    while (n && n->kind == NodeCast)
-    {
-        n = ((CastExpr*)n)->operand;
-    }
+    /* Shared "what can be moved" rule (unwrap casts; ident/member/index). */
+    const Node* moved = MovableBoxSourceNode(n);
 
-    if (!n)
+    if (!moved)
     {
         return NULL;
     }
 
-    if (n->kind == NodeIdent)
+    if (moved->kind == NodeIdent)
     {
-        return ((IdentExpr*)n)->name;
+        return ((const IdentExpr*)moved)->name;
     }
 
-    if (n->kind == NodeMember)
+    if (moved->kind == NodeMember)
     {
-        MemberExpr* m = (MemberExpr*)n;
+        const MemberExpr* m = (const MemberExpr*)moved;
         const char* baseKey = MovableBoxSourceKey(r, m->base_node);
 
         return baseKey ? arena_format(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
     }
 
-    if (n->kind == NodeIndex)
+    if (moved->kind == NodeIndex)
     {
-        IndexExpr* ix = (IndexExpr*)n;
+        const IndexExpr* ix = (const IndexExpr*)moved;
         const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
 
         /* An owning array element is movable: reading it into an owning

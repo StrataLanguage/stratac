@@ -1082,23 +1082,11 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
     return ValueMake(v, sym->typeDesc);
 }
 
-/* Unwraps casts to find the lvalue being moved (identifier or field chain),
-   for nulling via EmitLValue. */
-static Node* MovableBoxSourceNode(Node* n)
-{
-    while (n && n->kind == NodeCast)
-    {
-        n = ((CastExpr*)n)->operand;
-    }
-
-    return (n && (n->kind == NodeIdent || n->kind == NodeMember || n->kind == NodeIndex)) ? n : NULL;
-}
-
 /* Nulls the owning binding (box/string/array ident or member chain) behind a
    moved value, so the source is no longer responsible for freeing it. */
 static void NullMovedSource(Builder* b, Node* n)
 {
-    Node* moved = MovableBoxSourceNode(n);
+    Node* moved = (Node*)MovableBoxSourceNode(n);
 
     if (!moved)
     {
@@ -1715,7 +1703,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
 
-                Node* movedNode = MovableBoxSourceNode(n->value);
+                Node* movedNode = (Node*)MovableBoxSourceNode(n->value);
 
                 if (movedNode)
                 {
@@ -1748,7 +1736,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
 
-                Node* movedSourceNode = MovableBoxSourceNode(n->value);
+                Node* movedSourceNode = (Node*)MovableBoxSourceNode(n->value);
 
                 if (movedSourceNode)
                 {
@@ -3066,7 +3054,7 @@ static void EmitStmt(Builder* b, Node* n)
                 }
 
                 Node* movedReturnNode
-                    = (v.typeDesc.isBox || v.typeDesc.isArray) ? MovableBoxSourceNode(r->value) : NULL;
+                    = (v.typeDesc.isBox || v.typeDesc.isArray) ? (Node*)MovableBoxSourceNode(r->value) : NULL;
 
                 if (movedReturnNode)
                 {
@@ -3136,7 +3124,7 @@ static void EmitStmt(Builder* b, Node* n)
                     /* Move from another array binding: copy the {ptr,len}
                        struct and zero the source (whole slot) to avoid a
                        double free. */
-                    Node* movedNode = MovableBoxSourceNode(varDecl->init);
+                    Node* movedNode = (Node*)MovableBoxSourceNode(varDecl->init);
                     LValue src = movedNode ? EmitLValue(b, movedNode) : (LValue){0};
 
                     Value value = EmitExpr(b, varDecl->init);

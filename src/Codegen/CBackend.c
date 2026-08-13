@@ -592,23 +592,6 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     }
 }
 
-static bool IsLValue(const Node* node)
-{
-    return node && (node->kind == NodeIdent || node->kind == NodeMember || node->kind == NodeIndex);
-}
-
-/* Unwraps casts to find the lvalue being moved (identifier or field chain),
-   for nulling via EmitLValue. */
-static const Node* MovableBoxSource(const Node* n)
-{
-    while (n && n->kind == NodeCast)
-    {
-        n = ((const CastExpr*)n)->operand;
-    }
-
-    return IsLValue(n) ? n : NULL;
-}
-
 static void EmitScalarValue(CEmitter* emitter, const Node* node);
 static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* innerType);
 
@@ -861,7 +844,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
                 /* Same owning type: move (take pointer, null source). */
                 CEmitExpr(emitter, field->value);
 
-                const Node* moved = MovableBoxSource(field->value);
+                const Node* moved = MovableBoxSourceNode(field->value);
 
                 if (moved)
                 {
@@ -951,7 +934,7 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
                 /* Same owning type, not a literal: move (take pointer, null source). */
                 CEmitExpr(emitter, val);
 
-                const Node* moved = MovableBoxSource(val);
+                const Node* moved = MovableBoxSourceNode(val);
 
                 if (moved)
                 {
@@ -1140,7 +1123,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
             CEmitExpr(emitter, eNode);
             SbPuts(&emitter->out, "; ");
 
-            const Node* moved = MovableBoxSource(eNode);
+            const Node* moved = MovableBoxSourceNode(eNode);
 
             if (moved)
             {
@@ -1181,7 +1164,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
             /* box<T> arg: the box pointer already IS the address of the value. */
             CEmitExpr(emitter, eNode);
         }
-        else if (IsLValue(eNode))
+        else if (IsLValueNode(eNode))
         {
             SbPuts(&emitter->out, "&(");
             EmitLValue(emitter, eNode);
@@ -1297,7 +1280,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
                 CEmitExpr(emitter, argument);
                 SbPuts(&emitter->out, ") })");
             }
-            else if (IsLValue(argument))
+            else if (IsLValueNode(argument))
             {
                 SbPuts(&emitter->out, "&(");
                 EmitLValue(emitter, argument);
@@ -1445,7 +1428,7 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
                 /* Same owning type, not a literal: move. */
                 CEmitExpr(emitter, eNode);
 
-                const Node* moved = MovableBoxSource(eNode);
+                const Node* moved = MovableBoxSourceNode(eNode);
 
                 if (moved)
                 {
@@ -1740,7 +1723,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             CEmitExpr(emitter, assign->value);
             SbPutc(&emitter->out, ';');
 
-            const Node* movedSource = MovableBoxSource(assign->value);
+            const Node* movedSource = MovableBoxSourceNode(assign->value);
 
             if (movedSource)
             {
@@ -1783,7 +1766,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             }
             SbPuts(&emitter->out, ")");
 
-            const Node* movedSource = MovableBoxSource(assign->value);
+            const Node* movedSource = MovableBoxSourceNode(assign->value);
 
             if (movedSource)
             {
@@ -1968,7 +1951,7 @@ static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* inn
 
     CEmitExpr(emitter, init);
 
-    const Node* moved = MovableBoxSource(init);
+    const Node* moved = MovableBoxSourceNode(init);
 
     if (moved)
     {
@@ -2148,7 +2131,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                     SbPutc(&emitter->out, ';');
                 }
 
-                const Node* movedSource = MovableBoxSource(declaration->init);
+                const Node* movedSource = MovableBoxSourceNode(declaration->init);
 
                 if (movedSource)
                 {
@@ -2238,7 +2221,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
             if (declaration->init && declaration->init->kind != NodeStrLiteral)
             {
-                const Node* movedSrc = MovableBoxSource(declaration->init);
+                const Node* movedSrc = MovableBoxSourceNode(declaration->init);
                 if (movedSrc)
                 {
                     if (semicolon)
@@ -2288,7 +2271,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                 SbPutc(&emitter->out, ';');
             }
 
-            const Node* movedDeclSource = MovableBoxSource(declaration->init);
+            const Node* movedDeclSource = MovableBoxSourceNode(declaration->init);
 
             if (movedDeclSource)
             {
@@ -2608,7 +2591,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
 
         /* A bare box<T> identifier is only a move if the function returns
            box<T>; otherwise it's a deref-read. */
-        const Node* movedReturnSource = IsOwningType(valueType) ? MovableBoxSource(statement->value) : NULL;
+        const Node* movedReturnSource = IsOwningType(valueType) ? MovableBoxSourceNode(statement->value) : NULL;
         bool movesBox = movedReturnSource && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
 
         /* An owning value returned as a non-owning type (e.g. box<int>

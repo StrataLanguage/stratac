@@ -307,3 +307,18 @@ Str ArrayInnerStr(const char* name)
 
     return (Str){name, len - 2};
 }
+
+const Node* MovableBoxSourceNode(const Node* n)
+{
+    while (n && n->kind == NodeCast)
+    {
+        n = ((const CastExpr*)n)->operand;
+    }
+
+    return IsLValueNode(n) ? n : NULL;
+}
+
+bool IsLValueNode(const Node* n)
+{
+    return n && (n->kind == NodeIdent || n->kind == NodeMember || n->kind == NodeIndex);
+}
