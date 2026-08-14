@@ -105,8 +105,6 @@ void LLVMJitDestroy(LLVMJit* jit)
 {
     if (jit->m_jit)
     {
-        /* If the module has owning globals, their teardown was emitted as
-           __strata_module_teardown.  Call it before we unload. */
         typedef void (*VoidFn)(void);
         uint64_t tdAddr = 0;
 
@@ -200,9 +198,6 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     LLVMOrcJITDylibRef mainJd = LLVMOrcLLJITGetMainJITDylib(llj);
 
-    /* Reflect process symbols (e.g. libcalls like memcpy/memset that LLVM
-       may lower struct-copy or vector code into) into the main dylib, since
-       a bare JITDylib does not resolve these automatically. */
     {
         LLVMOrcDefinitionGeneratorRef gen = NULL;
         LLVMErrorRef genErr = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
@@ -218,9 +213,6 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         }
     }
 
-    /* Map the compiler-internal heap runtime and the panic-unwind runtime to
-       the host so generated code can allocate and unwind without the user
-       binding symbols. */
     {
         LLVMOrcCSymbolMapPair pairs[8];
 
@@ -273,9 +265,6 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         }
     }
 
-    /* Map the CRT setjmp the generated unwind prologues call. It must be the
-       host CRT's own _setjmp so frames saved in JIT'd code are compatible
-       with the _longjmp issued by __strata_raise/__strata_rethrow. */
     {
         LLVMOrcCSymbolMapPair sj[1];
         uintptr_t setjmpAddr = StrataJitSetJmpAddress();
@@ -328,8 +317,6 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         return false;
     }
 
-    /* If the module has owning globals (box<T> / T[]), their runtime
-       initialisation was emitted as __strata_module_init.  Call it now. */
     {
         typedef void (*VoidFn)(void);
         uint64_t initAddr = 0;

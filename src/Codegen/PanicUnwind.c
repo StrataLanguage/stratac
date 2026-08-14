@@ -13,7 +13,8 @@ extern void strata_panic(const char* msg);
    documented setjmp/longjmp combination:
      - mingw-w64 x64:   _setjmp(buf, frame) + longjmp  (msvcrt exports)
      - mingw-w64 arm64: __mingw_setjmp + __mingw_longjmp
-     - MSVC:            _setjmp(buf) + _longjmp        (ucrt exports)
+     - MSVC/clang-cl:   _setjmp(buf) + longjmp         (ucrt exports; ucrt
+                         has no `_longjmp` symbol, unlike POSIX libcs)
      - POSIX:           _setjmp(buf) + _longjmp
    On x64 the longjmp half is a plain register restore + jump — it does not
    walk unwind tables — which is exactly what skipping JIT'd frames needs.
@@ -40,9 +41,9 @@ extern void longjmp(void* buf, int value);
 #define STRATA_LONGJMP longjmp
 #elif defined(_WIN32)
 extern int _setjmp(void* buf);
-extern void _longjmp(void* buf, int value);
+extern void longjmp(void* buf, int value);
 #define STRATA_SETJMP _setjmp
-#define STRATA_LONGJMP _longjmp
+#define STRATA_LONGJMP longjmp
 #else
 extern int _setjmp(void* buf);
 extern void _longjmp(void* buf, int value);
