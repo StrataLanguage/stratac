@@ -30,6 +30,7 @@ struct LLVMOrcOpaqueDefinitionGenerator;
 struct LLVMOrcOpaqueSymbolStringPoolEntry;
 struct LLVMOrcOpaqueLLJITBuilder;
 struct LLVMOrcOpaqueLLJIT;
+struct LLVMOrcOpaqueObjectLayer;
 
 typedef struct LLVMOpaqueContext* LLVMContextRef;
 typedef struct LLVMOpaqueModule* LLVMModuleRef;
@@ -51,6 +52,7 @@ typedef struct LLVMOrcOpaqueDefinitionGenerator* LLVMOrcDefinitionGeneratorRef;
 typedef struct LLVMOrcOpaqueSymbolStringPoolEntry* LLVMOrcSymbolStringPoolEntryRef;
 typedef struct LLVMOrcOpaqueLLJITBuilder* LLVMOrcLLJITBuilderRef;
 typedef struct LLVMOrcOpaqueLLJIT* LLVMOrcLLJITRef;
+typedef struct LLVMOrcOpaqueObjectLayer* LLVMOrcObjectLayerRef;
 typedef uint64_t LLVMOrcExecutorAddress;
 
 
@@ -324,6 +326,17 @@ LLVMOrcLLJITBuilderRef LLVMOrcCreateLLJITBuilder(void);
 void LLVMOrcDisposeLLJITBuilder(LLVMOrcLLJITBuilderRef builder);
 void LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(LLVMOrcLLJITBuilderRef builder, LLVMOrcJITTargetMachineBuilderRef jtmb);
 
+/* Overrides the object linking layer LLJIT constructs internally. Used to
+   opt into JITLink (see llvm-c/OrcEE.h below) instead of the legacy
+   RuntimeDyld/COFF backend, which cannot satisfy the ordered-section-layout
+   requirement of IMAGE_REL_AMD64_ADDR32NB relocations (Win64 .pdata/.xdata)
+   once a JIT'd module has enough sections. */
+typedef LLVMOrcObjectLayerRef (*LLVMOrcLLJITBuilderObjectLinkingLayerCreatorFunction)(
+    void* Ctx, LLVMOrcExecutionSessionRef ES, const char* Triple);
+void LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(
+    LLVMOrcLLJITBuilderRef Builder,
+    LLVMOrcLLJITBuilderObjectLinkingLayerCreatorFunction F, void* Ctx);
+
 LLVMErrorRef LLVMOrcCreateLLJIT(LLVMOrcLLJITRef* outResult, LLVMOrcLLJITBuilderRef builder);
 LLVMErrorRef LLVMOrcDisposeLLJIT(LLVMOrcLLJITRef j);
 
@@ -333,6 +346,10 @@ LLVMOrcSymbolStringPoolEntryRef LLVMOrcLLJITMangleAndIntern(LLVMOrcLLJITRef j, c
 
 LLVMErrorRef LLVMOrcLLJITAddLLVMIRModule(LLVMOrcLLJITRef j, LLVMOrcJITDylibRef jd, LLVMOrcThreadSafeModuleRef tsm);
 LLVMErrorRef LLVMOrcLLJITLookup(LLVMOrcLLJITRef j, LLVMOrcExecutorAddress* outResult, const char* name);
+
+/* --- llvm-c/OrcEE.h --- */
+LLVMOrcObjectLayerRef LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManagerReserveAlloc(
+    LLVMOrcExecutionSessionRef ES, LLVMBool ReserveAlloc);
 
 #define kReturnStatusAction 1
 

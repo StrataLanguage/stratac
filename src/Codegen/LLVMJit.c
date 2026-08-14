@@ -61,6 +61,15 @@ static char* TakeOrcError(LLVMErrorRef err)
     return copy;
 }
 
+static LLVMOrcObjectLayerRef StrataReserveAllocObjectLayerCreator(void* ctx, LLVMOrcExecutionSessionRef es, const char* triple)
+{
+    (void)ctx;
+    (void)triple;
+
+    // I refuse to believe that this is a real function name
+    return LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManagerReserveAlloc(es, 1);
+}
+
 static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
 {
     LLVMOrcExecutorAddress addr = 0;
@@ -165,6 +174,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
     LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(builder, jtmb);
+    LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(builder, &StrataReserveAllocObjectLayerCreator, NULL);
 
     LLVMOrcLLJITRef llj = NULL;
     err = LLVMOrcCreateLLJIT(&llj, builder);
