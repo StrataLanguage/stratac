@@ -13,6 +13,7 @@ typedef struct
     Arena* m_arena;
     StrMap m_constVars;
     StrMap m_movedBoxes;
+    StrMap m_nonEmptyPaths; /* dotted path -> 1 = definitely non-empty (`T?` narrowing) */
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
@@ -74,7 +75,7 @@ static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
    tree (including inside boxes: `^T[N]` is an array of boxes). */
 static bool TypeTreeHasFixedArray(const TypeName* t)
 {
-    for (; t; t = t->isBox ? t->inner : (t->isArray ? t->elem : NULL))
+    for (; t; t = (t->isBox || t->isOptional) ? t->inner : (t->isArray ? t->elem : NULL))
     {
         if (t->isArray && t->length >= 0)
         {
@@ -159,10 +160,18 @@ static void ClearBoxSubtree(Resolver* r, const char* key)
     }
 }
 
+/* Nullable (`T?`) narrowing facts - defined below, used by move tracking. */
+static void MarkPathNonEmpty(Resolver* r, const char* key);
+static void ClearNonEmptySubtree(Resolver* r, const char* key);
+
 static void MarkBoxLive(Resolver* r, const char* name)
 {
     ClearBoxSubtree(r, name);
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
+    /* A whole-value reassignment installs a fresh, definitely-initialized
+       value - the path is non-empty again (and so are no stale descendants). */
+    ClearNonEmptySubtree(r, name);
+    MarkPathNonEmpty(r, name);
 }
 
 /* Reassigning a single owning field (e.g. `bob.name = ...`) re-lives that
@@ -172,6 +181,9 @@ static void MarkBoxLive(Resolver* r, const char* name)
 static void RevalidateOwningField(Resolver* r, const char* key)
 {
     ClearBoxSubtree(r, key);
+    /* Reassigning a single owning field re-installs a valid value there. */
+    ClearNonEmptySubtree(r, key);
+    MarkPathNonEmpty(r, key);
 
     StrMap* m = &r->m_movedBoxes;
 
@@ -255,6 +267,88 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
     }
 }
 
+/* ---- Nullable (`T?`) narrowing facts ------------------------------------
+   A path ("weap.model") maps to 1 while sema can prove the box is non-empty
+   (inside `if (weap.model?) { ... }`, or after a definite assignment).
+   Reading through an unproven optional is a compile error. This is the
+   mirror image of move poisoning: facts must be invalidated by anything
+   that could empty/rebind the path (move-out, reassignment, shadowing). */
+
+static bool IsPathNonEmpty(const Resolver* r, const char* key);
+static void MarkPathNonEmpty(Resolver* r, const char* key);
+static void ClearNonEmptySubtree(Resolver* r, const char* key);
+
+static bool IsPathNonEmpty(const Resolver* r, const char* key)
+{
+    return key && StrMapGet(&r->m_nonEmptyPaths, key) == (void*)1;
+}
+
+static void MarkPathNonEmpty(Resolver* r, const char* key)
+{
+    if (key)
+    {
+        StrMapPut(&r->m_nonEmptyPaths, key, (void*)1);
+    }
+}
+
+/* Drops `key` and all `key.*` descendants from the non-empty map. */
+static void ClearNonEmptySubtree(Resolver* r, const char* key)
+{
+    if (!key)
+    {
+        return;
+    }
+
+    StrMap* m = &r->m_nonEmptyPaths;
+    size_t klen = strlen(key);
+
+    for (size_t i = 0; i < m->cap; i++)
+    {
+        if (!m->keys[i])
+        {
+            continue;
+        }
+
+        const char* k = m->keys[i];
+
+        if (strcmp(k, key) == 0 ||
+            (strncmp(k, key, klen) == 0 && k[klen] == '.'))
+        {
+            m->values[i] = NULL;
+        }
+    }
+}
+
+static void ClearAllNonEmptyFacts(Resolver* r)
+{
+    StrMap* m = &r->m_nonEmptyPaths;
+
+    for (size_t i = 0; i < m->cap; i++)
+    {
+        m->values[i] = NULL;
+    }
+}
+
+/* Intersects two fact sets: a path stays definitely-non-empty only when BOTH
+   branches prove it. Dual of MergeMovedBoxes (which unions badness). */
+static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
+{
+    for (size_t i = 0; i < dst->cap; i++)
+    {
+        if (!dst->keys[i] || dst->values[i] != (void*)1)
+        {
+            continue;
+        }
+
+        if (StrMapGet(other, dst->keys[i]) != (void*)1)
+        {
+            dst->values[i] = NULL;
+        }
+    }
+
+    /* Keys that exist only in `other` cannot survive the merge either. */
+}
+
 /* Marks 'name' moved, unless it's a box global or rooted in a `ref ^T`
    param - a borrow of the caller's box, which the callee doesn't own and
    can't validly move out of (the caller's own liveness tracking has no way
@@ -281,6 +375,9 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 
     MarkBoxMoved(r, name);
     MarkBoxPartiallyMoved(r, name);
+    /* Moving out also invalidates any "definitely non-empty" fact for the
+       path and its descendants - a moved-from optional is empty again. */
+    ClearNonEmptySubtree(r, name);
 }
 
 /* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
@@ -1126,6 +1223,8 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     }
     case NodeAssign:
         return InferType(r, ((AssignExpr*)n)->target, scope);
+    case NodeNullTest:
+        return InternTypeName(r, "bool");
     case NodeIncDec:
         return InferType(r, ((IncDecExpr*)n)->operand, scope);
     case NodeCast:
@@ -1135,6 +1234,13 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         MemberExpr* m = (MemberExpr*)n;
 
         const TypeName* baseType = InferType(r, m->base_node, scope);
+
+        /* Member access through an optional goes through the same box
+           pointer as through a `^T`. */
+        if (baseType && baseType->isOptional)
+        {
+            baseType = baseType->inner;
+        }
 
         if (baseType && baseType->isBox)
         {
@@ -1232,6 +1338,17 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
     if (targetType && TypeNameIsOwning(targetType))
     {
         const TypeName* inner = TypeNameBoxInner(targetType);
+
+        /* A `T?` slot accepts a `^T` (and vice versa) when the inner types
+           match - same runtime representation. The reverse direction is NOT
+           accepted here on purpose: moving an optional into a non-optional
+           box requires a narrowing fact, which the callers check. */
+        const TypeName* valueInner = TypeNameBoxInner(valueType);
+
+        if (targetType->isOptional && valueType->isBox && inner && valueInner)
+        {
+            return strcmp(inner->name, valueInner->name) == 0;
+        }
 
         return (inner && strcmp(inner->name, valueType->name) == 0)
                || strcmp(valueType->name, targetType->name) == 0;
@@ -1358,6 +1475,36 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 targetIsOwningField = true;
                 fieldKey = MovableBoxSourceKey(r, a->target);
             }
+
+            /* Writing THROUGH an optional link (addressing a field inside a
+               maybe-empty box) needs every optional ancestor proven - same
+               rule as a read, since codegen must compute the field address. */
+            for (Node* anc = ((MemberExpr*)a->target)->base_node; anc;)
+            {
+                const TypeName* at2 = InferType(r, anc, scope);
+
+                if (at2 && at2->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
+                {
+                    const char* ancKey = MovableBoxSourceKey(r, anc);
+
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "'%s' may be empty ('%s'); test it first: if (%s?) { ... }",
+                                 ancKey ? ancKey : "<expression>", at2->name, ancKey ? ancKey : "<expr>");
+                }
+
+                if (anc->kind == NodeMember)
+                {
+                    anc = ((MemberExpr*)anc)->base_node;
+                }
+                else if (anc->kind == NodeIndex)
+                {
+                    anc = ((IndexExpr*)anc)->base_node;
+                }
+                else
+                {
+                    anc = NULL;
+                }
+            }
         }
 
         /* A bare braced array literal RHS (`a = {1,2,3};`, `s.field = {...};`)
@@ -1399,8 +1546,22 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             /* `=` rebinds the box (moves in a new box of the same type);
                 any other assignment into a ^T - including `=` with a
-                plain T value, e.g. `x = 5;` - mutates its contents instead. */
-            bool boxMove = a->op == AssignSet && vt && strcmp(vt->name, tt->name) == 0;
+                plain T value, e.g. `x = 5;` - mutates its contents instead.
+                An optional target (`T?`) may be empty, so its contents can
+                never be mutated in place: every `=` rebinds the whole slot
+                (drop old + take new), and compound ops are rejected. */
+            bool optionalTarget = tt->isOptional;
+
+            if (optionalTarget && a->op != AssignSet)
+            {
+                DiagErrorFmt(r->m_diag, a->base.range,
+                             "cannot compound-assign into '%s' of nullable type '%s'; it may be empty",
+                             ((IdentExpr*)a->target)->name, tt->name);
+
+                return;
+            }
+
+            bool boxMove = a->op == AssignSet && vt && (strcmp(vt->name, tt->name) == 0 || optionalTarget);
             const char* targetName = ((IdentExpr*)a->target)->name;
 
             if (boxMove)
@@ -1583,7 +1744,29 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         MemberExpr* m = (MemberExpr*)n;
         ResolveExprImpl(r, m->base_node, scope, true);
 
-        const TypeName* baseType = InferType(r, m->base_node, scope);
+        const TypeName* rawBaseType = InferType(r, m->base_node, scope);
+
+        /* Reading through a possibly-empty optional requires a narrowing
+           fact (`if (path?)`) - or an explicit reassignment of it. */
+        if (rawBaseType && rawBaseType->isOptional)
+        {
+            const char* baseKey = MovableBoxSourceKey(r, m->base_node);
+
+            if (!IsPathNonEmpty(r, baseKey))
+            {
+                DiagErrorFmt(r->m_diag, m->base.range,
+                             "'%s' may be empty ('%s'); test it first: if (%s?) { ... }",
+                             baseKey ? baseKey : "<expression>", rawBaseType->name,
+                             baseKey ? baseKey : "<expr>");
+            }
+        }
+
+        const TypeName* baseType = rawBaseType;
+
+        if (baseType && baseType->isOptional)
+        {
+            baseType = baseType->inner;
+        }
 
         if (baseType && baseType->isBox)
         {
@@ -1799,6 +1982,87 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
+        /* Non-optional box fields (`^T`) must be explicitly initialized:
+           an omitted field would be zero-filled, leaving a NULL box that
+           every subsequent operation would trip over. Optionals (`T?`)
+           may legitimately stay empty. */
+        if (structType && !TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
+        {
+            size_t positionalIndex = 0;
+
+            for (size_t i = 0; i < structInitExpr->fields.count; i++)
+            {
+                StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
+
+                if (!field->name || field->name[0] == '\0')
+                {
+                    positionalIndex++;
+                }
+            }
+
+            /* Re-walk to map literal entries onto struct fields the same way
+               the checking loop above does. */
+            size_t positionalSeen = 0;
+            bool covered[256] = {false};
+            bool overflow = structType->fields.count > 256;
+
+            for (size_t i = 0; i < structInitExpr->fields.count && !overflow; i++)
+            {
+                StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
+                size_t idx = (size_t)-1;
+
+                if (!field->name || field->name[0] == '\0')
+                {
+                    idx = positionalSeen++;
+                }
+                else
+                {
+                    int named = TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name);
+
+                    if (named >= 0)
+                    {
+                        idx = (size_t)named;
+                    }
+                }
+
+                if (idx < 256)
+                {
+                    covered[idx] = true;
+                }
+            }
+
+            for (size_t f = 0; f < structType->fields.count && !overflow; f++)
+            {
+                FieldDecl* fd = (FieldDecl*)VecGet(&structType->fields, f);
+
+                /* Covers both `^T` fields and owning structs held by value
+                   (also rejected elsewhere, but keep init enforcement here). */
+                bool mustInit = (fd->type.isBox && !fd->type.isOptional)
+                                || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name);
+
+                if (mustInit && (f >= 256 || !covered[f]))
+                {
+                    /* Suggest the optional spelling of the inner type. A
+                       `^string` field's optional is spelled `string?`; a
+                       by-value owning struct keeps its own name (`Model?`). */
+                    const TypeName* inner = TypeNameBoxInner(&fd->type);
+                    const char* optSpelling = inner ? inner->name : fd->type.name;
+
+                    DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+                                 "owning field '%s' of struct '%s' must be initialized "
+                                 "(declare it '%s?' if it may be empty)",
+                                 fd->name, structInitExpr->typeName, optSpelling);
+                }
+            }
+
+            if (overflow)
+            {
+                DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+                             "struct '%s' has too many fields to check for missing initializers",
+                             structInitExpr->typeName);
+            }
+        }
+
         return;
     }
     case NodeIndex:
@@ -1806,6 +2070,65 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         IndexExpr* ix = (IndexExpr*)n;
         ResolveExprImpl(r, ix->base_node, scope, true);
         ResolveExprImpl(r, ix->index, scope, false);
+        return;
+    }
+    case NodeNullTest:
+    {
+        NullTestExpr* nt = (NullTestExpr*)n;
+
+        /* Testing `a.b.c?` reaches c by dereferencing a and a.b - so every
+           optional ANCESTOR of the tested path must already be proven
+           non-empty, otherwise the test itself would fault. */
+        Node* anc = NULL;
+
+        if (nt->operand->kind == NodeMember)
+        {
+            anc = ((MemberExpr*)nt->operand)->base_node;
+        }
+        else if (nt->operand->kind == NodeIndex)
+        {
+            anc = ((IndexExpr*)nt->operand)->base_node;
+        }
+
+        for (; anc;)
+        {
+            const TypeName* at = InferType(r, anc, scope);
+
+            if (at && at->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
+            {
+                const char* ancKey = MovableBoxSourceKey(r, anc);
+
+                DiagErrorFmt(r->m_diag, nt->base.range,
+                             "'%s' may be empty ('%s'); test it first: if (%s?) { ... }",
+                             ancKey ? ancKey : "<expression>", at->name, ancKey ? ancKey : "<expr>");
+            }
+
+            if (anc->kind == NodeMember)
+            {
+                anc = ((MemberExpr*)anc)->base_node;
+            }
+            else if (anc->kind == NodeIndex)
+            {
+                anc = ((IndexExpr*)anc)->base_node;
+            }
+            else
+            {
+                anc = NULL;
+            }
+        }
+
+        /* Finally resolve the operand path (gates apply within it). */
+        ResolveExpr(r, nt->operand, scope);
+
+        const TypeName* operandType = InferType(r, nt->operand, scope);
+
+        if (operandType && !operandType->isOptional)
+        {
+            DiagErrorFmt(r->m_diag, nt->base.range,
+                         "'?' test requires a nullable type ('T?'), but '%s' can never be empty",
+                         operandType->name);
+        }
+
         return;
     }
     case NodeArrayInit:
@@ -1891,8 +2214,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         }
 
         /* Owning types must be initialized so they hold a valid heap pointer
-            - except arrays, which default to an empty {null, 0} fat struct. */
-        if (TypeNameIsOwning(&vd->type) && !TypeNameIsDynamicArray(&vd->type) && !vd->init)
+            - except arrays, which default to an empty {null, 0} fat struct,
+            and optionals (`T?`), for which empty is a valid state. */
+        if (TypeNameIsOwning(&vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
+            && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
         }
@@ -1947,8 +2272,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         /* Fresh binding: clear any stale moved-state a same-named variable
             left behind (e.g. from a prior loop iteration or an earlier,
             unrelated declaration in this function) — including field-level
-            partial-move markers. */
+            partial-move markers and nullable narrowing facts. */
         ClearBoxSubtree(r, vd->name);
+        ClearNonEmptySubtree(r, vd->name);
         StrMapPut(scope, vd->name, (void*)&vd->type);
 
         return;
@@ -2028,18 +2354,40 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         IfStmt* i = (IfStmt*)n;
         ResolveExpr(r, i->condition, scope);
 
+        /* A direct `if (path?)` condition establishes a definitely-non-empty
+           fact for the then-branch. Facts from both branches are intersected
+           at the join; moved-state keeps its own conservative union merge. */
+        const char* factKey = NULL;
+
+        if (i->condition->kind == NodeNullTest)
+        {
+            factKey = MovableBoxSourceKey(r, ((NullTestExpr*)i->condition)->operand);
+        }
+
         /* then/else are mutually exclusive - each is walked from the same
-           starting moved-state (not one after the other), and the state
-           after the if is a conservative merge of both outcomes. */
+            starting moved-state (not one after the other), and the state
+            after the if is a conservative merge of both outcomes. */
         StrMap beforeBranches;
         CopyStrMap(&r->m_movedBoxes, &beforeBranches);
+
+        StrMap beforeFacts;
+        CopyStrMap(&r->m_nonEmptyPaths, &beforeFacts);
+
+        if (factKey)
+        {
+            MarkPathNonEmpty(r, factKey);
+        }
 
         WalkStmt(r, i->thenBranch, scope);
 
         StrMap afterThen;
         CopyStrMap(&r->m_movedBoxes, &afterThen);
 
+        StrMap factsThen;
+        CopyStrMap(&r->m_nonEmptyPaths, &factsThen);
+
         ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
+        ReplaceStrMapContents(&r->m_nonEmptyPaths, &beforeFacts);
 
         if (i->elseBranch)
         {
@@ -2048,8 +2396,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         MergeMovedBoxes(&r->m_movedBoxes, &afterThen);
 
+        /* Keep only paths proven non-empty on BOTH branches. */
+        MergeNonEmptyFacts(&r->m_nonEmptyPaths, &factsThen);
+
         StrMapFree(&beforeBranches);
         StrMapFree(&afterThen);
+        StrMapFree(&beforeFacts);
+        StrMapFree(&factsThen);
 
         return;
     }
@@ -2057,7 +2410,24 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     {
         WhileStmt* w = (WhileStmt*)n;
         ResolveExpr(r, w->condition, scope);
+
+        const char* factKey = NULL;
+
+        if (w->condition->kind == NodeNullTest)
+        {
+            factKey = MovableBoxSourceKey(r, ((NullTestExpr*)w->condition)->operand);
+
+            if (factKey)
+            {
+                MarkPathNonEmpty(r, factKey);
+            }
+        }
+
         WalkLoopBody(r, w->body, scope);
+
+        /* Nothing survives a loop: the condition may have been false on the
+           last check, and any fact established inside may not hold. */
+        ClearAllNonEmptyFacts(r);
 
         return;
     }
@@ -2080,6 +2450,16 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (fs->condition)
         {
             ResolveExpr(r, fs->condition, scope);
+
+            if (fs->condition->kind == NodeNullTest)
+            {
+                const char* factKey = MovableBoxSourceKey(r, ((NullTestExpr*)fs->condition)->operand);
+
+                if (factKey)
+                {
+                    MarkPathNonEmpty(r, factKey);
+                }
+            }
         }
 
         if (fs->update)
@@ -2088,6 +2468,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         }
 
         WalkLoopBody(r, fs->body, scope);
+
+        /* Same rule as while: facts never survive a loop. */
+        ClearAllNonEmptyFacts(r);
 
         return;
     }
@@ -2116,6 +2499,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
+    StrMapInit(&r.m_nonEmptyPaths);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_typeCache);
@@ -2427,6 +2811,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     StrMapFree(&r.m_constVars);
     StrMapFree(&r.m_movedBoxes);
+    StrMapFree(&r.m_nonEmptyPaths);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
     StrMapFree(&r.m_typeCache);

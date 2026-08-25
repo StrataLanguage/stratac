@@ -363,6 +363,8 @@ static Token LexTokenImpl(Lexer* lex)
         }
 
         return Make(lex, TokGt, start);
+    case '?':
+        return Make(lex, TokQuestion, start);
     default:
         DiagErrorFmt(lex->m_diag, LexRange(lex, start, 1), "unexpected character '%c'", c);
 

@@ -24,7 +24,8 @@ typedef struct
     bool isVoid;
     const char* structTypeName;
     bool isBox;
-    const TypeName* boxInner; /* inner T of ^T (NULL for string) */
+    bool isOptional; /* T?: same repr as ^T, but may be empty (sema-gated) */
+    const TypeName* boxInner; /* inner T of ^T / T? (NULL for string) */
     bool isArray;
     bool isSimdVector;
     const TypeName* arrayInner; /* element type of T[] / T[N] */

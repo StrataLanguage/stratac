@@ -435,6 +435,9 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         const TypeName* boxInner = TypeNameBoxInner(t);
 
         td.isBox = true;
+        /* `T?` shares the box representation; the flag only selects the
+           whole-slot rebind path for assignments (contents may not exist). */
+        td.isOptional = t->isOptional;
 
         if (boxInner)
         {
@@ -2287,6 +2290,45 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 return rhs;
             }
 
+            /* Optional (`T?`) slot receiving a NON-box value (struct literal,
+               aggregate, plain value): whole-slot rebind. The old value is
+               dropped (it may be empty - EmitDropOne handles NULL), then a
+               fresh cell is allocated and the owned inner constructed into
+               it. Same-kind box RHS already took the boxMove path above. */
+            bool optRebind = lvalue.typeDesc.isOptional && n->op == AssignSet;
+
+            if (optRebind)
+            {
+                /* Drop whatever the slot held first (no-op when empty). */
+                EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+
+                const TypeName* innerTn = lvalue.typeDesc.boxInner ? lvalue.typeDesc.boxInner : StringTypeName(b);
+                TypeDesc innerTd = Resolve(b, innerTn);
+
+                if (!innerTd.isArray && !innerTd.isBox)
+                {
+                    /* Scalar / struct / handle inner: allocate a cell and
+                       construct the owned value into it. */
+                    LLVMValueRef size = SizeOfConst(b, innerTd.type);
+                    LLVMValueRef args[1] = {size};
+                    StrataAllocFn(b);
+                    LLVMValueRef cell = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "optcell");
+                    LLVMValueRef inner = Coerce(b, rhs, innerTd).value;
+                    LLVMBuildStore(b->m_builder, inner, cell);
+                    LLVMBuildStore(b->m_builder, cell, lvalue.ptr);
+
+                    return ValueMake(cell, lvalue.typeDesc);
+                }
+
+                /* String inner: construct the owned string (heap copy) into
+                   the slot. Array inner cannot occur - optionals of dynamic
+                   arrays are rejected by sema. */
+                LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
+                LLVMBuildStore(b->m_builder, owned, lvalue.ptr);
+
+                return ValueMake(owned, lvalue.typeDesc);
+            }
+
             if (lvalue.typeDesc.isBox && !boxMove)
             {
                 /* Assigning a plain T (or compound-assigning) into a ^T
@@ -3555,6 +3597,23 @@ Value EmitExpr(Builder* b, Node* n)
 
     case NodeStructInit:
         return EmitStructInit(b, (StructInitExpr*)n);
+
+    case NodeNullTest:
+    {
+        /* `expr?` — load the optional slot's pointer and test it. Zero
+           runtime cost beyond the compare; sema guarantees the operand is
+           a nullable path. */
+        NullTestExpr* nt = (NullTestExpr*)n;
+        LValue lv = EmitLValue(b, nt->operand);
+
+        LLVMValueRef slotPtr = lv.valid ? lv.ptr : EmitExpr(b, nt->operand).value;
+        LLVMValueRef boxPtr = lv.valid ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slotPtr, "opt")
+                                       : slotPtr;
+
+        LLVMValueRef isNonNull = LLVMBuildICmp(b->m_builder, LLVMIntNE, boxPtr, LLVMConstNull(b->m_ptrTy), "nn");
+
+        return ValueMake(isNonNull, TypeDescMake(I1Ty(b), 0, NULL));
+    }
 
     case NodeIncDec:
     {

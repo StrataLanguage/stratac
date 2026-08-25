@@ -162,7 +162,21 @@ main) are the internal entry points.
   binds tighter than `[]`: `^Foo[]` is an array of boxed `Foo`. There is
   no spelling for a box whose inner type is an array. In the compiler a
   box is a structural `TypeName` flag (`isBox`/`inner`); canonical type
-  spellings look like `^Foo` / `^Foo[]`.
+  spellings look like `^Foo` / `^Foo[]`. `^T` is NON-NULL by contract:
+  every `^T` local must be initialized, and every `^T` struct field must
+  appear in the struct literal (compile error otherwise).
+- Optionals: `T?` — the maybe-empty form of a box (`Weapon? w;`). Same
+  runtime representation as `^T` (pointer slot; null = empty; identical
+  ABI and drop glue), purely a sema-level distinction (`TypeName`
+  `isOptional` flag). Uninitialized optional locals are legal (empty).
+  Reading through a `T?` requires a narrowing fact from `if (path?)`,
+  definite reassignment, or while/for condition narrowing — facts use the
+  same dotted-path machinery as move poisoning (`m_nonEmptyPaths`) with
+  intersection-merge at if/else joins and full invalidation at loop exits.
+  Testing `a.b.c?` also requires every optional ancestor proven. Every
+  `=` into a `T?` rebinds the whole slot (drop old + take new); compound
+  assignment into optionals is rejected. Recursive owning structs use
+  optionals for self-references (`struct Node { int v; Node? next; };`).
 - Fixed-size arrays: `byte[16] name;` — C-ABI inline storage (`[16 x i8]`
   in LLVM, `unsigned char name[16]` in C). **Struct fields only** (not
   locals, params, returns, globals, or dynamic-array elements); elements

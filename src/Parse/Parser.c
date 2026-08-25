@@ -475,6 +475,14 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
         ApplyArrayBrackets(p, out, constRange);
 
+        if (p->m_cur.kind == TokQuestion)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range,
+                         "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
+                         base.name, base.name);
+            Advance(p);
+        }
+
         out->isConst = isConst;
 
         return true;
@@ -548,6 +556,20 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->name = (char*)name;
     out->range
         = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+
+    /* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
+       so `Weapon?[]` is an array of optionals. */
+    if (p->m_cur.kind == TokQuestion)
+    {
+        SourceRange qRange = p->m_cur.range;
+        Advance(p);
+
+        TypeName wrapped = TypeNameOptionalWrap(p->m_arena, *out);
+        wrapped.range = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start),
+                                      constRange.fileId};
+        (void)qRange;
+        *out = wrapped;
+    }
 
     ApplyArrayBrackets(p, out, constRange);
 
@@ -1664,8 +1686,24 @@ static Node* ParsePostfix(Parser* p)
 
     while (e
            && (p->m_cur.kind == TokDot || p->m_cur.kind == TokInc || p->m_cur.kind == TokDec
-               || p->m_cur.kind == TokLBracket))
+               || p->m_cur.kind == TokLBracket || p->m_cur.kind == TokQuestion))
     {
+        if (p->m_cur.kind == TokQuestion)
+        {
+            /* `expr?` — null test (postfix). Only meaningful on a `T?`
+               expression; sema rejects it everywhere else. */
+            Token q = p->m_cur;
+            Advance(p);
+
+            NullTestExpr* node = AST_NEW(p->m_arena, NullTestExpr);
+            node->base.kind = NodeNullTest;
+            node->base.range = q.range;
+            node->operand = e;
+
+            e = (Node*)node;
+            continue;
+        }
+
         if (p->m_cur.kind == TokLBracket)
         {
             Token lbr = p->m_cur;

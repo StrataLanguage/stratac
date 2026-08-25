@@ -563,6 +563,16 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     }
 
+    case NodeNullTest:
+    {
+        NullTestExpr* nt = AsNode(NullTestExpr, n);
+        SbPuts(out, "(nulltest ");
+        Dump(nt->operand, 0, out);
+        SbPutc(out, '?');
+        SbPutc(out, ')');
+        return;
+    }
+
     case NodeParam:
         SbPuts(out, "(param)\n");
         return;

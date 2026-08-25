@@ -283,8 +283,9 @@ static bool ScalarSizeAlign(const char* name, SizeAlign* out)
 
 static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeName* t, SizeAlign* out)
 {
-    if (t->isBox)
+    if (t->isBox || t->isOptional)
     {
+        /* Boxes and optionals are pointer-sized slots. */
         out->size = 8;
         out->align = 8;
         return true;

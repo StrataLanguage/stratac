@@ -226,6 +226,24 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
     return CSIMD_FALLBACK_VECTOR_NAME;
 }
 
+/* Boxes and optionals share the same C representation (`T *`). */
+static bool TyIsBoxLike(const TypeName* t)
+{
+    return t && (t->isBox || t->isOptional);
+}
+
+/* Effective inner type name of a box/optional; "string" for a bare ^string.
+   NULL when t is neither. */
+static const char* BoxInnerName(const TypeName* t)
+{
+    if (!TyIsBoxLike(t))
+    {
+        return NULL;
+    }
+
+    return t->inner ? t->inner->name : "string";
+}
+
 static const char* TypeNameC(CEmitter* emitter, const TypeName* type)
 {
     if (!type || !type->name)
@@ -248,7 +266,7 @@ static const char* TypeNameC(CEmitter* emitter, const TypeName* type)
         return "void*";
     }
 
-    if (type->isBox)
+    if (TyIsBoxLike(type))
     {
         const char* innerC = TypeNameC(emitter, type->inner);
         Sb sb;
@@ -560,7 +578,7 @@ static const TypeName* ExprType(CEmitter* emitter, const Node* node)
             return InternType(emitter, "ulong");
         }
 
-        if (baseType && baseType->isBox)
+        if (TyIsBoxLike(baseType))
         {
             baseType = baseType->inner;
             baseName = baseType->name;
@@ -690,7 +708,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
             return;
         }
 
-        bool throughBox = baseType && baseType->isBox;
+        bool throughBox = TyIsBoxLike(baseType);
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
@@ -921,9 +939,17 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
         if (declaration && TypeNameIsOwning(&declaration->type))
         {
             const TypeName* valueType = ExprType(emitter, field->value);
-            bool sameOwningType = valueType && TypeNameIsOwning(valueType)
-                && strcmp(valueType->name, declaration->type.name) == 0;
-            const TypeName* inner = declaration->type.isBox ? declaration->type.inner : NULL;
+
+            /* Same owning type: exact match (^T = ^T) or matching inner
+               types across the box/optional pair (^T = U?, U? = ^T). */
+            const char* targetInnerName = BoxInnerName(&declaration->type);
+            const char* valueInnerName = BoxInnerName(valueType);
+
+            bool sameOwningType = valueType && TypeNameIsOwning(valueType) && targetInnerName && valueInnerName
+                && (strcmp(valueType->name, declaration->type.name) == 0
+                    || strcmp(targetInnerName, valueInnerName) == 0);
+
+            const TypeName* inner = (TyIsBoxLike(&declaration->type) ? declaration->type.inner : NULL);
 
             if (sameOwningType && field->value->kind != NodeStrLiteral)
             {
@@ -1034,7 +1060,7 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
                     SbPuts(&emitter->out, " = 0)");
                 }
             }
-            else if (elemType->isBox)
+            else if (TyIsBoxLike(elemType))
             {
                 /* ^T element from a non-^T value: box it up.
                     CEmitOwnedValue handles strdup for literals, move for
@@ -1132,7 +1158,7 @@ static void CEmitCopyText(CEmitter* emitter, const TypeName* type, const char* a
         return;
     }
 
-    if (type->isBox)
+    if (TyIsBoxLike(type))
     {
         const char* innerC = TypeNameC(emitter, type->inner);
         char* innerAccessor = arena_format(emitter->arena, "(*%s)", accessor);
@@ -1256,7 +1282,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const TypeName
 
         /* ^T from a bare T: heap-box it inline. */
         {
-            const TypeName* inner = elemType->isBox ? elemType->inner : NULL;
+            const TypeName* inner = (TyIsBoxLike(elemType) ? elemType->inner : NULL);
             const char* innerC = inner ? TypeNameC(emitter, inner) : "void";
 
             SbPuts(&emitter->out, "({ ");
@@ -1580,7 +1606,7 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
                     SbPuts(&emitter->out, " = 0)");
                 }
             }
-            else if (elemType->isBox)
+            else if (TyIsBoxLike(elemType))
             {
                 /* ^T element from a non-^T value: box it up. */
                 const char* innerC = TypeNameC(emitter, elemType->inner);
@@ -1753,7 +1779,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
         /* ^simd.swizzle or ^simd.lane: unpack the box and route
             through the SIMD destructure. */
         {
-            const TypeName* inner = baseType && baseType->isBox ? baseType->inner : NULL;
+            const TypeName* inner = (TyIsBoxLike(baseType) ? baseType->inner : NULL);
 
             if (inner && IsSimdVector(inner->name))
             {
@@ -1762,7 +1788,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             }
         }
 
-        bool throughBox = baseType && baseType->isBox;
+        bool throughBox = TyIsBoxLike(baseType);
         SbPutc(&emitter->out, '(');
         CEmitExpr(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
@@ -1773,6 +1799,16 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     case NodeIndex:
         EmitLValue(emitter, node);
         return;
+    case NodeNullTest:
+    {
+        /* `expr?` — plain pointer test in C. Compared against 0 rather than
+            NULL: the JIT-mode prelude defines no standard headers. */
+        const NullTestExpr* nt = (const NullTestExpr*)node;
+        SbPutc(&emitter->out, '(');
+        EmitLValue(emitter, nt->operand);
+        SbPuts(&emitter->out, " != 0)");
+        return;
+    }
     case NodeArrayInit:
         EmitArrayInitExpr(emitter, (const ArrayInitExpr*)node);
         return;
@@ -1899,6 +1935,50 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
         bool boxMove = assign->op == AssignSet && targetType && TypeNameIsOwning(targetType) && valueType
                        && strcmp(valueType->name, targetName) == 0;
 
+        /* An optional slot may be empty, so its contents can never be
+            mutated in place: every `=` rebinds the whole slot (free old
+            cell, then move a box-like source or allocate + construct). */
+        if (assign->op == AssignSet && targetType && targetType->isOptional)
+        {
+            const TypeName* optInner = targetType->inner;
+            const char* optInnerC = TypeNameC(emitter, optInner);
+
+            SbPuts(&emitter->out, "({ strata_free(");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, "); ");
+
+            if (valueType && TyIsBoxLike(valueType))
+            {
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, " = ");
+                CEmitExpr(emitter, assign->value);
+                SbPutc(&emitter->out, ';');
+
+                const Node* movedSource = MovableBoxSourceNode(assign->value);
+
+                if (movedSource)
+                {
+                    SbPutc(&emitter->out, ' ');
+                    EmitLValue(emitter, movedSource);
+                    SbPuts(&emitter->out, " = 0;");
+                }
+            }
+            else
+            {
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+                SbPuts(&emitter->out, optInnerC);
+                SbPuts(&emitter->out, ")); *");
+                EmitLValue(emitter, assign->target);
+                SbPuts(&emitter->out, " = ");
+                CEmitOwnedValue(emitter, assign->value, optInner);
+                SbPutc(&emitter->out, ';');
+            }
+
+            SbPuts(&emitter->out, " })");
+            return;
+        }
+
         if (boxMove)
         {
             bool isStrLit = strcmp(targetName, "string") == 0 && assign->value->kind == NodeStrLiteral;
@@ -1940,7 +2020,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
                 mutates its contents in place - not a move, so `x = 5;` and
                 `val -= amt;` both work even through a `ref ^T` param or
                 a box global. */
-            const TypeName* inner = targetType->isBox ? targetType->inner : NULL;
+            const TypeName* inner = (TyIsBoxLike(targetType) ? targetType->inner : NULL);
 
             if (inner && TypeNameIsOwning(inner))
             {
@@ -2026,7 +2106,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     {
         const IncDecExpr* increment = (const IncDecExpr*)node;
         const TypeName* operandType = ExprType(emitter, increment->operand);
-        bool throughBox = operandType && operandType->isBox;
+        bool throughBox = TyIsBoxLike(operandType);
 
         SbPutc(&emitter->out, '(');
 
@@ -2206,13 +2286,20 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
            ^T from the same ^T is a direct move. */
         const TypeName* valueType = ExprType(emitter, sf->value);
         bool fieldIsOwning = TypeNameIsOwning(&fd->type);
+
+        /* Exact match (^T = ^T) or matching inner types across the
+           box/optional pair (^T = U?, U? = ^T). */
+        const char* fieldInnerName = BoxInnerName(&fd->type);
+        const char* valueInnerName = BoxInnerName(valueType);
+
         bool sameOwningType = fieldIsOwning && valueType
-            && strcmp(valueType->name, fd->type.name) == 0;
+            && (strcmp(valueType->name, fd->type.name) == 0
+                || (fieldInnerName && valueInnerName && strcmp(fieldInnerName, valueInnerName) == 0));
 
         if (fieldIsOwning && !sameOwningType)
         {
             /* ^T field from a non-^T value: box it up. */
-            const TypeName* fieldInner = fd->type.isBox ? fd->type.inner : NULL;
+            const TypeName* fieldInner = (TyIsBoxLike(&fd->type) ? fd->type.inner : NULL);
             const char* fieldInnerC = TypeNameC(emitter, fieldInner);
 
             Pad(emitter);
@@ -2284,7 +2371,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
     const TypeName* initType = ExprType(emitter, (Node*)init);
 
     /* Direct move from another ^T of the same kind: take pointer. */
-    if (initType && initType->isBox)
+    if (TyIsBoxLike(initType))
     {
         Pad(emitter);
         SbPuts(&emitter->out, cName);
@@ -2468,6 +2555,63 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         const char* innerName = inner ? inner->name : "";
         const char* innerC = TypeNameC(emitter, inner);
         const TypeName* initType = declaration->init ? ExprType(emitter, declaration->init) : NULL;
+
+        if (declaration->type.isOptional)
+        {
+            /* Optional local: declare the slot EMPTY, then let the init
+               statement allocate/move into it. Unlike `^T`, no cell is
+               eagerly allocated - emptiness must be observable. */
+            SbPuts(&emitter->out, innerC);
+            SbPuts(&emitter->out, " *");
+            SbPutc(&emitter->out, ' ');
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, " = 0");
+
+            if (semicolon)
+            {
+                SbPutc(&emitter->out, ';');
+            }
+
+            if (declaration->init)
+            {
+                if (semicolon)
+                {
+                    SbPutc(&emitter->out, '\n');
+                    Pad(emitter);
+                }
+
+                EmitBoxInitStmt(emitter, cName, innerC, innerName, declaration->init);
+
+                const Node* movedOptSrc = MovableBoxSourceNode(declaration->init);
+
+                if (movedOptSrc && TyIsBoxLike(ExprType(emitter, (Node*)declaration->init)))
+                {
+                    if (semicolon)
+                    {
+                        SbPutc(&emitter->out, '\n');
+                        Pad(emitter);
+                    }
+
+                    EmitLValue(emitter, movedOptSrc);
+                    SbPuts(&emitter->out, " = 0");
+
+                    if (semicolon)
+                    {
+                        SbPutc(&emitter->out, ';');
+                    }
+                }
+            }
+
+            AddSymbol(emitter, declaration->name, &declaration->type, cName, false);
+            {
+                OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
+                entry->cName = cName;
+                entry->typeName = &declaration->type;
+                VecPush(&emitter->boxVars, entry);
+            }
+
+            return;
+        }
 
         SbPuts(&emitter->out, innerC);
         SbPuts(&emitter->out, " *");
@@ -2654,7 +2798,7 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
             continue;
         }
 
-        const TypeName* inner = e->typeName && e->typeName->isBox ? e->typeName->inner : NULL;
+        const TypeName* inner = (e->typeName && TyIsBoxLike(e->typeName) ? e->typeName->inner : NULL);
 
         /* For a by-ref box param, the box pointer lives at *var (caller's slot). */
         const char* star = e->byRef ? "*" : "";
@@ -3088,7 +3232,7 @@ static void EmitDropField(CEmitter* emitter, const char* fieldC, const TypeName*
 
     if (TypeNameIsOwning(fieldType))
     {
-        const TypeName* inner = fieldType->isBox ? fieldType->inner : NULL;
+        const TypeName* inner = (TyIsBoxLike(fieldType) ? fieldType->inner : NULL);
 
         SbPrintf(&emitter->out, "    if (p->%s) { ", fieldC);
 
@@ -3753,7 +3897,7 @@ static void EmitModuleInit(CEmitter* emitter)
             continue;
         }
 
-        const TypeName* inner = global->type.isBox ? global->type.inner : NULL;
+        const TypeName* inner = (TyIsBoxLike(&global->type) ? global->type.inner : NULL);
         const char* innerName = inner ? inner->name : "";
         const char* innerC = TypeNameC(emitter, inner);
 

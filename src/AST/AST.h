@@ -38,6 +38,7 @@ typedef enum {
     NodeGlobal,
     NodeIndex,
     NodeArrayInit,
+    NodeNullTest,
 } NodeKind;
 
 typedef struct {
@@ -48,13 +49,16 @@ typedef struct {
 #define AST_NEW(arena, type) ((type*)arena_alloc((arena), sizeof(type)))
 #define AsNode(type, node) ((type*)(node))
 
-/* Types are structural: `^T` (box) and `T[]`/`T[N]` (array) are dedicated
-   nodes wrapping an inner/element TypeName; `name` is the canonical spelling
-   of the whole subtree ("Foo", "^Foo", "^Foo[]", "int[][]", "int[4]"),
-   derived at parse time and kept consistent by the wrap helpers below. A
-   node is either a leaf (name set), a box (isBox + inner), or an array
+/* Types are structural: `^T` (box), `T?` (optional box), and `T[]`/`T[N]`
+   (array) are dedicated nodes wrapping an inner/element TypeName; `name` is
+   the canonical spelling of the whole subtree ("Foo", "^Foo", "Foo?",
+   "^Foo[]", "int[][]", "int[4]"), derived at parse time and kept consistent
+   by the wrap helpers below. A node is either a leaf (name set), a box
+   (isBox + inner), an optional (isOptional + inner), or an array
    (isArray + elem). A dynamic array `T[]` has length < 0; a fixed-size
-   array `T[N]` (C-ABI inline storage, struct fields only) has length >= 1. */
+   array `T[N]` (C-ABI inline storage, struct fields only) has length >= 1.
+   `^T` is a NON-NULL owning box; `T?` ("optional") is the maybe-empty form
+   and shares its runtime representation. */
 typedef struct TypeName {
     char* name;
     SourceRange range;
@@ -65,6 +69,7 @@ typedef struct TypeName {
     struct TypeName* elem;
     bool isBox;
     struct TypeName* inner;
+    bool isOptional; /* `T?` — maybe-empty box; `inner` is the wrapped type */
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -84,6 +89,23 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     t.inner = i;
     t.name = arena_format(arena, "^%s", i->name);
     t.range = i->range;
+    return t;
+}
+
+/* `T?` — wraps `inner` into an optional (maybe-empty box). Shares the
+   runtime representation of `^T`; the difference is enforced by sema. */
+static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
+{
+    TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *i = inner;
+    i->isOptional = false;
+
+    TypeName t = {0};
+    t.isOptional = true;
+    t.inner = i;
+    t.name = arena_format(arena, "%s?", i->name);
+    t.isConst = inner.isConst;
+    t.range = inner.range;
     return t;
 }
 
@@ -156,14 +178,28 @@ static inline bool TypeNameIsBox(const TypeName* t)
     return t && t->isBox;
 }
 
-/* Inner `T` of a box `^T`, or NULL. Never an array (no such spelling). */
-static inline const TypeName* TypeNameBoxInner(const TypeName* t)
+/* `T?` — the maybe-empty form of a box. */
+static inline bool TypeNameIsOptional(const TypeName* t)
 {
-    return (t && t->isBox) ? t->inner : NULL;
+    return t && t->isOptional;
 }
 
-/* Owning types: `string`, `^T` and dynamic `T[]`. Fixed `T[N]` is plain
-   inline storage and never owning. */
+/* Inner `T` of a box `^T` or optional `T?`, or NULL. Never an array (no
+   such spelling). */
+static inline const TypeName* TypeNameBoxInner(const TypeName* t)
+{
+    if (!t || !(t->isBox || t->isOptional))
+    {
+        return NULL;
+    }
+
+    /* `T?` always wraps an explicit inner type; `^string` is the one box
+       with a NULL inner. */
+    return t->inner;
+}
+
+/* Owning types: `string`, `^T`, `T?` and dynamic `T[]`. Fixed `T[N]` is
+   plain inline storage and never owning. */
 static inline bool TypeNameIsOwning(const TypeName* t)
 {
     if (!t || !t->name)
@@ -176,7 +212,7 @@ static inline bool TypeNameIsOwning(const TypeName* t)
         return true;
     }
 
-    return t->isBox || TypeNameIsDynamicArray(t);
+    return t->isBox || t->isOptional || TypeNameIsDynamicArray(t);
 }
 
 /* A leaf TypeName for a spelling without structure ("int", "Foo"). */
@@ -192,6 +228,21 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
 {
     if (groupsLen == 0)
     {
+        /* Trailing '?' marks an optional (`Weapon?`). */
+        if (baseLen >= 2 && base[baseLen - 1] == '?')
+        {
+            TypeName inner = TypeNameParseGroups(arena, base, baseLen - 1, NULL, 0);
+
+            TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+            *i = inner;
+
+            TypeName t = {0};
+            t.isOptional = true;
+            t.inner = i;
+            t.name = arena_strndup(arena, base, baseLen);
+            return t;
+        }
+
         if (baseLen >= 2 && base[0] == '^')
         {
             TypeName* inner = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -540,6 +591,14 @@ typedef struct {
     const TypeName* elementType;
     Vec elements;
 } ArrayInitExpr;
+
+/* expr? — null test. Valid only on a nullable (`T?`) path; yields bool.
+   Sema uses it to establish "definitely non-empty" narrowing facts inside
+   the taken branch (same machinery as move poisoning). */
+typedef struct {
+    Node base;
+    Node* operand;
+} NullTestExpr;
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);

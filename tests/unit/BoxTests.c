@@ -834,12 +834,14 @@ STRATA_TEST(box_string_array_global_element_moved_to_local_is_an_error)
 
 STRATA_TEST(box_owning_field_linked_list)
 {
-    /* A recursive owning struct: ^Node with a ^Node next field.
-       Building the list moves boxes into fields; dropping the head frees the
-       whole chain recursively. */
+    /* A recursive owning struct: the self-reference is an OPTIONAL field
+       (Node? next) because a ^T field must always be initialized and a
+       list terminator cannot be. Building the list moves boxes into fields;
+       walking it narrows each link before dereferencing; dropping the head
+       frees the whole chain recursively. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
-        "struct Node { int v; ^Node next; };\n"
+        "struct Node { int v; Node? next; };\n"
         "^Node build() {\n"
         "  ^Node c = Node { .v = 3 };\n"
         "  ^Node b = Node { .v = 2, .next = c };\n"
@@ -848,7 +850,16 @@ STRATA_TEST(box_owning_field_linked_list)
         "}\n"
         "int entry() {\n"
         "  ^Node head = build();\n"
-        "  return head.v + head.next.v + head.next.next.v;\n"
+        "  int sum = head.v;\n"
+        "  if (head.next?)\n"
+        "  {\n"
+        "    sum = sum + head.next.v;\n"
+        "    if (head.next.next?)\n"
+        "    {\n"
+        "      sum = sum + head.next.next.v;\n"
+        "    }\n"
+        "  }\n"
+        "  return sum;\n"
         "}\n",
         &err);
 

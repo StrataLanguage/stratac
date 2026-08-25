@@ -344,6 +344,7 @@ if(NOT STRATA_SHARED)
             tests/unit/ArrayTests.c
             tests/unit/VectorTests.c
             tests/unit/ConstRefTests.c
+            tests/unit/OptionalTests.c
         )
     endif()
 
