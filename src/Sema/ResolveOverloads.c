@@ -411,6 +411,11 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
 {
     Node* base = target;
 
+    if (!base)
+    {
+        return;
+    }
+
     while (base->kind == NodeMember || base->kind == NodeIndex)
     {
         if (base->kind == NodeMember)
@@ -1327,6 +1332,11 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     {
         AssignExpr* a = (AssignExpr*)n;
 
+        if (!a->target || !a->value)
+        {
+            return;
+        }
+
         CheckConstAssign(r, a->target, a->base.range);
 
         const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
@@ -1671,7 +1681,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 positionalCount++;
             }
 
-            if (fieldDecl)
+            if (fieldDecl && field->value)
             {
                 if (field->value->kind == NodeArrayInit)
                 {

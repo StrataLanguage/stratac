@@ -460,6 +460,34 @@ if(STRATA_ENABLE_LLVM)
     set_target_properties(aot_varargs_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_varargs_test COMMAND aot_varargs_test)
     set_tests_properties(aot_varargs_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 63")
+
+    set(STRATA_EXTERN_STRUCT_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/extern_struct_test${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_EXTERN_STRUCT_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/extern_struct.strata"
+                -o "${STRATA_EXTERN_STRUCT_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/extern_struct.strata"
+        COMMENT "stratac: AOT-compiling extern_struct.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_extern_struct_test samples/hosts/extern_struct_host.c "${STRATA_EXTERN_STRUCT_TEST_OBJECT}")
+    set_target_properties(aot_extern_struct_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_extern_struct_test COMMAND aot_extern_struct_test)
+    set_tests_properties(aot_extern_struct_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 125")
+
+    set(STRATA_EXTERN_LAYOUT_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/extern_layout_test${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_EXTERN_LAYOUT_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/extern_layout.strata"
+                -o "${STRATA_EXTERN_LAYOUT_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/extern_layout.strata"
+        COMMENT "stratac: AOT-compiling extern_layout.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_extern_layout_test samples/hosts/extern_layout_host.c "${STRATA_EXTERN_LAYOUT_TEST_OBJECT}")
+    set_target_properties(aot_extern_layout_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_extern_layout_test COMMAND aot_extern_layout_test)
+    set_tests_properties(aot_extern_layout_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 385")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES
