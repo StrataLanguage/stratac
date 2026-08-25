@@ -363,6 +363,11 @@ static void DefineFunction(Builder* b, const FunctionDecl* f);
 
 static TypeDesc Resolve(Builder* b, const TypeName* t)
 {
+    if (!t)
+    {
+        return TypeDescMake(NULL, TD_VOID, NULL);
+    }
+
     MappedType mapped = MapType(t);
 
     if (mapped.valid)
@@ -3443,9 +3448,11 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
 
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, PhysicalFieldIndex(st, (int)idx), "ins");
 
-        /* If an owning field was moved from an owning lvalue source (string
-           or ^T), null the source so its scope-exit drop is a no-op. */
-        if (fieldTd.isBox && rawField.typeDesc.isBox && field->value->kind != NodeStrLiteral)
+        /* If an owning field was moved from an owning lvalue source (string,
+           ^T, or a dynamic array), null the source so its scope-exit drop
+           is a no-op. */
+        if (((fieldTd.isBox && rawField.typeDesc.isBox) || (fieldTd.isArray && rawField.typeDesc.isArray))
+            && field->value->kind != NodeStrLiteral && field->value->kind != NodeArrayInit)
         {
             NullMovedSource(b, field->value);
         }

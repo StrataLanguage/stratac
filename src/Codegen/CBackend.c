@@ -3055,6 +3055,37 @@ static const char* DropHelperName(CEmitter* emitter, const char* structName)
 
 static void EmitDropField(CEmitter* emitter, const char* fieldC, const TypeName* fieldType)
 {
+    if (TypeNameIsDynamicArray(fieldType))
+    {
+        /* T[] field: free owning elements, then the data buffer (same
+            shape as the local-array drop in EmitDrops). */
+        const TypeName* elemType = TypeNameArrayElem(fieldType);
+        const char* elemC = TypeNameC(emitter, elemType ? elemType : InternType(emitter, "void"));
+
+        SbPrintf(&emitter->out, "    if (p->%s.data) { ", fieldC);
+
+        if (elemType && TypeNameIsOwning(elemType))
+        {
+            SbPrintf(&emitter->out, "{ unsigned long long _i; for (_i = 0; _i < p->%s.len; _i++) { ", fieldC);
+
+            if (TypeRegistryIsOwningStruct(&emitter->types, elemType->name))
+            {
+                SbPrintf(&emitter->out, "%s(&((%s*)p->%s.data)[_i]); ", DropHelperName(emitter, elemType->name), elemC,
+                         fieldC);
+            }
+            else
+            {
+                SbPrintf(&emitter->out, "strata_free(((%s*)p->%s.data)[_i]); ", elemC, fieldC);
+            }
+
+            SbPuts(&emitter->out, "} } ");
+        }
+
+        SbPrintf(&emitter->out, "strata_free(p->%s.data); p->%s.data = 0; p->%s.len = 0; }\n", fieldC, fieldC, fieldC);
+
+        return;
+    }
+
     if (TypeNameIsOwning(fieldType))
     {
         const TypeName* inner = fieldType->isBox ? fieldType->inner : NULL;

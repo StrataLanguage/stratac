@@ -66,7 +66,7 @@ MappedType MapType(const TypeName* t)
 {
     MappedType m = {0};
 
-    if (!t->name || t->name[0] == '\0')
+    if (!t || !t->name || t->name[0] == '\0')
     {
         return m;
     }

@@ -1360,21 +1360,37 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        if (targetIsBox)
+        /* A bare braced array literal RHS (`a = {1,2,3};`, `s.field = {...};`)
+            carries no element type from the parser - infer it from the
+            target so codegen and the type checks below see a real type.
+            A non-array target cannot take a braced list at all (fixed-size
+            array targets are rejected later with a more specific message). */
+        if (a->value->kind == NodeArrayInit
+            && (a->target->kind == NodeIdent || a->target->kind == NodeMember))
         {
-            /* A bare braced array literal RHS (`a = {1,2,3};`) carries no
-                element type from the parser - infer it from the array target
-                so codegen and the type checks below see a real type. */
-            if (TypeNameIsDynamicArray(tt) && a->value->kind == NodeArrayInit)
+            const TypeName* at = (a->target->kind == NodeIdent) ? tt : InferType(r, a->target, scope);
+
+            if (at && TypeNameIsDynamicArray(at))
             {
                 ArrayInitExpr* ai = (ArrayInitExpr*)a->value;
 
                 if (!ai->elementType)
                 {
-                    ai->elementType = TypeNameArrayElem(tt);
+                    ai->elementType = TypeNameArrayElem(at);
                 }
             }
+            else if (at && !TypeNameIsFixedArray(at))
+            {
+                const char* targetKey = MovableBoxSourceKey(r, a->target);
 
+                DiagErrorFmt(r->m_diag, a->value->range,
+                             "cannot assign a braced initializer to '%s' of non-array type '%s'",
+                             targetKey ? targetKey : "target", at->name);
+            }
+        }
+
+        if (targetIsBox)
+        {
             /* Resolve the value first (so a call gets its resolvedDecl set)
                 before inferring its type - otherwise an unresolved call's
                 type reads as unknown, misclassifying the assignment below. */
@@ -1721,10 +1737,35 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                             }
                         }
                     }
+                    else if (TypeNameIsDynamicArray(&fieldDecl->type))
+                    {
+                        /* Dynamic array field: the braced literal allocates a
+                            fresh array. Fill the element type for codegen and
+                            check per-element types. */
+                        const TypeName* elem = TypeNameArrayElem(&fieldDecl->type);
+
+                        if (!ai->elementType)
+                        {
+                            ai->elementType = elem;
+                        }
+
+                        for (size_t k = 0; k < ai->elements.count; k++)
+                        {
+                            Node* element = (Node*)VecGet(&ai->elements, k);
+                            const TypeName* elemType = InferType(r, element, scope);
+
+                            if (elemType && !IsAssignableType(r, elem, elemType))
+                            {
+                                DiagErrorFmt(r->m_diag, element->range,
+                                             "element of type '%s' cannot initialize '%s' element of field '%s'",
+                                             elemType->name, elem->name, fieldDecl->name);
+                            }
+                        }
+                    }
                     else
                     {
                         DiagErrorFmt(r->m_diag, field->value->range,
-                                     "braced initializers are only supported for fixed-size array fields; "
+                                     "braced initializers are only supported for array fields; "
                                      "field '%s' has type '%s'",
                                      fieldDecl->name, fieldDecl->type.name);
                     }
