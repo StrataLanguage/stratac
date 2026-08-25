@@ -149,6 +149,9 @@ float entry()
     printf("sCopy = %s\n", sCopy);
 
 
+    // test read OOB
+    printf("globalStringArray[9] = %s\n", globalStringArray[9]);
+
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);
     globalStringArray[0] = "goodbye";
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);

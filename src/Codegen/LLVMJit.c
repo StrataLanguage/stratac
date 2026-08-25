@@ -17,6 +17,7 @@ static void strata_free_impl(void* p)
 }
 
 extern void strata_panic(const char* msg);
+extern void strata_oob(const char* msg);
 
 static void EnsureTargetsInitialized(void)
 {
@@ -210,7 +211,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     /* Map the compiler-internal heap runtime to the host so generated box
        code can allocate without the user binding symbols. */
     {
-        LLVMOrcCSymbolMapPair pairs[3];
+        LLVMOrcCSymbolMapPair pairs[4];
 
         pairs[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_alloc");
         pairs[0].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
@@ -227,7 +228,12 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         pairs[2].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
         pairs[2].Sym.Flags.TargetFlags = 0;
 
-        LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 3);
+        pairs[3].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_oob");
+        pairs[3].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&strata_oob;
+        pairs[3].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+        pairs[3].Sym.Flags.TargetFlags = 0;
+
+        LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 4);
         LLVMErrorRef defineErr = LLVMOrcJITDylibDefine(mainJd, mu);
 
         if (defineErr)

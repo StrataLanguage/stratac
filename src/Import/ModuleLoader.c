@@ -2,66 +2,11 @@
 
 #include "Lex/Lexer.h"
 #include "Parse/Parser.h"
+#include "Core/Util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static char* ReadFileAlloc(const char* path, size_t* outLen)
-{
-    FILE* in = fopen(path, "rb");
-    if (!in)
-    {
-        return NULL;
-    }
-
-    if (fseek(in, 0, SEEK_END) != 0)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    long size = ftell(in);
-    if (size < 0)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    rewind(in);
-
-    char* buf = (char*)malloc((size_t)size + 1);
-    if (!buf)
-    {
-        fclose(in);
-        return NULL;
-    }
-
-    size_t n = fread(buf, 1, (size_t)size, in);
-    fclose(in);
-
-    buf[n] = '\0';
-
-    if (outLen)
-    {
-        *outLen = n;
-    }
-
-    return buf;
-}
-
-static size_t DirLen(const char* path)
-{
-    size_t len = strlen(path);
-    size_t i = len;
-
-    while (i > 0 && path[i - 1] != '/' && path[i - 1] != '\\')
-    {
-        --i;
-    }
-
-    return i > 0 ? i - 1 : 0;
-}
 
 static char* ResolveImportPath(Arena* arena, const char* importerPath, const char* importPath)
 {
@@ -109,6 +54,7 @@ static bool AlreadyVisited(const ModuleLoader* loader, const char* path)
             return true;
         }
     }
+
     return false;
 }
 
@@ -118,14 +64,17 @@ static void AppendItems(Module* root, const Module* src)
     {
         VecPush(&root->structs, VecGet(&src->structs, i));
     }
+
     for (size_t i = 0; i < src->handles.count; i++)
     {
         VecPush(&root->handles, VecGet(&src->handles, i));
     }
+
     for (size_t i = 0; i < src->functions.count; i++)
     {
         VecPush(&root->functions, VecGet(&src->functions, i));
     }
+    
     for (size_t i = 0; i < src->globals.count; i++)
     {
         VecPush(&root->globals, VecGet(&src->globals, i));
@@ -138,6 +87,13 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
 
 static void LoadModule(ModuleLoader* loader, const char* name, const char* text, size_t textLen, bool textOwned)
 {
+    /* Take ownership of caller-owned text before any early return so it can
+       never leak. */
+    if (textOwned)
+    {
+        PushBuffer(loader, (char*)text);
+    }
+
     if (AlreadyVisited(loader, name))
     {
         return;
@@ -145,11 +101,6 @@ static void LoadModule(ModuleLoader* loader, const char* name, const char* text,
 
     const char* nameKey = arena_strdup(loader->arena, name);
     PushVisited(loader, nameKey);
-
-    if (textOwned)
-    {
-        PushBuffer(loader, (char*)text);
-    }
 
     if (loader->sourceCount >= loader->sourceCap)
     {
@@ -217,7 +168,7 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
     }
 
     size_t fileLen = 0;
-    char* source = ReadFileAlloc(childPath, &fileLen);
+    char* source = ReadWholeFile(childPath, &fileLen);
     if (!source)
     {
         DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", childPath);
@@ -282,7 +233,7 @@ Module* ModuleLoaderLoad(ModuleLoader* loader, const char* mainPath)
     /* The main file is always supplied by the caller from disk; only its
        imports are routed through the resolver (if one is set). */
     size_t fileLen = 0;
-    char* source = ReadFileAlloc(mainPath, &fileLen);
+    char* source = ReadWholeFile(mainPath, &fileLen);
     if (!source)
     {
         DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", mainPath);

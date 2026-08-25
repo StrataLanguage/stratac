@@ -36,10 +36,24 @@ static void print_entity_name(HEntity inEntity)
     puts(inEntity->base.name);
 }
 
+static void handle_panic(const char* str)
+{
+    printf("STRATA PANIC! %s\n", str);
+}
+
 int main(void)
 {
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
+
+    StrataProfile profile;
+    profile.boundsCheck = (unsigned)1;
+    profile.nullExternCall = (unsigned)1;
+
+    strataJitSetBackend(c, STRATA_JIT_BACKEND_LLVM);
+    strataJitSetProfile(c, &profile);
+
+    strataSetPanicHandler(handle_panic);
 
     char path[512];
     snprintf(path, sizeof path, "%s/box_demo.strata", STRATA_SAMPLE_DIR);

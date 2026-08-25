@@ -74,12 +74,11 @@ typedef enum StrataArch
     STRATA_ARCH_ARM64,
 } StrataArch;
 
-/* A set of JIT-mode runtime checks. Each field is enabled (1) by default;
-   set a field to 0 to disable that check. Obtained via strataProfileDefault()
-   or customized by the host. */
 typedef struct StrataProfile
 {
-    unsigned boundsCheck;    /* array index bounds check + panic on out-of-bounds */
+    unsigned boundsCheck;    /* array bounds check: AOT/TCC panic on OOB; LLVM JIT notifies the panic handler
+                              * (strataSetPanicHandler) and continues - OOB reads yield a dummy value, OOB
+                              * writes are no-ops. A handler that longjmps still halts the run. */
     unsigned nullExternCall; /* panic on calling an extern that was never bound */
 } StrataProfile;
 
@@ -91,9 +90,9 @@ STRATA_API void strataSetPanicHandler(StrataPanicHandler handler);
 
 typedef struct
 {
-    const char* text;   /* module source text (borrowed; not freed by the library) */
+    const char* text;   /* module source text (non-owning, your responsibility to ensure lifetime remains valid.) */
     size_t      length; /* length of text (in bytes) */
-    const char* name;   /* diagnostic name - copied by the library */
+    const char* name;   /* diagnostic name (copied, ) */
 } StrataResolvedModule;
 
 /* Returns 1 if the module was resolved (`out` filled in), 0 if not available.
@@ -143,7 +142,9 @@ STRATA_API void strataJitSetBackend(StrataCompiler* c, StrataJitBackend backend)
 
 /* Configures the runtime checks emitted into JIT-compiled code. Pass
    &strataProfileDefault() (the default) for all checks, or a customized
-   profile. Must be called before strataJitCompileString/strataJitCompileFile. */
+   profile.
+   
+   Must be called before strataJitCompileString/strataJitCompileFile. */
 STRATA_API void strataJitSetProfile(StrataCompiler* c, const StrataProfile* profile);
 
 STRATA_API StrataResult strataCompileString(StrataCompiler* c, const char* source,

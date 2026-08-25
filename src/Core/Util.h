@@ -175,3 +175,10 @@ size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);
 const char* GenerateId(char* buffer, int size);
 
 char* ReplaceExt(const char* path, const char* ext);
+
+// -- Files
+
+/* Returns a malloc'd buffer holding the file contents (NUL-terminated).
+   Caller must free() it. Named ReadWholeFile to avoid the WinAPI ReadFile. */
+char* ReadWholeFile(const char* path, size_t* outLen);
+size_t DirLen(const char* path);

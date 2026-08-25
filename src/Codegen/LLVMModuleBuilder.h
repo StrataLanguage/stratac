@@ -57,6 +57,7 @@ typedef struct Builder
     bool m_jitMode;
     bool m_boundsCheck;     /* emit array bounds checks (StrataProfile) */
     bool m_nullExternCheck; /* panic on calling a null extern slot (StrataProfile) */
+    bool m_nullStoreLValue; /* re-resolving an lvalue only to NULL it: skip OOB dummy re-init */
     LLVMValueRef m_curFn;
     LLVMBasicBlockRef m_entryBlock;
     LLVMValueRef m_entryAllocaPt;
@@ -69,6 +70,8 @@ typedef struct Builder
     LLVMTypeRef m_freeFnType;
     LLVMValueRef m_panicFn;
     LLVMTypeRef m_panicFnType;
+    LLVMValueRef m_oobFn;      /* strata_oob: report OOB, continue (JIT) */
+    LLVMTypeRef m_oobFnType;
     LLVMValueRef m_strdupFn;
     LLVMTypeRef m_strdupFnType;
     Arena* m_arena;

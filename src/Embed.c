@@ -987,6 +987,24 @@ extern "C"
         }
     }
 
+    void strata_oob(const char* msg)
+    {
+        /* Reports a recoverable out-of-bounds access (LLVM JIT, boundsCheck
+           on): the panic handler (if any) is notified, but execution
+           continues - the caller receives a dummy element / the write is
+           absorbed. A handler that longjmps still stops the program. */
+        if (s_panicHandler)
+        {
+            s_panicHandler(msg);
+        }
+        else
+        {
+            fputs("strata bounds violation: ", stderr);
+            fputs(msg, stderr);
+            fputc('\n', stderr);
+        }
+    }
+
     void strataSetPanicHandler(StrataPanicHandler handler)
     {
         s_panicHandler = handler;

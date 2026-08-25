@@ -527,6 +527,7 @@ char* ReplaceExt(const char* path, const char* ext)
     char* lastSep = bslash > slash ? bslash : slash;
 
     char* dot = strrchr(path, '.');
+
     if (dot && (!lastSep || dot > lastSep))
     {
         size_t baseLen = dot - path;
@@ -534,6 +535,7 @@ char* ReplaceExt(const char* path, const char* ext)
         char* result = malloc(baseLen + extLen + 1);
         memcpy(result, path, baseLen);
         memcpy(result + baseLen, ext, extLen + 1);
+
         return result;
     }
 
@@ -542,5 +544,64 @@ char* ReplaceExt(const char* path, const char* ext)
     char* result = malloc(len + extLen + 1);
     memcpy(result, path, len);
     memcpy(result + len, ext, extLen + 1);
+
     return result;
+}
+
+//-- Files
+
+char* ReadWholeFile(const char* path, size_t* outLen)
+{
+    FILE* in = fopen(path, "rb");
+    if (!in)
+    {
+        return NULL;
+    }
+
+    if (fseek(in, 0, SEEK_END) != 0)
+    {
+        fclose(in);
+        return NULL;
+    }
+
+    long size = ftell(in);
+    if (size < 0)
+    {
+        fclose(in);
+        return NULL;
+    }
+
+    rewind(in);
+
+    char* buf = (char*)malloc((size_t)size + 1);
+    if (!buf)
+    {
+        fclose(in);
+        return NULL;
+    }
+
+    size_t n = fread(buf, 1, (size_t)size, in);
+    fclose(in);
+
+    buf[n] = '\0';
+
+    if (outLen)
+    {
+        *outLen = n;
+    }
+
+    return buf;
+}
+
+size_t DirLen(const char* path)
+{
+    size_t len = strlen(path);
+    size_t i = len;
+
+    while (i > 0 && path[i - 1] != '/' && path[i - 1] != '\\')
+    {
+        --i;
+    }
+
+    return i > 0 ? i - 1 : 0;
 }
