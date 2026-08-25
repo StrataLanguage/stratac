@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <windows.h>
+#endif
+
 /* JIT panic unwinding (LLVM JIT only): strata_panic must unwind the JIT'd
    stack frame by frame — each frame's landing pad frees the owning values it
    holds (box<T> / string / T[], including rest-param elements) — until the
@@ -304,12 +308,11 @@ STRATA_TEST(panic_unwind_drops_rest_param_elements)
 /* A longjmping panic handler (the classic embed pattern) must still work:
    with unwinding on, the handler is notified at the boundary after the TLS
    chain is restored, so its longjmp leaves no stale unwind state behind.
-   Windows note: this requires the TCC-compiled boundary wrapper (unwind info
-   registered via RtlAddFunctionTable), so the test is skipped on
-   LLVM-only builds. */
+   Windows requires the boundary wrapper's unwind info to be registered with
+   the OS (TCC wrapper, or the native COFF wrapper on LLVM-only builds) so
+   the longjmp's RtlUnwind can walk it. */
 STRATA_TEST(panic_unwind_longjmp_handler_still_works)
 {
-#if !defined(_WIN32) || STRATA_TEST_HAS_TCC
     StrataJit* jit = CompileLlvm(
         "int entry() { int[] a = {1, 2, 3}; return a[5]; }\n",
         1);
@@ -340,7 +343,136 @@ STRATA_TEST(panic_unwind_longjmp_handler_still_works)
     }
 
     strataJitDestroy(jit);
+}
+
+/* The MSVC-host scenario: ucrtbase's longjmp always unwinds via RtlUnwind
+   (MinGW's msvcrt longjmp is a lenient register restore, so the plain
+   longjmp test above cannot prove the RtlUnwind path). Simulates an MSVC
+   engine whose panic handler longjmps across the boundary wrapper: without
+   OS-registered unwind info for the wrapper this is exactly the
+   STATUS_BAD_STACK (0xC0000028) crash seen in the wild. */
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+static int (*UcrtSetJmp)(void*, void*);
+static void (*UcrtLongJmp)(void*, int);
+static __attribute__((aligned(16))) unsigned char s_ucrtJmp[512]; /* ucrt x64 jmp_buf is 256 bytes */
+
+static void UcrtLongJmpHandler(const char* msg)
+{
+    s_panicCount++;
+    snprintf(s_panicMsg, sizeof s_panicMsg, "%s", msg ? msg : "(null)");
+    UcrtLongJmp(s_ucrtJmp, 1);
+}
+
+STRATA_TEST(panic_unwind_rtlunwind_longjmp_across_wrapper)
+{
+    HMODULE ucrt = LoadLibraryA("ucrtbase.dll");
+
+    if (!ucrt)
+    {
+        return; /* pre-Windows-10 host: nothing to prove */
+    }
+
+    UcrtSetJmp = (int (*)(void*, void*))(void*)GetProcAddress(ucrt, "setjmp");
+    UcrtLongJmp = (void (*)(void*, int))(void*)GetProcAddress(ucrt, "longjmp");
+
+    if (!UcrtSetJmp || !UcrtLongJmp)
+    {
+        return;
+    }
+
+    StrataJit* jit = CompileLlvm(
+        "int entry() { int[] a = {1, 2, 3}; return a[5]; }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        s_panicCount = 0;
+        s_panicMsg[0] = '\0';
+        memset(s_ucrtJmp, 0, sizeof s_ucrtJmp);
+        strataSetPanicHandler(UcrtLongJmpHandler);
+
+        if (UcrtSetJmp(s_ucrtJmp, NULL) == 0)
+        {
+            entry();
+            STRATA_CHECK(0 && "expected a panic but entry() returned");
+        }
+
+        strataSetPanicHandler(NULL);
+        STRATA_CHECK_EQ(s_panicCount, 1);
+        STRATA_CHECK(strstr(s_panicMsg, "array index out of bounds") != NULL);
+    }
+
+    strataJitDestroy(jit);
+}
 #endif
+
+/* Flag-and-return pattern: a handler that returns (or polling without any
+   handler installed) can ask strataConsumePanic after the entry function
+   comes back zeroed. Returns 1 exactly once per panic, with the message. */
+STRATA_TEST(panic_unwind_consume_panic_reports_each_panic_once)
+{
+    StrataJit* jit = CompileLlvm(
+        "int inner() { int[] a = {1, 2}; return a[7]; }\n"
+        "int entry() { int[] keep = {42}; return inner() + keep[0]; }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        ResetCounters();
+        const char* msg = "sentinel";
+
+        /* earlier tests on this thread may have left panics pending: drain */
+        while (strataConsumePanic(&msg))
+        {
+        }
+
+        msg = "sentinel";
+        STRATA_CHECK_EQ(strataConsumePanic(&msg), 0);
+        STRATA_CHECK(msg == NULL);
+
+        strataSetPanicHandler(RecordPanicHandler);
+
+        int r1 = entry(); /* panics */
+        int r2 = entry(); /* panics again */
+
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r1, 0);
+        STRATA_CHECK_EQ(r2, 0);
+
+        msg = NULL;
+        STRATA_CHECK_EQ(strataConsumePanic(&msg), 1);
+        STRATA_CHECK(msg != NULL && strstr(msg, "array index out of bounds") != NULL);
+        STRATA_CHECK_EQ(strataConsumePanic(&msg), 0); /* consumed exactly once */
+
+        /* ...and re-arms for the next panic (a handler must stay installed:
+           without one the boundary still aborts after notifying) */
+        strataSetPanicHandler(RecordPanicHandler);
+        r1 = entry();
+        strataSetPanicHandler(NULL);
+
+        STRATA_CHECK_EQ(r1, 0);
+        STRATA_CHECK_EQ(strataConsumePanic(&msg), 1);
+        STRATA_CHECK_EQ(s_panicCount, 3);
+    }
+
+    strataJitDestroy(jit);
 }
 
 /* A void entry that panics must also return cleanly through its boundary
@@ -375,6 +507,48 @@ STRATA_TEST(panic_unwind_void_entry)
 
     strataJitDestroy(jit);
 }
+
+/* The address strataJitGetFunction hands out is the panic-unwind boundary:
+   on Windows it MUST have OS-registered unwind info (.pdata via
+   RtlAddFunctionTable — TCC wrapper or native COFF wrapper), or a host panic
+   handler that longjmps (or a C++ exception) unwinds an unregistered frame
+   and dies with STATUS_BAD_STACK (0xC0000028). Regression test for the
+   "wrapper silently fell back to the JIT'd wrapper" class of bug. */
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+typedef void* (*RtlLookupFn)(unsigned long long, unsigned long long*, void*);
+
+static void* GetProc(const char* lib, const char* name)
+{
+    HMODULE m = GetModuleHandleA(lib);
+    return m ? (void*)GetProcAddress(m, name) : NULL;
+}
+
+STRATA_TEST(panic_unwind_entry_point_has_registered_unwind_info)
+{
+    StrataJit* jit = CompileLlvm(
+        "int entry() { int[] a = {1, 2, 3}; return a[5]; }\n",
+        1);
+
+    if (!jit)
+    {
+        return;
+    }
+
+    void* fn = strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(fn != NULL);
+
+    RtlLookupFn lookup = (RtlLookupFn)GetProc("ntdll.dll", "RtlLookupFunctionEntry");
+
+    if (lookup)
+    {
+        unsigned long long imgBase = 0;
+        void* unwindEntry = lookup((unsigned long long)(uintptr_t)fn, &imgBase, NULL);
+        STRATA_CHECK(unwindEntry != NULL);
+    }
+
+    strataJitDestroy(jit);
+}
+#endif
 
 /* panicUnwind=0 must preserve the legacy behavior: the handler runs at the
    panic site (it can longjmp out of JIT'd frames as before). */

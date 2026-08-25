@@ -43,6 +43,46 @@ extern void _longjmp(void* buf, int value);
 static STRATA_TLS StrataUnwindFrame* s_top = NULL;
 static STRATA_TLS char s_msg[256] = {0};
 
+static STRATA_TLS char s_pendingMsg[256] = {0};
+static STRATA_TLS int s_pendingSet = 0;
+
+void __strata_set_pending_panic(const char* msg)
+{
+    if (msg)
+    {
+        strncpy(s_pendingMsg, msg, sizeof(s_pendingMsg) - 1);
+        s_pendingMsg[sizeof(s_pendingMsg) - 1] = '\0';
+    }
+    else
+    {
+        s_pendingMsg[0] = '\0';
+    }
+
+    s_pendingSet = 1;
+}
+
+int StrataConsumePendingPanic(const char** outMessage)
+{
+    if (!s_pendingSet)
+    {
+        if (outMessage)
+        {
+            *outMessage = NULL;
+        }
+
+        return 0;
+    }
+
+    s_pendingSet = 0;
+
+    if (outMessage)
+    {
+        *outMessage = s_pendingMsg;
+    }
+
+    return 1;
+}
+
 void __strata_unwind_push(void* frame)
 {
     StrataUnwindFrame* f = (StrataUnwindFrame*)frame;
@@ -90,7 +130,7 @@ const char* __strata_panic_message(void)
 
 // MSVC:  error C7552: '_setjmp': purely intrinsic functions have no address
 #if defined(_MSC_VER)
-static uintptr_t msvc_setjmp_wrapper(void* buf)
+static int msvc_setjmp_wrapper(void* buf)
 {
     return STRATA_SETJMP(buf);
 }

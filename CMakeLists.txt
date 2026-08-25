@@ -38,6 +38,7 @@ set(STRATA_COMMON_SOURCES
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
     src/Codegen/PanicUnwind.c
+    src/Codegen/CoffImage.c
     src/Codegen/CBackend.c
     src/Codegen/CSimd.c
     src/Import/ModuleLoader.c

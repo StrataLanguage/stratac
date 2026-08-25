@@ -58,7 +58,11 @@ typedef struct Builder
     bool m_boundsCheck;     /* emit array bounds checks (StrataProfile) */
     bool m_nullExternCheck; /* panic on calling a null extern slot (StrataProfile) */
     bool m_panicUnwind;     /* JIT-only: panics unwind the stack, dropping
-                               owning locals frame by frame (StrataProfile) */
+                                owning locals frame by frame (StrataProfile) */
+    bool m_nativeEntryWrappers; /* Windows x64 without TinyCC: the JIT'd-module
+                                   wrappers are skipped; a separate native
+                                   wrapper image (see BuildLlvmWrapperModule)
+                                   provides registered-unwind boundaries */
     LLVMValueRef m_curFn;
     LLVMBasicBlockRef m_entryBlock;
     LLVMValueRef m_entryAllocaPt;
@@ -102,5 +106,14 @@ void BuiltModuleDispose(BuiltModule* bm);
 
 BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
                             const StrataProfile* profile);
+
+/* Builds a module containing only the __strata_entry_<mangled> host-boundary
+   wrappers: each real function is an external declaration the loader resolves
+   against the LLVM JIT's addresses. Emitted to a native object and loaded by
+   CoffImage (Windows x64 without TinyCC), so the wrapper code carries OS-
+   registered unwind info (.pdata) and host longjmp/exception handlers can
+   unwind through it. Returns an empty module when native wrappers are not
+   the active configuration. */
+BuiltModule BuildLlvmWrapperModule(const Module* ast, DiagnosticEngine* diag, Arena* arena);
 
 Value EmitExpr(Builder* b, Node* n);

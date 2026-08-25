@@ -267,6 +267,8 @@ LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef t, LLVMModuleRef m, co
 LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef t, LLVMModuleRef m, LLVMCodeGenFileType codegen,
                                              char** errorMessage, LLVMMemoryBufferRef* outMemBuf);
 void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef memBuf);
+const char* LLVMGetBufferStart(LLVMMemoryBufferRef memBuf);
+size_t LLVMGetBufferSize(LLVMMemoryBufferRef memBuf);
 
 LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef m, const char* name);
 

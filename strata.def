@@ -9,6 +9,8 @@ strataResultFree
 strataFree
 strataCapabilities
 strataLLVMVersion
+strataSetPanicHandler
+strataConsumePanic
 strataJitCompileString
 strataJitCompileFile
 strataJitGetFunction

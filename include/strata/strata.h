@@ -99,6 +99,20 @@ typedef void (*StrataPanicHandler)(const char* msg);
 
 STRATA_API void strataSetPanicHandler(StrataPanicHandler handler);
 
+/* Flag-and-return panic pattern (recommended for hosts whose panic handlers
+ * cannot longjmp across JIT frames): strata_panic records every panic
+ * message in thread-local storage, whether or not a handler consumed it
+ * (a handler must still be installed — the boundary aborts if it returns
+ * without one). strataConsumePanic returns 1 exactly once per recorded
+ * panic — storing a pointer to the message (valid until the next panic on
+ * that thread) — and 0 afterwards, so a host can poll after each entry call:
+ *
+ *     int r = entry();             // panics: r comes back zeroed
+ *     const char* msg = NULL;
+ *     if (strataConsumePanic(&msg)) handle_panic(msg);
+ */
+STRATA_API int strataConsumePanic(const char** outMessage);
+
 typedef struct
 {
     const char* text;   /* module source text (borrowed; not freed by the library) */

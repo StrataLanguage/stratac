@@ -27,6 +27,22 @@
 #include "Codegen/LLVMModuleBuilder.h"
 #endif
 
+#include "Codegen/PanicUnwind.h"
+
+/* Native panic-unwind boundary wrappers (Windows x64 without TinyCC): the
+   wrappers are compiled to a COFF object and loaded by CoffImage, which
+   registers their .pdata with the OS so host longjmp/exception handlers can
+   unwind through them (RTDyld never registers the LLVM JIT's unwind info). */
+#if STRATA_HAS_LLVM && !STRATA_HAS_TCC && defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
+#define STRATA_NATIVE_WRAPPERS 1
+#else
+#define STRATA_NATIVE_WRAPPERS 0
+#endif
+
+#if STRATA_NATIVE_WRAPPERS
+#include "Codegen/CoffImage.h"
+#endif
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -468,10 +484,17 @@ extern "C"
         StrataProfile profile; /* profile the module was JIT-compiled with */
 
         /* TccJit* holding the panic-unwind boundary wrappers (Windows: the
-           wrappers are TCC-compiled so their unwind info is registered and a
-           host panic handler's longjmp can unwind them; the LLVM JIT's own
-           code has no registered unwind info). NULL when not built. */
+            wrappers are TCC-compiled so their unwind info is registered and a
+            host panic handler's longjmp can unwind them; the LLVM JIT's own
+            code has no registered unwind info). NULL when not built. */
         void* entryWrapperJit;
+
+#if STRATA_NATIVE_WRAPPERS
+        /* CoffImage* holding the native panic-unwind boundary wrappers
+           (Windows x64 without TinyCC): compiled by the LLVM TargetMachine to
+           a COFF object and loaded with OS-registered unwind info. */
+        void* nativeWrappers;
+#endif
 #if STRATA_HAS_LLVM
         Vec llvmExports; /* LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM */
 #endif
@@ -563,6 +586,136 @@ extern "C"
         handle->profile = *profile;
 
         return handle;
+    }
+#endif
+
+#if STRATA_NATIVE_WRAPPERS
+    /* Builds the native boundary wrappers (BuildLlvmWrapperModule), compiles
+       them to a COFF object, loads the image with OS-registered unwind info,
+       and resolves its externals against the panic-unwind runtime plus the
+       JIT'd function addresses. A failure here is fatal for the JIT handle:
+       without a registered wrapper, host panic handlers that longjmp (or C++
+       exceptions unwinding through the boundary) hit unregistered frames and
+       crash with STATUS_BAD_STACK — fail loudly instead. */
+    static bool LoadNativeEntryWrappers(StrataJit* handle, LLVMJit* jit, Module* mod, DiagnosticEngine* diag,
+                                        Arena* arena, char** errOut)
+    {
+        extern void strata_panic(const char* msg);
+
+        BuiltModule wm = BuildLlvmWrapperModule(mod, diag, arena);
+
+        if (DiagHasErrors(diag))
+        {
+            char* allDiag = DiagFormat(diag, NULL, 0, arena);
+            *errOut = ConcatOwned("panic-unwind wrapper build failed: ", allDiag ? allDiag : "(unknown)");
+            BuiltModuleDispose(&wm);
+            return false;
+        }
+
+        if (!wm.mod)
+        {
+            *errOut = DupString("panic-unwind wrapper module was not built");
+            BuiltModuleDispose(&wm);
+            return false;
+        }
+
+        size_t objSize = 0;
+        char* werr = NULL;
+        char* obj = EmitNativeMemory(&wm, &objSize, &werr);
+
+        if (wm.mod)
+        {
+            LLVMDisposeModule(wm.mod);
+        }
+
+        if (wm.ctx)
+        {
+            LLVMContextDispose(wm.ctx);
+        }
+
+        BuiltModuleDispose(&wm);
+
+        if (!obj)
+        {
+            *errOut = ConcatOwned("panic-unwind wrapper emission failed: ", werr ? werr : "(unknown)");
+            free(werr);
+            return false;
+        }
+
+        size_t fnCount = 0;
+
+        for (size_t i = 0; i < mod->functions.count; i++)
+        {
+            if (!((const FunctionDecl*)VecGet(&mod->functions, i))->isExtern)
+            {
+                fnCount++;
+            }
+        }
+
+        CoffExtern* exts = (CoffExtern*)malloc((fnCount + 6) * sizeof(CoffExtern));
+        size_t n = 0;
+
+        if (!exts)
+        {
+            free(obj);
+            *errOut = DupString("out of memory building wrapper externs");
+            return false;
+        }
+
+        exts[n].name = "__strata_unwind_push";
+        exts[n].address = (void*)&__strata_unwind_push;
+        n++;
+        exts[n].name = "__strata_unwind_pop_to";
+        exts[n].address = (void*)&__strata_unwind_pop_to;
+        n++;
+        exts[n].name = "__strata_panic_message";
+        exts[n].address = (void*)&__strata_panic_message;
+        n++;
+        exts[n].name = "strata_panic";
+        exts[n].address = (void*)&strata_panic;
+        n++;
+        exts[n].name = "__strata_setjmp";
+        exts[n].address = (void*)StrataJitSetJmpAddress();
+        n++;
+
+        for (size_t i = 0; i < mod->functions.count; i++)
+        {
+            const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
+
+            if (fn->isExtern)
+            {
+                continue;
+            }
+
+            uint64_t addr = LLVMJitGetAddress(jit, fn->mangledName);
+
+            if (!addr)
+            {
+                free(obj);
+                free(exts);
+                *errOut = ConcatOwned("panic-unwind wrapper could not resolve JIT'd function '", fn->mangledName);
+                return false;
+            }
+
+            exts[n].name = fn->mangledName;
+            exts[n].address = (void*)(uintptr_t)addr;
+            n++;
+        }
+
+        CoffImage* img = CoffImageLoad(obj, objSize, exts, n, &werr);
+
+        free(obj);
+        free(exts);
+
+        if (!img)
+        {
+            *errOut = ConcatOwned("panic-unwind wrapper load failed: ", werr ? werr : "(unknown)");
+            free(werr);
+            return false;
+        }
+
+        handle->nativeWrappers = img;
+        return true;
     }
 #endif
 
@@ -699,6 +852,42 @@ extern "C"
             }
 
             BuiltCModuleDispose(&wm);
+        }
+#endif
+
+#if STRATA_NATIVE_WRAPPERS
+        /* Panic-unwind boundary wrappers, native flavor: compiled to a COFF
+           object and loaded with OS-registered unwind info (.pdata), so a
+           host panic handler's longjmp — or a C++ exception unwinding through
+           the boundary — walks a registered frame instead of crashing with
+           STATUS_BAD_STACK. Failures are fatal (loud), never silent: without
+           this image the JIT'd wrappers would have no unwind info at all. */
+        if (profile && profile->panicUnwind)
+        {
+            char* werr = NULL;
+
+            if (!LoadNativeEntryWrappers(handle, jit, mod, diag, arena, &werr))
+            {
+                if (errOut)
+                {
+                    *errOut = ConcatOwned("JIT error: ", werr ? werr : "(unknown)");
+                }
+
+                free(werr);
+                LLVMJitDestroy(jit);
+                free(jit);
+
+                for (size_t i = 0; i < handle->llvmExports.count; i++)
+                {
+                    LlvmJitExport* exp = (LlvmJitExport*)handle->llvmExports.items[i];
+                    free(exp->name);
+                    free(exp);
+                }
+                free(handle->llvmExports.items);
+                free(handle);
+
+                return NULL;
+            }
         }
 #endif
         return handle;
@@ -891,7 +1080,8 @@ extern "C"
         {
             /* Panic unwinding on: prefer the TCC-compiled boundary wrapper
                (unwind info registered, so a host panic handler's longjmp can
-               cross it), then the JIT'd wrapper, then the raw function. */
+               cross it), then the native COFF-loaded wrapper, then the JIT'd
+               wrapper, then the raw function. */
 #if STRATA_HAS_TCC && defined(_WIN32)
             if (jit->entryWrapperJit && jit->profile.panicUnwind)
             {
@@ -902,6 +1092,25 @@ extern "C"
                 {
                     snprintf(wrapped, needed, "__strata_entry_%s", name);
                     void* addr = TccJitGetAddress((TccJit*)jit->entryWrapperJit, wrapped);
+                    free(wrapped);
+
+                    if (addr)
+                    {
+                        return addr;
+                    }
+                }
+            }
+#endif
+#if STRATA_NATIVE_WRAPPERS
+            if (jit->nativeWrappers && jit->profile.panicUnwind)
+            {
+                size_t needed = strlen(name) + 16;
+                char* wrapped = (char*)malloc(needed);
+
+                if (wrapped)
+                {
+                    snprintf(wrapped, needed, "__strata_entry_%s", name);
+                    void* addr = CoffImageGetSymbol((CoffImage*)jit->nativeWrappers, wrapped);
                     free(wrapped);
 
                     if (addr)
@@ -1062,6 +1271,16 @@ extern "C"
 #if STRATA_HAS_LLVM
         if (jit->kind == STRATA_JIT_KIND_LLVM)
         {
+#if STRATA_NATIVE_WRAPPERS
+            /* unregister the wrapper's function tables before the code they
+               describe (and the JIT'd functions they call) go away */
+            if (jit->nativeWrappers)
+            {
+                CoffImageDestroy((CoffImage*)jit->nativeWrappers);
+                jit->nativeWrappers = NULL;
+            }
+#endif
+
             if (jit->backend)
             {
                 LLVMJitDestroy((LLVMJit*)jit->backend);
@@ -1094,6 +1313,11 @@ extern "C"
 
     void strata_panic(const char* msg)
     {
+        /* Record for the flag-and-return pattern (strataConsumePanic):
+           hosts whose handlers return — or that install no handler — can
+           ask "did a panic happen?" after the entry function came back. */
+        __strata_set_pending_panic(msg);
+
         if (s_panicHandler)
         {
             s_panicHandler(msg);
@@ -1101,7 +1325,7 @@ extern "C"
         else
         {
             fputs("strata panic: ", stderr);
-            fputs(msg, stderr);
+            fputs(msg ? msg : "(null)", stderr);
             fputc('\n', stderr);
             abort();
         }
@@ -1110,6 +1334,11 @@ extern "C"
     void strataSetPanicHandler(StrataPanicHandler handler)
     {
         s_panicHandler = handler;
+    }
+
+    int strataConsumePanic(const char** outMessage)
+    {
+        return StrataConsumePendingPanic(outMessage);
     }
 
     void strataFree(char* s)

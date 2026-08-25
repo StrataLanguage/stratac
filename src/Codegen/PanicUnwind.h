@@ -29,3 +29,11 @@ const char* __strata_panic_message(void);
    typedef games (jmp_buf as an array type, setjmp as a macro) never leak
    into other translation units. */
 uintptr_t StrataJitSetJmpAddress(void);
+
+/* Flag-and-return panic pattern: strata_panic records the last panic message
+   in thread-local storage (whether or not a handler consumed it).
+   __strata_set_pending_panic records; StrataConsumePendingPanic returns 1
+   exactly once per recorded panic (storing the message pointer, valid until
+   the next panic) and clears the flag. Backs the public strataConsumePanic. */
+void __strata_set_pending_panic(const char* msg);
+int StrataConsumePendingPanic(const char** outMessage);

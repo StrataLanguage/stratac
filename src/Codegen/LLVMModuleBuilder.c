@@ -9,6 +9,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Native (registered-unwind) entry wrappers replace the JIT'd wrappers on
+   Windows x64 builds without TinyCC; see BuildLlvmWrapperModule. */
+#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64)) && !STRATA_HAS_TCC
+#define STRATA_LLVM_NATIVE_WRAPPERS 1
+#else
+#define STRATA_LLVM_NATIVE_WRAPPERS 0
+#endif
+
 typedef struct
 {
     LLVMValueRef function;
@@ -3938,20 +3946,11 @@ static void EmitStmt(Builder* b, Node* n)
     }
 }
 
-static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngine* diag, bool jitMode,
-                                const StrataProfile* profile)
+/* Creates the named struct types and sets their bodies (opaque handles stay
+   pointer-sized). Shared by the full module build and the wrapper-only
+   build, which needs complete signatures for the entry wrappers. */
+static void EmitStructTypes(Builder* b, const Module* module)
 {
-    b->m_diag = diag;
-    b->m_jitMode = jitMode;
-    b->m_boundsCheck = !profile || profile->boundsCheck;
-    b->m_nullExternCheck = !profile || profile->nullExternCall;
-    b->m_panicUnwind = jitMode && (!profile || profile->panicUnwind);
-    b->m_ctx = LLVMContextCreate();
-    b->m_mod = LLVMModuleCreateWithNameInContext(module->name, b->m_ctx);
-    b->m_builder = LLVMCreateBuilderInContext(b->m_ctx);
-    b->m_ptrTy = LLVMPointerTypeInContext(b->m_ctx, 0);
-    b->m_strLitCount = 0;
-
     TypeRegistryBuild(&b->m_registry, module);
 
     for (size_t i = 0; i < b->m_registry.count; i++)
@@ -3996,6 +3995,24 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, st->name);
         LLVMStructSetBody(structTy, fields, (unsigned)fcount, 0);
     }
+}
+
+static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngine* diag, bool jitMode,
+                                const StrataProfile* profile)
+{
+    b->m_diag = diag;
+    b->m_jitMode = jitMode;
+    b->m_boundsCheck = !profile || profile->boundsCheck;
+    b->m_nullExternCheck = !profile || profile->nullExternCall;
+    b->m_panicUnwind = jitMode && (!profile || profile->panicUnwind);
+    b->m_nativeEntryWrappers = STRATA_LLVM_NATIVE_WRAPPERS ? b->m_panicUnwind : false;
+    b->m_ctx = LLVMContextCreate();
+    b->m_mod = LLVMModuleCreateWithNameInContext(module->name, b->m_ctx);
+    b->m_builder = LLVMCreateBuilderInContext(b->m_ctx);
+    b->m_ptrTy = LLVMPointerTypeInContext(b->m_ctx, 0);
+    b->m_strLitCount = 0;
+
+    EmitStructTypes(b, module);
 
     for (size_t i = 0; i < module->functions.count; i++)
     {
@@ -4113,8 +4130,10 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
     /* JIT unwind mode: emit the host-boundary wrapper for every non-extern
        function. strataJitGetFunction resolves __strata_entry_<name> and
-       hands the host the wrapper. */
-    if (b->m_panicUnwind)
+       hands the host the wrapper. On Windows x64 without TinyCC the wrapper
+       comes from the native image instead (BuildLlvmWrapperModule), whose
+       unwind info is registered with the OS. */
+    if (b->m_panicUnwind && !b->m_nativeEntryWrappers)
     {
         for (size_t i = 0; i < module->functions.count; i++)
         {
@@ -4290,6 +4309,63 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     return out;
 }
 
+/* Builds the wrapper-only module used for the native (registered-unwind)
+   boundary on Windows x64 without TinyCC: declarations for every function
+   (the loader resolves them against the LLVM JIT's addresses) plus the
+   __strata_entry_<mangled> wrappers themselves. */
+static BuiltModule BuilderBuildWrapper(Builder* b, const Module* module, DiagnosticEngine* diag)
+{
+    b->m_diag = diag;
+    b->m_jitMode = false; /* no extern slots: plain declarations */
+    b->m_boundsCheck = false;
+    b->m_nullExternCheck = false;
+    b->m_panicUnwind = true;
+    b->m_nativeEntryWrappers = false;
+    b->m_ctx = LLVMContextCreate();
+    b->m_mod = LLVMModuleCreateWithNameInContext(module->name, b->m_ctx);
+    b->m_builder = LLVMCreateBuilderInContext(b->m_ctx);
+    b->m_ptrTy = LLVMPointerTypeInContext(b->m_ctx, 0);
+    b->m_strLitCount = 0;
+
+    EmitStructTypes(b, module);
+
+    for (size_t i = 0; i < module->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
+        DeclareFunction(b, f);
+    }
+
+    for (size_t i = 0; i < module->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
+
+        if (f->isExtern)
+        {
+            continue;
+        }
+
+        EmitEntryWrapper(b, f);
+    }
+
+    if (b->m_builder)
+    {
+        LLVMDisposeBuilder(b->m_builder);
+        b->m_builder = NULL;
+    }
+
+    BuiltModule out;
+    BuiltModuleInit(&out);
+
+    out.ctx = b->m_ctx;
+    out.mod = b->m_mod;
+    out.externSymbols = b->m_externNames;
+
+    b->m_ctx = NULL;
+    b->m_mod = NULL;
+
+    return out;
+}
+
 void BuiltModuleInit(BuiltModule* bm)
 {
     bm->ctx = NULL;
@@ -4359,4 +4435,66 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     TypeRegistryFree(&b.m_registry);
 
     return module;
+}
+
+BuiltModule BuildLlvmWrapperModule(const Module* ast, DiagnosticEngine* diag, Arena* arena)
+{
+#if STRATA_LLVM_NATIVE_WRAPPERS
+    Builder b = {0};
+    b.m_arena = arena;
+    StrMapInit(&b.m_structTypes);
+    StrMapInit(&b.m_funcs);
+    StrMapInit(&b.m_symbols);
+    StrMapInit(&b.m_globals);
+    StrMapInit(&b.m_externSlots);
+    StrMapInit(&b.m_dropFns);
+    VecInit(&b.m_externNames);
+    VecInit(&b.m_loops);
+    VecInit(&b.m_owningLocals);
+    b.m_allocFn = NULL;
+    b.m_allocFnType = NULL;
+    b.m_freeFn = NULL;
+    b.m_freeFnType = NULL;
+    b.m_panicFn = NULL;
+    b.m_panicFnType = NULL;
+    b.m_raiseFn = NULL;
+    b.m_raiseFnType = NULL;
+    b.m_pushFn = NULL;
+    b.m_pushFnType = NULL;
+    b.m_popFn = NULL;
+    b.m_popFnType = NULL;
+    b.m_rethrowFn = NULL;
+    b.m_rethrowFnType = NULL;
+    b.m_panicMsgFn = NULL;
+    b.m_panicMsgFnType = NULL;
+    b.m_setjmpFn = NULL;
+    b.m_setjmpFnType = NULL;
+    b.m_unwindFrameTy = NULL;
+    b.m_strdupFn = NULL;
+    b.m_strdupFnType = NULL;
+    b.m_arrayType = NULL;
+
+    TypeRegistryInit(&b.m_registry);
+
+    BuiltModule module = BuilderBuildWrapper(&b, ast, diag);
+    StrMapFree(&b.m_structTypes);
+    StrMapFree(&b.m_funcs);
+    StrMapFree(&b.m_symbols);
+    StrMapFree(&b.m_globals);
+    StrMapFree(&b.m_externSlots);
+    StrMapFree(&b.m_dropFns);
+    free(b.m_loops.items);
+    free(b.m_owningLocals.items);
+    TypeRegistryFree(&b.m_registry);
+
+    return module;
+#else
+    (void)ast;
+    (void)diag;
+    (void)arena;
+
+    BuiltModule none;
+    BuiltModuleInit(&none);
+    return none;
+#endif
 }
