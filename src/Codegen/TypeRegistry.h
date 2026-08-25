@@ -52,10 +52,9 @@ bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
-//-- Box helpers
-bool IsOwningType(const char* name);
-Str  OwningInnerStr(const char* name);             /* Str slice - no alloc (box inner only) */
-const char* OwningInnerCStr(Arena* arena, const char* name); /* null-terminated arena copy */
+/* Type shape queries (arrays, boxes, owning-ness) are structural — see the
+   TypeNameIs* accessors in AST/AST.h. The canonical `name` spelling is
+   display/mangling data only. */
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 
 /* Returns the lvalue actually being moved (identifier, member chain, or array
@@ -64,19 +63,6 @@ const Node* MovableBoxSourceNode(const Node* n);
 
 /* is this an assignable lvalue expression? */
 bool IsLValueNode(const Node* n);
-
-//-- Arrays
-/* Dynamic `T[]` (fat {ptr, len} pointer). NOTE: returns false for fixed-size
-   `T[N]` — use IsFixedArrayType for those. */
-bool IsArrayType(const char* name);
-Str ArrayInnerStr(const char* name); /* strips the first bracket group; empty when the
-                                        result is not contiguous (nested fixed arrays) */
-char* ArrayInnerName(Arena* arena, const char* name); /* allocating variant, handles nesting */
-
-/* Fixed-size `T[N]` — C-ABI inline storage (struct fields only). Dimensions
-   are spelled in source order, outermost first (`int[2][6]` = 2 x int[6]). */
-bool IsFixedArrayType(const char* name);
-long FixedArrayLength(const char* name); /* -1 when not a fixed array */
 
 // -- Helpers
 

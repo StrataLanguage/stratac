@@ -33,6 +33,7 @@ typedef struct CEmitter
     Arena* arena;
     TypeRegistry types;
     StrMap symbols;
+    StrMap typeCache; /* canonical spelling -> interned TypeName tree */
     Sb out;
     Vec exports;
     Vec externs;
@@ -41,9 +42,9 @@ typedef struct CEmitter
     unsigned indent;
     const SourceManager* sources;
     size_t sourceCount;
-    Vec boxVars;               /* in-scope box-local OwnEntry* (current function) */
-    bool terminated;           /* the current block ended in a definite return */
-    const char* currentReturn; /* current function's return type name */
+    Vec boxVars;                    /* in-scope box-local OwnEntry* (current function) */
+    bool terminated;                /* the current block ended in a definite return */
+    const TypeName* currentReturn;  /* current function's return type */
     unsigned retCounter;
     unsigned boxTmpCounter; /* unique names for inline struct-init field boxing */
     bool boundsCheck;       /* emit array bounds checks (StrataProfile) */

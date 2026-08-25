@@ -201,11 +201,11 @@ static void Dump(Node* n, int indent, Sb* out)
 
             if (param->isVarargRest)
             {
-                Str inner = ArrayInnerStr(param->type.name);
+                const TypeName* elem = TypeNameArrayElem(&param->type);
 
-                if (inner.data)
+                if (elem)
                 {
-                    SbPrintf(out, "%.*s... %s", (int)inner.len, inner.data, param->name);
+                    SbPrintf(out, "%s... %s", elem->name, param->name);
                 }
                 else
                 {
@@ -551,7 +551,7 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeArrayInit:
     {
         ArrayInitExpr* ai = AsNode(ArrayInitExpr, n);
-        SbPrintf(out, "(array-init %s", ai->elementType);
+        SbPrintf(out, "(array-init %s", ai->elementType ? ai->elementType->name : "");
 
         for (size_t i = 0; i < ai->elements.count; i++)
         {

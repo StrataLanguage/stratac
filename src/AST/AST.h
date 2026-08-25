@@ -119,6 +119,149 @@ static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long 
     return t;
 }
 
+/* ---- Structural type queries -------------------------------------------
+   These are the authority for "what shape is this type". The `name` spelling
+   is derived data (display, mangling, map keys) — never parse it for shape. */
+
+static inline bool TypeNameIsArray(const TypeName* t)
+{
+    return t && t->isArray;
+}
+
+/* `T[]` — owning fat-pointer array. */
+static inline bool TypeNameIsDynamicArray(const TypeName* t)
+{
+    return t && t->isArray && t->length < 0;
+}
+
+/* `T[N]` — C-ABI inline storage (struct fields only). */
+static inline bool TypeNameIsFixedArray(const TypeName* t)
+{
+    return t && t->isArray && t->length >= 0;
+}
+
+/* N for `T[N]`; -1 otherwise (including dynamic arrays). */
+static inline long TypeNameArrayLength(const TypeName* t)
+{
+    return (t && t->isArray) ? t->length : -1;
+}
+
+static inline const TypeName* TypeNameArrayElem(const TypeName* t)
+{
+    return (t && t->isArray) ? t->elem : NULL;
+}
+
+static inline bool TypeNameIsBox(const TypeName* t)
+{
+    return t && t->isBox;
+}
+
+/* Inner `T` of a box `^T`, or NULL. Never an array (no such spelling). */
+static inline const TypeName* TypeNameBoxInner(const TypeName* t)
+{
+    return (t && t->isBox) ? t->inner : NULL;
+}
+
+/* Owning types: `string`, `^T` and dynamic `T[]`. Fixed `T[N]` is plain
+   inline storage and never owning. */
+static inline bool TypeNameIsOwning(const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    if (strcmp(t->name, "string") == 0)
+    {
+        return true;
+    }
+
+    return t->isBox || TypeNameIsDynamicArray(t);
+}
+
+/* A leaf TypeName for a spelling without structure ("int", "Foo"). */
+static inline TypeName TypeNameLeaf(char* name)
+{
+    TypeName t = {0};
+    t.name = name;
+    return t;
+}
+
+static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_t baseLen, const char* groups,
+                                           size_t groupsLen)
+{
+    if (groupsLen == 0)
+    {
+        if (baseLen >= 2 && base[0] == '^')
+        {
+            TypeName* inner = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+            *inner = TypeNameLeaf(arena_strndup(arena, base + 1, baseLen - 1));
+
+            TypeName t = {0};
+            t.isBox = true;
+            t.inner = inner;
+            t.name = arena_strndup(arena, base, baseLen);
+            return t;
+        }
+
+        return TypeNameLeaf(arena_strndup(arena, base, baseLen));
+    }
+
+    /* The first bracket group is the outermost dimension (`int[2][6]` is
+        2 x int[6]), so wrap the remaining (inner) groups first. */
+    const char* close = (const char*)memchr(groups, ']', groupsLen);
+    size_t groupLen = close ? (size_t)(close - groups) + 1 : groupsLen;
+
+    TypeName elem = TypeNameParseGroups(arena, base, baseLen, groups + groupLen, groupsLen - groupLen);
+
+    TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *e = elem;
+
+    TypeName t = {0};
+    t.isArray = true;
+    t.elem = e;
+
+    if (groupLen == 2 && groups[1] == ']')
+    {
+        t.length = -1;
+    }
+    else
+    {
+        long v = 0;
+
+        for (size_t i = 1; i + 1 < groupLen; i++)
+        {
+            v = v * 10 + (groups[i] - '0');
+        }
+
+        t.length = v;
+    }
+
+    /* Canonical name: base + every group, in source order. */
+    Sb sb;
+    SbInit(&sb);
+    SbPrintf(&sb, "%.*s%.*s", (int)baseLen, base, (int)groupsLen, groups);
+    t.name = SbFinish(&sb, arena);
+    return t;
+}
+
+/* Rebuild a structural TypeName tree from a canonical spelling ("Foo",
+   "^Foo", "int[4]", "^Foo[]", "int[2][6]"). Only for boundary code that
+   genuinely starts from a name string; the pipeline itself carries trees. */
+static inline TypeName TypeNameParse(Arena* arena, const char* spelling)
+{
+    const char* open = strchr(spelling, '[');
+
+    if (!open)
+    {
+        return TypeNameParseGroups(arena, spelling, strlen(spelling), NULL, 0);
+    }
+
+    size_t baseLen = (size_t)(open - spelling);
+
+    return TypeNameParseGroups(arena, spelling, baseLen, open, strlen(open));
+}
+
 typedef enum {
     ModNone,
     ModRef,
@@ -390,10 +533,11 @@ typedef struct {
 } IndexExpr;
 
 /* { e0, e1, ... } — array literal. elementType is the parsed element type
-   name (e.g. "int"); elements holds the initializer expressions. */
+   (NULL when untyped — inferred later by sema from the surrounding context);
+   elements holds the initializer expressions. */
 typedef struct {
     Node base;
-    char* elementType;
+    const TypeName* elementType;
     Vec elements;
 } ArrayInitExpr;
 

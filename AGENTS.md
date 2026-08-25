@@ -76,6 +76,14 @@ The `AST_NEW(arena, Type)` macro zero-initializes via `memset`. Cast between
 node types with `(Type*)node` or the `AsNode(Type, node)` macro. Dispatch on
 `node->kind` (the `NodeKind` enum).
 
+`TypeName` is the authority for type shape: `isArray`/`length`/`elem` (arrays;
+dynamic `T[]` has length < 0, fixed `T[N]` >= 1) and `isBox`/`inner` (boxes).
+Query shape with the `TypeNameIs*`/`TypeNameArrayElem`/`TypeNameBoxInner`
+accessors in `src/AST/AST.h` — never parse `TypeName.name`. The `name` string
+is derived canonical spelling, used only for display, mangling and map keys;
+`TypeNameParse(arena, spelling)` rebuilds a tree from a spelling at true
+boundaries (the only code that understands brackets/carets).
+
 ### Pipeline
 
 ```

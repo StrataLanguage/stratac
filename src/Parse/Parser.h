@@ -13,7 +13,7 @@ typedef struct {
     Arena* m_arena;
     Token m_cur;
     bool m_hasReturnStmt;
-    const char* m_returnType;
+    const TypeName* m_returnType;
 } Parser;
 
 void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, const char* moduleName);

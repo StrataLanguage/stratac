@@ -803,7 +803,7 @@ static Node* ParseUnary(Parser* p);
 static Node* ParsePostfix(Parser* p);
 static Node* ParsePrimary(Parser* p);
 static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName);
-static Node* ParseArrayInitBody(Parser* p, Token startTok, const char* elementType);
+static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType);
 
 static Node* ParseFunction(Parser* p)
 {
@@ -851,7 +851,7 @@ static Node* ParseFunction(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace && returnType.isArray)
             {
-                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem->name);
+                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem);
             }
             else
             {
@@ -970,11 +970,10 @@ static Node* ParseFunction(Parser* p)
         For ^T/string this is the inner T; for T[] the whole array type is
         kept so a braced return is parsed as an array literal. */
     p->m_returnType = node->returnType.isArray
-                          ? node->returnType.name
+                          ? &node->returnType
                           : (node->returnType.isBox
-                                 ? node->returnType.inner->name
-                                 : (strcmp(node->returnType.name, "string") == 0 ? NULL
-                                                                                 : node->returnType.name));
+                                 ? node->returnType.inner
+                                 : (strcmp(node->returnType.name, "string") == 0 ? NULL : &node->returnType));
 
     node->body = ParseBlock(p);
 
@@ -1259,7 +1258,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
             {
                 if (type.isArray)
                 {
-                    node->init = ParseArrayInitBody(p, start, type.elem->name);
+                    node->init = ParseArrayInitBody(p, start, type.elem);
                 }
                 else
                 {
@@ -1314,14 +1313,13 @@ static Node* ParseReturn(Parser* p)
     {
         if (p->m_cur.kind == TokLBrace && p->m_returnType)
         {
-            if (IsArrayType(p->m_returnType))
+            if (TypeNameIsDynamicArray(p->m_returnType))
             {
-                Str inner = ArrayInnerStr(p->m_returnType);
-                node->value = ParseArrayInitBody(p, p->m_cur, StrNew(p->m_arena, inner.data, inner.len).data);
+                node->value = ParseArrayInitBody(p, p->m_cur, p->m_returnType->elem);
             }
             else
             {
-                node->value = ParseStructInitBody(p, p->m_cur, p->m_returnType);
+                node->value = ParseStructInitBody(p, p->m_cur, p->m_returnType->name);
             }
         }
         else
@@ -1478,7 +1476,7 @@ static Node* ParseAssign(Parser* p)
 
         if (p->m_cur.kind == TokLBrace)
         {
-            rhs = ParseArrayInitBody(p, p->m_cur, "");
+            rhs = ParseArrayInitBody(p, p->m_cur, NULL);
         }
         else
         {
@@ -1797,12 +1795,12 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
     return (Node*)init;
 }
 
-static Node* ParseArrayInitBody(Parser* p, Token startTok, const char* elementType)
+static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
 {
     ArrayInitExpr* init = AST_NEW(p->m_arena, ArrayInitExpr);
     init->base.kind = NodeArrayInit;
     init->base.range = startTok.range;
-    init->elementType = arena_strdup(p->m_arena, elementType ? elementType : "");
+    init->elementType = elementType;
     VecInit(&init->elements);
 
     Advance(p); /* consume '{' */

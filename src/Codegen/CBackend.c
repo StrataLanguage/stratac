@@ -17,7 +17,7 @@
 
 typedef struct
 {
-    const char* typeName;
+    const TypeName* typeName;
     const char* cName;
     bool indirect;
     bool aliased; /* ref T... rest: element slots hold pointers to sources */
@@ -26,10 +26,28 @@ typedef struct
 typedef struct
 {
     const char* cName;
-    const char* typeName;
+    const TypeName* typeName;
     bool byRef; /* by-ref box param: cName is a pointer to the caller's box slot */
     bool stackBuffer; /* T[] rest param: array backing is the caller's stack */
 } OwnEntry;
+
+/* Intern a TypeName tree for a canonical spelling (literals, builtin
+   results, synthesized types share one tree per spelling). */
+static const TypeName* InternType(CEmitter* emitter, const char* spelling)
+{
+    const TypeName* cached = (const TypeName*)StrMapGet(&emitter->typeCache, spelling);
+
+    if (cached)
+    {
+        return cached;
+    }
+
+    TypeName* t = (TypeName*)arena_alloc(emitter->arena, sizeof(TypeName));
+    *t = TypeNameParse(emitter->arena, spelling);
+    StrMapPut(&emitter->typeCache, t->name, t);
+
+    return t;
+}
 
 static const char* DropHelperName(CEmitter* emitter, const char* structName);
 
@@ -208,56 +226,52 @@ static const char* GetSimdTypeName(CEmitter* emitter, const char* name)
     return CSIMD_FALLBACK_VECTOR_NAME;
 }
 
-static const char* TypeNameC(CEmitter* emitter, const char* name)
+static const char* TypeNameC(CEmitter* emitter, const TypeName* type)
 {
-    if (IsArrayType(name))
+    if (!type || !type->name)
+    {
+        return "void*";
+    }
+
+    if (TypeNameIsDynamicArray(type))
     {
         /* Every T[] shares one fat {data, len} C struct; the element type
-           only matters when indexing (the data pointer is cast then). */
+            only matters when indexing (the data pointer is cast then). */
         return "strata__arr";
     }
 
-    if (IsFixedArrayType(name))
+    if (TypeNameIsFixedArray(type))
     {
         /* Fixed T[N] needs a declarator (type name[N]) — use EmitTypeDecl
-           at declaration sites. Reaching here is a backend bug. */
-        DiagErrorFmt(emitter->diag, SRC_INVALID, "fixed-size array type '%s' needs a declarator", name);
+            at declaration sites. Reaching here is a backend bug. */
+        DiagErrorFmt(emitter->diag, SRC_INVALID, "fixed-size array type '%s' needs a declarator", type->name);
         return "void*";
     }
 
-    if (IsOwningType(name))
+    if (type->isBox)
     {
-        if (strcmp(name, "string") == 0)
-        {
-            return "char *";
-        }
+        const char* innerC = TypeNameC(emitter, type->inner);
+        Sb sb;
+        SbInit(&sb);
+        SbPuts(&sb, innerC);
+        SbPuts(&sb, " *");
 
-        const char* inner = OwningInnerCStr(emitter->arena, name);
+        return SbFinish(&sb, emitter->arena);
+    }
 
-        if (inner)
-        {
-            const char* innerC = TypeNameC(emitter, inner);
-            Sb sb;
-            SbInit(&sb);
-            SbPuts(&sb, innerC);
-            SbPuts(&sb, " *");
-
-            return SbFinish(&sb, emitter->arena);
-        }
-
-        return "void*";
+    if (strcmp(type->name, "string") == 0)
+    {
+        return "char *";
     }
 
     MappedType mapped;
-    TypeName type = {0};
-    type.name = (char*)name;
-    mapped = MapType(&type);
+    mapped = MapType(type);
 
     if (mapped.valid)
     {
         if (mapped.isSimdVector)
         {
-            return GetSimdTypeName(emitter, name);
+            return GetSimdTypeName(emitter, type->name);
         }
 
         if (mapped.isVoid)
@@ -303,12 +317,12 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
         return "int";
     }
 
-    if (TypeRegistryIsUserType(&emitter->types, name))
+    if (TypeRegistryIsUserType(&emitter->types, type->name))
     {
-        return Encode(emitter, "strata__type_", name);
+        return Encode(emitter, "strata__type_", type->name);
     }
 
-    DiagErrorFmt(emitter->diag, SRC_INVALID, "don't know '%s'", name);
+    DiagErrorFmt(emitter->diag, SRC_INVALID, "don't know '%s'", type->name);
 
     return "void*";
 }
@@ -340,7 +354,7 @@ static bool IsStructValue(CEmitter* emitter, const char* name)
 
 static bool ParamIsIndirect(CEmitter* emitter, const ParamDecl* param)
 {
-    return ByRef(param->mod) || IsStructValue(emitter, param->type.name) || IsOwningType(param->type.name);
+    return ByRef(param->mod) || IsStructValue(emitter, param->type.name) || TypeNameIsOwning(&param->type);
 }
 
 /* Param pass convention for a specific function. Extern variadic functions
@@ -368,16 +382,9 @@ static bool ParamIsAliasedRest(CEmitter* emitter, const ParamDecl* param)
         return false;
     }
 
-    Str inner = ArrayInnerStr(param->type.name);
+    const TypeName* elem = TypeNameArrayElem(&param->type);
 
-    if (!inner.data)
-    {
-        return false;
-    }
-
-    const char* elem = StrNew(emitter->arena, inner.data, inner.len).data;
-
-    return !IsOwningType(elem);
+    return elem && !TypeNameIsOwning(elem);
 }
 
 static void EmitType(CEmitter* emitter, const TypeName* type)
@@ -387,10 +394,10 @@ static void EmitType(CEmitter* emitter, const TypeName* type)
         SbPuts(&emitter->out, "const ");
     }
 
-    SbPuts(&emitter->out, TypeNameC(emitter, type->name));
+    SbPuts(&emitter->out, TypeNameC(emitter, type));
 }
 
-static void AddSymbol(CEmitter* emitter, const char* name, const char* typeName, const char* cName, bool indirect)
+static void AddSymbol(CEmitter* emitter, const char* name, const TypeName* typeName, const char* cName, bool indirect)
 {
     CSymbol* symbol = (CSymbol*)arena_alloc(emitter->arena, sizeof(CSymbol));
     symbol->typeName = typeName;
@@ -400,22 +407,22 @@ static void AddSymbol(CEmitter* emitter, const char* name, const char* typeName,
     StrMapPut(&emitter->symbols, name, symbol);
 }
 
-static const char* ExprTypePseudoCall(CEmitter* emitter, const CallExpr* call)
+static const TypeName* ExprTypePseudoCall(CEmitter* emitter, const CallExpr* call)
 {
     // The callee name is preserved for pseudo function calls in contrast to the mangled name for user defined calls.
     if (IsSimdVector(call->callee))
     {
-        return call->callee;
+        return InternType(emitter, call->callee);
     }
 
     return NULL;
 }
 
-static const char* ExprType(CEmitter* emitter, const Node* node)
+static const TypeName* ExprType(CEmitter* emitter, const Node* node)
 {
     if (!node)
     {
-        return "";
+        return NULL;
     }
 
     switch (node->kind)
@@ -426,84 +433,87 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
 
         if (lit->value > 0xFFFFFFFFULL)
         {
-            return lit->isUnsigned ? "ulong" : "long";
+            return InternType(emitter, lit->isUnsigned ? "ulong" : "long");
         }
 
-        return lit->isUnsigned ? "uint" : "int";
+        return InternType(emitter, lit->isUnsigned ? "uint" : "int");
     }
     case NodeFloatLiteral:
-        return "float";
+        return InternType(emitter, "float");
     case NodeBoolLiteral:
-        return "bool";
+        return InternType(emitter, "bool");
     case NodeStrLiteral:
-        return "string";
+        return InternType(emitter, "string");
     case NodeIdent:
     {
         const CSymbol* symbol = (const CSymbol*)StrMapGet(&emitter->symbols, ((const IdentExpr*)node)->name);
-        return symbol ? symbol->typeName : "";
+        return symbol ? symbol->typeName : NULL;
     }
     case NodeUnary:
-        return ((const UnaryExpr*)node)->op == UnNot ? "bool" : ExprType(emitter, ((const UnaryExpr*)node)->operand);
+        return ((const UnaryExpr*)node)->op == UnNot ? InternType(emitter, "bool")
+                                                     : ExprType(emitter, ((const UnaryExpr*)node)->operand);
     case NodeBinary:
     {
         const BinaryExpr* expression = (const BinaryExpr*)node;
 
         if (expression->op >= BinEqEq)
         {
-            return "bool";
+            return InternType(emitter, "bool");
         }
 
-        const char* lhs = ExprType(emitter, expression->lhs);
-        const char* rhs = ExprType(emitter, expression->rhs);
+        const TypeName* lt = ExprType(emitter, expression->lhs);
+        const TypeName* rt = ExprType(emitter, expression->rhs);
+        const char* lhs = lt ? lt->name : "";
+        const char* rhs = rt ? rt->name : "";
 
         if (strcmp(lhs, "double") == 0 || strcmp(rhs, "double") == 0)
         {
-            return "double";
+            return InternType(emitter, "double");
         }
 
         if (strcmp(lhs, "float") == 0 || strcmp(rhs, "float") == 0)
         {
-            return "float";
+            return InternType(emitter, "float");
         }
 
         if (strcmp(lhs, "ulong") == 0 || strcmp(rhs, "ulong") == 0)
         {
-            return "ulong";
+            return InternType(emitter, "ulong");
         }
 
         if (strcmp(lhs, "long") == 0 || strcmp(rhs, "long") == 0)
         {
-            return "long";
+            return InternType(emitter, "long");
         }
 
         if (strcmp(lhs, "uint") == 0 || strcmp(rhs, "uint") == 0)
         {
-            return "uint";
+            return InternType(emitter, "uint");
         }
 
         if (strcmp(lhs, "float3") == 0 && (strcmp(lhs, "float3") == 0 || strcmp(rhs, "float") == 0))
         {
-            return "float3";
+            return InternType(emitter, "float3");
         }
 
         if (strcmp(lhs, "float4") == 0 && (strcmp(lhs, "float4") == 0 || strcmp(rhs, "float") == 0))
         {
-            return "float4";
+            return InternType(emitter, "float4");
         }
 
-        return "int";
+        return InternType(emitter, "int");
     }
     case NodeAssign:
         return ExprType(emitter, ((const AssignExpr*)node)->target);
     case NodeIncDec:
         return ExprType(emitter, ((const IncDecExpr*)node)->operand);
     case NodeCast:
-        return ((const CastExpr*)node)->type.name;
+        return &((const CastExpr*)node)->type;
     case NodeCall:
     {
         const CallExpr* call = (const CallExpr*)node;
 
-        const char* pseudoCallType = ExprTypePseudoCall(emitter, call);
+        const TypeName* pseudoCallType = ExprTypePseudoCall(emitter, call);
 
         if (pseudoCallType)
         {
@@ -512,16 +522,17 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
 
         if (call->resolvedDecl)
         {
-            return call->resolvedDecl->returnType.name;
+            return &call->resolvedDecl->returnType;
         }
 
-        return TypeRegistryIsUserType(&emitter->types, call->callee) ? call->callee : "";
+        return TypeRegistryIsUserType(&emitter->types, call->callee) ? InternType(emitter, call->callee) : NULL;
     }
     case NodeMember:
     {
         const MemberExpr* member = (const MemberExpr*)node;
 
-        const char* baseName = ExprType(emitter, member->base_node);
+        const TypeName* baseType = ExprType(emitter, member->base_node);
+        const char* baseName = baseType ? baseType->name : "";
 
         if (IsSimdVector(baseName))
         {
@@ -529,91 +540,81 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
             switch (laneCount)
             {
             case 1:
-                return "float";
+                return InternType(emitter, "float");
             case 3:
-                return "float3";
+                return InternType(emitter, "float3");
             case 4:
-                return "float4";
+                return InternType(emitter, "float4");
             default:
                 DiagErrorFmt(emitter->diag, node->range, "cannot destructure into larger vector");
                 break;
             }
 
-            return "float";
+            return InternType(emitter, "float");
         }
 
         /* array.length is a u64 query on the fat struct; a fixed array's
-           .length is the compile-time dimension (still u64). */
-        if (IsArrayType(baseName) && strcmp(member->member, "length") == 0)
+            .length is the compile-time dimension (still u64). */
+        if (TypeNameIsArray(baseType) && strcmp(member->member, "length") == 0)
         {
-            return "ulong";
+            return InternType(emitter, "ulong");
         }
 
-        if (IsFixedArrayType(baseName) && strcmp(member->member, "length") == 0)
+        if (baseType && baseType->isBox)
         {
-            return "ulong";
-        }
-
-        const char* _inner = OwningInnerCStr(emitter->arena, baseName);
-        if (_inner)
-        {
-            baseName = _inner;
+            baseType = baseType->inner;
+            baseName = baseType->name;
         }
 
         /* If unwrapping a box revealed a SIMD vector, the member is a lane
-           or swizzle, not a struct field. */
+            or swizzle, not a struct field. */
         if (IsSimdVector(baseName))
         {
             size_t laneCount = strlen(member->member);
             switch (laneCount)
             {
             case 1:
-                return "float";
+                return InternType(emitter, "float");
             case 3:
-                return "float3";
+                return InternType(emitter, "float3");
             case 4:
-                return "float4";
+                return InternType(emitter, "float4");
             default:
                 DiagErrorFmt(emitter->diag, node->range, "cannot destructure into larger vector");
                 break;
             }
 
-            return "float";
+            return InternType(emitter, "float");
         }
 
         const StructType* type = TypeRegistryFind(&emitter->types, baseName);
         int index = type ? TypeRegistryFieldIndex(&emitter->types, baseName, member->member) : -1;
 
-        return index >= 0 ? ((const FieldDecl*)VecGet(&type->fields, (size_t)index))->type.name : "";
+        return index >= 0 ? &((const FieldDecl*)VecGet(&type->fields, (size_t)index))->type : NULL;
     }
     case NodeStructInit:
-        return ((const StructInitExpr*)node)->typeName;
+        return InternType(emitter, ((const StructInitExpr*)node)->typeName);
     case NodeIndex:
     {
-        const char* baseName = ExprType(emitter, ((const IndexExpr*)node)->base_node);
+        const TypeName* baseType = ExprType(emitter, ((const IndexExpr*)node)->base_node);
 
-        if (IsArrayType(baseName) || IsFixedArrayType(baseName))
-        {
-            return ArrayInnerName(emitter->arena, baseName);
-        }
-
-        Str inner = ArrayInnerStr(baseName);
-
-        return inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "";
+        return baseType ? TypeNameArrayElem(baseType) : NULL;
     }
     case NodeArrayInit:
     {
         const ArrayInitExpr* ai = (const ArrayInitExpr*)node;
 
-        return arena_format(emitter->arena, "%s[]", ai->elementType);
+        return ai->elementType
+                   ? InternType(emitter, arena_format(emitter->arena, "%s[]", ai->elementType->name))
+                   : NULL;
     }
     default:
-        return "";
+        return NULL;
     }
 }
 
 static void EmitScalarValue(CEmitter* emitter, const Node* node);
-static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* innerType);
+static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const TypeName* innerType);
 
 /* True if 'base' is a `ref T...` rest array whose slots hold pointers to the
    source arguments (element access must deref the slot). */
@@ -669,10 +670,10 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     if (node->kind == NodeMember)
     {
         const MemberExpr* member = (const MemberExpr*)node;
-        const char* baseType = ExprType(emitter, member->base_node);
+        const TypeName* baseType = ExprType(emitter, member->base_node);
 
         /* array.length is a u64 query on the fat struct. */
-        if (IsArrayType(baseType) && strcmp(member->member, "length") == 0)
+        if (TypeNameIsDynamicArray(baseType) && strcmp(member->member, "length") == 0)
         {
             SbPutc(&emitter->out, '(');
             EmitLValue(emitter, member->base_node);
@@ -682,14 +683,14 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
         }
 
         /* Fixed-array .length: the compile-time dimension as a constant. */
-        if (IsFixedArrayType(baseType) && strcmp(member->member, "length") == 0)
+        if (TypeNameIsFixedArray(baseType) && strcmp(member->member, "length") == 0)
         {
-            SbPrintf(&emitter->out, "((unsigned long long)%ld)", FixedArrayLength(baseType));
+            SbPrintf(&emitter->out, "((unsigned long long)%ld)", baseType->length);
 
             return;
         }
 
-        bool throughBox = IsOwningType(baseType);
+        bool throughBox = baseType && baseType->isBox;
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
@@ -701,11 +702,11 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     if (node->kind == NodeIndex)
     {
         const IndexExpr* idx = (const IndexExpr*)node;
-        const char* baseType = ExprType(emitter, idx->base_node);
+        const TypeName* baseType = ExprType(emitter, idx->base_node);
 
         /* Fixed inline array: plain C subscript on the member itself; the
-           bound is the compile-time dimension. */
-        if (IsFixedArrayType(baseType))
+            bound is the compile-time dimension. */
+        if (TypeNameIsFixedArray(baseType))
         {
             SbPutc(&emitter->out, '(');
             EmitLValue(emitter, idx->base_node);
@@ -715,7 +716,7 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
             if (emitter->boundsCheck)
             {
                 SbPrintf(&emitter->out,
-                         "; if (_bi >= %ld) strata_panic(\"array index out of bounds\"); ", FixedArrayLength(baseType));
+                         "; if (_bi >= %ld) strata_panic(\"array index out of bounds\"); ", baseType->length);
             }
 
             SbPuts(&emitter->out, "; _bi; })]");
@@ -723,9 +724,8 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
             return;
         }
 
-        Str inner = ArrayInnerStr(baseType);
-        const char* elemC
-            = TypeNameC(emitter, inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "void");
+        const TypeName* inner = TypeNameArrayElem(baseType);
+        const char* elemC = TypeNameC(emitter, inner ? inner : InternType(emitter, "void"));
 
         if (IsAliasedRestArray(emitter, idx->base_node))
         {
@@ -861,7 +861,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
 {
     const StructType* type = TypeRegistryFind(&emitter->types, typeName);
     SbPutc(&emitter->out, '(');
-    SbPuts(&emitter->out, TypeNameC(emitter, typeName));
+    SbPuts(&emitter->out, TypeNameC(emitter, InternType(emitter, typeName)));
     SbPuts(&emitter->out, "){ ");
 
     size_t positional = 0;
@@ -895,7 +895,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             SbPuts(&emitter->out, " = ");
         }
 
-        if (declaration && IsFixedArrayType(declaration->type.name) && field->value->kind == NodeArrayInit)
+        if (declaration && TypeNameIsFixedArray(&declaration->type) && field->value->kind == NodeArrayInit)
         {
             /* Fixed-size array field from a braced literal: a flat C brace
                list (valid for nested dimensions too). Trailing elements past
@@ -918,12 +918,12 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             continue;
         }
 
-        if (declaration && IsOwningType(declaration->type.name))
+        if (declaration && TypeNameIsOwning(&declaration->type))
         {
-            const char* valueType = ExprType(emitter, field->value);
-            bool sameOwningType = valueType[0] != '\0' && IsOwningType(valueType)
-                && strcmp(valueType, declaration->type.name) == 0;
-            const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
+            const TypeName* valueType = ExprType(emitter, field->value);
+            bool sameOwningType = valueType && TypeNameIsOwning(valueType)
+                && strcmp(valueType->name, declaration->type.name) == 0;
+            const TypeName* inner = declaration->type.isBox ? declaration->type.inner : NULL;
 
             if (sameOwningType && field->value->kind != NodeStrLiteral)
             {
@@ -942,8 +942,8 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             else if (inner)
             {
                 /* ^T field from a non-^T value: heap-box it inline
-                   via a GNU statement expression. CEmitOwnedValue handles
-                   strdup for literals, move for owning sources. */
+                    via a GNU statement expression. CEmitOwnedValue handles
+                    strdup for literals, move for owning sources. */
                 const char* innerC = TypeNameC(emitter, inner);
                 char tmp[32];
                 snprintf(tmp, sizeof tmp, "strata__boxtmp%u", emitter->boxTmpCounter++);
@@ -965,8 +965,8 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             else
             {
                 /* string field: construct owned value (strdup literal,
-                   move source). */
-                CEmitOwnedValue(emitter, field->value, declaration->type.name);
+                    move source). */
+                CEmitOwnedValue(emitter, field->value, &declaration->type);
             }
 
             continue;
@@ -984,10 +984,15 @@ static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call);
 static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
 {
     const Node* arg0 = (const Node*)VecGet(&call->args, 0);
-    Str innerRaw = ArrayInnerStr(ExprType(emitter, arg0));
-    const char* elemType = StrNew(emitter->arena, innerRaw.data, innerRaw.len).data;
+    const TypeName* elemType = TypeNameArrayElem(ExprType(emitter, arg0));
+
+    if (!elemType)
+    {
+        elemType = InternType(emitter, "");
+    }
+
     const char* elemC = TypeNameC(emitter, elemType);
-    bool elemOwning = IsOwningType(elemType);
+    bool elemOwning = TypeNameIsOwning(elemType);
 
     SbPuts(&emitter->out, "({ strata__arr* _a = &(");
     EmitLValue(emitter, arg0);
@@ -1012,9 +1017,9 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
 
         if (elemOwning)
         {
-            const char* vt = ExprType(emitter, val);
+            const TypeName* vt = ExprType(emitter, val);
 
-            if (vt[0] != '\0' && IsOwningType(vt) && strcmp(vt, elemType) == 0
+            if (vt && TypeNameIsOwning(vt) && strcmp(vt->name, elemType->name) == 0
                 && val->kind != NodeStrLiteral)
             {
                 /* Same owning type, not a literal: move (take pointer, null source). */
@@ -1029,20 +1034,19 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
                     SbPuts(&emitter->out, " = 0)");
                 }
             }
-            else if (elemType && IsArrayType(elemType) == false && OwningInnerCStr(emitter->arena, elemType))
+            else if (elemType->isBox)
             {
                 /* ^T element from a non-^T value: box it up.
-                   CEmitOwnedValue handles strdup for literals, move for
-                   owning sources. */
-                const char* inner = OwningInnerCStr(emitter->arena, elemType);
-                const char* innerC = TypeNameC(emitter, inner);
+                    CEmitOwnedValue handles strdup for literals, move for
+                    owning sources. */
+                const char* innerC = TypeNameC(emitter, elemType->inner);
 
                 SbPuts(&emitter->out, "({ ");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, " *_b = strata_alloc(sizeof(");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, ")); *_b = ");
-                CEmitOwnedValue(emitter, val, inner);
+                CEmitOwnedValue(emitter, val, elemType->inner);
                 SbPuts(&emitter->out, "; _b; })");
             }
             else
@@ -1118,9 +1122,9 @@ static void EmitPseudoCall(CEmitter* emitter, const CallExpr* call)
 }
 
 /* Deep copy */
-static void CEmitCopyText(CEmitter* emitter, const char* type, const char* accessor)
+static void CEmitCopyText(CEmitter* emitter, const TypeName* type, const char* accessor)
 {
-    if (strcmp(type, "string") == 0)
+    if (strcmp(type->name, "string") == 0)
     {
         SbPuts(&emitter->out, "strata_strdup(");
         SbPuts(&emitter->out, accessor);
@@ -1128,10 +1132,9 @@ static void CEmitCopyText(CEmitter* emitter, const char* type, const char* acces
         return;
     }
 
-    if (IsOwningType(type) && !IsArrayType(type))
+    if (type->isBox)
     {
-        const char* inner = OwningInnerCStr(emitter->arena, type);
-        const char* innerC = TypeNameC(emitter, inner);
+        const char* innerC = TypeNameC(emitter, type->inner);
         char* innerAccessor = arena_format(emitter->arena, "(*%s)", accessor);
 
         SbPuts(&emitter->out, "({ ");
@@ -1139,16 +1142,14 @@ static void CEmitCopyText(CEmitter* emitter, const char* type, const char* acces
         SbPuts(&emitter->out, " *_c = strata_alloc(sizeof(");
         SbPuts(&emitter->out, innerC);
         SbPuts(&emitter->out, ")); *_c = ");
-        CEmitCopyText(emitter, inner, innerAccessor);
+        CEmitCopyText(emitter, type->inner, innerAccessor);
         SbPuts(&emitter->out, "; _c; })");
         return;
     }
 
-    if (IsArrayType(type))
+    if (type->isArray)
     {
-        Str innerRaw = ArrayInnerStr(type);
-        const char* elemType = StrNew(emitter->arena, innerRaw.data, innerRaw.len).data;
-        const char* elemC = TypeNameC(emitter, elemType);
+        const char* elemC = TypeNameC(emitter, type->elem);
         char* elemAccessor = arena_format(emitter->arena, "((%s*)(%s).data)[_i]", elemC, accessor);
 
         SbPuts(&emitter->out, "({ strata__arr _c; _c.len = (");
@@ -1159,9 +1160,9 @@ static void CEmitCopyText(CEmitter* emitter, const char* type, const char* acces
         SbPuts(&emitter->out, elemC);
         SbPuts(&emitter->out, "*)_c.data)[_i] = ");
 
-        if (IsOwningType(elemType))
+        if (TypeNameIsOwning(type->elem))
         {
-            CEmitCopyText(emitter, elemType, elemAccessor);
+            CEmitCopyText(emitter, type->elem, elemAccessor);
         }
         else
         {
@@ -1180,10 +1181,15 @@ static void CEmitCopyText(CEmitter* emitter, const char* type, const char* acces
 static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
 {
     const Node* arg0 = (const Node*)VecGet(&call->args, 0);
-    const char* type = ExprType(emitter, arg0);
+    const TypeName* type = ExprType(emitter, arg0);
+
+    if (!type)
+    {
+        type = InternType(emitter, "");
+    }
 
     /* Capture the source expression's C text so the recursive copy below can
-       reference it (a nested statement-expression references it in-place). */
+        reference it (a nested statement-expression references it in-place). */
     Sb saved = emitter->out;
     Sb tmp;
     SbInit(&tmp);
@@ -1202,9 +1208,9 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai);
    The backing array is a compound literal at the call site; each element is a
    plain C expression. Owning elements are moved (pointer captured, source
    nulled) unless borrow is set (ref rest), in which case they're borrowed. */
-static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* elemType, bool borrow)
+static void EmitRestElement(CEmitter* emitter, const Node* eNode, const TypeName* elemType, bool borrow)
 {
-    bool elemOwning = IsOwningType(elemType);
+    bool elemOwning = TypeNameIsOwning(elemType);
     const char* elemC = TypeNameC(emitter, elemType);
 
     if (elemOwning)
@@ -1217,9 +1223,9 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
             return;
         }
 
-        const char* valueType = ExprType(emitter, eNode);
+        const TypeName* valueType = ExprType(emitter, eNode);
 
-        if (strcmp(elemType, "string") == 0 && eNode->kind == NodeStrLiteral)
+        if (strcmp(elemType->name, "string") == 0 && eNode->kind == NodeStrLiteral)
         {
             SbPuts(&emitter->out, "strata_strdup(");
             CEmitExpr(emitter, eNode);
@@ -1228,7 +1234,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
             return;
         }
 
-        if (valueType[0] != '\0' && IsOwningType(valueType))
+        if (valueType && TypeNameIsOwning(valueType))
         {
             /* Move an owning source: capture its pointer, null the source. */
             SbPrintf(&emitter->out, "({ %s _t = ", elemC);
@@ -1250,7 +1256,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
 
         /* ^T from a bare T: heap-box it inline. */
         {
-            const char* inner = OwningInnerCStr(emitter->arena, elemType);
+            const TypeName* inner = elemType->isBox ? elemType->inner : NULL;
             const char* innerC = inner ? TypeNameC(emitter, inner) : "void";
 
             SbPuts(&emitter->out, "({ ");
@@ -1265,13 +1271,13 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
         return;
     }
 
-    const char* valueType = ExprType(emitter, eNode);
+    const TypeName* valueType = ExprType(emitter, eNode);
 
     if (borrow)
     {
         /* Aliased `ref T...`: the slot holds a POINTER to the source storage
-           so element writes through the ref propagate to the caller. */
-        if (valueType[0] != '\0' && IsOwningType(valueType))
+            so element writes through the ref propagate to the caller. */
+        if (valueType && TypeNameIsOwning(valueType))
         {
             /* ^T arg: the box pointer already IS the address of the value. */
             CEmitExpr(emitter, eNode);
@@ -1295,7 +1301,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
     }
 
     /* ^T stored in a T[] element: unbox the pointer. */
-    if (valueType[0] != '\0' && IsOwningType(valueType))
+    if (valueType && TypeNameIsOwning(valueType))
     {
         SbPuts(&emitter->out, "(*");
         CEmitExpr(emitter, eNode);
@@ -1389,10 +1395,10 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         if (parameter && !isStringByValue && ParamIsIndirectFor(emitter, function, parameter))
         {
             /* ^T coerced to T: if the param is a plain struct (not box),
-               and the arg is a box, the heap pointer IS the T* the param wants. */
-            bool paramIsBoxType = IsOwningType(parameter->type.name);
-            const char* argType = ExprType(emitter, argument);
-            bool argIsBox = IsOwningType(argType);
+                and the arg is a box, the heap pointer IS the T* the param wants. */
+            bool paramIsBoxType = TypeNameIsOwning(&parameter->type);
+            const TypeName* argType = ExprType(emitter, argument);
+            bool argIsBox = argType && TypeNameIsOwning(argType);
 
             if (!paramIsBoxType && argIsBox)
             {
@@ -1415,7 +1421,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
             }
             else
             {
-                const char* typeName = TypeNameC(emitter, parameter->type.name);
+                const char* typeName = TypeNameC(emitter, &parameter->type);
 
                 SbPuts(&emitter->out, "&((");
                 SbPuts(&emitter->out, typeName);
@@ -1426,13 +1432,13 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         }
         else
         {
-            const char* argType = ExprType(emitter, argument);
+            const TypeName* argType = ExprType(emitter, argument);
 
             if (isStringByValue)
             {
                 /* Extern string param: a plain string arg passes its char*
-                   value; a ^string derefs to its char*. */
-                if (strcmp(argType, "string") == 0)
+                    value; a ^string derefs to its char*. */
+                if (argType && strcmp(argType->name, "string") == 0)
                 {
                     CEmitExpr(emitter, argument);
                 }
@@ -1441,7 +1447,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
                     EmitScalarValue(emitter, argument);
                 }
             }
-            else if (cVararg && strcmp(argType, "string") == 0)
+            else if (cVararg && argType && strcmp(argType->name, "string") == 0)
             {
                 /* Variadic extern: string args pass their char* value. */
                 CEmitExpr(emitter, argument);
@@ -1464,11 +1470,16 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
         }
 
         const ParamDecl* restParam = (const ParamDecl*)VecGet(&function->params, function->params.count - 1);
-        Str inner = ArrayInnerStr(restParam->type.name);
-        const char* elemName = inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : NULL;
-        const char* elemC = TypeNameC(emitter, elemName);
+        const TypeName* elemType = TypeNameArrayElem(&restParam->type);
+
+        if (!elemType)
+        {
+            elemType = InternType(emitter, "");
+        }
+
+        const char* elemC = TypeNameC(emitter, elemType);
         bool borrow = restParam->mod == ModRef;
-        bool aliased = borrow && !IsOwningType(elemName);
+        bool aliased = borrow && !TypeNameIsOwning(elemType);
 
         /* A stack-allocated {data, len}: the backing buffer is a compound
            literal array (automatic storage, alive through the call). An
@@ -1498,7 +1509,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
                     SbPuts(&emitter->out, ", ");
                 }
 
-                EmitRestElement(emitter, (const Node*)VecGet(&call->args, i), elemName, borrow);
+                EmitRestElement(emitter, (const Node*)VecGet(&call->args, i), elemType, borrow);
             }
         }
 
@@ -1526,10 +1537,10 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai);
    buffer; owning elements (string/box) are heap-boxed or moved in. */
 static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
 {
-    const char* elemType = ai->elementType;
+    const TypeName* elemType = ai->elementType ? ai->elementType : InternType(emitter, "");
     const char* elemC = TypeNameC(emitter, elemType);
     size_t count = ai->elements.count;
-    bool elemOwning = IsOwningType(elemType);
+    bool elemOwning = TypeNameIsOwning(elemType);
 
     /* Pointer-to-element cast, e.g. "int *", "char * *", "Vec3 *". */
     SbPuts(&emitter->out, "({ strata__arr _a; _a.data = strata_alloc(");
@@ -1552,9 +1563,9 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
 
         if (elemOwning)
         {
-            const char* valueType = ExprType(emitter, eNode);
+            const TypeName* valueType = ExprType(emitter, eNode);
 
-            if (valueType[0] != '\0' && IsOwningType(valueType) && strcmp(valueType, elemType) == 0
+            if (valueType && TypeNameIsOwning(valueType) && strcmp(valueType->name, elemType->name) == 0
                 && eNode->kind != NodeStrLiteral)
             {
                 /* Same owning type, not a literal: move. */
@@ -1569,18 +1580,17 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
                     SbPuts(&emitter->out, " = 0)");
                 }
             }
-            else if (OwningInnerCStr(emitter->arena, elemType))
+            else if (elemType->isBox)
             {
                 /* ^T element from a non-^T value: box it up. */
-                const char* inner = OwningInnerCStr(emitter->arena, elemType);
-                const char* innerC = TypeNameC(emitter, inner);
+                const char* innerC = TypeNameC(emitter, elemType->inner);
 
                 SbPuts(&emitter->out, "({ ");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, " *_b = strata_alloc(sizeof(");
                 SbPuts(&emitter->out, innerC);
                 SbPuts(&emitter->out, ")); *_b = ");
-                CEmitOwnedValue(emitter, eNode, inner);
+                CEmitOwnedValue(emitter, eNode, elemType->inner);
                 SbPuts(&emitter->out, "; _b; })");
             }
             else
@@ -1591,10 +1601,10 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
         }
         else
         {
-            const char* valueType = ExprType(emitter, eNode);
+            const TypeName* valueType = ExprType(emitter, eNode);
 
             /* ^T stored in a T[] array element: unbox the pointer. */
-            if (valueType[0] != '\0' && IsOwningType(valueType) && !elemOwning)
+            if (valueType && TypeNameIsOwning(valueType) && !elemOwning)
             {
                 SbPuts(&emitter->out, "(*");
                 CEmitExpr(emitter, eNode);
@@ -1615,10 +1625,12 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
 static void EmitScalarValue(CEmitter* emitter, const Node* node)
 {
     /* A box-typed expression used as a plain value (by-value call arg,
-       unary/binary operand, assignment RHS) is dereferenced to its pointee.
-       Handles idents, array elements, member chains, and box-returning calls
-       uniformly; for an ident CEmitExpr already yields the box pointer. */
-    if (node && IsOwningType(ExprType(emitter, node)))
+        unary/binary operand, assignment RHS) is dereferenced to its pointee.
+        Handles idents, array elements, member chains, and box-returning calls
+        uniformly; for an ident CEmitExpr already yields the box pointer. */
+    const TypeName* nodeType = node ? ExprType(emitter, node) : NULL;
+
+    if (nodeType && TypeNameIsOwning(nodeType))
     {
         SbPuts(&emitter->out, "(*");
         CEmitExpr(emitter, node);
@@ -1711,16 +1723,17 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     case NodeMember:
     {
         const MemberExpr* member = (const MemberExpr*)node;
-        const char* baseType = ExprType(emitter, member->base_node);
+        const TypeName* baseType = ExprType(emitter, member->base_node);
+        const char* baseName = baseType ? baseType->name : "";
 
-        if (IsSimdVector(baseType))
+        if (IsSimdVector(baseName))
         {
             CSimdVectorDestructure(emitter, member, false);
             return;
         }
 
         /* array.length is a u64 query on the fat struct. */
-        if (IsArrayType(baseType) && strcmp(member->member, "length") == 0)
+        if (TypeNameIsDynamicArray(baseType) && strcmp(member->member, "length") == 0)
         {
             SbPutc(&emitter->out, '(');
             CEmitExpr(emitter, member->base_node);
@@ -1730,27 +1743,26 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
         }
 
         /* Fixed-array .length: the compile-time dimension as a constant. */
-        if (IsFixedArrayType(baseType) && strcmp(member->member, "length") == 0)
+        if (TypeNameIsFixedArray(baseType) && strcmp(member->member, "length") == 0)
         {
-            SbPrintf(&emitter->out, "((unsigned long long)%ld)", FixedArrayLength(baseType));
+            SbPrintf(&emitter->out, "((unsigned long long)%ld)", baseType->length);
 
             return;
         }
 
         /* ^simd.swizzle or ^simd.lane: unpack the box and route
-           through the SIMD destructure. */
+            through the SIMD destructure. */
         {
-            bool throughBox = IsOwningType(baseType);
-            const char* inner = throughBox ? OwningInnerCStr(emitter->arena, baseType) : NULL;
+            const TypeName* inner = baseType && baseType->isBox ? baseType->inner : NULL;
 
-            if (inner && IsSimdVector(inner))
+            if (inner && IsSimdVector(inner->name))
             {
                 CSimdVectorDestructure(emitter, member, true);
                 return;
             }
         }
 
-        bool throughBox = IsOwningType(baseType);
+        bool throughBox = baseType && baseType->isBox;
         SbPutc(&emitter->out, '(');
         CEmitExpr(emitter, member->base_node);
         SbPuts(&emitter->out, throughBox ? ")->" : ").");
@@ -1778,11 +1790,12 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     {
         const BinaryExpr* binary = (const BinaryExpr*)node;
 
-        const char* resultType = ExprType(emitter, node);
+        const TypeName* resultType = ExprType(emitter, node);
+        const char* resultName = resultType ? resultType->name : "";
 
-        if (binary->op == BinMod && IsFloatType(resultType))
+        if (binary->op == BinMod && IsFloatType(resultName))
         {
-            SbPuts(&emitter->out, strcmp(resultType, "double") == 0 ? "fmod(" : "fmodf(");
+            SbPuts(&emitter->out, strcmp(resultName, "double") == 0 ? "fmod(" : "fmodf(");
             EmitScalarValue(emitter, binary->lhs);
             SbPuts(&emitter->out, ", ");
             EmitScalarValue(emitter, binary->rhs);
@@ -1791,7 +1804,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             return;
         }
 
-        if (IsSimdVector(resultType))
+        if (IsSimdVector(resultName))
         {
             CSimdVectorBinExpr(emitter, binary);
             return;
@@ -1811,17 +1824,18 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     {
         const AssignExpr* assign = (const AssignExpr*)node;
 
-        const char* targetType = ExprType(emitter, assign->target);
+        const TypeName* targetType = ExprType(emitter, assign->target);
+        const TypeName* valueType = ExprType(emitter, assign->value);
+        const char* targetName = targetType ? targetType->name : "";
 
         /* Whole-array rebind: free the old buffer (and owning elements), take
-           the new fat struct, and null a moved source. */
-        if (assign->op == AssignSet && IsArrayType(targetType)
-            && strcmp(ExprType(emitter, assign->value), targetType) == 0)
+            the new fat struct, and null a moved source. */
+        if (assign->op == AssignSet && TypeNameIsDynamicArray(targetType) && valueType
+            && strcmp(valueType->name, targetName) == 0)
         {
-            Str inner = ArrayInnerStr(targetType);
-            const char* elemType = StrNew(emitter->arena, inner.data, inner.len).data;
+            const TypeName* elemType = targetType->elem;
             const char* elemC = TypeNameC(emitter, elemType);
-            bool elemOwning = IsOwningType(elemType);
+            bool elemOwning = TypeNameIsOwning(elemType);
 
             SbPuts(&emitter->out, "({ if (");
             EmitLValue(emitter, assign->target);
@@ -1833,9 +1847,9 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
                 EmitLValue(emitter, assign->target);
                 SbPuts(&emitter->out, ".len; _i++) { ");
 
-                if (TypeRegistryIsOwningStruct(&emitter->types, elemType))
+                if (TypeRegistryIsOwningStruct(&emitter->types, elemType->name))
                 {
-                    SbPuts(&emitter->out, DropHelperName(emitter, elemType));
+                    SbPuts(&emitter->out, DropHelperName(emitter, elemType->name));
                     SbPuts(&emitter->out, "(&((");
                     SbPuts(&emitter->out, elemC);
                     SbPuts(&emitter->out, "*)");
@@ -1880,14 +1894,14 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
         }
 
         /* `=` rebinds the box only when the value is itself a box of the
-           same type; any other assignment into a ^T - including `=`
-           with a plain T value, e.g. `x = 5;` - mutates its contents. */
-        bool boxMove = assign->op == AssignSet && IsOwningType(targetType)
-                       && strcmp(ExprType(emitter, assign->value), targetType) == 0;
+            same type; any other assignment into a ^T - including `=`
+            with a plain T value, e.g. `x = 5;` - mutates its contents. */
+        bool boxMove = assign->op == AssignSet && targetType && TypeNameIsOwning(targetType) && valueType
+                       && strcmp(valueType->name, targetName) == 0;
 
         if (boxMove)
         {
-            bool isStrLit = strcmp(targetType, "string") == 0 && assign->value->kind == NodeStrLiteral;
+            bool isStrLit = strcmp(targetName, "string") == 0 && assign->value->kind == NodeStrLiteral;
 
             SbPuts(&emitter->out, "(strata_free(");
             EmitLValue(emitter, assign->target);
@@ -1920,15 +1934,15 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             return;
         }
 
-        if (!boxMove && IsOwningType(targetType))
+        if (!boxMove && targetType && TypeNameIsOwning(targetType))
         {
             /* Assigning a plain T (or compound-assigning) into a ^T
-               mutates its contents in place - not a move, so `x = 5;` and
-               `val -= amt;` both work even through a `ref ^T` param or
-               a box global. */
-            const char* inner = OwningInnerCStr(emitter->arena, targetType);
+                mutates its contents in place - not a move, so `x = 5;` and
+                `val -= amt;` both work even through a `ref ^T` param or
+                a box global. */
+            const TypeName* inner = targetType->isBox ? targetType->inner : NULL;
 
-            if (IsOwningType(inner))
+            if (inner && TypeNameIsOwning(inner))
             {
                 /* Content-assigning an OWNING inner (^string = "x" /
                    someString): drop only the old inner value in place (free
@@ -1950,12 +1964,12 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
                 return;
             }
 
-            if (assign->op == AssignMod && IsFloatType(inner))
+            if (assign->op == AssignMod && IsFloatType(inner->name))
             {
                 SbPuts(&emitter->out, "(*");
                 EmitLValue(emitter, assign->target);
                 SbPuts(&emitter->out, " = ");
-                SbPuts(&emitter->out, strcmp(inner, "double") == 0 ? "fmod(*" : "fmodf(*");
+                SbPuts(&emitter->out, strcmp(inner->name, "double") == 0 ? "fmod(*" : "fmodf(*");
                 EmitLValue(emitter, assign->target);
                 SbPuts(&emitter->out, ", ");
                 EmitScalarValue(emitter, assign->value);
@@ -1975,12 +1989,12 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             return;
         }
 
-        if (assign->op == AssignMod && IsFloatType(targetType))
+        if (assign->op == AssignMod && IsFloatType(targetName))
         {
             SbPutc(&emitter->out, '(');
             EmitLValue(emitter, assign->target);
             SbPuts(&emitter->out, " = ");
-            SbPuts(&emitter->out, strcmp(targetType, "double") == 0 ? "fmod(" : "fmodf(");
+            SbPuts(&emitter->out, strcmp(targetName, "double") == 0 ? "fmod(" : "fmodf(");
             EmitLValue(emitter, assign->target);
             SbPuts(&emitter->out, ", ");
             EmitScalarValue(emitter, assign->value);
@@ -2011,8 +2025,8 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     case NodeIncDec:
     {
         const IncDecExpr* increment = (const IncDecExpr*)node;
-        const char* operandType = ExprType(emitter, increment->operand);
-        bool throughBox = IsOwningType(operandType);
+        const TypeName* operandType = ExprType(emitter, increment->operand);
+        bool throughBox = operandType && operandType->isBox;
 
         SbPutc(&emitter->out, '(');
 
@@ -2050,7 +2064,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
     {
         const CastExpr* cast = (const CastExpr*)node;
         SbPuts(&emitter->out, "((");
-        SbPuts(&emitter->out, TypeNameC(emitter, cast->type.name));
+        SbPuts(&emitter->out, TypeNameC(emitter, &cast->type));
         SbPuts(&emitter->out, ")(");
         CEmitExpr(emitter, cast->operand);
         SbPuts(&emitter->out, "))");
@@ -2073,9 +2087,9 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
      comma expression:  (expr, (src = 0))
    - Owning inner + non-movable (call result): evaluate as-is.
    Used for string vars, ^T inners, struct fields, return values, etc. */
-static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* innerType)
+static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const TypeName* innerType)
 {
-    if (!IsOwningType(innerType))
+    if (!TypeNameIsOwning(innerType))
     {
         CEmitExpr(emitter, init);
         return;
@@ -2123,7 +2137,7 @@ static void EmitFixedArrayLiteral(CEmitter* emitter, const TypeName* type, const
     }
 
     SbPutc(&emitter->out, '(');
-    SbPuts(&emitter->out, TypeNameC(emitter, t->name));
+    SbPuts(&emitter->out, TypeNameC(emitter, t));
 
     for (int i = 0; i < depth; i++)
     {
@@ -2190,15 +2204,15 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
            whenever the value type differs from the field type — a bare T
            into ^T, a string literal into ^string, etc. Only
            ^T from the same ^T is a direct move. */
-        const char* valueType = ExprType(emitter, sf->value);
-        bool fieldIsOwning = IsOwningType(fd->type.name);
-        bool sameOwningType = fieldIsOwning && valueType[0] != '\0'
-            && strcmp(valueType, fd->type.name) == 0;
+        const TypeName* valueType = ExprType(emitter, sf->value);
+        bool fieldIsOwning = TypeNameIsOwning(&fd->type);
+        bool sameOwningType = fieldIsOwning && valueType
+            && strcmp(valueType->name, fd->type.name) == 0;
 
         if (fieldIsOwning && !sameOwningType)
         {
             /* ^T field from a non-^T value: box it up. */
-            const char* fieldInner = OwningInnerCStr(emitter->arena, fd->type.name);
+            const TypeName* fieldInner = fd->type.isBox ? fd->type.inner : NULL;
             const char* fieldInnerC = TypeNameC(emitter, fieldInner);
 
             Pad(emitter);
@@ -2249,7 +2263,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
 
             if (fieldIsOwning)
             {
-                CEmitOwnedValue(emitter, sf->value, fd->type.name);
+                CEmitOwnedValue(emitter, sf->value, &fd->type);
             }
             else
             {
@@ -2267,10 +2281,10 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
 static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* innerC, const char* inner,
                             const Node* init)
 {
-    const char* initType = ExprType(emitter, (Node*)init);
+    const TypeName* initType = ExprType(emitter, (Node*)init);
 
     /* Direct move from another ^T of the same kind: take pointer. */
-    if (initType[0] != '\0' && IsOwningType(initType) && OwningInnerStr(initType).data)
+    if (initType && initType->isBox)
     {
         Pad(emitter);
         SbPuts(&emitter->out, cName);
@@ -2301,7 +2315,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
     SbPutc(&emitter->out, '*');
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " = ");
-    CEmitOwnedValue(emitter, init, inner);
+    CEmitOwnedValue(emitter, init, InternType(emitter, inner));
     SbPuts(&emitter->out, ";\n");
 }
 
@@ -2309,7 +2323,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 {
     const char* cName = VarName(emitter, declaration->name);
 
-    if (IsArrayType(declaration->type.name))
+    if (TypeNameIsDynamicArray(&declaration->type))
     {
         SbPuts(&emitter->out, "strata__arr ");
         SbPuts(&emitter->out, cName);
@@ -2317,9 +2331,9 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
         if (declaration->init)
         {
-            const char* initType = ExprType(emitter, declaration->init);
+            const TypeName* initType = ExprType(emitter, declaration->init);
 
-            if (initType[0] != '\0' && IsArrayType(initType))
+            if (initType && TypeNameIsDynamicArray(initType))
             {
                 /* Move from another array: copy the fat struct, then null the
                    source so it isn't freed twice. */
@@ -2369,11 +2383,11 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
             }
         }
 
-        AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+        AddSymbol(emitter, declaration->name, &declaration->type, cName, false);
         {
             OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
             entry->cName = cName;
-            entry->typeName = declaration->type.name;
+            entry->typeName = &declaration->type;
             entry->byRef = false;
             VecPush(&emitter->boxVars, entry);
         }
@@ -2381,7 +2395,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         return;
     }
 
-    if (IsOwningType(declaration->type.name))
+    if (TypeNameIsOwning(&declaration->type))
     {
         bool isString = strcmp(declaration->type.name, "string") == 0;
 
@@ -2439,27 +2453,28 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                 }
             }
 
-            AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+            AddSymbol(emitter, declaration->name, &declaration->type, cName, false);
             {
                 OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
                 entry->cName = cName;
-                entry->typeName = declaration->type.name;
+                entry->typeName = &declaration->type;
                 VecPush(&emitter->boxVars, entry);
             }
 
             return;
         }
 
-        const char* inner = OwningInnerCStr(emitter->arena, declaration->type.name);
+        const TypeName* inner = declaration->type.inner;
+        const char* innerName = inner ? inner->name : "";
         const char* innerC = TypeNameC(emitter, inner);
-        const char* initType = declaration->init ? ExprType(emitter, declaration->init) : "";
+        const TypeName* initType = declaration->init ? ExprType(emitter, declaration->init) : NULL;
 
         SbPuts(&emitter->out, innerC);
         SbPuts(&emitter->out, " *");
         SbPutc(&emitter->out, ' ');
         SbPuts(&emitter->out, cName);
 
-        if (initType[0] != '\0' && IsOwningType(initType) && strcmp(initType, declaration->type.name) == 0)
+        if (initType && TypeNameIsOwning(initType) && strcmp(initType->name, declaration->type.name) == 0)
         {
             /* Direct move from the same ^T type: take pointer, null source. */
             SbPuts(&emitter->out, " = ");
@@ -2489,10 +2504,10 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
                 }
             }
         }
-        else if (declaration->init && TypeRegistryIsOwningStruct(&emitter->types, inner)
+        else if (declaration->init && TypeRegistryIsOwningStruct(&emitter->types, innerName)
                  && declaration->init->kind == NodeStructInit)
         {
-            EmitBoxedStructInit(emitter, cName, innerC, inner, (const StructInitExpr*)declaration->init);
+            EmitBoxedStructInit(emitter, cName, innerC, innerName, (const StructInitExpr*)declaration->init);
         }
         else
         {
@@ -2524,11 +2539,11 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
             }
         }
 
-        AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+        AddSymbol(emitter, declaration->name, &declaration->type, cName, false);
         {
             OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
             entry->cName = cName;
-            entry->typeName = declaration->type.name;
+            entry->typeName = &declaration->type;
             VecPush(&emitter->boxVars, entry);
         }
 
@@ -2544,9 +2559,9 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
     if (declaration->init)
     {
         /* ^T -> T coercion: dereference the box pointer. */
-        const char* initType = ExprType(emitter, declaration->init);
+        const TypeName* initType = ExprType(emitter, declaration->init);
 
-        if (IsOwningType(initType))
+        if (initType && TypeNameIsOwning(initType))
         {
             SbPutc(&emitter->out, '*');
         }
@@ -2556,7 +2571,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
     else
     {
         SbPutc(&emitter->out, '(');
-        SbPuts(&emitter->out, TypeNameC(emitter, declaration->type.name));
+        SbPuts(&emitter->out, TypeNameC(emitter, &declaration->type));
         SbPuts(&emitter->out, "){0}");
     }
 
@@ -2565,7 +2580,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         SbPutc(&emitter->out, ';');
     }
 
-    AddSymbol(emitter, declaration->name, declaration->type.name, cName, false);
+    AddSymbol(emitter, declaration->name, &declaration->type, cName, false);
 }
 
 static void EmitStmt(CEmitter* emitter, const Node* node);
@@ -2578,15 +2593,14 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
         OwnEntry* e = (OwnEntry*)VecGet(&emitter->boxVars, i);
         const char* var = e->cName;
 
-        if (IsArrayType(e->typeName))
+        if (TypeNameIsDynamicArray(e->typeName))
         {
             /* T[]: the data pointer is freed; owning elements drop first.
-               For a by-ref array param the struct lives at (*var). */
+                For a by-ref array param the struct lives at (*var). */
             const char* ref = e->byRef ? "(*" : "";
             const char* closeRef = e->byRef ? ")" : "";
-            Str arrInner = ArrayInnerStr(e->typeName);
-            const char* elemType = arrInner.data ? StrNew(emitter->arena, arrInner.data, arrInner.len).data : "void";
-            const char* elemC = TypeNameC(emitter, elemType);
+            const TypeName* elemType = TypeNameArrayElem(e->typeName);
+            const char* elemC = TypeNameC(emitter, elemType ? elemType : InternType(emitter, "void"));
 
             Pad(emitter);
             SbPuts(&emitter->out, "if (");
@@ -2595,14 +2609,14 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
             SbPuts(&emitter->out, closeRef);
             SbPuts(&emitter->out, ".data) { ");
 
-            if (IsOwningType(elemType))
+            if (elemType && TypeNameIsOwning(elemType))
             {
                 SbPrintf(&emitter->out, "{ unsigned long long _i; for (_i = 0; _i < %s%s%s.len; _i++) { ", ref, var,
                          closeRef);
 
-                if (TypeRegistryIsOwningStruct(&emitter->types, elemType))
+                if (TypeRegistryIsOwningStruct(&emitter->types, elemType->name))
                 {
-                    SbPuts(&emitter->out, DropHelperName(emitter, elemType));
+                    SbPuts(&emitter->out, DropHelperName(emitter, elemType->name));
                     SbPuts(&emitter->out, "&((");
                     SbPuts(&emitter->out, elemC);
                     SbPuts(&emitter->out, "*)");
@@ -2640,7 +2654,7 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
             continue;
         }
 
-        const char* inner = OwningInnerCStr(emitter->arena, e->typeName);
+        const TypeName* inner = e->typeName && e->typeName->isBox ? e->typeName->inner : NULL;
 
         /* For a by-ref box param, the box pointer lives at *var (caller's slot). */
         const char* star = e->byRef ? "*" : "";
@@ -2652,20 +2666,20 @@ static void EmitDrops(CEmitter* emitter, size_t fromIndex)
         SbPuts(&emitter->out, ") { ");
 
         /* A box of an owning inner owns that inner too. An owning struct
-           drops its fields recursively; an owning primitive (string) is a
-           single heap pointer freed directly; a plain value (int) needs no
-           inner drop. */
+            drops its fields recursively; an owning primitive (string) is a
+            single heap pointer freed directly; a plain value (int) needs no
+            inner drop. */
         if (inner)
         {
-            if (TypeRegistryIsOwningStruct(&emitter->types, inner))
+            if (TypeRegistryIsOwningStruct(&emitter->types, inner->name))
             {
-                SbPuts(&emitter->out, DropHelperName(emitter, inner));
+                SbPuts(&emitter->out, DropHelperName(emitter, inner->name));
                 SbPuts(&emitter->out, "(");
                 SbPuts(&emitter->out, star);
                 SbPuts(&emitter->out, var);
                 SbPuts(&emitter->out, "); ");
             }
-            else if (IsOwningType(inner))
+            else if (TypeNameIsOwning(inner))
             {
                 SbPuts(&emitter->out, "strata_free(*");
                 SbPuts(&emitter->out, star);
@@ -2755,17 +2769,18 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
     {
         const ReturnStmt* statement = (const ReturnStmt*)node;
 
-        const char* valueType = statement->value ? ExprType(emitter, statement->value) : "";
-        bool targetIsBox = emitter->currentReturn && IsOwningType(emitter->currentReturn);
+        const TypeName* valueType = statement->value ? ExprType(emitter, statement->value) : NULL;
+        bool targetIsBox = emitter->currentReturn && TypeNameIsOwning(emitter->currentReturn);
 
         /* The return type is ^T but the expression produces a plain T
-           (e.g. `return Pistol{...};` from a ^Pistol-returning
-           function): box it into a temporary, same as a `^T x = ...;`
-           local, then return the pointer. */
+            (e.g. `return Pistol{...};` from a ^Pistol-returning
+            function): box it into a temporary, same as a `^T x = ...;`
+            local, then return the pointer. */
         if (statement->value && targetIsBox
-            && !(valueType[0] != '\0' && strcmp(valueType, emitter->currentReturn) == 0))
+            && !(valueType && strcmp(valueType->name, emitter->currentReturn->name) == 0))
         {
-            const char* inner = OwningInnerCStr(emitter->arena, emitter->currentReturn);
+            const TypeName* inner = emitter->currentReturn->inner;
+            const char* innerName = inner ? inner->name : "";
             const char* innerC = TypeNameC(emitter, inner);
             char tmp[32];
             snprintf(tmp, sizeof tmp, "strata__ret%u", emitter->retCounter++);
@@ -2776,7 +2791,7 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, tmp);
             SbPuts(&emitter->out, ";\n");
 
-            EmitBoxInitStmt(emitter, tmp, innerC, inner, statement->value);
+            EmitBoxInitStmt(emitter, tmp, innerC, innerName, statement->value);
             EmitDrops(emitter, 0);
 
             Pad(emitter);
@@ -2789,26 +2804,29 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         }
 
         /* A bare ^T identifier is only a move if the function returns
-           ^T; otherwise it's a deref-read. */
-        const Node* movedReturnSource = IsOwningType(valueType) ? MovableBoxSourceNode(statement->value) : NULL;
-        bool movesBox = movedReturnSource && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
+            ^T; otherwise it's a deref-read. */
+        const Node* movedReturnSource
+            = (valueType && TypeNameIsOwning(valueType)) ? MovableBoxSourceNode(statement->value) : NULL;
+        bool movesBox = movedReturnSource && targetIsBox && strcmp(emitter->currentReturn->name, valueType->name) == 0;
 
         /* An owning value returned as a non-owning type (e.g. ^int
-           field access returned as int) must be dereferenced to read.
-           Arrays are excluded: they're returned by value as a {ptr, len}
-           struct, not through a pointer deref. */
-        bool needsBoxDeref = statement->value && valueType[0] != '\0'
-            && IsOwningType(valueType) && !IsArrayType(valueType) && !movesBox;
+            field access returned as int) must be dereferenced to read.
+            Arrays are excluded: they're returned by value as a {ptr, len}
+            struct, not through a pointer deref. */
+        bool needsBoxDeref = statement->value && valueType && TypeNameIsOwning(valueType)
+            && !TypeNameIsDynamicArray(valueType) && !movesBox;
 
         if (statement->value && emitter->boxVars.count > 0)
         {
             /* Keep box members alive across the drop by materializing the
-               return value first. */
+                return value first. */
             char tmp[32];
             snprintf(tmp, sizeof tmp, "strata__ret%u", emitter->retCounter++);
 
             Pad(emitter);
-            SbPuts(&emitter->out, TypeNameC(emitter, emitter->currentReturn ? emitter->currentReturn : "int"));
+            SbPuts(&emitter->out, TypeNameC(emitter,
+                                            emitter->currentReturn ? emitter->currentReturn
+                                                                   : InternType(emitter, "int")));
             SbPutc(&emitter->out, ' ');
             SbPuts(&emitter->out, tmp);
             SbPuts(&emitter->out, " = ");
@@ -2827,12 +2845,12 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             SbPuts(&emitter->out, ";\n");
 
             /* Returning an owning value moves it out: null the source so the
-               drop below does not free it. */
+                drop below does not free it. */
             if (movesBox)
             {
                 Pad(emitter);
                 EmitLValue(emitter, movedReturnSource);
-                if (IsArrayType(valueType))
+                if (TypeNameIsDynamicArray(valueType))
                 {
                     /* An array is a {ptr, len} struct: zero the whole struct,
                        not just the pointer. */
@@ -3035,28 +3053,28 @@ static const char* DropHelperName(CEmitter* emitter, const char* structName)
     return Encode(emitter, "strata__drop__", structName);
 }
 
-static void EmitDropField(CEmitter* emitter, const char* fieldC, const char* fieldType)
+static void EmitDropField(CEmitter* emitter, const char* fieldC, const TypeName* fieldType)
 {
-    if (IsOwningType(fieldType))
+    if (TypeNameIsOwning(fieldType))
     {
-        const char* inner = OwningInnerCStr(emitter->arena, fieldType);
+        const TypeName* inner = fieldType->isBox ? fieldType->inner : NULL;
 
         SbPrintf(&emitter->out, "    if (p->%s) { ", fieldC);
 
-        if (inner && TypeRegistryIsOwningStruct(&emitter->types, inner))
+        if (inner && TypeRegistryIsOwningStruct(&emitter->types, inner->name))
         {
-            SbPrintf(&emitter->out, "%s(p->%s); ", DropHelperName(emitter, inner), fieldC);
+            SbPrintf(&emitter->out, "%s(p->%s); ", DropHelperName(emitter, inner->name), fieldC);
         }
-        else if (inner && IsOwningType(inner))
+        else if (inner && TypeNameIsOwning(inner))
         {
             SbPrintf(&emitter->out, "strata_free(*(p->%s)); ", fieldC);
         }
 
         SbPrintf(&emitter->out, "strata_free(p->%s); p->%s = 0; }\n", fieldC, fieldC);
     }
-    else if (TypeRegistryIsOwningStruct(&emitter->types, fieldType))
+    else if (TypeRegistryIsOwningStruct(&emitter->types, fieldType->name))
     {
-        SbPrintf(&emitter->out, "    %s(&(p->%s));\n", DropHelperName(emitter, fieldType), fieldC);
+        SbPrintf(&emitter->out, "    %s(&(p->%s));\n", DropHelperName(emitter, fieldType->name), fieldC);
     }
 }
 
@@ -3070,7 +3088,7 @@ static void EmitDropHelpers(CEmitter* emitter)
         if (TypeRegistryIsOwningStruct(&emitter->types, t->name))
         {
             SbPrintf(&emitter->out, "static void %s(%s*);\n", DropHelperName(emitter, t->name),
-                     TypeNameC(emitter, t->name));
+                     TypeNameC(emitter, InternType(emitter, t->name)));
         }
     }
 
@@ -3086,12 +3104,12 @@ static void EmitDropHelpers(CEmitter* emitter)
         SbPrintf(&emitter->out,
                  "static void %s(%s* p) {\n"
                  "    if (!p) return;\n",
-                 DropHelperName(emitter, t->name), TypeNameC(emitter, t->name));
+                 DropHelperName(emitter, t->name), TypeNameC(emitter, InternType(emitter, t->name)));
 
         for (size_t j = 0; j < t->fields.count; ++j)
         {
             FieldDecl* f = (FieldDecl*)VecGet(&t->fields, j);
-            EmitDropField(emitter, FieldName(emitter, f->name), f->type.name);
+            EmitDropField(emitter, FieldName(emitter, f->name), &f->type);
         }
 
         SbPuts(&emitter->out, "}\n");
@@ -3218,7 +3236,7 @@ static void EmitTypeDecl(CEmitter* emitter, const TypeName* type, const char* na
         SbPuts(&emitter->out, "const ");
     }
 
-    SbPuts(&emitter->out, TypeNameC(emitter, t->name));
+    SbPuts(&emitter->out, TypeNameC(emitter, t));
     SbPutc(&emitter->out, ' ');
     SbPuts(&emitter->out, name);
 
@@ -3260,7 +3278,7 @@ static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* state
 
     states[index] = 2;
 
-    const char* cName = TypeNameC(emitter, type->name);
+    const char* cName = TypeNameC(emitter, InternType(emitter, type->name));
     EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
     SbPuts(&emitter->out, "struct ");
     SbPuts(&emitter->out, cName);
@@ -3336,7 +3354,7 @@ static void EmitTypes(CEmitter* emitter)
     for (size_t i = 0; i < emitter->types.count; ++i)
     {
         const StructType* type = &emitter->types.types[i];
-        const char* cName = TypeNameC(emitter, type->name);
+        const char* cName = TypeNameC(emitter, InternType(emitter, type->name));
 
         EmitLineDirective(emitter, TypeSourceRange(emitter, type->name));
 
@@ -3383,16 +3401,16 @@ static void EmitGlobals(CEmitter* emitter)
         SbPuts(&emitter->out, cName);
         SbPuts(&emitter->out, " = ");
 
-        if (IsArrayType(global->type.name))
+        if (TypeNameIsDynamicArray(&global->type))
         {
             /* Array globals start empty (no braced initializer supported at
-               module scope). The module_init/teardown helpers handle alloc/free. */
+                module scope). The module_init/teardown helpers handle alloc/free. */
             SbPuts(&emitter->out, "(strata__arr){0}");
         }
-        else if (IsOwningType(global->type.name))
+        else if (TypeNameIsOwning(&global->type))
         {
             /* Boxing requires a runtime alloc, so the real init runs in
-               __strata_module_init; the declared storage starts null. */
+                __strata_module_init; the declared storage starts null. */
             SbPuts(&emitter->out, "0");
         }
         else if (global->init)
@@ -3402,12 +3420,12 @@ static void EmitGlobals(CEmitter* emitter)
         else
         {
             SbPutc(&emitter->out, '(');
-            SbPuts(&emitter->out, TypeNameC(emitter, global->type.name));
+            SbPuts(&emitter->out, TypeNameC(emitter, &global->type));
             SbPuts(&emitter->out, "){0}");
         }
 
         SbPuts(&emitter->out, ";\n");
-        AddSymbol(emitter, global->name, global->type.name, cName, false);
+        AddSymbol(emitter, global->name, &global->type, cName, false);
     }
 
     if (emitter->mod->globals.count)
@@ -3513,19 +3531,19 @@ static void EmitDefinitions(CEmitter* emitter)
         emitter->boxVars.count = 0;
         emitter->retCounter = 0;
         emitter->boxTmpCounter = 0;
-        emitter->currentReturn = function->returnType.name;
+        emitter->currentReturn = &function->returnType;
 
         for (size_t j = 0; j < emitter->mod->globals.count; ++j)
         {
             const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, j);
 
-            AddSymbol(emitter, global->name, global->type.name, GlobalName(emitter, global->name), false);
+            AddSymbol(emitter, global->name, &global->type, GlobalName(emitter, global->name), false);
         }
         for (size_t j = 0; j < function->params.count; ++j)
         {
             const ParamDecl* param = (const ParamDecl*)VecGet(&function->params, j);
 
-            AddSymbol(emitter, param->name, param->type.name, VarName(emitter, param->name),
+            AddSymbol(emitter, param->name, &param->type, VarName(emitter, param->name),
                       ParamIsIndirect(emitter, param));
 
             {
@@ -3537,13 +3555,13 @@ static void EmitDefinitions(CEmitter* emitter)
             }
 
             /* An owned (non-ref) box parameter is consumed: freed at return.
-               A vararg rest array is stack-backed: drop its owning elements
-               but not the caller's stack buffer. */
-            if (IsOwningType(param->type.name) && param->mod == ModNone)
+                A vararg rest array is stack-backed: drop its owning elements
+                but not the caller's stack buffer. */
+            if (TypeNameIsOwning(&param->type) && param->mod == ModNone)
             {
                 OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
                 entry->cName = VarName(emitter, param->name);
-                entry->typeName = param->type.name;
+                entry->typeName = &param->type;
                 entry->byRef = true;
                 entry->stackBuffer = param->isVarargRest;
                 VecPush(&emitter->boxVars, entry);
@@ -3593,7 +3611,7 @@ static void EmitDefinitions(CEmitter* emitter)
                 else
                 {
                     SbPuts(&emitter->out, "return (");
-                    SbPuts(&emitter->out, TypeNameC(emitter, function->returnType.name));
+                    SbPuts(&emitter->out, TypeNameC(emitter, &function->returnType));
                     SbPuts(&emitter->out, "){0};\n");
                 }
             }
@@ -3614,7 +3632,7 @@ static bool ModuleHasBoxGlobals(const CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
-        if (IsOwningType(global->type.name))
+        if (TypeNameIsOwning(&global->type))
         {
             return true;
         }
@@ -3631,13 +3649,13 @@ static void ResetEmitterForSyntheticFunction(CEmitter* emitter)
     emitter->boxVars.count = 0;
     emitter->retCounter = 0;
     emitter->boxTmpCounter = 0;
-    emitter->currentReturn = "void";
+    emitter->currentReturn = NULL;
 
     for (size_t j = 0; j < emitter->mod->globals.count; ++j)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, j);
 
-        AddSymbol(emitter, global->name, global->type.name, GlobalName(emitter, global->name), false);
+        AddSymbol(emitter, global->name, &global->type, GlobalName(emitter, global->name), false);
     }
 }
 
@@ -3658,13 +3676,13 @@ static void EmitModuleInit(CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
-        if (IsArrayType(global->type.name) && global->init)
+        if (TypeNameIsDynamicArray(&global->type) && global->init)
         {
             /* Array literals need a runtime alloc, so the braced initializer
-               runs here against the (zeroed) global storage. */
+                runs here against the (zeroed) global storage. */
             const char* cName = GlobalName(emitter, global->name);
 
-            AddSymbol(emitter, global->name, global->type.name, cName, false);
+            AddSymbol(emitter, global->name, &global->type, cName, false);
             Pad(emitter);
             SbPuts(&emitter->out, cName);
             SbPuts(&emitter->out, " = ");
@@ -3673,13 +3691,13 @@ static void EmitModuleInit(CEmitter* emitter)
             continue;
         }
 
-        if (!IsOwningType(global->type.name) || !global->init)
+        if (!TypeNameIsOwning(&global->type) || !global->init)
         {
             continue;
         }
 
         const char* cName = GlobalName(emitter, global->name);
-        AddSymbol(emitter, global->name, global->type.name, cName, false);
+        AddSymbol(emitter, global->name, &global->type, cName, false);
 
         if (strcmp(global->type.name, "string") == 0)
         {
@@ -3704,10 +3722,11 @@ static void EmitModuleInit(CEmitter* emitter)
             continue;
         }
 
-        const char* inner = OwningInnerCStr(emitter->arena, global->type.name);
+        const TypeName* inner = global->type.isBox ? global->type.inner : NULL;
+        const char* innerName = inner ? inner->name : "";
         const char* innerC = TypeNameC(emitter, inner);
 
-        EmitBoxInitStmt(emitter, cName, innerC, inner, global->init);
+        EmitBoxInitStmt(emitter, cName, innerC, innerName, global->init);
     }
 
     emitter->indent--;
@@ -3728,14 +3747,14 @@ static void EmitModuleTeardown(CEmitter* emitter)
     {
         const GlobalDecl* global = (const GlobalDecl*)VecGet(&emitter->mod->globals, i);
 
-        if (!IsOwningType(global->type.name))
+        if (!TypeNameIsOwning(&global->type))
         {
             continue;
         }
 
         OwnEntry* entry = (OwnEntry*)arena_alloc(emitter->arena, sizeof(OwnEntry));
         entry->cName = GlobalName(emitter, global->name);
-        entry->typeName = global->type.name;
+        entry->typeName = &global->type;
         entry->byRef = false;
         VecPush(&emitter->boxVars, entry);
     }
@@ -3795,11 +3814,12 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     TypeRegistryInit(&emitter.types);
     TypeRegistryBuild(&emitter.types, ast);
     StrMapInit(&emitter.symbols);
+    StrMapInit(&emitter.typeCache);
     SbInit(&emitter.out);
     VecInit(&emitter.exports);
     VecInit(&emitter.externs);
     VecInit(&emitter.boxVars);
-    emitter.currentReturn = "int";
+    emitter.currentReturn = NULL;
     emitter.retCounter = 0;
     emitter.boxTmpCounter = 0;
 
@@ -3862,6 +3882,7 @@ BuiltCModule BuildCModuleWithSources(const Module* ast, DiagnosticEngine* diag, 
     result.externs = emitter.externs;
 
     DisposeMap(&emitter.symbols);
+    DisposeMap(&emitter.typeCache);
     free(emitter.boxVars.items);
     TypeRegistryFree(&emitter.types);
 

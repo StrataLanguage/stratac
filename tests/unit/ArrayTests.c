@@ -1,5 +1,6 @@
 #include "Util.h"
 #include "Test.h"
+#include "AST/AST.h"
 #include "strata/strata.h"
 
 #include <stdio.h>
@@ -10,6 +11,71 @@
 #include "Codegen/LLVMModuleBuilder.h"
 #include <stdint.h>
 #endif
+
+/* TypeNameParse must rebuild a structural tree whose every subtree carries
+   the canonical spelling of that subtree (first bracket group = outermost
+   dimension, `^` binding tighter than `[]`). */
+STRATA_TEST(type_name_parse_round_trips)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+
+    struct
+    {
+        const char* spelling;
+        bool dynamic;
+        bool fixed;
+        long length;
+        const char* elemName;
+        bool elemIsBox;
+    } cases[] = {
+        {"int", false, false, -1, NULL, false},
+        {"Foo", false, false, -1, NULL, false},
+        {"int[]", true, false, -1, "int", false},
+        {"int[4]", false, true, 4, "int", false},
+        {"int[2][6]", false, true, 2, "int[6]", false},
+        {"^Foo", false, false, -1, NULL, false},
+        {"^Foo[]", true, false, -1, "^Foo", true},
+        {"^Foo[2]", false, true, 2, "^Foo", true},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        TypeName t = TypeNameParse(&arena, cases[i].spelling);
+
+        STRATA_CHECK(t.name && strcmp(t.name, cases[i].spelling) == 0);
+        STRATA_CHECK_EQ(TypeNameIsDynamicArray(&t), cases[i].dynamic);
+        STRATA_CHECK_EQ(TypeNameIsFixedArray(&t), cases[i].fixed);
+        STRATA_CHECK_EQ(TypeNameArrayLength(&t), cases[i].length);
+
+        if (cases[i].elemName)
+        {
+            const TypeName* elem = TypeNameArrayElem(&t);
+            STRATA_CHECK(elem != NULL);
+            if (elem)
+            {
+                STRATA_CHECK(strcmp(elem->name, cases[i].elemName) == 0);
+                STRATA_CHECK_EQ(TypeNameIsBox(elem), cases[i].elemIsBox);
+            }
+        }
+        else
+        {
+            STRATA_CHECK(TypeNameArrayElem(&t) == NULL);
+        }
+    }
+
+    /* Owning-ness is structural: string, ^T and dynamic T[] own; T[N] does not. */
+    STRATA_CHECK(TypeNameIsOwning(&(TypeName){.name = (char*)"string"}));
+    TypeName fixed = TypeNameParse(&arena, "int[4]");
+    STRATA_CHECK(!TypeNameIsOwning(&fixed));
+    TypeName dyn = TypeNameParse(&arena, "int[]");
+    STRATA_CHECK(TypeNameIsOwning(&dyn));
+    TypeName box = TypeNameParse(&arena, "^Foo");
+    STRATA_CHECK(TypeNameIsOwning(&box));
+    STRATA_CHECK(TypeNameBoxInner(&box) && strcmp(TypeNameBoxInner(&box)->name, "Foo") == 0);
+
+    arena_free(&arena);
+}
 
 static StrataJit* CompileArr(const char* src, const char** err)
 {

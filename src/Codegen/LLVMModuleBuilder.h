@@ -24,13 +24,13 @@ typedef struct
     bool isVoid;
     const char* structTypeName;
     bool isBox;
-    const char* boxInner;
+    const TypeName* boxInner; /* inner T of ^T (NULL for string) */
     bool isArray;
     bool isSimdVector;
-    const char* arrayInner; /* element type name (arena-owned) */
-    bool aliasedArray;      /* ref T... rest: slots hold pointers to sources */
-    bool isFixedArray;      /* T[N]: inline [N x T] (C ABI), struct fields only */
-    long fixedLength;       /* N when isFixedArray */
+    const TypeName* arrayInner; /* element type of T[] / T[N] */
+    bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */
+    bool isFixedArray;          /* T[N]: inline [N x T] (C ABI), struct fields only */
+    long fixedLength;           /* N when isFixedArray */
 } TypeDesc;
 
 typedef struct
