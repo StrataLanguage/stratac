@@ -28,7 +28,6 @@ static const Spelling keywords[] = {
     { TokKwStatic, "static" },
     { TokKwExtern, "extern" },
     { TokKwHandle, "handle" },
-    { TokKwBox, "box" },
     { TokKwExtends, "extends" },
     { TokKwReturn, "return" },
     { TokKwIf, "if" },

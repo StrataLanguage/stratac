@@ -9,7 +9,7 @@ typedef struct {
     const char* name;
     bool opaque;
     bool incomplete;
-    bool owning;        /* transitively contains a box<T> field */
+    bool owning;        /* transitively contains a ^T field */
     const char* extendsFrom;
     Vec fields;
 } StructType;

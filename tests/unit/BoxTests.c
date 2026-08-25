@@ -24,7 +24,7 @@ STRATA_TEST(box_allocates_and_reads_struct_fields)
     StrataJit* jit = CompileBox(
         "struct Vec3 { float x; float y; float z; };\n"
         "float entry() {\n"
-        "  box<Vec3> v = Vec3 { .x = 1.0, .y = 2.0, .z = 3.0 };\n"
+        "  ^Vec3 v = Vec3 { .x = 1.0, .y = 2.0, .z = 3.0 };\n"
         "  v.x = 10.0;\n"
         "  return v.x + v.y + v.z;\n"          /* 10 + 2 + 3 = 15 */
         "}\n",
@@ -58,7 +58,7 @@ STRATA_TEST(box_in_loop_does_not_crash)
         "int entry() {\n"
         "  int sum = 0;\n"
         "  for (int i = 0; i < 100; i++) {\n"
-        "    box<Cell> c = Cell { .v = i };\n"
+        "    ^Cell c = Cell { .v = i };\n"
         "    sum += c.v;\n"
         "  }\n"
         "  return sum;\n"                       /* 0+1+...+99 = 4950 */
@@ -85,7 +85,7 @@ STRATA_TEST(box_in_loop_does_not_crash)
 
 STRATA_TEST(box_ref_param_passed_to_owned_param_is_an_error)
 {
-    /* `ref box<T>` is a borrow of the CALLER's box - the callee doesn't own
+    /* `ref ^T` is a borrow of the CALLER's box - the callee doesn't own
        it, so passing it on to a consuming (owned, non-ref) parameter must
        be rejected. Without this, the callee frees/nulls the caller's own
        box out from under it with no way for the caller's sema to notice,
@@ -95,8 +95,8 @@ STRATA_TEST(box_ref_param_passed_to_owned_param_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "void drop(box<V> v) {}\n"
-        "void mutate(ref box<V> inBox) {\n"
+        "void drop(^V v) {}\n"
+        "void mutate(ref ^V inBox) {\n"
         "  drop(inBox);\n"    /* error: inBox is borrowed, not owned */
         "}\n",
         &diag, &arena);
@@ -112,15 +112,15 @@ STRATA_TEST(box_ref_param_passed_to_owned_param_is_an_error)
 
 STRATA_TEST(box_ref_param_moved_into_local_is_an_error)
 {
-    /* Same rule, different move context: moving a ref box<T> param into a
+    /* Same rule, different move context: moving a ref ^T param into a
        fresh local also isn't a real move - the callee still doesn't own
        the source. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "void mutate(ref box<V> inBox) {\n"
-        "  box<V> stolen = inBox;\n"   /* error */
+        "void mutate(ref ^V inBox) {\n"
+        "  ^V stolen = inBox;\n"   /* error */
         "}\n",
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -135,13 +135,13 @@ STRATA_TEST(box_ref_param_moved_into_local_is_an_error)
 
 STRATA_TEST(box_ref_param_returned_is_an_error)
 {
-    /* Same rule again: returning a ref box<T> param as box<T> would move
+    /* Same rule again: returning a ref ^T param as ^T would move
        the caller's box out through the return value. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "box<V> steal(ref box<V> inBox) {\n"
+        "^V steal(ref ^V inBox) {\n"
         "  return inBox;\n"   /* error */
         "}\n",
         &diag, &arena);
@@ -157,9 +157,9 @@ STRATA_TEST(box_ref_param_returned_is_an_error)
 
 STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
 {
-    /* `inBox = newBox;` (RHS is itself a box<T>) looks like a move-assign
+    /* `inBox = newBox;` (RHS is itself a ^T) looks like a move-assign
        target, so sema tries the real box-reassign path - and rejects it,
-       since `inBox` is a `ref box<T>` borrow, not something this function
+       since `inBox` is a `ref ^T` borrow, not something this function
        owns to rebind. Silently allowing this would rebind the CALLER's
        variable out from under it via the shared slot, invisibly to the
        caller's own move-tracking. */
@@ -167,8 +167,8 @@ STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Vec3 { float x; };\n"
-        "void mutate_box(ref box<Vec3> inBox) {\n"
-        "  box<Vec3> newBox = Vec3 { .x = 100.0 };\n"
+        "void mutate_box(ref ^Vec3 inBox) {\n"
+        "  ^Vec3 newBox = Vec3 { .x = 100.0 };\n"
         "  inBox = newBox;\n"    /* error: rebind through a ref */
         "}\n",
         &diag, &arena);
@@ -184,12 +184,12 @@ STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
 
 STRATA_TEST(box_string_moves_owned_string_source)
 {
-    /* string is owned (like a box), so boxing a string value into box<string>
-       is a move: the source string is consumed, like boxing a box<T>. */
+    /* string is owned (like a box), so boxing a string value into ^string
+       is a move: the source string is consumed, like boxing a ^T. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
-                    "int entry() { string src = \"world\"; box<string> b = src; return puts(src); }\n",
+                    "int entry() { string src = \"world\"; ^string b = src; return puts(src); }\n",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -198,21 +198,21 @@ STRATA_TEST(box_string_moves_owned_string_source)
 
 STRATA_TEST(box_ref_param_inner_value_assign_mutates_in_place)
 {
-    /* The legitimate way to write through a ref box<T>: assign its INNER
-       value (a plain Vec3, not box<Vec3>). This overwrites the contents of
+    /* The legitimate way to write through a ref ^T: assign its INNER
+       value (a plain Vec3, not ^Vec3). This overwrites the contents of
        whatever box the caller already owns, in place - the caller's box
        keeps the same identity, only its data changes. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Vec3 { float x; float y; float z; };\n"
-        "box<Vec3> make_vec3(float x) { box<Vec3> v = Vec3 { .x = x }; return v; }\n"
-        "void mutate_box(ref box<Vec3> inBox) {\n"
-        "  box<Vec3> newBox = Vec3 { .x = 100.0 };\n"
+        "^Vec3 make_vec3(float x) { ^Vec3 v = Vec3 { .x = x }; return v; }\n"
+        "void mutate_box(ref ^Vec3 inBox) {\n"
+        "  ^Vec3 newBox = Vec3 { .x = 100.0 };\n"
         "  Vec3 newBoxVal = newBox;\n"   /* read newBox's value (not a move) */
         "  inBox = newBoxVal;\n"          /* content-assign, in place */
         "}\n"
         "int entry() {\n"
-        "  box<Vec3> w = make_vec3(0.0);\n"
+        "  ^Vec3 w = make_vec3(0.0);\n"
         "  mutate_box(w);\n"
         "  return (int)w.x;\n"    /* 100 */
         "}\n",
@@ -238,17 +238,17 @@ STRATA_TEST(box_ref_param_inner_value_assign_mutates_in_place)
 
 STRATA_TEST(box_value_assigned_into_plain_ref_target_derefs)
 {
-    /* Assigning a box<T> value directly into a plain (non-box) `ref T`
-       target - not `ref box<T>` - reads through the box in place, same
-       box<T> -> T coercion already used for var-decl inits/call args/
+    /* Assigning a ^T value directly into a plain (non-box) `ref T`
+       target - not `ref ^T` - reads through the box in place, same
+       ^T -> T coercion already used for var-decl inits/call args/
        returns. Was previously unvalidated by sema and unhandled by
        codegen, which emitted an invalid `Vec3 = Vec3*` C assignment. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Vec3 { float x; };\n"
         "void mutate(ref Vec3 inBox) {\n"
-        "  box<Vec3> newBox = Vec3 { .x = 100.0 };\n"
-        "  inBox = newBox;\n"     /* box<Vec3> -> Vec3, in place */
+        "  ^Vec3 newBox = Vec3 { .x = 100.0 };\n"
+        "  inBox = newBox;\n"     /* ^Vec3 -> Vec3, in place */
         "}\n"
         "int entry() {\n"
         "  Vec3 w = Vec3 { .x = 0.0 };\n"
@@ -277,7 +277,7 @@ STRATA_TEST(box_value_assigned_into_plain_ref_target_derefs)
 
 STRATA_TEST(box_value_assigned_into_mismatched_ref_target_is_an_error)
 {
-    /* box<Pistol> assigned into a plain (non-box) `ref Vec3` target - the
+    /* ^Pistol assigned into a plain (non-box) `ref Vec3` target - the
        inner types don't match, so this is a genuine mismatch and must
        still be rejected, not silently passed through like before. */
     Arena arena; arena_init(&arena, 0);
@@ -286,8 +286,8 @@ STRATA_TEST(box_value_assigned_into_mismatched_ref_target_is_an_error)
         "struct Pistol { int ammo; };\n"
         "struct Vec3 { float x; };\n"
         "void mutate(ref Vec3 target) {\n"
-        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
-        "  target = p;\n"    /* error: box<Pistol> into ref Vec3 */
+        "  ^Pistol p = Pistol { .ammo = 1 };\n"
+        "  target = p;\n"    /* error: ^Pistol into ref Vec3 */
         "}\n",
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -302,15 +302,15 @@ STRATA_TEST(box_value_assigned_into_mismatched_ref_target_is_an_error)
 
 STRATA_TEST(box_ref_param_reborrow_still_allowed)
 {
-    /* Passing a ref box<T> param on to ANOTHER ref box<T> param is a
+    /* Passing a ref ^T param on to ANOTHER ref ^T param is a
        re-borrow, not a move - must still be allowed. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
-        "int read_it(ref box<V> v) { return v.x; }\n"
-        "int reborrow(ref box<V> inBox) { return read_it(inBox); }\n"
+        "int read_it(ref ^V v) { return v.x; }\n"
+        "int reborrow(ref ^V inBox) { return read_it(inBox); }\n"
         "int entry() {\n"
-        "  box<V> v = V { .x = 9 };\n"
+        "  ^V v = V { .x = 9 };\n"
         "  return reborrow(v);\n"
         "}\n",
         &err);
@@ -335,15 +335,15 @@ STRATA_TEST(box_ref_param_reborrow_still_allowed)
 
 STRATA_TEST(box_compound_assign_mutates_contents_in_place)
 {
-    /* `val -= amt;` on a box<int> target mutates the boxed value in place -
-       not a move - so it works through a `ref box<T>` param. It was
+    /* `val -= amt;` on a ^int target mutates the boxed value in place -
+       not a move - so it works through a `ref ^T` param. It was
        previously misclassified as a full box-move, requiring the RHS to
-       itself be a box<int>. */
+       itself be a ^int. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
-        "void sub(ref box<int> val, int amt) { val -= amt; }\n"
+        "void sub(ref ^int val, int amt) { val -= amt; }\n"
         "int entry() {\n"
-        "  box<int> x = 15;\n"
+        "  ^int x = 15;\n"
         "  sub(x, 25);\n"
         "  return x;\n"     /* 15 - 25 = -10 */
         "}\n",
@@ -369,15 +369,15 @@ STRATA_TEST(box_compound_assign_mutates_contents_in_place)
 
 STRATA_TEST(box_plain_assign_of_inner_value_mutates_contents)
 {
-    /* `x = 5;` where x is box<int> and 5 is a plain int (not box<int>)
-       also mutates in place - only `=` with a matching box<T> value is a
+    /* `x = 5;` where x is ^int and 5 is a plain int (not ^int)
+       also mutates in place - only `=` with a matching ^T value is a
        move. It was previously always treated as a move, rejecting any
        non-box RHS outright. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
-        "void reassign(box<int> x) { x = 5; }\n"
+        "void reassign(^int x) { x = 5; }\n"
         "int entry() {\n"
-        "  box<int> x = 15;\n"
+        "  ^int x = 15;\n"
         "  int before = x;\n"
         "  reassign(x);\n"
         "  return before;\n"    /* captured before reassign runs -> 15 */
@@ -404,15 +404,15 @@ STRATA_TEST(box_plain_assign_of_inner_value_mutates_contents)
 
 STRATA_TEST(box_reassign_from_call_still_moves)
 {
-    /* `a = make(7);` (RHS is itself box<T>, from a call) must still be a
+    /* `a = make(7);` (RHS is itself ^T, from a call) must still be a
        real move-rebind, not misclassified as content-assign, since the
        value's type isn't known until the call is resolved. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
-        "box<V> make(int n) { box<V> v = V { .x = n }; return v; }\n"
+        "^V make(int n) { ^V v = V { .x = n }; return v; }\n"
         "int entry() {\n"
-        "  box<V> a = make(1);\n"
+        "  ^V a = make(1);\n"
         "  a = make(7);\n"
         "  return a.x;\n"    /* 7 */
         "}\n",
@@ -438,7 +438,7 @@ STRATA_TEST(box_reassign_from_call_still_moves)
 
 STRATA_TEST(box_passed_to_by_value_scalar_param_derefs)
 {
-    /* box<int> passed to a plain `int` param (a by-value, non-indirect
+    /* ^int passed to a plain `int` param (a by-value, non-indirect
        param - handles hit the same path) must be dereferenced to its
        value. It was previously passed as the box's own heap pointer,
        which crashes/misbehaves for any real handle-typed param. */
@@ -446,7 +446,7 @@ STRATA_TEST(box_passed_to_by_value_scalar_param_derefs)
     StrataJit* jit = CompileBox(
         "int take(int x) { return x; }\n"
         "int entry() {\n"
-        "  box<int> b = 41;\n"
+        "  ^int b = 41;\n"
         "  return take(b);\n"
         "}\n",
         &err);
@@ -471,12 +471,12 @@ STRATA_TEST(box_passed_to_by_value_scalar_param_derefs)
 
 STRATA_TEST(box_returned_as_inner_struct_type_copies_value)
 {
-    /* Returning box<Struct> as plain Struct copies the value, then frees the box. */
+    /* Returning ^Struct as plain Struct copies the value, then frees the box. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; int w; };\n"
         "Cell make_cell() {\n"
-        "  box<Cell> c = Cell { .v = 40, .w = 2 };\n"
+        "  ^Cell c = Cell { .v = 40, .w = 2 };\n"
         "  return c;\n"
         "}\n"
         "int entry() {\n"
@@ -509,8 +509,8 @@ STRATA_TEST(box_returned_struct_literal_boxes_at_return)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "box<Cell> make_cell(int n) { return Cell { .v = n }; }\n"
-        "int entry() { box<Cell> c = make_cell(9); return c.v; }\n",
+        "^Cell make_cell(int n) { return Cell { .v = n }; }\n"
+        "int entry() { ^Cell c = make_cell(9); return c.v; }\n",
         &err);
 
     STRATA_CHECK(jit != NULL);
@@ -533,12 +533,12 @@ STRATA_TEST(box_returned_struct_literal_boxes_at_return)
 
 STRATA_TEST(box_returned_anonymous_struct_literal_boxes_at_return)
 {
-    /* `return { .v = n };` infers Cell, not "box<Cell>", then boxes it. */
+    /* `return { .v = n };` infers Cell, not "^Cell", then boxes it. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "box<Cell> make_cell(int n) { return { .v = n }; }\n"
-        "int entry() { box<Cell> c = make_cell(13); return c.v; }\n",
+        "^Cell make_cell(int n) { return { .v = n }; }\n"
+        "int entry() { ^Cell c = make_cell(13); return c.v; }\n",
         &err);
 
     STRATA_CHECK(jit != NULL);
@@ -565,7 +565,7 @@ STRATA_TEST(box_global_with_valid_init_reads_and_mutates)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "box<Cell> g = Cell { .v = 5 };\n"
+        "^Cell g = Cell { .v = 5 };\n"
         "void bump() { g.v = g.v + 1; }\n"
         "int entry() {\n"
         "  bump();\n"
@@ -598,8 +598,8 @@ STRATA_TEST(box_global_with_call_init_reads)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "box<Cell> make() { box<Cell> c = Cell { .v = 41 }; return c; }\n"
-        "box<Cell> g = make();\n"
+        "^Cell make() { ^Cell c = Cell { .v = 41 }; return c; }\n"
+        "^Cell g = make();\n"
         "int entry() { return g.v + 1; }\n",
         &err);
 
@@ -623,10 +623,10 @@ STRATA_TEST(box_global_with_call_init_reads)
 
 STRATA_TEST(box_global_scalar_value_used_in_arithmetic)
 {
-    /* A box<int> global's value is dereferenced in an expression, not just a bare return. */
+    /* A ^int global's value is dereferenced in an expression, not just a bare return. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
-        "box<int> i = 9;\n"
+        "^int i = 9;\n"
         "int entry() {\n"
         "  int a = 3;\n"
         "  return a + i;\n"   /* 3 + 9 = 12 */
@@ -653,10 +653,10 @@ STRATA_TEST(box_global_scalar_value_used_in_arithmetic)
 
 STRATA_TEST(box_global_scalar_bare_return_reads_value)
 {
-    /* `return i;` reads the value (not box<int>), so it's not a move. */
+    /* `return i;` reads the value (not ^int), so it's not a move. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
-        "box<int> i = 41;\n"
+        "^int i = 41;\n"
         "int entry() { return i; }\n",
         &err);
 
@@ -684,8 +684,8 @@ STRATA_TEST(box_global_ref_param_borrows)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "box<Cell> g = Cell { .v = 6 };\n"
-        "int read(ref box<Cell> c) { return c.v; }\n"
+        "^Cell g = Cell { .v = 6 };\n"
+        "int read(ref ^Cell c) { return c.v; }\n"
         "int entry() { return read(g) * g.v; }\n"   /* 6 * 6 = 36 */
         ,
         &err);
@@ -712,7 +712,7 @@ STRATA_TEST(box_global_uninitialized_is_an_error)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { int x; };\nbox<V> g;\n", &diag, &arena);
+    ParseAndResolve("struct V { int x; };\n^V g;\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -724,8 +724,8 @@ STRATA_TEST(box_global_move_init_from_another_global_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "box<V> a = V { .x = 1 };\n"
-        "box<V> b = a;\n",          /* error: moving from a global */
+        "^V a = V { .x = 1 };\n"
+        "^V b = a;\n",          /* error: moving from a global */
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -738,8 +738,8 @@ STRATA_TEST(box_global_reassignment_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "box<V> g = V { .x = 1 };\n"
-        "box<V> other = V { .x = 2 };\n"
+        "^V g = V { .x = 1 };\n"
+        "^V other = V { .x = 2 };\n"
         "void set() { g = other; }\n",   /* error: box global cannot be reassigned */
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -758,8 +758,8 @@ STRATA_TEST(box_global_moved_into_local_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "box<V> g = V { .x = 1 };\n"
-        "int entry() { box<V> local = g; return local.x; }\n",   /* error: moving global */
+        "^V g = V { .x = 1 };\n"
+        "int entry() { ^V local = g; return local.x; }\n",   /* error: moving global */
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
@@ -777,8 +777,8 @@ STRATA_TEST(box_global_passed_to_owned_param_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "box<V> g = V { .x = 1 };\n"
-        "int take(box<V> v) { return v.x; }\n"
+        "^V g = V { .x = 1 };\n"
+        "int take(^V v) { return v.x; }\n"
         "int entry() { return take(g); }\n",   /* error: moving global into owned param */
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -797,8 +797,8 @@ STRATA_TEST(box_global_returned_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "box<V> g = V { .x = 1 };\n"
-        "box<V> give() { return g; }\n",   /* error: moving global out via return */
+        "^V g = V { .x = 1 };\n"
+        "^V give() { return g; }\n",   /* error: moving global out via return */
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
@@ -813,13 +813,13 @@ STRATA_TEST(box_global_returned_is_an_error)
 STRATA_TEST(box_string_array_global_element_moved_to_local_is_an_error)
 {
     /* Moving an owning element out of a global array must be rejected, even
-       when the element is a box<string> that auto-derefs to string. This
+       when the element is a ^string that auto-derefs to string. This
        exercises the transitive global-root check across globals + arrays +
-       the boxed string type (box<string> is char**; string is char*). */
+       the boxed string type (^string is char**; string is char*). */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
-        "box<string>[] boxStrings = { \"\" };\n"
+        "^string[] boxStrings = { \"\" };\n"
         "int entry() { string str = boxStrings[0]; return 0; }\n",
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -834,20 +834,20 @@ STRATA_TEST(box_string_array_global_element_moved_to_local_is_an_error)
 
 STRATA_TEST(box_owning_field_linked_list)
 {
-    /* A recursive owning struct: box<Node> with a box<Node> next field.
+    /* A recursive owning struct: ^Node with a ^Node next field.
        Building the list moves boxes into fields; dropping the head frees the
        whole chain recursively. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
-        "struct Node { int v; box<Node> next; };\n"
-        "box<Node> build() {\n"
-        "  box<Node> c = Node { .v = 3 };\n"
-        "  box<Node> b = Node { .v = 2, .next = c };\n"
-        "  box<Node> a = Node { .v = 1, .next = b };\n"
+        "struct Node { int v; ^Node next; };\n"
+        "^Node build() {\n"
+        "  ^Node c = Node { .v = 3 };\n"
+        "  ^Node b = Node { .v = 2, .next = c };\n"
+        "  ^Node a = Node { .v = 1, .next = b };\n"
         "  return a;\n"
         "}\n"
         "int entry() {\n"
-        "  box<Node> head = build();\n"
+        "  ^Node head = build();\n"
         "  return head.v + head.next.v + head.next.next.v;\n"
         "}\n",
         &err);
@@ -879,10 +879,10 @@ STRATA_TEST(box_use_after_struct_field_move_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Pistol { int ammo; };\n"
-        "struct Holder { box<Pistol> p; };\n"
+        "struct Holder { ^Pistol p; };\n"
         "int entry() {\n"
-        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
-        "  box<Holder> h = Holder { p };\n"    /* p moved into h.p */
+        "  ^Pistol p = Pistol { .ammo = 1 };\n"
+        "  ^Holder h = Holder { p };\n"    /* p moved into h.p */
         "  return p.ammo;\n"                    /* error: use of moved box 'p' */
         "}\n",
         &diag, &arena);
@@ -898,14 +898,14 @@ STRATA_TEST(box_use_after_struct_field_move_is_an_error)
 
 STRATA_TEST(box_anonymous_struct_literal_infers_box_inner_type)
 {
-    /* `box<Holder> h = { p };` infers Holder, not "box<Holder>". */
+    /* `^Holder h = { p };` infers Holder, not "^Holder". */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Pistol { int ammo; };\n"
-        "struct Holder { box<Pistol> p; };\n"
+        "struct Holder { ^Pistol p; };\n"
         "int entry() {\n"
-        "  box<Pistol> p = Pistol { .ammo = 42 };\n"
-        "  box<Holder> h = { p };\n"
+        "  ^Pistol p = Pistol { .ammo = 42 };\n"
+        "  ^Holder h = { p };\n"
         "  return h.p.ammo;\n"
         "}\n",
         &err);
@@ -930,16 +930,16 @@ STRATA_TEST(box_anonymous_struct_literal_infers_box_inner_type)
 
 STRATA_TEST(box_field_wrong_box_inner_type_is_an_error)
 {
-    /* box<Any> and box<Pistol> are unrelated - field types weren't checked before. */
+    /* ^Any and ^Pistol are unrelated - field types weren't checked before. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Pistol { int ammo; };\n"
         "struct Any;\n"
-        "struct Holder { box<Any> gun; };\n"
+        "struct Holder { ^Any gun; };\n"
         "int entry() {\n"
-        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
-        "  box<Holder> h = { p };\n"    /* error: box<Pistol> into box<Any> field */
+        "  ^Pistol p = Pistol { .ammo = 1 };\n"
+        "  ^Holder h = { p };\n"    /* error: ^Pistol into ^Any field */
         "  return 0;\n"
         "}\n",
         &diag, &arena);
@@ -955,17 +955,17 @@ STRATA_TEST(box_field_wrong_box_inner_type_is_an_error)
 
 STRATA_TEST(box_cast_via_opaque_marker_round_trips)
 {
-    /* box<Pistol> -> box<Any> -> box<Pistol>: allowed since Any is opaque.
+    /* ^Pistol -> ^Any -> ^Pistol: allowed since Any is opaque.
        Each cast moves its source, so nothing is freed twice. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Pistol { int ammo; };\n"
         "struct Any;\n"
-        "struct Holder { box<Any> gun; };\n"
+        "struct Holder { ^Any gun; };\n"
         "int entry() {\n"
-        "  box<Pistol> p = Pistol { .ammo = 100 };\n"
-        "  box<Holder> holder = { (box<Any>)p };\n"
-        "  box<Pistol> p2 = (box<Pistol>)holder.gun;\n"
+        "  ^Pistol p = Pistol { .ammo = 100 };\n"
+        "  ^Holder holder = { (^Any)p };\n"
+        "  ^Pistol p2 = (^Pistol)holder.gun;\n"
         "  return p2.ammo;\n"
         "}\n",
         &err);
@@ -997,8 +997,8 @@ STRATA_TEST(box_cast_between_unrelated_concrete_structs_is_an_error)
         "struct Pistol { int ammo; };\n"
         "struct Vec3 { float x; float y; float z; };\n"
         "int entry() {\n"
-        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
-        "  box<Vec3> v = (box<Vec3>)p;\n"
+        "  ^Pistol p = Pistol { .ammo = 1 };\n"
+        "  ^Vec3 v = (^Vec3)p;\n"
         "  return 0;\n"
         "}\n",
         &diag, &arena);
@@ -1020,12 +1020,12 @@ STRATA_TEST(box_field_extracted_twice_is_an_error)
     ParseAndResolve(
         "struct Pistol { int ammo; };\n"
         "struct Any;\n"
-        "struct Holder { box<Any> gun; };\n"
+        "struct Holder { ^Any gun; };\n"
         "int entry() {\n"
-        "  box<Pistol> p = Pistol { .ammo = 1 };\n"
-        "  box<Holder> holder = { (box<Any>)p };\n"
-        "  box<Pistol> p2 = (box<Pistol>)holder.gun;\n"
-        "  box<Pistol> p3 = (box<Pistol>)holder.gun;\n"   /* error: gun moved already */
+        "  ^Pistol p = Pistol { .ammo = 1 };\n"
+        "  ^Holder holder = { (^Any)p };\n"
+        "  ^Pistol p2 = (^Pistol)holder.gun;\n"
+        "  ^Pistol p3 = (^Pistol)holder.gun;\n"   /* error: gun moved already */
         "  return 0;\n"
         "}\n",
         &diag, &arena);
@@ -1065,10 +1065,10 @@ STRATA_TEST(struct_field_wrong_scalar_type_is_an_error)
 
 STRATA_TEST(box_owning_struct_field_allowed)
 {
-    /* box<T> fields are now allowed (the struct becomes owning). */
+    /* ^T fields are now allowed (the struct becomes owning). */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { int x; };\nstruct W { box<V> v; };\n", &diag, &arena);
+    ParseAndResolve("struct V { int x; };\nstruct W { ^V v; };\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -1080,12 +1080,12 @@ STRATA_TEST(box_factory_returns_and_caller_owns)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "box<Cell> make(int n) {\n"
-        "  box<Cell> c = Cell { .v = n };\n"
+        "^Cell make(int n) {\n"
+        "  ^Cell c = Cell { .v = n };\n"
         "  c.v = c.v * 2;\n"
         "  return c;\n"
         "}\n"
-        "int entry() { box<Cell> w = make(21); return w.v; }\n",
+        "int entry() { ^Cell w = make(21); return w.v; }\n",
         &err);
 
     STRATA_CHECK(jit != NULL);
@@ -1113,9 +1113,9 @@ STRATA_TEST(box_owned_param_consumes_callers_box)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "int consume(box<Cell> c) { return c.v; }\n"
+        "int consume(^Cell c) { return c.v; }\n"
         "int entry() {\n"
-        "  box<Cell> a = Cell { .v = 9 };\n"
+        "  ^Cell a = Cell { .v = 9 };\n"
         "  int r = consume(a);\n"          /* a moved */
         "  return r;\n"
         "}\n",
@@ -1130,14 +1130,14 @@ STRATA_TEST(box_owned_param_consumes_callers_box)
 
 STRATA_TEST(box_ref_param_borrows_callers_box)
 {
-    /* A `ref box<T>` parameter is a borrow: the callee reads the box through
+    /* A `ref ^T` parameter is a borrow: the callee reads the box through
        the reference but the caller still owns and frees it. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
-        "int read(ref box<Cell> c) { return c.v; }\n"
+        "int read(ref ^Cell c) { return c.v; }\n"
         "int entry() {\n"
-        "  box<Cell> a = Cell { .v = 7 };\n"
+        "  ^Cell a = Cell { .v = 7 };\n"
         "  int r = read(a);\n"             /* borrow – a stays alive */
         "  return r * a.v;\n"               /* 7 * 7 = 49 */
         "}\n",
@@ -1157,9 +1157,9 @@ STRATA_TEST(box_moved_unconditionally_every_loop_iteration_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "int take(box<V> v) { return v.x; }\n"
+        "int take(^V v) { return v.x; }\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 1 };\n"
+        "  ^V a = V { .x = 1 };\n"
         "  for (int i = 0; i < 10; i++) {\n"
         "    take(a);\n"                      /* fine on iteration 1, freed after */
         "  }\n"
@@ -1180,11 +1180,11 @@ STRATA_TEST(box_fresh_local_per_iteration_moved_in_loop_is_allowed)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
-        "int take(box<V> v) { return v.x; }\n"
+        "int take(^V v) { return v.x; }\n"
         "int entry() {\n"
         "  int sum = 0;\n"
         "  for (int i = 0; i < 5; i++) {\n"
-        "    box<V> local = V { .x = i };\n"
+        "    ^V local = V { .x = i };\n"
         "    sum += take(local);\n"
         "  }\n"
         "  return sum;\n"     /* 0+1+2+3+4 = 10 */
@@ -1215,9 +1215,9 @@ STRATA_TEST(box_moved_in_one_if_branch_used_only_in_other_branch_is_allowed)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
-        "int take(box<V> v) { return v.x; }\n"
+        "int take(^V v) { return v.x; }\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 7 };\n"
+        "  ^V a = V { .x = 7 };\n"
         "  bool cond = false;\n"
         "  if (cond) {\n"
         "    return take(a);\n"
@@ -1252,9 +1252,9 @@ STRATA_TEST(box_moved_in_one_if_branch_used_unconditionally_after_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "int take(box<V> v) { return v.x; }\n"
+        "int take(^V v) { return v.x; }\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 1 };\n"
+        "  ^V a = V { .x = 1 };\n"
         "  bool cond = false;\n"
         "  if (cond) {\n"
         "    take(a);\n"
@@ -1276,9 +1276,9 @@ STRATA_TEST(box_owned_param_use_after_call_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { int x; };\n"
-        "int take(box<V> v) { return v.x; }\n"
+        "int take(^V v) { return v.x; }\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 1 };\n"
+        "  ^V a = V { .x = 1 };\n"
         "  int r = take(a);\n"             /* a moved */
         "  return a.x;\n"                   /* error: use of moved box 'a' */
         "}\n",
@@ -1298,8 +1298,8 @@ STRATA_TEST(box_reassign_moves_ownership)
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
         "int entry() {\n"
-        "  box<Cell> a = Cell { .v = 10 };\n"
-        "  box<Cell> b = Cell { .v = 32 };\n"
+        "  ^Cell a = Cell { .v = 10 };\n"
+        "  ^Cell b = Cell { .v = 32 };\n"
         "  a = b;\n"
         "  return a.v;\n"
         "}\n",
@@ -1327,7 +1327,7 @@ STRATA_TEST(box_uninitialized_is_an_error)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { int x; };\nint entry() { box<V> v; return 0; }\n", &diag, &arena);
+    ParseAndResolve("struct V { int x; };\nint entry() { ^V v; return 0; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -1340,8 +1340,8 @@ STRATA_TEST(box_use_after_vardecl_move_is_an_error)
     ParseAndResolve(
         "struct V { int x; };\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 1 };\n"
-        "  box<V> b = a;\n"          /* a moved into b */
+        "  ^V a = V { .x = 1 };\n"
+        "  ^V b = a;\n"          /* a moved into b */
         "  return a.x;\n"            /* error: use of moved box 'a' */
         "}\n",
         &diag, &arena);
@@ -1362,8 +1362,8 @@ STRATA_TEST(box_use_after_assign_move_is_an_error)
     ParseAndResolve(
         "struct V { int x; };\n"
         "int entry() {\n"
-        "  box<V> a = V { .x = 1 };\n"
-        "  box<V> b = V { .x = 2 };\n"
+        "  ^V a = V { .x = 1 };\n"
+        "  ^V b = V { .x = 2 };\n"
         "  a = b;\n"                  /* b moved into a */
         "  return b.x;\n"             /* error: use of moved box 'b' */
         "}\n",
@@ -1384,10 +1384,10 @@ STRATA_TEST(box_reassign_after_move_revalidates)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct V { int x; };\n"
-        "box<V> make(int n) { box<V> v = V { .x = n }; return v; }\n"
+        "^V make(int n) { ^V v = V { .x = n }; return v; }\n"
         "int entry() {\n"
-        "  box<V> a = make(1);\n"
-        "  box<V> b = a;\n"          /* a moved */
+        "  ^V a = make(1);\n"
+        "  ^V b = a;\n"          /* a moved */
         "  a = make(7);\n"           /* a re-Live */
         "  return a.x + b.x;\n"      /* ok: both live -> 7 + 1 = 8 */
         "}\n",
@@ -1413,14 +1413,14 @@ STRATA_TEST(box_reassign_after_move_revalidates)
 
 STRATA_TEST(box_coerced_to_bare_param_borrows)
 {
-    /* Passing box<T> where T is expected borrows the heap pointer — the
+    /* Passing ^T where T is expected borrows the heap pointer — the
        box survives the call (not consumed). */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
         "int read_bare(const Cell c) { return c.v; }\n"
         "int entry() {\n"
-        "  box<Cell> a = Cell { .v = 5 };\n"
+        "  ^Cell a = Cell { .v = 5 };\n"
         "  int r = read_bare(a);\n"      /* borrow: a stays alive */
         "  return r + a.v;\n"             /* 5 + 5 = 10 */
         "}\n",
@@ -1435,13 +1435,13 @@ STRATA_TEST(box_coerced_to_bare_param_borrows)
 
 STRATA_TEST(box_coerced_to_bare_return_unboxes)
 {
-    /* Returning box<T> from a T-returning function loads the value out and
+    /* Returning ^T from a T-returning function loads the value out and
        frees the box at the function's return. */
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
         "Cell extract() {\n"
-        "  box<Cell> c = Cell { .v = 42 };\n"
+        "  ^Cell c = Cell { .v = 42 };\n"
         "  return c;\n"                   /* unbox: load value, free box */
         "}\n"
         "int entry() {\n"
@@ -1485,11 +1485,11 @@ STRATA_TEST(box_same_variable_passed_to_two_owned_params_in_one_call_is_safe)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Stage { int fuel; };\n"
-        "int ignite(box<Stage> primary, box<Stage> backup) {\n"
+        "int ignite(^Stage primary, ^Stage backup) {\n"
         "  return primary.fuel + backup.fuel;\n"
         "}\n"
         "int entry() {\n"
-        "  box<Stage> stage = Stage { .fuel = 50 };\n"
+        "  ^Stage stage = Stage { .fuel = 50 };\n"
         "  return ignite(stage, stage);\n"    /* aliased - both read fuel=50 */
         "}\n",
         &err);
@@ -1512,10 +1512,10 @@ STRATA_TEST(box_struct_field_extracted_twice_via_separate_calls_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Sensor { int reading; };\n"
-        "struct FlightComputer { box<Sensor> primary; };\n"
-        "int read_sensor(box<Sensor> s) { return s.reading; }\n"
+        "struct FlightComputer { ^Sensor primary; };\n"
+        "int read_sensor(^Sensor s) { return s.reading; }\n"
         "int entry() {\n"
-        "  box<FlightComputer> fc = FlightComputer { .primary = Sensor { .reading = 5 } };\n"
+        "  ^FlightComputer fc = FlightComputer { .primary = Sensor { .reading = 5 } };\n"
         "  int a = read_sensor(fc.primary);\n"   /* moves fc.primary out */
         "  int b = read_sensor(fc.primary);\n"   /* error: fc.primary already moved */
         "  return a + b;\n"
@@ -1541,9 +1541,9 @@ STRATA_TEST(box_moved_in_one_branch_of_three_way_if_chain_used_after_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Stage { int fuel; };\n"
-        "int jettison(box<Stage> s) { return s.fuel; }\n"
+        "int jettison(^Stage s) { return s.fuel; }\n"
         "int entry() {\n"
-        "  box<Stage> booster = Stage { .fuel = 12 };\n"
+        "  ^Stage booster = Stage { .fuel = 12 };\n"
         "  int mode = 1;\n"
         "  if (mode == 0) {\n"
         "    return booster.fuel;\n"
@@ -1575,9 +1575,9 @@ STRATA_TEST(box_moved_inside_loop_guarded_by_break_then_used_after_loop_is_error
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Stage { int fuel; };\n"
-        "int abort_stage(box<Stage> s) { return s.fuel; }\n"
+        "int abort_stage(^Stage s) { return s.fuel; }\n"
         "int entry() {\n"
-        "  box<Stage> booster = Stage { .fuel = 20 };\n"
+        "  ^Stage booster = Stage { .fuel = 20 };\n"
         "  for (int i = 0; i < 10; i++) {\n"
         "    if (i == 3) {\n"
         "      abort_stage(booster);\n"   /* moved on this iteration only */
@@ -1599,8 +1599,8 @@ STRATA_TEST(box_moved_inside_loop_guarded_by_break_then_used_after_loop_is_error
 
 STRATA_TEST(box_ref_chain_three_levels_deep_mutates_original_stage)
 {
-    /* A telemetry-relay pattern: a `ref box<T>` borrow passed on through
-       two more levels of `ref box<T>` re-borrow, mutated only at the
+    /* A telemetry-relay pattern: a `ref ^T` borrow passed on through
+       two more levels of `ref ^T` re-borrow, mutated only at the
        deepest level. The original caller's box must observe the
        mutation - a broken re-borrow chain (e.g. accidentally copying
        instead of re-passing the reference) would silently mutate a
@@ -1608,11 +1608,11 @@ STRATA_TEST(box_ref_chain_three_levels_deep_mutates_original_stage)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Stage { int fuel; };\n"
-        "void drain_innermost(ref box<Stage> s) { s.fuel = s.fuel - 1; }\n"
-        "void relay_b(ref box<Stage> s) { drain_innermost(s); }\n"
-        "void relay_a(ref box<Stage> s) { relay_b(s); }\n"
+        "void drain_innermost(ref ^Stage s) { s.fuel = s.fuel - 1; }\n"
+        "void relay_b(ref ^Stage s) { drain_innermost(s); }\n"
+        "void relay_a(ref ^Stage s) { relay_b(s); }\n"
         "int entry() {\n"
-        "  box<Stage> booster = Stage { .fuel = 100 };\n"
+        "  ^Stage booster = Stage { .fuel = 100 };\n"
         "  relay_a(booster);\n"
         "  return booster.fuel;\n"     /* 99 */
         "}\n",
@@ -1627,7 +1627,7 @@ STRATA_TEST(box_ref_chain_three_levels_deep_mutates_original_stage)
 
 STRATA_TEST(box_dual_field_struct_drops_both_children_without_crash)
 {
-    /* A struct owning TWO box<T> fields (a redundant flight computer with
+    /* A struct owning TWO ^T fields (a redundant flight computer with
        primary+backup sensors) must drop BOTH children exactly once when
        it goes out of scope. The existing recursive-drop coverage
        (box_owning_field_linked_list) only ever exercised a single owning
@@ -1636,9 +1636,9 @@ STRATA_TEST(box_dual_field_struct_drops_both_children_without_crash)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Sensor { int reading; };\n"
-        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
+        "struct FlightComputer { ^Sensor primary; ^Sensor backup; };\n"
         "int entry() {\n"
-        "  box<FlightComputer> fc = FlightComputer {\n"
+        "  ^FlightComputer fc = FlightComputer {\n"
         "    .primary = Sensor { .reading = 7 },\n"
         "    .backup = Sensor { .reading = 13 }\n"
         "  };\n"
@@ -1662,10 +1662,10 @@ STRATA_TEST(box_extracting_one_field_does_not_block_sibling_field_use)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Sensor { int reading; };\n"
-        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
-        "int read_sensor(box<Sensor> s) { return s.reading; }\n"
+        "struct FlightComputer { ^Sensor primary; ^Sensor backup; };\n"
+        "int read_sensor(^Sensor s) { return s.reading; }\n"
         "int entry() {\n"
-        "  box<FlightComputer> fc = FlightComputer {\n"
+        "  ^FlightComputer fc = FlightComputer {\n"
         "    .primary = Sensor { .reading = 7 },\n"
         "    .backup = Sensor { .reading = 13 }\n"
         "  };\n"
@@ -1689,10 +1689,10 @@ STRATA_TEST(box_extracted_field_reused_after_move_is_error_sibling_unaffected)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Sensor { int reading; };\n"
-        "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
-        "int read_sensor(box<Sensor> s) { return s.reading; }\n"
+        "struct FlightComputer { ^Sensor primary; ^Sensor backup; };\n"
+        "int read_sensor(^Sensor s) { return s.reading; }\n"
         "int entry() {\n"
-        "  box<FlightComputer> fc = FlightComputer {\n"
+        "  ^FlightComputer fc = FlightComputer {\n"
         "    .primary = Sensor { .reading = 7 },\n"
         "    .backup = Sensor { .reading = 13 }\n"
         "  };\n"
@@ -1720,9 +1720,9 @@ STRATA_TEST(box_soak_test_many_iterations_through_ref_no_crash)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Telemetry { int ticks; };\n"
-        "void tick(ref box<Telemetry> t) { t.ticks = t.ticks + 1; }\n"
+        "void tick(ref ^Telemetry t) { t.ticks = t.ticks + 1; }\n"
         "int entry() {\n"
-        "  box<Telemetry> state = Telemetry { .ticks = 0 };\n"
+        "  ^Telemetry state = Telemetry { .ticks = 0 };\n"
         "  for (int i = 0; i < 10000; i++) {\n"
         "    tick(state);\n"
         "  }\n"
@@ -1748,10 +1748,10 @@ STRATA_TEST(box_move_and_reassign_every_iteration_over_many_cycles_is_allowed)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Stage { int fuel; };\n"
-        "box<Stage> refuel(int amount) { box<Stage> s = Stage { .fuel = amount }; return s; }\n"
-        "int burn(box<Stage> s) { return s.fuel; }\n"
+        "^Stage refuel(int amount) { ^Stage s = Stage { .fuel = amount }; return s; }\n"
+        "int burn(^Stage s) { return s.fuel; }\n"
         "int entry() {\n"
-        "  box<Stage> booster = refuel(5);\n"
+        "  ^Stage booster = refuel(5);\n"
         "  int total = 0;\n"
         "  for (int i = 0; i < 50; i++) {\n"
         "    total += burn(booster);\n"   /* moves booster */
@@ -1777,10 +1777,10 @@ STRATA_TEST(box_borrowed_then_moved_afterward_is_allowed)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Stage { int fuel; };\n"
-        "int read_only(ref box<Stage> s) { return s.fuel; }\n"
-        "int consume(box<Stage> s) { return s.fuel; }\n"
+        "int read_only(ref ^Stage s) { return s.fuel; }\n"
+        "int consume(^Stage s) { return s.fuel; }\n"
         "int entry() {\n"
-        "  box<Stage> booster = Stage { .fuel = 8 };\n"
+        "  ^Stage booster = Stage { .fuel = 8 };\n"
         "  int a = read_only(booster);\n"   /* borrow completes */
         "  int b = consume(booster);\n"     /* now moves it - fine, borrow already ended */
         "  return a + b;\n"                  /* 16 */
@@ -1801,7 +1801,7 @@ STRATA_TEST(box_coerced_to_bare_vardecl_copies)
     StrataJit* jit = CompileBox(
         "struct Cell { int v; };\n"
         "int entry() {\n"
-        "  box<Cell> a = Cell { .v = 7 };\n"
+        "  ^Cell a = Cell { .v = 7 };\n"
         "  Cell copy = a;\n"             /* deref-copy: copy = *a */
         "  copy.v = 99;\n"               /* mutate the copy */
         "  return a.v;\n"                /* a unchanged: 7 */
@@ -1832,7 +1832,7 @@ STRATA_TEST(partial_move_field_then_use_sibling_field_is_allowed)
         "struct Person { string name; int age; };\n"
         "int take(string s) { return 7; }\n"
         "int entry() {\n"
-        "  box<Person> p = Person { .name = \"Alice\", .age = 30 };\n"
+        "  ^Person p = Person { .name = \"Alice\", .age = 30 };\n"
         "  int r = take(p.name);\n"          /* moves p.name */
         "  return r + p.age;\n"             /* p.age still accessible: 7 + 30 = 37 */
         "}\n",
@@ -1854,9 +1854,9 @@ STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
     ParseAndResolve(
         "struct Person { string name; int age; };\n"
         "int take(string s) { return 1; }\n"
-        "int consume(box<Person> p) { return 1; }\n"
+        "int consume(^Person p) { return 1; }\n"
         "int entry() {\n"
-        "  box<Person> p = Person { .name = \"A\", .age = 1 };\n"
+        "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
         "  take(p.name);\n"
         "  return consume(p);\n"     /* error: p partially moved */
         "}\n",
@@ -1879,8 +1879,8 @@ STRATA_TEST(partial_move_field_then_return_whole_is_error)
     ParseAndResolve(
         "struct Person { string name; int age; };\n"
         "int take(string s) { return 1; }\n"
-        "box<Person> give() {\n"
-        "  box<Person> p = Person { .name = \"A\", .age = 1 };\n"
+        "^Person give() {\n"
+        "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
         "  take(p.name);\n"
         "  return p;\n"             /* error: p partially moved */
         "}\n",
@@ -1899,9 +1899,9 @@ STRATA_TEST(partial_move_field_then_move_whole_to_var_is_error)
         "struct Person { string name; int age; };\n"
         "int take(string s) { return 1; }\n"
         "int entry() {\n"
-        "  box<Person> p = Person { .name = \"A\", .age = 1 };\n"
+        "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
         "  take(p.name);\n"
-        "  box<Person> q = p;\n"     /* error: p partially moved */
+        "  ^Person q = p;\n"     /* error: p partially moved */
         "  return q.age;\n"
         "}\n",
         &diag, &arena);
@@ -1917,9 +1917,9 @@ STRATA_TEST(partial_move_reassign_re_lives)
     StrataJit* jit = CompileBox(
         "struct Person { string name; int age; };\n"
         "int take(string s) { return 1; }\n"
-        "box<Person> make() { box<Person> p = Person { .name = \"new\", .age = 99 }; return p; }\n"
+        "^Person make() { ^Person p = Person { .name = \"new\", .age = 99 }; return p; }\n"
         "int entry() {\n"
-        "  box<Person> p = Person { .name = \"old\", .age = 1 };\n"
+        "  ^Person p = Person { .name = \"old\", .age = 1 };\n"
         "  take(p.name);\n"          /* p.name moved, p partially moved */
         "  p = make();\n"           /* re-live: clears subtree */
         "  return p.age + take(p.name);\n"  /* both usable again: 99 + 1 = 100 */
@@ -1942,11 +1942,11 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Leaf { string tag; };\n"
-        "struct Mid { box<Leaf> c; box<Leaf> d; };\n"
-        "struct Root { box<Mid> a_b; box<Leaf> x; };\n"
+        "struct Mid { ^Leaf c; ^Leaf d; };\n"
+        "struct Root { ^Mid a_b; ^Leaf x; };\n"
         "int take(string s) { return 1; }\n"
         "int entry() {\n"
-        "  box<Root> r = Root {\n"
+        "  ^Root r = Root {\n"
         "    .a_b = Mid { .c = Leaf { .tag = \"c\" }, .d = Leaf { .tag = \"d\" } },\n"
         "    .x = Leaf { .tag = \"x\" }\n"
         "  };\n"
@@ -1967,12 +1967,12 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
     DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Leaf { string tag; };\n"
-        "struct Mid { box<Leaf> c; };\n"
-        "struct Root { box<Mid> a_b; };\n"
+        "struct Mid { ^Leaf c; };\n"
+        "struct Root { ^Mid a_b; };\n"
         "int take(string s) { return 1; }\n"
-        "int consume(box<Mid> m) { return 1; }\n"
+        "int consume(^Mid m) { return 1; }\n"
         "int entry() {\n"
-        "  box<Root> r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
+        "  ^Root r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
         "  take(r.a_b.c.tag);\n"   /* poisons r.a_b */
         "  return consume(r.a_b);\n"  /* error: r.a_b partially moved */
         "}\n",
@@ -1995,11 +1995,11 @@ STRATA_TEST(partial_move_whole_field_then_access_descendant_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Leaf { string tag; };\n"
-        "struct Mid { box<Leaf> c; };\n"
-        "struct Root { box<Mid> a_b; };\n"
-        "int consume(box<Mid> m) { return 1; }\n"
+        "struct Mid { ^Leaf c; };\n"
+        "struct Root { ^Mid a_b; };\n"
+        "int consume(^Mid m) { return 1; }\n"
         "int entry() {\n"
-        "  box<Root> r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
+        "  ^Root r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
         "  consume(r.a_b);\n"          /* moves r.a_b as a whole */
         "  return take(r.a_b.c.tag);\n"  /* error: r.a_b fully moved */
         "}\n",
@@ -2018,7 +2018,7 @@ STRATA_TEST(partial_move_two_fields_both_moved)
         "struct Pair { string a; string b; };\n"
         "int take(string s) { return 1; }\n"
         "int entry() {\n"
-        "  box<Pair> p = Pair { .a = \"x\", .b = \"y\" };\n"
+        "  ^Pair p = Pair { .a = \"x\", .b = \"y\" };\n"
         "  take(p.a);\n"
         "  take(p.b);\n"
         "  return take(p.a);\n"  /* error: p.a already moved */

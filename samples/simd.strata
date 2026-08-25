@@ -35,7 +35,7 @@ void mutate_vector(ref float3 v)
 
 int run()
 {
-    box<float3> a = float3(1.0, 2.0, 3.0);
+    ^float3 a = float3(1.0, 2.0, 3.0);
     float3 b = float3(10.0, 20.0, 30.0);
     float3 sum = add(a, b);         // {11, 22, 33}
     float3 splat = float3(5.0);     // {5, 5, 5}
@@ -47,11 +47,11 @@ int run()
     print_vectors(a, b, sum);
 
     // Testing of box simd
-    box<float3> boxA = float3(1.0, 2.0, 3.0);
-    box<float3> boxB = float3(4.0, 5.0, 6.0);
-    box<float3> boxC = add(boxA, boxB);
+    ^float3 boxA = float3(1.0, 2.0, 3.0);
+    ^float3 boxB = float3(4.0, 5.0, 6.0);
+    ^float3 boxC = add(boxA, boxB);
 
-    box<float3>[] vecs = { b };
+    ^float3[] vecs = { b };
     array_push(vecs, a);
 
     float3 sw = vecs[vecs.length - 1].zyx;              // swizzle {3, 2, 1}

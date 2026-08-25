@@ -192,17 +192,17 @@ static void CheckErrorRejected(StrataJitBackend backend, const char* source, con
 STRATA_TEST(errored_module_rejected_cleanly_tcc)
 {
     CheckErrorRejected(STRATA_JIT_BACKEND_TCC,
-                       "box<string>[] g = { \"Hi\" };\n"
+                       "^string[] g = { \"Hi\" };\n"
                        "string[] f() { return g; }\n",
-                       "cannot return a value of type 'box<string>[]'");
+                       "cannot return a value of type '^string[]'");
 }
 
 STRATA_TEST(errored_module_rejected_cleanly_llvm)
 {
     CheckErrorRejected(STRATA_JIT_BACKEND_LLVM,
-                       "box<string>[] g = { \"Hi\" };\n"
+                       "^string[] g = { \"Hi\" };\n"
                        "string[] f() { return g; }\n",
-                       "cannot return a value of type 'box<string>[]'");
+                       "cannot return a value of type '^string[]'");
 }
 
 STRATA_TEST(errored_module_rejected_cleanly_string_mismatch)
@@ -300,7 +300,7 @@ STRATA_TEST(profile_oob_string_write_noop_llvm)
     }
 }
 
-/* OOB box<struct> reads give a newly constructed (zeroed) struct. */
+/* OOB ^struct reads give a newly constructed (zeroed) struct. */
 STRATA_TEST(profile_oob_box_struct_field_zero_llvm)
 {
     if (!(strataCapabilities() & STRATA_CAP_LLVM_JIT))
@@ -310,7 +310,7 @@ STRATA_TEST(profile_oob_box_struct_field_zero_llvm)
 
     StrataJit* jit = CompileJit(
         "struct W { int dmg; };\n"
-        "int entry() { box<W>[] ws = { W(7) }; return ws[9].dmg; }",
+        "int entry() { ^W[] ws = { W(7) }; return ws[9].dmg; }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -355,7 +355,7 @@ STRATA_TEST(profile_oob_box_move_then_reread_llvm)
 
     StrataJit* jit = CompileJit(
         "struct W { int dmg; };\n"
-        "int entry() { box<W>[] ws = { W(7) }; box<W> m = ws[9]; return ws[9].dmg + m.dmg; }",
+        "int entry() { ^W[] ws = { W(7) }; ^W m = ws[9]; return ws[9].dmg + m.dmg; }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)

@@ -2,7 +2,7 @@
  *
  * Covers the full passing matrix for the owning types that most commonly
  * cross into C code: string (plain / const / ref / const ref), arrays
- * (int[] / ref int[] / string[]), and boxes (box<T>, box<string>, box<T>[]),
+ * (int[] / ref int[] / string[]), and boxes (^T, ^string, ^T[]),
  * each as parameters AND return values. Most scenarios run identically on
  * both the LLVM and TinyCC JIT backends; the by-value array RETURN runs on
  * TinyCC only (see the ABI note below and CheckExternTccOnly).
@@ -18,8 +18,8 @@
  *     must malloc the buffer. Returning the 16-byte struct across the host
  *     boundary is ABI-host-dependent (sret vs register return), so this is
  *     exercised on the backend whose ABI matches this test build's host.
- *   - extern box<T> params cross as a pointer to the box slot (T**); the
- *     host reads/writes the pointee in place. box<T> returns are OWNED.
+ *   - extern ^T params cross as a pointer to the box slot (T**); the
+ *     host reads/writes the pointee in place. ^T returns are OWNED.
  *   - extern owned params never move the caller's value (borrowed).
  */
 
@@ -529,14 +529,14 @@ STRATA_TEST(extern_int_array_return_is_owned)
 
 STRATA_TEST(extern_box_struct_param_borrows)
 {
-    /* box<T> crosses as a pointer to the box slot; extern never moves the
+    /* ^T crosses as a pointer to the box slot; extern never moves the
        caller's box, so it stays live afterward. */
     HostSymbol hosts[] = { { "host_box_read", (void*)&HostBoxRead } };
     CheckExtern("struct Foo { int v; };\n"
-                "extern int host_box_read(box<Foo> b);\n"
+                "extern int host_box_read(^Foo b);\n"
                 "int entry()\n"
                 "{\n"
-                "  box<Foo> b = Foo { .v = 7 };\n"
+                "  ^Foo b = Foo { .v = 7 };\n"
                 "  int r = host_box_read(b);\n"      /* 7; b borrowed, still live */
                 "  return r + b.v;\n"                /* 7 + 7 = 14 */
                 "}\n",
@@ -547,10 +547,10 @@ STRATA_TEST(extern_box_struct_param_host_mutates)
 {
     HostSymbol hosts[] = { { "host_box_set", (void*)&HostBoxSet } };
     CheckExtern("struct Foo { int v; };\n"
-                "extern void host_box_set(box<Foo> b);\n"
+                "extern void host_box_set(^Foo b);\n"
                 "int entry()\n"
                 "{\n"
-                "  box<Foo> b = Foo { .v = 1 };\n"
+                "  ^Foo b = Foo { .v = 1 };\n"
                 "  host_box_set(b);\n"               /* sets b.v = 99 in place */
                 "  return b.v;\n"                    /* 99 */
                 "}\n",
@@ -561,10 +561,10 @@ STRATA_TEST(extern_ref_box_struct_param)
 {
     HostSymbol hosts[] = { { "host_box_read_ref", (void*)&HostBoxReadRef } };
     CheckExtern("struct Foo { int v; };\n"
-                "extern int host_box_read_ref(ref box<Foo> b);\n"
+                "extern int host_box_read_ref(ref ^Foo b);\n"
                 "int entry()\n"
                 "{\n"
-                "  box<Foo> b = Foo { .v = 5 };\n"
+                "  ^Foo b = Foo { .v = 5 };\n"
                 "  int r = host_box_read_ref(b);\n"  /* 5 */
                 "  return r + b.v;\n"                /* 5 + 5 = 10 */
                 "}\n",
@@ -573,13 +573,13 @@ STRATA_TEST(extern_ref_box_struct_param)
 
 STRATA_TEST(extern_box_string_param)
 {
-    /* box<string> crosses as a pointer to the box slot (char***): the host
+    /* ^string crosses as a pointer to the box slot (char***): the host
        derefs through the box to the string content. */
     HostSymbol hosts[] = { { "host_str_box_len", (void*)&HostStrBoxLen } };
-    CheckExtern("extern int host_str_box_len(box<string> b);\n"
+    CheckExtern("extern int host_str_box_len(^string b);\n"
                 "int entry()\n"
                 "{\n"
-                "  box<string> b = \"hello\";\n"
+                "  ^string b = \"hello\";\n"
                 "  return host_str_box_len(b);\n"    /* 5; b still live */
                 "}\n",
                 hosts, 1, 5);
@@ -587,14 +587,14 @@ STRATA_TEST(extern_box_string_param)
 
 STRATA_TEST(extern_box_struct_array_param)
 {
-    /* box<Foo>[] (owning elements) crosses as the fat struct; the host
+    /* ^Foo[] (owning elements) crosses as the fat struct; the host
        reaches the first boxed element. The array stays live after. */
     HostSymbol hosts[] = { { "host_box_arr_first", (void*)&HostBoxArrFirst } };
     CheckExtern("struct Foo { int v; };\n"
-                "extern int host_box_arr_first(box<Foo>[] arr);\n"
+                "extern int host_box_arr_first(^Foo[] arr);\n"
                 "int entry()\n"
                 "{\n"
-                "  box<Foo>[] arr = { Foo { .v = 9 }, Foo { .v = 8 } };\n"
+                "  ^Foo[] arr = { Foo { .v = 9 }, Foo { .v = 8 } };\n"
                 "  int f = host_box_arr_first(arr);\n" /* 9; arr borrowed */
                 "  return f + arr[1].v;\n"            /* 9 + 8 = 17 */
                 "}\n",
@@ -608,11 +608,11 @@ STRATA_TEST(extern_box_struct_return_is_owned)
     /* The caller owns the returned box slot and frees it at scope exit. */
     HostSymbol hosts[] = { { "host_box_make", (void*)&HostBoxMake } };
     CheckExtern("struct Foo { int v; };\n"
-                "extern box<Foo> host_box_make(int v);\n"
+                "extern ^Foo host_box_make(int v);\n"
                 "int entry()\n"
                 "{\n"
-                "  box<Foo> a = host_box_make(10);\n" /* owns a heap Foo */
-                "  box<Foo> b = host_box_make(32);\n"
+                "  ^Foo a = host_box_make(10);\n" /* owns a heap Foo */
+                "  ^Foo b = host_box_make(32);\n"
                 "  return a.v + b.v;\n"               /* 42 */
                 "}\n",
                 hosts, 1, 42);

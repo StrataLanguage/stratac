@@ -352,7 +352,7 @@ static bool ParamIsIndirectFor(CEmitter* emitter, const FunctionDecl* function, 
 
 /* A `ref T... rest` with non-owning elements collects POINTERS to the source
    arguments, so element writes through the ref propagate back to the caller
-   (true ref semantics). Owning (box<T>) element rests stay a borrow. */
+   (true ref semantics). Owning (^T) element rests stay a borrow. */
 static bool ParamIsAliasedRest(CEmitter* emitter, const ParamDecl* param)
 {
     if (!param->isVarargRest || param->mod != ModRef)
@@ -869,7 +869,7 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             }
             else if (inner)
             {
-                /* box<T> field from a non-box<T> value: heap-box it inline
+                /* ^T field from a non-^T value: heap-box it inline
                    via a GNU statement expression. CEmitOwnedValue handles
                    strdup for literals, move for owning sources. */
                 const char* innerC = TypeNameC(emitter, inner);
@@ -959,7 +959,7 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
             }
             else if (elemType && IsArrayType(elemType) == false && OwningInnerCStr(emitter->arena, elemType))
             {
-                /* box<T> element from a non-box<T> value: box it up.
+                /* ^T element from a non-^T value: box it up.
                    CEmitOwnedValue handles strdup for literals, move for
                    owning sources. */
                 const char* inner = OwningInnerCStr(emitter->arena, elemType);
@@ -1104,7 +1104,7 @@ static void CEmitCopyText(CEmitter* emitter, const char* type, const char* acces
 }
 
 /* Emits copy(arg) returning a deep copy of an owning value
-   (string/box<T>/T[]). */
+   (string/^T/T[]). */
 static void EmitCopyBuiltin(CEmitter* emitter, const CallExpr* call)
 {
     const Node* arg0 = (const Node*)VecGet(&call->args, 0);
@@ -1176,7 +1176,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
             return;
         }
 
-        /* box<T> from a bare T: heap-box it inline. */
+        /* ^T from a bare T: heap-box it inline. */
         {
             const char* inner = OwningInnerCStr(emitter->arena, elemType);
             const char* innerC = inner ? TypeNameC(emitter, inner) : "void";
@@ -1201,7 +1201,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
            so element writes through the ref propagate to the caller. */
         if (valueType[0] != '\0' && IsOwningType(valueType))
         {
-            /* box<T> arg: the box pointer already IS the address of the value. */
+            /* ^T arg: the box pointer already IS the address of the value. */
             CEmitExpr(emitter, eNode);
         }
         else if (IsLValueNode(eNode))
@@ -1222,7 +1222,7 @@ static void EmitRestElement(CEmitter* emitter, const Node* eNode, const char* el
         return;
     }
 
-    /* box<T> stored in a T[] element: unbox the pointer. */
+    /* ^T stored in a T[] element: unbox the pointer. */
     if (valueType[0] != '\0' && IsOwningType(valueType))
     {
         SbPuts(&emitter->out, "(*");
@@ -1316,7 +1316,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
 
         if (parameter && !isStringByValue && ParamIsIndirectFor(emitter, function, parameter))
         {
-            /* box<T> coerced to T: if the param is a plain struct (not box),
+            /* ^T coerced to T: if the param is a plain struct (not box),
                and the arg is a box, the heap pointer IS the T* the param wants. */
             bool paramIsBoxType = IsOwningType(parameter->type.name);
             const char* argType = ExprType(emitter, argument);
@@ -1359,7 +1359,7 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
             if (isStringByValue)
             {
                 /* Extern string param: a plain string arg passes its char*
-                   value; a box<string> derefs to its char*. */
+                   value; a ^string derefs to its char*. */
                 if (strcmp(argType, "string") == 0)
                 {
                     CEmitExpr(emitter, argument);
@@ -1499,7 +1499,7 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
             }
             else if (OwningInnerCStr(emitter->arena, elemType))
             {
-                /* box<T> element from a non-box<T> value: box it up. */
+                /* ^T element from a non-^T value: box it up. */
                 const char* inner = OwningInnerCStr(emitter->arena, elemType);
                 const char* innerC = TypeNameC(emitter, inner);
 
@@ -1521,7 +1521,7 @@ static void EmitArrayInitExpr(CEmitter* emitter, const ArrayInitExpr* ai)
         {
             const char* valueType = ExprType(emitter, eNode);
 
-            /* box<T> stored in a T[] array element: unbox the pointer. */
+            /* ^T stored in a T[] array element: unbox the pointer. */
             if (valueType[0] != '\0' && IsOwningType(valueType) && !elemOwning)
             {
                 SbPuts(&emitter->out, "(*");
@@ -1657,7 +1657,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             return;
         }
 
-        /* box<simd>.swizzle or box<simd>.lane: unpack the box and route
+        /* ^simd.swizzle or ^simd.lane: unpack the box and route
            through the SIMD destructure. */
         {
             bool throughBox = IsOwningType(baseType);
@@ -1800,7 +1800,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
         }
 
         /* `=` rebinds the box only when the value is itself a box of the
-           same type; any other assignment into a box<T> - including `=`
+           same type; any other assignment into a ^T - including `=`
            with a plain T value, e.g. `x = 5;` - mutates its contents. */
         bool boxMove = assign->op == AssignSet && IsOwningType(targetType)
                        && strcmp(ExprType(emitter, assign->value), targetType) == 0;
@@ -1842,19 +1842,19 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
 
         if (!boxMove && IsOwningType(targetType))
         {
-            /* Assigning a plain T (or compound-assigning) into a box<T>
+            /* Assigning a plain T (or compound-assigning) into a ^T
                mutates its contents in place - not a move, so `x = 5;` and
-               `val -= amt;` both work even through a `ref box<T>` param or
+               `val -= amt;` both work even through a `ref ^T` param or
                a box global. */
             const char* inner = OwningInnerCStr(emitter->arena, targetType);
 
             if (IsOwningType(inner))
             {
-                /* Content-assigning an OWNING inner (box<string> = "x" /
+                /* Content-assigning an OWNING inner (^string = "x" /
                    someString): drop only the old inner value in place (free
                    it), then store a freshly owned inner - strata_strdup a
                    literal, move a movable source. The box allocation itself
-                   is kept, mirroring `box<int> = 5` except the replaced
+                   is kept, mirroring `^int = 5` except the replaced
                    inner is owning so it's freed first. */
                 SbPuts(&emitter->out, "({ if (*");
                 EmitLValue(emitter, assign->target);
@@ -1992,7 +1992,7 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
    - Owning inner + movable source: evaluate, then null the source via a
      comma expression:  (expr, (src = 0))
    - Owning inner + non-movable (call result): evaluate as-is.
-   Used for string vars, box<T> inners, struct fields, return values, etc. */
+   Used for string vars, ^T inners, struct fields, return values, etc. */
 static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* innerType)
 {
     if (!IsOwningType(innerType))
@@ -2022,7 +2022,7 @@ static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* inn
 }
 
 /* Box a struct value by allocating it and assigning each init field, so that
-   box<T> fields move their source (nulling it). Omitted fields stay zero/null. */
+   ^T fields move their source (nulling it). Omitted fields stay zero/null. */
 static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char* innerC, const char* inner,
                                 const StructInitExpr* si)
 {
@@ -2063,11 +2063,11 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             continue;
         }
 
-        /* For a box<T> field, determine whether we need to box up the value
+        /* For a ^T field, determine whether we need to box up the value
            (alloc + store) or can do a direct pointer move. Boxing is needed
            whenever the value type differs from the field type — a bare T
-           into box<T>, a string literal into box<string>, etc. Only
-           box<T> from the same box<T> is a direct move. */
+           into ^T, a string literal into ^string, etc. Only
+           ^T from the same ^T is a direct move. */
         const char* valueType = ExprType(emitter, sf->value);
         bool fieldIsOwning = IsOwningType(fd->type.name);
         bool sameOwningType = fieldIsOwning && valueType[0] != '\0'
@@ -2075,7 +2075,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
 
         if (fieldIsOwning && !sameOwningType)
         {
-            /* box<T> field from a non-box<T> value: box it up. */
+            /* ^T field from a non-^T value: box it up. */
             const char* fieldInner = OwningInnerCStr(emitter->arena, fd->type.name);
             const char* fieldInnerC = TypeNameC(emitter, fieldInner);
 
@@ -2098,7 +2098,7 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
         }
         else
         {
-            /* Direct assignment: same box<T> move, string field, or non-owning.
+            /* Direct assignment: same ^T move, string field, or non-owning.
                For owning fields, CEmitOwnedValue handles strdup for literals
                and move+null for variables (the comma-expression works because
                = binds tighter than ,). */
@@ -2130,7 +2130,7 @@ static void EmitBoxInitStmt(CEmitter* emitter, const char* cName, const char* in
 {
     const char* initType = ExprType(emitter, (Node*)init);
 
-    /* Direct move from another box<T> of the same kind: take pointer. */
+    /* Direct move from another ^T of the same kind: take pointer. */
     if (initType[0] != '\0' && IsOwningType(initType) && OwningInnerStr(initType).data)
     {
         Pad(emitter);
@@ -2322,7 +2322,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
         if (initType[0] != '\0' && IsOwningType(initType) && strcmp(initType, declaration->type.name) == 0)
         {
-            /* Direct move from the same box<T> type: take pointer, null source. */
+            /* Direct move from the same ^T type: take pointer, null source. */
             SbPuts(&emitter->out, " = ");
             CEmitExpr(emitter, declaration->init);
 
@@ -2357,9 +2357,9 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
         }
         else
         {
-            /* Box up the inner value. For box<string> this is:
+            /* Box up the inner value. For ^string this is:
                construct a string (strdup literal / move source), then store
-               into the allocated slot — identical to box<int> but the inner
+               into the allocated slot — identical to ^int but the inner
                happens to be owning. */
             SbPuts(&emitter->out, " = strata_alloc(sizeof(");
             SbPuts(&emitter->out, innerC);
@@ -2404,7 +2404,7 @@ static void EmitVarDecl(CEmitter* emitter, const VarDeclStmt* declaration, bool 
 
     if (declaration->init)
     {
-        /* box<T> -> T coercion: dereference the box pointer. */
+        /* ^T -> T coercion: dereference the box pointer. */
         const char* initType = ExprType(emitter, declaration->init);
 
         if (IsOwningType(initType))
@@ -2619,9 +2619,9 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
         const char* valueType = statement->value ? ExprType(emitter, statement->value) : "";
         bool targetIsBox = emitter->currentReturn && IsOwningType(emitter->currentReturn);
 
-        /* The return type is box<T> but the expression produces a plain T
-           (e.g. `return Pistol{...};` from a box<Pistol>-returning
-           function): box it into a temporary, same as a `box<T> x = ...;`
+        /* The return type is ^T but the expression produces a plain T
+           (e.g. `return Pistol{...};` from a ^Pistol-returning
+           function): box it into a temporary, same as a `^T x = ...;`
            local, then return the pointer. */
         if (statement->value && targetIsBox
             && !(valueType[0] != '\0' && strcmp(valueType, emitter->currentReturn) == 0))
@@ -2649,12 +2649,12 @@ static void EmitStmt(CEmitter* emitter, const Node* node)
             return;
         }
 
-        /* A bare box<T> identifier is only a move if the function returns
-           box<T>; otherwise it's a deref-read. */
+        /* A bare ^T identifier is only a move if the function returns
+           ^T; otherwise it's a deref-read. */
         const Node* movedReturnSource = IsOwningType(valueType) ? MovableBoxSourceNode(statement->value) : NULL;
         bool movesBox = movedReturnSource && targetIsBox && strcmp(emitter->currentReturn, valueType) == 0;
 
-        /* An owning value returned as a non-owning type (e.g. box<int>
+        /* An owning value returned as a non-owning type (e.g. ^int
            field access returned as int) must be dereferenced to read.
            Arrays are excluded: they're returned by value as a {ptr, len}
            struct, not through a pointer deref. */

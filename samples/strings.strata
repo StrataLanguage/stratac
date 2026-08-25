@@ -30,8 +30,8 @@ int take_string(string s)
 
 string globalString = "Test global";
 
-box<string> boxedString = "Hello!";
-box<string>[] arrayOfBoxedStrings;
+^string boxedString = "Hello!";
+^string[] arrayOfBoxedStrings;
 
 int run()
 {

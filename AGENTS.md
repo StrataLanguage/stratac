@@ -137,6 +137,12 @@ main) are the internal entry points.
 - Handles: `handle Entity;` — opaque, pointer-sized, passed by value.
 - Handle inheritance: `handle Player extends Entity;` — `Player` is
   passable anywhere `Entity` is expected (checked by `HandleExtendsFrom`)
+- Boxes: `^T` — an owning, heap-allocated, move-only handle to a `T`
+  (e.g. `^Vec3 v = Vec3 { ... };`). `^` always takes the next type and
+  binds tighter than `[]`: `^Foo[]` is an array of boxed `Foo`. There is
+  no spelling for a box whose inner type is an array. In the compiler a
+  box is a structural `TypeName` flag (`isBox`/`inner`); canonical type
+  spellings look like `^Foo` / `^Foo[]`.
 
 ### Parameters
 
@@ -155,7 +161,7 @@ main) are the internal entry points.
 - `extern int printf(string fmt, ...);` — bare `...` is **extern-only** and
   call-only: the host provides the body as a real C vararg function. No
   `va_list`/`va_start` appears in user or generated code. Trailing args must be
-  scalar/`string`/handle/`box<T>`; the LLVM backend applies C default argument
+  scalar/`string`/handle/`^T`; the LLVM backend applies C default argument
   promotions (`float`→`double`, small ints→`int`) explicitly, the C backend
   relies on the C compiler. Variadic string params cross as `const char*`.
 

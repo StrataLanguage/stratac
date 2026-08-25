@@ -75,7 +75,7 @@ STRATA_TEST(llvm_and_tcc_box_parity)
 {
     CheckParity("struct Cell { int v; };\n"
                 "int entry() {\n"
-                "  box<Cell> c = Cell { .v = 7 };\n"
+                "  ^Cell c = Cell { .v = 7 };\n"
                 "  c.v = c.v + 35;\n"
                 "  return c.v;\n"
                 "}\n",
@@ -86,10 +86,10 @@ STRATA_TEST(llvm_and_tcc_box_move_parity)
 {
     /* Factory return + VarDecl move + assign move, on both backends. */
     CheckParity("struct Cell { int v; };\n"
-                "box<Cell> make(int n) { box<Cell> c = Cell { .v = n }; return c; }\n"
+                "^Cell make(int n) { ^Cell c = Cell { .v = n }; return c; }\n"
                 "int entry() {\n"
-                "  box<Cell> a = make(10);\n"
-                "  box<Cell> b = make(32);\n"
+                "  ^Cell a = make(10);\n"
+                "  ^Cell b = make(32);\n"
                 "  a = b;\n"
                 "  return a.v;\n"
                 "}\n",
@@ -100,18 +100,18 @@ STRATA_TEST(llvm_and_tcc_box_param_owned_parity)
 {
     /* An owned box parameter consumes the caller's box (moves it). */
     CheckParity("struct Cell { int v; };\n"
-                "int consume(box<Cell> c) { return c.v; }\n"
-                "int entry() { box<Cell> a = Cell { .v = 11 }; return consume(a); }\n",
+                "int consume(^Cell c) { return c.v; }\n"
+                "int entry() { ^Cell a = Cell { .v = 11 }; return consume(a); }\n",
                 11);
 }
 
 STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
 {
-    /* box<int> read as a value (no field to access) in arithmetic and a bare return. */
-    CheckParity("int read_bare(box<int> owned) { return owned; }\n"
+    /* ^int read as a value (no field to access) in arithmetic and a bare return. */
+    CheckParity("int read_bare(^int owned) { return owned; }\n"
                 "int entry() {\n"
-                "  box<int> a = 9;\n"
-                "  box<int> b = 5;\n"
+                "  ^int a = 9;\n"
+                "  ^int b = 5;\n"
                 "  int sum = a + b * 2;\n"       /* 9 + 5*2 = 19 */
                 "  return sum + read_bare(a);\n" /* a moved into read_bare -> 19 + 9 = 28 */
                 "}\n",
@@ -120,9 +120,9 @@ STRATA_TEST(llvm_and_tcc_box_scalar_value_parity)
 
 STRATA_TEST(llvm_and_tcc_box_value_assigned_into_plain_ref_target_parity)
 {
-    /* box<Vec3> assigned into a plain `ref Vec3` target derefs on both backends. */
+    /* ^Vec3 assigned into a plain `ref Vec3` target derefs on both backends. */
     CheckParity("struct Vec3 { float x; };\n"
-                "void mutate(ref Vec3 inBox) { box<Vec3> newBox = Vec3 { .x = 100.0 }; inBox = newBox; }\n"
+                "void mutate(ref Vec3 inBox) { ^Vec3 newBox = Vec3 { .x = 100.0 }; inBox = newBox; }\n"
                 "int entry() { Vec3 w = Vec3 { .x = 0.0 }; mutate(w); return (int)w.x; }\n",
                 100);
 }
@@ -132,8 +132,8 @@ STRATA_TEST(llvm_and_tcc_box_same_variable_two_owned_params_parity)
     /* The T** ABI means aliasing the same box into two owned params in one
        call must be safe (no double-free) identically on both backends. */
     CheckParity("struct Stage { int fuel; };\n"
-                "int ignite(box<Stage> primary, box<Stage> backup) { return primary.fuel + backup.fuel; }\n"
-                "int entry() { box<Stage> stage = Stage { .fuel = 50 }; return ignite(stage, stage); }\n",
+                "int ignite(^Stage primary, ^Stage backup) { return primary.fuel + backup.fuel; }\n"
+                "int entry() { ^Stage stage = Stage { .fuel = 50 }; return ignite(stage, stage); }\n",
                 100);
 }
 
@@ -142,10 +142,10 @@ STRATA_TEST(llvm_and_tcc_box_ref_chain_three_levels_parity)
     /* A 3-deep ref-box re-borrow chain must mutate the original identically
        on both backends. */
     CheckParity("struct Stage { int fuel; };\n"
-                "void drain_innermost(ref box<Stage> s) { s.fuel = s.fuel - 1; }\n"
-                "void relay_b(ref box<Stage> s) { drain_innermost(s); }\n"
-                "void relay_a(ref box<Stage> s) { relay_b(s); }\n"
-                "int entry() { box<Stage> booster = Stage { .fuel = 100 }; relay_a(booster); return booster.fuel; }\n",
+                "void drain_innermost(ref ^Stage s) { s.fuel = s.fuel - 1; }\n"
+                "void relay_b(ref ^Stage s) { drain_innermost(s); }\n"
+                "void relay_a(ref ^Stage s) { relay_b(s); }\n"
+                "int entry() { ^Stage booster = Stage { .fuel = 100 }; relay_a(booster); return booster.fuel; }\n",
                 99);
 }
 
@@ -153,10 +153,10 @@ STRATA_TEST(llvm_and_tcc_box_move_and_reassign_in_loop_parity)
 {
     /* Move-then-revalidate every loop iteration, checked on both backends. */
     CheckParity("struct Stage { int fuel; };\n"
-                "box<Stage> refuel(int amount) { box<Stage> s = Stage { .fuel = amount }; return s; }\n"
-                "int burn(box<Stage> s) { return s.fuel; }\n"
+                "^Stage refuel(int amount) { ^Stage s = Stage { .fuel = amount }; return s; }\n"
+                "int burn(^Stage s) { return s.fuel; }\n"
                 "int entry() {\n"
-                "  box<Stage> booster = refuel(5);\n"
+                "  ^Stage booster = refuel(5);\n"
                 "  int total = 0;\n"
                 "  for (int i = 0; i < 50; i++) {\n"
                 "    total += burn(booster);\n"
@@ -169,12 +169,12 @@ STRATA_TEST(llvm_and_tcc_box_move_and_reassign_in_loop_parity)
 
 STRATA_TEST(llvm_and_tcc_box_dual_owning_field_drop_parity)
 {
-    /* A struct with two owning box<T> fields must drop both without
+    /* A struct with two owning ^T fields must drop both without
        crashing on either backend. */
     CheckParity("struct Sensor { int reading; };\n"
-                "struct FlightComputer { box<Sensor> primary; box<Sensor> backup; };\n"
+                "struct FlightComputer { ^Sensor primary; ^Sensor backup; };\n"
                 "int entry() {\n"
-                "  box<FlightComputer> fc = FlightComputer {\n"
+                "  ^FlightComputer fc = FlightComputer {\n"
                 "    .primary = Sensor { .reading = 7 },\n"
                 "    .backup = Sensor { .reading = 13 }\n"
                 "  };\n"
@@ -185,9 +185,9 @@ STRATA_TEST(llvm_and_tcc_box_dual_owning_field_drop_parity)
 
 STRATA_TEST(llvm_and_tcc_box_compound_assign_parity)
 {
-    /* `val -= amt;` through a `ref box<int>` mutates in place on both backends. */
-    CheckParity("void sub(ref box<int> val, int amt) { val -= amt; }\n"
-                "int entry() { box<int> x = 15; sub(x, 25); return x; }\n",
+    /* `val -= amt;` through a `ref ^int` mutates in place on both backends. */
+    CheckParity("void sub(ref ^int val, int amt) { val -= amt; }\n"
+                "int entry() { ^int x = 15; sub(x, 25); return x; }\n",
                 -10);
 }
 
@@ -196,7 +196,7 @@ STRATA_TEST(llvm_and_tcc_box_passed_to_by_value_scalar_param_parity)
     /* A by-value (non-indirect) param - handles hit this same path - must
        receive the dereferenced value, not the box's own heap pointer. */
     CheckParity("int take(int x) { return x; }\n"
-                "int entry() { box<int> b = 41; return take(b); }\n",
+                "int entry() { ^int b = 41; return take(b); }\n",
                 41);
 }
 
@@ -206,9 +206,9 @@ STRATA_TEST(llvm_and_tcc_box_cast_via_opaque_marker_parity)
     CheckParity("struct Pistol { int ammo; };\n"
                 "struct Any;\n"
                 "int entry() {\n"
-                "  box<Pistol> p = Pistol { .ammo = 77 };\n"
-                "  box<Any> a = (box<Any>)p;\n"
-                "  box<Pistol> p2 = (box<Pistol>)a;\n"
+                "  ^Pistol p = Pistol { .ammo = 77 };\n"
+                "  ^Any a = (^Any)p;\n"
+                "  ^Pistol p2 = (^Pistol)a;\n"
                 "  return p2.ammo;\n"
                 "}\n",
                 77);
@@ -218,8 +218,8 @@ STRATA_TEST(llvm_and_tcc_box_param_ref_parity)
 {
     /* A ref box parameter borrows the caller's box. */
     CheckParity("struct Cell { int v; };\n"
-                "int read(ref box<Cell> c) { return c.v; }\n"
-                "int entry() { box<Cell> a = Cell { .v = 5 }; return (read(a) * 10) + a.v; }\n",
+                "int read(ref ^Cell c) { return c.v; }\n"
+                "int entry() { ^Cell a = Cell { .v = 5 }; return (read(a) * 10) + a.v; }\n",
                 55);
 }
 
@@ -355,10 +355,10 @@ STRATA_TEST(llvm_and_tcc_string_global_compiles)
 
 STRATA_TEST(llvm_and_tcc_box_global_allocates_and_reads_parity)
 {
-    /* A box<Pt> global is allocated in module_init and freed in teardown;
+    /* A ^Pt global is allocated in module_init and freed in teardown;
        entry() can read it and both backends must agree on the value. */
     CheckParity("struct Pt { int x; };\n"
-                "box<Pt> g_box = Pt{.x = 42};\n"
+                "^Pt g_box = Pt{.x = 42};\n"
                 "int entry() {\n"
                 "  return g_box.x;\n"                /* 42 */
                 "}\n",
@@ -378,13 +378,13 @@ STRATA_TEST(llvm_and_tcc_array_global_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_array_parity)
 {
-    /* An owning struct (holds a string) must be boxed; box<S>[] stores
-       box<S> elements, each heap-owning its string. Pushing a bare S boxes it,
+    /* An owning struct (holds a string) must be boxed; ^S[] stores
+       ^S elements, each heap-owning its string. Pushing a bare S boxes it,
        and dropping the array recursively frees every S's string in both
        backends without a crash or double-free. */
     CheckParity("struct S { string s; };\n"
                 "int entry() {\n"
-                "  box<S>[] arr = { S{.s = \"a\"}, S{.s = \"bb\"} };\n"
+                "  ^S[] arr = { S{.s = \"a\"}, S{.s = \"bb\"} };\n"
                 "  array_push(arr, S{.s = \"ccc\"});\n"
                 "  return (int)arr.length;\n"          /* 3 */
                 "}\n",
@@ -393,16 +393,16 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_array_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_ownership_parity)
 {
-    /* box<string> owns its string: create from a literal and from a string
+    /* ^string owns its string: create from a literal and from a string
        move, move boxes around, and reassign - all dropped at scope exit with
        no leak or double-free on either backend. */
     CheckParity("int entry()\n"
                 "{\n"
-                "  box<string> a = \"hello\";\n"
-                "  box<string> b = a;\n"
+                "  ^string a = \"hello\";\n"
+                "  ^string b = a;\n"
                 "  string src = \"world\";\n"
-                "  box<string> c = src;\n"
-                "  box<string> d = \"test\";\n"
+                "  ^string c = src;\n"
+                "  ^string d = \"test\";\n"
                 "  d = b;\n"
                 "  return 7;\n"
                 "}\n",
@@ -411,30 +411,30 @@ STRATA_TEST(llvm_and_tcc_box_string_ownership_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_global_parity)
 {
-    /* A box<string> global: module_init heap-copies the literal into a box
+    /* A ^string global: module_init heap-copies the literal into a box
        slot, module_teardown frees the string and the slot (no crash). */
-    CheckParity("box<string> g = \"Hello!\";\n"
+    CheckParity("^string g = \"Hello!\";\n"
                 "int entry() { return 7; }\n",
                 7);
 }
 
 /* ===========================================================================
-   Comprehensive box<T> passing-mode matrix.
+   Comprehensive ^T passing-mode matrix.
 
    For each inner-type category — plain struct, owning struct, string —
    exercise: owned param, ref param, const ref param, factory return,
    reassign, move, global, and as varargs rest elements.
    =========================================================================== */
 
-/* ---- box<plain struct> gaps (most already covered above) ---- */
+/* ---- boxed plain struct gaps (most already covered above) ---- */
 
 STRATA_TEST(llvm_and_tcc_box_plain_struct_const_ref_param_parity)
 {
-    /* const ref box<Plain>: read-only borrow, caller's box still alive. */
+    /* const ref ^Plain: read-only borrow, caller's box still alive. */
     CheckParity("struct Cell { int v; };\n"
-                "int peek(const ref box<Cell> c) { return c.v; }\n"
+                "int peek(const ref ^Cell c) { return c.v; }\n"
                 "int entry() {\n"
-                "  box<Cell> a = Cell { .v = 44 };\n"
+                "  ^Cell a = Cell { .v = 44 };\n"
                 "  int r = peek(a);\n"
                 "  return r + a.v;\n"             /* 44 + 44 = 88 */
                 "}\n",
@@ -443,12 +443,12 @@ STRATA_TEST(llvm_and_tcc_box_plain_struct_const_ref_param_parity)
 
 STRATA_TEST(llvm_and_tcc_box_plain_struct_ref_inner_value_parity)
 {
-    /* ref Plain (not ref box<Plain>): write through the box into the caller's
+    /* ref Plain (not ref ^Plain): write through the box into the caller's
        struct slot in-place. */
     CheckParity("struct Cell { int v; };\n"
                 "void set(ref Cell target) { target.v = 77; }\n"
                 "int entry() {\n"
-                "  box<Cell> a = Cell { .v = 0 };\n"
+                "  ^Cell a = Cell { .v = 0 };\n"
                 "  set(a);\n"
                 "  return a.v;\n"                 /* 77 */
                 "}\n",
@@ -457,27 +457,27 @@ STRATA_TEST(llvm_and_tcc_box_plain_struct_ref_inner_value_parity)
 
 STRATA_TEST(llvm_and_tcc_box_plain_struct_const_ref_inner_value_parity)
 {
-    /* const ref Plain from box<Plain>: read-only deref. */
+    /* const ref Plain from ^Plain: read-only deref. */
     CheckParity("struct Cell { int v; };\n"
                 "int read(const ref Cell c) { return c.v; }\n"
                 "int entry() {\n"
-                "  box<Cell> a = Cell { .v = 33 };\n"
+                "  ^Cell a = Cell { .v = 33 };\n"
                 "  int r = read(a);\n"
                 "  return r + a.v;\n"             /* 33 + 33 = 66 */
                 "}\n",
                 66);
 }
 
-/* ---- box<owning struct> full matrix ---- */
+/* ---- boxed owning struct full matrix ---- */
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_owned_param_parity)
 {
-    /* box<owning struct> consumed by owned param: inner box<int> is
+    /* boxed owning struct consumed by owned param: inner ^int is
        accessible; the whole tree is dropped at function return. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "int take(box<Owns> o) { return o.child; }\n"
+    CheckParity("struct Owns { ^int child; };\n"
+                "int take(^Owns o) { return o.child; }\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 42 };\n"
+                "  ^Owns a = Owns { .child = 42 };\n"
                 "  return take(a);\n"             /* a moved, 42 */
                 "}\n",
                 42);
@@ -485,12 +485,12 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_owned_param_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_ref_param_parity)
 {
-    /* ref box<owning struct>: borrow and mutate inner field through
+    /* ref boxed owning struct: borrow and mutate inner field through
        nested box deref. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "void bump(ref box<Owns> o) { o.child = o.child + 10; }\n"
+    CheckParity("struct Owns { ^int child; };\n"
+                "void bump(ref ^Owns o) { o.child = o.child + 10; }\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 5 };\n"
+                "  ^Owns a = Owns { .child = 5 };\n"
                 "  bump(a);\n"
                 "  bump(a);\n"
                 "  return a.child;\n"             /* 5 + 10 + 10 = 25 */
@@ -500,11 +500,11 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_ref_param_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_const_ref_param_parity)
 {
-    /* const ref box<owning struct>: read-only borrow of the whole tree. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "int peek(const ref box<Owns> o) { return o.child; }\n"
+    /* const ref boxed owning struct: read-only borrow of the whole tree. */
+    CheckParity("struct Owns { ^int child; };\n"
+                "int peek(const ref ^Owns o) { return o.child; }\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 33 };\n"
+                "  ^Owns a = Owns { .child = 33 };\n"
                 "  int r = peek(a);\n"
                 "  return r + a.child;\n"         /* 33 + 33 = 66 */
                 "}\n",
@@ -515,13 +515,13 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_factory_return_parity)
 {
     /* Build owning struct in a factory and return it; caller reads inner
        value, everything dropped correctly on both backends. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "box<Owns> make(int v) {\n"
-                "  box<Owns> o = Owns { .child = v };\n"
+    CheckParity("struct Owns { ^int child; };\n"
+                "^Owns make(int v) {\n"
+                "  ^Owns o = Owns { .child = v };\n"
                 "  return o;\n"
                 "}\n"
                 "int entry() {\n"
-                "  box<Owns> a = make(77);\n"
+                "  ^Owns a = make(77);\n"
                 "  return a.child;\n"
                 "}\n",
                 77);
@@ -529,15 +529,15 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_factory_return_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_reassign_parity)
 {
-    /* Reassigning a box<owning struct> frees the old tree (inner box freed
+    /* Reassigning a boxed owning struct frees the old tree (inner box freed
        first, then the struct, then the outer box). */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "box<Owns> make(int v) {\n"
-                "  box<Owns> o = Owns { .child = v };\n"
+    CheckParity("struct Owns { ^int child; };\n"
+                "^Owns make(int v) {\n"
+                "  ^Owns o = Owns { .child = v };\n"
                 "  return o;\n"
                 "}\n"
                 "int entry() {\n"
-                "  box<Owns> a = make(10);\n"
+                "  ^Owns a = make(10);\n"
                 "  a = make(33);\n"
                 "  return a.child;\n"             /* 33 */
                 "}\n",
@@ -546,11 +546,11 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_reassign_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_move_vardecl_parity)
 {
-    /* Move box<owning struct> between locals: inner tree transfers. */
-    CheckParity("struct Owns { box<int> child; };\n"
+    /* Move boxed owning struct between locals: inner tree transfers. */
+    CheckParity("struct Owns { ^int child; };\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 55 };\n"
-                "  box<Owns> b = a;\n"
+                "  ^Owns a = Owns { .child = 55 };\n"
+                "  ^Owns b = a;\n"
                 "  return b.child;\n"             /* 55 */
                 "}\n",
                 55);
@@ -559,11 +559,11 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_move_vardecl_parity)
 STRATA_TEST(llvm_and_tcc_box_owning_struct_ref_chain_parity)
 {
     /* 3-deep ref chain through owning structs. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "void set_inner(ref box<Owns> o, int v) { o.child = v; }\n"
-                "void relay(ref box<Owns> o) { set_inner(o, 99); }\n"
+    CheckParity("struct Owns { ^int child; };\n"
+                "void set_inner(ref ^Owns o, int v) { o.child = v; }\n"
+                "void relay(ref ^Owns o) { set_inner(o, 99); }\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 0 };\n"
+                "  ^Owns a = Owns { .child = 0 };\n"
                 "  relay(a);\n"
                 "  return a.child;\n"             /* 99 */
                 "}\n",
@@ -572,9 +572,9 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_ref_chain_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_global_parity)
 {
-    /* box<owning struct> global: module_init, mutate, module_teardown. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "box<Owns> g = Owns { .child = 99 };\n"
+    /* boxed owning struct global: module_init, mutate, module_teardown. */
+    CheckParity("struct Owns { ^int child; };\n"
+                "^Owns g = Owns { .child = 99 };\n"
                 "void bump() { g.child = g.child + 1; }\n"
                 "int entry() {\n"
                 "  bump();\n"
@@ -588,9 +588,9 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_two_owning_fields_parity)
 {
     /* Struct with two owning fields: both children dropped correctly. */
     CheckParity("struct Leaf { int v; };\n"
-                "struct Pair { box<Leaf> a; box<Leaf> b; };\n"
+                "struct Pair { ^Leaf a; ^Leaf b; };\n"
                 "int entry() {\n"
-                "  box<Pair> p = Pair {\n"
+                "  ^Pair p = Pair {\n"
                 "    .a = Leaf { .v = 17 },\n"
                 "    .b = Leaf { .v = 25 }\n"
                 "  };\n"
@@ -599,13 +599,13 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_two_owning_fields_parity)
                 42);
 }
 
-/* ---- box<owning struct> as varargs ---- */
+/* ---- boxed owning struct as varargs ---- */
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_to_box_rest_parity)
 {
-    /* box<owning struct> elements moved into box<Owns>... rest. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "int sum_owns(box<Owns>... rest) {\n"
+    /* boxed owning struct elements moved into ^Owns... rest. */
+    CheckParity("struct Owns { ^int child; };\n"
+                "int sum_owns(^Owns... rest) {\n"
                 "  int total = 0;\n"
                 "  for (ulong i = 0; i < rest.length; i = i + 1) {\n"
                 "    total = total + rest[i].child;\n"
@@ -613,8 +613,8 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_to_box_rest_parity)
                 "  return total;\n"
                 "}\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 10 };\n"
-                "  box<Owns> b = Owns { .child = 20 };\n"
+                "  ^Owns a = Owns { .child = 10 };\n"
+                "  ^Owns b = Owns { .child = 20 };\n"
                 "  return sum_owns(a, b);\n"      /* 30 */
                 "}\n",
                 30);
@@ -622,9 +622,9 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_to_box_rest_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_ref_box_rest_parity)
 {
-    /* ref box<owning struct>... rest: borrow, sources stay alive. */
-    CheckParity("struct Owns { box<int> child; };\n"
-                "int sum_ref(ref box<Owns>... rest) {\n"
+    /* ref boxed owning struct... rest: borrow, sources stay alive. */
+    CheckParity("struct Owns { ^int child; };\n"
+                "int sum_ref(ref ^Owns... rest) {\n"
                 "  int total = 0;\n"
                 "  for (ulong i = 0; i < rest.length; i = i + 1) {\n"
                 "    total = total + rest[i].child;\n"
@@ -632,23 +632,23 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_ref_box_rest_parity)
                 "  return total;\n"
                 "}\n"
                 "int entry() {\n"
-                "  box<Owns> a = Owns { .child = 10 };\n"
-                "  box<Owns> b = Owns { .child = 20 };\n"
+                "  ^Owns a = Owns { .child = 10 };\n"
+                "  ^Owns b = Owns { .child = 20 };\n"
                 "  int s = sum_ref(a, b);\n"
                 "  return s + a.child + b.child;\n" /* 30 + 10 + 20 = 60 */
                 "}\n",
                 60);
 }
 
-/* ---- box<string> passing modes ---- */
+/* ---- ^string passing modes ---- */
 
 STRATA_TEST(llvm_and_tcc_box_string_owned_param_parity)
 {
-    /* box<string> consumed by owned param: callee drops the string + box
+    /* ^string consumed by owned param: callee drops the string + box
        at return; no crash. */
-    CheckParity("int take(box<string> s) { return 42; }\n"
+    CheckParity("int take(^string s) { return 42; }\n"
                 "int entry() {\n"
-                "  box<string> b = \"hello\";\n"
+                "  ^string b = \"hello\";\n"
                 "  return take(b);\n"             /* b moved */
                 "}\n",
                 42);
@@ -656,10 +656,10 @@ STRATA_TEST(llvm_and_tcc_box_string_owned_param_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_ref_param_parity)
 {
-    /* ref box<string>: borrow, box still alive after the call. */
-    CheckParity("int read(ref box<string> s) { return 7; }\n"
+    /* ref ^string: borrow, box still alive after the call. */
+    CheckParity("int read(ref ^string s) { return 7; }\n"
                 "int entry() {\n"
-                "  box<string> b = \"hello\";\n"
+                "  ^string b = \"hello\";\n"
                 "  int r = read(b);\n"
                 "  return r;\n"                   /* b still alive */
                 "}\n",
@@ -668,10 +668,10 @@ STRATA_TEST(llvm_and_tcc_box_string_ref_param_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_const_ref_param_parity)
 {
-    /* const ref box<string>: read-only borrow. */
-    CheckParity("int peek(const ref box<string> s) { return 8; }\n"
+    /* const ref ^string: read-only borrow. */
+    CheckParity("int peek(const ref ^string s) { return 8; }\n"
                 "int entry() {\n"
-                "  box<string> b = \"hello\";\n"
+                "  ^string b = \"hello\";\n"
                 "  int r = peek(b);\n"
                 "  return r;\n"
                 "}\n",
@@ -680,10 +680,10 @@ STRATA_TEST(llvm_and_tcc_box_string_const_ref_param_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_factory_return_parity)
 {
-    /* Factory creates box<string> from literal, returns it; caller owns. */
-    CheckParity("box<string> make() { box<string> s = \"world\"; return s; }\n"
+    /* Factory creates ^string from literal, returns it; caller owns. */
+    CheckParity("^string make() { ^string s = \"world\"; return s; }\n"
                 "int entry() {\n"
-                "  box<string> b = make();\n"
+                "  ^string b = make();\n"
                 "  return 42;\n"
                 "}\n",
                 42);
@@ -691,10 +691,10 @@ STRATA_TEST(llvm_and_tcc_box_string_factory_return_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_reassign_parity)
 {
-    /* Reassigning a box<string> frees the old string + box slot. */
-    CheckParity("box<string> make() { box<string> s = \"world\"; return s; }\n"
+    /* Reassigning a ^string frees the old string + box slot. */
+    CheckParity("^string make() { ^string s = \"world\"; return s; }\n"
                 "int entry() {\n"
-                "  box<string> a = \"hello\";\n"
+                "  ^string a = \"hello\";\n"
                 "  a = make();\n"
                 "  return 42;\n"
                 "}\n",
@@ -703,10 +703,10 @@ STRATA_TEST(llvm_and_tcc_box_string_reassign_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_move_vardecl_parity)
 {
-    /* Move box<string> between locals. */
+    /* Move ^string between locals. */
     CheckParity("int entry() {\n"
-                "  box<string> a = \"hello\";\n"
-                "  box<string> b = a;\n"
+                "  ^string a = \"hello\";\n"
+                "  ^string b = a;\n"
                 "  return 42;\n"
                 "}\n",
                 42);
@@ -714,15 +714,15 @@ STRATA_TEST(llvm_and_tcc_box_string_move_vardecl_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_in_owning_struct_parity)
 {
-    /* A struct with a box<string> field is owning; dropping the outer
-       box<Holder> frees the inner box<string> and its string. */
-    CheckParity("struct Holder { box<string> name; };\n"
-                "box<Holder> make(string s) {\n"
-                "  box<Holder> h = Holder { .name = s };\n"
+    /* A struct with a ^string field is owning; dropping the outer
+       ^Holder frees the inner ^string and its string. */
+    CheckParity("struct Holder { ^string name; };\n"
+                "^Holder make(string s) {\n"
+                "  ^Holder h = Holder { .name = s };\n"
                 "  return h;\n"
                 "}\n"
                 "int entry() {\n"
-                "  box<Holder> h = make(\"test\");\n"
+                "  ^Holder h = make(\"test\");\n"
                 "  return 42;\n"
                 "}\n",
                 42);
@@ -730,10 +730,10 @@ STRATA_TEST(llvm_and_tcc_box_string_in_owning_struct_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_in_owning_struct_two_fields_parity)
 {
-    /* Two box<string> fields: both dropped correctly. */
-    CheckParity("struct Pair { box<string> a; box<string> b; };\n"
+    /* Two ^string fields: both dropped correctly. */
+    CheckParity("struct Pair { ^string a; ^string b; };\n"
                 "int entry() {\n"
-                "  box<Pair> p = Pair { .a = \"first\", .b = \"second\" };\n"
+                "  ^Pair p = Pair { .a = \"first\", .b = \"second\" };\n"
                 "  return 42;\n"
                 "}\n",
                 42);
@@ -741,9 +741,9 @@ STRATA_TEST(llvm_and_tcc_box_string_in_owning_struct_two_fields_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_global_ref_param_parity)
 {
-    /* A box<string> global borrowed by a ref param. */
-    CheckParity("box<string> g = \"global\";\n"
-                "int read(ref box<string> s) { return 5; }\n"
+    /* A ^string global borrowed by a ref param. */
+    CheckParity("^string g = \"global\";\n"
+                "int read(ref ^string s) { return 5; }\n"
                 "int entry() {\n"
                 "  int r = read(g);\n"
                 "  return r;\n"
@@ -751,16 +751,16 @@ STRATA_TEST(llvm_and_tcc_box_string_global_ref_param_parity)
                 5);
 }
 
-/* ---- box<string> as varargs ---- */
+/* ---- ^string as varargs ---- */
 
 STRATA_TEST(llvm_and_tcc_box_string_to_box_string_rest_parity)
 {
-    /* box<string> to box<string>... rest: move the boxes; rest array dropped
+    /* ^string to ^string... rest: move the boxes; rest array dropped
        on return with no leak or double-free. */
-    CheckParity("int count(box<string>... rest) { return (int)rest.length; }\n"
+    CheckParity("int count(^string... rest) { return (int)rest.length; }\n"
                 "int entry() {\n"
-                "  box<string> a = \"hello\";\n"
-                "  box<string> b = \"world\";\n"
+                "  ^string a = \"hello\";\n"
+                "  ^string b = \"world\";\n"
                 "  return count(a, b);\n"         /* 2 */
                 "}\n",
                 2);
@@ -768,11 +768,11 @@ STRATA_TEST(llvm_and_tcc_box_string_to_box_string_rest_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_ref_box_string_rest_parity)
 {
-    /* ref box<string>... rest: borrow, sources stay alive. */
-    CheckParity("int count(ref box<string>... rest) { return (int)rest.length; }\n"
+    /* ref ^string... rest: borrow, sources stay alive. */
+    CheckParity("int count(ref ^string... rest) { return (int)rest.length; }\n"
                 "int entry() {\n"
-                "  box<string> a = \"hello\";\n"
-                "  box<string> b = \"world\";\n"
+                "  ^string a = \"hello\";\n"
+                "  ^string b = \"world\";\n"
                 "  int n = count(a, b);\n"
                 "  return n;\n"                   /* 2 */
                 "}\n",
@@ -781,12 +781,12 @@ STRATA_TEST(llvm_and_tcc_box_string_ref_box_string_rest_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_loop_soak_parity)
 {
-    /* Heavy stress: create and drop box<string> every iteration — verifies
+    /* Heavy stress: create and drop ^string every iteration — verifies
        alloc/free balance on both backends at scale. */
     CheckParity("int entry() {\n"
                 "  int sum = 0;\n"
                 "  for (int i = 0; i < 100; i++) {\n"
-                "    box<string> s = \"hello\";\n"
+                "    ^string s = \"hello\";\n"
                 "    sum = sum + 1;\n"
                 "  }\n"
                 "  return sum;\n"                 /* 100 */
@@ -796,12 +796,12 @@ STRATA_TEST(llvm_and_tcc_box_string_loop_soak_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_loop_soak_parity)
 {
-    /* Heavy stress: create and drop box<owning struct> every iteration. */
-    CheckParity("struct Owns { box<int> child; };\n"
+    /* Heavy stress: create and drop boxed owning struct every iteration. */
+    CheckParity("struct Owns { ^int child; };\n"
                 "int entry() {\n"
                 "  int sum = 0;\n"
                 "  for (int i = 0; i < 100; i++) {\n"
-                "    box<Owns> o = Owns { .child = i };\n"
+                "    ^Owns o = Owns { .child = i };\n"
                 "    sum = sum + o.child;\n"
                 "  }\n"
                 "  return sum;\n"                 /* 0+1+...+99 = 4950 */
@@ -809,15 +809,15 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_loop_soak_parity)
                 4950);
 }
 
-/* ---- box<string>[] array operations ---- */
+/* ---- ^string[] array operations ---- */
 
 STRATA_TEST(llvm_and_tcc_box_string_array_push_literal_parity)
 {
-    /* array_push of a string literal into box<string>[] must box the literal
+    /* array_push of a string literal into ^string[] must box the literal
        (strata_strdup + alloc char* slot), not store the raw char*.  Reading
        the element back and dereferencing must not crash. */
     CheckParity("int entry() {\n"
-                "  box<string>[] arr;\n"
+                "  ^string[] arr;\n"
                 "  array_push(arr, \"hello\");\n"
                 "  array_push(arr, \"world\");\n"
                 "  return (int)arr.length;\n"      /* 2 */
@@ -827,11 +827,11 @@ STRATA_TEST(llvm_and_tcc_box_string_array_push_literal_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_array_push_move_parity)
 {
-    /* Pushing a box<string> variable moves it into the array element
+    /* Pushing a ^string variable moves it into the array element
        (pointer move, source nulled). */
     CheckParity("int entry() {\n"
-                "  box<string>[] arr;\n"
-                "  box<string> a = \"first\";\n"
+                "  ^string[] arr;\n"
+                "  ^string a = \"first\";\n"
                 "  array_push(arr, a);\n"
                 "  return (int)arr.length;\n"      /* 1 */
                 "}\n",
@@ -840,10 +840,10 @@ STRATA_TEST(llvm_and_tcc_box_string_array_push_move_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_array_literal_init_parity)
 {
-    /* box<string>[] initialized from a literal: each string literal is
+    /* ^string[] initialized from a literal: each string literal is
        boxed properly. */
     CheckParity("int entry() {\n"
-                "  box<string>[] arr = { \"alpha\", \"beta\", \"gamma\" };\n"
+                "  ^string[] arr = { \"alpha\", \"beta\", \"gamma\" };\n"
                 "  return (int)arr.length;\n"      /* 3 */
                 "}\n",
                 3);
@@ -851,9 +851,9 @@ STRATA_TEST(llvm_and_tcc_box_string_array_literal_init_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_array_push_then_pop_parity)
 {
-    /* Push then pop: the popped box<string> is returned and dropped. */
+    /* Push then pop: the popped ^string is returned and dropped. */
     CheckParity("int entry() {\n"
-                "  box<string>[] arr;\n"
+                "  ^string[] arr;\n"
                 "  array_push(arr, \"first\");\n"
                 "  array_push(arr, \"second\");\n"
                 "  array_pop(arr);\n"
@@ -864,10 +864,10 @@ STRATA_TEST(llvm_and_tcc_box_string_array_push_then_pop_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_array_loop_soak_parity)
 {
-    /* Push a box<string> each iteration, drop the whole array at the end.
+    /* Push a ^string each iteration, drop the whole array at the end.
        Verifies alloc/free balance at scale on both backends. */
     CheckParity("int entry() {\n"
-                "  box<string>[] arr;\n"
+                "  ^string[] arr;\n"
                 "  for (int i = 0; i < 50; i++) {\n"
                 "    array_push(arr, \"item\");\n"
                 "  }\n"
@@ -878,11 +878,11 @@ STRATA_TEST(llvm_and_tcc_box_string_array_loop_soak_parity)
 
 STRATA_TEST(llvm_and_tcc_box_struct_array_push_literal_parity)
 {
-    /* array_push of a bare struct value into box<T>[] must box it inline
+    /* array_push of a bare struct value into ^T[] must box it inline
        (alloc T slot, store value, store slot pointer). */
     CheckParity("struct Cell { int v; };\n"
                 "int entry() {\n"
-                "  box<Cell>[] arr;\n"
+                "  ^Cell[] arr;\n"
                 "  array_push(arr, Cell { .v = 10 });\n"
                 "  array_push(arr, Cell { .v = 20 });\n"
                 "  return arr[0].v + arr[1].v;\n"  /* 30 */
@@ -892,11 +892,11 @@ STRATA_TEST(llvm_and_tcc_box_struct_array_push_literal_parity)
 
 STRATA_TEST(llvm_and_tcc_box_struct_array_push_box_var_parity)
 {
-    /* Pushing a box<T> variable moves it into the array. */
+    /* Pushing a ^T variable moves it into the array. */
     CheckParity("struct Cell { int v; };\n"
                 "int entry() {\n"
-                "  box<Cell>[] arr;\n"
-                "  box<Cell> a = Cell { .v = 7 };\n"
+                "  ^Cell[] arr;\n"
+                "  ^Cell a = Cell { .v = 7 };\n"
                 "  array_push(arr, a);\n"
                 "  return arr[0].v;\n"             /* 7 */
                 "}\n",
@@ -905,8 +905,8 @@ STRATA_TEST(llvm_and_tcc_box_struct_array_push_box_var_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_array_global_push_parity)
 {
-    /* A box<string>[] global, pushed to from a function, readable later. */
-    CheckParity("box<string>[] g_arr;\n"
+    /* A ^string[] global, pushed to from a function, readable later. */
+    CheckParity("^string[] g_arr;\n"
                 "void add_item() { array_push(g_arr, \"global\"); }\n"
                 "int entry() {\n"
                 "  add_item();\n"
@@ -918,11 +918,11 @@ STRATA_TEST(llvm_and_tcc_box_string_array_global_push_parity)
 
 STRATA_TEST(llvm_and_tcc_box_owning_struct_array_push_parity)
 {
-    /* Pushing a box<owning struct> moves it; the array's drop frees each
+    /* Pushing a boxed owning struct moves it; the array's drop frees each
        element's inner box recursively. */
-    CheckParity("struct Owns { box<int> child; };\n"
+    CheckParity("struct Owns { ^int child; };\n"
                 "int entry() {\n"
-                "  box<Owns>[] arr;\n"
+                "  ^Owns[] arr;\n"
                 "  array_push(arr, Owns { .child = 10 });\n"
                 "  array_push(arr, Owns { .child = 20 });\n"
                 "  return arr[0].child + arr[1].child;\n"  /* 30 */
@@ -932,14 +932,14 @@ STRATA_TEST(llvm_and_tcc_box_owning_struct_array_push_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_content_assign_parity)
 {
-    /* Content-assigning a string literal into an existing box<string>
-       (`box<string> = "x"`) must drop the old inner value in place and
+    /* Content-assigning a string literal into an existing ^string
+       (`^string = "x"`) must drop the old inner value in place and
        store a freshly owned copy — not free the entire box, and not store a
        raw pointer. The buggy C backend emitted `*box = *"goodbye"` (the
        literal's first character), corrupting the inner pointer to 0x67 so
        teardown crashed freeing it; the buggy LLVM backend dropped the whole
        box. Both backends must run and drop cleanly. */
-    CheckParity("box<string> g = \"hi\";\n"
+    CheckParity("^string g = \"hi\";\n"
                 "int entry() {\n"
                 "  g = \"goodbye\";\n"
                 "  return 42;\n"
@@ -949,10 +949,10 @@ STRATA_TEST(llvm_and_tcc_box_string_content_assign_parity)
 
 STRATA_TEST(llvm_and_tcc_box_string_array_element_content_assign_parity)
 {
-    /* The same content-assign through a global box<string>[] element — the
+    /* The same content-assign through a global ^string[] element — the
        exact box_demo crash: element content-assigned, dropped at teardown
        without corruption or freeing the box allocation itself. */
-    CheckParity("box<string>[] g = { \"hi\" };\n"
+    CheckParity("^string[] g = { \"hi\" };\n"
                 "int entry() {\n"
                 "  g[0] = \"goodbye\";\n"
                 "  return 7;\n"
@@ -976,12 +976,12 @@ STRATA_TEST(llvm_and_tcc_local_owning_array_element_move_parity)
 
 STRATA_TEST(llvm_and_tcc_copy_box_string_deep_parity)
 {
-    /* copy(box<string>) must duplicate the inner string: the copied box owns
+    /* copy(^string) must duplicate the inner string: the copied box owns
        a fresh buffer. An aliasing copy double-frees the shared string when
        both boxes drop, crashing both backends. */
     CheckParity("int entry() {\n"
-                "  box<string> a = \"hello\";\n"
-                "  box<string> b = copy(a);\n"
+                "  ^string a = \"hello\";\n"
+                "  ^string b = copy(a);\n"
                 "  return 7;\n"
                 "}\n",
                 7);
@@ -1002,10 +1002,10 @@ STRATA_TEST(llvm_and_tcc_copy_string_array_deep_parity)
 
 STRATA_TEST(llvm_and_tcc_copy_box_string_array_deep_parity)
 {
-    /* copy(box<string>[]) must duplicate each box AND its inner string. */
+    /* copy(^string[]) must duplicate each box AND its inner string. */
     CheckParity("int entry() {\n"
-                "  box<string>[] a = { \"alpha\", \"beta\" };\n"
-                "  box<string>[] b = copy(a);\n"
+                "  ^string[] a = { \"alpha\", \"beta\" };\n"
+                "  ^string[] b = copy(a);\n"
                 "  return (int)b.length;\n"          /* 2 */
                 "}\n",
                 2);

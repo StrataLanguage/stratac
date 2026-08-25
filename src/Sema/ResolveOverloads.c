@@ -171,7 +171,7 @@ static bool IsBoxGlobalName(const Resolver* r, const char* name)
 
 /* The identifier a move key is rooted in - "holder.gun" -> "holder",
    "arr[]" -> "arr", "g.arr[]" -> "g". Used to check the underlying binding
-   (a global, or a ref box<T> param), not just the literal access text, so
+   (a global, or a ref ^T param), not just the literal access text, so
    the move ban applies transitively through struct fields and array
    elements. */
 static const char* KeyRoot(Arena* arena, const char* key)
@@ -204,7 +204,7 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
     }
 }
 
-/* Marks 'name' moved, unless it's a box global or rooted in a `ref box<T>`
+/* Marks 'name' moved, unless it's a box global or rooted in a `ref ^T`
    param - a borrow of the caller's box, which the callee doesn't own and
    can't validly move out of (the caller's own liveness tracking has no way
    to see a move that happens inside a different function). */
@@ -215,7 +215,7 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     if (IsBoxGlobalName(r, root))
     {
         DiagErrorFmt(r->m_diag, range,
-                     "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref box<T>`, copy() it, or pass `T` by value)",
+                      "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref ^T`, copy() it, or pass `T` by value)",
                      name);
 
         return;
@@ -460,7 +460,7 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     if (!argType || argType[0] == '\0' || !IsOwningType(argType))
     {
         DiagErrorFmt(r->m_diag, arg0->range,
-                     "'copy' expects an owning type (string, box<T>, T[]) — not '%s'", argType);
+                     "'copy' expects an owning type (string, ^T, T[]) — not '%s'", argType);
         return true;
     }
 
@@ -645,8 +645,8 @@ static bool IsCVarargScalarish(Resolver* r, const char* type)
 }
 
 /* Types that may be passed through a bare extern `...` (C varargs).
-   Scalars, string, handles, and box<T> (which derefs to its value) reduce
-   to something the C ABI can carry; box<T> is only allowed when T itself is
+   Scalars, string, handles, and ^T (which derefs to its value) reduce
+   to something the C ABI can carry; ^T is only allowed when T itself is
    scalar/string/handle, since a boxed struct would have to cross by value. */
 static bool IsCVarargCompatible(Resolver* r, const char* type)
 {
@@ -684,7 +684,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     /* For a typed rest, the last param is the collected T[] array itself, so
        the arg at that slot is really the first ELEMENT. Only args before it
        map to named params; everything from the rest slot onward moves only if
-       the ELEMENT type is owning (e.g. box<T>...), not because T[] is. */
+       the ELEMENT type is owning (e.g. ^T...), not because T[] is. */
     bool typedRest = best->isVariadic && !best->isCVararg;
     size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
 
@@ -765,7 +765,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
-    // copy(string/box<T>/T[]): deep-copy an owning value.
+    // copy(string/^T/T[]): deep-copy an owning value.
     if (c->callee != NULL && ResolveCopyBuiltin(r, c, scope))
     {
         return;
@@ -908,7 +908,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             }
             else if (IsOwningType(argType))
             {
-                /* box<T> coerces to T (implicit deref). */
+                /* ^T coerces to T (implicit deref). */
                 if (StrEqC(OwningInnerStr(argType), paramType))
                 {
                     score += 1;
@@ -922,7 +922,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             else if (isTail && param->mod == ModNone && IsOwningType(paramType)
                      && StrEqC(OwningInnerStr(paramType), argType))
             {
-                /* T coerces to box<T> (implicit boxing), matching array
+                /* T coerces to ^T (implicit boxing), matching array
                    literals. Only valid for owned (non-ref) typed-rest tail
                    args, where the collector boxes each element inline and the
                    callee owns it; a ref rest borrows, so it can't box. */
@@ -1304,7 +1304,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             const char* vt = InferType(r, a->value, scope);
 
             /* `=` rebinds the box (moves in a new box of the same type);
-               any other assignment into a box<T> - including `=` with a
+               any other assignment into a ^T - including `=` with a
                plain T value, e.g. `x = 5;` - mutates its contents instead. */
             bool boxMove = a->op == AssignSet && vt[0] != '\0' && strcmp(vt, tt) == 0;
             const char* targetName = ((IdentExpr*)a->target)->name;
@@ -1319,7 +1319,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     return;
                 }
 
-                /* A `ref box<T>` is a view of the caller's box binding, not
+                /* A `ref ^T` is a view of the caller's box binding, not
                    something this function owns - rebinding it (`inBox =
                    otherBox;`) would silently rebind the caller's variable
                    too. Only the box's contents can be assigned through a
@@ -1347,7 +1347,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             else
             {
                 /* Assigning a plain T (or compound-assigning) into a
-                   box<T> (`x = 5;`, `val -= amt;`) mutates the boxed value
+                   ^T (`x = 5;`, `val -= amt;`) mutates the boxed value
                    in place - not a move, so it's allowed even for a box
                    global or a moved-and-revalidated box. */
                 if (IsBoxMoved(r, targetName))
@@ -1359,7 +1359,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 if (vt[0] != '\0' && !IsAssignableType(r, inner, vt))
                 {
-                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' into box<%s> '%s'", vt, inner,
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' into ^%s '%s'", vt, inner,
                                  targetName);
                 }
             }
@@ -1417,9 +1417,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             ResolveExpr(r, a->target, scope);
             ResolveExpr(r, a->value, scope);
 
-            /* A box<T> value assigned into a plain (non-box) T target - a
+            /* A ^T value assigned into a plain (non-box) T target - a
                ref T param, a local, a field - reads through the box (same
-               "box<T> -> T" coercion already used for var-decl inits, call
+               "^T -> T" coercion already used for var-decl inits, call
                args, and returns), not a move. */
             if (tt)
             {
@@ -1455,7 +1455,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             = src && dst && IsHandleType(&r->m_registry, src) && IsHandleType(&r->m_registry, dst)
               && (HandleExtendsFrom(&r->m_registry, dst, src) || HandleExtendsFrom(&r->m_registry, src, dst));
 
-        /* box<T> -> box<U> only when T or U is opaque (erase/cast-back). */
+        /* ^T -> ^U only when T or U is opaque (erase/cast-back). */
         bool boxPair = src && dst && IsOwningType(src) && IsOwningType(dst)
                        && (TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, src))
                            || TypeRegistryIsOpaque(&r->m_registry, OwningInnerCStr(r->m_arena, dst)));
@@ -1596,9 +1596,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                  fieldDecl->name, structInitExpr->typeName, fieldValueType);
                 }
 
-                /* A box<T> field moves its source — but only when the source
-                   value itself is owning (box<T> into box<T>, string into
-                   box<string>). A bare T boxed into a box<T> field is a copy. */
+                /* A ^T field moves its source — but only when the source
+                   value itself is owning (^T into ^T, string into
+                   ^string). A bare T boxed into a ^T field is a copy. */
                 const char* movedFieldKey
                     = (IsOwningType(fieldDecl->type.name)
                        && fieldValueType[0] != '\0' && IsOwningType(fieldValueType))
@@ -1708,12 +1708,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         if (TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range, "owning struct '%s' must be stored in a box; use 'box<%s>'",
+            DiagErrorFmt(r->m_diag, vd->base.range, "owning struct '%s' must be stored in a box; use '^%s'",
                          vd->type.name, vd->type.name);
         }
 
         /* An owning struct held by value as an array element would leak its
-           owning fields on drop - it must be boxed too (box<S>[]). */
+           owning fields on drop - it must be boxed too (^S[]). */
         {
             Str arrInner = ArrayInnerStr(vd->type.name);
 
@@ -1721,8 +1721,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             {
                 const char* innerC = StrNew(r->m_arena, arrInner.data, arrInner.len).data;
                 DiagErrorFmt(r->m_diag, vd->base.range,
-                             "owning struct '%s' must be stored in a box; use 'box<%s>[]'",
-                             innerC, innerC);
+                              "owning struct '%s' must be stored in a box; use '^%s[]'",
+                              innerC, innerC);
             }
         }
 
@@ -1739,7 +1739,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              vd->type.name, initType);
             }
 
-            /* box<T> init from a box source (identifier/field/cast) moves it. */
+            /* ^T init from a box source (identifier/field/cast) moves it. */
             const char* movedInitKey
                 = IsOwningType(vd->type.name) && IsOwningType(initType) ? MovableBoxSourceKey(r, vd->init) : NULL;
 
@@ -1790,7 +1790,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              r->m_currentReturnType);
             }
 
-            /* Only a move if the function itself returns box<T>; otherwise
+            /* Only a move if the function itself returns ^T; otherwise
                it's a read (unless the inner type is owning). */
             const char* movedReturnKey = IsOwningType(typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
 

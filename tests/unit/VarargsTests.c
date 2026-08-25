@@ -345,9 +345,9 @@ STRATA_TEST(varargs_typed_rest_struct_parity)
 
 STRATA_TEST(varargs_typed_rest_box_elements_parity)
 {
-    /* box<Foo>... moves each box source into the collected box<Foo>[]. */
+    /* ^Foo... moves each box source into the collected ^Foo[]. */
     CheckParity("struct Foo { int v; };\n"
-                "int sum_box(box<Foo>... rest)\n"
+                "int sum_box(^Foo... rest)\n"
                 "{\n"
                 "    int total = 0;\n"
                 "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
@@ -355,8 +355,8 @@ STRATA_TEST(varargs_typed_rest_box_elements_parity)
                 "}\n"
                 "int entry()\n"
                 "{\n"
-                "    box<Foo> a = Foo{.v = 10};\n"
-                "    box<Foo> b = Foo{.v = 20};\n"
+                "    ^Foo a = Foo{.v = 10};\n"
+                "    ^Foo b = Foo{.v = 20};\n"
                 "    return sum_box(a, b);\n"   /* 30 */
                 "}\n",
                 30);
@@ -364,9 +364,9 @@ STRATA_TEST(varargs_typed_rest_box_elements_parity)
 
 STRATA_TEST(varargs_typed_rest_implicit_box_parity)
 {
-    /* Bare T args to a box<T>... rest are boxed inline, like array literals. */
+    /* Bare T args to a ^T... rest are boxed inline, like array literals. */
     CheckParity("struct Foo { int v; };\n"
-                "int sum_box(box<Foo>... rest)\n"
+                "int sum_box(^Foo... rest)\n"
                 "{\n"
                 "    int total = 0;\n"
                 "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
@@ -378,7 +378,7 @@ STRATA_TEST(varargs_typed_rest_implicit_box_parity)
 
 STRATA_TEST(varargs_typed_rest_box_arg_coerces_to_scalar_parity)
 {
-    /* box<int> args to an int... rest deref to their value (implicit deref),
+    /* ^int args to an int... rest deref to their value (implicit deref),
        NOT a move: the boxes stay usable afterwards. */
     CheckParity("int sum_int(int... rest)\n"
                 "{\n"
@@ -388,8 +388,8 @@ STRATA_TEST(varargs_typed_rest_box_arg_coerces_to_scalar_parity)
                 "}\n"
                 "int entry()\n"
                 "{\n"
-                "    box<int> x = 5;\n"
-                "    box<int> y = 7;\n"
+                "    ^int x = 5;\n"
+                "    ^int y = 7;\n"
                 "    int s = sum_int(1, x, y);\n"
                 "    return s + x;\n"          /* 13 + 5 = 18 */
                 "}\n",
@@ -398,7 +398,7 @@ STRATA_TEST(varargs_typed_rest_box_arg_coerces_to_scalar_parity)
 
 STRATA_TEST(varargs_typed_rest_box_arg_not_moved_for_nonowning_element_parity)
 {
-    /* box<Pt> to a Pt... rest derefs into the array (a copy), not a move:
+    /* ^Pt to a Pt... rest derefs into the array (a copy), not a move:
        the box stays live for later use. */
     CheckParity("struct Pt { int x; };\n"
                 "int sum_pts(Pt... rest)\n"
@@ -409,7 +409,7 @@ STRATA_TEST(varargs_typed_rest_box_arg_not_moved_for_nonowning_element_parity)
                 "}\n"
                 "int entry()\n"
                 "{\n"
-                "    box<Pt> p = Pt{.x = 10};\n"
+                "    ^Pt p = Pt{.x = 10};\n"
                 "    int s = sum_pts(p, Pt{.x = 20});\n"
                 "    return s + p.x;\n"        /* 30 + 10 = 40 */
                 "}\n",
@@ -418,21 +418,21 @@ STRATA_TEST(varargs_typed_rest_box_arg_not_moved_for_nonowning_element_parity)
 
 STRATA_TEST(varargs_typed_rest_box_move_then_reassign_parity)
 {
-    /* Passing boxes to a box<Foo>... rest moves them out (source nulled).
+    /* Passing boxes to a ^Foo... rest moves them out (source nulled).
        The moved box can be re-livened by rebinding a fresh box value; no
        double-free or leak on either backend. */
     CheckParity("struct Foo { int v; };\n"
-                "int sum_box(box<Foo>... rest)\n"
+                "int sum_box(^Foo... rest)\n"
                 "{\n"
                 "    int total = 0;\n"
                 "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
                 "    return total;\n"
                 "}\n"
-                "box<Foo> make_box() { box<Foo> x = Foo{.v = 5}; return x; }\n"
+                "^Foo make_box() { ^Foo x = Foo{.v = 5}; return x; }\n"
                 "int entry()\n"
                 "{\n"
-                "    box<Foo> a = Foo{.v = 10};\n"
-                "    box<Foo> b = Foo{.v = 20};\n"
+                "    ^Foo a = Foo{.v = 10};\n"
+                "    ^Foo b = Foo{.v = 20};\n"
                 "    int s = sum_box(a, b);\n"
                 "    a = make_box();\n"
                 "    return s + a.v;\n"            /* 30 + 5 = 35 */
@@ -529,12 +529,12 @@ STRATA_TEST(varargs_typed_rest_ref_aliases_scalars_parity)
 
 STRATA_TEST(varargs_typed_rest_ref_aliases_box_parity)
 {
-    /* A box<T> arg to a ref Foo... rest aliases the boxed value. */
+    /* A ^T arg to a ref Foo... rest aliases the boxed value. */
     CheckParity("struct Foo { int v; };\n"
                 "void set_first(ref Foo... rest) { rest[0].v = 99; }\n"
                 "int entry()\n"
                 "{\n"
-                "    box<Foo> a = Foo{.v = 1};\n"
+                "    ^Foo a = Foo{.v = 1};\n"
                 "    Foo b = Foo{.v = 2};\n"
                 "    set_first(a, b);\n"
                 "    return a.v + b.v;\n"   /* 99 + 2 = 101 */
@@ -571,9 +571,9 @@ STRATA_TEST(sema_typed_rest_const_element_write_rejected)
 
 STRATA_TEST(varargs_typed_rest_ref_box_borrow_parity)
 {
-    /* ref box<Foo>... rest borrows the boxes: the sources stay alive. */
+    /* ref ^Foo... rest borrows the boxes: the sources stay alive. */
     CheckParity("struct Foo { int v; };\n"
-                "int read_boxes(ref box<Foo>... rest)\n"
+                "int read_boxes(ref ^Foo... rest)\n"
                 "{\n"
                 "    int total = 0;\n"
                 "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].v; }\n"
@@ -581,8 +581,8 @@ STRATA_TEST(varargs_typed_rest_ref_box_borrow_parity)
                 "}\n"
                 "int entry()\n"
                 "{\n"
-                "    box<Foo> a = Foo{.v = 5};\n"
-                "    box<Foo> b = Foo{.v = 7};\n"
+                "    ^Foo a = Foo{.v = 5};\n"
+                "    ^Foo b = Foo{.v = 7};\n"
                 "    int s = read_boxes(a, b);\n"
                 "    return s + a.v + b.v;\n"     /* 12 + 5 + 7 = 24 */
                 "}\n",
@@ -605,12 +605,12 @@ STRATA_TEST(varargs_typed_rest_struct_stack_buffer_parity)
 
 STRATA_TEST(c_backend_box_array_element_to_by_value_param_parity)
 {
-    /* A box<T> array element (e.g. `box<int>[] a; a[0]`) passed to a by-value
+    /* A ^T array element (e.g. `^int[] a; a[0]`) passed to a by-value
        T param auto-derefs, like a box ident. */
     CheckParity("int read(int x) { return x; }\n"
                 "int entry()\n"
                 "{\n"
-                "    box<int>[] a = { 7 };\n"
+                "    ^int[] a = { 7 };\n"
                 "    return read(a[0]);\n"
                 "}\n",
                 7);
@@ -641,14 +641,14 @@ STRATA_TEST(c_backend_rest_stack_buffer_no_heap_alloc)
 
 STRATA_TEST(sema_ref_rest_rejects_implicit_boxing)
 {
-    /* A ref box<T>... rest borrows; a bare T can't be boxed inline (it would
+    /* A ref ^T... rest borrows; a bare T can't be boxed inline (it would
        be an owned heap box nobody drops). */
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
-                    "int read_boxes(ref box<Foo>... rest) { return 0; }\n"
+                    "int read_boxes(ref ^Foo... rest) { return 0; }\n"
                     "int entry() { return read_boxes(Foo{.v = 1}); }",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -663,8 +663,8 @@ STRATA_TEST(sema_typed_rest_box_used_after_move_error)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
-                    "int sum_box(box<Foo>... rest) { return 0; }\n"
-                    "int entry() { box<Foo> a = Foo{.v = 1}; int s = sum_box(a); return a.v; }",
+                    "int sum_box(^Foo... rest) { return 0; }\n"
+                    "int entry() { ^Foo a = Foo{.v = 1}; int s = sum_box(a); return a.v; }",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -673,15 +673,15 @@ STRATA_TEST(sema_typed_rest_box_used_after_move_error)
 
 STRATA_TEST(sema_typed_rest_ref_box_move_error)
 {
-    /* A ref box<T> can't be moved into a box<T>... rest. */
+    /* A ref ^T can't be moved into a ^T... rest. */
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
-                    "int sum_box(box<Foo>... rest) { return 0; }\n"
-                    "int via_ref(ref box<Foo> b) { return sum_box(b); }\n"
-                    "int entry() { box<Foo> f = Foo{.v = 1}; return via_ref(f); }",
+                    "int sum_box(^Foo... rest) { return 0; }\n"
+                    "int via_ref(ref ^Foo b) { return sum_box(b); }\n"
+                    "int entry() { ^Foo f = Foo{.v = 1}; return via_ref(f); }",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -690,14 +690,14 @@ STRATA_TEST(sema_typed_rest_ref_box_move_error)
 
 STRATA_TEST(sema_typed_rest_global_box_move_error)
 {
-    /* A global box<T> can't be moved into a box<T>... rest. */
+    /* A global ^T can't be moved into a ^T... rest. */
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
-                    "int sum_box(box<Foo>... rest) { return 0; }\n"
-                    "box<Foo> g = Foo{.v = 1};\n"
+                    "int sum_box(^Foo... rest) { return 0; }\n"
+                    "^Foo g = Foo{.v = 1};\n"
                     "int entry() { return sum_box(g); }",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -743,7 +743,7 @@ STRATA_TEST(sema_cvararg_box_struct_rejected)
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
                     "extern int host_vsum(int count, ...);\n"
-                    "int entry() { box<Foo> f = Foo{.v = 1}; return host_vsum(1, f); }",
+                    "int entry() { ^Foo f = Foo{.v = 1}; return host_vsum(1, f); }",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -793,20 +793,20 @@ STRATA_TEST(varargs_extern_cvararg_ints_parity)
 
 STRATA_TEST(box_string_reads_correctly_via_printf)
 {
-    /* box<string> reads as its string: printf's return value (chars written)
+    /* ^string reads as its string: printf's return value (chars written)
        proves the content is correct on both backends. Covers literal creation,
        moving a string into a box, box moves, and box reassignment. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry()\n"
                       "{\n"
-                      "  box<string> a = \"hello\";\n"
+                      "  ^string a = \"hello\";\n"
                       "  int n1 = printf(\"box=%s\\n\", a);\n"
                       "  string src = \"world\";\n"
-                      "  box<string> b = src;\n"
+                      "  ^string b = src;\n"
                       "  int n2 = printf(\"box2=%s\\n\", b);\n"
-                      "  box<string> c = a;\n"
+                      "  ^string c = a;\n"
                       "  int n3 = printf(\"box3=%s\\n\", c);\n"
-                      "  box<string> d = \"test\";\n"
+                      "  ^string d = \"test\";\n"
                       "  d = c;\n"
                       "  int n4 = printf(\"box4=%s\\n\", d);\n"
                       "  return n1 + n2 + n3 + n4;\n"
@@ -816,33 +816,33 @@ STRATA_TEST(box_string_reads_correctly_via_printf)
 
 STRATA_TEST(box_string_global_reads_correctly_via_printf)
 {
-    /* A box<string> global initialized from a literal reads correctly. */
+    /* A ^string global initialized from a literal reads correctly. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "box<string> g = \"Hello!\";\n"
+                      "^string g = \"Hello!\";\n"
                       "int entry() { return printf(\"g=%s\\n\", g); }\n",   /* 9 */
                       "printf", (void*)&printf, 9);
 }
 
 STRATA_TEST(box_string_passes_to_extern_string_param)
 {
-    /* box<string> passed to an extern `string` param (by-value const char*)
+    /* ^string passed to an extern `string` param (by-value const char*)
        reads correctly on both backends. */
     CheckVarargExtern("extern int puts(string s);\n"
-                      "box<string> g = \"Hello!\";\n"
-                      "int entry() { puts(g); box<string> l = \"world\"; puts(l); return 0; }\n",
+                      "^string g = \"Hello!\";\n"
+                      "int entry() { puts(g); ^string l = \"world\"; puts(l); return 0; }\n",
                       "puts", (void*)&puts, 0);
 }
 
-/* ---- box<string> and box<T> to extern `...` (C varargs) ---- */
+/* ---- ^string and ^T to extern `...` (C varargs) ---- */
 
 STRATA_TEST(box_string_to_extern_cvararg_parity)
 {
-    /* box<string> arg in extern `...` position derefs to its char* and
+    /* ^string arg in extern `...` position derefs to its char* and
        printf reads it correctly on both backends. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  box<string> a = \"alpha\";\n"
-                      "  box<string> b = \"beta\";\n"
+                      "  ^string a = \"alpha\";\n"
+                      "  ^string b = \"beta\";\n"
                       "  return printf(\"%s %s\", a, b);\n"   /* 10 */
                       "}\n",
                       "printf", (void*)&printf, 10);
@@ -850,12 +850,12 @@ STRATA_TEST(box_string_to_extern_cvararg_parity)
 
 STRATA_TEST(box_string_from_return_to_extern_parity)
 {
-    /* box<string> returned from a function then passed to extern: the
+    /* ^string returned from a function then passed to extern: the
        returned box must be readable by printf. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "box<string> make(string s) { box<string> b = s; return b; }\n"
+                      "^string make(string s) { ^string b = s; return b; }\n"
                       "int entry() {\n"
-                      "  box<string> g = make(\"gamma\");\n"
+                      "  ^string g = make(\"gamma\");\n"
                       "  return printf(\"%s\", g);\n"         /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
@@ -863,11 +863,11 @@ STRATA_TEST(box_string_from_return_to_extern_parity)
 
 STRATA_TEST(box_string_multiple_extern_calls_parity)
 {
-    /* Multiple sequential extern calls with box<string> verify the box
+    /* Multiple sequential extern calls with ^string verify the box
        survives each call (borrow, not moved) when passed to string param. */
     CheckVarargExtern("extern int puts(string s);\n"
                       "int entry() {\n"
-                      "  box<string> b = \"shared\";\n"
+                      "  ^string b = \"shared\";\n"
                       "  puts(b);\n"
                       "  puts(b);\n"
                       "  puts(b);\n"
@@ -878,26 +878,26 @@ STRATA_TEST(box_string_multiple_extern_calls_parity)
 
 STRATA_TEST(box_int_to_extern_int_param_parity)
 {
-    /* box<int> passed to an extern int param derefs to its value. */
+    /* ^int passed to an extern int param derefs to its value. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  box<int> b = 42;\n"
+                      "  ^int b = 42;\n"
                       "  return printf(\"%d\", b);\n"        /* 2 */
                       "}\n",
                       "printf", (void*)&printf, 2);
 }
 
-/* ---- box<string>[] array element to extern ---- */
+/* ---- ^string[] array element to extern ---- */
 
 STRATA_TEST(box_string_array_element_to_puts_parity)
 {
-    /* The original crash bug: array_push of a string literal into box<string>[]
+    /* The original crash bug: array_push of a string literal into ^string[]
        stored a raw char* into a char** slot. puts(arr[0]) then dereferenced
        garbage. This test verifies the element is properly boxed and its
        string content is readable via puts. */
     CheckVarargExtern("extern int puts(string s);\n"
                       "int entry() {\n"
-                      "  box<string>[] arr;\n"
+                      "  ^string[] arr;\n"
                       "  array_push(arr, \"hello\");\n"
                       "  puts(arr[0]);\n"
                       "  return 0;\n"
@@ -911,7 +911,7 @@ STRATA_TEST(box_string_array_element_to_printf_parity)
        (not just non-crashing). The return value is the character count. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  box<string>[] arr;\n"
+                      "  ^string[] arr;\n"
                       "  array_push(arr, \"world\");\n"
                       "  return printf(\"%s\", arr[0]);\n"   /* 5 */
                       "}\n",
@@ -923,7 +923,7 @@ STRATA_TEST(box_string_array_multiple_elements_to_printf_parity)
     /* Multiple pushes, each must be independently readable. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  box<string>[] arr;\n"
+                      "  ^string[] arr;\n"
                       "  array_push(arr, \"ab\");\n"
                       "  array_push(arr, \"cd\");\n"
                       "  array_push(arr, \"ef\");\n"
@@ -934,11 +934,11 @@ STRATA_TEST(box_string_array_multiple_elements_to_printf_parity)
 
 STRATA_TEST(box_string_array_literal_element_to_printf_parity)
 {
-    /* box<string>[] initialized from a literal, then element passed to
+    /* ^string[] initialized from a literal, then element passed to
        printf — verifies the literal init path boxes each string correctly. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  box<string>[] arr = { \"hi\" };\n"
+                      "  ^string[] arr = { \"hi\" };\n"
                       "  return printf(\"%s\", arr[0]);\n"   /* 2 */
                       "}\n",
                       "printf", (void*)&printf, 2);
@@ -946,11 +946,11 @@ STRATA_TEST(box_string_array_literal_element_to_printf_parity)
 
 STRATA_TEST(box_string_array_push_var_then_read_parity)
 {
-    /* Push a box<string> variable (move), then read it back via printf. */
+    /* Push a ^string variable (move), then read it back via printf. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  box<string>[] arr;\n"
-                      "  box<string> a = \"moved\";\n"
+                      "  ^string[] arr;\n"
+                      "  ^string a = \"moved\";\n"
                       "  array_push(arr, a);\n"
                       "  return printf(\"%s\", arr[0]);\n"   /* 5 */
                       "}\n",
@@ -959,12 +959,12 @@ STRATA_TEST(box_string_array_push_var_then_read_parity)
 
 STRATA_TEST(box_string_in_struct_array_to_printf_parity)
 {
-    /* A box<Holder> where Holder has a box<string> field, stored in a
-       box<Holder>[], then the nested string read via printf. */
+    /* A ^Holder where Holder has a ^string field, stored in a
+       ^Holder[], then the nested string read via printf. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "struct Holder { box<string> name; };\n"
+                      "struct Holder { ^string name; };\n"
                       "int entry() {\n"
-                      "  box<Holder>[] arr;\n"
+                      "  ^Holder[] arr;\n"
                       "  array_push(arr, Holder { .name = \"nested\" });\n"
                       "  return printf(\"%s\", arr[0].name);\n"   /* 6 */
                       "}\n",
@@ -981,7 +981,7 @@ STRATA_TEST(string_member_passed_to_extern_via_printf_parity)
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "struct Person { string name; };\n"
                       "int entry() {\n"
-                      "  box<Person> p = Person { .name = \"Alice\" };\n"
+                      "  ^Person p = Person { .name = \"Alice\" };\n"
                       "  return printf(\"%s\", p.name);\n"     /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
@@ -996,7 +996,7 @@ STRATA_TEST(string_member_passed_to_owned_string_param_parity)
                       "struct Person { string name; };\n"
                       "int take(string s) { return printf(\"%s\", s); }\n"
                       "int entry() {\n"
-                      "  box<Person> p = Person { .name = \"Bob\" };\n"
+                      "  ^Person p = Person { .name = \"Bob\" };\n"
                       "  return take(p.name);\n"              /* 3 */
                       "}\n",
                       "printf", (void*)&printf, 3);
@@ -1010,7 +1010,7 @@ STRATA_TEST(string_member_passed_to_ref_string_param_parity)
                       "struct Person { string name; };\n"
                       "int read(ref string s) { return printf(\"%s\", s); }\n"
                       "int entry() {\n"
-                      "  box<Person> p = Person { .name = \"Carol\" };\n"
+                      "  ^Person p = Person { .name = \"Carol\" };\n"
                       "  int n = read(p.name);\n"
                       "  return n + printf(\" again\", p.name);\n"  /* 5 + 6 = 11 */
                       "}\n",
@@ -1019,12 +1019,12 @@ STRATA_TEST(string_member_passed_to_ref_string_param_parity)
 
 STRATA_TEST(box_string_member_passed_to_extern_via_printf_parity)
 {
-    /* A struct with a box<string> field. The member is passed to printf —
-       the nested box<string> must deref through two levels to char*. */
+    /* A struct with a ^string field. The member is passed to printf —
+       the nested ^string must deref through two levels to char*. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "struct Wrapper { box<string> title; };\n"
+                      "struct Wrapper { ^string title; };\n"
                       "int entry() {\n"
-                      "  box<Wrapper> w = Wrapper { .title = \"hello\" };\n"
+                      "  ^Wrapper w = Wrapper { .title = \"hello\" };\n"
                       "  return printf(\"%s\", w.title);\n"   /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
@@ -1037,7 +1037,7 @@ STRATA_TEST(string_member_reassigned_then_read_parity)
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "struct Person { string name; };\n"
                       "int entry() {\n"
-                      "  box<Person> p = Person { .name = \"old\" };\n"
+                      "  ^Person p = Person { .name = \"old\" };\n"
                       "  p.name = \"new\";\n"
                       "  return printf(\"%s\", p.name);\n"    /* 3 */
                       "}\n",
@@ -1051,7 +1051,7 @@ STRATA_TEST(two_string_members_both_readable_parity)
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "struct Pair { string a; string b; };\n"
                       "int entry() {\n"
-                      "  box<Pair> p = Pair { .a = \"first\", .b = \"second\" };\n"
+                      "  ^Pair p = Pair { .a = \"first\", .b = \"second\" };\n"
                       "  return printf(\"%s %s\", p.a, p.b);\n"  /* 12 */
                       "}\n",
                       "printf", (void*)&printf, 12);
@@ -1067,7 +1067,7 @@ STRATA_TEST(string_member_passed_to_user_function_parity)
                 "  return qty;\n"
                 "}\n"
                 "int entry() {\n"
-                "  box<Item> item = Item { .label = \"widget\", .qty = 10 };\n"
+                "  ^Item item = Item { .label = \"widget\", .qty = 10 };\n"
                 "  return process(item.label, item.qty);\n"  /* 10 */
                 "}\n",
                 10);
@@ -1091,10 +1091,10 @@ STRATA_TEST(varargs_extern_cvararg_zero_variadic_args_parity)
 
 STRATA_TEST(varargs_extern_cvararg_box_scalar_derefs_parity)
 {
-    /* A box<int> arg through bare extern `...` derefs to its value (same
+    /* A ^int arg through bare extern `...` derefs to its value (same
        coercion as any by-value box argument), on both backends. */
     CheckVarargExtern("extern int host_vsum(int count, ...);\n"
-                      "int entry() { box<int> b = 9; return host_vsum(1, b); }\n",
+                      "int entry() { ^int b = 9; return host_vsum(1, b); }\n",
                       "host_vsum", (void*)&HostVSum, 9);
 }
 

@@ -1,4 +1,4 @@
-# Global `box<T>` variables
+# Global `^T` variables
 
 Status: implemented (2026-08-01). Sema, C/TinyCC codegen, and the TCC JIT
 lifecycle hooks described below have landed; LLVM stays out of scope for v1
@@ -9,18 +9,18 @@ as planned. One refinement beyond the original plan: reading a box's value
 ## Read vs. move (added after initial landing)
 
 The no-reassignment/no-move rule only forbids handing out the *box itself*
-(`box<T>` for `box<T>`). It never applied to reading the value a box holds.
+(`^T` for `^T`). It never applied to reading the value a box holds.
 That distinction didn't exist before this feature: previously, any bare
 `return ident;` where `ident` was box-typed was unconditionally treated as a
 move, regardless of what the function actually returned. That was already
 latently wrong for locals whenever the inner type was a scalar (e.g.
-`box<int> x = 9; float f() { return x; }` would return the box's raw pointer
+`^int x = 9; float f() { return x; }` would return the box's raw pointer
 bits, not 9) - it just had no way to surface, since nothing exercised it.
 
 The fix, applied uniformly to locals and globals in both backends:
 - **Sema** (`ResolveOverloads.c`, `NodeReturn`): a bare box-typed identifier
   in a `return` only counts as a move when the function's declared return
-  type is that same `box<T>`. When the return type is the inner type instead
+  type is that same `^T`. When the return type is the inner type instead
   (or numerically coercible to it), it's a read, not a move - and reads never
   hit the box-global move restriction. Bit-copying an owning struct's value
   out this way is still unsound, so that case still goes through the move
@@ -35,7 +35,7 @@ The fix, applied uniformly to locals and globals in both backends:
   var-decl init, box-typed return) are unaffected - they still need, and
   still get, the raw box pointer.
 
-This is what lets `samples/box_demo.strata`'s `box<int> i = 9; ... return
+This is what lets `samples/box_demo.strata`'s `^int i = 9; ... return
 a + b + d + i;` compile and run: `i`'s value is read inline in the
 expression, never moved.
 
@@ -45,14 +45,14 @@ expression, never moved.
   path). LLVM IR/AOT keeps rejecting box globals with a diagnostic, consistent
   with its existing "owning structs are not yet supported by the LLVM backend"
   restriction (`LLVMModuleBuilder.c:292-295`).
-- Box globals are bound once at module init and never rebound. `box<T> g = ...;`
+- Box globals are bound once at module init and never rebound. `^T g = ...;`
   at module scope is legal; `g = other;` anywhere in a function body is a sema
   error. Field mutation (`g.field = x;`) remains legal — only rebinding the
   global's own box pointer is forbidden.
 - A box global's initializer must be either a value of the inner type
-  (`box<T> g = T{...};`, boxed on module init the same way a local box var is
-  boxed) or a box-returning call (`box<T> g = makeT();`). Moving from another
-  global (`box<T> b = a;`) is rejected, so there is no global-init-ordering
+  (`^T g = T{...};`, boxed on module init the same way a local box var is
+  boxed) or a box-returning call (`^T g = makeT();`). Moving from another
+  global (`^T b = a;`) is rejected, so there is no global-init-ordering
   question to reason about.
 - Box globals are freed on JIT teardown, not leaked. A synthetic
   `__strata_module_teardown` frees every box global; `TccJitDestroy` calls it
@@ -65,11 +65,11 @@ expression, never moved.
 
 Existing box-local codegen (`CBackend.c:834-928` `EmitVarDecl`, and
 `LLVMModuleBuilder.c:1392-1438` `NodeVarDecl`) already does alloc + init +
-move + drop for `box<T>` locals. `EmitIdent`/`EmitLValue`
+move + drop for `^T` locals. `EmitIdent`/`EmitLValue`
 (`LLVMModuleBuilder.c:578-627`) already resolve identifiers through a single
 `m_symbols`/`m_globals` lookup chain that doesn't care whether the storage is
 a stack alloca or a module-level global — and `Resolve()`
-(`LLVMModuleBuilder.c:301-313`) already gives `box<T>` a `ptr`-typed storage
+(`LLVMModuleBuilder.c:301-313`) already gives `^T` a `ptr`-typed storage
 slot regardless of whether it's called for a local or (once `EmitGlobals`
 uses it for box types) a global. So *reads and writes* of a box global need
 no new machinery in either backend — the only real gap is *initialization*,

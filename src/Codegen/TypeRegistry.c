@@ -105,7 +105,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->extendsFrom = hd->extendsName;
     }
 
-    /* a struct is owning if it has a box<T> field or an owning field. */
+    /* a struct is owning if it has a ^T field or an owning field. */
     bool changed = true;
 
     while (changed)
@@ -125,7 +125,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
             {
                 FieldDecl* f = (FieldDecl*)VecGet(&t->fields, j);
 
-                if (IsOwningType(f->type.name))
+                if (f->type.isBox || IsOwningType(f->type.name))
                 {
                     t->owning = true;
                     changed = true;
@@ -247,7 +247,9 @@ bool IsOwningType(const char* name)
 
     size_t len = strlen(name);
 
-    return len > 5 && strncmp(name, "box<", 4) == 0 && name[len - 1] == '>';
+    /* `^T` — the boxed-type spelling (caret binds tighter than `[]`, so an
+       array of boxes is "^T[]" and is caught by IsArrayType above). */
+    return len >= 2 && name[0] == '^';
 }
 
 Str OwningInnerStr(const char* name)
@@ -263,7 +265,7 @@ Str OwningInnerStr(const char* name)
     }
 
     /* Arrays have no box inner; their element type is retrieved via
-       ArrayInnerStr. OwningInnerStr is the box<T> inner slice only. */
+        ArrayInnerStr. OwningInnerStr is the ^T inner slice only. */
     if (IsArrayType(name))
     {
         return STR_EMPTY;
@@ -271,7 +273,7 @@ Str OwningInnerStr(const char* name)
 
     size_t len = strlen(name);
 
-    return (Str){name + 4, len - 5};
+    return (Str){name + 1, len - 1};
 }
 
 const char* OwningInnerCStr(Arena* arena, const char* name)

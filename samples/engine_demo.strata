@@ -17,23 +17,23 @@ extern int    get_x(Entity e);
 extern int    get_y(Entity e);
 extern void   move(Entity e, int dx, int dy);
 
-void TakeOwnershipOfBox(box<Pistol> p)
+void TakeOwnershipOfBox(^Pistol p)
 {
 }
 
-void BorrowBox(ref box<Pistol> p)
+void BorrowBox(ref ^Pistol p)
 {
 }
 
 struct Any;
-struct Wrapper { box<Any> target; };
+struct Wrapper { ^Any target; };
 
 extern int printf(string str, ...);
 
 int chase(Entity attacker, Entity target, int step)
 {
-    box<Pistol> p = MakePistol(100);
-    box<Wrapper> wrapper = { (box<Any>)p };
+    ^Pistol p = MakePistol(100);
+    ^Wrapper wrapper = { (^Any)p };
 
     int ax = get_x(attacker);
     int ay = get_y(attacker);
@@ -42,7 +42,7 @@ int chase(Entity attacker, Entity target, int step)
     
     for (int i = 0; i < 10; i++)
     {
-        Shoot((box<Pistol>)wrapper.target);
+        Shoot((^Pistol)wrapper.target);
 
 
         //BorrowBox(p);
@@ -55,7 +55,7 @@ int chase(Entity attacker, Entity target, int step)
         move(attacker, dx, dy);
     }
 
-    Shoot((box<Pistol>)wrapper.target);
+    Shoot((^Pistol)wrapper.target);
 
     return get_x(attacker) + get_y(attacker);
 }

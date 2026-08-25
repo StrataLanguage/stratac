@@ -226,7 +226,7 @@ static bool LooksLikeVarDecl(Parser* p)
     case TokKwFloat3:
     case TokKwFloat4:
     case TokKwString:
-    case TokKwBox:
+    case TokCaret:
         return true;
     case TokIdent:
     {
@@ -259,7 +259,7 @@ static bool LooksLikeVarDecl(Parser* p)
     }
 }
 
-/* Consume well-formed postfix `[]` pairs (e.g. `int[]`, `box<S>[]`, `int[][]`).
+/* Consume well-formed postfix `[]` pairs (e.g. `int[]`, `^S[]`, `int[][]`).
    Leaves a `[` intact (e.g. `foo[3]`) so speculative type-parse is safe. */
 static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 {
@@ -268,9 +268,10 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         Advance(p); /* '[' */
         Advance(p); /* ']' */
 
-        out->name = arena_format(p->m_arena, "%s[]", out->name);
-        out->range
+        TypeName wrapped = TypeNameArrayWrap(p->m_arena, *out);
+        wrapped.range
             = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+        *out = wrapped;
     }
 }
 
@@ -286,36 +287,50 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         Advance(p);
     }
 
-    if (p->m_cur.kind == TokKwBox)
+    if (p->m_cur.kind == TokCaret)
     {
-        SourceRange boxRange = p->m_cur.range;
+        /* `^T` — boxed type. `^` always takes the next type; it binds
+           tighter than a trailing `[]`, so `^S[]` is an array of boxed S
+           and `^S[]`'s element type is `^S`. */
+        SourceRange caretRange = p->m_cur.range;
         Advance(p);
-
-        if (!ParserConsume(p, TokLt))
-        {
-            DiagError(p->m_diag, p->m_cur.range, "expected '<' after 'box'");
-            return false;
-        }
 
         TypeName inner = {0};
 
-        if (!ParserTryParseType(p, &inner) || !inner.name)
+        if (!ParserTryParseType(p, &inner) || !TypeNameValid(&inner))
         {
-            DiagError(p->m_diag, p->m_cur.range, "expected a type after 'box<'");
+            DiagError(p->m_diag, p->m_cur.range, "expected a type after '^'");
             return false;
         }
 
-        if (!ParserConsume(p, TokGt))
+        /* `^` binds tighter than a trailing `[]`: the recursive parse may
+           have consumed postfix brackets into `inner` (`^T[]` read as
+           ^(T[])). Unwrap them from the inner type and re-apply them
+           around the box so the result is (^T)[]. There is no spelling
+           for a box whose inner type is an array. */
+        TypeName base = inner;
+        int arrayDepth = 0;
+
+        while (base.isArray)
         {
-            DiagErrorFmt(p->m_diag, p->m_cur.range, "expected '>' to close 'box<%s>'", inner.name);
-            return false;
+            arrayDepth++;
+            base = *base.elem;
         }
 
-        out->name = arena_format(p->m_arena, "box<%s>", inner.name);
-        out->range = (SourceRange){boxRange.start, (uint16_t)(p->m_cur.range.start - boxRange.start), boxRange.fileId};
-        out->isConst = isConst;
+        TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
+
+        while (arrayDepth-- > 0)
+        {
+            wrapped = TypeNameArrayWrap(p->m_arena, wrapped);
+        }
+
+        wrapped.range
+            = (SourceRange){caretRange.start, (uint16_t)(p->m_cur.range.start - caretRange.start), caretRange.fileId};
+        *out = wrapped;
 
         ApplyArrayBrackets(p, out, constRange);
+
+        out->isConst = isConst;
 
         return true;
     }
@@ -553,8 +568,8 @@ static ParamDecl* ParseParam(Parser* p)
         isVarargRest = true;
 
         /* `ref int... rest` borrows the collected stack array (non-owning);
-           `const int... rest` makes the view read-only. Both are allowed. */
-        type.name = arena_format(p->m_arena, "%s[]", type.name);
+            `const int... rest` makes the view read-only. Both are allowed. */
+        type = TypeNameArrayWrap(p->m_arena, type);
     }
 
     if (p->m_cur.kind != TokIdent)
@@ -634,10 +649,9 @@ static Node* ParseFunction(Parser* p)
 
         if (ParserConsume(p, TokAssign))
         {
-            if (p->m_cur.kind == TokLBrace && IsArrayType(returnType.name))
+            if (p->m_cur.kind == TokLBrace && returnType.isArray)
             {
-                Str inner = ArrayInnerStr(returnType.name);
-                gd->init = ParseArrayInitBody(p, p->m_cur, StrNew(p->m_arena, inner.data, inner.len).data);
+                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem->name);
             }
             else
             {
@@ -753,12 +767,14 @@ static Node* ParseFunction(Parser* p)
     p->m_hasReturnStmt = false;
 
     /* `return { ... };` infers its struct type from the function's return type.
-       For box<T>/string this is the inner T; for T[] the whole array type is
-       kept so a braced return is parsed as an array literal. */
-    p->m_returnType = IsArrayType(node->returnType.name)
+        For ^T/string this is the inner T; for T[] the whole array type is
+        kept so a braced return is parsed as an array literal. */
+    p->m_returnType = node->returnType.isArray
                           ? node->returnType.name
-                          : (IsOwningType(node->returnType.name) ? OwningInnerCStr(p->m_arena, node->returnType.name)
-                                                                 : node->returnType.name);
+                          : (node->returnType.isBox
+                                 ? node->returnType.inner->name
+                                 : (strcmp(node->returnType.name, "string") == 0 ? NULL
+                                                                                 : node->returnType.name));
 
     node->body = ParseBlock(p);
 
@@ -1024,16 +1040,16 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace)
             {
-                if (IsArrayType(type.name))
+                if (type.isArray)
                 {
-                    Str inner = ArrayInnerStr(type.name);
-                    node->init = ParseArrayInitBody(p, start, StrNew(p->m_arena, inner.data, inner.len).data);
+                    node->init = ParseArrayInitBody(p, start, type.elem->name);
                 }
                 else
                 {
-                    /* `box<T> x = {...};` infers T, not "box<T>". */
+                    /* `^T x = {...};` infers T, not "^T". */
                     const char* initTypeName
-                        = IsOwningType(type.name) ? OwningInnerCStr(p->m_arena, type.name) : type.name;
+                        = type.isBox ? type.inner->name
+                                     : (strcmp(type.name, "string") == 0 ? NULL : type.name);
 
                     node->init = ParseStructInitBody(p, start, initTypeName);
                 }
@@ -1358,7 +1374,7 @@ static Node* ParseUnary(Parser* p)
                                 || next.kind == TokKwDouble || next.kind == TokKwBool;
 
             bool isHandleCast = next.kind == TokIdent;
-            bool isBoxCast = next.kind == TokKwBox;
+            bool isBoxCast = next.kind == TokCaret;
 
             if (isScalarCast || isHandleCast || isBoxCast)
             {

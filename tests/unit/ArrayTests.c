@@ -341,7 +341,7 @@ STRATA_TEST(array_of_owning_struct_must_be_boxed)
     StrataJit* jit = CompileArr(
         "struct S { string s; };\n"
         "int entry() {\n"
-        "  S[] arr = { S{.s = \"a\"} };\n"   /* illegal: use box<S>[] */
+        "  S[] arr = { S{.s = \"a\"} };\n"   /* illegal: use ^S[] */
         "  return (int)arr.length;\n"
         "}\n",
         &err);

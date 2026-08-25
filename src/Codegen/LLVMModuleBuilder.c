@@ -492,7 +492,7 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     return ValueMake(r, target);
 }
 
-/* If value is box<T> but the target context expects T, load the pointee. */
+/* If value is ^T but the target context expects T, load the pointee. */
 static Value UnboxIfBox(Builder* b, Value value, TypeDesc target)
 {
     if (value.typeDesc.isBox && !target.isBox && value.typeDesc.boxInner)
@@ -712,7 +712,7 @@ static bool ElemNeedsScratchDummy(Builder* b, TypeDesc td)
 }
 
 /* Stores a freshly constructed dummy of `td` into `slot` (assumed already
-   dropped): string -> heap "" (free-able when later owned), box<T> -> newly
+   dropped): string -> heap "" (free-able when later owned), ^T -> newly
    allocated T (constructing owning struct fields recursively), owning struct
    -> field-wise construct, T[] -> {NULL, 0}. `chain` guards compile-time
    recursion on self-referential types: a field whose struct type is already
@@ -975,15 +975,15 @@ static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
 }
 
 /* Drops the owning fields of a by-value struct at `structPtr` (used when
-   dropping a box<StructType> - the pointed-to struct's owning fields must be
+   dropping a ^StructType - the pointed-to struct's owning fields must be
    freed before the struct allocation itself). */
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName);
 
 /* Returns (creating if needed) a per-struct-type LLVM function that drops
    the owning fields of `structName` given a pointer to it. Used instead of
-   inlining EmitDropStructFields at box<StructType> drop sites: a
+   inlining EmitDropStructFields at ^StructType drop sites: a
    self-referential or mutually recursive owning struct (e.g.
-   `struct Node { box<Node> next; }`) would otherwise make EmitDropStructFields
+   `struct Node { ^Node next; }`) would otherwise make EmitDropStructFields
    recurse into itself without bound at IR-generation time, since the
    compile-time recursion follows the *type* graph, not the (possibly null,
    runtime-only-known) data. A real function call terminates at runtime via
@@ -991,8 +991,8 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
 static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
 
 /* Drops (frees) the owning value held in 'slot', typed 'td'.
-   - box<T> / string: 'slot' is the address of a pointer; free it (and, for a
-     box<owning struct>, the struct's owning fields first).
+   - ^T / string: 'slot' is the address of a pointer; free it (and, for a
+     boxed owning struct, the struct's owning fields first).
    - T[]: 'slot' is the address of a {ptr, u64} struct; free the backing
      buffer, and when the element type is itself owning (box/string/array),
      drop each element first via a loop.
@@ -1153,7 +1153,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
 
 /* Builds the body of a per-struct-type drop function: `if (!p) return;`
    followed by EmitDropStructFields(p, structName). May run while another
-   function's body is mid-emission (a box<T> drop site can be reached from
+   function's body is mid-emission (a ^T drop site can be reached from
    anywhere), so the enclosing function-build context is saved and restored
    around it. */
 static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* structName)
@@ -1488,7 +1488,7 @@ static void NullMovedSource(Builder* b, Node* n)
    - Owning inner + string literal: heap-copied so the destination owns it.
    - Owning inner + movable source (ident/field): value taken, source nulled.
    - Owning inner + non-movable (call result): value taken as-is.
-   Used for string vars, box<T> inners, struct fields, return values, etc. */
+   Used for string vars, ^T inners, struct fields, return values, etc. */
 static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const char* innerType)
 {
     if (!IsOwningType(innerType))
@@ -2080,9 +2080,9 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
             }
 
             /* `=` rebinds the box only when the value is itself a box of the
-               SAME kind (string=string, box<T>=box<T>); any other assignment
-               into a box<T> - including `=` with a plain T value (`x = 5;`)
-               or a string value/ literal into box<string> - mutates its
+               SAME kind (string=string, ^T=^T); any other assignment
+               into a ^T - including `=` with a plain T value (`x = 5;`)
+               or a string value/ literal into ^string - mutates its
                contents instead. */
             bool rhsIsSameBoxKind = rhs.typeDesc.isBox
                                  && ((lvalue.typeDesc.boxInner == NULL && rhs.typeDesc.boxInner == NULL)
@@ -2141,9 +2141,9 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
             if (lvalue.typeDesc.isBox && !boxMove)
             {
-                /* Assigning a plain T (or compound-assigning) into a box<T>
+                /* Assigning a plain T (or compound-assigning) into a ^T
                    mutates its contents in place - not a move - so `x = 5;`
-                   and `val -= amt;` both work even through a `ref box<T>`
+                   and `val -= amt;` both work even through a `ref ^T`
                    param or a box global. lvalue.ptr is the
                    address of the box pointer slot (ref-adjusted already by
                    EmitLValue); load through it to get the box pointer, then
@@ -2154,12 +2154,12 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
                 if (IsOwningType(innerName))
                 {
-                    /* Content-assigning an OWNING inner (e.g. box<string> =
+                    /* Content-assigning an OWNING inner (e.g. ^string =
                        "x" / someString): drop only the old inner value (free
                        it in place — NOT the box allocation itself), then
                        construct a fresh owned inner into the existing box:
                        heap-copy a literal, move a movable source. Mirrors
-                       `box<int> = 5`, except the replaced inner is owning so
+                       `^int = 5`, except the replaced inner is owning so
                        the old value is freed first. */
                     EmitDropOne(b, boxPtr, innerTd);
                     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerName);
@@ -2433,8 +2433,8 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
         }
         else if (elemTd.isBox && elemTd.boxInner)
         {
-            /* box<T> element from a non-box<T> value (bare T, string literal
-               into box<string>): allocate a T slot, construct the owned
+            /* ^T element from a non-^T value (bare T, string literal
+               into ^string): allocate a T slot, construct the owned
                inner value, store it. */
             TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)elemTd.boxInner});
             LLVMValueRef sz = SizeOfConst(b, innerTd.type);
@@ -2626,7 +2626,7 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         else
         {
             /* Inner is not a registered struct: a scalar, or a bare owning
-               value such as string (box<string>), another box, or an array.
+               value such as string (^string), another box, or an array.
                Deep-copy it. */
             Value innerVal = ValueMake(LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv"), innerTd);
             Value copied = EmitCopyValue(b, innerVal, innerTd);
@@ -2865,7 +2865,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
         bool shouldPassByPtr = k < info->paramByPtrCount && info->paramByPtr[k];
         Node* argNode = (Node*)VecGet(&n->args, k);
 
-        /* box<T> coerced to T: if the param is a plain struct (not box),
+        /* ^T coerced to T: if the param is a plain struct (not box),
            and the arg is a box, the heap pointer IS the T* the param wants. */
         bool paramIsBoxType
             = fd && k < fd->params.count && IsOwningType(((ParamDecl*)VecGet(&fd->params, k))->type.name);
@@ -3088,7 +3088,7 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
             }
             else if (elemTd.isBox && elemTd.boxInner)
             {
-                /* box<T> element. */
+                /* ^T element. */
                 bool sameOwningType
                     = v.typeDesc.isBox && v.typeDesc.boxInner && strcmp(v.typeDesc.boxInner, elemTd.boxInner) == 0;
 
@@ -3099,13 +3099,13 @@ static Value EmitArrayFromNodes(Builder* b, const char* elementType, const Vec* 
                 }
                 else if (sameOwningType)
                 {
-                    /* Same box<T> type: move. */
+                    /* Same ^T type: move. */
                     LLVMBuildStore(b->m_builder, v.value, elemAddr);
                     NullMovedSource(b, eNode);
                 }
                 else
                 {
-                    /* box<T> from a non-box<T> value: box it up. */
+                    /* ^T from a non-^T value: box it up. */
                     TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)elemTd.boxInner});
                     LLVMValueRef sz = SizeOfConst(b, innerTd.type);
                     LLVMValueRef args[1] = {sz};
@@ -3208,10 +3208,10 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
                  && !(rawField.typeDesc.isBox && rawField.typeDesc.boxInner
                       && strcmp(rawField.typeDesc.boxInner, fieldTd.boxInner) == 0))
         {
-            /* box<T> field from a non-box<T> value (bare T, string literal,
-               string variable into box<string>): allocate a T slot, construct
+            /* ^T field from a non-^T value (bare T, string literal,
+               string variable into ^string): allocate a T slot, construct
                the owned inner value, store it. Same pattern as a top-level
-               box<T> init. */
+               ^T init. */
             TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)fieldTd.boxInner});
             LLVMValueRef size = SizeOfConst(b, innerTd.type);
             LLVMValueRef args[1] = {size};
@@ -3229,7 +3229,7 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, (unsigned)idx, "ins");
 
         /* If an owning field was moved from an owning lvalue source (string
-           or box<T>), null the source so its scope-exit drop is a no-op. */
+           or ^T), null the source so its scope-exit drop is a no-op. */
         if (fieldTd.isBox && rawField.typeDesc.isBox && field->value->kind != NodeStrLiteral)
         {
             NullMovedSource(b, field->value);
@@ -3420,7 +3420,7 @@ static void EmitStmt(Builder* b, Node* n)
 
             if (b->m_curRet.isBox && !raw.typeDesc.isBox)
             {
-                /* Returns box<T> but expr is a plain T: box it, like a local. */
+                /* Returns ^T but expr is a plain T: box it, like a local. */
                 TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)b->m_curRet.boxInner});
                 LLVMValueRef size = SizeOfConst(b, innerTd.type);
                 LLVMValueRef args[1] = {size};
@@ -3553,7 +3553,7 @@ static void EmitStmt(Builder* b, Node* n)
                 bool isLiteral = varDecl->init->kind == NodeStrLiteral;
 
                 /* Direct move: source and destination are the same owning type
-                   (string=string, box<T>=box<T>). Copy the pointer, null the
+                   (string=string, ^T=^T). Copy the pointer, null the
                    source. No allocation needed. */
                 bool sameOwningType = value.typeDesc.isBox && !isLiteral
                                       && ((typeDesc.boxInner == NULL && value.typeDesc.boxInner == NULL)
@@ -3567,10 +3567,10 @@ static void EmitStmt(Builder* b, Node* n)
                 }
                 else if (typeDesc.boxInner)
                 {
-                    /* box<T>: allocate a T slot, construct the inner value
-                       (with ownership), and store it. For box<string> this
+                    /* ^T: allocate a T slot, construct the inner value
+                       (with ownership), and store it. For ^string this
                        is: construct a string (heap-copy literal / move source),
-                       then box it up — identical to box<int> but the inner
+                       then box it up — identical to ^int but the inner
                        happens to be owning. */
                     TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)typeDesc.boxInner});
                     LLVMValueRef size = SizeOfConst(b, innerTd.type);
@@ -3915,7 +3915,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             continue;
         }
 
-        /* box<T> / T[] globals: storage starts null (box) or zero (array).
+        /* ^T / T[] globals: storage starts null (box) or zero (array).
            The runtime init (__strata_module_init) fills them. */
         if (IsOwningType(gd->type.name))
         {
@@ -3976,7 +3976,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     }
 
     /* Emit __strata_module_init + __strata_module_teardown when the module has
-       owning globals (box<T> / T[]) that need runtime initialization.  String
+       owning globals (^T / T[]) that need runtime initialization.  String
        globals are excluded — they already point at a string-constant global
        and don't need teardown in the LLVM backend. */
     {
@@ -4043,7 +4043,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                     TypeDesc innerTd = Resolve(b, &(TypeName){.name = (char*)td.boxInner});
                     Value val = EmitExpr(b, gd->init);
 
-                    /* Direct move from the same box<T> kind: take pointer. */
+                    /* Direct move from the same ^T kind: take pointer. */
                     bool sameBoxKind = val.typeDesc.boxInner && strcmp(val.typeDesc.boxInner, td.boxInner) == 0;
 
                     if (sameBoxKind)

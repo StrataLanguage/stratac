@@ -48,16 +48,55 @@ typedef struct {
 #define AST_NEW(arena, type) ((type*)arena_alloc((arena), sizeof(type)))
 #define AsNode(type, node) ((type*)(node))
 
-typedef struct {
+/* Types are structural: `^T` (box) and `T[]` (array) are dedicated nodes
+   wrapping an inner/element TypeName; `name` is the canonical spelling of
+   the whole subtree ("Foo", "^Foo", "^Foo[]", "int[][]"), derived at parse
+   time and kept consistent by the wrap helpers below. A node is either a
+   leaf (name set), a box (isBox + inner), or an array (isArray + elem). */
+typedef struct TypeName {
     char* name;
     SourceRange range;
     bool isConst;
     bool isVector;
+    bool isArray;
+    struct TypeName* elem;
+    bool isBox;
+    struct TypeName* inner;
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
 {
     return t->name != NULL && t->name[0] != '\0';
+}
+
+/* `^T` — wraps `inner` into a boxed type. isConst of the result reflects the
+   leading `const` (set by the caller); the inner node keeps its own flags. */
+static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
+{
+    TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *i = inner;
+
+    TypeName t = {0};
+    t.isBox = true;
+    t.inner = i;
+    t.name = arena_format(arena, "^%s", i->name);
+    t.range = i->range;
+    return t;
+}
+
+/* `T[]` — wraps `elem` into an array type. */
+static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
+{
+    TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *e = elem;
+
+    TypeName t = {0};
+    t.isArray = true;
+    t.elem = e;
+    t.name = arena_format(arena, "%s[]", e->name);
+    t.isConst = e->isConst;
+    t.range = e->range;
+    return t;
 }
 
 typedef enum {

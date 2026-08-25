@@ -200,7 +200,7 @@ STRATA_TEST(global_owning_field_move_is_an_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Cell { string name; };\n"
-        "box<Cell> g = Cell { .name = \"hi\" };\n"
+        "^Cell g = Cell { .name = \"hi\" };\n"
         "int entry() {\n"
         "  string s = g.name;\n"
         "  return 0;\n"

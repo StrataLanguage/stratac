@@ -1,6 +1,6 @@
 // implicit heap allocation via borrowing and move.
 //
-// When the target type is a box<T>, the compiler allocates the object on the heap via host-provided allocation funuctions. 
+// When the target type is a ^T, the compiler allocates the object on the heap via host-provided allocation funuctions. 
 // Boxes are move-only (cannot be copied), are dropped (freed) at scope end, and ownership can be transferred by returning / assigning /
 // passing as an owned parameter.
 
@@ -12,22 +12,22 @@ struct Vec3 {
 
 
 // ---------------------------------------------------------------------------
-// box<T> v = T { ... };   allocates a T on the heap, stores the value,
+// ^T v = T { ... };   allocates a T on the heap, stores the value,
 //                          and auto-frees v when it goes out of scope.
 
 // ---------------------------------------------------------------------------
-// box<T> globals — module-lifetime storage, boxed once when the module
+// ^T globals — module-lifetime storage, boxed once when the module
 // loads and freed once when it unloads. A box global can never be moved
-// (no reassignment, no passing to an owned parameter, no returning box<T>
+// (no reassignment, no passing to an owned parameter, no returning ^T
 // itself) — but reading its value out (returning/using its inner type, or
 // `ref` borrowing, or field access) never needs a move, so it's allowed.
 
-box<int> i = 9;
-box<Vec3> gVec = Vec3 {.x = 90};
+^int i = 9;
+^Vec3 gVec = Vec3 {.x = 90};
 
 float read_box()
 {
-    box<Vec3> v = Vec3 { .x = 1.0, .y = 2.0, .z = 3.0 };
+    ^Vec3 v = Vec3 { .x = 1.0, .y = 2.0, .z = 3.0 };
     v.x = 10.0;
     return v.x + v.y + v.z;     // 10 + 2 + 3 = 15   (v freed at '}')
 }
@@ -35,24 +35,24 @@ float read_box()
 // `return v` *moves* the box out of the callee — the callee does NOT free
 // it.  The caller receives ownership and frees it at its own scope end.
 
-box<Vec3> make_vec3(float x, float y, float z)
+^Vec3 make_vec3(float x, float y, float z)
 {
-    box<Vec3> v = Vec3 { .x = x, .y = y, .z = z };
+    ^Vec3 v = Vec3 { .x = x, .y = y, .z = z };
     return v;   // moves out — caller now owns
 }
 
 // ---------------------------------------------------------------------------
 // Move-assign (a = b) — frees the old box, takes the new pointer, nulls b
 // ---------------------------------------------------------------------------
-// `a = b` where both are box<T>:
+// `a = b` where both are ^T:
 //   1.  a's old box is freed (strata_free).
 //   2.  b's pointer is copied into a.
 //   3.  b is nulled — using b afterwards is a compile error ("'b' used after move").
 
 float move_and_read()
 {
-    box<Vec3> a = Vec3 { .x = 1.0, .y = 0.0, .z = 0.0 };
-    box<Vec3> b = Vec3 { .x = 0.0, .y = 7.0, .z = 0.0 };
+    ^Vec3 a = Vec3 { .x = 1.0, .y = 0.0, .z = 0.0 };
+    ^Vec3 b = Vec3 { .x = 0.0, .y = 7.0, .z = 0.0 };
     a = b;                  // a's old box freed; b nulled (moved)
     return a.y;             // 7
 }
@@ -62,43 +62,43 @@ float move_and_read()
 // ---------------------------------------------------------------------------
 // Owned box parameter — callee takes ownership, frees at return
 // ---------------------------------------------------------------------------
-// Passing a box as a plain box<T> parameter *moves* the caller's box.
+// Passing a box as a plain ^T parameter *moves* the caller's box.
 // The callee owns it now and frees it when it returns.
 
-float consume_box(box<Vec3> v)
+float consume_box(^Vec3 v)
 {
     float s = v.x + v.y + v.z;
     return s;               // v freed here (owned param drop)
 }
 
 
-float read_through_ref(ref box<Vec3> v)
+float read_through_ref(ref ^Vec3 v)
 {
     return v.x + v.y + v.z; // v is NOT freed here (borrow)
 }
 
-void take_value(box<Vec3> v)
+void take_value(^Vec3 v)
 {
 }
 
 // Returning a box by identifier from a function declared to return the
 // inner type (not the box) copies the value out and frees the box, rather
-// than moving it — safe here since Vec3 has no box<T> fields to alias.
+// than moving it — safe here since Vec3 has no ^T fields to alias.
 Vec3 return_bare_vec3()
 {
-    box<Vec3> newVec = { .x = 123 };
+    ^Vec3 newVec = { .x = 123 };
     return newVec;   // reads newVec's value, then frees it (not a move)
 }
 
-void drop(box<Vec3> inBox)
+void drop(^Vec3 inBox)
 {
 }
 
 // Mutate inner value of box.
 // (Doesn't drop mem)
-void mutate_box(ref box<Vec3> inBox)
+void mutate_box(ref ^Vec3 inBox)
 {
-    box<Vec3> newBox = { .x = 100 };
+    ^Vec3 newBox = { .x = 100 };
     Vec3 newBoxVal = newBox;   // read newBox's value (not a move)
 
     // If we directly wrote `inBox = newBox` that would mean a move assignment,
@@ -112,7 +112,7 @@ extern float host_length_sq(Vec3 v);
 handle BaseEntity;
 handle Entity extends BaseEntity;
 
-void take_entity(box<BaseEntity> be)
+void take_entity(^BaseEntity be)
 {
 }
 
@@ -135,7 +135,7 @@ void say_hi_to_person(ref Person person)
     printf("hello, %s\n", person.name);
 }
 
-box<string>[] globalStringArrayBox = { "hi" };
+^string[] globalStringArrayBox = { "hi" };
 string[] globalStringArray = { "hi" };
 
 // Entrypoint
@@ -145,7 +145,7 @@ float entry()
     globalStringArrayBox[0] = "goodbye";
     printf("globalStringArrayBox[0] = %s\n", globalStringArrayBox[0]);
 
-    box<string> sCopy = copy(globalStringArrayBox[0]);
+    ^string sCopy = copy(globalStringArrayBox[0]);
     printf("sCopy = %s\n", sCopy);
 
 
@@ -156,7 +156,7 @@ float entry()
     globalStringArray[0] = "goodbye";
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);
 
-    box<Person> bob = { .name = "Bob" };
+    ^Person bob = { .name = "Bob" };
     take_name(bob.name);
     // bob.name is NULL! oh no.
     // Luckily, we 'poison' the object, so we can only use other fields; until bob.name is reassigned.
@@ -169,19 +169,19 @@ float entry()
     Entity e;
     get_entity(e);
 
-    box<Entity> eBox = e;
+    ^Entity eBox = e;
     print_entity_name(eBox);
-    box<BaseEntity> casted = (box<BaseEntity>)eBox;
+    ^BaseEntity casted = (^BaseEntity)eBox;
     take_entity(casted);
 
-    box<Vec3> v = make_vec3(1.0, 2.0, 0.0);   // factory return — caller owns
+    ^Vec3 v = make_vec3(1.0, 2.0, 0.0);   // factory return — caller owns
 
     float a = read_through_ref(v);             // borrow — v stays alive
     v.y = 4.0;                                 // mutate through the borrow
     // Host sees a stack copy of the box data — safe borrow, no ownership transfer.
     float b = host_length_sq(Vec3 { .x = v.x, .y = v.y, .z = v.z });
 
-    box<Vec3> w = make_vec3(0.0, 3.0, 4.0);
+    ^Vec3 w = make_vec3(0.0, 3.0, 4.0);
     host_length_sq(w);
     mutate_box(w);                              // w's contents replaced in place (see above)
     float d = 0.0;

@@ -273,7 +273,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         return false;
     }
 
-    /* If the module has owning globals (box<T> / T[]), their runtime
+    /* If the module has owning globals (^T / T[]), their runtime
        initialisation was emitted as __strata_module_init.  Call it now. */
     {
         typedef void (*VoidFn)(void);

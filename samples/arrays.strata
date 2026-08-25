@@ -6,9 +6,9 @@
  *   array_pop(arr)         -> T      remove and return the last element
  *   array_resize(arr, n)   -> void   grow (zero-init) or shrink (drop) to n
  *
- * A struct holding any owning field (string/box<T>/T[]) is itself "owning" and
- * must be boxed - so an array of FooBars is written box<FooBar>[]. Dropping a
- * box<FooBar> frees the FooBar's string field recursively.
+ * A struct holding any owning field (string/^T/T[]) is itself "owning" and
+ * must be boxed - so an array of FooBars is written ^FooBar[]. Dropping a
+ * ^FooBar frees the FooBar's string field recursively.
  */
 
 int sum(ref int[] a)
@@ -61,9 +61,9 @@ void PrintAll(ref int[] elems)
     puts("");
 }
 
-void PrintAll(ref box<FooBar>[] elems) {
+void PrintAll(ref ^FooBar[] elems) {
     string foo1 = "hi";
-    box<FooBar> fb1 = {foo1};
+    ^FooBar fb1 = {foo1};
     array_push(elems, fb1);
     array_push(elems, FooBar("again"));
     array_push(elems, FooBar(copy(testGlobalString)));
@@ -75,7 +75,7 @@ void PrintAll(ref box<FooBar>[] elems) {
 int entry() {
     PrintAll(testGlobalArray);
 
-    box<FooBar>[] fooBars = { FooBar("hello"), FooBar("world") };
+    ^FooBar[] fooBars = { FooBar("hello"), FooBar("world") };
     PrintAll(fooBars);
 
     int[] nums = {1, 2, 3, 4, 5};
