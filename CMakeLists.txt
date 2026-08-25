@@ -351,6 +351,7 @@ if(NOT STRATA_SHARED)
         list(APPEND STRATA_TEST_SOURCES
             tests/unit/CodegenTests.c
             tests/unit/SampleTests.c
+            tests/unit/ExternStructTests.c
         )
         if(STRATA_ENABLE_TCC)
             list(APPEND STRATA_TEST_SOURCES tests/unit/BackendParityTests.c)

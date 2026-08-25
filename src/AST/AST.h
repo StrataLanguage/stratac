@@ -48,17 +48,20 @@ typedef struct {
 #define AST_NEW(arena, type) ((type*)arena_alloc((arena), sizeof(type)))
 #define AsNode(type, node) ((type*)(node))
 
-/* Types are structural: `^T` (box) and `T[]` (array) are dedicated nodes
-   wrapping an inner/element TypeName; `name` is the canonical spelling of
-   the whole subtree ("Foo", "^Foo", "^Foo[]", "int[][]"), derived at parse
-   time and kept consistent by the wrap helpers below. A node is either a
-   leaf (name set), a box (isBox + inner), or an array (isArray + elem). */
+/* Types are structural: `^T` (box) and `T[]`/`T[N]` (array) are dedicated
+   nodes wrapping an inner/element TypeName; `name` is the canonical spelling
+   of the whole subtree ("Foo", "^Foo", "^Foo[]", "int[][]", "int[4]"),
+   derived at parse time and kept consistent by the wrap helpers below. A
+   node is either a leaf (name set), a box (isBox + inner), or an array
+   (isArray + elem). A dynamic array `T[]` has length < 0; a fixed-size
+   array `T[N]` (C-ABI inline storage, struct fields only) has length >= 1. */
 typedef struct TypeName {
     char* name;
     SourceRange range;
     bool isConst;
     bool isVector;
     bool isArray;
+    long length;
     struct TypeName* elem;
     bool isBox;
     struct TypeName* inner;
@@ -84,7 +87,7 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     return t;
 }
 
-/* `T[]` — wraps `elem` into an array type. */
+/* `T[]` — wraps `elem` into a dynamic (fat pointer) array type. */
 static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
 {
     TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -92,8 +95,25 @@ static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
 
     TypeName t = {0};
     t.isArray = true;
+    t.length = -1;
     t.elem = e;
     t.name = arena_format(arena, "%s[]", e->name);
+    t.isConst = e->isConst;
+    t.range = e->range;
+    return t;
+}
+
+/* `T[N]` — wraps `elem` into a fixed-size inline array type (C ABI). */
+static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long length)
+{
+    TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *e = elem;
+
+    TypeName t = {0};
+    t.isArray = true;
+    t.length = length;
+    t.elem = e;
+    t.name = arena_format(arena, "%s[%ld]", e->name, length);
     t.isConst = e->isConst;
     t.range = e->range;
     return t;
@@ -132,6 +152,7 @@ typedef struct {
 typedef struct {
     TypeName type;
     char* name;
+    long offset; /* explicit byte offset via `fieldoffset(N)`, or -1 */
 } FieldDecl;
 
 typedef struct {
@@ -139,6 +160,7 @@ typedef struct {
     char* name;
     Vec fields;
     bool incomplete;
+    bool isExtern; /* `extern struct` — mirrors a host-defined layout */
 } StructDecl;
 
 typedef struct {

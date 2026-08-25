@@ -1,7 +1,12 @@
 #include "Codegen/TypeRegistry.h"
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+void ComputeAllLayouts(TypeRegistry* reg);
+
 void TypeRegistryInit(TypeRegistry* reg)
 {
     *reg = (TypeRegistry){0};
@@ -9,6 +14,14 @@ void TypeRegistryInit(TypeRegistry* reg)
 
 void TypeRegistryFree(TypeRegistry* reg)
 {
+    for (size_t i = 0; i < reg->count; i++)
+    {
+        free(reg->types[i].fieldOffsets);
+        free(reg->types[i].physicalIndex);
+        free(reg->types[i].pads);
+        free(reg->types[i].layoutError);
+    }
+
     free(reg->types);
     TypeRegistryInit(reg);
 }
@@ -41,8 +54,57 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     t->owning = false;
     t->extendsFrom = NULL;
     VecInit(&t->fields);
+    t->isExtern = false;
+    t->hasLayout = false;
+    t->packedLayout = false;
+    t->sizeBytes = 0;
+    t->alignBytes = 0;
+    t->fieldOffsets = NULL;
+    t->physicalIndex = NULL;
+    t->pads = NULL;
+    t->padCount = 0;
+    t->physicalCount = 0;
+    t->layoutError = NULL;
 
     return t;
+}
+
+static void SetLayoutError(StructType* t, const char* fmt, ...)
+{
+    if (t->layoutError)
+    {
+        return;
+    }
+
+    char buf[256];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    t->layoutError = strdup(buf);
+}
+
+static bool FieldsIdentical(const Vec* a, const Vec* b)
+{
+    if (a->count != b->count)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < a->count; i++)
+    {
+        FieldDecl* fa = (FieldDecl*)VecGet((Vec*)a, i);
+        FieldDecl* fb = (FieldDecl*)VecGet((Vec*)b, i);
+
+        if (strcmp(fa->name, fb->name) != 0 || strcmp(fa->type.name, fb->type.name) != 0
+            || fa->offset != fb->offset)
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
@@ -59,8 +121,26 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
             continue;
         }
 
-        if (TypeRegistryFindIndex(reg, sd->name) >= 0)
+        int existing = TypeRegistryFindIndex(reg, sd->name);
+
+        if (existing >= 0)
         {
+            /* Extern structs mirror host layouts, so a divergent duplicate
+               is a hard error (plain structs keep first-wins behavior). */
+            StructType* ex = &reg->types[existing];
+
+            if (ex->isExtern || sd->isExtern)
+            {
+                if (ex->isExtern != sd->isExtern)
+                {
+                    SetLayoutError(ex, "struct '%s' is declared both as extern and non-extern", sd->name);
+                }
+                else if (!FieldsIdentical(&ex->fields, &sd->fields))
+                {
+                    SetLayoutError(ex, "conflicting redeclaration of extern struct '%s'", sd->name);
+                }
+            }
+
             continue;
         }
 
@@ -68,6 +148,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->opaque = false;
         t->incomplete = false;
         t->fields = sd->fields;
+        t->isExtern = sd->isExtern;
     }
 
     /* Forward declarations for structs (incomplete types) */
@@ -143,7 +224,290 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
             }
         }
     }
+
+    ComputeAllLayouts(reg);
 }
+
+//--
+
+typedef struct {
+    long size;
+    long align;
+} SizeAlign;
+
+/* Transient per-struct layout state: 0 = new, 1 = computing, 2 = done,
+   3 = failed. Stored in a parallel array owned by ComputeAllLayouts. */
+
+static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t idx);
+
+static bool ScalarSizeAlign(const char* name, SizeAlign* out)
+{
+    if (strcmp(name, "bool") == 0 || strcmp(name, "byte") == 0 || strcmp(name, "sbyte") == 0)
+    {
+        out->size = 1;
+        out->align = 1;
+        return true;
+    }
+
+    if (strcmp(name, "short") == 0 || strcmp(name, "ushort") == 0)
+    {
+        out->size = 2;
+        out->align = 2;
+        return true;
+    }
+
+    if (strcmp(name, "int") == 0 || strcmp(name, "uint") == 0 || strcmp(name, "float") == 0)
+    {
+        out->size = 4;
+        out->align = 4;
+        return true;
+    }
+
+    if (strcmp(name, "long") == 0 || strcmp(name, "ulong") == 0 || strcmp(name, "double") == 0)
+    {
+        out->size = 8;
+        out->align = 8;
+        return true;
+    }
+
+    /* float3, float4 are 16 byte aligned */
+    if (strcmp(name, "float3") == 0 || strcmp(name, "float4") == 0)
+    {
+        out->size = 16;
+        out->align = 16;
+        return true;
+    }
+
+    return false;
+}
+
+static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeName* t, SizeAlign* out)
+{
+    if (t->isBox)
+    {
+        out->size = 8;
+        out->align = 8;
+        return true;
+    }
+
+    if (t->isArray)
+    {
+        if (t->length < 0)
+        {
+            /* Dynamic array is fat pointer: {ptr, i64}. */
+            out->size = 16;
+            out->align = 8;
+            return true;
+        }
+
+        SizeAlign elem;
+
+        if (!FieldSizeAlign(reg, state, t->elem, &elem))
+        {
+            return false;
+        }
+
+        out->size = elem.size * t->length;
+        out->align = elem.align;
+        return true;
+    }
+
+    if (strcmp(t->name, "string") == 0)
+    {
+        out->size = 8;
+        out->align = 8;
+        return true;
+    }
+
+    if (ScalarSizeAlign(t->name, out))
+    {
+        return true;
+    }
+
+    int idx = TypeRegistryFindIndex(reg, t->name);
+
+    if (idx < 0)
+    {
+        return false;
+    }
+
+    StructType* st = &reg->types[idx];
+
+    if (st->opaque)
+    {
+        out->size = 8;
+        out->align = 8;
+        return true;
+    }
+
+    if (state[idx] == 2)
+    {
+        out->size = st->sizeBytes;
+        out->align = st->alignBytes;
+        return st->alignBytes > 0;
+    }
+
+    if (state[idx] != 0)
+    {
+        /* computing (by-value cycle) or previously failed */
+        return false;
+    }
+
+    if (!ComputeStructLayout(reg, state, (size_t)idx))
+    {
+        return false;
+    }
+
+    out->size = st->sizeBytes;
+    out->align = st->alignBytes;
+    return true;
+}
+
+static long AlignUp(long v, long a)
+{
+    return (v + a - 1) / a * a;
+}
+
+static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t idx)
+{
+    StructType* st = &reg->types[idx];
+
+    if (st->opaque || st->incomplete || st->fields.count == 0)
+    {
+        st->sizeBytes = 0;
+        st->alignBytes = 1;
+        state[idx] = 2;
+        return true;
+    }
+
+    state[idx] = 1;
+
+    size_t n = st->fields.count;
+    long* offsets = (long*)malloc(n * sizeof(long));
+    int* physical = (int*)malloc(n * sizeof(int));
+    StructPad* pads = (StructPad*)malloc((n + 1) * sizeof(StructPad));
+    size_t padCount = 0;
+    bool ok = true;
+
+    long cursor = 0;
+    long maxAlign = 1;
+    bool packed = false;
+    int nextPhysical = 0;
+
+    for (size_t i = 0; i < n && ok; i++)
+    {
+        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
+        SizeAlign sa;
+
+        if (!FieldSizeAlign(reg, state, &f->type, &sa))
+        {
+            SetLayoutError(st, "field '%s' has type '%s' with no computable size (unknown, incomplete, or by-value cycle)",
+                           f->name, f->type.name);
+            ok = false;
+            break;
+        }
+
+        long off;
+
+        if (f->offset >= 0)
+        {
+            packed = true;
+            off = f->offset;
+
+            if (off < cursor)
+            {
+                SetLayoutError(st, "fieldoffset(%ld) for field '%s' overlaps the previous field (data ends at byte %ld)",
+                               off, f->name, cursor);
+                ok = false;
+                break;
+            }
+        }
+        else
+        {
+            off = AlignUp(cursor, sa.align);
+        }
+
+        if (off > cursor)
+        {
+            pads[padCount].beforeField = i;
+            pads[padCount].bytes = off - cursor;
+            padCount++;
+            nextPhysical++;
+        }
+
+        offsets[i] = off;
+        physical[i] = nextPhysical;
+        nextPhysical++;
+
+        if (sa.align > maxAlign)
+        {
+            maxAlign = sa.align;
+        }
+
+        cursor = off + sa.size;
+    }
+
+    if (ok)
+    {
+        if (packed)
+        {
+            /* Explicit offsets: the pad members above already encode the
+               full layout, so backends emit the struct packed (no compiler
+               padding of its own) and the size is exact. */
+            st->sizeBytes = cursor;
+            st->alignBytes = 1;
+        }
+        else
+        {
+            /* Natural layout: no explicit pads needed — the backend's own
+               padding rules produce the same offsets computed here (drop
+               the bookkeeping pads and keep identity member indices). */
+            st->sizeBytes = AlignUp(cursor, maxAlign);
+            st->alignBytes = maxAlign;
+            padCount = 0;
+
+            for (size_t i = 0; i < n; i++)
+            {
+                physical[i] = (int)i;
+            }
+        }
+
+        st->packedLayout = packed;
+        st->fieldOffsets = offsets;
+        st->physicalIndex = physical;
+        st->pads = pads;
+        st->padCount = padCount;
+        st->physicalCount = n + padCount;
+        st->hasLayout = true;
+        state[idx] = 2;
+    }
+    else
+    {
+        free(offsets);
+        free(physical);
+        free(pads);
+        state[idx] = 3;
+    }
+
+    return ok;
+}
+
+void ComputeAllLayouts(TypeRegistry* reg)
+{
+    unsigned char* state = (unsigned char*)calloc(reg->count ? reg->count : 1, 1);
+
+    for (size_t i = 0; i < reg->count; i++)
+    {
+        if (state[i] == 0)
+        {
+            ComputeStructLayout(reg, state, i);
+        }
+    }
+
+    free(state);
+}
+
+//--
 
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
 {
@@ -248,7 +612,8 @@ bool IsOwningType(const char* name)
     size_t len = strlen(name);
 
     /* `^T` — the boxed-type spelling (caret binds tighter than `[]`, so an
-       array of boxes is "^T[]" and is caught by IsArrayType above). */
+        array of boxes is "^T[]" and is caught by IsArrayType above). Fixed
+        arrays (`int[4]`) are plain inline storage and never owning. */
     return len >= 2 && name[0] == '^';
 }
 
@@ -297,20 +662,140 @@ bool IsArrayType(const char* name)
 
     size_t len = strlen(name);
 
-    /* "[]" postfix (length >= 3 so there is a non-empty element type). */
+    /* Dynamic "[]" postfix (length >= 3 so there is a non-empty element
+       type). Fixed arrays ("int[4]") are handled by IsFixedArrayType. */
     return len >= 3 && name[len - 2] == '[' && name[len - 1] == ']';
+}
+
+/* Locate the FIRST bracket group of an array type spelling. Dimensions are
+   spelled in source order (outermost first: `int[2][6]` is 2 x int[6]).
+   Returns the index of '[' and the index just past ']', or false. */
+static bool FirstBracketGroup(const char* name, size_t* startOut, size_t* endOut)
+{
+    if (!name)
+    {
+        return false;
+    }
+
+    const char* open = strchr(name, '[');
+
+    if (!open || open == name)
+    {
+        return false;
+    }
+
+    const char* close = strchr(open, ']');
+
+    if (!close)
+    {
+        return false;
+    }
+
+    *startOut = (size_t)(open - name);
+    *endOut = (size_t)(close - name) + 1;
+    return true;
+}
+
+bool IsFixedArrayType(const char* name)
+{
+    size_t start = 0;
+    size_t end = 0;
+
+    if (!FirstBracketGroup(name, &start, &end))
+    {
+        return false;
+    }
+
+    /* The first group must be a pure dimension ("[N]") — excludes a leading
+       dynamic "[]". */
+    if (end - start < 3)
+    {
+        return false;
+    }
+
+    for (size_t i = start + 1; i + 1 < end; i++)
+    {
+        if (name[i] < '0' || name[i] > '9')
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+long FixedArrayLength(const char* name)
+{
+    size_t start = 0;
+    size_t end = 0;
+
+    if (!FirstBracketGroup(name, &start, &end) || end - start < 3)
+    {
+        return -1;
+    }
+
+    long v = 0;
+
+    for (size_t i = start + 1; i + 1 < end; i++)
+    {
+        if (name[i] < '0' || name[i] > '9')
+        {
+            return -1;
+        }
+
+        v = v * 10 + (name[i] - '0');
+    }
+
+    return v;
 }
 
 Str ArrayInnerStr(const char* name)
 {
-    if (!IsArrayType(name))
+    if (!IsArrayType(name) && !IsFixedArrayType(name))
     {
         return STR_EMPTY;
     }
 
-    size_t len = strlen(name);
+    size_t start = 0;
+    size_t end = 0;
 
-    return (Str){name, len - 2};
+    if (!FirstBracketGroup(name, &start, &end))
+    {
+        return STR_EMPTY;
+    }
+
+    /* Strip the first (outermost) group; the remainder is the element type
+       spelling (e.g. "int[4]" -> "int"). Only contiguous results can be a
+       slice — a nested fixed array ("int[2][6]" -> "int[6]") needs the
+       allocating ArrayInnerName. */
+    if (name[end] != '\0')
+    {
+        return STR_EMPTY;
+    }
+
+    return (Str){name, start};
+}
+
+char* ArrayInnerName(Arena* arena, const char* name)
+{
+    if (!IsArrayType(name) && !IsFixedArrayType(name))
+    {
+        return NULL;
+    }
+
+    size_t start = 0;
+    size_t end = 0;
+
+    if (!FirstBracketGroup(name, &start, &end))
+    {
+        return NULL;
+    }
+
+    Sb sb;
+    SbInit(&sb);
+    SbPrintf(&sb, "%.*s%s", (int)start, name, name + end);
+
+    return SbFinish(&sb, arena);
 }
 
 const Node* MovableBoxSourceNode(const Node* n)

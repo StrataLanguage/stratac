@@ -217,6 +217,14 @@ static const char* TypeNameC(CEmitter* emitter, const char* name)
         return "strata__arr";
     }
 
+    if (IsFixedArrayType(name))
+    {
+        /* Fixed T[N] needs a declarator (type name[N]) — use EmitTypeDecl
+           at declaration sites. Reaching here is a backend bug. */
+        DiagErrorFmt(emitter->diag, SRC_INVALID, "fixed-size array type '%s' needs a declarator", name);
+        return "void*";
+    }
+
     if (IsOwningType(name))
     {
         if (strcmp(name, "string") == 0)
@@ -534,8 +542,14 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
             return "float";
         }
 
-        /* array.length is a u64 query on the fat struct. */
+        /* array.length is a u64 query on the fat struct; a fixed array's
+           .length is the compile-time dimension (still u64). */
         if (IsArrayType(baseName) && strcmp(member->member, "length") == 0)
+        {
+            return "ulong";
+        }
+
+        if (IsFixedArrayType(baseName) && strcmp(member->member, "length") == 0)
         {
             return "ulong";
         }
@@ -577,6 +591,12 @@ static const char* ExprType(CEmitter* emitter, const Node* node)
     case NodeIndex:
     {
         const char* baseName = ExprType(emitter, ((const IndexExpr*)node)->base_node);
+
+        if (IsArrayType(baseName) || IsFixedArrayType(baseName))
+        {
+            return ArrayInnerName(emitter->arena, baseName);
+        }
+
         Str inner = ArrayInnerStr(baseName);
 
         return inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "";
@@ -661,6 +681,14 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
             return;
         }
 
+        /* Fixed-array .length: the compile-time dimension as a constant. */
+        if (IsFixedArrayType(baseType) && strcmp(member->member, "length") == 0)
+        {
+            SbPrintf(&emitter->out, "((unsigned long long)%ld)", FixedArrayLength(baseType));
+
+            return;
+        }
+
         bool throughBox = IsOwningType(baseType);
         SbPutc(&emitter->out, '(');
         EmitLValue(emitter, member->base_node);
@@ -674,6 +702,27 @@ static void EmitLValue(CEmitter* emitter, const Node* node)
     {
         const IndexExpr* idx = (const IndexExpr*)node;
         const char* baseType = ExprType(emitter, idx->base_node);
+
+        /* Fixed inline array: plain C subscript on the member itself; the
+           bound is the compile-time dimension. */
+        if (IsFixedArrayType(baseType))
+        {
+            SbPutc(&emitter->out, '(');
+            EmitLValue(emitter, idx->base_node);
+            SbPuts(&emitter->out, ")[({ unsigned long long _bi = ");
+            CEmitExpr(emitter, idx->index);
+
+            if (emitter->boundsCheck)
+            {
+                SbPrintf(&emitter->out,
+                         "; if (_bi >= %ld) strata_panic(\"array index out of bounds\"); ", FixedArrayLength(baseType));
+            }
+
+            SbPuts(&emitter->out, "; _bi; })]");
+
+            return;
+        }
+
         Str inner = ArrayInnerStr(baseType);
         const char* elemC
             = TypeNameC(emitter, inner.data ? StrNew(emitter->arena, inner.data, inner.len).data : "void");
@@ -844,6 +893,29 @@ static void EmitStructInit(CEmitter* emitter, const char* typeName, const Vec* f
             SbPutc(&emitter->out, '.');
             SbPuts(&emitter->out, FieldName(emitter, declaration->name));
             SbPuts(&emitter->out, " = ");
+        }
+
+        if (declaration && IsFixedArrayType(declaration->type.name) && field->value->kind == NodeArrayInit)
+        {
+            /* Fixed-size array field from a braced literal: a flat C brace
+               list (valid for nested dimensions too). Trailing elements past
+               the literal stay zero. */
+            const ArrayInitExpr* ai = (const ArrayInitExpr*)field->value;
+
+            SbPutc(&emitter->out, '{');
+
+            for (size_t k = 0; k < ai->elements.count; ++k)
+            {
+                if (k > 0)
+                {
+                    SbPuts(&emitter->out, ", ");
+                }
+
+                CEmitExpr(emitter, (const Node*)VecGet(&ai->elements, k));
+            }
+
+            SbPuts(&emitter->out, "}");
+            continue;
         }
 
         if (declaration && IsOwningType(declaration->type.name))
@@ -1657,6 +1729,14 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             return;
         }
 
+        /* Fixed-array .length: the compile-time dimension as a constant. */
+        if (IsFixedArrayType(baseType) && strcmp(member->member, "length") == 0)
+        {
+            SbPrintf(&emitter->out, "((unsigned long long)%ld)", FixedArrayLength(baseType));
+
+            return;
+        }
+
         /* ^simd.swizzle or ^simd.lane: unpack the box and route
            through the SIMD destructure. */
         {
@@ -2023,6 +2103,48 @@ static void CEmitOwnedValue(CEmitter* emitter, const Node* init, const char* inn
 
 /* Box a struct value by allocating it and assigning each init field, so that
    ^T fields move their source (nulling it). Omitted fields stay zero/null. */
+
+/* Emits `(T[d0][d1]...){ e0, e1, ... }` — a compound literal for a
+   (possibly nested) fixed-size array field. */
+static void EmitFixedArrayLiteral(CEmitter* emitter, const TypeName* type, const ArrayInitExpr* ai)
+{
+    long dims[8];
+    int depth = 0;
+    const TypeName* t = type;
+
+    while (t && t->isArray && t->length >= 0)
+    {
+        if (depth < 8)
+        {
+            dims[depth] = t->length;
+        }
+        depth++;
+        t = t->elem;
+    }
+
+    SbPutc(&emitter->out, '(');
+    SbPuts(&emitter->out, TypeNameC(emitter, t->name));
+
+    for (int i = 0; i < depth; i++)
+    {
+        SbPrintf(&emitter->out, "[%ld]", dims[i]);
+    }
+
+    SbPuts(&emitter->out, "){ ");
+
+    for (size_t k = 0; k < ai->elements.count; ++k)
+    {
+        if (k > 0)
+        {
+            SbPuts(&emitter->out, ", ");
+        }
+
+        CEmitExpr(emitter, (const Node*)VecGet(&ai->elements, k));
+    }
+
+    SbPuts(&emitter->out, "}");
+}
+
 static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char* innerC, const char* inner,
                                 const StructInitExpr* si)
 {
@@ -2096,12 +2218,29 @@ static void EmitBoxedStructInit(CEmitter* emitter, const char* cName, const char
             CEmitOwnedValue(emitter, sf->value, fieldInner);
             SbPuts(&emitter->out, ";\n");
         }
+        else if (fd->type.isArray && fd->type.length >= 0 && sf->value->kind == NodeArrayInit)
+        {
+            /* Fixed-size array field: C can't assign arrays — memcpy a
+               compound literal (elements are a flat list). */
+            Pad(emitter);
+            SbPuts(&emitter->out, "memcpy(");
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, "->");
+            SbPuts(&emitter->out, FieldName(emitter, fd->name));
+            SbPuts(&emitter->out, ", ");
+            EmitFixedArrayLiteral(emitter, &fd->type, (const ArrayInitExpr*)sf->value);
+            SbPuts(&emitter->out, ", sizeof(");
+            SbPuts(&emitter->out, cName);
+            SbPuts(&emitter->out, "->");
+            SbPuts(&emitter->out, FieldName(emitter, fd->name));
+            SbPuts(&emitter->out, "));\n");
+        }
         else
         {
             /* Direct assignment: same ^T move, string field, or non-owning.
-               For owning fields, CEmitOwnedValue handles strdup for literals
-               and move+null for variables (the comma-expression works because
-               = binds tighter than ,). */
+                For owning fields, CEmitOwnedValue handles strdup for literals
+                and move+null for variables (the comma-expression works because
+                = binds tighter than ,). */
             Pad(emitter);
             SbPuts(&emitter->out, cName);
             SbPuts(&emitter->out, "->");
@@ -3053,6 +3192,43 @@ static void EmitExternSlot(CEmitter* emitter, const FunctionDecl* function)
     VecPush(&emitter->externs, symbol);
 }
 
+/* Emits `type name[dim0][dim1]...` for a fixed-size array field (C reverses
+   the dimension order relative to Strata's spelling: Strata `int[2][6]` is
+   six int[2] elements, i.e. C `int name[6][2]`). */
+static void EmitTypeDecl(CEmitter* emitter, const TypeName* type, const char* name)
+{
+    long dims[8];
+    int depth = 0;
+    const TypeName* t = type;
+    bool isConst = t->isConst;
+
+    while (t && t->isArray && t->length >= 0)
+    {
+        if (depth < 8)
+        {
+            dims[depth] = t->length;
+        }
+        depth++;
+        isConst = isConst || t->isConst;
+        t = t->elem;
+    }
+
+    if (isConst)
+    {
+        SbPuts(&emitter->out, "const ");
+    }
+
+    SbPuts(&emitter->out, TypeNameC(emitter, t->name));
+    SbPutc(&emitter->out, ' ');
+    SbPuts(&emitter->out, name);
+
+    /* dims[0] is the outermost array, which C spells first. */
+    for (int i = 0; i < depth; i++)
+    {
+        SbPrintf(&emitter->out, "[%ld]", dims[i]);
+    }
+}
+
 static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* states)
 {
     const StructType* type = &emitter->types.types[index];
@@ -3090,17 +3266,52 @@ static void EmitStructBody(CEmitter* emitter, size_t index, unsigned char* state
     SbPuts(&emitter->out, cName);
     SbPuts(&emitter->out, " {\n");
 
+    size_t nextPad = 0;
+
     for (size_t j = 0; j < type->fields.count; ++j)
     {
+        /* Registry-computed padding members interleave before the fields
+           that follow them (explicit fieldoffset layouts only). */
+        while (nextPad < type->padCount && type->pads[nextPad].beforeField == j)
+        {
+            SbPrintf(&emitter->out, "    unsigned char strata__pad%u[%ld];\n", (unsigned)j,
+                     type->pads[nextPad].bytes);
+            nextPad++;
+        }
+
         FieldDecl* field = (FieldDecl*)VecGet(&type->fields, j);
         SbPuts(&emitter->out, "    ");
-        EmitType(emitter, &field->type);
-        SbPutc(&emitter->out, ' ');
-        SbPuts(&emitter->out, FieldName(emitter, field->name));
+
+        if (field->type.isArray && field->type.length >= 0)
+        {
+            EmitTypeDecl(emitter, &field->type, FieldName(emitter, field->name));
+        }
+        else
+        {
+            EmitType(emitter, &field->type);
+            SbPutc(&emitter->out, ' ');
+            SbPuts(&emitter->out, FieldName(emitter, field->name));
+        }
+
         SbPuts(&emitter->out, ";\n");
     }
 
-    SbPuts(&emitter->out, "};\n");
+    while (nextPad < type->padCount)
+    {
+        SbPrintf(&emitter->out, "    unsigned char strata__padend[%ld];\n", type->pads[nextPad].bytes);
+        nextPad++;
+    }
+
+    SbPuts(&emitter->out, "}");
+
+    /* Explicit-offset layouts are fully encoded by the members above (pad
+       members included), so the C compiler must not add padding of its own. */
+    if (type->packedLayout)
+    {
+        SbPuts(&emitter->out, " __attribute__((packed))");
+    }
+
+    SbPuts(&emitter->out, ";\n");
 }
 
 static void EmitTypes(CEmitter* emitter)

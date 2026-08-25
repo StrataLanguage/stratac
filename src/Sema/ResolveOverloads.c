@@ -51,6 +51,38 @@ static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
     return t && t->opaque && t->incomplete;
 }
 
+/* True if a fixed-size array dimension (`T[N]`) appears anywhere in a type
+   tree (including inside boxes: `^T[N]` is an array of boxes). */
+static bool TypeTreeHasFixedArray(const TypeName* t)
+{
+    for (; t; t = t->isBox ? t->inner : (t->isArray ? t->elem : NULL))
+    {
+        if (t->isArray && t->length >= 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Descend through the leading fixed-size array dimensions of a field type,
+   returning the innermost non-fixed node and the total element count
+   (product of the dimensions, 1 when the type is not a fixed array). */
+static const TypeName* FixedArrayLeaf(const TypeName* t, long* totalCount)
+{
+    long count = 1;
+
+    while (t && t->isArray && t->length >= 0)
+    {
+        count *= t->length;
+        t = t->elem;
+    }
+
+    *totalCount = count;
+    return t;
+}
+
 /* Move-state tracking for box locals.
  *   value 1 = fully moved (value/field is gone)
  *   value 2 = re-live (reassigned as a whole)
@@ -1143,6 +1175,12 @@ static const char* InferType(Resolver* r, Node* n, StrMap* scope)
     case NodeIndex:
     {
         const char* baseName = InferType(r, ((IndexExpr*)n)->base_node, scope);
+
+        if (IsArrayType(baseName) || IsFixedArrayType(baseName))
+        {
+            return ArrayInnerName(r->m_arena, baseName);
+        }
+
         Str inner = ArrayInnerStr(baseName);
 
         return inner.data ? StrNew(r->m_arena, inner.data, inner.len).data : "";
@@ -1417,10 +1455,24 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             ResolveExpr(r, a->target, scope);
             ResolveExpr(r, a->value, scope);
 
+            /* Whole fixed-size array fields cannot be assigned (no splice
+               semantics; element stores are the supported path). */
+            if (a->target->kind == NodeMember || a->target->kind == NodeIndex)
+            {
+                const char* mt = InferType(r, a->target, scope);
+
+                if (mt[0] != '\0' && IsFixedArrayType(mt))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "cannot assign to a whole fixed-size array of type '%s'; assign its elements instead",
+                                 mt);
+                }
+            }
+
             /* A ^T value assigned into a plain (non-box) T target - a
-               ref T param, a local, a field - reads through the box (same
-               "^T -> T" coercion already used for var-decl inits, call
-               args, and returns), not a move. */
+                ref T param, a local, a field - reads through the box (same
+                "^T -> T" coercion already used for var-decl inits, call
+                args, and returns), not a move. */
             if (tt)
             {
                 const char* vt = InferType(r, a->value, scope);
@@ -1587,21 +1639,72 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (fieldDecl)
             {
-                const char* fieldValueType = InferType(r, field->value, scope);
-
-                if (fieldValueType[0] != '\0' && !IsAssignableType(r, fieldDecl->type.name, fieldValueType))
+                if (field->value->kind == NodeArrayInit)
                 {
-                    DiagErrorFmt(r->m_diag, structInitExpr->base.range,
-                                 "field '%s' of struct '%s' cannot be initialized by expression of type '%s'",
-                                 fieldDecl->name, structInitExpr->typeName, fieldValueType);
+                    ArrayInitExpr* ai = (ArrayInitExpr*)field->value;
+
+                    if (fieldDecl->type.isArray && fieldDecl->type.length >= 0)
+                    {
+                        /* Fixed-size array field: elements are a flat list
+                           (nested dims flatten, C-style); missing trailing
+                           elements are zero. Fill the element type for
+                           codegen and check count + per-element types. */
+                        long total = 0;
+                        const TypeName* leaf = FixedArrayLeaf(&fieldDecl->type, &total);
+
+                        if (ai->elementType[0] == '\0')
+                        {
+                            ai->elementType = leaf->name;
+                        }
+
+                        if ((long)ai->elements.count > total)
+                        {
+                            DiagErrorFmt(r->m_diag, field->value->range,
+                                         "too many initializers for fixed-size array field '%s' (%ld max, got %zu)",
+                                         fieldDecl->name, total, ai->elements.count);
+                        }
+
+                        for (size_t k = 0; k < ai->elements.count; k++)
+                        {
+                            Node* elem = (Node*)VecGet(&ai->elements, k);
+                            const char* elemType = InferType(r, elem, scope);
+
+                            if (elemType[0] != '\0' && !IsAssignableType(r, leaf->name, elemType))
+                            {
+                                DiagErrorFmt(r->m_diag, elem->range,
+                                             "element of type '%s' cannot initialize '%s' element of field '%s'",
+                                             elemType, leaf->name, fieldDecl->name);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        DiagErrorFmt(r->m_diag, field->value->range,
+                                     "braced initializers are only supported for fixed-size array fields; "
+                                     "field '%s' has type '%s'",
+                                     fieldDecl->name, fieldDecl->type.name);
+                    }
+                }
+                else
+                {
+                    const char* fieldValueType = InferType(r, field->value, scope);
+
+                    if (fieldValueType[0] != '\0' && !IsAssignableType(r, fieldDecl->type.name, fieldValueType))
+                    {
+                        DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+                                     "field '%s' of struct '%s' cannot be initialized by expression of type '%s'",
+                                     fieldDecl->name, structInitExpr->typeName, fieldValueType);
+                    }
                 }
 
                 /* A ^T field moves its source — but only when the source
                    value itself is owning (^T into ^T, string into
                    ^string). A bare T boxed into a ^T field is a copy. */
+                const char* fieldValueType2 = InferType(r, field->value, scope);
+
                 const char* movedFieldKey
                     = (IsOwningType(fieldDecl->type.name)
-                       && fieldValueType[0] != '\0' && IsOwningType(fieldValueType))
+                       && fieldValueType2[0] != '\0' && IsOwningType(fieldValueType2))
                       ? MovableBoxSourceKey(r, field->value) : NULL;
 
                 if (movedFieldKey)
@@ -1692,6 +1795,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (IsIncompleteStruct(&r->m_registry, vd->type.name))
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
+        }
+
+        if (TypeTreeHasFixedArray(&vd->type))
+        {
+            DiagErrorFmt(r->m_diag, vd->base.range,
+                         "local variable '%s' may not have a fixed-size array type ('%s'); "
+                         "fixed-size arrays are only allowed as struct fields",
+                         vd->name, vd->type.name);
         }
 
         /* Owning types must be initialized so they hold a valid heap pointer
@@ -2032,6 +2143,16 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             continue;
         }
 
+        /* Layout conflicts (extern struct redeclarations, overlapping
+           fieldoffsets, unsizeable field types) are computed in the type
+           registry; report them here where a source range is available. */
+        const StructType* registered = TypeRegistryFind(&r.m_registry, sd->name);
+
+        if (registered && registered->layoutError)
+        {
+            DiagErrorFmt(diag, sd->base.range, "%s", registered->layoutError);
+        }
+
         for (size_t j = 0; j < sd->fields.count; j++)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
@@ -2039,6 +2160,53 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             if (IsIncompleteStruct(&r.m_registry, field->type.name))
             {
                 DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name,
+                             field->type.name);
+            }
+
+            if (field->type.isArray && field->type.length >= 0)
+            {
+                if (field->type.length < 1)
+                {
+                    DiagErrorFmt(diag, field->type.range,
+                                 "fixed-size array field '%s' must have a length of at least 1", field->name);
+                }
+
+                long total = 0;
+                const TypeName* leaf = FixedArrayLeaf(&field->type, &total);
+
+                if (leaf->isArray)
+                {
+                    DiagErrorFmt(diag, field->type.range,
+                                 "fixed-size array field '%s' may not contain a dynamic array", field->name);
+                }
+                else if (leaf->isBox || strcmp(leaf->name, "string") == 0 || IsOwningType(leaf->name))
+                {
+                    DiagErrorFmt(diag, field->type.range,
+                                 "fixed-size array field '%s' may not own its elements ('%s' is owning); "
+                                 "fixed-size arrays have no drop glue",
+                                 field->name, leaf->name);
+                }
+                else if (TypeRegistryIsOwningStruct(&r.m_registry, leaf->name))
+                {
+                    DiagErrorFmt(diag, field->type.range,
+                                 "fixed-size array field '%s' may not contain an owning struct ('%s'); "
+                                 "fixed-size arrays have no drop glue",
+                                 field->name, leaf->name);
+                }
+                else if (IsIncompleteStruct(&r.m_registry, leaf->name))
+                {
+                    DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name,
+                                 leaf->name);
+                }
+            }
+            else if (TypeTreeHasFixedArray(&field->type))
+            {
+                /* e.g. `int[4][]` — a dynamic array whose elements are fixed
+                   arrays: not supported (fixed arrays live only in struct
+                   fields, nested inside other fixed arrays). */
+                DiagErrorFmt(diag, field->type.range,
+                             "fixed-size arrays may only appear as (nested) fixed-size array struct fields, "
+                             "not inside '%s'",
                              field->type.name);
             }
         }
@@ -2064,6 +2232,14 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         for (size_t i = 0; i < mod->globals.count; i++)
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+
+            if (TypeTreeHasFixedArray(&gd->type))
+            {
+                DiagErrorFmt(diag, gd->base.range,
+                             "global '%s' may not have a fixed-size array type ('%s'); "
+                             "fixed-size arrays are only allowed as struct fields",
+                             gd->name, gd->type.name);
+            }
 
             /* Array globals default to an empty {null, 0} fat struct. */
             if (IsArrayType(gd->type.name))
@@ -2132,10 +2308,21 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
 
-            /* `const ref T` is a non-owning view to an immutable. For structs
-               (always passed by reference) it is equivalent to `const T`, so we
-               allow the explicit spelling rather than rejecting it. */
-            (void)p;
+            if (TypeTreeHasFixedArray(&p->type))
+            {
+                DiagErrorFmt(diag, p->base.range,
+                             "parameter '%s' may not have a fixed-size array type ('%s'); "
+                             "fixed-size arrays are only allowed as struct fields",
+                             p->name, p->type.name);
+            }
+        }
+
+        if (TypeTreeHasFixedArray(&functionDecl->returnType))
+        {
+            DiagErrorFmt(diag, functionDecl->base.range,
+                         "function '%s' may not return a fixed-size array type ('%s'); "
+                         "fixed-size arrays are only allowed as struct fields",
+                         functionDecl->name, functionDecl->returnType.name);
         }
 
         if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))

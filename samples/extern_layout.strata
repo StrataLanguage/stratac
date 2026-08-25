@@ -1,0 +1,67 @@
+// extern_layout.strata -- `extern struct` mirrors a host-defined struct type.
+//
+// The body is written in Strata but describes the HOST's C layout exactly:
+// `fieldoffset(N)` pins a field to byte N, and `T[N]` is a C-ABI inline
+// fixed-size array. Fields without an explicit offset flow at the next
+// naturally aligned offset, exactly like the C compiler would place them —
+// so this Header mirrors the C `Header` in hosts/extern_layout_host.c
+// (verified there with static_asserts on offsetof/sizeof).
+//
+// Pointer members are spelled `^T`: instances Strata creates are dropped
+// automatically (the box and everything it owns is freed); structs passed to
+// Strata functions travel by reference and are never dropped.
+//
+//   stratac extern_layout.strata -o extern_layout.o
+//   clang hosts/extern_layout_host.c extern_layout.o -o extern_layout.exe
+//   ./extern_layout.exe
+
+extern struct Header {
+    fieldoffset(0) int magic;      // host: int   magic;   @ 0
+    fieldoffset(8) long size;      // host: long  size;    @ 8  (4 bytes skipped)
+    byte[16] name;                 // host: unsigned char name[16]; @ 16
+    float[4] bbox;                 // host: float bbox[4];  @ 32
+    int count;                     // host: int   count;   @ 48
+};
+
+struct Counter { long hits; };
+
+// Owning extern struct: `hits` is a Strata-side box. The host treats it as an
+// opaque pointer and never frees it — Strata drops it when the owning value
+// goes away.
+extern struct Owned {
+    ^Counter hits;
+    int[2][3] cells;               // host: int cells[2][3]; @ 8
+};
+
+// The host implements these over the SAME layout:
+//   long sum_header(const Header*), void fill_header(Header*).
+extern long sum_header(const Header h);
+extern void fill_header(Header h);
+
+long strata_side()
+{
+    // A Strata-created instance: braced fixed-array literals (missing
+    // elements are zero), constant `.length`, bounds-checked indexing.
+    Header h = Header { .magic = 1, .size = 2, .name = { 97, 98 }, .bbox = { 1.0, 2.0 }, .count = 3 };
+
+    // Boxes created inside a scope drop automatically at its end.
+    long total = 0;
+    {
+        ^Owned o = Owned { .hits = Counter { .hits = 10 }, .cells = { 1, 2, 3, 4, 5, 6 } };
+        total = o.hits.hits + o.cells[1][2] + o.cells.length;   // 10 + 6 + 2 = 18
+    }
+
+    // sum_header sees the identical bytes: 1+2+3 + (97+98) + (1+2) = 204
+    return total + sum_header(h);
+}
+
+long entry()
+{
+    // The host writes through its own C struct; Strata reads the same bytes.
+    Header h;
+    fill_header(h);   // magic=8 size=16 name[0]=83 bbox[3]=4 count=32
+
+    // 18 + 204 + 8+16+83+4+32 + 16 + 4 = 385
+    return strata_side() + h.magic + h.size + h.name[0] + (long)h.bbox[3] + h.count
+           + h.name.length + h.bbox.length;
+}

@@ -162,11 +162,15 @@ static void Dump(Node* n, int indent, Sb* out)
             SbPrintf(out, "struct %s;  ; forward\n", struct_decl->name);
             return;
         }
-        SbPrintf(out, "struct %s {\n", struct_decl->name);
+        SbPrintf(out, "%sstruct %s {\n", struct_decl->isExtern ? "extern " : "", struct_decl->name);
         for (size_t i = 0; i < struct_decl->fields.count; i++)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&struct_decl->fields, i);
             Pad(indent + 4, out);
+            if (field->offset >= 0)
+            {
+                SbPrintf(out, "fieldoffset(%ld) ", field->offset);
+            }
             SbPrintf(out, "%s %s\n", field->type.name, field->name);
         }
         Pad(indent + 2, out);

@@ -134,7 +134,8 @@ STRATA_TEST(c_backend_rejects_struct_value_cycles)
     StrataResult result
         = strataCompileString(compiler, "struct A { B b; }; struct B { A a; };", "struct_cycle", STRATA_EMIT_C, 0);
     STRATA_CHECK(!result.ok);
-    STRATA_CHECK(strstr(result.diagnostics, "by-value dependency cycle") != NULL);
+    /* The sema layout pass catches by-value cycles before any backend runs. */
+    STRATA_CHECK(strstr(result.diagnostics, "by-value cycle") != NULL);
     strataResultFree(&result);
     strataCompilerDestroy(compiler);
 }

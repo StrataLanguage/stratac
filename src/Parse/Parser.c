@@ -259,20 +259,130 @@ static bool LooksLikeVarDecl(Parser* p)
     }
 }
 
-/* Consume well-formed postfix `[]` pairs (e.g. `int[]`, `^S[]`, `int[][]`).
-   Leaves a `[` intact (e.g. `foo[3]`) so speculative type-parse is safe. */
+/* Consume well-formed postfix bracket pairs (e.g. `int[]`, `^S[]`,
+   `int[][]`). A pair holding an integer literal (`int[4]`) declares a
+   fixed-size (C-ABI inline) array dimension. Anything else (e.g. `foo[i]`,
+   `foo[3 + 1]`) leaves the `[` intact so speculative type-parse is safe;
+   fixed dimensions are verified as a complete `[ N ]` trio before any token
+   is consumed, so speculation never emits diagnostics.
+
+   Dimension order matches C: in `T[A][B]` the FIRST group is the outermost
+   dimension (A elements of T[B]), so `int[2][6]` mirrors C `int x[2][6]`.
+   The wraps are applied inside-out and the canonical name is rebuilt in
+   source order so it round-trips. */
+typedef struct {
+    bool isFixed;
+    long length;
+} ArrayDim;
+
 static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 {
-    while (p->m_cur.kind == TokLBracket && LexerPeekToken(p->m_lex).kind == TokRBracket)
-    {
-        Advance(p); /* '[' */
-        Advance(p); /* ']' */
+    ArrayDim dims[8];
+    int dimCount = 0;
 
-        TypeName wrapped = TypeNameArrayWrap(p->m_arena, *out);
-        wrapped.range
-            = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+    while (p->m_cur.kind == TokLBracket && dimCount < 8)
+    {
+        Token next = LexerPeekToken(p->m_lex);
+        ArrayDim dim;
+        bool consumed = false;
+
+        if (next.kind == TokRBracket)
+        {
+            Advance(p); /* '[' */
+            Advance(p); /* ']' */
+
+            dim.isFixed = false;
+            dim.length = -1;
+            consumed = true;
+        }
+        else if (next.kind == TokIntLit)
+        {
+            size_t savedPos = LexerPosition(p->m_lex);
+            bool savedHasPeek = p->m_lex->m_hasPeek;
+            Token savedPeeked = p->m_lex->m_peeked;
+            Token savedCur = p->m_cur;
+
+            Advance(p); /* '[' */
+
+            Token lenTok = p->m_cur;
+            Advance(p);
+
+            if (p->m_cur.kind == TokRBracket)
+            {
+                Advance(p); /* ']' */
+
+                Str sv = ParserIdentText(p, lenTok);
+
+                if (sv.len > 0 && (sv.data[sv.len - 1] == 'u' || sv.data[sv.len - 1] == 'U'))
+                {
+                    sv.len--;
+                }
+
+                char tmp[64];
+                size_t n = sv.len < 63 ? sv.len : 63;
+                memcpy(tmp, sv.data, n);
+                tmp[n] = '\0';
+
+                /* Length < 1 is diagnosed later (sema); parsing continues
+                   so speculation stays diagnostic-free. */
+                dim.isFixed = true;
+                dim.length = (long)strtoull(tmp, NULL, 0);
+                consumed = true;
+            }
+            else
+            {
+                /* Not a fixed dimension after all — put everything back. */
+                p->m_lex->m_pos = savedPos;
+                p->m_lex->m_hasPeek = savedHasPeek;
+                p->m_lex->m_peeked = savedPeeked;
+                p->m_cur = savedCur;
+            }
+        }
+
+        if (!consumed)
+        {
+            break;
+        }
+
+        dims[dimCount++] = dim;
+    }
+
+    if (dimCount == 0)
+    {
+        return;
+    }
+
+    /* Apply inside-out (last source group is the innermost array), then
+       rebuild the canonical name in source order. The pre-bracket type is
+       never itself an array, so its name is the leaf spelling. */
+    const char* leafName = out->name;
+
+    for (int i = dimCount - 1; i >= 0; i--)
+    {
+        TypeName wrapped = dims[i].isFixed ? TypeNameFixedArrayWrap(p->m_arena, *out, dims[i].length)
+                                           : TypeNameArrayWrap(p->m_arena, *out);
         *out = wrapped;
     }
+
+    Sb sb;
+    SbInit(&sb);
+    SbPuts(&sb, leafName);
+
+    for (int i = 0; i < dimCount; i++)
+    {
+        if (dims[i].isFixed)
+        {
+            SbPrintf(&sb, "[%ld]", dims[i].length);
+        }
+        else
+        {
+            SbPuts(&sb, "[]");
+        }
+    }
+
+    out->name = SbFinish(&sb, p->m_arena);
+    out->range
+        = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
 }
 
 bool ParserTryParseType(Parser* p, TypeName* out)
@@ -306,22 +416,57 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         /* `^` binds tighter than a trailing `[]`: the recursive parse may
            have consumed postfix brackets into `inner` (`^T[]` read as
            ^(T[])). Unwrap them from the inner type and re-apply them
-           around the box so the result is (^T)[]. There is no spelling
-           for a box whose inner type is an array. */
+           around the box so the result is (^T)[N] (or (^T)[]). Dimension
+           lengths are preserved and the name rebuilt in source order so
+           the spelling round-trips. There is no spelling for a box whose
+           inner type is an array. */
         TypeName base = inner;
+        long depths[8];
         int arrayDepth = 0;
 
         while (base.isArray)
         {
+            if (arrayDepth < 8)
+            {
+                depths[arrayDepth] = base.length;
+            }
             arrayDepth++;
             base = *base.elem;
         }
 
         TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
 
-        while (arrayDepth-- > 0)
+        for (int i = arrayDepth - 1; i >= 0; i--)
         {
-            wrapped = TypeNameArrayWrap(p->m_arena, wrapped);
+            if (i < 8 && depths[i] >= 0)
+            {
+                wrapped = TypeNameFixedArrayWrap(p->m_arena, wrapped, depths[i]);
+            }
+            else
+            {
+                wrapped = TypeNameArrayWrap(p->m_arena, wrapped);
+            }
+        }
+
+        if (arrayDepth > 0)
+        {
+            Sb sb;
+            SbInit(&sb);
+            SbPrintf(&sb, "^%s", base.name);
+
+            for (int i = 0; i < arrayDepth; i++)
+            {
+                if (i < 8 && depths[i] >= 0)
+                {
+                    SbPrintf(&sb, "[%ld]", depths[i]);
+                }
+                else
+                {
+                    SbPuts(&sb, "[]");
+                }
+            }
+
+            wrapped.name = SbFinish(&sb, p->m_arena);
         }
 
         wrapped.range
@@ -460,7 +605,7 @@ static HandleDecl* ParseHandleDecl(Parser* p)
     return node;
 }
 
-static StructDecl* ParseStructDecl(Parser* p)
+static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 {
     if (!ParserConsume(p, TokKwStruct))
     {
@@ -482,11 +627,60 @@ static StructDecl* ParseStructDecl(Parser* p)
     node->base.range = nameTok.range;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     VecInit(&node->fields);
+    node->isExtern = isExtern;
 
     if (ParserConsume(p, TokLBrace))
     {
         while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
         {
+            long offset = -1;
+
+            if (p->m_cur.kind == TokKwFieldoffset)
+            {
+                Token foTok = p->m_cur;
+                Advance(p);
+
+                if (!ParserConsume(p, TokLParen))
+                {
+                    DiagError(p->m_diag, p->m_cur.range, "expected '(' after 'fieldoffset'");
+                    break;
+                }
+
+                if (p->m_cur.kind != TokIntLit)
+                {
+                    DiagError(p->m_diag, p->m_cur.range, "expected a byte offset inside 'fieldoffset(...)'");
+                    break;
+                }
+
+                Token lenTok = p->m_cur;
+                Advance(p);
+
+                if (!ParserConsume(p, TokRParen))
+                {
+                    DiagError(p->m_diag, p->m_cur.range, "expected ')' to close 'fieldoffset(...)'");
+                    break;
+                }
+
+                if (!isExtern)
+                {
+                    DiagError(p->m_diag, foTok.range, "'fieldoffset' is only allowed inside an 'extern struct'");
+                }
+
+                Str sv = ParserIdentText(p, lenTok);
+
+                if (sv.len > 0 && (sv.data[sv.len - 1] == 'u' || sv.data[sv.len - 1] == 'U'))
+                {
+                    sv.len--;
+                }
+
+                char tmp[64];
+                size_t n = sv.len < 63 ? sv.len : 63;
+                memcpy(tmp, sv.data, n);
+                tmp[n] = '\0';
+
+                offset = (long)strtoull(tmp, NULL, 0);
+            }
+
             TypeName ft = {0};
             if (!ParserTryParseType(p, &ft))
             {
@@ -506,6 +700,7 @@ static StructDecl* ParseStructDecl(Parser* p)
             FieldDecl* field = AST_NEW(p->m_arena, FieldDecl);
             field->type = ft;
             field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldTok));
+            field->offset = offset;
             VecPush(&node->fields, field);
 
             Token semi = ParserExpect(p, TokSemicolon, "';'");
@@ -520,6 +715,11 @@ static StructDecl* ParseStructDecl(Parser* p)
     }
     else
     {
+        if (isExtern)
+        {
+            DiagError(p->m_diag, nameTok.range, "extern struct must have a body");
+        }
+
         node->incomplete = true;
     }
 
@@ -881,7 +1081,24 @@ Module* ParserParseModule(Parser* p)
 
         if (p->m_cur.kind == TokKwStruct)
         {
-            StructDecl* sd = ParseStructDecl(p);
+            StructDecl* sd = ParseStructDecl(p, false);
+            if (sd)
+            {
+                VecPush(&mod->structs, sd);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
+            continue;
+        }
+
+        if (p->m_cur.kind == TokKwExtern && LexerPeekToken(p->m_lex).kind == TokKwStruct)
+        {
+            Advance(p); /* 'extern' */
+
+            StructDecl* sd = ParseStructDecl(p, true);
             if (sd)
             {
                 VecPush(&mod->structs, sd);
@@ -1540,7 +1757,17 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
             ParserExpect(p, TokAssign, "'='");
         }
 
-        field->value = ParseExpr(p);
+        if (p->m_cur.kind == TokLBrace)
+        {
+            /* `{ ... }` initializes a fixed-size array field; the element
+               type is filled in from the field during sema. */
+            field->value = ParseArrayInitBody(p, p->m_cur, NULL);
+        }
+        else
+        {
+            field->value = ParseExpr(p);
+        }
+
         VecPush(&init->fields, field);
 
         if (ParserConsume(p, TokComma))

@@ -186,3 +186,36 @@ STRATA_TEST(array_indexing_emits_bounds_check)
     free(src);
 }
 
+STRATA_TEST(sample_extern_layout_mirrors_host_struct)
+{
+    char* src = LoadSample("extern_layout.strata");
+    STRATA_CHECK(src != NULL);
+    STRATA_CHECK(src[0] != '\0');
+
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    /* The extern structs keep explicit-offset (packed) layout in the IR:
+       Header has a 4-byte pad before `size` (@8) and fixed inline arrays;
+       Owned carries the per-type drop helper for its ^Counter field. */
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "%struct.Header = type <{ i32, [4 x i8], i64, [16 x i8], [4 x float], i32 }>")
+                 != NULL);
+    STRATA_CHECK(strstr(res.output, "[2 x [3 x i32]]") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_drop_Owned") != NULL);
+
+    /* The C backend mirrors the same layout with pad members + packed. */
+    CodegenResult cres = GenerateC(mod, STRATA_ARCH_AUTO);
+    STRATA_CHECK(cres.ok);
+    STRATA_CHECK(strstr(cres.output, "strata__pad1[4]") != NULL);
+    STRATA_CHECK(strstr(cres.output, "__attribute__((packed))") != NULL);
+    STRATA_CHECK(strstr(cres.output, "int strata__field_cells[2][3]") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+    free(src);
+}
+

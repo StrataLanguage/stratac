@@ -134,6 +134,18 @@ main) are the internal entry points.
 - Scalars: `void bool int uint long ulong byte sbyte short ushort float double`
 - Structs: `struct Vec3 { float x; float y; float z; };` — value types,
   passed by reference by default (pointer at the ABI level)
+- Extern structs: `extern struct Header { fieldoffset(8) long size; byte[16] name; };`
+  — mirrors a **host-defined** C struct type. The body must match the host
+  layout byte-for-byte; `fieldoffset(N)` pins a field to byte N (extern
+  structs only), fields without an offset flow at the next naturally aligned
+  offset (C rules). Any struct with an explicit offset is emitted *packed*
+  with explicit pad members, so `sizeof`/offsets match C exactly (natural
+  extern structs rely on the backend's C-compatible padding). Duplicate
+  extern-struct declarations must be field-identical (hard error otherwise).
+  Pointer members are spelled `^T`: instances Strata creates (as `^Struct`)
+  are dropped automatically; bare struct params stay borrows — the host never
+  frees a Strata box and treats `^T` members as opaque pointers. See
+  `samples/extern_layout.strata` + `samples/hosts/extern_layout_host.c`.
 - Handles: `handle Entity;` — opaque, pointer-sized, passed by value.
 - Handle inheritance: `handle Player extends Entity;` — `Player` is
   passable anywhere `Entity` is expected (checked by `HandleExtendsFrom`)
@@ -143,6 +155,18 @@ main) are the internal entry points.
   no spelling for a box whose inner type is an array. In the compiler a
   box is a structural `TypeName` flag (`isBox`/`inner`); canonical type
   spellings look like `^Foo` / `^Foo[]`.
+- Fixed-size arrays: `byte[16] name;` — C-ABI inline storage (`[16 x i8]`
+  in LLVM, `unsigned char name[16]` in C). **Struct fields only** (not
+  locals, params, returns, globals, or dynamic-array elements); elements
+  must be non-owning scalars/handles/structs (no `^T`/`string`/`T[]`
+  elements — fixed arrays have no drop glue). Dimensions read like C,
+  outermost first (`int[2][6]` is 2×`int[6]`, mirroring `int x[2][6]`;
+  nesting is spelled inside-out relative to C). Braced struct-init values
+  are flat C-style lists (`S { .m = {1,2,3} }`, missing elements zero),
+  indexing is bounds-checked against the compile-time length, and
+  `.length` is a compile-time constant. Whole fixed-array assignment
+  (`s.a = s.b`) is rejected — assign elements. No auto-conversion to the
+  fat `T[]` pointer yet.
 
 ### Parameters
 
@@ -187,7 +211,10 @@ main) are the internal entry points.
 - JIT: each `extern` call goes through a writable global pointer slot
   `__strata_ext_<name>`. `strataJitAddSymbol` writes the host address.
 - Structs cross the boundary as pointers (`ptr`); handles are already
-  pointer-sized and pass by value.
+  pointer-sized and pass by value. `extern struct` declarations let Strata
+  code name and read/write the host's own struct layouts (see Types above);
+  AOT hosts must also provide `strata_alloc`/`strata_free` (and
+  `strata_panic`) whenever the Strata code allocates boxes.
 
 ## Adding a language feature (typical path)
 

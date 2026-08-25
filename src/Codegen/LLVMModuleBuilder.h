@@ -29,6 +29,8 @@ typedef struct
     bool isSimdVector;
     const char* arrayInner; /* element type name (arena-owned) */
     bool aliasedArray;      /* ref T... rest: slots hold pointers to sources */
+    bool isFixedArray;      /* T[N]: inline [N x T] (C ABI), struct fields only */
+    long fixedLength;       /* N when isFixedArray */
 } TypeDesc;
 
 typedef struct

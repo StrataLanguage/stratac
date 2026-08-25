@@ -310,6 +310,18 @@ static LLVMValueRef IdxConst(Builder* b, unsigned i)
     return LLVMConstInt(I32Ty(b), i, 1);
 }
 
+/* LLVM member index for logical field `idx` of a struct, mapping through the
+   computed layout (explicit fieldoffsets insert padding members). */
+static unsigned PhysicalFieldIndex(const StructType* st, int idx)
+{
+    if (st && st->hasLayout && st->physicalIndex && idx >= 0 && (size_t)idx < st->fields.count)
+    {
+        return (unsigned)st->physicalIndex[idx];
+    }
+
+    return (unsigned)(idx < 0 ? 0 : idx);
+}
+
 static TypeDesc Resolve(Builder* b, const TypeName* t);
 static Value ZeroInt(Builder* b);
 static Value Coerce(Builder* b, Value value, TypeDesc target);
@@ -367,6 +379,41 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
     if (found)
     {
         return TypeDescMake(found, 0, t->name);
+    }
+
+    /* T[N]: fixed-size inline array ([N x T], C ABI). Struct fields only.
+       Handles both full type trees (parser-produced) and name-only
+       TypeNames (synthesized at member/index sites). */
+    if (t->isArray && t->length >= 0)
+    {
+        TypeDesc elemTd = Resolve(b, t->elem);
+
+        TypeDesc td = {0};
+        td.type = LLVMArrayType(elemTd.type, (unsigned)t->length);
+        td.isFixedArray = true;
+        td.fixedLength = t->length;
+        td.arrayInner = t->elem->name;
+
+        return td;
+    }
+
+    if (IsFixedArrayType(t->name))
+    {
+        char* fixedInner = ArrayInnerName(b->m_arena, t->name);
+
+        if (fixedInner)
+        {
+            TypeName elemTn = MakeTypeName(fixedInner);
+            TypeDesc elemTd = Resolve(b, &elemTn);
+
+            TypeDesc td = {0};
+            td.type = LLVMArrayType(elemTd.type, (unsigned)FixedArrayLength(t->name));
+            td.isFixedArray = true;
+            td.fixedLength = FixedArrayLength(t->name);
+            td.arrayInner = fixedInner;
+
+            return td;
+        }
     }
 
     Str arrInner = ArrayInnerStr(t->name);
@@ -764,7 +811,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
             {
                 FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
                 TypeDesc fieldTd = Resolve(b, &f->type);
-                LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)j)};
+                LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
                 LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "df");
 
                 if (IsOwningType(f->type.name) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
@@ -824,7 +871,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
         {
             FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
             TypeDesc fieldTd = Resolve(b, &f->type);
-            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)j)};
+            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
             LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, slot, idxs, 2, "df");
 
             if (IsOwningType(f->type.name) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
@@ -938,6 +985,66 @@ static LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValu
 
     PositionAtEnd(b, okBB);
     LLVMValueRef elemAddr = PlainElemPtr(b, dataPtr, idxVal, elemTy, aliased);
+    Br(b, mergeBB);
+    LLVMBasicBlockRef okEnd = LLVMGetInsertBlock(b->m_builder);
+
+    PositionAtEnd(b, mergeBB);
+    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, b->m_ptrTy, "el");
+    LLVMValueRef incomingVals[2] = {dummyAddr, elemAddr};
+    LLVMBasicBlockRef incomingBlocks[2] = {oobEnd, okEnd};
+    LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
+    return phi;
+}
+
+/* Element address inside a fixed-size inline array ([N x T] at `arrPtr`).
+   The leading 0 walks into the array; the runtime index is the element. */
+static LLVMValueRef FixedElemPtr(Builder* b, LLVMValueRef arrPtr, LLVMValueRef idxVal, LLVMTypeRef arrTy)
+{
+    LLVMValueRef idxArgs[2] = {IdxConst(b, 0), idxVal};
+    return LLVMBuildGEP2(b->m_builder, arrTy, arrPtr, idxArgs, 2, "ai");
+}
+
+/* Bounds-checked variant for fixed arrays. The length is the compile-time
+   dimension; elements are never owning (enforced by sema), so the JIT dummy
+   is a shared slot and never needs per-site scratch. */
+static LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, long length, LLVMValueRef arrPtr,
+                                            LLVMTypeRef arrTy, TypeDesc elemTd)
+{
+    LLVMValueRef lenVal = LLVMConstInt(I64Ty(b), (unsigned long long)(length < 0 ? 0 : length), 0);
+
+    if (!b->m_boundsCheck)
+    {
+        return FixedElemPtr(b, arrPtr, idxVal, arrTy);
+    }
+
+    if (!b->m_jitMode)
+    {
+        EmitBoundsCheck(b, idxVal, lenVal);
+        return FixedElemPtr(b, arrPtr, idxVal, arrTy);
+    }
+
+    LLVMValueRef oob = LLVMBuildICmp(b->m_builder, LLVMIntUGE, idxVal, lenVal, "oob");
+
+    LLVMBasicBlockRef oobBB = NewBb(b, "oob.dummy");
+    LLVMBasicBlockRef okBB = NewBb(b, "oob.ok");
+    LLVMBasicBlockRef mergeBB = NewBb(b, "oob.elem");
+    LLVMBuildCondBr(b->m_builder, oob, oobBB, okBB);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, oobBB);
+
+    if (!b->m_nullStoreLValue)
+    {
+        EmitOobReport(b);
+    }
+
+    LLVMValueRef dummyAddr = SharedDummyAddr(b, elemTd);
+
+    Br(b, mergeBB);
+    LLVMBasicBlockRef oobEnd = LLVMGetInsertBlock(b->m_builder);
+
+    PositionAtEnd(b, okBB);
+    LLVMValueRef elemAddr = FixedElemPtr(b, arrPtr, idxVal, arrTy);
     Br(b, mergeBB);
     LLVMBasicBlockRef okEnd = LLVMGetInsertBlock(b->m_builder);
 
@@ -1136,7 +1243,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
             continue;
         }
 
-        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)j)};
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
         LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "fd");
 
         if (fieldOwning)
@@ -1555,6 +1662,12 @@ static LValue EmitLValue(Builder* b, Node* n)
             return none;
         }
 
+        /* Fixed-array .length is a compile-time constant, not an lvalue. */
+        if (base.typeDesc.isFixedArray && strcmp(m->member, "length") == 0)
+        {
+            return none;
+        }
+
         LLVMValueRef structPtr;
         LLVMTypeRef structTy;
         const char* structName;
@@ -1588,9 +1701,11 @@ static LValue EmitLValue(Builder* b, Node* n)
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
         TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
+        unsigned physIdx = PhysicalFieldIndex(st, idx);
+
         LLVMValueRef idxs[2] = {0};
         idxs[0] = IdxConst(b, 0);
-        idxs[1] = IdxConst(b, (unsigned)idx);
+        idxs[1] = IdxConst(b, physIdx);
 
         LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "f");
 
@@ -1608,6 +1723,23 @@ static LValue EmitLValue(Builder* b, Node* n)
 
         if (!base.valid || !base.typeDesc.isArray)
         {
+            if (!base.valid || !base.typeDesc.isFixedArray)
+            {
+                return none;
+            }
+
+            /* Fixed inline array: GEP straight into the [N x T] storage;
+               the length is the compile-time dimension. */
+            TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)base.typeDesc.arrayInner});
+            LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+
+            LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+
+            none.valid = true;
+            none.ptr = EmitCheckedFixedElemPtr(b, idxVal, base.typeDesc.fixedLength, base.ptr, base.typeDesc.type,
+                                               elemTd);
+            none.typeDesc = elemTd;
+
             return none;
         }
 
@@ -1665,11 +1797,18 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         return ValueMake(len, TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL));
     }
 
+    /* Fixed-array .length: the compile-time dimension as a constant. */
+    if (base.typeDesc.isFixedArray && strcmp(n->member, "length") == 0)
+    {
+        LLVMValueRef len = LLVMConstInt(I64Ty(b), (unsigned long long)base.typeDesc.fixedLength, 0);
+        return ValueMake(len, TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL));
+    }
+
     if (base.typeDesc.isBox && base.typeDesc.boxInner)
     {
         /* A box-typed value with no addressable lvalue (e.g. a call result
-           used directly: `MakeThing().field`) - GEP+load through the
-           pointer instead of extracting from an aggregate value. */
+            used directly: `MakeThing().field`) - GEP+load through the
+            pointer instead of extracting from an aggregate value. */
         LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, base.typeDesc.boxInner);
         int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.boxInner, n->member);
 
@@ -1679,7 +1818,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
             FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
             TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
-            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)idx)};
+            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, idx))};
             LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, base.value, idxs, 2, "f");
             LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
 
@@ -1718,7 +1857,8 @@ static Value EmitMember(Builder* b, MemberExpr* n)
             FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
             TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
-            LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, (unsigned)idx, "m");
+            LLVMValueRef v
+                = LLVMBuildExtractValue(b->m_builder, base.value, PhysicalFieldIndex(st, idx), "m");
 
             return ValueMake(v, fieldTypeDesc);
         }
@@ -1747,6 +1887,24 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     /* Fallback: base is a non-addressable array rvalue (literal or call
        result), e.g. {1,2,3}[0] or MakeArr()[2]. */
     Value base = EmitExpr(b, n->base_node);
+
+    if (base.typeDesc.isFixedArray)
+    {
+        /* Fixed inline array rvalue (e.g. MakeS().data): park the value in
+           an entry alloca so a runtime index can address it. */
+        TypeDesc elemTd = Resolve(b, &(TypeName){.name = (char*)base.typeDesc.arrayInner});
+
+        LLVMValueRef slot = EntryAlloca(b, base.typeDesc.type, "fxr");
+        LLVMBuildStore(b->m_builder, base.value, slot);
+
+        LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
+
+        LLVMValueRef elemAddr
+            = EmitCheckedFixedElemPtr(b, idxVal, base.typeDesc.fixedLength, slot, base.typeDesc.type, elemTd);
+        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTd.type, elemAddr, "el");
+
+        return ValueMake(v, elemTd);
+    }
 
     if (!base.typeDesc.isArray)
     {
@@ -2606,7 +2764,7 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
             {
                 FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
                 TypeDesc fieldTd = Resolve(b, &f->type);
-                LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)j)};
+                LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
                 LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
                 LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
 
@@ -2793,7 +2951,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 argValue = Coerce(b, rawArg, fieldTd);
             }
 
-            agg = LLVMBuildInsertValue(b->m_builder, agg, argValue.value, (unsigned)i, "ins");
+            agg = LLVMBuildInsertValue(b->m_builder, agg, argValue.value, PhysicalFieldIndex(st, (int)i), "ins");
 
             /* If an owning field was moved from an owning lvalue source,
                null the source so its scope-exit drop is a no-op. */
@@ -3154,6 +3312,45 @@ static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
     return EmitArrayFromNodes(b, n->elementType, &n->elements, false, false);
 }
 
+/* Product of the fixed dimensions at/below `t` (1 once a non-fixed node is
+   reached). Used to map a flat literal index onto nested array dimensions. */
+static long FixedDimProduct(const TypeName* t)
+{
+    long count = 1;
+
+    while (t && t->isArray && t->length >= 0)
+    {
+        count *= t->length;
+        t = t->elem;
+    }
+
+    return count;
+}
+
+/* Inserts element `k` (a FLAT index, C-initialized-array style) of a
+   (possibly nested) fixed array value, descending through inner fixed
+   dimensions with extract/insert pairs. */
+static LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, long k)
+{
+    if (!(arrType->isArray && arrType->length >= 0))
+    {
+        return agg;
+    }
+
+    if (arrType->elem && arrType->elem->isArray && arrType->elem->length >= 0)
+    {
+        long innerCount = FixedDimProduct(arrType->elem);
+        long outer = innerCount > 0 ? k / innerCount : 0;
+        long inner = innerCount > 0 ? k % innerCount : 0;
+
+        LLVMValueRef sub = LLVMBuildExtractValue(b->m_builder, agg, (unsigned)outer, "sub");
+        sub = InsertFixedElem(b, sub, val, arrType->elem, inner);
+        return LLVMBuildInsertValue(b->m_builder, agg, sub, (unsigned)outer, "ins");
+    }
+
+    return LLVMBuildInsertValue(b->m_builder, agg, val, (unsigned)k, "ins");
+}
+
 static Value EmitStructInit(Builder* b, StructInitExpr* n)
 {
     TypeName tn = MakeTypeName(n->typeName);
@@ -3195,6 +3392,26 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, idx);
         TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
 
+        if (fieldTd.isFixedArray && field->value->kind == NodeArrayInit)
+        {
+            /* Fixed-size array field from a braced literal: elements are a
+               flat list; trailing elements past the literal stay zero. */
+            ArrayInitExpr* ai = (ArrayInitExpr*)field->value;
+            TypeDesc elemTd = Resolve(b, &(TypeName){.name = ai->elementType});
+
+            LLVMValueRef arr = LLVMConstNull(fieldTd.type);
+
+            for (size_t k = 0; k < ai->elements.count; k++)
+            {
+                Node* elem = (Node*)VecGet(&ai->elements, k);
+                Value ev = Coerce(b, EmitExpr(b, elem), elemTd);
+                arr = InsertFixedElem(b, arr, ev.value, &fieldDecl->type, (long)k);
+            }
+
+            agg = LLVMBuildInsertValue(b->m_builder, agg, arr, PhysicalFieldIndex(st, (int)idx), "ins");
+            continue;
+        }
+
         Value rawField = EmitExpr(b, field->value);
         Value fieldValue;
 
@@ -3226,7 +3443,7 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
             fieldValue = Coerce(b, rawField, fieldTd);
         }
 
-        agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, (unsigned)idx, "ins");
+        agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, PhysicalFieldIndex(st, (int)idx), "ins");
 
         /* If an owning field was moved from an owning lvalue source (string
            or ^T), null the source so its scope-exit drop is a no-op. */
@@ -3843,22 +4060,44 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             continue;
         }
 
-        size_t fcount = st->fields.count;
-        LLVMTypeRef* fields = NULL;
+        /* Build the physical member list: registry-computed padding members
+           ([n x i8]) interleaved before the fields that follow them. A struct
+           with any explicit fieldoffset is emitted packed - the pad members
+           fully determine the layout, so neither LLVM nor C may add their
+           own padding. Natural structs (padCount 0, packed 0) produce the
+           same body as before. */
+        size_t memberCount = st->hasLayout ? st->physicalCount : st->fields.count;
+        LLVMTypeRef* members = NULL;
 
-        if (fcount > 0)
+        if (memberCount > 0)
         {
-            fields = (LLVMTypeRef*)arena_alloc(b->m_arena, fcount * sizeof(LLVMTypeRef));
+            members = (LLVMTypeRef*)arena_alloc(b->m_arena, memberCount * sizeof(LLVMTypeRef));
         }
 
-        for (size_t j = 0; j < fcount; j++)
+        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+        size_t nextPad = 0;
+        unsigned m = 0;
+
+        for (size_t j = 0; j < st->fields.count; j++)
         {
+            while (st->hasLayout && nextPad < st->padCount && st->pads[nextPad].beforeField == j)
+            {
+                members[m++] = LLVMArrayType(i8Ty, (unsigned)st->pads[nextPad].bytes);
+                nextPad++;
+            }
+
             FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, j);
-            fields[j] = Resolve(b, &fieldDecl->type).type;
+            members[m++] = Resolve(b, &fieldDecl->type).type;
+        }
+
+        while (st->hasLayout && nextPad < st->padCount)
+        {
+            members[m++] = LLVMArrayType(i8Ty, (unsigned)st->pads[nextPad].bytes);
+            nextPad++;
         }
 
         LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, st->name);
-        LLVMStructSetBody(structTy, fields, (unsigned)fcount, 0);
+        LLVMStructSetBody(structTy, members, (unsigned)memberCount, st->packedLayout ? 1 : 0);
     }
 
     for (size_t i = 0; i < module->functions.count; i++)
