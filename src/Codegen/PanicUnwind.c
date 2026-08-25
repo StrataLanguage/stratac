@@ -90,7 +90,7 @@ const char* __strata_panic_message(void)
 
 // MSVC:  error C7552: '_setjmp': purely intrinsic functions have no address
 #if defined(_MSC_VER)
-static int msvc_setjmp_wrapper(void* buf)
+static uintptr_t msvc_setjmp_wrapper(void* buf)
 {
     return STRATA_SETJMP(buf);
 }
