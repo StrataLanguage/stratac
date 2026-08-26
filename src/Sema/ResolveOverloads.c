@@ -18,6 +18,7 @@ typedef struct
     StrMap m_refBoxParams;
     StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
     const TypeName* m_currentReturnType;
+    Vec* m_liveLog; /* when set, MarkBoxLive records keys here (loop warmup) */
 } Resolver;
 
 /* Intern a TypeName tree for a canonical spelling. Expressions that need a
@@ -168,6 +169,12 @@ static void MarkBoxLive(Resolver* r, const char* name)
 {
     ClearBoxSubtree(r, name);
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
+
+    if (r->m_liveLog)
+    {
+        VecPush(r->m_liveLog, (void*)name);
+    }
+
     /* A whole-value reassignment installs a fresh, definitely-initialized
        value - the path is non-empty again (and so are no stale descendants). */
     ClearNonEmptySubtree(r, name);
@@ -502,7 +509,7 @@ static void WalkBlock(Resolver* r, Block* b, StrMap* scope);
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope);
 static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
-static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope);
+static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey);
 
 static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
 {
@@ -2167,7 +2174,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
    starts from), then walk it again for real; any move violation that only
    shows up because of that carried-over state - like moving the same box
    on every iteration of a loop - is caught by the second walk. */
-static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope)
+static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey)
 {
     DiagnosticEngine warmup;
     DiagnosticEngineInit(&warmup);
@@ -2175,10 +2182,36 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope)
     DiagnosticEngine* realDiag = r->m_diag;
     r->m_diag = &warmup;
 
+    /* Warmup pass: simulate a second iteration with diagnostics muted, so
+       genuinely unsound bodies still surface their errors below. */
+    Vec liveLog;
+    VecInit(&liveLog);
+    r->m_liveLog = &liveLog;
+
     WalkStmt(r, body, scope);
 
+    r->m_liveLog = NULL;
     r->m_diag = realDiag;
     DiagnosticEngineFree(&warmup);
+
+    /* Back-edge credit: anything the body REASSIGNED as a whole is fresh
+       again at the top of the next iteration - clear its subtree (and stale
+       narrowing facts). Without this, `cur = cur.next;` in a list walk reads
+       as a use-after-move even though each iteration binds a fresh cell. */
+    for (size_t i = 0; i < liveLog.count; i++)
+    {
+        const char* key = (const char*)VecGet(&liveLog, i);
+        ClearBoxSubtree(r, key);
+        ClearNonEmptySubtree(r, key);
+    }
+
+    /* The condition is re-tested every iteration: its narrowing fact holds
+       throughout the body even if the body reassigned that very path
+       (`while (cur?) { ... cur = cur.next; }`). */
+    if (condFactKey)
+    {
+        MarkPathNonEmpty(r, condFactKey);
+    }
 
     WalkStmt(r, body, scope);
 }
@@ -2416,14 +2449,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (w->condition->kind == NodeNullTest)
         {
             factKey = MovableBoxSourceKey(r, ((NullTestExpr*)w->condition)->operand);
-
-            if (factKey)
-            {
-                MarkPathNonEmpty(r, factKey);
-            }
         }
 
-        WalkLoopBody(r, w->body, scope);
+        WalkLoopBody(r, w->body, scope, factKey);
 
         /* Nothing survives a loop: the condition may have been false on the
            last check, and any fact established inside may not hold. */
@@ -2450,16 +2478,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (fs->condition)
         {
             ResolveExpr(r, fs->condition, scope);
+        }
 
-            if (fs->condition->kind == NodeNullTest)
-            {
-                const char* factKey = MovableBoxSourceKey(r, ((NullTestExpr*)fs->condition)->operand);
+        const char* forFactKey = NULL;
 
-                if (factKey)
-                {
-                    MarkPathNonEmpty(r, factKey);
-                }
-            }
+        if (fs->condition && fs->condition->kind == NodeNullTest)
+        {
+            forFactKey = MovableBoxSourceKey(r, ((NullTestExpr*)fs->condition)->operand);
         }
 
         if (fs->update)
@@ -2467,7 +2492,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ResolveExpr(r, fs->update, scope);
         }
 
-        WalkLoopBody(r, fs->body, scope);
+        WalkLoopBody(r, fs->body, scope, forFactKey);
 
         /* Same rule as while: facts never survive a loop. */
         ClearAllNonEmptyFacts(r);

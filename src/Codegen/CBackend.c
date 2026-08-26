@@ -1045,7 +1045,14 @@ static void EmitArrayBuiltin(CEmitter* emitter, const CallExpr* call)
         {
             const TypeName* vt = ExprType(emitter, val);
 
-            if (vt && TypeNameIsOwning(vt) && strcmp(vt->name, elemType->name) == 0
+            /* Same owning type: exact match (^T = ^T) or matching inner
+               types across the box/optional pair (^T elem = U? value). */
+            const char* elemInnerName = BoxInnerName(elemType);
+            const char* valInnerName = BoxInnerName(vt);
+
+            if (vt && TypeNameIsOwning(vt)
+                && (strcmp(vt->name, elemType->name) == 0
+                    || (elemInnerName && valInnerName && strcmp(elemInnerName, valInnerName) == 0))
                 && val->kind != NodeStrLiteral)
             {
                 /* Same owning type, not a literal: move (take pointer, null source). */
@@ -1934,48 +1941,49 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             with a plain T value, e.g. `x = 5;` - mutates its contents. */
         bool boxMove = assign->op == AssignSet && targetType && TypeNameIsOwning(targetType) && valueType
                        && strcmp(valueType->name, targetName) == 0;
-
         /* An optional slot may be empty, so its contents can never be
-            mutated in place: every `=` rebinds the whole slot (free old
-            cell, then move a box-like source or allocate + construct). */
+            mutated in place: every `=` rebinds the whole slot. The new
+            value is captured (and an aliased source detached) BEFORE the
+            old cell is freed - `cur = cur.next` must read and detach the
+            OLD binding's field. */
         if (assign->op == AssignSet && targetType && targetType->isOptional)
         {
             const TypeName* optInner = targetType->inner;
             const char* optInnerC = TypeNameC(emitter, optInner);
 
-            SbPuts(&emitter->out, "({ strata_free(");
-            EmitLValue(emitter, assign->target);
-            SbPuts(&emitter->out, "); ");
+            SbPuts(&emitter->out, "({ ");
+            SbPuts(&emitter->out, optInnerC);
+            SbPuts(&emitter->out, "* _nv = ");
 
             if (valueType && TyIsBoxLike(valueType))
             {
-                EmitLValue(emitter, assign->target);
-                SbPuts(&emitter->out, " = ");
                 CEmitExpr(emitter, assign->value);
-                SbPutc(&emitter->out, ';');
+                SbPuts(&emitter->out, "; ");
 
                 const Node* movedSource = MovableBoxSourceNode(assign->value);
 
                 if (movedSource)
                 {
-                    SbPutc(&emitter->out, ' ');
+                    SbPuts(&emitter->out, "void** _sp = (void**)&(");
                     EmitLValue(emitter, movedSource);
-                    SbPuts(&emitter->out, " = 0;");
+                    SbPuts(&emitter->out, "); *_sp = 0; ");
                 }
             }
             else
             {
-                EmitLValue(emitter, assign->target);
-                SbPuts(&emitter->out, " = strata_alloc(sizeof(");
+                SbPuts(&emitter->out, "strata_alloc(sizeof(");
                 SbPuts(&emitter->out, optInnerC);
-                SbPuts(&emitter->out, ")); *");
-                EmitLValue(emitter, assign->target);
-                SbPuts(&emitter->out, " = ");
+                SbPuts(&emitter->out, ")); *_nv = ");
                 CEmitOwnedValue(emitter, assign->value, optInner);
-                SbPutc(&emitter->out, ';');
+                SbPuts(&emitter->out, "; ");
             }
 
-            SbPuts(&emitter->out, " })");
+            SbPuts(&emitter->out, "strata_free(");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, "); ");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, " = _nv; })");
+
             return;
         }
 
@@ -1983,11 +1991,10 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
         {
             bool isStrLit = strcmp(targetName, "string") == 0 && assign->value->kind == NodeStrLiteral;
 
-            SbPuts(&emitter->out, "(strata_free(");
-            EmitLValue(emitter, assign->target);
-            SbPuts(&emitter->out, "), (");
-            EmitLValue(emitter, assign->target);
-            SbPuts(&emitter->out, " = ");
+            /* The source slot address and the new value are captured BEFORE
+               the target is freed/rebound: for an aliased move like
+               `cur = cur.next` the source must be the OLD binding's field. */
+            SbPuts(&emitter->out, "({ void* _nv = ");
             if (isStrLit)
             {
                 SbPuts(&emitter->out, "strata_strdup(");
@@ -1998,18 +2005,28 @@ void CEmitExpr(CEmitter* emitter, const Node* node)
             {
                 CEmitExpr(emitter, assign->value);
             }
-            SbPuts(&emitter->out, ")");
+
+            SbPuts(&emitter->out, "; ");
 
             const Node* movedSource = MovableBoxSourceNode(assign->value);
 
             if (movedSource)
             {
-                SbPuts(&emitter->out, ", (");
+                /* Detach the source BEFORE freeing the target: for an
+                   aliased move (`cur = cur.next`) the slot lives inside the
+                   object being dropped. */
+                SbPuts(&emitter->out, "void** _sp = (void**)&(");
                 EmitLValue(emitter, movedSource);
-                SbPuts(&emitter->out, " = 0)");
+                SbPuts(&emitter->out, "); *_sp = 0; ");
             }
 
-            SbPuts(&emitter->out, ")");
+            SbPuts(&emitter->out, "strata_free(");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, "); ");
+            EmitLValue(emitter, assign->target);
+            SbPuts(&emitter->out, " = _nv; ");
+
+            SbPuts(&emitter->out, " })");
 
             return;
         }

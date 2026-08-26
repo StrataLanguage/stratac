@@ -2244,21 +2244,22 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
             if (boxMove && !boxMoveFromLiteral)
             {
-                /* Box move: free the old value, take the new pointer, null the source. */
+                /* Box move: take the new pointer, null the source, drop the
+                   old value, rebind. The SOURCE is detached BEFORE the old
+                   value is dropped - for an aliased move like `cur =
+                   cur.next` the source slot lives inside the object being
+                   freed, so the drop glue must not see it (and the write
+                   must not hit freed memory). */
+                Node* movedSourceNodePre = (Node*)MovableBoxSourceNode(n->value);
+                LValue srcPre = movedSourceNodePre ? EmitLValueForNullStore(b, movedSourceNodePre) : (LValue){0};
+
+                if (srcPre.valid)
+                {
+                    LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), srcPre.ptr);
+                }
+
                 EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
-
-                Node* movedSourceNode = (Node*)MovableBoxSourceNode(n->value);
-
-                if (movedSourceNode)
-                {
-                    LValue src = EmitLValueForNullStore(b, movedSourceNode);
-
-                    if (src.valid)
-                    {
-                        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
-                    }
-                }
 
                 return rhs;
             }
@@ -2320,13 +2321,22 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     return ValueMake(cell, lvalue.typeDesc);
                 }
 
-                /* String inner: construct the owned string (heap copy) into
-                   the slot. Array inner cannot occur - optionals of dynamic
-                   arrays are rejected by sema. */
+                /* String inner: construct the owned string (heap copy),
+                   then wrap it in a cell - the boxed representation is
+                   slot -> cell -> chars, which is what the drop glue and
+                   reads expect. Array inner cannot occur - optionals of
+                   dynamic arrays are rejected by sema. */
                 LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
-                LLVMBuildStore(b->m_builder, owned, lvalue.ptr);
 
-                return ValueMake(owned, lvalue.typeDesc);
+                LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
+                LLVMValueRef cellArgs[1] = {cellSz};
+                StrataAllocFn(b);
+                LLVMValueRef strCell = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1,
+                                                      "optstr");
+                LLVMBuildStore(b->m_builder, owned, strCell);
+                LLVMBuildStore(b->m_builder, strCell, lvalue.ptr);
+
+                return ValueMake(strCell, lvalue.typeDesc);
             }
 
             if (lvalue.typeDesc.isBox && !boxMove)

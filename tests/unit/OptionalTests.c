@@ -247,3 +247,56 @@ STRATA_TEST(optional_jit_empty_test_and_narrowed_walk)
 
     strataJitDestroy(jit);
 }
+
+STRATA_TEST(optional_jit_string_array_and_list_moves)
+{
+    /* Exercises optional strings (field + read), arrays of optionals
+       (push moves a ^T and boxes a literal), and the linked-list walk
+       (`cur = cur.next` aliased move) end to end. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Model { int polys; };\n"
+        "struct Weapon { Model? model; string? title; int dmg; };\n"
+        "struct Item { int value; Item? next; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = {};\n"
+        "  ^Weapon sword = Weapon { .dmg = 30 };\n"
+        "  sword.title = \"sword\";\n"
+        "  array_push(rack, sword);\n"
+        "  array_push(rack, Weapon { .dmg = 55 });\n"
+        "  int rackSum = 0;\n"
+        "  for (int i = 0; i < rack.length; i++)\n"
+        "  {\n"
+        "    if (rack[i]?) { rackSum += rack[i].dmg; }\n"
+        "  }\n"
+        "  ^Item c = Item { .value = 3 };\n"
+        "  ^Item b = Item { .value = 2, .next = c };\n"
+        "  ^Item a = Item { .value = 1, .next = b };\n"
+        "  Item? cur = a;\n"
+        "  int listSum = 0;\n"
+        "  while (cur?)\n"
+        "  {\n"
+        "    listSum += cur.value;\n"
+        "    cur = cur.next;\n"
+        "  }\n"
+        "  return rackSum * 100 + listSum;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 8506);
+    }
+
+    strataJitDestroy(jit);
+}

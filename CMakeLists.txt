@@ -270,6 +270,14 @@ target_compile_definitions(box_demo PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(box_demo)
 
+add_executable(optional_demo samples/hosts/optional_demo_host.c)
+target_link_libraries(optional_demo PRIVATE strata)
+target_compile_definitions(optional_demo PRIVATE
+    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
+set_target_properties(optional_demo PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+strata_stage_dll(optional_demo)
+
 add_executable(simd_demo samples/hosts/simd_demo_host.c)
 target_link_libraries(simd_demo PRIVATE strata)
 target_compile_definitions(simd_demo PRIVATE

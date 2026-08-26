@@ -1,0 +1,231 @@
+// optional_demo.strata -- tour of nullable types (`T?`).
+//
+// Run via the `optional_demo` CMake target (JIT), or:
+//   stratac optional_demo.strata --run --entry DemoAll
+//
+// `^T` is a NON-NULL owning box: every ^T local must be initialized and
+// every ^T struct field must appear in its struct literal. `T?` is the
+// maybe-empty form: same runtime representation (a pointer slot, null ==
+// empty), but emptiness is part of the type. Reading through a `T?` is a
+// compile error until the compiler can PROVE it is set - via `if (x?)`,
+// a definite reassignment, or a while/for condition test.
+
+extern int printf(string fmt, ...);
+
+// =====================================================================
+// 1. Structs with optional fields
+// =====================================================================
+
+struct Model
+{
+    int polycount;
+};
+
+struct Attachment
+{
+    string? label;
+};
+
+struct Weapon
+{
+    Model? model;         // empty until assigned
+    Attachment? scope;    // nested optional
+    string? title;        // optional string
+    int damage;
+};
+
+// =====================================================================
+// 2. Recursive structures: linked lists NEED optionals
+// =====================================================================
+
+struct Item
+{
+    int value;
+    Item? next;           // `^Item next` cannot exist: a list tail has no
+                          // initializer, and ^T fields must have one.
+};
+
+// =====================================================================
+// Helpers
+// =====================================================================
+
+int DamageOf(Weapon? w)
+{
+    // Optional PARAM: whole-slot reads are always safe; going THROUGH it
+    // requires proof.
+    if (w?)
+    {
+        return w.damage;
+    }
+
+    return -1;
+}
+
+^Weapon MakeWeapon(int dmg, int polys)
+{
+    return Weapon
+    {
+        .model = Model { .polycount = polys },
+        .damage = dmg,
+    };
+}
+
+// =====================================================================
+// Demo sections (each prints as it goes; returns a checksum)
+// =====================================================================
+
+int DemoBasics()
+{
+    printf("-- basics -----------------------------\n");
+
+    // Empty optional local: legal, no initialization required.
+    Weapon? nothing;
+
+    // Whole-value use is safe even when empty.
+    printf("empty weapon damage = %d\n", DamageOf(nothing));
+
+    // A definite assignment proves the path - no test needed afterwards.
+    nothing = MakeWeapon(25, 1200);
+    printf("assigned weapon damage = %d\n", DamageOf(nothing));
+
+    // Going through an unproven path is a compile error:
+    //   Weapon? w2;
+    //   w2.damage;            <-- error: 'w2' may be empty ('Weapon?')
+    //
+    // The narrowing idiom:
+    Weapon? maybe = MakeWeapon(10, 300);
+    int checksum = 0;
+
+    if (maybe?)
+    {
+        printf("maybe is set, damage = %d\n", maybe.damage);
+        checksum += maybe.damage;
+    }
+    else
+    {
+        printf("unreachable\n");
+    }
+
+    // Facts die at the join: outside the if, `maybe.damage` errors again.
+    return checksum;
+}
+
+int DemoStrings()
+{
+    printf("-- optional strings --------------------\n");
+
+    // Uninitialized string? field is empty...
+    ^Weapon w = {};
+    int checksum = 0;
+
+    if (w.title?) // ...so this is false, not a crash.
+    {
+        printf("unreachable\n");
+    }
+    else
+    {
+        printf("title is unset\n");
+        checksum += 1;
+    }
+
+    // Assigning a literal heaps a copy; the fact now holds.
+    w.title = "Flaming Sword";
+    printf("title = %s\n", w.title);
+
+    checksum += 1;
+    return checksum;
+}
+
+int DemoArrays()
+{
+    printf("-- arrays of optionals ------------------\n");
+
+    // A dynamic array whose ELEMENTS are optional: slots start empty and
+    // fill up as boxes are moved (or boxed) in.
+    Weapon?[] rack = {};
+    ^Weapon sword = MakeWeapon(30, 800);
+    array_push(rack, sword);                 // moves `sword` in
+    array_push(rack, MakeWeapon(55, 4000));  // boxes a fresh literal
+    array_push(rack, MakeWeapon(5, 90));
+
+    printf("rack holds %llu weapon(s)\n", rack.length);
+
+    int total = 0;
+
+    for (int i = 0; i < rack.length; i++)
+    {
+        // Element access gives a `Weapon?`; narrow before reading.
+        if (rack[i]?)
+        {
+            printf("  rack[%d]: damage %d\n", i, rack[i].damage);
+            total += rack[i].damage;
+        }
+    }
+
+    return total;
+}
+
+int DemoLinkedList()
+{
+    printf("-- linked list --------------------------\n");
+
+    // Build 3 -> 2 -> 1. Only the `next` links are optional; nodes
+    // themselves are non-null boxes.
+    ^Item third = Item { .value = 3 };
+    ^Item second = Item { .value = 2, .next = third };
+    ^Item first = Item { .value = 1, .next = second };
+
+    int sum = 0;
+
+    // While-condition narrowing: `cur` is proven inside the body, every
+    // iteration.
+    Item? cur = first;
+
+    while (cur?)
+    {
+        sum += cur.value;
+        cur = cur.next; // move the link out; old binding becomes empty
+    }
+
+    printf("list sum = %d\n", sum);
+    return sum;
+}
+
+int DemoNested()
+{
+    printf("-- nested narrowing ---------------------\n");
+
+    ^Weapon w = MakeWeapon(100, 99999);
+    w.scope = Attachment {};
+
+    int checksum = 0;
+
+    // Chained tests: each level proves the next. Testing w.scope.label?
+    // requires w.scope? to be established first.
+    if (w.scope?)
+    {
+        printf("scope attached, label empty: %d\n", w.scope.label?);
+
+        w.scope.label = "ACOG 4x";
+
+        // Definite reassignment establishes the fact mid-branch.
+        printf("scope label = %s\n", w.scope.label);
+        checksum += 1;
+    }
+
+    return checksum;
+}
+
+int DemoAll()
+{
+    int checksum = 0;
+
+    checksum += DemoBasics();
+    checksum += DemoStrings();
+    checksum += DemoArrays();
+    checksum += DemoLinkedList();
+    checksum += DemoNested();
+
+    printf("-- checksum = %d (expect 109)\n", checksum);
+    return checksum;
+}
