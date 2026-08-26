@@ -361,6 +361,165 @@ STRATA_TEST(optional_definite_reassignment_establishes_fact)
     arena_free(&arena);
 }
 
+/* ---- Definitely-empty facts (else branch) ------------------------------- */
+
+STRATA_TEST(optional_else_branch_reports_definitely_empty)
+{
+    /* Inside the else of `if (w?)`, reading through `w` gets the sharper
+       "is definitely empty" diagnostic rather than "may be empty". */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Model { int v; };\n"
+        "struct Weapon { Model? model; };\n"
+        "int entry() {\n"
+        "  Weapon? w;\n"
+        "  if (w?) { }\n"
+        "  else { return w.model.v; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'w' is definitely empty"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_initialized_declaration_establishes_fact)
+{
+    /* `Weapon? w = Weapon {};` proves `w` non-empty for everything after -
+       testing a field through it needs no outer `if (w?)`. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Model { int v; };\n"
+        "struct Weapon { Model? model; };\n"
+        "int entry() {\n"
+        "  Weapon? w = Weapon {};\n"
+        "  if (w.model?) { return w.model.v; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(mod != NULL);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_assignment_inside_else_clears_empty_fact)
+{
+    /* Assigning in the else block re-proves the path: reads after the
+       assignment are legal even though we entered via "definitely empty". */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Model { int v; };\n"
+        "struct Weapon { Model? model; };\n"
+        "int entry() {\n"
+        "  Weapon? w = Weapon {};\n"
+        "  if (w.model?) { }\n"
+        "  else\n"
+        "  {\n"
+        "    w.model = Model { .v = 5 };\n"
+        "    return w.model.v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(mod != NULL);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_empty_fact_does_not_escape_else)
+{
+    /* Past the if/else join the path is merely unproven again - assigning
+       in the OTHER branch is what makes the lazy-init join work. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+
+    /* Without any branch proving non-empty, the post-join read errors... */
+    ParseAndResolve(
+        "struct Model { int v; };\n"
+        "struct Weapon { Model? model; };\n"
+        "int entry() {\n"
+        "  Weapon? w = Weapon {};\n"
+        "  if (w.model?) { }\n"
+        "  else { }\n"
+        "  return w.model.v;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    /* ...but with an assignment in the else, BOTH branches prove it and
+       the lazy-init idiom joins to a non-empty fact. */
+    arena_init(&arena, 0);
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Model { int v; };\n"
+        "struct Weapon { Model? model; };\n"
+        "int entry() {\n"
+        "  Weapon? w = Weapon {};\n"
+        "  if (w.model?) { return w.model.v; }\n"
+        "  else { w.model = Model { .v = 7 }; }\n"
+        "  return w.model.v;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(mod != NULL);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_jit_lazy_init_join_runs)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int str_len(string s);\n"
+        "struct Model { string name; int v; };\n"
+        "struct Weapon { Model? model; };\n"
+        "int entry() {\n"
+        "  Weapon? w = Weapon {};\n"
+        "  int r = 0;\n"
+        "  if (w.model?)\n"
+        "  {\n"
+        "    r = w.model.v;\n"
+        "  }\n"
+        "  else\n"
+        "  {\n"
+        "    w.model = Model { .name = \"fallback\", .v = 40 };\n"
+        "    r = str_len(w.model.name);\n"   // 8
+        "  }\n"
+        "  r = r + w.model.v;               // 8 + 40 = 48\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 48);
+    }
+
+    strataJitDestroy(jit);
+}
+
 /* ---- Runtime (JIT): optionals behave at execution ----------------------- */
 
 STRATA_TEST(optional_jit_empty_test_and_narrowed_walk)

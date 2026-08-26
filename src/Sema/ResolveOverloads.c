@@ -14,6 +14,7 @@ typedef struct
     StrMap m_constVars;
     StrMap m_movedBoxes;
     StrMap m_nonEmptyPaths; /* dotted path -> 1 = definitely non-empty (`T?` narrowing) */
+    StrMap m_emptyPaths;    /* dotted path -> 1 = definitely EMPTY (else branch of `if (path?)`) */
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
@@ -164,6 +165,7 @@ static void ClearBoxSubtree(Resolver* r, const char* key)
 /* Nullable (`T?`) narrowing facts - defined below, used by move tracking. */
 static void MarkPathNonEmpty(Resolver* r, const char* key);
 static void ClearNonEmptySubtree(Resolver* r, const char* key);
+static void ClearEmptySubtree(Resolver* r, const char* key);
 
 static void MarkBoxLive(Resolver* r, const char* name)
 {
@@ -178,6 +180,7 @@ static void MarkBoxLive(Resolver* r, const char* name)
     /* A whole-value reassignment installs a fresh, definitely-initialized
        value - the path is non-empty again (and so are no stale descendants). */
     ClearNonEmptySubtree(r, name);
+    ClearEmptySubtree(r, name);
     MarkPathNonEmpty(r, name);
 }
 
@@ -190,6 +193,7 @@ static void RevalidateOwningField(Resolver* r, const char* key)
     ClearBoxSubtree(r, key);
     /* Reassigning a single owning field re-installs a valid value there. */
     ClearNonEmptySubtree(r, key);
+    ClearEmptySubtree(r, key);
     MarkPathNonEmpty(r, key);
 
     StrMap* m = &r->m_movedBoxes;
@@ -334,8 +338,72 @@ static void ClearAllNonEmptyFacts(Resolver* r)
     {
         m->values[i] = NULL;
     }
+
+    StrMap* e = &r->m_emptyPaths;
+
+    for (size_t i = 0; i < e->cap; i++)
+    {
+        e->values[i] = NULL;
+    }
 }
 
+/* ---- Definitely-EMPTY facts ---------------------------------------------
+   The else branch of `if (path?)` proves the path is empty. An empty fact
+   never leaves its else block, and is dropped by anything that could give
+   the path a value (assignment, move-in, shadowing). Its main consumer is
+   diagnostics: reading through a definitely-empty path gets a sharper
+   message than a merely-unproven one. */
+
+static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
+{
+    return key && StrMapGet(&r->m_emptyPaths, key) == (void*)1;
+}
+
+static void MarkPathEmpty(Resolver* r, const char* key)
+{
+    if (key)
+    {
+        /* A path cannot be both. */
+        ClearNonEmptySubtree(r, key);
+        StrMapPut(&r->m_emptyPaths, key, (void*)1);
+    }
+}
+
+/* Drops `key` and all `key.*` descendants from the EMPTY map. */
+static void ClearEmptySubtree(Resolver* r, const char* key)
+{
+    if (!key)
+    {
+        return;
+    }
+
+    StrMap* m = &r->m_emptyPaths;
+    size_t klen = strlen(key);
+
+    for (size_t i = 0; i < m->cap; i++)
+    {
+        if (!m->keys[i])
+        {
+            continue;
+        }
+
+        const char* k = m->keys[i];
+
+        if (strcmp(k, key) == 0 ||
+            (strncmp(k, key, klen) == 0 && k[klen] == '.'))
+        {
+            m->values[i] = NULL;
+        }
+    }
+}
+
+
+/* Picks the right "empty" wording: a path narrowed by an enclosing else
+   block IS empty; anything else merely MAY be. */
+static const char* EmptyWording(const Resolver* r, const char* key)
+{
+    return IsPathDefinitelyEmpty(r, key) ? "is definitely empty" : "may be empty";
+}
 /* Intersects two fact sets: a path stays definitely-non-empty only when BOTH
    branches prove it. Dual of MergeMovedBoxes (which unions badness). */
 static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
@@ -1527,8 +1595,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     const char* ancKey = MovableBoxSourceKey(r, anc);
 
                     DiagErrorFmt(r->m_diag, a->base.range,
-                                 "'%s' may be empty ('%s'); test it first: if (%s?) { ... }",
-                                 ancKey ? ancKey : "<expression>", at2->name, ancKey ? ancKey : "<expr>");
+                                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
+                                 ancKey ? ancKey : "<expression>", EmptyWording(r, ancKey), at2->name,
+                                 ancKey ? ancKey : "<expr>");
                 }
 
                 if (anc->kind == NodeMember)
@@ -1794,8 +1863,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             if (!IsPathNonEmpty(r, baseKey))
             {
                 DiagErrorFmt(r->m_diag, m->base.range,
-                             "'%s' may be empty ('%s'); test it first: if (%s?) { ... }",
-                             baseKey ? baseKey : "<expression>", rawBaseType->name,
+                             "'%s' %s ('%s'); test it first: if (%s?) { ... }",
+                             baseKey ? baseKey : "<expression>", EmptyWording(r, baseKey), rawBaseType->name,
                              baseKey ? baseKey : "<expr>");
             }
         }
@@ -2139,8 +2208,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 const char* ancKey = MovableBoxSourceKey(r, anc);
 
                 DiagErrorFmt(r->m_diag, nt->base.range,
-                             "'%s' may be empty ('%s'); test it first: if (%s?) { ... }",
-                             ancKey ? ancKey : "<expression>", at->name, ancKey ? ancKey : "<expr>");
+                             "'%s' %s ('%s'); test it first: if (%s?) { ... }",
+                             ancKey ? ancKey : "<expression>", EmptyWording(r, ancKey), at->name,
+                             ancKey ? ancKey : "<expr>");
             }
 
             if (anc->kind == NodeMember)
@@ -2236,6 +2306,7 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* con
         const char* key = (const char*)VecGet(&liveLog, i);
         ClearBoxSubtree(r, key);
         ClearNonEmptySubtree(r, key);
+        ClearEmptySubtree(r, key);
     }
 
     /* The condition is re-tested every iteration: its narrowing fact holds
@@ -2337,10 +2408,20 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         /* Fresh binding: clear any stale moved-state a same-named variable
             left behind (e.g. from a prior loop iteration or an earlier,
-            unrelated declaration in this function) — including field-level
+            unrelated declaration in this function) - including field-level
             partial-move markers and nullable narrowing facts. */
         ClearBoxSubtree(r, vd->name);
         ClearNonEmptySubtree(r, vd->name);
+        ClearEmptySubtree(r, vd->name);
+
+        /* An initialized declaration proves the binding non-empty - same as
+           a whole-value assignment would (`Weapon? w = Weapon { ... };`
+           establishes `w?` for everything that follows). */
+        if (vd->init)
+        {
+            MarkPathNonEmpty(r, vd->name);
+        }
+
         StrMapPut(scope, vd->name, (void*)&vd->type);
 
         return;
@@ -2455,9 +2536,23 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
         ReplaceStrMapContents(&r->m_nonEmptyPaths, &beforeFacts);
 
+        /* The else branch of `if (path?)` runs only when the path IS empty:
+           install the definitely-empty fact for its duration. Empty facts
+           never escape their else block - past the join the path is simply
+           "unknown" again. */
+        StrMap beforeEmpty;
+        CopyStrMap(&r->m_emptyPaths, &beforeEmpty);
+
         if (i->elseBranch)
         {
+            if (factKey)
+            {
+                MarkPathEmpty(r, factKey);
+            }
+
             WalkStmt(r, i->elseBranch, scope);
+
+            ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
         }
 
         MergeMovedBoxes(&r->m_movedBoxes, &afterThen);

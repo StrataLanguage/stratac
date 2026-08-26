@@ -115,7 +115,7 @@ int DemoBasics()
 
     // Going through an unproven path is a compile error:
     //   Weapon? w2;
-    //   w2.damage;            <-- error: 'w2' may be empty ('Weapon?')
+    //   w2.damage;            //<-- error: 'w2' may be empty ('Weapon?')
     //
     // The narrowing idiom:
     Weapon? maybe = MakeWeapon(10, 300);

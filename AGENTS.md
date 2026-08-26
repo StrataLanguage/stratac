@@ -173,6 +173,11 @@ main) are the internal entry points.
   definite reassignment, or while/for condition narrowing — facts use the
   same dotted-path machinery as move poisoning (`m_nonEmptyPaths`) with
   intersection-merge at if/else joins and full invalidation at loop exits.
+  An initialized declaration also establishes the fact
+  (`Weapon? w = Weapon {}` proves `w`). The else branch of `if (path?)`
+  carries a definitely-EMPTY fact (`m_emptyPaths`, scoped to that block):
+  reads there get a sharper "is definitely empty" error, and assigning in
+  the else is what makes the lazy-init idiom join to a non-empty fact.
   Testing `a.b.c?` also requires every optional ancestor proven. Every
   `=` into a `T?` rebinds the whole slot (drop old + take new); compound
   assignment into optionals is rejected. Recursive owning structs use
