@@ -120,25 +120,6 @@ STRATA_TEST(assign_to_const_ref_struct_member_is_error)
 
 #if STRATA_TEST_HAS_LLVM
 
-/* ---- Codegen: C lowering is `const T*` ---- */
-
-STRATA_TEST(const_ref_scalar_lowers_to_const_pointer_in_c)
-{
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "int read(const ref int x) { return x; }\n",
-        &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
-    STRATA_CHECK(res.ok);
-    /* A non-owning view to an immutable: pointer to const. */
-    STRATA_CHECK(strstr(res.output, "const int*") != NULL);
-
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
-}
 
 /* ---- JIT runtime behavior ---- */
 

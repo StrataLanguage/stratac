@@ -95,7 +95,7 @@ STRATA_TEST(import_missing_file_is_reported)
     SamplePath("missing.strata", path, sizeof(path));
 
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileFile(c, path, STRATA_EMIT_C, 0);
+    StrataResult r = strataCompileFile(c, path, STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);
@@ -111,7 +111,7 @@ STRATA_TEST(import_from_string_is_rejected)
     StrataResult r = strataCompileString(c,
                                          "import weapons/pistol;\n"
                                          "int entry() { return 1; }\n",
-                                         "inline", STRATA_EMIT_C, 0);
+                                         "inline", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(strstr(r.diagnostics, "not supported") != NULL);
@@ -126,7 +126,7 @@ STRATA_TEST(import_error_names_imported_file)
     SamplePath("uses_broken.strata", path, sizeof(path));
 
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileFile(c, path, STRATA_EMIT_C, 0);
+    StrataResult r = strataCompileFile(c, path, STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(strstr(r.diagnostics, "broken_mod.strata") != NULL);
@@ -267,7 +267,7 @@ STRATA_TEST(resolver_not_found_is_reported)
     StrataResult r = strataCompileString(c,
         "import ghost;\n"
         "int entry() { return 1; }\n",
-        "main", STRATA_EMIT_C, 0);
+        "main", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);

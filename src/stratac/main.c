@@ -44,7 +44,7 @@ static char* ReplaceExt(const char* path, const char* ext)
 /* Adds a labelled separator between options */
 #define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, label_}
 
-/* Defines a mode that takes no arguments. (e.g. --emit-c, --run) */
+/* Defines a mode that takes no arguments. (e.g. --run) */
 #define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
 
 /* Same as `COMMAND_MODE`, used for readability */
@@ -77,7 +77,6 @@ typedef enum MOde : uint64_t
     MF_NONE,
     MF_PRINT_AST,
     MF_EMIT_ASM,
-    MF_EMIT_C,
     MF_EMIT_IR,
     MF_RUN,
 } Mode;
@@ -174,8 +173,7 @@ static const CLICommand commands[] = {
 
     COMMAND_MODE("--ast",     MF_PRINT_AST, "print ast tree"),
     COMMAND_MODE("--asm",     MF_EMIT_ASM,  "output asm representation"),
-    COMMAND_MODE("--emit-c",  MF_EMIT_C,    "emit C code instead of an object file"),
-    COMMAND_MODE("--emit-ir", MF_EMIT_IR,   "emit LLVM IR"),
+        COMMAND_MODE("--emit-ir", MF_EMIT_IR,   "emit LLVM IR"),
     COMMAND_MODE("--run",     MF_RUN,       "JIT and run an int(void) entry in memory"),
 
     COMMAND_GENERAL(NULL, "--no-simd", NULL,      &Cmd_DisableSimd, "disable SIMD intrinsics"),
@@ -195,7 +193,6 @@ typedef struct ModeImpl
 } ModeImpl;
 
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler);
-static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler);
 static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler);
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
 static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
@@ -206,7 +203,6 @@ static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler);
 static const ModeImpl modeImpls[] = {
     {MF_PRINT_AST, &Impl_PrintAst },
     {MF_RUN,       &Impl_JitAndRun},
-    {MF_EMIT_C,    &Impl_EmitC    },
     {MF_EMIT_ASM,  &Impl_EmitAsm  },
     {MF_EMIT_IR,   &Impl_EmitIr   },
 };
@@ -256,7 +252,7 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
     }
 
     /* If there were no emit modes specified, compile and emit the object file */
-    if ((state->toggleCommands & (MF_BIT(MF_EMIT_ASM) | MF_BIT(MF_EMIT_C))) == 0)
+    if ((state->toggleCommands & MF_BIT(MF_EMIT_ASM)) == 0)
     {
         ResultCode result = Impl_CompileToObject(state, compiler);
 
@@ -331,11 +327,6 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
     {
         fprintf(stderr, "This build has no LLVM object/assembly backend.\n");
     }
-    if (!(capabilities & STRATA_CAP_TCC_JIT))
-    {
-        fprintf(stderr, "This build has no in-memory TinyCC backend.\n");
-    }
-
     return RCSuccess;
 }
 
@@ -343,8 +334,7 @@ static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLIC
 {
     unsigned capabilities = strataCapabilities();
 
-    printf("stratac 0.1.0 (C%s%s", capabilities & STRATA_CAP_TCC_JIT ? ", TinyCC JIT" : "",
-           capabilities & STRATA_CAP_LLVM_AOT ? ", LLVM " : "");
+    printf("stratac 0.1.0 (%s", capabilities & STRATA_CAP_LLVM_AOT ? "LLVM " : "");
     if (capabilities & STRATA_CAP_LLVM_AOT)
     {
         printf("%s", strataLLVMVersion());
@@ -440,79 +430,6 @@ static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler)
     return RCSuccess;
 }
 
-static ResultCode Impl_EmitC(State* state, StrataCompiler* compiler)
-{
-    if (HAS_TOGGLE(state->toggleCommands, MF_EMIT_ASM))
-    {
-        fprintf(stderr, "error: --asm cannot be combined with --emit-c\n");
-        return RCArgumentError;
-    }
-
-    if (!state->outputFileName)
-    {
-        state->outputFileName = ReplaceExt(state->sourceFileName, ".c");
-        state->outFileOwned = true;
-    }
-
-    StrataResult result = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_C, state->emitFlags);
-    if (result.diagnostics && result.diagnostics[0])
-    {
-        fprintf(stderr, "%s\n", result.diagnostics);
-    }
-    if (!result.ok)
-    {
-        strataResultFree(&result);
-
-        if (state->outFileOwned)
-        {
-            free((void*)state->outputFileName);
-        }
-
-        return RCIOError;
-    }
-
-    FILE* output = fopen(state->outputFileName, "wb");
-
-    if (output == NULL)
-    {
-        fprintf(stderr, "error: cannot open output '%s'\n", state->outputFileName);
-        strataResultFree(&result);
-
-        if (state->outFileOwned)
-        {
-            free((void*)state->outputFileName);
-        }
-
-        return RCIOError;
-    }
-
-    size_t outputLen = strlen(result.output);
-    bool wrote = fwrite(result.output, 1, outputLen, output) == outputLen;
-
-    strataResultFree(&result);
-
-    if (!wrote || fclose(output) != 0)
-    {
-        fprintf(stderr, "error: failed writing C source '%s'\n", state->outputFileName);
-
-        if (state->outFileOwned)
-        {
-            free((void*)state->outputFileName);
-        }
-
-        return RCIOError;
-    }
-
-    fprintf(stderr, "wrote C source: %s\n", state->outputFileName);
-
-    if (state->outFileOwned)
-    {
-        free((void*)state->outputFileName);
-    }
-
-    return RCSuccess;
-}
-
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 {
     const char* asmFilename = state->outputFileName;
@@ -558,9 +475,9 @@ static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler)
 
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
 {
-    if (!(strataCapabilities() & STRATA_CAP_TCC_JIT))
+    if (!(strataCapabilities() & STRATA_CAP_LLVM_JIT))
     {
-        fprintf(stderr, "error: TinyCC JIT backend not built\n");
+        fprintf(stderr, "error: LLVM JIT backend not built\n");
         return RCIOError;
     }
 

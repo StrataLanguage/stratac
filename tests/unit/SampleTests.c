@@ -138,7 +138,7 @@ STRATA_TEST(sample_arrays_lower_in_llvm_backend)
     free(src);
 }
 
-STRATA_TEST(sample_simd_compiles_via_c_backend)
+STRATA_TEST(sample_simd_compiles)
 {
     char* src = LoadSample("simd.strata");
     STRATA_CHECK(src != NULL);
@@ -150,11 +150,8 @@ STRATA_TEST(sample_simd_compiles_via_c_backend)
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->functions.count >= 2);
 
-    /* SIMD is C-backend-only; with SIMD disabled (the default GenerateC path)
-       it lowers to the __strata_float128 struct fallback. */
-    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
+    CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(strstr(res.output, "__strata_float128") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -172,11 +169,7 @@ STRATA_TEST(array_indexing_emits_bounds_check)
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
-    /* Both backends must emit bounds-checking code (strata_panic calls). */
-    CodegenResult cres = GenerateC(mod, STRATA_ARCH_AUTO);
-    STRATA_CHECK(cres.ok);
-    STRATA_CHECK(strstr(cres.output, "strata_panic") != NULL);
-
+    /* The IR must contain bounds-checking code (strata_panic calls). */
     CodegenResult ires = GenerateLlvmIr(mod);
     STRATA_CHECK(ires.ok);
     STRATA_CHECK(strstr(ires.output, "strata_panic") != NULL);
@@ -206,13 +199,6 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
                  != NULL);
     STRATA_CHECK(strstr(res.output, "[2 x [3 x i32]]") != NULL);
     STRATA_CHECK(strstr(res.output, "__strata_drop_Owned") != NULL);
-
-    /* The C backend mirrors the same layout with pad members + packed. */
-    CodegenResult cres = GenerateC(mod, STRATA_ARCH_AUTO);
-    STRATA_CHECK(cres.ok);
-    STRATA_CHECK(strstr(cres.output, "strata__pad1[4]") != NULL);
-    STRATA_CHECK(strstr(cres.output, "__attribute__((packed))") != NULL);
-    STRATA_CHECK(strstr(cres.output, "int strata__field_cells[2][3]") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

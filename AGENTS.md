@@ -208,8 +208,8 @@ main) are the internal entry points.
   call-only: the host provides the body as a real C vararg function. No
   `va_list`/`va_start` appears in user or generated code. Trailing args must be
   scalar/`string`/handle/`^T`; the LLVM backend applies C default argument
-  promotions (`float`→`double`, small ints→`int`) explicitly, the C backend
-  relies on the C compiler. Variadic string params cross as `const char*`.
+  promotions (`float`→`double`, small ints→`int`) explicitly. Variadic string
+  params cross as `const char*`.
 
 ### Operators
 
@@ -242,7 +242,7 @@ main) are the internal entry points.
   pointer to the caller's slot. A plain value arg is boxed into a temp cell
   before the call. A `T?`/`^T` return is likewise one pointer; ownership
   transfers to the caller (the host hands back memory Strata will free).
-  Both the LLVM and C backends implement this identically.
+  The LLVM backend implements this.
 
 ## Adding a language feature (typical path)
 

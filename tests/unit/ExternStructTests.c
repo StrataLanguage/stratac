@@ -255,19 +255,19 @@ STRATA_TEST(emit_ir_layout_packed_with_pads)
     strataResultFree(&r);
 }
 
-STRATA_TEST(emit_c_layout_packed_with_pads_and_fixed_fields)
+STRATA_TEST(emit_ir_layout_packed_with_pads_and_fixed_fields)
 {
     StrataCompiler* c = strataCompilerCreate();
     StrataResult r = strataCompileString(
         c,
         "extern struct Layout { fieldoffset(0) byte a; fieldoffset(4) int b; byte[8] data; };\n"
         "int entry(Layout l) { return l.a + l.b + l.data[0]; }\n",
-        "layout_c", STRATA_EMIT_C, 0);
+        "layout_c", STRATA_EMIT_LLVM_IR, 0);
     STRATA_CHECK(r.ok);
     STRATA_CHECK(r.output != NULL);
-    STRATA_CHECK(strstr(r.output, "unsigned char strata__pad1[3];") != NULL);
-    STRATA_CHECK(strstr(r.output, "__attribute__((packed))") != NULL);
-    STRATA_CHECK(strstr(r.output, "unsigned char strata__field_data[8];") != NULL);
+    /* Packed body with an explicit 3-byte pad before field b, plus the
+       inline fixed-size array member. */
+    STRATA_CHECK(strstr(r.output, "<{ i8, [3 x i8], i32, [8 x i8] }>") != NULL);
     strataResultFree(&r);
     strataCompilerDestroy(c);
 }

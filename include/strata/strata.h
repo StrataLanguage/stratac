@@ -43,7 +43,6 @@ typedef enum
 {
     STRATA_EMIT_LLVM_IR = 0,
     STRATA_EMIT_AST     = 1,
-    STRATA_EMIT_C       = 2,
 } StrataEmitKind;
 
 typedef enum StrataEmitFlags
@@ -53,18 +52,15 @@ typedef enum StrataEmitFlags
 
 typedef enum
 {
-    STRATA_CAP_C_OUTPUT = 1u << 0,
-    STRATA_CAP_TCC_JIT  = 1u << 1,
-    STRATA_CAP_LLVM_IR  = 1u << 2,
-    STRATA_CAP_LLVM_AOT = 1u << 3,
-    STRATA_CAP_LLVM_JIT = 1u << 4,
+    STRATA_CAP_LLVM_IR  = 1u << 0,
+    STRATA_CAP_LLVM_AOT = 1u << 1,
+    STRATA_CAP_LLVM_JIT = 1u << 2,
 } StrataCapability;
 
 typedef enum
 {
     STRATA_JIT_BACKEND_AUTO = 0,
-    STRATA_JIT_BACKEND_TCC  = 1,
-    STRATA_JIT_BACKEND_LLVM = 2,
+    STRATA_JIT_BACKEND_LLVM = 1,
 } StrataJitBackend;
 
 typedef enum StrataArch
@@ -76,7 +72,7 @@ typedef enum StrataArch
 
 typedef struct StrataProfile
 {
-    unsigned boundsCheck;    /* array bounds check: AOT/TCC panic on OOB; LLVM JIT notifies the panic handler
+    unsigned boundsCheck;    /* array bounds check: AOT panics on OOB; the LLVM JIT notifies the panic handler
                               * (strataSetPanicHandler) and continues - OOB reads yield a dummy value, OOB
                               * writes are no-ops. A handler that longjmps still halts the run. */
     unsigned nullExternCall; /* panic on calling an extern that was never bound */

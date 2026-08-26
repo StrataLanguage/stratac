@@ -1386,8 +1386,8 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         }
 
         /* For extern functions, ^T / T? params cross as the pointer ITSELF
-            by value (one `ptr`), not as a pointer to the caller's slot -
-            matching the ABI hosts see for `T*` / `T?` parameters. */
+           by value (one `ptr`), not as a pointer to the caller's slot -
+           matching the ABI hosts see for `T*` / `T?` parameters. */
         if (byPtr && f->isExtern && (p->type.isBox || p->type.isOptional))
         {
             byPtr = false;
@@ -3151,8 +3151,8 @@ static Value EmitCall(Builder* b, CallExpr* n)
         else if (!shouldPassByPtr && paramIsBoxType && fd && fd->isExtern && k < fd->params.count)
         {
             /* Extern ^T / T? param: pass the pointer ITSELF by value.
-                A box/optional arg already is that pointer; a plain owning
-                value is constructed into a fresh cell first. */
+               A box/optional arg already is that pointer; a plain owning
+               value is constructed into a fresh cell first. */
             const ParamDecl* extParam = (ParamDecl*)VecGet(&fd->params, k);
             const TypeName* extTy = &extParam->type;
 
@@ -3226,7 +3226,10 @@ static Value EmitCall(Builder* b, CallExpr* n)
     {
         /* JIT extern slots start null; a call before strataJitAddSymbol bound
            the host function would jump to address 0. Under the profile's
-           nullExternCall check, panic with the unbound name instead. */
+           nullExternCall check, panic with the unbound name instead. The
+           panic block RETURNS a zero value (not unreachable) so a host
+           panic handler that returns - rather than longjmps or aborts -
+           keeps the JIT frame's stack walker out of the equation. */
         LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "extnull");
         LLVMBasicBlockRef nullBB = NewBb(b, "ext.null");
         LLVMBasicBlockRef callBB = NewBb(b, "ext.call");
@@ -3234,8 +3237,22 @@ static Value EmitCall(Builder* b, CallExpr* n)
         b->m_terminated = true;
 
         PositionAtEnd(b, nullBB);
-        EmitPanic(b, arena_format(b->m_arena, "call to null extern function '%s'", n->callee));
-        b->m_terminated = true;
+        {
+            LLVMValueRef args2[1] = {MsgGlobalPtr(b, ".pmsg",
+                                                  arena_format(b->m_arena, "call to null extern function '%s'",
+                                                               n->callee))};
+            StrataPanicFn(b);
+            LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args2, 1, "");
+
+            if (LLVMGetTypeKind(info->returnType.type) == LLVMVoidTypeKind)
+            {
+                LLVMBuildRetVoid(b->m_builder);
+            }
+            else
+            {
+                LLVMBuildRet(b->m_builder, LLVMConstNull(info->returnType.type));
+            }
+        }
 
         PositionAtEnd(b, callBB);
         call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");

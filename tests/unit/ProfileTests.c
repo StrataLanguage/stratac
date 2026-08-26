@@ -1,6 +1,5 @@
 #include "strata/strata.h"
 
-#include "Codegen/CBackend.h"
 #include "Test.h"
 #include "Util.h"
 
@@ -131,11 +130,6 @@ static void RunPanicPair(StrataJitBackend backend, const char* source, const cha
 {
     unsigned caps = strataCapabilities();
 
-    if (backend == STRATA_JIT_BACKEND_TCC && !(caps & STRATA_CAP_TCC_JIT))
-    {
-        return;
-    }
-
     if (backend == STRATA_JIT_BACKEND_LLVM && !(caps & STRATA_CAP_LLVM_JIT))
     {
         return;
@@ -150,24 +144,12 @@ static void RunPanicPair(StrataJitBackend backend, const char* source, const cha
     }
 }
 
-STRATA_TEST(profile_bounds_check_panics_on_oob_tcc)
-{
-    RunPanicPair(STRATA_JIT_BACKEND_TCC,
-                 "int entry() { int[] a = {1, 2, 3}; return a[5]; }",
-                 "array index out of bounds");
-}
-
 /* An errored module must be rejected cleanly (NULL jit + message), never
    crash the compiler — a return that reads out a NULL box-inner used to
    pass NULL into TypeRegistryIsOwningStruct and crash mid-resolve. */
 static void CheckErrorRejected(StrataJitBackend backend, const char* source, const char* expectMsg)
 {
     unsigned caps = strataCapabilities();
-
-    if (backend == STRATA_JIT_BACKEND_TCC && !(caps & STRATA_CAP_TCC_JIT))
-    {
-        return;
-    }
 
     if (backend == STRATA_JIT_BACKEND_LLVM && !(caps & STRATA_CAP_LLVM_JIT))
     {
@@ -189,14 +171,6 @@ static void CheckErrorRejected(StrataJitBackend backend, const char* source, con
     strataCompilerDestroy(c);
 }
 
-STRATA_TEST(errored_module_rejected_cleanly_tcc)
-{
-    CheckErrorRejected(STRATA_JIT_BACKEND_TCC,
-                       "^string[] g = { \"Hi\" };\n"
-                       "string[] f() { return g; }\n",
-                       "cannot return a value of type '^string[]'");
-}
-
 STRATA_TEST(errored_module_rejected_cleanly_llvm)
 {
     CheckErrorRejected(STRATA_JIT_BACKEND_LLVM,
@@ -207,7 +181,7 @@ STRATA_TEST(errored_module_rejected_cleanly_llvm)
 
 STRATA_TEST(errored_module_rejected_cleanly_string_mismatch)
 {
-    CheckErrorRejected(STRATA_JIT_BACKEND_TCC,
+    CheckErrorRejected(STRATA_JIT_BACKEND_LLVM,
                        "int f() { string s = \"x\"; return s; }\n",
                        "cannot return a value of type 'string'");
 }
@@ -388,37 +362,33 @@ STRATA_TEST(profile_oob_repeat_in_loop_llvm)
     }
 }
 
-STRATA_TEST(profile_null_extern_panics_when_unbound_tcc)
-{
-    RunPanicPair(STRATA_JIT_BACKEND_TCC,
-                 "extern int host_missing(int x);\n"
-                 "int entry() { return host_missing(5); }",
-                 "call to null extern function 'host_missing'");
-}
-
 STRATA_TEST(profile_null_extern_panics_when_unbound_llvm)
 {
-    RunPanicPair(STRATA_JIT_BACKEND_LLVM,
-                 "extern int host_missing(int x);\n"
-                 "int entry() { return host_missing(5); }",
-                 "call to null extern function 'host_missing'");
-}
-
-STRATA_TEST(profile_checks_disabled_bounds_no_panic_tcc)
-{
-    if (!(strataCapabilities() & STRATA_CAP_TCC_JIT))
+    /* Uses the non-unwinding recorder handler: the null-extern panic block
+       RETURNS a zero value (rather than unreachable), so the handler may
+       return and execution continues with a defined result. */
+    if (!(strataCapabilities() & STRATA_CAP_LLVM_JIT))
     {
         return;
     }
 
-    StrataJit* jit = CompileJit("int entry() { int[] a = {1, 2, 3}; return a[5]; }",
-                                STRATA_JIT_BACKEND_TCC, 0);
+    StrataJit* jit = CompileJit("extern int host_missing(int x);\n"
+                                "int entry() { return host_missing(5); }",
+                                STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
-    if (jit)
+    if (!jit)
     {
-        ExpectNoPanic(jit);
-        strataJitDestroy(jit);
+        return;
     }
+
+    int violations = -1;
+    int value = CallEntryReport(jit, &violations);
+
+    STRATA_CHECK_EQ(violations, 1);
+    STRATA_CHECK(strstr(s_panicMsg, "call to null extern function 'host_missing'") != NULL);
+    STRATA_CHECK_EQ(value, 0); /* zero return after the panic */
+
+    strataJitDestroy(jit);
 }
 
 STRATA_TEST(profile_checks_disabled_bounds_no_panic_llvm)
@@ -440,57 +410,3 @@ STRATA_TEST(profile_checks_disabled_bounds_no_panic_llvm)
 
 /* The emitted JIT C must contain the null-extern guard with the default
    profile and omit it when nullExternCall is disabled. */
-STRATA_TEST(profile_null_extern_guard_reflects_profile_in_c)
-{
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-
-    const char* src = "extern int host_missing(int x); int entry() { return host_missing(5); }";
-    Module* mod = ParseAndResolve(src, &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    StrataProfile off = strataProfileDefault();
-    off.nullExternCall = 0;
-
-    BuiltCModule withDefault = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-    STRATA_CHECK(strstr(withDefault.source, "strata__ext_check") != NULL);
-    STRATA_CHECK(strstr(withDefault.source, "call to null extern function 'host_missing'") != NULL);
-
-    BuiltCModule withOff = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, &off);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-    STRATA_CHECK(strstr(withOff.source, "strata__ext_check") == NULL);
-
-    BuiltCModuleDispose(&withDefault);
-    BuiltCModuleDispose(&withOff);
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
-}
-
-/* The emitted JIT C must contain the bounds check with the default profile
-   and omit it when boundsCheck is disabled. */
-STRATA_TEST(profile_bounds_check_reflects_profile_in_c)
-{
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-
-    const char* src = "int entry() { int[] a = {1, 2, 3}; return a[0]; }";
-    Module* mod = ParseAndResolve(src, &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    StrataProfile off = strataProfileDefault();
-    off.boundsCheck = 0;
-
-    BuiltCModule withDefault = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-    STRATA_CHECK(strstr(withDefault.source, "array index out of bounds") != NULL);
-
-    BuiltCModule withOff = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, &off);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-    STRATA_CHECK(strstr(withOff.source, "array index out of bounds") == NULL);
-
-    BuiltCModuleDispose(&withDefault);
-    BuiltCModuleDispose(&withOff);
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
-}

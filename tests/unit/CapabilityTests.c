@@ -6,12 +6,6 @@
 STRATA_TEST(build_capabilities_match_configuration)
 {
     unsigned capabilities = strataCapabilities();
-    STRATA_CHECK((capabilities & STRATA_CAP_C_OUTPUT) != 0);
-#if STRATA_TEST_HAS_TCC
-    STRATA_CHECK((capabilities & STRATA_CAP_TCC_JIT) != 0);
-#else
-    STRATA_CHECK((capabilities & STRATA_CAP_TCC_JIT) == 0);
-#endif
 #if STRATA_TEST_HAS_LLVM
     STRATA_CHECK((capabilities & STRATA_CAP_LLVM_IR) != 0);
     STRATA_CHECK((capabilities & STRATA_CAP_LLVM_AOT) != 0);

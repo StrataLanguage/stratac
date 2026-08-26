@@ -21,7 +21,7 @@ STRATA_TEST(embed_compile_string_ok)
 STRATA_TEST(embed_compile_string_reports_errors)
 {
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_C, 0);
+    StrataResult r = strataCompileString(c, "int f( { }", "m", STRATA_EMIT_LLVM_IR, 0);
     STRATA_CHECK_EQ(r.ok, 0);
     STRATA_CHECK(r.error_count > 0);
     STRATA_CHECK(r.diagnostics != NULL);

@@ -3,9 +3,7 @@
  * Covers the full passing matrix for the owning types that most commonly
  * cross into C code: string (plain / const / ref / const ref), arrays
  * (int[] / ref int[] / string[]), and boxes (^T, ^string, ^T[]),
- * each as parameters AND return values. Most scenarios run identically on
- * both the LLVM and TinyCC JIT backends; the by-value array RETURN runs on
- * TinyCC only (see the ABI note below and CheckExternTccOnly).
+ * each as parameters AND return values. All scenarios run on the LLVM JIT.
  *
  * ABI notes locked in here:
  *   - extern `string` params cross by value as `const char*`, even when
@@ -17,18 +15,16 @@
  *   - extern array returns are OWNED: the caller frees `.data`, so hosts
  *     must malloc the buffer. Returning the 16-byte struct across the host
  *     boundary is ABI-host-dependent (sret vs register return), so this is
- *     exercised on the backend whose ABI matches this test build's host.
- *   - extern ^T params cross as a pointer to the box slot (T**); the
- *     host reads/writes the pointee in place. ^T returns are OWNED.
+ *     not exercised here.
+ *   - extern ^T / T? params cross as ONE pointer by value (the box cell;
+ *     NULL = empty for T?). ^T returns are OWNED.
  *   - extern owned params never move the caller's value (borrowed).
  */
 
 #include "strata/strata.h"
 
-#include "Codegen/CBackend.h"
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
-#include "Codegen/TccJit.h"
 #include "Test.h"
 #include "Util.h"
 
@@ -215,7 +211,7 @@ static int HostBoxArrFirst(const HostArr* a)
     return elems[0]->v;
 }
 
-/* ---- Parity harness: run a source on the LLVM and/or TCC JITs ---- */
+/* ---- Harness: run a source on the LLVM JIT with host symbols bound ---- */
 
 typedef struct
 {
@@ -223,21 +219,7 @@ typedef struct
     void* fn;
 } HostSymbol;
 
-typedef enum
-{
-    CheckBothBackends,
-    CheckTccOnly,
-    CheckLlvmOnly,
-} CheckMode;
-
-static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t hostCount, int expected, CheckMode mode);
-
-static void CheckLlvmOnlyExtern(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
-{
-    CheckExternImpl(source, hosts, hostCount, expected, CheckLlvmOnly);
-}
-
-static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t hostCount, int expected, CheckMode mode)
+static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
 {
     Arena arena;
     arena_init(&arena, 0);
@@ -258,72 +240,22 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
     char* llvmError = NULL;
     bool llvmOk = false;
 
-    if (mode == CheckBothBackends || mode == CheckLlvmOnly)
+    llvmModule = BuildLlvmModule(mod, &diag, &arena, true, NULL);
+    llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
+    if (!llvmOk)
     {
-        llvmModule = BuildLlvmModule(mod, &diag, &arena, true, NULL);
-        llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
-        if (!llvmOk)
+        printf("  LLVM JIT failed: %s\n", llvmError ? llvmError : "(none)");
+    }
+    STRATA_CHECK(llvmOk);
+    if (llvmOk)
+    {
+        for (size_t i = 0; i < hostCount; i++)
         {
-            printf("  LLVM JIT failed: %s\n", llvmError ? llvmError : "(none)");
-        }
-        STRATA_CHECK(llvmOk);
-        if (llvmOk)
-        {
-            for (size_t i = 0; i < hostCount; i++)
-            {
-                STRATA_CHECK_EQ(LLVMJitAddSymbol(&llvm, hosts[i].name, hosts[i].fn), 1);
-            }
+            STRATA_CHECK_EQ(LLVMJitAddSymbol(&llvm, hosts[i].name, hosts[i].fn), 1);
         }
     }
 
-    BuiltCModule cModule;
-    BuiltCModuleInit(&cModule);
-    TccJit tcc;
-    TccJitInit(&tcc);
-    char* tccError = NULL;
-    bool tccOk = false;
-
-    if (mode != CheckLlvmOnly)
-    {
-        cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
-        tccOk = TccJitLoad(&tcc, &cModule, &tccError);
-        if (!tccOk)
-        {
-            printf("  TinyCC JIT failed: %s\n", tccError ? tccError : "(none)");
-        }
-        STRATA_CHECK(tccOk);
-        if (tccOk)
-        {
-            for (size_t i = 0; i < hostCount; i++)
-            {
-                STRATA_CHECK_EQ(TccJitAddSymbol(&tcc, hosts[i].name, hosts[i].fn), 1);
-            }
-        }
-    }
-
-    if (llvmOk && tccOk)
-    {
-        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
-        int (*tccEntry)(void) = (int (*)(void))TccJitGetAddress(&tcc, "entry");
-        STRATA_CHECK(llvmEntry != NULL);
-        STRATA_CHECK(tccEntry != NULL);
-        if (llvmEntry && tccEntry)
-        {
-            STRATA_CHECK_EQ(llvmEntry(), expected);
-            STRATA_CHECK_EQ(tccEntry(), expected);
-            STRATA_CHECK_EQ(llvmEntry(), tccEntry());
-        }
-    }
-    else if (tccOk)
-    {
-        int (*tccEntry)(void) = (int (*)(void))TccJitGetAddress(&tcc, "entry");
-        STRATA_CHECK(tccEntry != NULL);
-        if (tccEntry)
-        {
-            STRATA_CHECK_EQ(tccEntry(), expected);
-        }
-    }
-    else if (llvmOk)
+    if (llvmOk)
     {
         int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
         STRATA_CHECK(llvmEntry != NULL);
@@ -334,37 +266,21 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
     }
 
     free(llvmError);
-    free(tccError);
 
-    if (mode != CheckLlvmOnly)
-    {
-        TccJitDestroy(&tcc);
-        BuiltCModuleDispose(&cModule);
-    }
-
-    if (mode == CheckBothBackends || mode == CheckLlvmOnly)
-    {
-        LLVMJitDestroy(&llvm);
-        BuiltModuleDispose(&llvmModule);
-    }
+    LLVMJitDestroy(&llvm);
+    BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
 
-static void CheckExtern(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
+static void CheckLlvmOnlyExtern(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
 {
-    CheckExternImpl(source, hosts, hostCount, expected, CheckBothBackends);
+    CheckExternImpl(source, hosts, hostCount, expected);
 }
 
-/* TCC-only harness for extern functions that RETURN a >8-byte struct
-   (e.g. int[]). The C ABI for returning a 16-byte {data, len} struct is
-   host-toolchain dependent: TinyCC and MinGW both use a hidden sret
-   pointer, while the LLVM backend emits the register return (RAX:RDX)
-   that MSVC hosts expect. Only the TinyCC backend matches the MinGW host
-   ABI used by this test build, so array returns are exercised there. */
-static void CheckExternTccOnly(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
+static void CheckExtern(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
 {
-    CheckExternImpl(source, hosts, hostCount, expected, CheckTccOnly);
+    CheckExternImpl(source, hosts, hostCount, expected);
 }
 
 /* ================= String params ================= */
@@ -535,31 +451,17 @@ STRATA_TEST(extern_string_array_param_count)
 
 /* ================= Array returns ================= */
 
-STRATA_TEST(extern_int_array_return_is_owned)
-{
-    /* The caller owns the returned array and frees `.data` at scope exit.
-       Runs on the TinyCC backend only: returning the 16-byte {data, len}
-       struct across the host boundary is ABI-host-dependent — TinyCC and
-       the MinGW host both use a hidden sret pointer, while the LLVM
-       backend emits the register return (RAX:RDX) that MSVC hosts expect
-       (see CheckExternTccOnly). */
-    HostSymbol hosts[] = { { "host_arr_make", (void*)&HostArrMake }, { "host_arr_sum", (void*)&HostArrSum } };
-    CheckExternTccOnly("extern int[] host_arr_make(int n);\n"
-                       "extern int host_arr_sum(int[] a);\n"
-                       "int entry()\n"
-                       "{\n"
-                       "  int[] a = host_arr_make(3);\n"    /* {0, 10, 20} */
-                       "  return host_arr_sum(a) + (int)a.length;\n" /* 30 + 3 = 33 */
-                       "}\n",
-                       hosts, 2, 33);
-}
+/* NOTE: an extern `int[]` RETURN is not exercised here. Returning the
+   16-byte {data, len} struct across the host boundary is ABI-host-dependent
+   (hidden sret pointer vs register return), and the only backend that
+   matched this build's MinGW host was TinyCC, which has been removed. */
 
 /* ================= Box params ================= */
 
 STRATA_TEST(extern_box_struct_param_borrows)
 {
-    /* ^T crosses as a pointer to the box slot; extern never moves the
-       caller's box, so it stays live afterward. */
+    /* ^T crosses as the box cell pointer; extern never moves the caller's
+       box, so it stays live afterward. */
     HostSymbol hosts[] = { { "host_box_read", (void*)&HostBoxRead } };
     CheckExtern("struct Foo { int v; };\n"
                 "extern int host_box_read(^Foo b);\n"

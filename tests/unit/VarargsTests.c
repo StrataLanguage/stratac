@@ -1,10 +1,8 @@
 #include "strata/strata.h"
 
-#include "Codegen/CBackend.h"
 #include "Codegen/CodegenBackend.h"
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
-#include "Codegen/TccJit.h"
 #include "Test.h"
 #include "Util.h"
 
@@ -18,7 +16,7 @@ static bool Contains(const char* hay, const char* needle)
     return hay && needle && strstr(hay, needle) != NULL;
 }
 
-/* ---- Execution parity: run a source on both the LLVM and TCC JITs ---- */
+/* ---- Execution: run a source on the LLVM JIT ---- */
 
 static void CheckParity(const char* source, int expected)
 {
@@ -36,31 +34,17 @@ static void CheckParity(const char* source, int expected)
     bool llvmOk = LLVMJitLoad(&llvm, &llvmModule, &llvmError);
     STRATA_CHECK(llvmOk);
 
-    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
-    TccJit tcc;
-    TccJitInit(&tcc);
-    char* tccError = NULL;
-    bool tccOk = TccJitLoad(&tcc, &cModule, &tccError);
-    STRATA_CHECK(tccOk);
-
-    if (llvmOk && tccOk)
+    if (llvmOk)
     {
         int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
-        int (*tccEntry)(void) = (int (*)(void))TccJitGetAddress(&tcc, "entry");
         STRATA_CHECK(llvmEntry != NULL);
-        STRATA_CHECK(tccEntry != NULL);
-        if (llvmEntry && tccEntry)
+        if (llvmEntry)
         {
             STRATA_CHECK_EQ(llvmEntry(), expected);
-            STRATA_CHECK_EQ(tccEntry(), expected);
-            STRATA_CHECK_EQ(llvmEntry(), tccEntry());
         }
     }
 
     free(llvmError);
-    free(tccError);
-    TccJitDestroy(&tcc);
-    BuiltCModuleDispose(&cModule);
     LLVMJitDestroy(&llvm);
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
@@ -117,35 +101,17 @@ static void CheckVarargExtern(const char* source, const char* symbol, void* host
         STRATA_CHECK_EQ(LLVMJitAddSymbol(&llvm, symbol, hostFn), 1);
     }
 
-    BuiltCModule cModule = BuildCModule(mod, &diag, &arena, CEmitJIT, STRATA_ARCH_AUTO, NULL);
-    TccJit tcc;
-    TccJitInit(&tcc);
-    char* tccError = NULL;
-    bool tccOk = TccJitLoad(&tcc, &cModule, &tccError);
-    STRATA_CHECK(tccOk);
-    if (tccOk)
-    {
-        STRATA_CHECK_EQ(TccJitAddSymbol(&tcc, symbol, hostFn), 1);
-    }
-
-    if (llvmOk && tccOk)
+    if (llvmOk)
     {
         int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
-        int (*tccEntry)(void) = (int (*)(void))TccJitGetAddress(&tcc, "entry");
         STRATA_CHECK(llvmEntry != NULL);
-        STRATA_CHECK(tccEntry != NULL);
-        if (llvmEntry && tccEntry)
+        if (llvmEntry)
         {
             STRATA_CHECK_EQ(llvmEntry(), expected);
-            STRATA_CHECK_EQ(tccEntry(), expected);
-            STRATA_CHECK_EQ(llvmEntry(), tccEntry());
         }
     }
 
     free(llvmError);
-    free(tccError);
-    TccJitDestroy(&tcc);
-    BuiltCModuleDispose(&cModule);
     LLVMJitDestroy(&llvm);
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
@@ -614,29 +580,6 @@ STRATA_TEST(c_backend_box_array_element_to_by_value_param_parity)
                 "    return read(a[0]);\n"
                 "}\n",
                 7);
-}
-
-STRATA_TEST(c_backend_rest_stack_buffer_no_heap_alloc)
-{
-    /* The rest collection must be a stack compound literal, not a
-       strata_alloc'd heap buffer. */
-    Arena arena;
-    arena_init(&arena, 0);
-    DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve("int sum(int first, int... rest) { return first; }\n"
-                                  "int entry() { return sum(1, 2, 3); }",
-                                  &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
-    STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "(int[]){ 2, 3 }"));
-    STRATA_CHECK(Contains(res.output, ".len = 2"));
-    STRATA_CHECK(!Contains(res.output, "strata_alloc(2*sizeof(int)"));
-
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
 }
 
 STRATA_TEST(sema_ref_rest_rejects_implicit_boxing)
@@ -1113,45 +1056,6 @@ STRATA_TEST(llvm_vararg_extern_declared_variadic)
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "@printf"));
     STRATA_CHECK(Contains(res.output, ", ...)"));
-
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
-}
-
-STRATA_TEST(c_backend_vararg_extern_signature)
-{
-    Arena arena;
-    arena_init(&arena, 0);
-    DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve("extern int printf(string fmt, ...);", &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
-    STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "printf(const char *"));
-    STRATA_CHECK(Contains(res.output, ", ...)"));
-
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
-}
-
-STRATA_TEST(c_backend_typed_rest_collects_array)
-{
-    Arena arena;
-    arena_init(&arena, 0);
-    DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve("int sum(int first, int... rest) { return first; }\n"
-                                  "int entry() { return sum(1, 2, 3); }",
-                                  &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    CodegenResult res = GenerateC(mod, STRATA_ARCH_AUTO);
-    STRATA_CHECK(res.ok);
-    /* The rest array is a stack-allocated {data, len} compound literal. */
-    STRATA_CHECK(Contains(res.output, "(strata__arr){ .data = ("));
-    STRATA_CHECK(Contains(res.output, ".len = 2"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
