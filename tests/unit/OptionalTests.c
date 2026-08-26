@@ -18,6 +18,160 @@ static StrataJit* CompileOpt(const char* src, const char** err)
     return jit;
 }
 
+/* Host extern bound into JIT tests that need to observe Strata values.
+   `string` crosses the boundary as `const char*`. */
+static int HostStrLen(const char* s)
+{
+    return s ? (int)strlen(s) : -1;
+}
+
+/* Extern `T?` ABI probe: the host receives the pointer itself, NULL = empty. */
+static int HostOptNonNull(const void* p)
+{
+    return p != NULL;
+}
+
+static const void* g_lastOpt = NULL;
+
+static void HostOptTake(const void* p)
+{
+    g_lastOpt = p;
+}
+
+static StrataJit* CompileOptBound(const char* src, const char** err)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    StrataJit* jit = strataJitCompileString(c, src, "opt", err);
+
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "str_len", (void*)&HostStrLen);
+        strataJitAddSymbol(jit, "opt_non_null", (void*)&HostOptNonNull);
+        strataJitAddSymbol(jit, "opt_take", (void*)&HostOptTake);
+    }
+
+    strataCompilerDestroy(c);
+    return jit;
+}
+
+STRATA_TEST(optional_extern_param_and_return_abi)
+{
+    /* An extern `T?` param crosses as the pointer itself (NULL = empty),
+       and an extern `T?` return comes back as a `Weapon?` slot that obeys
+       narrowing. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int opt_non_null(Weapon? w);\n"
+        "extern void opt_take(Weapon? w);\n"
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon? empty;\n"
+        "  int r = opt_non_null(empty) * 1;   // empty -> host sees NULL -> 0\n"
+        "  Weapon? set = Weapon { .dmg = 7 };\n"
+        "  if (set?) { r = r + opt_non_null(set); }   // set   -> 1\n"
+        "  opt_take(empty);\n"
+        "  return r * 10 + opt_non_null(Weapon { .dmg = 9 }); // boxed temp -> 1\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 11);
+
+        /* The last extern call passed the EMPTY optional: host saw NULL. */
+        STRATA_CHECK(g_lastOpt == NULL);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- The canonical example ----------------------------------------------
+   struct Weapon { string name; };
+   Weapon w;          -> illegal: owning struct must live in a box
+   ^Weapon w = {};    -> illegal: 'name' must be initialized
+   ^Weapon w = { "" } -> legal:   name is an owned empty string            */
+
+STRATA_TEST(optional_plain_owning_struct_local_is_illegal)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Weapon { string name; };\n"
+        "int main() { Weapon w; return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "owning struct 'Weapon' must be stored in a box"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_empty_literal_with_string_field_is_illegal)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Weapon { string name; };\n"
+        "int main() { ^Weapon w = {}; return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "owning field 'name' of struct 'Weapon' must be initialized"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_empty_string_field_init_runs_and_owns)
+{
+    /* `^Weapon w = { "" };` compiles, the entry runs, and `name` is a real,
+       owned empty string (length 0 through a host extern). */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int str_len(string s);\n"
+        "struct Weapon { string name; };\n"
+        "int main() {\n"
+        "  //Weapon w;\n"
+        "  ^Weapon w = { \"\" };\n"
+        "  int n = str_len(w.name);\n"
+        "  w.name = \"x\";\n"          // field is mutable and owning
+        "  return n * 10 + str_len(w.name);\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*mainFn)(void) = (int (*)(void))strataJitGetFunction(jit, "main");
+    STRATA_CHECK(mainFn != NULL);
+    if (mainFn)
+    {
+        STRATA_CHECK_EQ(mainFn(), 1); // 0 * 10 + 1
+    }
+
+    strataJitDestroy(jit);
+}
+
 /* ---- Sema: forced initialization of ^T fields -------------------------- */
 
 STRATA_TEST(optional_missing_box_field_init_is_an_error)
@@ -195,7 +349,7 @@ STRATA_TEST(optional_definite_reassignment_establishes_fact)
         "  Weapon? w = Weapon {};\n"
         "  if (w?)\n"
         "  {\n"
-        "    w.model = Model { .v = 42 };\n"
+        "    w.model = Model { .name = \"m\", .v = 42 };\n"
         "    return w.model.v;\n"
         "  }\n"
         "  return 0;\n"
@@ -223,7 +377,7 @@ STRATA_TEST(optional_jit_empty_test_and_narrowed_walk)
         "  w = Weapon {};\n"
         "  if (w?)\n"
         "  {\n"
-        "    w.model = Model { .v = 40 };\n"
+        "    w.model = Model { .name = \"m\", .v = 40 };\n"
         "    r = r + w.model.v;\n"
         "  }\n"
         "  return r;\n"

@@ -387,6 +387,14 @@ static bool ParamIsIndirectFor(CEmitter* emitter, const FunctionDecl* function, 
         return false;
     }
 
+    /* Extern box/optional params (^T, T?) cross as the pointer ITSELF by
+       value - one `ptr` in LLVM IR, so the C prototype must be a single
+       star, not the internal by-reference `T**` convention. */
+    if (function && function->isExtern && TyIsBoxLike(&param->type))
+    {
+        return false;
+    }
+
     return ParamIsIndirect(emitter, param);
 }
 
@@ -1485,11 +1493,35 @@ static void EmitCall(CEmitter* emitter, const CallExpr* call)
                 /* Variadic extern: string args pass their char* value. */
                 CEmitExpr(emitter, argument);
             }
+            else if (function && function->isExtern && parameter && TyIsBoxLike(&parameter->type))
+            {
+                /* Extern ^T / T? param: pass the pointer itself. A box or
+                    optional arg already IS that pointer; a plain owning
+                    value is boxed into a fresh cell first. */
+                const TypeName* extArgType = ExprType(emitter, argument);
+
+                if (extArgType && TyIsBoxLike(extArgType))
+                {
+                    CEmitExpr(emitter, argument);
+                }
+                else
+                {
+                    const char* innerC = TypeNameC(emitter, parameter->type.inner);
+
+                    SbPuts(&emitter->out, "({ ");
+                    SbPuts(&emitter->out, innerC);
+                    SbPuts(&emitter->out, "* _c = strata_alloc(sizeof(");
+                    SbPuts(&emitter->out, innerC);
+                    SbPuts(&emitter->out, ")); *_c = ");
+                    CEmitOwnedValue(emitter, argument, parameter->type.inner);
+                    SbPuts(&emitter->out, "; _c; })");
+                }
+            }
             else
             {
                 /* A box arg passed to a by-value (non-indirect) param - e.g. a
-                   plain handle - must be dereferenced to its value, not passed
-                   as the box's own heap pointer. */
+                    plain handle - must be dereferenced to its value, not passed
+                    as the box's own heap pointer. */
                 EmitScalarValue(emitter, argument);
             }
         }

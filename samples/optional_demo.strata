@@ -71,6 +71,31 @@ int DamageOf(Weapon? w)
 }
 
 // =====================================================================
+// Overload resolution across Weapon / Weapon? / ^Weapon
+// =====================================================================
+
+// All three coexist peacefully: they mangle to DISTINCT symbols
+// (Overloaded$Weapon, Overloaded$Weapon?, Overloaded$^Weapon), so there is
+// no collision even though `Weapon?` and `^Weapon` are the same runtime
+// representation (a pointer slot). The compiler always picks the exact
+// match for the argument's type.
+
+int Overloaded(Weapon w)
+{
+    return 1; // plain owning value (borrowed read)
+}
+
+int Overloaded(Weapon? w)
+{
+    return 2; // maybe-empty slot
+}
+
+int Overloaded(^Weapon w)
+{
+    return 3; // non-null box (moved in)
+}
+
+// =====================================================================
 // Demo sections (each prints as it goes; returns a checksum)
 // =====================================================================
 
@@ -216,6 +241,41 @@ int DemoNested()
     return checksum;
 }
 
+int DemoOverloads()
+{
+    printf("-- overloads ----------------------------\n");
+
+    int tags = 0;
+
+    // Plain owning value -> picks Overloaded$Weapon.
+    tags = tags * 10 + Overloaded(Weapon { .damage = 1 });
+
+    // Optional slot -> picks Overloaded$Weapon? (no implicit deref).
+    // Note: passing an owning value MOVES it, so each call gets a fresh slot.
+    Weapon? optA = Weapon {};
+    tags = tags * 10 + Overloaded(optA);
+
+    // Narrowed inside `if (opt?)` - still a `Weapon?`, still $Weapon?.
+    Weapon? optB = Weapon {};
+    if (optB?)
+    {
+        tags = tags * 10 + Overloaded(optB);
+    }
+
+    // A box -> picks Overloaded$^Weapon. Widening ^Weapon -> Weapon? would
+    // also have been legal and picked $Weapon?; the exact match wins.
+    tags = tags * 10 + Overloaded(MakeWeapon(9, 9));
+
+    // Compile errors, as expected:
+    //   ^Weapon b = MakeWeapon(1, 1);
+    //   Weapon? o = b;              // ok: widening move
+    //   Overloaded$^Weapon(o);      // error: 'o' may be empty - no narrowing
+    //                               //        conversion to ^Weapon exists
+
+    printf("overload tags = %d (expect 1223)\n", tags);
+    return tags;
+}
+
 int DemoAll()
 {
     int checksum = 0;
@@ -225,7 +285,8 @@ int DemoAll()
     checksum += DemoArrays();
     checksum += DemoLinkedList();
     checksum += DemoNested();
+    checksum += DemoOverloads();
 
-    printf("-- checksum = %d (expect 109)\n", checksum);
+    printf("-- checksum = %d (expect 1332)\n", checksum);
     return checksum;
 }

@@ -46,7 +46,8 @@ int main(int argc, char** argv)
 
     int total = 0;
 
-    const char* sections[] = {"DemoBasics", "DemoStrings", "DemoArrays", "DemoLinkedList", "DemoNested"};
+    const char* sections[] = {"DemoBasics", "DemoStrings", "DemoArrays", "DemoLinkedList", "DemoNested",
+                              "DemoOverloads"};
 
     for (size_t i = 0; i < sizeof(sections) / sizeof(sections[0]); ++i)
     {
@@ -65,10 +66,10 @@ int main(int argc, char** argv)
         total += result;
     }
 
-    printf("total checksum: %d (expect 109)\n", total);
+    printf("total checksum: %d (expect 1332)\n", total);
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 
-    return total == 109 ? 0 : 1;
+    return total == 1332 ? 0 : 1;
 }

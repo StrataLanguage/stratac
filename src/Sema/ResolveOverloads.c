@@ -1063,6 +1063,38 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             {
                 score += 1;
             }
+            else if (paramType->isOptional)
+            {
+                /* `Weapon` (boxed on the fly, like rest-tail elements) and
+                    `^Weapon` (widened) both coerce into a `Weapon?` param
+                    when the inner types match. */
+                const char* paramInner = TypeNameBoxInner(paramType) ? TypeNameBoxInner(paramType)->name : NULL;
+
+                bool optMatch = false;
+
+                if (paramInner && (argType->isBox || argType->isOptional))
+                {
+                    const TypeName* argInner = TypeNameBoxInner(argType);
+
+                    optMatch = argInner != NULL
+                               ? strcmp(argInner->name, paramInner) == 0
+                               : strcmp("string", paramInner) == 0; /* bare ^string */
+                }
+                else if (paramInner)
+                {
+                    optMatch = strcmp(argType->name, paramInner) == 0;
+                }
+
+                if (optMatch)
+                {
+                    score += 1;
+                }
+                else
+                {
+                    viable = false;
+                    break;
+                }
+            }
             else if (TypeNameIsOwning(argType))
             {
                 /* ^T coerces to T (implicit deref). */
@@ -2042,16 +2074,17 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 FieldDecl* fd = (FieldDecl*)VecGet(&structType->fields, f);
 
-                /* Covers both `^T` fields and owning structs held by value
-                   (also rejected elsewhere, but keep init enforcement here). */
-                bool mustInit = (fd->type.isBox && !fd->type.isOptional)
-                                || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name);
+                /* Every OWNING field must be initialized: `^T`, owning
+                   structs held by value, and `string`. Optionals (`T?`)
+                   are the only owning fields allowed to stay empty. */
+                bool mustInit = !fd->type.isOptional
+                                && (TypeNameIsOwning(&fd->type)
+                                    || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
 
                 if (mustInit && (f >= 256 || !covered[f]))
                 {
                     /* Suggest the optional spelling of the inner type. A
-                       `^string` field's optional is spelled `string?`; a
-                       by-value owning struct keeps its own name (`Model?`). */
+                       `^string` field's optional is spelled `string?`. */
                     const TypeName* inner = TypeNameBoxInner(&fd->type);
                     const char* optSpelling = inner ? inner->name : fd->type.name;
 

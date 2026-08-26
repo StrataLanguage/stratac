@@ -1385,6 +1385,14 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
             byPtr = false;
         }
 
+        /* For extern functions, ^T / T? params cross as the pointer ITSELF
+            by value (one `ptr`), not as a pointer to the caller's slot -
+            matching the ABI hosts see for `T*` / `T?` parameters. */
+        if (byPtr && f->isExtern && (p->type.isBox || p->type.isOptional))
+        {
+            byPtr = false;
+        }
+
         info->paramByPtr[i] = byPtr;
 
         params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
@@ -3139,6 +3147,44 @@ static Value EmitCall(Builder* b, CallExpr* n)
         else if (shouldPassByPtr && !paramIsBoxType && argIsBox)
         {
             args[k] = EmitExpr(b, argNode).value;
+        }
+        else if (!shouldPassByPtr && paramIsBoxType && fd && fd->isExtern && k < fd->params.count)
+        {
+            /* Extern ^T / T? param: pass the pointer ITSELF by value.
+                A box/optional arg already is that pointer; a plain owning
+                value is constructed into a fresh cell first. */
+            const ParamDecl* extParam = (ParamDecl*)VecGet(&fd->params, k);
+            const TypeName* extTy = &extParam->type;
+
+            Value av = EmitExpr(b, argNode);
+
+            if (av.typeDesc.isBox)
+            {
+                args[k] = av.value;
+            }
+            else
+            {
+                const TypeName* innerTn = TypeNameBoxInner(extTy) ? TypeNameBoxInner(extTy) : StringTypeName(b);
+
+                if (!extTy->isBox && !extTy->isOptional)
+                {
+                    /* Unreachable for box-like params - kept defensive. */
+                    args[k] = av.value;
+                }
+                else
+                {
+                    LLVMValueRef owned = EmitOwnedValue(b, av, argNode, innerTn);
+
+                    LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
+                    LLVMValueRef cellArgs[1] = {cellSz};
+                    StrataAllocFn(b);
+                    LLVMValueRef cell = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1,
+                                                       "argcell");
+                    LLVMBuildStore(b->m_builder, owned, cell);
+
+                    args[k] = cell;
+                }
+            }
         }
         else
         {

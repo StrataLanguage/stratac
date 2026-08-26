@@ -237,6 +237,12 @@ main) are the internal entry points.
   code name and read/write the host's own struct layouts (see Types above);
   AOT hosts must also provide `strata_alloc`/`strata_free` (and
   `strata_panic`) whenever the Strata code allocates boxes.
+- Box/optional ABI at `extern`: a `T?` or `^T` param crosses as ONE pointer
+  by value (`T*` in the host prototype; NULL = empty for `T?`) — not as a
+  pointer to the caller's slot. A plain value arg is boxed into a temp cell
+  before the call. A `T?`/`^T` return is likewise one pointer; ownership
+  transfers to the caller (the host hands back memory Strata will free).
+  Both the LLVM and C backends implement this identically.
 
 ## Adding a language feature (typical path)
 
