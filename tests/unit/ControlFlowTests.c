@@ -214,4 +214,57 @@ STRATA_TEST(jit_for_loop_with_continue)
     }
 }
 
+STRATA_TEST(missing_return_on_branch_is_error)
+{
+    /* A non-void function whose false branch falls through has no return on
+       that path -> compilation must fail. */
+    StrataJit* jit = CompileJit("int f(int x) {\n"
+                                "  if (x > 0) return 1;\n"
+                                "}\n");
+    STRATA_CHECK(jit == NULL);
+    if (jit) strataJitDestroy(jit);
+}
+
+STRATA_TEST(missing_return_on_loop_zero_runs_is_error)
+{
+    /* A while may run zero times, so control can fall off the end. */
+    StrataJit* jit = CompileJit("int g(int x) {\n"
+                                "  while (x > 0) { return 1; }\n"
+                                "}\n");
+    STRATA_CHECK(jit == NULL);
+    if (jit) strataJitDestroy(jit);
+}
+
+STRATA_TEST(missing_return_break_then_fallthrough_is_error)
+{
+    /* while(true){break;} exits the loop and falls off the end. */
+    StrataJit* jit = CompileJit("int k() {\n"
+                                "  while (true) { break; }\n"
+                                "}\n");
+    STRATA_CHECK(jit == NULL);
+    if (jit) strataJitDestroy(jit);
+}
+
+STRATA_TEST(missing_return_if_else_both_return_ok)
+{
+    /* Both branches return, so no missing return. */
+    StrataJit* jit = CompileJit("int f(int x) {\n"
+                                "  if (x > 0) return 1; else return 2;\n"
+                                "}\n"
+                                "int entry() { return f(1); }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit) strataJitDestroy(jit);
+}
+
+STRATA_TEST(missing_return_while_true_infinite_ok)
+{
+    /* while(true){return;} never falls through (infinite loop). */
+    StrataJit* jit = CompileJit("int h() {\n"
+                                "  while (true) { return 1; }\n"
+                                "}\n"
+                                "int entry() { return h(); }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit) strataJitDestroy(jit);
+}
+
 

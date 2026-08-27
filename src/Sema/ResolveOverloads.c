@@ -3375,6 +3375,162 @@ static void WalkBlock(Resolver* r, Block* b, StrMap* scope)
     }
 }
 
+/* ---- Missing-return flow analysis ---- */
+
+static bool ExprIsConstantTrue(const Node* n);
+static bool ExprIsConstantFalse(const Node* n);
+
+static bool ExprIsConstantTrue(const Node* n)
+{
+    if (!n) return false;
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        return ((const IntLiteral*)n)->value != 0;
+    case NodeBoolLiteral:
+        return ((const BoolLiteral*)n)->value;
+    case NodeUnary:
+        if (((const UnaryExpr*)n)->op == UnNot)
+        {
+            return ExprIsConstantFalse(((const UnaryExpr*)n)->operand);
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+static bool ExprIsConstantFalse(const Node* n)
+{
+    if (!n) return false;
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        return ((const IntLiteral*)n)->value == 0;
+    case NodeBoolLiteral:
+        return !((const BoolLiteral*)n)->value;
+    case NodeUnary:
+        if (((const UnaryExpr*)n)->op == UnNot)
+        {
+            return ExprIsConstantTrue(((const UnaryExpr*)n)->operand);
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+/* True if a `break` targeting the loop at `targetDepth` can be reached on some
+   path through `n`, where `depth` is the current loop-nesting depth. A `break`
+   inside a nested loop targets that loop, not ours. */
+static bool BodyCanBreak(const Node* n, int depth, int targetDepth)
+{
+    if (!n) return false;
+
+    switch (n->kind)
+    {
+    case NodeBreak:
+        return depth == targetDepth;
+    case NodeBlock:
+    {
+        const Block* b = (const Block*)n;
+        for (size_t i = 0; i < b->statements.count; i++)
+        {
+            if (BodyCanBreak((const Node*)VecGet(&b->statements, i), depth, targetDepth))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    case NodeIf:
+    {
+        const IfStmt* s = (const IfStmt*)n;
+        return BodyCanBreak(s->thenBranch, depth, targetDepth)
+            || BodyCanBreak(s->elseBranch, depth, targetDepth);
+    }
+    case NodeWhile:
+        return BodyCanBreak(((const WhileStmt*)n)->body, depth + 1, targetDepth);
+    case NodeFor:
+        return BodyCanBreak(((const ForStmt*)n)->body, depth + 1, targetDepth);
+    default:
+        return false;
+    }
+}
+
+/* True if control can reach the statement after `n` (fall off its end) on some
+   path. `depth` is the current loop-nesting depth. */
+static bool StmtFallsThrough(const Node* n, int depth)
+{
+    if (!n) return true;
+
+    switch (n->kind)
+    {
+    case NodeReturn:
+    case NodeBreak:
+    case NodeContinue:
+        return false;
+
+    case NodeBlock:
+    {
+        const Block* b = (const Block*)n;
+        for (size_t i = 0; i < b->statements.count; i++)
+        {
+            if (!StmtFallsThrough((const Node*)VecGet(&b->statements, i), depth))
+            {
+                return false; /* terminating statement hit; rest is dead */
+            }
+        }
+        return true;
+    }
+
+    case NodeIf:
+    {
+        const IfStmt* s = (const IfStmt*)n;
+        if (ExprIsConstantTrue(s->condition))
+        {
+            return StmtFallsThrough(s->thenBranch, depth);
+        }
+        if (ExprIsConstantFalse(s->condition))
+        {
+            return StmtFallsThrough(s->elseBranch, depth);
+        }
+        if (!s->elseBranch)
+        {
+            return true; /* false branch always falls through */
+        }
+        return StmtFallsThrough(s->thenBranch, depth)
+            || StmtFallsThrough(s->elseBranch, depth);
+    }
+
+    case NodeWhile:
+    {
+        const WhileStmt* s = (const WhileStmt*)n;
+        if (ExprIsConstantTrue(s->condition))
+        {
+            /* Infinite unless the body breaks out. */
+            return BodyCanBreak(s->body, depth + 1, depth + 1);
+        }
+        /* May run zero times -> control reaches after the loop. */
+        return true;
+    }
+
+    case NodeFor:
+    {
+        const ForStmt* s = (const ForStmt*)n;
+        if (!s->condition || ExprIsConstantTrue(s->condition))
+        {
+            /* for(;;) or for(;true;) : infinite unless body breaks. */
+            return BodyCanBreak(s->body, depth + 1, depth + 1);
+        }
+        return true;
+    }
+
+    default:
+        return true;
+    }
+}
+
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     Resolver r = {0};
@@ -3480,6 +3636,16 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         WalkBlock(&r, (Block*)functionDecl->body, &scope);
         r.m_currentReturnType = NULL;
+
+        /* A non-void function must return on every path; if control can fall
+           off the end of the body, at least one path is missing a return. */
+        if (strcmp(functionDecl->returnType.name, "void") != 0
+            && StmtFallsThrough(functionDecl->body, 0))
+        {
+            DiagErrorFmt(diag, functionDecl->base.range,
+                         "missing return statement in function '%s' returning '%s'",
+                         functionDecl->name, functionDecl->returnType.name);
+        }
 
         StrMapFree(&scope);
     }

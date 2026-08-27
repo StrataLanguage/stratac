@@ -13,6 +13,28 @@ static size_t GrowCap(size_t cap)
     return cap ? cap * 2 : 8;
 }
 
+/* Resolves `path` to a canonical, absolute spelling so that the same file
+   reached via different relative paths / extensions / "." or ".." segments is
+   recognized as already visited and not loaded twice. */
+static const char* CanonicalizePath(Arena* arena, const char* path)
+{
+#if defined(_WIN32)
+    char buf[4096];
+    char* rp = _fullpath(buf, path, sizeof(buf));
+#else
+    char* rp = realpath(path, NULL);
+#endif
+    if (rp)
+    {
+        const char* result = arena_strdup(arena, rp);
+#if !defined(_WIN32)
+        free(rp);
+#endif
+        return result;
+    }
+    return arena_strdup(arena, path);
+}
+
 static char* ResolveImportPath(Arena* arena, const char* importerPath, const char* importPath)
 {
     size_t impLen = strlen(importPath);
@@ -67,26 +89,87 @@ static bool AlreadyVisited(const ModuleLoader* loader, const char* path)
     return false;
 }
 
-static void AppendItems(Module* root, const Module* src)
+static bool RootHasStruct(const Module* root, const char* name, bool definedOnly)
 {
+    for (size_t i = 0; i < root->structs.count; i++)
+    {
+        StructDecl* s = (StructDecl*)VecGet(&root->structs, i);
+        if (strcmp(s->name, name) == 0 && (!definedOnly || !s->incomplete))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool RootHasHandle(const Module* root, const char* name)
+{
+    for (size_t i = 0; i < root->handles.count; i++)
+    {
+        HandleDecl* h = (HandleDecl*)VecGet(&root->handles, i);
+        if (strcmp(h->name, name) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool RootHasGlobal(const Module* root, const char* name)
+{
+    for (size_t i = 0; i < root->globals.count; i++)
+    {
+        GlobalDecl* g = (GlobalDecl*)VecGet(&root->globals, i);
+        if (strcmp(g->name, name) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void AppendItems(ModuleLoader* loader, const Module* src)
+{
+    Module* root = loader->root;
+    DiagnosticEngine* diag = loader->diag;
+
     for (size_t i = 0; i < src->structs.count; i++)
     {
-        VecPush(&root->structs, VecGet(&src->structs, i));
+        StructDecl* s = (StructDecl*)VecGet(&src->structs, i);
+
+        if (!s->isExtern && RootHasStruct(root, s->name, true))
+        {
+            DiagErrorFmt(diag, s->base.range, "redefinition of struct '%s'", s->name);
+            continue;
+        }
+        VecPush(&root->structs, s);
     }
 
     for (size_t i = 0; i < src->handles.count; i++)
     {
-        VecPush(&root->handles, VecGet(&src->handles, i));
+        HandleDecl* h = (HandleDecl*)VecGet(&src->handles, i);
+        if (RootHasHandle(root, h->name))
+        {
+            DiagErrorFmt(diag, h->base.range, "redefinition of handle '%s'", h->name);
+            continue;
+        }
+        VecPush(&root->handles, h);
     }
 
     for (size_t i = 0; i < src->functions.count; i++)
     {
         VecPush(&root->functions, VecGet(&src->functions, i));
     }
-    
+
     for (size_t i = 0; i < src->globals.count; i++)
     {
-        VecPush(&root->globals, VecGet(&src->globals, i));
+        GlobalDecl* g = (GlobalDecl*)VecGet(&src->globals, i);
+        if (RootHasGlobal(root, g->name))
+        {
+            DiagErrorFmt(diag, g->base.range, "redefinition of global '%s'", g->name);
+            continue;
+        }
+        VecPush(&root->globals, g);
     }
 }
 
@@ -144,7 +227,7 @@ static void LoadModule(ModuleLoader* loader, const char* name, const char* text,
         ResolveImport(loader, nameKey, imp->importPath);
     }
 
-    AppendItems(loader->root, fileMod);
+    AppendItems(loader, fileMod);
     AstReleaseModuleLists(fileMod);
 }
 
@@ -169,22 +252,24 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
     }
 
     char* childPath = ResolveImportPath(loader->arena, importerName, importPath);
+    const char* canonPath = CanonicalizePath(loader->arena, childPath);
 
-    // Skip re-reading disk files we've already loaded.
-    if (AlreadyVisited(loader, childPath))
+    // Skip re-reading disk files we've already loaded (canonicalized so that
+    // e.g. "foo" and "foo.strata" or "./foo.strata" resolve to the same key).
+    if (AlreadyVisited(loader, canonPath))
     {
         return;
     }
 
     size_t fileLen = 0;
-    char* source = ReadWholeFile(childPath, &fileLen);
+    char* source = ReadWholeFile(canonPath, &fileLen);
     if (!source)
     {
-        DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", childPath);
+        DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", canonPath);
         return;
     }
 
-    LoadModule(loader, childPath, source, fileLen, true);
+    LoadModule(loader, canonPath, source, fileLen, true);
 }
 
 static Module* NewRootModule(Arena* arena, const char* name)
@@ -239,16 +324,20 @@ Module* ModuleLoaderLoad(ModuleLoader* loader, const char* mainPath)
 {
     loader->root = NewRootModule(loader->arena, mainPath);
 
+    // Canonicalize so an indirect import cycle that reaches this same file is
+    // recognized as already visited.
+    const char* canonMain = CanonicalizePath(loader->arena, mainPath);
+
     // The main file is supplied by the caller from disk; only its imports go through the resolver (if set).
     size_t fileLen = 0;
-    char* source = ReadWholeFile(mainPath, &fileLen);
+    char* source = ReadWholeFile(canonMain, &fileLen);
     if (!source)
     {
         DiagErrorFmt(loader->diag, SRC_INVALID, "cannot open module '%s'", mainPath);
         return loader->root;
     }
 
-    LoadModule(loader, mainPath, source, fileLen, true);
+    LoadModule(loader, canonMain, source, fileLen, true);
 
     return loader->root;
 }
