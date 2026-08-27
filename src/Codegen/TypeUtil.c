@@ -153,16 +153,16 @@ MappedType MapType(const TypeName* t)
 
 bool IsNumeric(const char* t)
 {
-    return strcmp(t, "int") == 0       /* */
-           || strcmp(t, "uint") == 0   /* */
-           || strcmp(t, "long") == 0   /* */
-           || strcmp(t, "ulong") == 0  /* */
-           || strcmp(t, "byte") == 0   /* */
-           || strcmp(t, "sbyte") == 0  /* */
-           || strcmp(t, "short") == 0  /* */
-           || strcmp(t, "ushort") == 0 /* */
-           || strcmp(t, "float") == 0  /* */
-           || strcmp(t, "double") == 0 /* */
+    return strcmp(t, "int") == 0
+           || strcmp(t, "uint") == 0
+           || strcmp(t, "long") == 0
+           || strcmp(t, "ulong") == 0
+           || strcmp(t, "byte") == 0
+           || strcmp(t, "sbyte") == 0
+           || strcmp(t, "short") == 0
+           || strcmp(t, "ushort") == 0
+           || strcmp(t, "float") == 0
+           || strcmp(t, "double") == 0
            || strcmp(t, "bool") == 0;
 }
 

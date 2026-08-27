@@ -86,14 +86,13 @@ static void AppendItems(Module* root, const Module* src)
     }
 }
 
-/* Forward declarations. */
+// Forward declarations.
 static void LoadModule(ModuleLoader* loader, const char* name, const char* text, size_t textLen, bool textOwned);
 static void ResolveImport(ModuleLoader* loader, const char* importerName, const char* importPath);
 
 static void LoadModule(ModuleLoader* loader, const char* name, const char* text, size_t textLen, bool textOwned)
 {
-    /* Take ownership of caller-owned text before any early return so it can
-       never leak. */
+    // Take ownership of caller-owned text before any early return so it can never leak.
     if (textOwned)
     {
         PushBuffer(loader, (char*)text);
@@ -158,15 +157,14 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
 
         const char* childName = resolved.name ? resolved.name : importPath;
 
-        /* `name` is copied inside LoadModule; `text` is borrowed for the
-           duration of the compile (the host owns it). */
+        // `name` is copied inside LoadModule; `text` is borrowed for the compile (host owns it).
         LoadModule(loader, childName, resolved.text, resolved.length, false);
         return;
     }
 
     char* childPath = ResolveImportPath(loader->arena, importerName, importPath);
 
-    /* Skip re-reading disk files we've already loaded. */
+    // Skip re-reading disk files we've already loaded.
     if (AlreadyVisited(loader, childPath))
     {
         return;
@@ -235,8 +233,7 @@ Module* ModuleLoaderLoad(ModuleLoader* loader, const char* mainPath)
 {
     loader->root = NewRootModule(loader->arena, mainPath);
 
-    /* The main file is always supplied by the caller from disk; only its
-       imports are routed through the resolver (if one is set). */
+    // The main file is supplied by the caller from disk; only its imports go through the resolver (if set).
     size_t fileLen = 0;
     char* source = ReadWholeFile(mainPath, &fileLen);
     if (!source)
@@ -254,8 +251,7 @@ Module* ModuleLoaderLoadSource(ModuleLoader* loader, const char* name, const cha
 {
     loader->root = NewRootModule(loader->arena, name ? name : "<string>");
 
-    /* The main source is the caller's string (borrowed). Imports require a
-       resolver since there is no filesystem context for relative resolution. */
+    // The main source is the caller's string (borrowed). Imports require a resolver (no filesystem context).
     LoadModule(loader, loader->root->name, text, textLen, false);
 
     return loader->root;

@@ -73,6 +73,15 @@ static void SetOrcError(char** errorMessage, LLVMErrorRef err, const char* fmt)
     free(msg);
 }
 
+/* Disposes the module/context held by a BuiltModule after a failed load. */
+static void DisposeBuiltModuleOnError(BuiltModule* bm)
+{
+    LLVMDisposeModule(bm->mod);
+    LLVMContextDispose(bm->ctx);
+    bm->mod = NULL;
+    bm->ctx = NULL;
+}
+
 static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
 {
     LLVMOrcExecutorAddress addr = 0;
@@ -162,10 +171,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     {
         SetOrcError(errorMessage, err, "could not create execution engine: %s");
 
-        LLVMDisposeModule(bm->mod);
-        LLVMContextDispose(bm->ctx);
-        bm->mod = NULL;
-        bm->ctx = NULL;
+        DisposeBuiltModuleOnError(bm);
 
         return false;
     }
@@ -180,10 +186,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     {
         SetOrcError(errorMessage, err, "could not create execution engine: %s");
 
-        LLVMDisposeModule(bm->mod);
-        LLVMContextDispose(bm->ctx);
-        bm->mod = NULL;
-        bm->ctx = NULL;
+        DisposeBuiltModuleOnError(bm);
 
         return false;
     }

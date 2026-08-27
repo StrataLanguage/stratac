@@ -195,6 +195,12 @@ target_compile_definitions(simd_demo PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(simd_demo)
 
+add_executable(readme_demo samples/hosts/readme_demo_host.c)
+target_link_libraries(readme_demo PRIVATE strata)
+target_compile_definitions(readme_demo PRIVATE
+    STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
+strata_stage_dll(readme_demo)
+
 enable_testing()
 
 if(NOT STRATA_SHARED)

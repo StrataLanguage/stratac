@@ -676,11 +676,10 @@ static LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
     return LLVMConstPtrToInt(gep, I64Ty(b));
 }
 
-/* ---- JIT out-of-bounds dummy elements ----
-   With boundsCheck on, the LLVM JIT does not panic on a bad index: reads
+/* JIT out-of-bounds: with boundsCheck on, bad indexes don't panic - reads
    resolve to a dummy element and writes are absorbed. Non-owning elements
-   share a zeroed global; owning elements get a fresh dummy constructed into
-   per-site entry scratch (dropping whatever a previous OOB event left there). */
+   share a zeroed global; owning elements get a fresh dummy in per-site entry
+   scratch (dropping whatever a prior OOB event left there). */
 
 static LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name)
 {
@@ -764,12 +763,10 @@ static bool ElemNeedsScratchDummy(Builder* b, TypeDesc td)
     return td.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, td.structTypeName);
 }
 
-/* Stores a freshly constructed dummy of `td` into `slot` (assumed already
-   dropped): string -> heap "" (free-able when later owned), ^T -> newly
-   allocated T (constructing owning struct fields recursively), owning struct
-   -> field-wise construct, T[] -> {NULL, 0}. `chain` guards compile-time
-   recursion on self-referential types: a field whose struct type is already
-   under construction gets a zero value instead of a nested dummy. */
+/* Stores a fresh dummy of `td` into `slot` (assumed already dropped):
+   string -> heap "", ^T -> new T, owning struct -> field-wise construct,
+   T[] -> {NULL,0}. `chain` guards compile-time recursion: a field whose
+   struct type is already under construction gets a zero value. */
 /* Iterates the fields of an owning struct, dummy-storing owning fields
    recursively and zeroing the rest, into `base`. */
 static void EmitDummyStoreStructFields(Builder* b, LLVMValueRef base, const StructType* st,
@@ -909,16 +906,10 @@ static LLVMValueRef PlainElemPtr(Builder* b, LLVMValueRef dataPtr, LLVMValueRef 
     return LLVMBuildGEP2(b->m_builder, elemTy, dataPtr, idxArgs, 1, "ai");
 }
 
-/* Resolves arr[idx] (length `lenVal`, data `dataPtr`, elements of `elemTy`/
-   `elemTd`) to an element address under the profile's bounds check:
-   - boundsCheck off: unchecked GEP.
-   - AOT: panic branch (strata_panic) + GEP.
-   - JIT: no abort - the violation is reported through strata_oob (the host's
-     panic handler, or stderr when unset) and execution continues with a
-     dummy slot: reads yield a dummy value and writes are absorbed. Owning
-     elements drop and re-construct the scratch per OOB event; a null-store
-     re-resolution (m_nullStoreLValue) skips that so a moved-out dummy is
-     never freed through the scratch. */
+/* Resolves arr[idx] under the profile bounds check: boundsCheck off -> raw
+   GEP; AOT -> panic branch; JIT -> no abort, report via strata_oob and
+   continue with a dummy slot (reads yield a dummy, writes absorbed). Owning
+   elements rebuild scratch per event; null-store re-resolution skips that. */
 static LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef lenVal, LLVMValueRef dataPtr,
                                        LLVMTypeRef elemTy, TypeDesc elemTd, bool aliased)
 {
@@ -1075,25 +1066,16 @@ static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
 /* Drops the owning fields of a struct at `structPtr`. */
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName);
 
-/* Returns (creating if needed) a per-struct-type LLVM function that drops
-   the owning fields of `structName` given a pointer to it. Used instead of
-   inlining EmitDropStructFields at ^StructType drop sites: a
-   self-referential or mutually recursive owning struct (e.g.
-   `struct Node { ^Node next; }`) would otherwise make EmitDropStructFields
-   recurse into itself without bound at IR-generation time, since the
-   compile-time recursion follows the *type* graph, not the (possibly null,
-   runtime-only-known) data. A real function call terminates at runtime via
-   the null check in the callee, following the actual chain length instead. */
+/* Returns (creating if needed) a per-struct drop fn for `structName`'s owning
+   fields, used instead of inlining at ^T drop sites. A self-referential/
+   mutually recursive owning struct would otherwise recurse without bound at
+   IR-gen time; a real call terminates via the callee's null check. */
 static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
 
-/* Drops (frees) the owning value held in 'slot', typed 'td'.
-   - ^T / string: 'slot' is the address of a pointer; free it (and, for a
-     boxed owning struct, the struct's owning fields first).
-   - T[]: 'slot' is the address of a {ptr, u64} struct; free the backing
-     buffer, and when the element type is itself owning (box/string/array),
-     drop each element first via a loop.
-   A stack-backed array (freeArrayBuffer=false, used for vararg rest params)
-   drops its owning elements but not the caller's stack buffer. */
+/* Drops the owning value in `slot`, typed `td`: ^T/string free the pointer
+   (and a boxed owning struct's fields first); T[] frees the backing buffer and
+   drops owning elements via a loop. freeArrayBuffer=false (vararg rest) drops
+   elements but not the caller's stack buffer. */
 static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool freeArrayBuffer)
 {
     if (td.isArray)
@@ -1246,11 +1228,9 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
     }
 }
 
-/* Builds the body of a per-struct-type drop function: `if (!p) return;`
-   followed by EmitDropStructFields(p, structName). May run while another
-   function's body is mid-emission (a ^T drop site can be reached from
-   anywhere), so the enclosing function-build context is saved and restored
-   around it. */
+/* Builds a drop fn body: `if (!p) return;` then EmitDropStructFields(p). May
+   run mid-emission of another function (a ^T drop can be reached anywhere),
+   so the enclosing build context is saved and restored around it. */
 static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* structName)
 {
     LLVMValueRef savedCurFn = b->m_curFn;
@@ -1580,13 +1560,10 @@ static void NullMovedSource(Builder* b, Node* n)
     }
 }
 
-/* Produces an owned value of 'innerType' from an already-evaluated expression.
-   This is the single point that encapsulates ownership construction:
-   - Non-owning inner (int, struct value, ...): returned as-is.
-   - Owning inner + string literal: heap-copied so the destination owns it.
-   - Owning inner + movable source (ident/field): value taken, source nulled.
-   - Owning inner + non-movable (call result): value taken as-is.
-   Used for string vars, ^T inners, struct fields, return values, etc. */
+/* Produces an owned value of `innerType` from an evaluated expr - the single
+   point encapsulating ownership construction. Non-owning inner returned as-is;
+   owning literal heap-copied, movable source taken + nulled, non-movable taken
+   as-is. Used for vars, ^T inners, fields, returns. */
 static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeName* innerType)
 {
     if (!TypeNameIsOwning(innerType))
@@ -1602,6 +1579,20 @@ static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, cons
 
     NullMovedSource(b, init);
     return evaluated.value;
+}
+
+/* Allocates a fresh T cell and constructs the owned inner value `src` into it,
+   returning the heap pointer. Shared by every ^T / T? box-up site. */
+static LLVMValueRef EmitBoxCell(Builder* b, const TypeName* innerTn, Value src, Node* srcNode, const char* name)
+{
+    TypeDesc innerTd = Resolve(b, innerTn);
+    LLVMValueRef size = SizeOfConst(b, innerTd.type);
+    LLVMValueRef args[1] = {size};
+    StrataAllocFn(b);
+    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, name);
+    LLVMValueRef inner = EmitOwnedValue(b, src, srcNode, innerTn);
+    LLVMBuildStore(b->m_builder, inner, heap);
+    return heap;
 }
 
 static LValue EmitLValue(Builder* b, Node* n)
@@ -2226,10 +2217,9 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 return ValueMake(rhs.value, lvalue.typeDesc);
             }
 
-            /* `=` rebinds the box only when the value is itself a box of the
-               SAME kind (string=string, ^T=^T); any other assignment
-               into a ^T - including `=` with a plain T value (`x = 5;`)
-               or a string value/ literal into ^string - mutates its
+            /* `=` rebinds the box only when RHS is a box of the SAME kind
+               (string=string, ^T=^T); any other assign into a ^T - a plain
+               T value (`x = 5;`) or a string into ^string - mutates its
                contents instead. */
             bool rhsIsSameBoxKind = rhs.typeDesc.isBox
                                  && ((lvalue.typeDesc.boxInner == NULL && rhs.typeDesc.boxInner == NULL)
@@ -2240,12 +2230,10 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
             if (boxMove && !boxMoveFromLiteral)
             {
-                /* Box move: take the new pointer, null the source, drop the
-                   old value, rebind. The SOURCE is detached BEFORE the old
-                   value is dropped - for an aliased move like `cur =
-                   cur.next` the source slot lives inside the object being
-                   freed, so the drop glue must not see it (and the write
-                   must not hit freed memory). */
+                /* Box move: take the pointer, null the source, drop the old
+                   value, rebind. The SOURCE is detached BEFORE the drop so the
+                   drop glue (and the store) never touch freed memory - for
+                   `cur = cur.next` the source slot lives inside the freed object. */
                 Node* movedSourceNodePre = (Node*)MovableBoxSourceNode(n->value);
                 LValue srcPre = movedSourceNodePre ? EmitLValueForNullStore(b, movedSourceNodePre) : (LValue){0};
 
@@ -2287,11 +2275,10 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 return rhs;
             }
 
-            /* Optional (`T?`) slot receiving a NON-box value (struct literal,
-               aggregate, plain value): whole-slot rebind. The old value is
-               dropped (it may be empty - EmitDropOne handles NULL), then a
-               fresh cell is allocated and the owned inner constructed into
-               it. Same-kind box RHS already took the boxMove path above. */
+            /* Optional (`T?`) slot receiving a NON-box value: whole-slot
+               rebind. The old value is dropped (EmitDropOne handles empty/
+               NULL), then a fresh cell is allocated and the owned inner
+               constructed into it. Same-kind box RHS took the boxMove path. */
             bool optRebind = lvalue.typeDesc.isOptional && n->op == AssignSet;
 
             if (optRebind)
@@ -2317,11 +2304,10 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     return ValueMake(cell, lvalue.typeDesc);
                 }
 
-                /* String inner: construct the owned string (heap copy),
-                   then wrap it in a cell - the boxed representation is
-                   slot -> cell -> chars, which is what the drop glue and
-                   reads expect. Array inner cannot occur - optionals of
-                   dynamic arrays are rejected by sema. */
+                /* String inner: construct the owned string (heap copy), then
+                   wrap it in a cell - the boxed representation is slot -> cell
+                   -> chars, as drop glue and reads expect. Array inner cannot
+                   occur (optionals of dynamic arrays are rejected by sema). */
                 LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
 
                 LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
@@ -2337,13 +2323,10 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
             if (lvalue.typeDesc.isBox && !boxMove)
             {
-                /* Assigning a plain T (or compound-assigning) into a ^T
-                   mutates its contents in place - not a move - so `x = 5;`
-                   and `val -= amt;` both work even through a `ref ^T`
-                   param or a box global. lvalue.ptr is the
-                   address of the box pointer slot (ref-adjusted already by
-                   EmitLValue); load through it to get the box pointer, then
-                   read/write the boxed value through that. */
+                /* Assigning a plain T (or compound-assign) into a ^T mutates
+                   its contents in place, not a move - so `x = 5;` and `val -=
+                   amt;` work even through a `ref ^T` param or box global.
+                   lvalue.ptr is the box slot; load it, then read/write through. */
                 LLVMValueRef boxPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lvalue.ptr, "box");
                 const TypeName* innerTn = lvalue.typeDesc.boxInner;
 
@@ -2356,13 +2339,10 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
                 if (TypeNameIsOwning(innerTn))
                 {
-                    /* Content-assigning an OWNING inner (e.g. ^string =
-                       "x" / someString): drop only the old inner value (free
-                        it in place — NOT the box allocation itself), then
-                        construct a fresh owned inner into the existing box:
-                        heap-copy a literal, move a movable source. Mirrors
-                        `^int = 5`, except the replaced inner is owning so
-                        the old value is freed first. */
+                    /* Content-assigning an OWNING inner (^string = "x"): drop
+                       only the old inner value (free it in place, NOT the box
+                       allocation), then construct a fresh owned inner into the
+                       existing box: heap-copy a literal, move a movable source. */
                     EmitDropOne(b, boxPtr, innerTd);
                     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
                     LLVMBuildStore(b->m_builder, owned, boxPtr);
@@ -3022,7 +3002,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
         return EmitCopyBuiltin(b, n);
     }
 
-    if (n->isPseudoCall && strcmp(n->callee, "float3") == 0)
+    if (n->isPseudoCall && IsSimdVector(n->callee))
     {
         return EmitVectorConstruct(b, n);
     }
@@ -3063,18 +3043,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
                      && !(rawArg.typeDesc.isBox && rawArg.typeDesc.boxInner
                           && strcmp(rawArg.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
             {
-                /* ^T / T? field from a non-box value (bare T, braced
-                    struct literal): allocate a T slot and construct the
-                    value into it. A braced `{}` against a `T?` field
-                    constructs a NON-EMPTY boxed T - same rule as the
-                    named-literal form. */
-                TypeDesc innerTd = Resolve(b, fieldTd.boxInner);
-                LLVMValueRef size = SizeOfConst(b, innerTd.type);
-                LLVMValueRef args[1] = {size};
-                StrataAllocFn(b);
-                LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "argbox");
-                LLVMValueRef inner = EmitOwnedValue(b, rawArg, argNode, fieldTd.boxInner);
-                LLVMBuildStore(b->m_builder, inner, heap);
+                /* ^T / T? field from a non-box value (bare T, braced struct
+                   literal): allocate a T slot and construct the value into it.
+                   A braced `{}` against a `T?` field constructs a NON-EMPTY
+                   boxed T (same rule as the named-literal form). */
+                LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawArg, argNode, "argbox");
                 argValue = ValueMake(heap, fieldTd);
             }
             else
@@ -3302,11 +3275,9 @@ static Value EmitCall(Builder* b, CallExpr* n)
     if (slotExtern && b->m_nullExternCheck)
     {
         /* JIT extern slots start null; a call before strataJitAddSymbol bound
-           the host function would jump to address 0. Under the profile's
-           nullExternCall check, panic with the unbound name instead. The
-           panic block RETURNS a zero value (not unreachable) so a host
-           panic handler that returns - rather than longjmps or aborts -
-           keeps the JIT frame's stack walker out of the equation. */
+           the host fn would jump to address 0. Under nullExternCall, panic with
+           the unbound name. The panic block RETURNS a zero value so a host
+           panic handler that returns keeps the JIT frame's stack walker away. */
         LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "extnull");
         LLVMBasicBlockRef nullBB = NewBb(b, "ext.null");
         LLVMBasicBlockRef callBB = NewBb(b, "ext.call");
@@ -3342,11 +3313,9 @@ static Value EmitCall(Builder* b, CallExpr* n)
     return ValueMake(call, info->returnType);
 }
 
-/* Builds a T[] array value from a list of element expressions. Shared by
-    array literals (heap-backed) and typed rest params. A rest param is
-    stack-backed (stackBuffer=true): the buffer is an alloca in the entry
-    block. borrow=true (ref rest) stores owning element pointers without
-    nulling/moving the sources. */
+/* Builds a T[] from element exprs, shared by array literals (heap-backed) and
+   typed rest params. rest=stack-backed (alloca in entry); borrow=true (ref
+   rest) stores owning element pointers without nulling/moving sources. */
 static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer, bool borrow)
 {
     TypeDesc elemTd = Resolve(b, elementType);
@@ -3459,13 +3428,7 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                 else
                 {
                     /* ^T from a non-^T value: box it up. */
-                    TypeDesc innerTd = Resolve(b, elemTd.boxInner);
-                    LLVMValueRef sz = SizeOfConst(b, innerTd.type);
-                    LLVMValueRef args[1] = {sz};
-                    StrataAllocFn(b);
-                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "abox");
-                    LLVMValueRef inner = EmitOwnedValue(b, v, eNode, elemTd.boxInner);
-                    LLVMBuildStore(b->m_builder, inner, heap);
+                    LLVMValueRef heap = EmitBoxCell(b, elemTd.boxInner, v, eNode, "abox");
                     LLVMBuildStore(b->m_builder, heap, elemAddr);
                 }
             }
@@ -3658,13 +3621,7 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
                string variable into ^string): allocate a T slot, construct
                the owned inner value, store it. Same pattern as a top-level
                ^T init. */
-            TypeDesc innerTd = Resolve(b, fieldTd.boxInner);
-            LLVMValueRef size = SizeOfConst(b, innerTd.type);
-            LLVMValueRef args[1] = {size};
-            StrataAllocFn(b);
-            LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "fieldbox");
-            LLVMValueRef inner = EmitOwnedValue(b, rawField, field->value, fieldTd.boxInner);
-            LLVMBuildStore(b->m_builder, inner, heap);
+            LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawField, field->value, "fieldbox");
             fieldValue = ValueMake(heap, fieldTd);
         }
         else
@@ -3784,11 +3741,10 @@ Value EmitExpr(Builder* b, Node* n)
 
     case NodeNullTest:
     {
-        /* `expr?` — test whether the optional holds anything. Zero runtime
-            cost beyond the compare; sema guarantees the operand is a
-            nullable path. A pointer slot (T? / ^T) tests the pointer; an
-            optional array tests its fat struct: set = non-null data OR a
-            non-zero length (either means it is not the canonical empty). */
+        /* `expr?` - test whether the optional holds anything (zero cost
+           beyond the compare; sema guarantees a nullable path). A T?/^T slot
+           tests the pointer; an optional array tests its fat struct: set =
+           non-null data OR non-zero length. */
         NullTestExpr* nt = (NullTestExpr*)n;
         LValue lv = EmitLValue(b, nt->operand);
 
@@ -4048,20 +4004,12 @@ static void EmitStmt(Builder* b, Node* n)
                 }
                 else if (typeDesc.boxInner)
                 {
-                    /* ^T: allocate a T slot, construct the inner value
-                       (with ownership), and store it. For ^string this
-                       is: construct a string (heap-copy literal / move source),
-                       then box it up — identical to ^int but the inner
-                       happens to be owning. */
-                    TypeDesc innerTd = Resolve(b, typeDesc.boxInner);
-                    LLVMValueRef size = SizeOfConst(b, innerTd.type);
-                    LLVMValueRef args[1] = {size};
-                    StrataAllocFn(b);
-                    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "heap");
+                /* ^T: allocate a T slot, construct the owned inner into it,
+                   store. For ^string this is: construct a string (heap-copy
+                   literal / move source), then box it up - identical to ^int
+                   but the inner happens to be owning. */
+                    LLVMValueRef heap = EmitBoxCell(b, typeDesc.boxInner, value, varDecl->init, "heap");
                     LLVMBuildStore(b->m_builder, heap, slot);
-
-                    LLVMValueRef inner = EmitOwnedValue(b, value, varDecl->init, typeDesc.boxInner);
-                    LLVMBuildStore(b->m_builder, inner, heap);
                 }
                 else
                 {
@@ -4324,12 +4272,10 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             continue;
         }
 
-        /* Build the physical member list: registry-computed padding members
-           ([n x i8]) interleaved before the fields that follow them. A struct
-           with any explicit fieldoffset is emitted packed - the pad members
-           fully determine the layout, so neither LLVM nor C may add their
-           own padding. Natural structs (padCount 0, packed 0) produce the
-           same body as before. */
+        /* Build the physical member list: registry-computed [n x i8] pads
+           interleaved before the fields they follow. A struct with any
+           explicit fieldoffset is emitted packed (pad members fully determine
+           layout); natural structs (padCount 0) produce the same body. */
         size_t memberCount = st->hasLayout ? st->physicalCount : st->fields.count;
         LLVMTypeRef* members = NULL;
 
@@ -4543,7 +4489,6 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                 }
                 else if (td.isBox && td.boxInner)
                 {
-                    TypeDesc innerTd = Resolve(b, td.boxInner);
                     Value val = EmitExpr(b, gd->init);
 
                     /* Direct move from the same ^T kind: take pointer. */
@@ -4557,15 +4502,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                     else
                     {
                         /* Box up the inner value (owning or not). */
-                        LLVMValueRef sz = SizeOfConst(b, innerTd.type);
-                        LLVMValueRef args[1] = {sz};
-                        StrataAllocFn(b);
-                        LLVMValueRef heap
-                            = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "boxgl");
+                        LLVMValueRef heap = EmitBoxCell(b, td.boxInner, val, gd->init, "boxgl");
                         LLVMBuildStore(b->m_builder, heap, sym->value);
-
-                        LLVMValueRef inner = EmitOwnedValue(b, val, gd->init, td.boxInner);
-                        LLVMBuildStore(b->m_builder, inner, heap);
                     }
                 }
             }
@@ -4606,11 +4544,9 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             LLVMBuildRetVoid(b->m_builder);
 
             /* AOT: register the initializer as a CRT constructor
-               (`llvm.global_ctors`, default priority) so it runs
-               automatically when a host links the object — no host-side
-               call needed. ELF lowers to .init_array, COFF to .CRT$XCU.
-               The JIT keeps its explicit lookup+call (LLVMJit.c) and skips
-               this list; registering it there too would double-init. */
+               (`llvm.global_ctors`, default priority) so it runs when a host
+               links the object - no host-side call. ELF -> .init_array, COFF
+               -> .CRT$XCU. JIT keeps its explicit call and skips this list. */
             if (!b->m_jitMode)
             {
                 LLVMTypeRef fields[3] = {I32Ty(b), b->m_ptrTy, b->m_ptrTy};

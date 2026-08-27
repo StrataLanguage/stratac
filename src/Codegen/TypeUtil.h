@@ -31,9 +31,7 @@ bool IsNumeric(const char* t);
 
 bool IsSimdVector(const char* t);
 
-/*
- * @brief Returns the number of vector components held by the type.
- */
+// Returns the number of vector components held by the type.
 int GetSimdVectorLanes(const char* t);
 
 bool IsScalarTypeName(const char* t);

@@ -17,10 +17,9 @@ typedef struct
     StrMap m_movedBoxes;
     StrMap m_nonEmptyPaths; /* dotted path -> 1 = definitely non-empty (`T?` narrowing) */
     StrMap m_emptyPaths;    /* dotted path -> 1 = definitely EMPTY (else branch of `if (path?)`) */
-    StrMap m_indexDeps;     /* index variable name -> Vec<const char*> of fact keys
-                                spelled with it ("i" -> {"arr[i].w"}); mutating the
-                                variable (or passing it as a non-const ref) must
-                                drop those facts */
+    /* Index var name -> Vec of fact keys spelled with it ("i" -> {"arr[i].w"}).
+       Mutating the var (or passing it non-const ref) drops those facts. */
+    StrMap m_indexDeps;
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
@@ -76,6 +75,23 @@ static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
 {
     const StructType* t = TypeRegistryFind(reg, name);
     return t && t->opaque && t->incomplete;
+}
+
+/* Resets a map's keys without freeing its buffer (recycles per-function state). */
+static void ResetStrMap(StrMap* m)
+{
+    if (m->cap > 0)
+    {
+        memset(m->keys, 0, m->cap * sizeof(const char*));
+        m->count = 0;
+    }
+}
+
+/* Count of non-rest params for a call (excludes the trailing typed-rest param). */
+static size_t NamedParamCount(const FunctionDecl* f)
+{
+    bool typedRest = f->isVariadic && !f->isCVararg;
+    return typedRest && f->params.count > 0 ? f->params.count - 1 : f->params.count;
 }
 
 /* True if any fixed-size array dimension (`T[N]`) appears in the type tree (even inside a box). */
@@ -1331,14 +1347,14 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     }
 
     /* With a typed rest, the rest slot holds the first ELEMENT; later args move only if the element type owns. */
-    bool typedRest = best->isVariadic && !best->isCVararg;
-    size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
+        bool typedRest = best->isVariadic && !best->isCVararg;
+        size_t namedCount = NamedParamCount(best);
 
-    for (size_t j = 0; j < c->args.count; j++)
-    {
-        Node* arg = (Node*)VecGet(&c->args, j);
+        for (size_t j = 0; j < c->args.count; j++)
+        {
+            Node* arg = (Node*)VecGet(&c->args, j);
 
-        /* A non-const `ref` arg may be mutated by the callee - drop its facts and index use. */
+            /* A non-const `ref` arg may be mutated by the callee - drop its facts and index use. */
         if (j < namedCount)
         {
             const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, j);
@@ -1416,7 +1432,7 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
     if (fd)
     {
         bool typedRest = fd->isVariadic && !fd->isCVararg;
-        size_t namedCount = typedRest && fd->params.count > 0 ? fd->params.count - 1 : fd->params.count;
+        size_t namedCount = NamedParamCount(fd);
 
         for (size_t j = 0; j < c->args.count; j++)
         {
@@ -2836,11 +2852,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 FieldDecl* fd = (FieldDecl*)VecGet(&structType->fields, f);
 
-                /* Every OWNING field must be initialized: `^T`, owning
-                    structs held by value, and `string`. Optionals (`T?`)
-                    and dynamic arrays (`T[]`) may stay empty: a T? slot is
-                    null, and a zero-filled T[] is the canonical empty
-                    {null, 0} fat struct (same as an uninitialized local). */
+                 /* Every OWNING field (`^T`, owning struct, `string`) must be
+                    initialized; optionals and dynamic arrays may stay empty
+                    (a T? is null, a zero-filled T[] is the canonical empty
+                    {null, 0} fat struct). */
                 bool mustInit = !fd->type.isOptional
                                 && !TypeNameIsDynamicArray(&fd->type)
                                 && (TypeNameIsOwning(&fd->type)
@@ -3426,23 +3441,9 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             }
         }
 
-        if (r.m_constVars.cap > 0)
-        {
-            memset(r.m_constVars.keys, 0, r.m_constVars.cap * sizeof(const char*));
-            r.m_constVars.count = 0;
-        }
-
-        if (r.m_movedBoxes.cap > 0)
-        {
-            memset(r.m_movedBoxes.keys, 0, r.m_movedBoxes.cap * sizeof(const char*));
-            r.m_movedBoxes.count = 0;
-        }
-
-        if (r.m_refBoxParams.cap > 0)
-        {
-            memset(r.m_refBoxParams.keys, 0, r.m_refBoxParams.cap * sizeof(const char*));
-            r.m_refBoxParams.count = 0;
-        }
+        ResetStrMap(&r.m_constVars);
+        ResetStrMap(&r.m_movedBoxes);
+        ResetStrMap(&r.m_refBoxParams);
 
         for (size_t j = 0; j < functionDecl->params.count; j++)
         {
@@ -3555,11 +3556,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         }
 
         /* Clear per-function move state left over from the last function walked. */
-        if (r.m_movedBoxes.cap > 0)
-        {
-            memset(r.m_movedBoxes.keys, 0, r.m_movedBoxes.cap * sizeof(const char*));
-            r.m_movedBoxes.count = 0;
-        }
+        ResetStrMap(&r.m_movedBoxes);
 
         for (size_t i = 0; i < mod->globals.count; i++)
         {

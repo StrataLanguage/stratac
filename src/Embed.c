@@ -30,12 +30,12 @@ extern "C"
     struct StrataCompiler
     {
         StrataArch arch;
-        void* allocFn;   /* optional host allocator for JIT mode */
-        void* freeFn;    /* optional host deallocator for JIT mode */
+        void* allocFn;   // optional host allocator for JIT mode
+        void* freeFn;    // optional host deallocator for JIT mode
         StrataJitBackend jitBackend;
-        StrataProfile profile; /* JIT runtime checks (default: all on) */
+        StrataProfile profile; // JIT runtime checks (default: all on)
 
-        StrataImportResolverFn importResolver;      /* optional import resolver */
+        StrataImportResolverFn importResolver;      // optional import resolver
         void* importResolverUserData;
     };
 
@@ -53,8 +53,27 @@ extern "C"
         return buf;
     }
 
-    /* Sets up the per-compile arena/diagnostics/loader and binds the host
-       resolver (if any) so `import` directives are routed to it. */
+    // Writes an error message into *errOut (owned), or no-ops when errOut is NULL.
+    static void SetErrOut(const char** errOut, const char* message, const char* fallback)
+    {
+        if (errOut)
+        {
+            *errOut = DupString(message ? message : fallback);
+        }
+    }
+
+    // Builds a zeroed StrataResult carrying a single error diagnostic.
+    static StrataResult NullResult(const char* message)
+    {
+        StrataResult r = {0};
+        r.ok = 0;
+        r.output = DupString("");
+        r.diagnostics = DupString(message ? message : "");
+        return r;
+    }
+
+    // Sets up the per-compile arena/diagnostics/loader and binds the host
+    // resolver (if any) so `import` directives are routed to it.
     static void InitModuleLoader(Arena* arena, DiagnosticEngine* diag, ModuleLoader* loader, StrataCompiler* c)
     {
         arena_init(arena, 0);
@@ -63,7 +82,7 @@ extern "C"
         ModuleLoaderSetResolver(loader, c->importResolver, c->importResolverUserData);
     }
 
-    /* Releases everything owned by a ModuleLoader-based compile. */
+    // Releases everything owned by a ModuleLoader-based compile.
     static void TeardownCompile(Module* mod, ModuleLoader* loader, DiagnosticEngine* diag, Arena* arena)
     {
         AstDispose((Node*)mod);
@@ -198,8 +217,8 @@ extern "C"
     {
         if (c && c->importResolver)
         {
-            /* A resolver is installed: route through the module loader so that
-                `import X;` directives are resolved by the host. */
+            // A resolver is installed: route through the module loader so that
+            // `import X;` directives are resolved by the host.
             Arena arena;
             DiagnosticEngine diag;
             ModuleLoader loader;
@@ -257,12 +276,7 @@ extern "C"
     {
         if (!c || !source)
         {
-            StrataResult r = {0};
-            r.ok = 0;
-            r.output = DupString("");
-            r.diagnostics = DupString("null compiler or source");
-
-            return r;
+            return NullResult("null compiler or source");
         }
 
         return CompileSource(c, source, strlen(source), moduleName ? moduleName : "strata_module", emit, emitFlags,
@@ -273,12 +287,7 @@ extern "C"
     {
         if (!c || !path)
         {
-            StrataResult r = {0};
-            r.ok = 0;
-            r.output = DupString("");
-            r.diagnostics = DupString("null compiler or path");
-
-            return r;
+            return NullResult("null compiler or path");
         }
 
         Arena arena;
@@ -302,25 +311,18 @@ extern "C"
         (void)c;
 
 #if !STRATA_HAS_LLVM
-        (void)inputPath;
-        (void)outputPath;
-        (void)assembly;
+    (void)inputPath;
+    (void)outputPath;
+    (void)assembly;
 
-        if (errOut)
-        {
-            *errOut = DupString("LLVM backend not built");
-        }
+    SetErrOut(errOut, "LLVM backend not built", "");
 
-        return 0;
+    return 0;
 #else
 
     if (!inputPath || !outputPath)
     {
-        if (errOut)
-        {
-            *errOut = DupString("null input or output path");
-        }
-
+        SetErrOut(errOut, "null input or output path", "");
         return 0;
     }
 
@@ -335,11 +337,7 @@ extern "C"
     if (DiagHasErrors(&diag) || !mod)
     {
         char* diagText = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
-
-        if (errOut)
-        {
-            *errOut = DupString(diagText ? diagText : "compilation failed");
-        }
+        SetErrOut(errOut, diagText, "compilation failed");
 
         TeardownCompile(mod, &loader, &diag, &arena);
 
@@ -351,11 +349,7 @@ extern "C"
     if (DiagHasErrors(&diag))
     {
         char* diagText = DiagFormat(&diag, loader.sources, loader.sourceCount, &arena);
-
-        if (errOut)
-        {
-            *errOut = DupString(diagText ? diagText : "code generation failed");
-        }
+        SetErrOut(errOut, diagText, "code generation failed");
 
         BuiltModuleDispose(&bm);
         TeardownCompile(mod, &loader, &diag, &arena);
@@ -366,9 +360,9 @@ extern "C"
     char* emitErr = NULL;
     int ok = EmitNativeFile(&bm, outputPath, assembly, &emitErr, NULL);
 
-    if (!ok && errOut)
+    if (!ok)
     {
-        *errOut = DupString(emitErr ? emitErr : "emission failed");
+        SetErrOut(errOut, emitErr, "emission failed");
     }
 
     BuiltModuleDispose(&bm);
@@ -426,10 +420,10 @@ extern "C"
     struct StrataJit
     {
         StrataJitKind kind;
-        void* backend;   /* LLVMJit*, per kind; NULL if kind == NONE */
+        void* backend;   // LLVMJit*, per kind; NULL if kind == NONE
         char* diagnostics;
 #if STRATA_HAS_LLVM
-        Vec llvmExports; /* LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM */
+        Vec llvmExports; // LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM
 #endif
     };
 
@@ -439,6 +433,18 @@ extern "C"
         char* name;
         bool isIntVoid;
     } LlvmJitExport;
+
+    // Frees the llvmExports list (names, entries, and the items array).
+    static void FreeJitExports(StrataJit* jit)
+    {
+        for (size_t i = 0; i < jit->llvmExports.count; i++)
+        {
+            LlvmJitExport* exp = (LlvmJitExport*)jit->llvmExports.items[i];
+            free(exp->name);
+            free(exp);
+        }
+        free(jit->llvmExports.items);
+    }
 #endif
 
     static StrataJit* UnavailableJit(const char** errOut)
@@ -522,13 +528,7 @@ extern "C"
             free(jit);
             BuiltModuleDispose(&bm);
 
-            for (size_t i = 0; i < handle->llvmExports.count; i++)
-            {
-                LlvmJitExport* exp = (LlvmJitExport*)handle->llvmExports.items[i];
-                free(exp->name);
-                free(exp);
-            }
-            free(handle->llvmExports.items);
+            FreeJitExports(handle);
             free(handle);
 
             return NULL;
@@ -577,8 +577,8 @@ extern "C"
     {
         if (c && c->importResolver)
         {
-            /* A resolver is installed: route through the module loader so that
-                `import X;` directives are resolved by the host. */
+            // A resolver is installed: route through the module loader so that
+            // `import X;` directives are resolved by the host.
             Arena arena;
             DiagnosticEngine diag;
             ModuleLoader loader;
@@ -645,11 +645,7 @@ extern "C"
 
         if (!c || !source)
         {
-            if (errOut)
-            {
-                *errOut = DupString("null compiler or source");
-            }
-
+            SetErrOut(errOut, "null compiler or source", "");
             return NULL;
         }
 
@@ -797,13 +793,7 @@ extern "C"
                 free(jit->backend);
             }
 
-            for (size_t i = 0; i < jit->llvmExports.count; i++)
-            {
-                LlvmJitExport* exp = (LlvmJitExport*)jit->llvmExports.items[i];
-                free(exp->name);
-                free(exp);
-            }
-            free(jit->llvmExports.items);
+            FreeJitExports(jit);
         }
 #endif
 
@@ -830,10 +820,9 @@ extern "C"
 
     void strata_oob(const char* msg)
     {
-        /* Reports a recoverable out-of-bounds access (LLVM JIT, boundsCheck
-           on): the panic handler (if any) is notified, but execution
-           continues - the caller receives a dummy element / the write is
-           absorbed. A handler that longjmps still stops the program. */
+        // Reports a recoverable out-of-bounds access (LLVM JIT, boundsCheck on): the panic
+        // handler (if any) is notified, but execution continues — the caller gets a dummy
+        // element / the write is absorbed. A handler that longjmps still stops the program.
         if (s_panicHandler)
         {
             s_panicHandler(msg);

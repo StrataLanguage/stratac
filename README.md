@@ -8,18 +8,45 @@ AOT for linking together with your project.
 ```c
 extern int printf(string fmt, ...);
 
-struct Vec3 { float x; float y; float z; };
-
-float length_sq(Vec3 v)
+// Built-in SIMD vector types: float3 / float4 are 128-bit vectors with
+// per-lane arithmetic, splatting (float4(s)) and swizzles (.xyz, .zyx, ...).
+float4 add(ref float4 a, ref float4 b)
 {
-    return v.x * v.x + v.y * v.y + v.z * v.z;
+    return a + b;                 // {11, 22, 33, 44}
 }
+
+struct Particle
+{
+    float4 pos;                   // SIMD field
+    Particle? next;              // optional link: maybe-empty, non-null box
+};
 
 int main()
 {
-    Vec3 v = { .x = 1.0, .y = 2.0, .z = 2.0 };
-    printf("%f\n", length_sq(v));   // 9.0
-    return 0;
+    // Boxed / owned heap allocation (^T): auto-freed at scope end.
+    ^float4 acc = float4(1.0, 2.0, 3.0, 4.0);
+
+    // Dynamic array; elements created via array_push / literals.
+    float4[] points = { float4(10.0, 20.0, 30.0, 40.0) };
+
+    // ref = mutable borrow; no ownership transfer, no copy.
+    for (uint i = 0; i < points.length; i++)
+    {
+        acc = add(acc, points[i]);
+    }
+
+    // Optionals (T?): a maybe-empty pointer slot. Reading THROUGH one
+    // requires a "blessing" — proof it is non-empty.
+    ^Particle head = Particle { .pos = acc };
+    Particle? cur = head;
+    while (cur?)                  // null check: blessing narrows `cur` to non-empty
+    {
+        printf("pos = %f %f %f %f\n",
+               cur.pos.x, cur.pos.y, cur.pos.z, cur.pos.w);
+        cur = cur.next;           // advance; old binding becomes empty again
+    }
+
+    return (int)(acc.x + acc.y);  // 11 + 22 = 33
 }
 ```
 

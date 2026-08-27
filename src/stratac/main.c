@@ -6,9 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Replaces a path's file extension (or appends one if it has none) and
-   returns a freshly malloc'd string. Local to the CLI so it only depends on
-   the public API. */
+// Replaces a path's file extension (or appends one if none) and returns a freshly malloc'd string. Local to the CLI (public API only).
 static char* ReplaceExt(const char* path, const char* ext)
 {
     const char* slash = strrchr(path, '/');
@@ -35,32 +33,26 @@ static char* ReplaceExt(const char* path, const char* ext)
     return result;
 }
 
-/*
- * Command builder helpers
- */
+// Command builder helpers
 
-/* Adds an unlabelled separator between options */
+// Adds an unlabelled separator between options
 #define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, NULL}
-/* Adds a labelled separator between options */
+// Adds a labelled separator between options
 #define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, label_}
 
-/* Defines a mode that takes no arguments. (e.g. --run) */
+// Defines a mode that takes no arguments (e.g. --run)
 #define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
 
-/* Same as `COMMAND_MODE`, used for readability */
+// Same as `COMMAND_MODE`, used for readability
 #define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                                 \
     {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
 
-/* Defines a command that writes out information before terminating. (e.g. --version or --help) */
+// Defines a command that writes out information before terminating (e.g. --version, --help)
 #define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, MF_NONE, desc_}
 
-/* Defines a general command used to modify internal state or specify values. (e.g. --arch, -o) */
+// Defines a general command used to modify internal state or specify values (e.g. --arch, -o)
 #define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                                \
     {short_cmd_, long_cmd_, follower_, func_, CF_NONE, MF_NONE, desc_}
-
-/*
- *
- */
 
 typedef enum ResultCode
 {
@@ -71,7 +63,7 @@ typedef enum ResultCode
 
 typedef uint64_t ModeFlag;
 
-/* Modes and toggles to be executed after all arguments are parsed. */
+// Modes and toggles executed after all arguments are parsed.
 typedef enum MOde : uint64_t
 {
     MF_NONE,
@@ -122,27 +114,23 @@ void StateDefault(State* c)
 typedef enum CommandFlags
 {
     CF_NONE = 0,
-    /* The program should exit after this command */
+    // The program should exit after this command.
     CF_FINAL = (1 << 0),
 
     CF_SEPARATOR = (1 << 1),
 } CommandFlags;
 
-/*
- * Command definitions
- */
-
+// Command definitions
 typedef struct CLICommand
 {
-    /* The short representation of the command, e.g. `-v` */
+    // The short representation of the command, e.g. `-v`.
     const char* shortCmd;
-    /* The long version of the command, e.g. `--version` */
+    // The long version of the command, e.g. `--version`.
     const char* longCmd;
-    /* Info that follows after the command text */
+    // Info that follows after the command text.
     const char* follower;
-    /* The implementation */
+    // The implementation.
     ResultCode (*func)(State*, StrataCompiler*, const struct CLICommand*);
-    /* */
     CommandFlags flags;
 
     Mode modeValue;
@@ -150,10 +138,7 @@ typedef struct CLICommand
     const char* description;
 } CLICommand;
 
-/*
- * Command Definitions
- */
-
+// Command Definitions
 static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd);
@@ -182,10 +167,7 @@ static const CLICommand commands[] = {
 };
 // clang-format on
 
-/*
- * Command implementations. This run after all of the commands and values are processed, and is mapped directly to
- * `ModeFlag`.
- */
+// Command implementations, run after all args are parsed; mapped directly to `ModeFlag`.
 typedef struct ModeImpl
 {
     ModeFlag toggle;
@@ -198,8 +180,7 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
 static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
 static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler);
 
-/* The implementations for each mode. Note that the higher the command in this list, the higher the precedence (and
- * therefore will be executed earlier.) */
+// Implementations per mode. Earlier entries in this list take higher precedence (executed earlier).
 static const ModeImpl modeImpls[] = {
     {MF_PRINT_AST, &Impl_PrintAst },
     {MF_RUN,       &Impl_JitAndRun},
@@ -231,9 +212,7 @@ const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count
     return NULL;
 }
 
-/**
- * @brief Executes all mode commands that were found during argument parsing
- */
+// Executes all mode commands found during argument parsing.
 void ExecuteCommands(State* state, StrataCompiler* compiler)
 {
     for (int toggleIndex = 0; toggleIndex < sizeof(modeImpls) / sizeof(modeImpls[0]); toggleIndex++)
@@ -251,7 +230,7 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
         }
     }
 
-    /* If there were no emit modes specified, compile and emit the object file */
+    // If no emit mode was specified, compile and emit the object file.
     if ((state->toggleCommands & MF_BIT(MF_EMIT_ASM)) == 0)
     {
         ResultCode result = Impl_CompileToObject(state, compiler);
@@ -266,7 +245,7 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
 
 static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
-    /* Show preamble */
+    // Show preamble
     fprintf(stderr, "stratac - Strata compiler\n"
                     "Usage: stratac [options] <file.strata>\n"
                     "Emits a relocatable object file (.o) by default.\n"
@@ -291,7 +270,7 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
             continue;
         }
 
-        /* Only one command format is available (only short or only long) */
+        // Only one command format is available (short or long only).
         if (cmd->shortCmd == NULL || cmd->longCmd == NULL)
         {
             const char* cmdText = (cmd->shortCmd) ? cmd->shortCmd : cmd->longCmd;
@@ -305,7 +284,7 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
                 snprintf(tmpCmdBuffer, tmpBufferSize, "%s", cmdText);
             }
         }
-        /* Both formats are provided */
+        // Both formats are provided.
         else
         {
             if (cmd->follower != NULL)
@@ -574,7 +553,7 @@ int main(int argc, char** argv)
         {
             ResultCode result = foundCommand->func(&state, compiler, foundCommand);
 
-            /* Return if there was an error or the command is marked final */
+            // Return if there was an error or the command is marked final.
             if (result != RCSuccess || (foundCommand->flags & CF_FINAL))
             {
                 strataCompilerDestroy(compiler);

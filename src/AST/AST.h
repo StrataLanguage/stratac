@@ -63,7 +63,7 @@ typedef struct TypeName {
     struct TypeName* elem;
     bool isBox;
     struct TypeName* inner;
-    bool isOptional; /* `T?` — maybe-empty box; `inner` is the wrapped type */
+    bool isOptional; // `T?` — maybe-empty box; `inner` is the wrapped type
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -71,8 +71,7 @@ static inline bool TypeNameValid(const TypeName* t)
     return t->name != NULL && t->name[0] != '\0';
 }
 
-/* `^T` — wraps `inner` into a boxed type. isConst of the result reflects the
-   leading `const` (set by the caller); the inner node keeps its own flags. */
+// `^T` wraps `inner` into a boxed type; the inner node keeps its own const flags.
 static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
 {
     TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -86,8 +85,7 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     return t;
 }
 
-/* `T?` — wraps `inner` into an optional (maybe-empty box). Shares the
-   runtime representation of `^T`; the difference is enforced by sema. */
+// `T?` wraps `inner` into a maybe-empty box; shares `^T`'s runtime representation, difference enforced by sema.
 static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
 {
     TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -103,7 +101,7 @@ static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
     return t;
 }
 
-/* `T[]` — wraps `elem` into a dynamic (fat pointer) array type. */
+// `T[]` — wraps `elem` into a dynamic (fat pointer) array type.
 static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
 {
     TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -119,7 +117,7 @@ static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
     return t;
 }
 
-/* `T[N]` — wraps `elem` into a fixed-size inline array type (C ABI). */
+// `T[N]` — wraps `elem` into a fixed-size inline array type (C ABI).
 static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long length)
 {
     TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -135,27 +133,26 @@ static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long 
     return t;
 }
 
-/* Structural type queries — the authority for a type's shape. `name` is derived
-   data (display, mangling, map keys); never parse it for shape. */
+// Structural type queries — the authority for a type's shape; `name` is derived, never parse it.
 
 static inline bool TypeNameIsArray(const TypeName* t)
 {
     return t && t->isArray;
 }
 
-/* `T[]` — owning fat-pointer array. */
+// `T[]` — owning fat-pointer array.
 static inline bool TypeNameIsDynamicArray(const TypeName* t)
 {
     return t && t->isArray && t->length < 0;
 }
 
-/* `T[N]` — C-ABI inline storage (struct fields only). */
+// `T[N]` — C-ABI inline storage (struct fields only).
 static inline bool TypeNameIsFixedArray(const TypeName* t)
 {
     return t && t->isArray && t->length >= 0;
 }
 
-/* N for `T[N]`; -1 otherwise (including dynamic arrays). */
+// N for `T[N]`; -1 otherwise (including dynamic arrays).
 static inline long TypeNameArrayLength(const TypeName* t)
 {
     return (t && t->isArray) ? t->length : -1;
@@ -171,14 +168,13 @@ static inline bool TypeNameIsBox(const TypeName* t)
     return t && t->isBox;
 }
 
-/* `T?` — the maybe-empty form of a box. */
+// `T?` — the maybe-empty form of a box.
 static inline bool TypeNameIsOptional(const TypeName* t)
 {
     return t && t->isOptional;
 }
 
-/* Inner `T` of a box/optional, or NULL. A box never wraps an array; an optional
-   may (`T[]?` wraps a dynamic array, sharing its fat {ptr, len} with empty = {null, 0}). */
+// Inner `T` of a box/optional, or NULL. A box never wraps an array; an optional may (`T[]?`).
 static inline const TypeName* TypeNameBoxInner(const TypeName* t)
 {
     if (!t || !(t->isBox || t->isOptional))
@@ -186,13 +182,11 @@ static inline const TypeName* TypeNameBoxInner(const TypeName* t)
         return NULL;
     }
 
-    /* `T?` always wraps an explicit inner type; `^string` is the one box
-       with a NULL inner. */
-    return t->inner;
+        // `T?` always wraps an explicit inner; `^string` is the one box with a NULL inner.
+        return t->inner;
 }
 
-/* Owning types: `string`, `^T`, `T?` and dynamic `T[]`. Fixed `T[N]` is
-   plain inline storage and never owning. */
+// Owning types: `string`, `^T`, `T?` and dynamic `T[]`. Fixed `T[N]` is plain inline storage, never owning.
 static inline bool TypeNameIsOwning(const TypeName* t)
 {
     if (!t || !t->name)
@@ -208,7 +202,7 @@ static inline bool TypeNameIsOwning(const TypeName* t)
     return t->isBox || t->isOptional || TypeNameIsDynamicArray(t);
 }
 
-/* A leaf TypeName for a spelling without structure ("int", "Foo"). */
+// A leaf TypeName for a spelling without structure ("int", "Foo").
 static inline TypeName TypeNameLeaf(char* name)
 {
     TypeName t = {0};
@@ -238,7 +232,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
 
     if (groupsLen == 0)
     {
-        /* Trailing '?' marks an optional (`Weapon?`). */
+        // Trailing '?' marks an optional (`Weapon?`).
         if (baseLen >= 2 && base[baseLen - 1] == '?')
         {
             TypeName inner = TypeNameParseGroups(arena, base, baseLen - 1, NULL, 0);
@@ -268,8 +262,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
         return TypeNameLeaf(arena_strndup(arena, base, baseLen));
     }
 
-    /* The first bracket group is the outermost dimension (`int[2][6]` is
-        2 x int[6]), so wrap the remaining (inner) groups first. */
+    // The first bracket group is the outermost dimension (`int[2][6]` is 2 x int[6]); wrap inner groups first.
     const char* close = (const char*)memchr(groups, ']', groupsLen);
     size_t groupLen = close ? (size_t)(close - groups) + 1 : groupsLen;
 
@@ -298,7 +291,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
         t.length = v;
     }
 
-    /* Canonical name: base + every group, in source order. */
+    // Canonical name: base + every group, in source order.
     Sb sb;
     SbInit(&sb);
     SbPrintf(&sb, "%.*s%.*s", (int)baseLen, base, (int)groupsLen, groups);
@@ -356,7 +349,7 @@ typedef struct {
 typedef struct {
     TypeName type;
     char* name;
-    long offset; /* explicit byte offset via `fieldoffset(N)`, or -1 */
+    long offset; // explicit byte offset via `fieldoffset(N)`, or -1
 } FieldDecl;
 
 typedef struct {
@@ -364,7 +357,7 @@ typedef struct {
     char* name;
     Vec fields;
     bool incomplete;
-    bool isExtern; /* `extern struct` — mirrors a host-defined layout */
+    bool isExtern; // `extern struct` — mirrors a host-defined layout
 } StructDecl;
 
 typedef struct {
@@ -382,8 +375,7 @@ typedef struct {
     bool isExtern;
     bool hasReturnStmt;
     char* mangledName;
-    /* isVariadic + isCVararg: extern with bare `...` (host provides the body).
-       Otherwise the last param is a typed rest collecting trailing args into a T[]. */
+    // isVariadic + isCVararg: extern with bare `...` (host provides the body); otherwise the last param is a typed rest collecting trailing args into a T[].
     bool isVariadic;
     bool isCVararg;
 } FunctionDecl;
@@ -583,26 +575,21 @@ typedef struct {
     Node* init;
 } GlobalDecl;
 
-/* arr[index] — indexing into an array (or array-typed member/expr). Usable
-   as both an rvalue (element load) and an lvalue (element store). */
+// arr[index] — array indexing; usable as both rvalue (load) and lvalue (store).
 typedef struct {
     Node base;
     Node* base_node;
     Node* index;
 } IndexExpr;
 
-/* { e0, e1, ... } — array literal. elementType is the parsed element type
-   (NULL when untyped — inferred later by sema from the surrounding context);
-   elements holds the initializer expressions. */
+// { e0, ... } array literal. elementType is NULL when untyped (inferred by sema); elements holds initializers.
 typedef struct {
     Node base;
     const TypeName* elementType;
     Vec elements;
 } ArrayInitExpr;
 
-/* expr? — null test. Valid only on a nullable (`T?`) path; yields bool.
-   Sema uses it to establish "definitely non-empty" narrowing facts inside
-   the taken branch (same machinery as move poisoning). */
+// expr? — null test on a `T?` path; yields bool and lets sema establish "definitely non-empty" facts (move-poisoning machinery).
 typedef struct {
     Node base;
     Node* operand;

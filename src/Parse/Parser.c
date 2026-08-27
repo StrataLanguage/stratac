@@ -126,8 +126,29 @@ static char* ToOwned(Arena* arena, Str s)
     return arena_strndup(arena, s.data, s.len);
 }
 
-/* Snapshot of lexer + parser position so a speculative parse can be undone
-   without emitting diagnostics. */
+static SourceRange SpanToCur(Parser* p, SourceRange from)
+{
+    return (SourceRange){from.start, (uint16_t)(p->m_cur.range.start - from.start), from.fileId};
+}
+
+static void CopyStrToBuf(Str sv, char* tmp)
+{
+    size_t n = sv.len < 63 ? sv.len : 63;
+    memcpy(tmp, sv.data, n);
+    tmp[n] = '\0';
+}
+
+static bool StripUnsignedSuffix(Str* sv)
+{
+    if (sv->len > 0 && (sv->data[sv->len - 1] == 'u' || sv->data[sv->len - 1] == 'U'))
+    {
+        sv->len--;
+        return true;
+    }
+    return false;
+}
+
+// Snapshot of lexer + parser position so a speculative parse can be undone without emitting diagnostics.
 typedef struct {
     size_t pos;
     bool hasPeek;
@@ -257,8 +278,7 @@ static bool LooksLikeVarDecl(Parser* p)
         return true;
     case TokIdent:
     {
-        /* A user-type decl may carry postfix array brackets before the name,
-           so peek one token too far; speculatively parse the type, then undo. */
+        // A user-type decl may carry postfix array brackets before the name; speculatively parse, then undo.
         LexerCheckpoint saved = SaveLexerState(p);
 
         TypeName tn = {0};
@@ -278,12 +298,10 @@ static bool LooksLikeVarDecl(Parser* p)
     }
 }
 
-/* Consume postfix bracket pairs (`int[]`, `int[4]`). An integer literal
-   inside declares a fixed-size (C-ABI inline) dimension; anything else (e.g.
-   `foo[i]`) is left intact so speculative type-parse stays diagnostic-free —
-   fixed dimensions are only taken when the full `[ N ]` trio is seen first.
-   Wraps are applied inside-out and the canonical name rebuilt in source order
-   so it round-trips, matching C dimension order (`int[2][6]` = 2 of `int[6]`). */
+/* Consume postfix `[]`/`[N]`. A literal N declares a fixed (C-ABI inline) array;
+   non-literal indices stay intact so speculation is diagnostic-free. Wraps apply
+   inside-out and the canonical name is rebuilt in source order to round-trip C
+   dimension order (`int[2][6]` = 2 of `int[6]`). */
 typedef struct {
     bool isFixed;
     long length;
@@ -323,26 +341,19 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
                 Advance(p); /* ']' */
 
                 Str sv = ParserIdentText(p, lenTok);
-
-                if (sv.len > 0 && (sv.data[sv.len - 1] == 'u' || sv.data[sv.len - 1] == 'U'))
-                {
-                    sv.len--;
-                }
+                StripUnsignedSuffix(&sv);
 
                 char tmp[64];
-                size_t n = sv.len < 63 ? sv.len : 63;
-                memcpy(tmp, sv.data, n);
-                tmp[n] = '\0';
+                CopyStrToBuf(sv, tmp);
 
-                /* Length < 1 is diagnosed later in sema; keep parsing so
-                   speculation stays diagnostic-free. */
+                // Length < 1 is diagnosed later in sema; keep parsing diagnostic-free.
                 dim.isFixed = true;
                 dim.length = (long)strtoull(tmp, NULL, 0);
                 consumed = true;
             }
             else
             {
-                /* Not a fixed dimension after all — put everything back. */
+                // Not a fixed dimension after all — put everything back.
                 RestoreLexerState(p, saved);
             }
         }
@@ -388,8 +399,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
     }
 
     out->name = SbFinish(&sb, p->m_arena);
-    out->range
-        = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+    out->range = SpanToCur(p, constRange);
 }
 
 bool ParserTryParseType(Parser* p, TypeName* out)
@@ -406,8 +416,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
     if (p->m_cur.kind == TokCaret)
     {
-        /* `^T` — boxed type. `^` always takes the next type and binds tighter
-           than a trailing `[]`, so `^S[]` is an array of boxed S. */
+        // `^T` — boxed type. `^` binds tighter than a trailing `[]`, so `^S[]` is an array of boxed S.
         SourceRange caretRange = p->m_cur.range;
         Advance(p);
 
@@ -587,8 +596,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     Advance(p);
 
     out->name = (char*)name;
-    out->range
-        = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+    out->range = SpanToCur(p, constRange);
 
     /* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
        so `Weapon?[]` is an array of optionals. */
@@ -598,8 +606,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         Advance(p);
 
         TypeName wrapped = TypeNameOptionalWrap(p->m_arena, *out);
-        wrapped.range = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start),
-                                      constRange.fileId};
+        wrapped.range = SpanToCur(p, constRange);
         (void)qRange;
         *out = wrapped;
     }
@@ -625,8 +632,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
             TypeName arr = *out;
             TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
-            optWrapped.range
-                = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+            optWrapped.range = SpanToCur(p, constRange);
             *out = optWrapped;
         }
         else
@@ -753,16 +759,10 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
                 }
 
                 Str sv = ParserIdentText(p, lenTok);
-
-                if (sv.len > 0 && (sv.data[sv.len - 1] == 'u' || sv.data[sv.len - 1] == 'U'))
-                {
-                    sv.len--;
-                }
+                StripUnsignedSuffix(&sv);
 
                 char tmp[64];
-                size_t n = sv.len < 63 ? sv.len : 63;
-                memcpy(tmp, sv.data, n);
-                tmp[n] = '\0';
+                CopyStrToBuf(sv, tmp);
 
                 offset = (long)strtoull(tmp, NULL, 0);
             }
@@ -820,7 +820,7 @@ static ParamDecl* ParseParam(Parser* p)
     ParamMod mod = ModNone;
     bool isConst = false;
 
-    /* 'const' and 'ref' may appear together in either order, each at most once. */
+    // 'const' and 'ref' may appear together in either order, each at most once.
     for (int i = 0; i < 2; i++)
     {
         if (ParserConsume(p, TokKwRef))
@@ -852,8 +852,7 @@ static ParamDecl* ParseParam(Parser* p)
     {
         isVarargRest = true;
 
-        /* `ref int... rest` borrows the collected stack array (non-owning);
-            `const int... rest` makes the view read-only. Both are allowed. */
+        // `ref int... rest` borrows the collected stack array (non-owning); `const int... rest` makes the view read-only. Both are allowed.
         type = TypeNameArrayWrap(p->m_arena, type);
     }
 
@@ -941,8 +940,7 @@ static Node* ParseFunction(Parser* p)
             else if (p->m_cur.kind == TokLBrace && returnType.isOptional && returnType.inner
                      && returnType.inner->isArray)
             {
-                /* `T[]? g = { ... };` - a braced literal initializes the
-                   inner dynamic array. */
+                // `T[]? g = { ... };` - a braced literal initializes the inner dynamic array.
                 gd->init = ParseArrayInitBody(p, p->m_cur, returnType.inner->elem);
             }
             else
@@ -1354,14 +1352,12 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
             }
             else if (type.isOptional && type.inner && type.inner->isArray)
             {
-                /* `T[]? x = { ... };` - a braced literal initializes the
-                   inner dynamic array. */
+                // `T[]? x = { ... };` - a braced literal initializes the inner dynamic array.
                 node->init = ParseArrayInitBody(p, start, type.inner->elem);
             }
             else
                 {
-                    /* `^T x = {...}` / `T? x = {}` infer the inner T, not the box
-                       type (a `T?{}` is a non-empty boxed T). */
+                    // `^T x = {...}` / `T? x = {}` infer the inner T, not the box (a `T?{}` is a non-empty boxed T).
                     const char* initTypeName
                         = (type.isBox || type.isOptional) && type.inner ? type.inner->name
                                                                          : (strcmp(type.name, "string") == 0 ? NULL : type.name);
@@ -1576,8 +1572,7 @@ static Node* ParseAssign(Parser* p)
         Token opToken = p->m_cur;
         Advance(p);
 
-        /* A bare braced RHS is an array literal (element type inferred in sema);
-           a designator form (`{ .field = ... }`) is a struct literal. */
+        // A bare braced RHS is an array literal (element type inferred in sema); a designator form (`{ .field = ... }`) is a struct literal.
         Node* rhs;
 
         if (p->m_cur.kind == TokLBrace)
@@ -1775,8 +1770,7 @@ static Node* ParsePostfix(Parser* p)
     {
         if (p->m_cur.kind == TokQuestion)
         {
-            /* `expr?` — null test (postfix). Only meaningful on a `T?`
-               expression; sema rejects it everywhere else. */
+            // `expr?` — null test (postfix). Only meaningful on a `T?`; sema rejects it everywhere else.
             Token q = p->m_cur;
             Advance(p);
 
@@ -1983,12 +1977,7 @@ static Node* ParsePrimary(Parser* p)
 
         Str sv = ParserIdentText(p, token);
 
-        bool isUnsigned = sv.len > 0 && (sv.data[sv.len - 1] == 'u' || sv.data[sv.len - 1] == 'U');
-
-        if (isUnsigned)
-        {
-            sv.len--;
-        }
+        bool isUnsigned = StripUnsignedSuffix(&sv);
 
         int base = 10;
         if (sv.len >= 2 && sv.data[0] == '0' && (sv.data[1] == 'x' || sv.data[1] == 'X'))
@@ -1997,9 +1986,7 @@ static Node* ParsePrimary(Parser* p)
         }
 
         char tmp[64];
-        size_t n = sv.len < 63 ? sv.len : 63;
-        memcpy(tmp, sv.data, n);
-        tmp[n] = '\0';
+        CopyStrToBuf(sv, tmp);
 
         uint64_t val = strtoull(tmp, NULL, base);
 
@@ -2024,9 +2011,7 @@ static Node* ParsePrimary(Parser* p)
         }
 
         char tmp[64];
-        size_t n = sv.len < 63 ? sv.len : 63;
-        memcpy(tmp, sv.data, n);
-        tmp[n] = '\0';
+        CopyStrToBuf(sv, tmp);
 
         double val = strtod(tmp, NULL);
 
