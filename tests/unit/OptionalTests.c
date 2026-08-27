@@ -613,3 +613,346 @@ STRATA_TEST(optional_jit_string_array_and_list_moves)
 
     strataJitDestroy(jit);
 }
+
+/* ---- Any-kind-of-deref rule ----------------------------------------------
+   Reading a T?'s CONTENTS anywhere (not just member access) requires a
+   narrowing fact: call args to plain T params, extern string params, bare
+   extern `...` slots, returns, assignments, array elements. Box-shaped
+   targets (T? / ^T params, T? decls) rebind instead and stay legal. */
+
+static bool OptDerefRejected(const char* src, const char* needle, Arena* arena)
+{
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(src, &diag, arena);
+    bool hasErrors = DiagHasErrors(&diag);
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, arena);
+    bool hit = Contains(d, needle);
+
+    DiagnosticEngineFree(&diag);
+
+    return hasErrors && hit;
+}
+
+STRATA_TEST(optional_deref_as_extern_string_arg_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "extern int puts(string s);\n"
+        "int entry() { string? s; puts(s); return 0; }\n",
+        "'s' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_as_plain_param_arg_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Weapon { int dmg; };\n"
+        "int take(Weapon w) { return w.dmg; }\n"
+        "int entry() { Weapon? w; return take(w); }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'w' may be empty"));
+
+    DiagnosticEngineFree(&diag);
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_in_c_vararg_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "extern int printf(string fmt, ...);\n"
+        "int entry() { string? s; printf(\"%s\", s); return 0; }\n",
+        "'s' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_on_return_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "string f() { string? s; return s; }\n",
+        "'s' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_on_assignment_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* plain string target */
+    STRATA_CHECK(OptDerefRejected(
+        "int entry() { string? s; string t = \"x\"; t = s; return 0; }\n",
+        "'s' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_content_assign_into_box_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() { Weapon? w; ^Weapon b = Weapon { .dmg = 1 }; b = w; return 0; }\n",
+        "'w' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_array_push_element_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() { Weapon[] arr; Weapon? v; array_push(arr, v); return 0; }\n",
+        "'v' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_deref_struct_field_requires_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Holder { string name; };\n"
+        "int entry() { string? s; Holder h = Holder { .name = s }; return 0; }\n",
+        "'s' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_narrowed_derefs_are_legal)
+{
+    /* The mirror positives: same derefs inside `if (opt?)` compile clean,
+       and the lazy-init idiom joins to a proven fact. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int str_len(string s);\n"
+        "int entry() {\n"
+        "  string? s;\n"
+        "  if (s?) { } else { s = \"hi\"; }\n"
+        "  int a = str_len(s);            // lazy-init join fact\n"
+        "  string? t = \"inited\";\n"
+        "  int b = str_len(t);            // initialized-decl fact\n"
+        "  string? u;\n"
+        "  int c = 0;\n"
+        "  if (u?) { c = str_len(u); }    // narrowed extern string arg\n"
+        "  return a * 100 + b;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 206);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Negated null tests (`if (!path?)`) ----------------------------------
+   The fact machinery mirrors through `!`: then-branch proves EMPTY,
+   else-branch (or the implicit fall-through) proves non-empty. */
+
+STRATA_TEST(optional_negated_test_else_proves_non_empty)
+{
+    /* The exact idiom: else of `if (!s?)` may read through the optional. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "extern int puts(string s);\n"
+        "int entry() {\n"
+        "  string? s;\n"
+        "  if (!s?) { puts(\"empty\"); }\n"
+        "  else { puts(s); }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_negated_test_then_is_definitely_empty)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "extern int puts(string s);\n"
+        "int entry() { string? s; if (!s?) { puts(s); } return 0; }\n",
+        "'s' is definitely empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_negated_implicit_else_lazy_init)
+{
+    /* `if (!s?) { s = v; }` proves `s` at the join: the explicit then
+        assigns, the implicit else had it non-empty all along. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int str_len(string s);\n"
+        "int entry() {\n"
+        "  string? s;\n"
+        "  if (!s?) { s = \"lazy\"; }\n"
+        "  return str_len(s);\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 4);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(optional_negated_while_body_sees_empty)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "extern int puts(string s);\n"
+        "int entry() { string? s = \"x\"; while (!s?) { puts(s); s = \"y\"; } return 0; }\n",
+        "'s' is definitely empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_double_negation_matches_positive)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "extern int puts(string s);\n"
+        "int entry() {\n"
+        "  string? s = \"v\";\n"
+        "  if (!!s?) { puts(s); }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ---- `while (foo?)` condition narrowing -----------------------------------
+   The loop condition is re-tested every iteration, so its fact holds
+   throughout the body - including for call args that unwrap the optional
+   (checked BEFORE move-tracking clears the fact by moving the value out).
+   No fact survives the loop: the condition was false on the last check. */
+
+STRATA_TEST(optional_while_condition_narrows_call_args)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "extern int puts(string s);\n"
+        "string next(string v) { return v; }\n"
+        "int entry() {\n"
+        "  string? s = \"x\";\n"
+        "  while (s?)\n"
+        "  {\n"
+        "    puts(s);          // extern string param, narrowed by the condition\n"
+        "    s = next(s);      // owning param: deref checked, then the move tracked\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_while_fact_does_not_survive_loop)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "extern int puts(string s);\n"
+        "int entry() { string? s = \"x\"; while (s?) { puts(s); } puts(s); return 0; }\n",
+        "'s' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_jit_while_walk_passes_narrowed_arg)
+{
+    /* The classic chain walk, with the narrowed optional itself passed to
+       a plain-T param each iteration (`visit(cur)` unwraps `cur`). */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Cell { int n; Cell? next; };\n"
+        "int visit(Cell c) { return c.n; }\n"
+        "int entry() {\n"
+        "  ^Cell c = Cell { .n = 3 };\n"
+        "  ^Cell b = Cell { .n = 2, .next = c };\n"
+        "  ^Cell a = Cell { .n = 1, .next = b };\n"
+        "  Cell? cur = a;\n"
+        "  int total = 0;\n"
+        "  while (cur?)\n"
+        "  {\n"
+        "    total = total * 10 + visit(cur);   // deref of cur as a call arg\n"
+        "    cur = cur.next;\n"
+        "  }\n"
+        "  return total;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 123);
+    }
+
+    strataJitDestroy(jit);
+}

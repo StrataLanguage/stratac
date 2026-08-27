@@ -33,14 +33,31 @@ string globalString = "Test global";
 ^string boxedString = "Hello!";
 ^string[] arrayOfBoxedStrings;
 
-string? nullableString = "Hi";
+struct MyStruct
+{
+    string strMember;
+};
 
 int run()
 {
     puts(boxedString);
     puts(globalString);
+    
+    MyStruct? myStruct;
+    // errors correctly:
+    //puts(myStruct.strMember);
 
-    puts(nullableString);
+    string? nullableString;
+    nullableString = "nope";
+
+    if(!nullableString?)
+    {
+        //...
+    }
+    else
+    {
+        puts(nullableString);
+    }
 
     array_push(arrayOfBoxedStrings, "hi");
     puts(arrayOfBoxedStrings[0]);

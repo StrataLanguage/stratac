@@ -44,6 +44,7 @@ int helpers()
 struct FooBar
 {
     string str;
+    int[] ints;
 };
 
 int[] testGlobalArray = {65, 100, 80};

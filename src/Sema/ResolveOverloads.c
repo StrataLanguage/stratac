@@ -404,6 +404,68 @@ static const char* EmptyWording(const Resolver* r, const char* key)
 {
     return IsPathDefinitelyEmpty(r, key) ? "is definitely empty" : "may be empty";
 }
+
+static const char* MovableBoxSourceKey(Resolver* r, Node* n);
+
+/* Reading the CONTENTS of a maybe-empty optional - passing it where its
+   non-optional inner `T` is expected (call arg, var init, assignment,
+   return, array element), so the value gets unwrapped - requires a
+   narrowing fact, exactly like a member read through a `T?`. Targets
+   that keep the box shape (`T?`, `^T`) rebind/move and never read
+   contents, so they are exempt. A NULL target means "unknown" and is
+   skipped (callers that know a deref happens pass the inner type). */
+static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueType, const TypeName* targetType,
+                               SourceRange range)
+{
+    if (!valueType || !valueType->isOptional)
+    {
+        return;
+    }
+
+    if (!targetType || targetType->isOptional || targetType->isBox)
+    {
+        return;
+    }
+
+    const char* key = MovableBoxSourceKey(r, value);
+
+    if (IsPathNonEmpty(r, key))
+    {
+        return;
+    }
+
+    DiagErrorFmt(r->m_diag, range,
+                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
+                 key ? key : "<expression>", EmptyWording(r, key), valueType->name,
+                 key ? key : "<expr>");
+}
+
+/* Extracts the tested path from an if/while/for condition shaped like
+   `path?` or `!path?` (any number of `!` wrappers - parity tracked).
+   Returns the null-test OPERAND node, or NULL when the condition isn't
+   a null test. `*negated` tells whether the condition asserts the path
+   EMPTY (then-branch) rather than non-empty. */
+static Node* CondNullTestOperand(Node* cond, bool* negated)
+{
+    bool neg = false;
+    Node* inner = cond;
+
+    while (inner && inner->kind == NodeUnary && ((UnaryExpr*)inner)->op == UnNot)
+    {
+        inner = ((UnaryExpr*)inner)->operand;
+        neg = !neg;
+    }
+
+    *negated = neg;
+
+    if (inner && inner->kind == NodeNullTest)
+    {
+        return ((NullTestExpr*)inner)->operand;
+    }
+
+    return NULL;
+}
+
 /* Intersects two fact sets: a path stays definitely-non-empty only when BOTH
    branches prove it. Dual of MergeMovedBoxes (which unions badness). */
 static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
@@ -577,7 +639,8 @@ static void WalkBlock(Resolver* r, Block* b, StrMap* scope);
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope);
 static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
-static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey);
+static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey, bool condFactNegated);
+static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope);
 
 static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
 {
@@ -818,7 +881,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
                          valueType->name, arrType->name, elemType->name);
         }
 
-        /* Pushing an owning value that is itself read out of an array element
+        /* Pushing an owning value read out of an array element
             (a borrow) would duplicate the owning pointer - the source array
             keeps it too, so both would free it. Move it into a local first. */
         if (valueType && TypeNameIsOwning(valueType) && IsArrayElementBorrow(arg1))
@@ -828,6 +891,10 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
                          "move it into a variable first",
                          valueType->name);
         }
+
+        /* Deref check before the move tracking below clears the pushed
+            optional's fact. */
+        CheckCallArgOptionalDerefs(r, c, scope);
 
         /* Pushing an owning value (string/box) moves it into the array. */
         if (valueType && TypeNameIsOwning(valueType))
@@ -947,14 +1014,92 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     }
 }
 
+/* After resolution, every call argument whose type is `T?` but whose
+   destination wants the CONTENTS (a plain `T` param, a typed rest's
+   element, a struct-constructor field, an array_push element, or a bare
+   extern `...` slot) must be proven non-empty - the call would unwrap
+   the maybe-empty box. */
+static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->args.count == 0)
+    {
+        return;
+    }
+
+    const FunctionDecl* fd = c->resolvedDecl;
+
+    if (fd)
+    {
+        bool typedRest = fd->isVariadic && !fd->isCVararg;
+        size_t namedCount = typedRest && fd->params.count > 0 ? fd->params.count - 1 : fd->params.count;
+
+        for (size_t j = 0; j < c->args.count; j++)
+        {
+            Node* arg = (Node*)VecGet(&c->args, j);
+            const TypeName* at = InferType(r, arg, scope);
+
+            const TypeName* target = NULL;
+
+            if (j < namedCount)
+            {
+                target = &((ParamDecl*)VecGet(&fd->params, j))->type;
+            }
+            else if (typedRest)
+            {
+                const ParamDecl* restParam = (ParamDecl*)VecGet(&fd->params, fd->params.count - 1);
+                target = TypeNameArrayElem(&restParam->type);
+            }
+            else if (fd->isCVararg)
+            {
+                /* Bare extern `...`: the C ABI carries the unwrapped value,
+                   so the optional's inner is the effective target. */
+                target = TypeNameBoxInner(at);
+            }
+
+            CheckOptionalDeref(r, arg, at, target, arg->range);
+        }
+
+        return;
+    }
+
+    /* Struct constructor FooBar(opt): the field slots are the targets. */
+    if (TypeRegistryIsUserType(&r->m_registry, c->callee))
+    {
+        const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
+
+        for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
+        {
+            FieldDecl* fd2 = (FieldDecl*)VecGet(&st->fields, j);
+            Node* arg = (Node*)VecGet(&c->args, j);
+
+            CheckOptionalDeref(r, arg, InferType(r, arg, scope), &fd2->type, arg->range);
+        }
+
+        return;
+    }
+
+    /* array_push(arr, opt): the element slot is the target. */
+    if (c->callee && strcmp(c->callee, "array_push") == 0 && c->args.count == 2)
+    {
+        const TypeName* arrType = InferType(r, (Node*)VecGet(&c->args, 0), scope);
+        Node* valArg = (Node*)VecGet(&c->args, 1);
+
+        CheckOptionalDeref(r, valArg, InferType(r, valArg, scope), TypeNameArrayElem(arrType), valArg->range);
+    }
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
     {
         /* Constructor call FooBar(arg): an owning field initialized from an
-           owning source is a move — enforce the same rules as var-decl and
-           array_push (globals / ref params can't be moved). */
+            owning source is a move — enforce the same rules as var-decl and
+            array_push (globals / ref params can't be moved). The optional
+            deref check runs BEFORE the moves: moving out of a `T?` clears
+            its narrowing fact, but the fact held at call time. */
         const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
+
+        CheckCallArgOptionalDerefs(r, c, scope);
 
         for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
         {
@@ -1002,6 +1147,10 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         const FunctionDecl* best = c->resolvedDecl;
 
+        /* Facts first, moves second: TrackCallArgMoves clears the narrowing
+            fact of an optional it moves out of, but the fact held at call
+            time. */
+        CheckCallArgOptionalDerefs(r, c, scope);
         TrackCallArgMoves(r, best, c);
 
         return;
@@ -1236,6 +1385,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     c->callee = best->mangledName;
     c->resolvedDecl = best;
 
+    CheckCallArgOptionalDerefs(r, c, scope);
     TrackCallArgMoves(r, best, c);
 }
 
@@ -1725,6 +1875,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' into '%s' '%s'", vt->name, inner->name,
                                  targetName);
                 }
+
+                /* Content-assigning a `T?` reads through the optional to
+                    move its inner value out - the content target is the
+                    box inner for ^T targets, or the target itself for a
+                    plain owning `string`. */
+                CheckOptionalDeref(r, a->value, vt, inner ? inner : tt, a->base.range);
             }
         }
         else if (targetIsOwningField)
@@ -1807,6 +1963,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to '%s' of type '%s'", vt->name,
                                  ((IdentExpr*)a->target)->name, tt->name);
                 }
+
+                /* Assigning a `T?` into a plain `T` unwraps the optional. */
+                CheckOptionalDeref(r, a->value, vt, tt, a->base.range);
+            }
+            else if (a->target->kind == NodeMember)
+            {
+                /* Non-owning field target (`bob.plain = opt;`) - the field
+                    type is the unwrap target. */
+                const TypeName* mt = InferType(r, a->target, scope);
+                const TypeName* vt = InferType(r, a->value, scope);
+
+                CheckOptionalDeref(r, a->value, vt, mt, a->base.range);
             }
         }
 
@@ -2071,6 +2239,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                      "field '%s' of struct '%s' cannot be initialized by expression of type '%s'",
                                      fieldDecl->name, structInitExpr->typeName, fieldValueType->name);
                     }
+
+                    /* A plain `T` field initialized from a `T?` unwraps it. */
+                    CheckOptionalDeref(r, field->value, fieldValueType, &fieldDecl->type, field->value->range);
                 }
 
                 /* A ^T field moves its source — but only when the source
@@ -2144,9 +2315,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 FieldDecl* fd = (FieldDecl*)VecGet(&structType->fields, f);
 
                 /* Every OWNING field must be initialized: `^T`, owning
-                   structs held by value, and `string`. Optionals (`T?`)
-                   are the only owning fields allowed to stay empty. */
+                    structs held by value, and `string`. Optionals (`T?`)
+                    and dynamic arrays (`T[]`) may stay empty: a T? slot is
+                    null, and a zero-filled T[] is the canonical empty
+                    {null, 0} fat struct (same as an uninitialized local). */
                 bool mustInit = !fd->type.isOptional
+                                && !TypeNameIsDynamicArray(&fd->type)
                                 && (TypeNameIsOwning(&fd->type)
                                     || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
 
@@ -2261,6 +2435,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     MoveBoxIdent(r, movedKey, elem->range);
                 }
             }
+
+            /* A non-optional element initialized from a `T?` unwraps it. */
+            CheckOptionalDeref(r, elem, InferType(r, elem, scope), ai->elementType, elem->range);
         }
 
         return;
@@ -2277,7 +2454,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
    starts from), then walk it again for real; any move violation that only
    shows up because of that carried-over state - like moving the same box
    on every iteration of a loop - is caught by the second walk. */
-static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey)
+static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey, bool condFactNegated)
 {
     DiagnosticEngine warmup;
     DiagnosticEngineInit(&warmup);
@@ -2310,11 +2487,19 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* con
     }
 
     /* The condition is re-tested every iteration: its narrowing fact holds
-       throughout the body even if the body reassigned that very path
-       (`while (cur?) { ... cur = cur.next; }`). */
+        throughout the body even if the body reassigned that very path
+        (`while (cur?) { ... cur = cur.next; }`). A negated condition
+        (`while (!cur?)`) proves the path EMPTY inside the body instead. */
     if (condFactKey)
     {
-        MarkPathNonEmpty(r, condFactKey);
+        if (condFactNegated)
+        {
+            MarkPathEmpty(r, condFactKey);
+        }
+        else
+        {
+            MarkPathNonEmpty(r, condFactKey);
+        }
     }
 
     WalkStmt(r, body, scope);
@@ -2396,6 +2581,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              vd->type.name, initType->name);
             }
 
+            /* Initializing a plain `T` from a `T?` unwraps the optional. */
+            CheckOptionalDeref(r, vd->init, initType, &vd->type, vd->base.range);
+
             /* ^T init from a box source (identifier/field/cast) moves it. */
             const char* movedInitKey
                 = initType && TypeNameIsOwning(&vd->type) && TypeNameIsOwning(initType) ? MovableBoxSourceKey(r, vd->init) : NULL;
@@ -2457,6 +2645,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              r->m_currentReturnType->name);
             }
 
+            /* Returning a `T?` from a `T` function unwraps the optional. */
+            CheckOptionalDeref(r, rs->value, typeName, r->m_currentReturnType, rs->base.range);
+
             /* Only a move if the function itself returns ^T; otherwise
                 it's a read (unless the inner type is owning). */
             const char* movedReturnKey = typeName && TypeNameIsOwning(typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
@@ -2502,14 +2693,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ResolveExpr(r, i->condition, scope);
 
         /* A direct `if (path?)` condition establishes a definitely-non-empty
-           fact for the then-branch. Facts from both branches are intersected
-           at the join; moved-state keeps its own conservative union merge. */
-        const char* factKey = NULL;
-
-        if (i->condition->kind == NodeNullTest)
-        {
-            factKey = MovableBoxSourceKey(r, ((NullTestExpr*)i->condition)->operand);
-        }
+            fact for the then-branch; the negated `if (!path?)` form mirrors
+            it: then-branch proves EMPTY, else-branch proves non-empty. Facts
+            from both branches are intersected at the join; moved-state keeps
+            its own conservative union merge. */
+        bool factNegated = false;
+        Node* factOperand = CondNullTestOperand(i->condition, &factNegated);
+        const char* factKey = factOperand ? MovableBoxSourceKey(r, factOperand) : NULL;
 
         /* then/else are mutually exclusive - each is walked from the same
             starting moved-state (not one after the other), and the state
@@ -2520,9 +2710,19 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         StrMap beforeFacts;
         CopyStrMap(&r->m_nonEmptyPaths, &beforeFacts);
 
+        StrMap beforeEmpty;
+        CopyStrMap(&r->m_emptyPaths, &beforeEmpty);
+
         if (factKey)
         {
-            MarkPathNonEmpty(r, factKey);
+            if (factNegated)
+            {
+                MarkPathEmpty(r, factKey);
+            }
+            else
+            {
+                MarkPathNonEmpty(r, factKey);
+            }
         }
 
         WalkStmt(r, i->thenBranch, scope);
@@ -2535,17 +2735,23 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
         ReplaceStrMapContents(&r->m_nonEmptyPaths, &beforeFacts);
+        /* Empty facts never escape their branch - not even the then-branch
+            of a negated test. */
+        ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
 
-        /* The else branch of `if (path?)` runs only when the path IS empty:
-           install the definitely-empty fact for its duration. Empty facts
-           never escape their else block - past the join the path is simply
-           "unknown" again. */
-        StrMap beforeEmpty;
-        CopyStrMap(&r->m_emptyPaths, &beforeEmpty);
+        /* The else side of the if - an EXPLICIT else block, or the implicit
+            fall-through when there is none - runs only when the condition is
+            false: `path?` false means the path is definitely empty, while
+            `!path?` false means it is non-empty (this implicit-else fact is
+            what makes `if (!p?) { p = v; }` prove `p` at the join). */
+        if (factKey && factNegated)
+        {
+            MarkPathNonEmpty(r, factKey);
+        }
 
         if (i->elseBranch)
         {
-            if (factKey)
+            if (factKey && !factNegated)
             {
                 MarkPathEmpty(r, factKey);
             }
@@ -2572,14 +2778,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         WhileStmt* w = (WhileStmt*)n;
         ResolveExpr(r, w->condition, scope);
 
-        const char* factKey = NULL;
+        bool whileFactNegated = false;
+        Node* whileFactOperand = CondNullTestOperand(w->condition, &whileFactNegated);
+        const char* factKey = whileFactOperand ? MovableBoxSourceKey(r, whileFactOperand) : NULL;
 
-        if (w->condition->kind == NodeNullTest)
-        {
-            factKey = MovableBoxSourceKey(r, ((NullTestExpr*)w->condition)->operand);
-        }
-
-        WalkLoopBody(r, w->body, scope, factKey);
+        WalkLoopBody(r, w->body, scope, factKey, whileFactNegated);
 
         /* Nothing survives a loop: the condition may have been false on the
            last check, and any fact established inside may not hold. */
@@ -2608,19 +2811,16 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ResolveExpr(r, fs->condition, scope);
         }
 
-        const char* forFactKey = NULL;
-
-        if (fs->condition && fs->condition->kind == NodeNullTest)
-        {
-            forFactKey = MovableBoxSourceKey(r, ((NullTestExpr*)fs->condition)->operand);
-        }
+        bool forFactNegated = false;
+        Node* forFactOperand = CondNullTestOperand(fs->condition, &forFactNegated);
+        const char* forFactKey = forFactOperand ? MovableBoxSourceKey(r, forFactOperand) : NULL;
 
         if (fs->update)
         {
             ResolveExpr(r, fs->update, scope);
         }
 
-        WalkLoopBody(r, fs->body, scope, forFactKey);
+        WalkLoopBody(r, fs->body, scope, forFactKey, forFactNegated);
 
         /* Same rule as while: facts never survive a loop. */
         ClearAllNonEmptyFacts(r);

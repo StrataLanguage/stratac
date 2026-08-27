@@ -445,6 +445,99 @@ STRATA_TEST(array_uninitialized_decl_allowed_empty)
     strataJitDestroy(jit);
 }
 
+/* A dynamic T[] struct field may be omitted from a struct literal: the
+   zero-fill IS the canonical empty {null, 0} array, exactly like an
+   uninitialized local. (There is no `T[]?` spelling to suggest - a box
+   never wraps an array.) */
+STRATA_TEST(array_field_omitted_starts_empty)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct S { int[] ints; int other; };\n"
+        "int entry() {\n"
+        "  ^S s = S { .other = 1 };\n"
+        "  int before = (int)s.ints.length;     /* 0 */\n"
+        "  array_push(s.ints, 7);\n"
+        "  array_push(s.ints, 8);\n"
+        "  int sum = s.ints[0] + s.ints[1];     /* 15 */\n"
+        "  return before * 1000 + sum + s.other * 10;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 25);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* The string flavor: an omitted string[] field is empty, growable, and the
+   pushed string is readable via .length indexing arithmetic. */
+STRATA_TEST(string_array_field_omitted_starts_empty)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct S { string[] words; };\n"
+        "int entry() {\n"
+        "  ^S s = S { };\n"
+        "  int before = (int)s.words.length;    /* 0 */\n"
+        "  array_push(s.words, \"abc\");\n"
+        "  array_push(s.words, \"de\");\n"
+        "  return before * 100 + (int)s.words.length * 10;\n"   /* 20 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 20);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* Owning NON-array fields still must be initialized; only the suggestion
+   is spelled for real optional types now that arrays are exempt. */
+STRATA_TEST(box_field_omitted_still_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Inner { int x; };\n"
+        "struct S { ^Inner inner; };\n"
+        "int entry() { ^S s = S { }; return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "must be initialized") != NULL);
+    STRATA_CHECK(strstr(d, "'Inner?'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(global_array_uninitialized_is_empty)
 {
     const char* err = NULL;
