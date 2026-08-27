@@ -3527,6 +3527,19 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
 
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 {
+    /* An untyped non-empty literal means no context ever supplied an
+        element type (a gap in inference) - diagnose instead of crashing
+        on a NULL type. */
+    if (!n->elementType && n->elements.count > 0)
+    {
+        if (b->m_diag)
+        {
+            DiagError(b->m_diag, n->base.range, "array literal element type could not be inferred");
+        }
+
+        n->elements.count = 0;
+    }
+
     /* An empty braced literal with no contextual element type (`FooBar("x", {})`)
         is the canonical empty array - nothing to resolve or allocate. */
     if (!n->elementType && n->elements.count == 0)
@@ -3626,8 +3639,9 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
 
         if (fieldTd.isFixedArray && field->value->kind == NodeArrayInit)
         {
-            /* Fixed-size array field from a braced literal: elements are a
-               flat list; trailing elements past the literal stay zero. */
+            /* Fixed-size array field from a braced literal: the flat list
+                carries row-major elements (sema placed nested rows at their
+                offsets); NULL entries are holes that stay zero. */
             ArrayInitExpr* ai = (ArrayInitExpr*)field->value;
             TypeDesc elemTd = Resolve(b, ai->elementType);
 
@@ -3636,6 +3650,12 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
             for (size_t k = 0; k < ai->elements.count; k++)
             {
                 Node* elem = (Node*)VecGet(&ai->elements, k);
+
+                if (!elem)
+                {
+                    continue;
+                }
+
                 Value ev = Coerce(b, EmitExpr(b, elem), elemTd);
                 arr = InsertFixedElem(b, arr, ev.value, &fieldDecl->type, (long)k);
             }

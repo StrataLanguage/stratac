@@ -1240,30 +1240,732 @@ STRATA_TEST(narrowed_element_index_ref_pass_invalidates)
     arena_free(&arena);
 }
 
-STRATA_TEST(narrowed_element_complex_index_is_refused)
+STRATA_TEST(narrowed_element_arithmetic_index_runs)
+{
+    /* Complex indices are pinned by a canonical fully-parenthesized
+       spelling: test and use of the SAME expression agree. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack;\n"
+        "  array_push(rack, Weapon { .dmg = 3 });\n"
+        "  array_push(rack, Weapon { .dmg = 7 });\n"   /* rack[1] */
+        "  Weapon? e;\n"
+        "  array_push(rack, e);\n"                     /* rack[2] empty */
+        "  uint i = 0;\n"
+        "  int r = 0;\n"
+        "  if (rack[i + 1]?)\n"
+        "  {\n"
+        "    r += rack[i + 1].dmg;\n"              /* 7 */ 
+        "  }\n"
+        "  if (rack[(i + 1) * 2 / 2]?)\n"          /* same value, same spelling */ 
+        "  {\n"
+        "    r += rack[(i + 1) * 2 / 2].dmg;\n"    /* +7 */ 
+        "  }\n"
+        "  return r;\n"                            /* 14 */ 
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 14);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(narrowed_element_arithmetic_index_mutation_invalidates)
 {
     Arena arena; arena_init(&arena, 0);
 
+    /* Same test, then the index variable moves: the fact must die. */
     STRATA_CHECK(OptDerefRejected(
         "struct Weapon { int dmg; };\n"
         "int entry() {\n"
         "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
         "  uint i = 0;\n"
-        "  if (rack[i + 1]?) { }\n"
-        "  return 0;\n"
-        "}\n"
-        "int probe() {\n"
-        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
-        "  uint i = 0;\n"
         "  if (rack[i + 1]?)\n"
         "  {\n"
-        "    return rack[i + 1].dmg;\n"    /* complex index: never provable */
+        "    i = 2;\n"
+        "    return rack[i + 1].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_index_spelling_mismatch_is_unproven)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Equally-VALUED but differently-SPELLED indices are distinct keys:
+       proving one must not prove the other (the compiler does not fold). */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  uint i = 1;\n"
+        "  if (rack[i + 1]?)\n"
+        "  {\n"
+        "    return rack[1 + i].dmg;\n"      /* "1 + i" != "i + 1" */ 
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_parenthesization_is_unambiguous)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* "(i+1)*2" and "i+1*2" evaluate differently; their spellings must
+       differ so one can never prove the other. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  uint i = 0;\n"
+        "  if (rack[(i + 1) * 2]?)\n"
+        "  {\n"
+        "    return rack[i + 1 * 2].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_length_index_runs_and_push_invalidates)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 5 } };\n"
+        "  int r = 0;\n"
+        "  if (rack[rack.length - 1]?)\n"
+        "  {\n"
+        "    r += rack[rack.length - 1].dmg;\n"    /* 5 */ 
+        "  }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 5);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(narrowed_element_length_index_push_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* push grows the length: "[rack.length - 1]" now names a different
+       element, so the fact must die even though push preserves values. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 5 } };\n"
+        "  if (rack[rack.length - 1]?)\n"
+        "  {\n"
+        "    array_push(rack, Weapon { .dmg = 9 });\n"
+        "    return rack[rack.length - 1].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_call_index_is_refused)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Calls have side effects and no stable spelling: never provable. This
+       includes calls with arguments (`foo[some_call(5)]`) - the two
+       evaluations may return different indices. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int f() { return 0; }\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  if (rack[f()]?)\n"
+        "  {\n"
+        "    return rack[f()].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "not a constant or a trackable variable", &arena));
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "uint pick(uint n) { return n; }\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  if (rack[pick(1)]?)\n"
+        "  {\n"
+        "    return rack[pick(1)].dmg;\n"
         "  }\n"
         "  return 0;\n"
         "}\n",
         "not a constant or a trackable variable", &arena));
 
     arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_call_index_materializes_into_local)
+{
+    /* The blessed idiom: evaluate the call ONCE into a local - the local
+       is dependency-tracked, so test and use provably agree. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "uint pick(uint n) { return n; }\n"
+        "int entry() {\n"
+        "  Weapon?[] rack;\n"
+        "  array_push(rack, Weapon { .dmg = 3 });\n"
+        "  array_push(rack, Weapon { .dmg = 7 });\n"
+        "  uint k = pick(1);\n"
+        "  int r = 0;\n"
+        "  if (rack[k]?)\n"
+        "  {\n"
+        "    r += rack[k].dmg;\n"          /* rack[1] -> 7 */ 
+        "  }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Dependent-array indexing (`foo.items[0].nested[j]`) ------------------
+   Keys compose through member+index chains ("foo.items[0].nested[1]"), so
+   narrowing is precise at EVERY index level, dependencies track every
+   variable the full spelling mentions, and member reads through optional
+   elements still require their own proof. */
+
+STRATA_TEST(nested_dependent_array_indexing_runs)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  Cell? empty2;\n"
+        "  ^Item a = Item( { Cell { .v = 1 }, empty, Cell { .v = 3 } } );\n"   /* nested[1] empty */
+        "  ^Item b = Item( { empty2 } );\n"                                      /* one empty element */
+        "  ^Foo foo = Foo( { a, b } );\n"                                        /* items[0]=a, [1]=b */
+        "  int sum = 0;\n"
+        "  if (foo.items[0].nested[0]?) { sum += foo.items[0].nested[0].v; }\n" /* 1 */
+        "  if (foo.items[0].nested[1]?) { sum += 1000; } else { sum += 10; }\n" /* empty -> 10 */
+        "  if (foo.items[0].nested[2]?) { sum += foo.items[0].nested[2].v; }\n" /* 3 */
+        "  if (foo.items[1].nested[0]?) { sum += 5000; } else { sum += 100; }\n"/* b[0] empty -> 100 */
+        "  return sum;\n"                                                       /* 114 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 114);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(nested_dependent_array_index_precise_at_both_levels)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Proving items[0].nested[0] proves neither the other ITEM... */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  ^Item a = Item( { Cell { .v = 1 }, empty } );\n"
+        "  ^Item b = Item( { } );\n"
+        "  ^Foo foo = Foo( { a, b } );\n"
+        "  if (foo.items[0].nested[0]?)\n"
+        "  {\n"
+        "    return foo.items[1].nested[0].v;\n"   /* different item: unproven */
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'foo.items[1].nested[0]' may be empty", &arena));
+
+    /* ...nor the other ELEMENT of the same item's nested array. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  ^Item a = Item( { Cell { .v = 1 }, empty, Cell { .v = 3 } } );\n"
+        "  ^Item b = Item( { } );\n"
+        "  ^Foo foo = Foo( { a, b } );\n"
+        "  if (foo.items[0].nested[0]?)\n"
+        "  {\n"
+        "    return foo.items[0].nested[2].v;\n"   /* different element: unproven */
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'foo.items[0].nested[2]' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(nested_dependent_array_index_var_mutation_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Mutating the OUTER index variable kills the fact... */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  ^Item a = Item( { Cell { .v = 1 }, empty } );\n"
+        "  ^Foo foo = Foo( { a } );\n"
+        "  uint i = 0;\n"
+        "  uint j = 0;\n"
+        "  if (foo.items[i].nested[j]?)\n"
+        "  {\n"
+        "    i = 1;\n"
+        "    return foo.items[i].nested[j].v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    /* ...and so does mutating the INNER one. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  ^Item a = Item( { Cell { .v = 1 }, empty } );\n"
+        "  ^Foo foo = Foo( { a } );\n"
+        "  uint i = 0;\n"
+        "  uint j = 0;\n"
+        "  if (foo.items[i].nested[j]?)\n"
+        "  {\n"
+        "    j = 1;\n"
+        "    return foo.items[i].nested[j].v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(nested_dependent_array_variable_indices_run)
+{
+    /* The mirror positive: both indices stable, test and use agree. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  ^Item a = Item( { Cell { .v = 1 }, empty, Cell { .v = 3 } } );\n"
+        "  ^Item b = Item( { Cell { .v = 7 } } );\n"
+        "  ^Foo foo = Foo( { a, b } );\n"
+        "  int sum = 0;\n"
+        "  for (uint i = 0; i < foo.items.length; i++)\n"
+        "  {\n"
+        "    for (uint j = 0; j < foo.items[i].nested.length; j++)\n"
+        "    {\n"
+        "      if (foo.items[i].nested[j]?) { sum += foo.items[i].nested[j].v; }\n"   /* 1+3+7 */
+        "    }\n"
+        "  }\n"
+        "  return sum;\n"       /* 11 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 11);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Index-as-index (`foo[other[bar]]`) and 2D arrays ---------------------
+   A nested index is spelled recursively ("foo[other[bar]]"), so test and
+   use agree; deps track every variable mentioned (bar) and every array
+   whose ELEMENTS feed the spelling (other) - element writes, rebinds,
+   builtins and ref passes all invalidate. 2D indexing composes the same
+   machinery ("grid[i][j]"). */
+
+STRATA_TEST(nested_index_as_index_runs)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] foo;\n"
+        "  array_push(foo, Weapon { .dmg = 3 });\n"
+        "  array_push(foo, Weapon { .dmg = 7 });\n"
+        "  uint[] other = {1, 0};\n"
+        "  uint bar = 0;\n"
+        "  int r = 0;\n"
+        "  if (foo[other[bar]]?)\n"
+        "  {\n"
+        "    r += foo[other[bar]].dmg;\n"      /* foo[1] -> 7 */ 
+        "  }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(nested_index_as_index_source_write_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Writing an element of the INDEX SOURCE array changes what
+        foo[other[bar]] evaluates to: the fact must die. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] foo = { Weapon { .dmg = 3 }, Weapon { .dmg = 7 } };\n"
+        "  uint[] other = {1, 0};\n"
+        "  uint bar = 0;\n"
+        "  if (foo[other[bar]]?)\n"
+        "  {\n"
+        "    other[0] = 0;\n"
+        "    return foo[other[bar]].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(nested_index_as_index_var_mutation_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] foo = { Weapon { .dmg = 3 }, Weapon { .dmg = 7 } };\n"
+        "  uint[] other = {1, 0};\n"
+        "  uint bar = 0;\n"
+        "  if (foo[other[bar]]?)\n"
+        "  {\n"
+        "    bar = 1;\n"
+        "    return foo[other[bar]].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(nested_index_as_index_ref_source_pass_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Handing the index source to a callee by ref lets it rewrite the
+        mapping: dependent facts die. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "void shuffle(ref uint[] a) { a[0] = 0; }\n"
+        "int entry() {\n"
+        "  Weapon?[] foo = { Weapon { .dmg = 3 }, Weapon { .dmg = 7 } };\n"
+        "  uint[] other = {1, 0};\n"
+        "  uint bar = 0;\n"
+        "  if (foo[other[bar]]?)\n"
+        "  {\n"
+        "    shuffle(other);\n"
+        "    return foo[other[bar]].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(two_d_optional_elements_narrow_per_element)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  Cell?[][] grid = { { Cell { .v = 1 }, empty, Cell { .v = 3 } }, { Cell { .v = 7 } } };\n"
+        "  int sum = 0;\n"
+        "  for (uint i = 0; i < grid.length; i++)\n"
+        "  {\n"
+        "    for (uint j = 0; j < grid[i].length; j++)\n"
+        "    {\n"
+        "      if (grid[i][j]?) { sum += grid[i][j].v; }\n"      /* 1 + 3 + 7 */
+        "    }\n"
+        "  }\n"
+        "  return sum;\n"                                        /* 11 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 11);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(two_d_index_precision_at_both_levels)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    /* Proving grid[0][0] proves neither the other ROW... */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  Cell?[][] grid = { { Cell { .v = 1 } }, { Cell { .v = 2 } } };\n"
+        "  if (grid[0][0]?)\n"
+        "  {\n"
+        "    return grid[1][0].v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'grid[1][0]' may be empty", &arena));
+
+    /* ...nor the other COLUMN of the same row. */
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  Cell?[][] grid = { { Cell { .v = 1 }, empty, Cell { .v = 3 } } };\n"
+        "  if (grid[0][0]?)\n"
+        "  {\n"
+        "    return grid[0][2].v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'grid[0][2]' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(two_d_index_var_mutation_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  Cell? empty;\n"
+        "  Cell?[][] grid = { { Cell { .v = 1 } }, { Cell { .v = 2 } } };\n"
+        "  uint i = 0;\n"
+        "  uint j = 0;\n"
+        "  if (grid[i][j]?)\n"
+        "  {\n"
+        "    j = 0;\n"                     /* even a same-valued rebind kills it */
+        "    i = 1;\n"
+        "    return grid[i][j].v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(nested_dependent_array_element_move_poisons_source)
+{
+    /* Moving elements through a braced ctor array arg (`Foo({a, b})`) is a
+       real move: the source boxes must read as moved afterward. The arg's
+       element type is inferred late, so this exercises the move marking
+       that runs at inference time. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "struct Foo { ^Item[] items; };\n"
+        "int entry() {\n"
+        "  ^Item a = Item( { } );\n"
+        "  ^Foo foo = Foo( { a } );\n"
+        "  return (int)a.nested.length;\n"      /* a was moved into the array */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'a' used after move"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(nested_member_through_optional_element_requires_proof)
+{
+    /* When the ELEMENT itself is optional (`Item?[]`), reaching its member
+       needs the element proven first - the `?` test's ancestor chain walks
+       through index nodes. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int v; };\n"
+        "struct Item { Cell?[] nested; };\n"
+        "int entry() {\n"
+        "  Item?[] items;\n"
+        "  ^Item a = Item( { Cell { .v = 2 } } );\n"
+        "  array_push(items, a);\n"
+        "  if (items[1].nested[0]?)\n"      /* items[1] itself unproven! */
+        "  {\n"
+        "    return items[1].nested[0].v;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'items[1]' may be empty", &arena));
+
+    arena_free(&arena);
+
+    /* The mirror positive: prove the element, then the inner element. */
+    {
+        const char* err = NULL;
+        StrataJit* jit = CompileOpt(
+            "struct Cell { int v; };\n"
+            "struct Item { Cell?[] nested; };\n"
+            "int entry() {\n"
+            "  Item?[] items;\n"
+            "  ^Item a = Item( { Cell { .v = 2 } } );\n"
+            "  array_push(items, a);\n"
+            "  int r = 0;\n"
+            "  if (items[0]?)\n"
+            "  {\n"
+            "    if (items[0].nested[0]?)\n"
+            "    {\n"
+            "      r += items[0].nested[0].v;\n"   /* 2 */ 
+            "    }\n"
+            "  }\n"
+            "  return r;\n"
+            "}\n",
+            &err);
+
+        STRATA_CHECK(jit != NULL);
+        if (!jit)
+        {
+            printf("  JIT failed: %s\n", err ? err : "(none)");
+            strataFree((char*)err);
+            return;
+        }
+
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 2);
+        }
+
+        strataJitDestroy(jit);
+    }
 }
 
 STRATA_TEST(narrowed_element_resize_invalidates)

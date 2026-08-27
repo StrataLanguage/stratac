@@ -47,7 +47,7 @@ long strata_side()
     // Boxes created inside a scope drop automatically at its end.
     long total = 0;
     {
-        ^Owned o = Owned { .hits = Counter { .hits = 10 }, .cells = { 1, 2, 3, 4, 5, 6 } };
+        ^Owned o = Owned { .hits = Counter { .hits = 10 }, .cells = { { 1, 2, 3 }, { 4, 5, 6 } } };
         total = o.hits.hits + o.cells[1][2] + o.cells.length;   // 10 + 6 + 2 = 18
     }
 

@@ -176,13 +176,19 @@ main) are the internal entry points.
   return, assignment, or initializer that unwraps it to `T`, an array
   element, a bare extern `...` slot — requires a narrowing fact from
   `if (path?)`, definite reassignment, or while/for condition narrowing.
-  Array-element facts are index-precise: a literal index (`arr[0]`) is a
-  constant key; a local variable index (`arr[i]`) is tracked and the fact
-  dies on any mutation of `i` (assignment, `++`/`--`, or passing it as a
-  non-const `ref`); any other index expression is never provable (hint
-  suggests moving/copying the element into a local). `array_resize`/
-  `array_pop` drop the receiver's element facts; `array_push` preserves
-  them; any real call drops global-rooted facts — facts use the
+  Array-element facts are index-precise: an index spelling is pinned to a
+  canonical fully-parenthesized form — a literal (`arr[0]`), a local
+  variable (`arr[i]`), `.length` of a local array, arithmetic over those
+  (`arr[i + 1]`, `arr[arr.length - 1]`), or a nested index
+  (`foo[other[bar]]`, `grid[i][j]`); every local and every array the
+  spelling mentions (as a variable, length base, or index source) is
+  tracked, and the fact dies on any mutation of them (assignment,
+  `++`/`--`, element writes, or passing them as a non-const `ref`) or any
+  length change of a `.length` base (push/resize/pop/rebind). Any other
+  index expression (calls, comparisons, globals, member bases) is never
+  provable (hint suggests moving/copying the element into a local).
+  `array_resize`/`array_pop` drop the receiver's element facts;
+  `array_push` preserves them; any real call drops global-rooted facts — facts use the
   same dotted-path machinery as move poisoning (`m_nonEmptyPaths`) with
   intersection-merge at if/else joins and full invalidation at loop exits.
   An initialized declaration also establishes the fact
@@ -201,9 +207,12 @@ main) are the internal entry points.
   elements — fixed arrays have no drop glue). Dimensions read like C,
   outermost first (`int[2][6]` is 2×`int[6]`, mirroring `int x[2][6]`;
   nesting is spelled inside-out relative to C). Braced struct-init values
-  are flat C-style lists (`S { .m = {1,2,3} }`, missing elements zero),
-  indexing is bounds-checked against the compile-time length, and
-  `.length` is a compile-time constant. Whole fixed-array assignment
+  mirror the type's shape — MANDATORY nested rows for multidimensional
+  fields (`S { .m = {{1,2},{3,4}} }`, one brace level per dimension; rows
+  may be short and missing rows/elements zero), flat leaf lists for
+  single-dimension fields (`S { .m = {1,2,3} }`); the wrong shape is a
+  compile error. Indexing is bounds-checked against the compile-time
+  length, and `.length` is a compile-time constant. Whole fixed-array assignment
   (`s.a = s.b`) is rejected — assign elements. No auto-conversion to the
   fat `T[]` pointer yet.
 

@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct
@@ -108,6 +109,91 @@ static const TypeName* FixedArrayLeaf(const TypeName* t, long* totalCount)
 
     *totalCount = count;
     return t;
+}
+
+/* Places the leaves of a (shape-checked) fixed-array initializer into
+   `flat` (pre-sized to the type's total element count) at their ROW-MAJOR
+   offsets: a short row leaves NULL holes and the next row still starts at
+   its own offset, matching C (`{ {1,2}, {4} }` for `int[2][3]` puts 4 at
+   cells[1][0], not cells[0][2]). Returns false when an element would land
+   beyond the type's capacity. */
+static bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExpr* ai)
+{
+    const TypeName* rowType = t->elem;
+    long innerTotal = 0;
+
+    FixedArrayLeaf(rowType, &innerTotal);
+
+    size_t slot = 0;
+
+    for (size_t k = 0; k < ai->elements.count; k++)
+    {
+        Node* elem = (Node*)VecGet(&ai->elements, k);
+
+        if (slot >= (size_t)t->length)
+        {
+            return false;
+        }
+
+        if (rowType && rowType->isArray && rowType->length >= 0)
+        {
+            if (!PlaceFixedArrayInit(flat, base + slot * (size_t)innerTotal, rowType, (ArrayInitExpr*)elem))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            flat->items[base + slot] = elem;
+        }
+
+        slot++;
+    }
+
+    return true;
+}
+
+/* Enforces the SHAPE of a fixed-size array initializer against its type:
+   multidimensional fields require nested rows - one brace level per
+   dimension (`{ {1,2,3}, {4,5,6} }` for `int[2][3]`; rows may be short,
+   missing elements zero) - and single-dimension fields require a flat
+   leaf list (a braced element is still fine when the leaf is a struct:
+   it is a struct init). Returns false (with a diagnostic) on a violation. */
+static bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai, const TypeName* leaf,
+                                     const char* fieldName)
+{
+    bool multidim = t->elem && t->elem->isArray && t->elem->length >= 0;
+    bool leafIsStruct = leaf && TypeRegistryIsUserType(&r->m_registry, leaf->name)
+                        && !TypeRegistryIsOpaque(&r->m_registry, leaf->name);
+
+    for (size_t k = 0; k < ai->elements.count; k++)
+    {
+        Node* elem = (Node*)VecGet(&ai->elements, k);
+
+        if (multidim && elem->kind != NodeArrayInit)
+        {
+            DiagErrorFmt(r->m_diag, elem->range,
+                         "multidimensional fixed-size array field '%s' requires nested rows "
+                         "('{ { ... }, { ... } }'), not a flat element list",
+                         fieldName);
+            return false;
+        }
+
+        if (!multidim && elem->kind == NodeArrayInit && !leafIsStruct)
+        {
+            DiagErrorFmt(r->m_diag, elem->range,
+                         "fixed-size array field '%s' has a single dimension - write its elements as a flat list",
+                         fieldName);
+            return false;
+        }
+
+        if (multidim && !CheckFixedArrayInitShape(r, t->elem, (ArrayInitExpr*)elem, leaf, fieldName))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /* Move-state tracking for box locals.
@@ -363,8 +449,10 @@ static bool IsIdentCont(char c)
     return isalnum((unsigned char)c) || c == '_';
 }
 
-/* Registers the fact key's index-variable dependencies: every `[ident]`
-   component names a local whose mutation must later drop the fact. */
+/* Registers the fact key's index-variable dependencies: every identifier
+   token inside a bracket group names a local whose mutation (assignment,
+   ++/--, non-const ref pass, or a length change for `.length` spellings)
+   must later drop the fact. */
 static void TrackIndexDeps(Resolver* r, const char* key)
 {
     for (const char* open = strchr(key, '['); open; open = strchr(open + 1, '['))
@@ -376,42 +464,33 @@ static void TrackIndexDeps(Resolver* r, const char* key)
             continue;
         }
 
-        size_t len = (size_t)(close - open - 1);
-
-        /* A single identifier only - literals and anything complex carry
-           no dependency. */
-        if (len == 0 || !IsIdentStart(open[1]))
+        for (const char* p = open + 1; p < close;)
         {
-            continue;
-        }
-
-        bool ident = true;
-
-        for (size_t i = 1; i < len; i++)
-        {
-            if (!IsIdentCont(open[1 + i]))
+            if (!IsIdentStart(*p))
             {
-                ident = false;
-                break;
+                p++;
+                continue;
             }
+
+            const char* start = p;
+
+            while (p < close && IsIdentCont(*p))
+            {
+                p++;
+            }
+
+            char* var = arena_strndup(r->m_arena, start, (size_t)(p - start));
+            Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
+
+            if (!deps)
+            {
+                deps = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
+                VecInit(deps);
+                StrMapPut(&r->m_indexDeps, var, deps);
+            }
+
+            VecPush(deps, (void*)key);
         }
-
-        if (!ident)
-        {
-            continue;
-        }
-
-        char* var = arena_strndup(r->m_arena, open + 1, len);
-        Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
-
-        if (!deps)
-        {
-            deps = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
-            VecInit(deps);
-            StrMapPut(&r->m_indexDeps, var, deps);
-        }
-
-        VecPush(deps, (void*)key);
     }
 }
 
@@ -561,10 +640,13 @@ static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* ke
 {
     if (PathKeyIsErased(key))
     {
+        size_t nlen = strlen(typeName);
+        bool alreadyOptional = nlen > 0 && typeName[nlen - 1] == '?';
+
         DiagErrorFmt(r->m_diag, range,
                      "'%s' may be empty ('%s'); the array index is not a constant or a trackable variable - "
-                     "move or copy the element into a local first ('%s? x = %s; if (x?) ...')",
-                     key, typeName, typeName, key);
+                     "move or copy the element into a local first ('%s x = %s...; if (x?) ...')",
+                     key, typeName, alreadyOptional ? typeName : "T?", key);
         return;
     }
 
@@ -715,6 +797,146 @@ static bool IsModuleGlobalName(const Resolver* r, const char* name)
     return false;
 }
 
+/* Prints a stable, unambiguous spelling of an index expression for path
+   keys: literals, locals, `.length` of a local array, unary -/+/~ and the
+   integer binary operators over those. Binaries are FULLY parenthesized so
+   distinct trees never collide ("(i+(1*2))" vs "((i+1)*2)").
+   Returns NULL when the expression cannot be pinned (calls, comparisons,
+   globals, other node kinds) - the caller then erases the key, which is
+   conservative for moves and never provable as a fact. */
+static char* IndexExprSpelling(Resolver* r, Node* n)
+{
+    if (!n)
+    {
+        return NULL;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        return arena_format(r->m_arena, "%llu", ((IntLiteral*)n)->value);
+
+    case NodeIdent:
+    {
+        const char* name = ((IdentExpr*)n)->name;
+
+        /* A global mentions no observable mutation site: erase. */
+        return IsModuleGlobalName(r, name) ? NULL : arena_format(r->m_arena, "%s", name);
+    }
+
+    case NodeMember:
+    {
+        /* `.length` of a BARE LOCAL only: member bases have no observable
+           invalidation point for their length. */
+        MemberExpr* m = (MemberExpr*)n;
+
+        if (strcmp(m->member, "length") == 0 && m->base_node->kind == NodeIdent
+            && !IsModuleGlobalName(r, ((IdentExpr*)m->base_node)->name))
+        {
+            return arena_format(r->m_arena, "%s.length", ((IdentExpr*)m->base_node)->name);
+        }
+
+        return NULL;
+    }
+
+    case NodeIndex:
+    {
+        /* A nested index used AS an index (`foo[other[bar]]`): spell base
+           and bracket recursively. The base must itself be spellable (a
+           bare local array); element writes into it are invalidated by the
+           assignment/++/-- hooks, and rebinds/builtins by the root hooks. */
+        IndexExpr* ix = (IndexExpr*)n;
+        char* baseSpell = IndexExprSpelling(r, ix->base_node);
+        char* inner = IndexExprSpelling(r, ix->index);
+
+        if (!baseSpell || !inner)
+        {
+            return NULL;
+        }
+
+        return arena_format(r->m_arena, "%s[%s]", baseSpell, inner);
+    }
+
+    case NodeUnary:
+    {
+        UnaryExpr* u = (UnaryExpr*)n;
+        char* inner = IndexExprSpelling(r, u->operand);
+
+        if (!inner)
+        {
+            return NULL;
+        }
+
+        switch (u->op)
+        {
+        case UnNeg:
+            return arena_format(r->m_arena, "-%s", inner);
+        case UnPos:
+            return arena_format(r->m_arena, "+%s", inner);
+        case UnBitNot:
+            return arena_format(r->m_arena, "~%s", inner);
+        default:
+            return NULL; /* UnNot: a boolean is not an index */
+        }
+    }
+
+    case NodeBinary:
+    {
+        BinaryExpr* bx = (BinaryExpr*)n;
+        char* lhs = IndexExprSpelling(r, bx->lhs);
+        char* rhs = IndexExprSpelling(r, bx->rhs);
+
+        if (!lhs || !rhs)
+        {
+            return NULL;
+        }
+
+        const char* op = NULL;
+
+        switch (bx->op)
+        {
+        case BinAdd:
+            op = "+";
+            break;
+        case BinSub:
+            op = "-";
+            break;
+        case BinMul:
+            op = "*";
+            break;
+        case BinDiv:
+            op = "/";
+            break;
+        case BinMod:
+            op = "%";
+            break;
+        case BinBitAnd:
+            op = "&";
+            break;
+        case BinBitOr:
+            op = "|";
+            break;
+        case BinBitXor:
+            op = "^";
+            break;
+        case BinShl:
+            op = "<<";
+            break;
+        case BinShr:
+            op = ">>";
+            break;
+        default:
+            return NULL; /* comparisons/logic yield bools, not indices */
+        }
+
+        return arena_format(r->m_arena, "(%s %s %s)", lhs, op, rhs);
+    }
+
+    default:
+        return NULL;
+    }
+}
+
 /* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
     Identifier -> its name; member chain -> dotted key ("holder.gun"). */
 static const char* MovableBoxSourceKey(Resolver* r, Node* n)
@@ -751,26 +973,20 @@ static const char* MovableBoxSourceKey(Resolver* r, Node* n)
         }
 
         /* Spell the index precisely so distinct elements are distinct keys:
-           a literal ("a[3]") is constant; a bare identifier ("a[i]") gets a
-           dependency-tracked key; anything else erases to the any-element
-           form ("a[]"), which is conservative for move poisoning and NEVER
-           provable as a narrowing fact. The "[]" marker also keeps
-           element-moves distinct from whole-array moves in the moved-state
-           map, while KeyRoot still reduces every "base[...]" to "base" for
-           the global / ref-param ownership check. */
-        Node* idx = ix->index;
+           a literal ("a[3]"), a local ("a[i]"), or any arithmetic/length
+           expression over locals ("a[i + 1]", "a[b.length - 1]") - the
+           latter two carry dependency-tracked variables. Anything the
+           printer refuses (calls, comparisons, globals) erases to the
+           any-element form ("a[]"), which is conservative for move
+           poisoning and NEVER provable as a narrowing fact. The "[]"
+           marker also keeps element-moves distinct from whole-array moves
+           in the moved-state map, while KeyRoot still reduces every
+           "base[...]" to "base" for the global / ref-param check. */
+        char* idxSpell = IndexExprSpelling(r, ix->index);
 
-        if (idx && idx->kind == NodeIntLiteral)
+        if (idxSpell)
         {
-            return arena_format(r->m_arena, "%s[%llu]", baseKey, ((IntLiteral*)idx)->value);
-        }
-
-        if (idx && idx->kind == NodeIdent && !IsModuleGlobalName(r, ((const IdentExpr*)idx)->name))
-        {
-            /* A variable index is precise only when it names a local of this
-               function whose mutation we can observe and invalidate. A
-               global index is spelled the same but untracked - erase it. */
-            return arena_format(r->m_arena, "%s[%s]", baseKey, ((const IdentExpr*)idx)->name);
+            return arena_format(r->m_arena, "%s[%s]", baseKey, idxSpell);
         }
 
         return arena_format(r->m_arena, "%s[]", baseKey);
@@ -1081,6 +1297,18 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
+    /* All three builtins can change the receiver's LENGTH: any fact whose
+        key was spelled through `[recv.length ...]` is stale. (Element-value
+        facts survive push; resize/pop drop those separately below.) */
+    {
+        const char* lenRecvKey = MovableBoxSourceKey(r, arg0);
+
+        if (lenRecvKey)
+        {
+            InvalidateIndexVar(r, KeyRoot(r->m_arena, lenRecvKey));
+        }
+    }
+
     /* array_resize (shrink drops trailing elements) and array_pop (removes
         the last element) can empty indexed slots we hold facts about; the
         lengths aren't tracked, so drop every element fact of the receiver.
@@ -1278,6 +1506,10 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
 
                 if (refKey)
                 {
+                    /* The callee may empty/rebind through the ref, and it may
+                        write elements of a passed array - nested-index
+                        spellings ("foo[other[bar]]") die with it. */
+                    InvalidateIndexVar(r, KeyRoot(r->m_arena, refKey));
                     ClearNonEmptySubtree(r, refKey);
                     ClearEmptySubtree(r, refKey);
                 }
@@ -1496,13 +1728,33 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 /* A braced list argument initializes an array field
                     positionally (`FooBar("x", {1, 2})`): it carries no
                     element type from the parser, so infer it from the
-                    field. */
+                    field. The argument's own resolution pass already ran
+                    with a NULL element type, so its per-element move
+                    marking was skipped - do it here (mirrors the
+                    NodeArrayInit resolution body). */
                 const TypeName* ft = &fd->type;
                 const TypeName* ftArr = ft->isOptional ? ft->inner : ft;
 
                 if (TypeNameIsDynamicArray(ftArr))
                 {
-                    ((ArrayInitExpr*)arg)->elementType = TypeNameArrayElem(ftArr);
+                    const TypeName* elem = TypeNameArrayElem(ftArr);
+                    ArrayInitExpr* ai = (ArrayInitExpr*)arg;
+
+                    ai->elementType = elem;
+
+                    if (elem && TypeNameIsOwning(elem))
+                    {
+                        for (size_t k = 0; k < ai->elements.count; k++)
+                        {
+                            Node* elemNode = (Node*)VecGet(&ai->elements, k);
+                            const char* movedKey = MovableBoxSourceKey(r, elemNode);
+
+                            if (movedKey)
+                            {
+                                MoveBoxIdent(r, movedKey, elemNode->range);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2163,6 +2415,19 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             InvalidateIndexVar(r, ((IdentExpr*)a->target)->name);
         }
+        else if (a->target->kind == NodeIndex)
+        {
+            /* Writing an ARRAY ELEMENT (`other[j] = v`) changes the value of
+                any nested-index spelling ("foo[other[bar]]") or length-based
+                one, at an untrackable position: kill the array root's
+                dependent facts. */
+            const char* targetKey = MovableBoxSourceKey(r, a->target);
+
+            if (targetKey)
+            {
+                InvalidateIndexVar(r, KeyRoot(r->m_arena, targetKey));
+            }
+        }
 
         const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
         bool targetIsBox = tt && TypeNameIsOwning(tt);
@@ -2451,6 +2716,16 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             InvalidateIndexVar(r, ((IdentExpr*)inc->operand)->name);
         }
+        else if (inc->operand->kind == NodeIndex)
+        {
+            /* ++/-- on an array element feeds nested-index spellings too. */
+            const char* operandKey = MovableBoxSourceKey(r, inc->operand);
+
+            if (operandKey)
+            {
+                InvalidateIndexVar(r, KeyRoot(r->m_arena, operandKey));
+            }
+        }
 
         return;
     }
@@ -2655,10 +2930,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                     if (fieldDecl->type.isArray && fieldDecl->type.length >= 0)
                     {
-                        /* Fixed-size array field: elements are a flat list
-                            (nested dims flatten, C-style); missing trailing
-                            elements are zero. Fill the element type for
-                            codegen and check count + per-element types. */
+                        /* Fixed-size array field: the initializer's SHAPE
+                            must mirror the type - nested rows (one brace
+                            level per dimension, rows may be short) for
+                            multidimensional fields, a flat leaf list for
+                            single-dimension ones. Rows then place at their
+                            row-major offsets; missing elements zero. */
                         long total = 0;
                         const TypeName* leaf = FixedArrayLeaf(&fieldDecl->type, &total);
 
@@ -2667,16 +2944,63 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                             ai->elementType = leaf;
                         }
 
-                        if ((long)ai->elements.count > total)
+                        if (!CheckFixedArrayInitShape(r, &fieldDecl->type, ai, leaf, fieldDecl->name))
                         {
-                            DiagErrorFmt(r->m_diag, field->value->range,
-                                         "too many initializers for fixed-size array field '%s' (%ld max, got %zu)",
-                                         fieldDecl->name, total, ai->elements.count);
+                            ai->elements.count = 0;
+                            continue;
+                        }
+
+                        /* Place rows at their row-major offsets; short rows
+                            leave NULL holes and missing elements zero. */
+                        {
+                            Vec flat;
+                            VecInit(&flat);
+
+                            for (long z = 0; z < total; z++)
+                            {
+                                VecPush(&flat, NULL);
+                            }
+
+                            if (!PlaceFixedArrayInit(&flat, 0, &fieldDecl->type, ai))
+                            {
+                                DiagErrorFmt(r->m_diag, field->value->range,
+                                             "too many initializers for fixed-size array field '%s' (%ld max)",
+                                             fieldDecl->name, total);
+                            }
+
+                            void** oldItems = ai->elements.items;
+                            ai->elements = flat;
+                            free(oldItems);
+                        }
+
+                        /* Bare-brace leaf elements (`{ .v = 1 }`, `{}`) are
+                            struct inits of the leaf type - the parser can't
+                            know that deep inside row literals, so fill them
+                            now that the leaf type is known. */
+                        for (size_t k = 0; k < ai->elements.count; k++)
+                        {
+                            Node* elem = (Node*)VecGet(&ai->elements, k);
+
+                            if (!elem)
+                            {
+                                continue;
+                            }
+
+                            if (elem->kind == NodeArrayInit || elem->kind == NodeStructInit)
+                            {
+                                VecSet(&ai->elements, k, ApplyBracedStructTarget(r, elem, leaf));
+                            }
                         }
 
                         for (size_t k = 0; k < ai->elements.count; k++)
                         {
                             Node* elem = (Node*)VecGet(&ai->elements, k);
+
+                            if (!elem)
+                            {
+                                continue;   /* hole: stays zero */
+                            }
+
                             const TypeName* elemType = InferType(r, elem, scope);
 
                             if (elemType && !IsAssignableType(r, leaf, elemType))
@@ -2925,6 +3249,21 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         for (size_t i = 0; i < ai->elements.count; i++)
         {
             Node* elem = (Node*)VecGet(&ai->elements, i);
+
+            /* Nested array literal (`int[][] g = { {1, 2}, {3} }`): the
+                parser types only the outermost literal, so propagate the
+                element type's own element into the row literals. */
+            if (ai->elementType && ai->elementType->isArray && elem->kind == NodeArrayInit
+                && !((ArrayInitExpr*)elem)->elementType)
+            {
+                const TypeName* innerElem = TypeNameArrayElem(ai->elementType);
+
+                if (innerElem)
+                {
+                    ((ArrayInitExpr*)elem)->elementType = innerElem;
+                }
+            }
+
             ResolveExpr(r, elem, scope);
 
             /* An owning value (string/box) stored in an array literal moves

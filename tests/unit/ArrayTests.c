@@ -739,6 +739,236 @@ STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
     arena_free(&arena);
 }
 
+/* ---- 2D arrays -------------------------------------------------------------
+   Dynamic `T[][]` literals (the parser types only the outermost literal;
+   sema propagates the row element type) and fixed `T[N][M]` struct fields
+   (braced initializers are FLAT C-style lists - nested rows diagnose). */
+
+STRATA_TEST(two_d_dynamic_array_literal_runs)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[][] grid = { {1, 2}, {3, 4} };\n"
+        "  int sum = 0;\n"
+        "  for (uint i = 0; i < grid.length; i++)\n"
+        "  {\n"
+        "    for (uint j = 0; j < grid[i].length; j++)\n"
+        "    {\n"
+        "      sum += grid[i][j];\n"
+        "    }\n"
+        "  }\n"
+        "  grid[1][0] = 30;\n"                    /* mutate a cell */
+        "  return sum * 100 + grid[1][0] + (int)grid.length + (int)grid[0].length;\n"   /* 1000+30+2+2 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 1034);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(two_d_fixed_array_nested_rows_required_and_run)
+{
+    /* Multidimensional fixed fields take nested rows - one brace level per
+       dimension, rows may be short (missing elements zero). */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Grid { int[2][3] cells; };\n"
+        "int entry() {\n"
+        "  Grid a = Grid { .cells = { {10, 20, 30}, {40, 50, 60} } };\n"
+        "  Grid b = Grid { .cells = { {1, 2} } };\n"          /* short row + missing row */
+        "  int sum = a.cells[0][0] + a.cells[1][2] + b.cells[0][1] + b.cells[0][2] + b.cells[1][0];\n"
+        "  return sum + (int)a.cells.length;\n"      /* 10+60+2+0+0 + 2 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 74);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(two_d_fixed_array_flat_list_for_multidim_is_error)
+{
+    /* A flat list for a multidimensional field is a shape violation - the
+       initializer must mirror the dimensions. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Grid { int[2][3] cells; };\n"
+        "int entry() {\n"
+        "  Grid g = Grid { .cells = {10, 20, 30, 40, 50, 60} };\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "requires nested rows") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(one_d_fixed_array_nested_row_is_error)
+{
+    /* The mirror rule: a single-dimension field takes a flat list only. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Buf { byte[4] data; };\n"
+        "int entry() {\n"
+        "  Buf b = Buf { .data = { {1, 2}, {3, 4} } };\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "single dimension - write its elements as a flat list") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ---- Multidimensional fixed arrays of STRUCTS -----------------------------
+   Brace-init struct elements in nested rows - typed literals, bare braces,
+   and positional calls - must survive the row placement without confusing
+   the parser or sema, including short rows leaving holes. */
+
+STRATA_TEST(multidim_fixed_array_struct_elements_typed_literals)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Cell { int v; int w; };\n"
+        "struct Grid { Cell[2][3] cells; };\n"
+        "int entry() {\n"
+        "  Grid g = Grid { .cells = { { Cell { .v = 1, .w = 10 }, Cell { .v = 2, .w = 20 }, Cell { .v = 3, .w = 30 } },\n"
+        "                          { Cell { .v = 4, .w = 40 }, Cell { .v = 5, .w = 50 }, Cell { .v = 6, .w = 60 } } } };\n"
+        "  int sum = g.cells[0][0].v + g.cells[0][2].v + g.cells[1][1].v;\n"     /* 1+3+5 */
+        "  int wsum = g.cells[0][1].w + g.cells[1][2].w;\n"                     /* 20+60 */
+        "  return sum * 100 + wsum + (int)g.cells.length;\n"                    /* 900+80+2 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 982);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(multidim_fixed_array_struct_elements_bare_braces)
+{
+    /* Bare-brace struct elements deep inside row literals carry no type
+       name from the parser - sema fills them from the leaf type. Short
+       rows leave holes: `{4}` belongs to cells[1][0], NOT cells[0][2]
+       (row-major placement, C semantics). */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Cell { int v; };\n"
+        "struct Grid { Cell[2][3] cells; };\n"
+        "int entry() {\n"
+        "  Grid g = Grid { .cells = { { { .v = 1 }, { .v = 2 } },\n"
+        "                          { { .v = 4 } } } };\n"
+        "  int a = g.cells[0][0].v;\n"      /* 1 */
+        "  int b = g.cells[0][1].v;\n"      /* 2 */
+        "  int hole = g.cells[0][2].v;\n"   /* short row left a hole -> 0 */
+        "  int c = g.cells[1][0].v;\n"      /* 4: next row starts at ITS offset */
+        "  return a * 1000 + b * 100 + hole * 10 + c;\n"   /* 1204 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 1204);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(multidim_fixed_array_struct_elements_mixed_forms)
+{
+    /* Typed literals, bare braces, and positional ctor calls mix freely
+       within the same initializer. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Cell { int v; };\n"
+        "struct Grid { Cell[2][2] cells; };\n"
+        "int entry() {\n"
+        "  Grid g = Grid { .cells = { { Cell { .v = 1 }, { .v = 2 } },\n"
+        "                          { Cell(3), { .v = 4 } } } };\n"
+        "  return g.cells[0][0].v + g.cells[0][1].v + g.cells[1][0].v + g.cells[1][1].v;\n"   /* 10 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 10);
+    }
+
+    strataJitDestroy(jit);
+}
+
 /* ---- Optional dynamic arrays (`T[]?`) ------------------------------------
    A `T[]?` field/local is an optional array: it shares the fat {ptr, len}
    representation with `T[]` (empty = {null, 0}), but reading it requires
