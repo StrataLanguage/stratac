@@ -1,17 +1,45 @@
 # Strata
 
-A small, fast scripting/programming language designed to be embedded in game
-engines. Strata can JIT through its vendored TinyCC backend or emit native
-objects and assembly through LLVM.
+A small, statically typed language for embedding in game engines. The compiler
+is a single C11 library with no external dependencies; it JIT-compiles scripts
+in memory (with LLVM ORCv2) or emits native objects and assembly
+AOT for linking together with your project.
 
-The public embedding JIT compiles generated C directly from memory and keeps
-the relocated code in memory; it does not create temporary source or object
-files. LLVM remains available for textual IR, AOT output, and development
-comparisons.
+```c
+extern int printf(string fmt, ...);
 
-## Build profiles
+struct Vec3 { float x; float y; float z; };
 
-The default profile builds both backends:
+float length_sq(Vec3 v)
+{
+    return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
+int main()
+{
+    Vec3 v = { .x = 1.0, .y = 2.0, .z = 2.0 };
+    printf("%f\n", length_sq(v));   // 9.0
+    return 0;
+}
+```
+
+## Highlights
+
+- **Statically typed** — structs, handles, fixed and dynamic arrays, overloads,
+  full type inference and const-checking at compile time
+- **Ownership built in** — `^T` boxes are move-only and auto-freed; `T?`
+  optionals with flow-typed emptiness checks; no GC, no refcounting
+- **Host-friendly ABI** — extern functions, varargs (`extern int printf(string
+  fmt, ...);`), extern structs that mirror host C layouts field-for-field
+- **LLVM codegen** — in-memory ORCv2 JIT, native object/assembly emission,
+  and textual IR output
+- **Embeddable** — one public header (`include/strata/strata.h`), virtual
+  import graphs via a host-installed resolver, host-defined allocators
+
+## Building
+
+Requires CMake 3.20+, Ninja, and a C11 compiler. The default preset links an
+x64 `LLVM-C.dll` (see `LLVM_C_DIR` in `CMakePresets.json`):
 
 ```sh
 cmake --preset default
@@ -19,64 +47,44 @@ cmake --build --preset default
 ctest --preset default
 ```
 
-The size-oriented profile builds `stratac` with the C/TinyCC path and no LLVM
-discovery, source, linkage, or runtime dependency:
+Binaries land in `build/default/bin/`.
+
+## CLI
 
 ```sh
-cmake --preset tcc-static
-cmake --build --preset tcc-static
-ctest --preset tcc-static
-cmake --build build/tcc-static --target stratac-size-report
+stratac samples/hello.strata -o hello.o      # emit native object (AOT)
+stratac --run script.strata                  # JIT and run `main`
+stratac --run --entry update script.strata   # ... or any int(void) function
+stratac --asm script.strata -o script.s      # native assembly
+stratac --emit-ir script.strata              # LLVM IR text
 ```
 
-`stratac-size-report` makes and strips a separate `stratac-stripped` copy,
-then reports section/file sizes and dynamic platform dependencies without
-altering the normal executable. Strata and libtcc are incorporated statically;
-the platform C runtime may still be dynamic.
+## Embedding
 
-## C output and in-memory execution
+```c
+#include "strata.h"
 
-```sh
-stratac --emit-c script.strata -o script.c
-stratac --run script.strata
-stratac --run --entry update script.strata
+StrataCompiler* c = strataCompilerCreate();
+StrataJit* jit = strataJitCompileFile(c, "scripts/game.strata", &err);
+if (!jit) { /* err holds diagnostics */ }
+
+strataJitAddSymbol(jit, "host_spawn", (void*)host_spawn);  // bind externs
+
+int (*update)(float) = (int (*)(float))strataJitGetFunction(jit, "update");
+int state = update(dt);
+
+strataJitDestroy(jit);
+strataCompilerDestroy(c);
 ```
 
-`--run` currently accepts a defined `int(void)` entry (`main` by default) and
-returns its result as the `stratac` process exit status. Standalone execution
-rejects scripts with unresolved host externs; embedding applications can bind
-those after compilation with `strataJitAddSymbol`.
+A host can also take over `import` resolution entirely
+(`strataSetImportResolver`) and compile a fully in-memory module graph with no
+disk access.
 
-The vendored TinyCC source and its LGPL-2.1 licensing/provenance are documented
-in `third_party/tinycc/STRATA-VENDOR.md`.
+## Repo layout
 
-## LLVM versus TinyCC JIT benchmark
-
-The full build provides an opt-in benchmark that generates deterministic large
-`.strata` fixtures in the build directory and compares both in-memory engines:
-
-```sh
-cmake --build build --target bench-jit
-build/bin/strata_jit_bench --sizes 1,5,20 --iterations 3 \
-    --csv build/jit-benchmark.csv
-build/bin/strata_jit_bench --runtime-only --sizes 1,5,20 --iterations 7 \
-    --csv build/jit-runtime.csv
-```
-
-On Windows, the repository-root batch runner configures and builds the default
-preset, stages `LLVM-C.dll`, and writes CSV reports under
-`build\default\perf`:
-
-```bat
-run-perf-tests.bat
-run-perf-tests.bat runtime
-run-perf-tests.bat quick
-```
-
-It reports file-to-callable, source-to-callable, AST-to-callable, backend-build,
-relocation, and post-load execution medians, p95 latency, throughput, and the
-TinyCC/LLVM ratio. Hot execution uses a dynamic unsigned workload specialized
-for each source shape, chains results between calls, runs 4,096 data-dependent
-rounds per call, and validates both JITs against a native reference before
-timing. `--runtime-only` skips the compile-latency passes. The benchmark is
-observational and is not part of CTest.
+- `include/strata/strata.h` — the only public header
+- `src/` — compiler sources (`Core`, `Lex`, `Parse`, `Sema`, `Codegen`, `Import`)
+- `samples/` — example scripts and host drivers
+- `tests/unit/` — test suite (runs via `ctest`)
+- `AGENTS.md` — detailed architecture and contribution notes

@@ -415,12 +415,15 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
     }
 }
 
-/* ---- Nullable (`T?`) narrowing facts ------------------------------------
-   A path ("weap.model") maps to 1 while sema can prove the box is non-empty
-   (inside `if (weap.model?) { ... }`, or after a definite assignment).
-   Reading through an unproven optional is a compile error. This is the
-   mirror image of move poisoning: facts must be invalidated by anything
-   that could empty/rebind the path (move-out, reassignment, shadowing). */
+/* ---- Nullable (`T?`) narrowing facts ("blessings") ------------------------
+   A path ("weap.model") maps to 1 while sema can prove the box is
+   non-empty (inside `if (weap.model?) { ... }`, or after a definite
+   assignment) - the path is BLESSED. Reading through an un-blessed
+   optional is a compile error ("'x' has not been blessed"). This is the
+   mirror image of move poisoning (a moved-from value is "poisoned";
+   an unproven one is merely un-blessed): blessings must be invalidated
+   by anything that could empty/rebind the path (move-out, reassignment,
+   shadowing). */
 
 static bool IsPathNonEmpty(const Resolver* r, const char* key);
 static void MarkPathNonEmpty(Resolver* r, const char* key);
@@ -623,19 +626,21 @@ static void ClearEmptySubtree(Resolver* r, const char* key)
 }
 
 
-/* Picks the right "empty" wording: a path narrowed by an enclosing else
-   block IS empty; anything else merely MAY be. */
+/* Picks the right "unblessed" wording: a path narrowed by an enclosing
+   else block IS empty; anything else merely has not been BLESSED (proven
+   non-empty) yet. */
 static const char* EmptyWording(const Resolver* r, const char* key)
 {
-    return IsPathDefinitelyEmpty(r, key) ? "is definitely empty" : "may be empty";
+    return IsPathDefinitelyEmpty(r, key) ? "is definitely empty" : "has not been blessed";
 }
 
 static const char* MovableBoxSourceKey(Resolver* r, Node* n);
 
-/* Shared diagnostic for reading through an unproven optional. An erased
-   key ("arr[]") means the index expression could not be pinned to a
-   constant or tracked variable - no fact can ever be established for it,
-   so point at the materialize-into-a-local idiom instead. */
+/* Shared diagnostic for reading through an un-BLESSED optional (one that
+   has not been proven non-empty by a `?` test). An erased key ("arr[]")
+   means the index expression could not be pinned to a constant or tracked
+   variable - no blessing can ever be established for it, so point at the
+   materialize-into-a-local idiom instead. */
 static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* key, const char* typeName)
 {
     if (PathKeyIsErased(key))
@@ -644,7 +649,7 @@ static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* ke
         bool alreadyOptional = nlen > 0 && typeName[nlen - 1] == '?';
 
         DiagErrorFmt(r->m_diag, range,
-                     "'%s' may be empty ('%s'); the array index is not a constant or a trackable variable - "
+                     "'%s' has not been blessed ('%s'); the array index is not a constant or a trackable variable - "
                      "move or copy the element into a local first ('%s x = %s...; if (x?) ...')",
                      key, typeName, alreadyOptional ? typeName : "T?", key);
         return;
@@ -764,13 +769,13 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 }
 
 /* Moving out an OPTIONAL path (`T?`) differs from a ^T/string move: the
-   source slot is nulled in place and left EMPTY - a legal state, not a
-   broken one. The move is not tracked as "moved" at all: the source just
-   becomes an unproven (in fact empty) optional, so later `path?` tests
-   read false and un-narrowed reads error with the ordinary "may be
-   empty" wording. Neither whole-value move restriction applies: the
-   parent box is not poisoned, and moving through a `ref` or out of a box
-   global is a visible in-place mutation, never a dangling owner. */
+    source slot is nulled in place and left EMPTY - a legal state, not a
+    broken one. The move is not tracked as "moved" at all: the source just
+    becomes an un-blessed (in fact empty) optional, so later `path?` tests
+    read false and un-narrowed reads error with the ordinary "has not
+    been blessed" wording. Neither whole-value move restriction applies:
+    the parent box is not poisoned, and moving through a `ref` or out of
+    a box global is a visible in-place mutation, never a dangling owner. */
 static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 {
     (void)range;
@@ -2537,7 +2542,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             if (optionalTarget && a->op != AssignSet)
             {
                 DiagErrorFmt(r->m_diag, a->base.range,
-                             "cannot compound-assign into '%s' of nullable type '%s'; it may be empty",
+                             "cannot compound-assign into '%s' of nullable type '%s'; it has not been blessed",
                              ((IdentExpr*)a->target)->name, tt->name);
 
                 return;

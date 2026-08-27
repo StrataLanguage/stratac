@@ -13,15 +13,14 @@
         "CMAKE_C_COMPILER": "gcc",
         "LLVM_C_DIR": "C:/Users/andre/llvm-x64",
         "STRATA_ENABLE_LLVM": "ON",
-        "STRATA_ENABLE_TCC": "ON",
         "STRATA_SHARED": "OFF",
         "STRATA_STATIC_RUNTIME": "ON"
       }
     },
     {
       "name": "llvm-only",
-      "displayName": "MinGW GCC + Ninja (Release, LLVM JIT only, no TinyCC)",
-      "description": "Builds with the LLVM ORCv2 JIT backend and TinyCC disabled, for testing the LLVM engine in isolation. Links the x64 LLVM-C DLL.",
+      "displayName": "MinGW GCC + Ninja (Release, LLVM only)",
+      "description": "Builds with the LLVM ORCv2 JIT backend. Links the x64 LLVM-C DLL.",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/llvm-only",
       "cacheVariables": {
@@ -30,47 +29,14 @@
         "LLVM_DIR": "C:/llvm/lib/cmake/llvm",
         "LLVM_C_DIR": "C:/Users/andre/llvm-x64",
         "STRATA_ENABLE_LLVM": "ON",
-        "STRATA_ENABLE_TCC": "OFF",
         "STRATA_SHARED": "OFF",
         "STRATA_STATIC_RUNTIME": "ON"
-      }
-    },
-    {
-      "name": "tcc-static",
-      "displayName": "MinGW GCC + Ninja (MinSizeRel, TinyCC only)",
-      "description": "Builds the small static Strata compiler/runtime without discovering or linking LLVM.",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/tcc-static",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "MinSizeRel",
-        "CMAKE_C_COMPILER": "gcc",
-        "STRATA_ENABLE_LLVM": "OFF",
-        "STRATA_ENABLE_TCC": "ON",
-        "STRATA_SHARED": "OFF",
-        "STRATA_STATIC_RUNTIME": "ON"
-      }
-    },
-    {
-      "name": "tcc-dyn",
-      "displayName": "MinGW GCC + Ninja (MinSizeRel, TinyCC only)",
-      "description": "Builds the Strata compiler/runtime without discovering or linking LLVM. (Dynamic)",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/tcc-dyn",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "MinSizeRel",
-        "CMAKE_C_COMPILER": "gcc",
-        "STRATA_ENABLE_LLVM": "OFF",
-        "STRATA_ENABLE_TCC": "ON",
-        "STRATA_SHARED": "ON",
-        "STRATA_STATIC_RUNTIME": "OFF"
       }
     }
   ],
   "buildPresets": [
     { "name": "default", "configurePreset": "default" },
-    { "name": "llvm-only", "configurePreset": "llvm-only" },
-    { "name": "tcc-static", "configurePreset": "tcc-static" },
-    { "name": "tcc-dyn", "configurePreset": "tcc-dyn" }
+    { "name": "llvm-only", "configurePreset": "llvm-only" }
   ],
   "testPresets": [
     {
@@ -81,11 +47,6 @@
     {
       "name": "llvm-only",
       "configurePreset": "llvm-only",
-      "output": { "outputOnFailure": true }
-    },
-    {
-      "name": "tcc-static",
-      "configurePreset": "tcc-static",
       "output": { "outputOnFailure": true }
     }
   ]

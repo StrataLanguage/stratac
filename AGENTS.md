@@ -174,8 +174,10 @@ main) are the internal entry points.
   `isOptional` flag). Uninitialized optional locals are legal (empty).
   Reading through a `T?` — a member/index reach, a call argument,
   return, assignment, or initializer that unwraps it to `T`, an array
-  element, a bare extern `...` slot — requires a narrowing fact from
-  `if (path?)`, definite reassignment, or while/for condition narrowing.
+  element, a bare extern `...` slot — requires a narrowing fact (a
+  "blessing": `'x' has not been blessed; test it first: if (x?) { ... }`,
+  the mirror image of the "poisoned" move state) from `if (path?)`,
+  definite reassignment, or while/for condition narrowing.
   Array-element facts are index-precise: an index spelling is pinned to a
   canonical fully-parenthesized form — a literal (`arr[0]`), a local
   variable (`arr[i]`), `.length` of a local array, arithmetic over those

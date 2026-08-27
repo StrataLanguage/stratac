@@ -255,7 +255,7 @@ STRATA_TEST(optional_read_without_narrowing_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "may be empty"));
+    STRATA_CHECK(Contains(d, "has not been blessed"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -276,7 +276,7 @@ STRATA_TEST(optional_nested_test_requires_parent_fact)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "'w' may be empty"));
+    STRATA_CHECK(Contains(d, "'w' has not been blessed"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -295,7 +295,7 @@ STRATA_TEST(optional_write_through_unproven_path_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "may be empty"));
+    STRATA_CHECK(Contains(d, "has not been blessed"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -366,7 +366,7 @@ STRATA_TEST(optional_definite_reassignment_establishes_fact)
 STRATA_TEST(optional_else_branch_reports_definitely_empty)
 {
     /* Inside the else of `if (w?)`, reading through `w` gets the sharper
-       "is definitely empty" diagnostic rather than "may be empty". */
+       "is definitely empty" diagnostic rather than "has not been blessed". */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
@@ -642,7 +642,7 @@ STRATA_TEST(optional_deref_as_extern_string_arg_requires_fact)
     STRATA_CHECK(OptDerefRejected(
         "extern int puts(string s);\n"
         "int entry() { string? s; puts(s); return 0; }\n",
-        "'s' may be empty", &arena));
+        "'s' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -661,7 +661,7 @@ STRATA_TEST(optional_deref_as_plain_param_arg_requires_fact)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "'w' may be empty"));
+    STRATA_CHECK(Contains(d, "'w' has not been blessed"));
 
     DiagnosticEngineFree(&diag);
 
@@ -675,7 +675,7 @@ STRATA_TEST(optional_deref_in_c_vararg_requires_fact)
     STRATA_CHECK(OptDerefRejected(
         "extern int printf(string fmt, ...);\n"
         "int entry() { string? s; printf(\"%s\", s); return 0; }\n",
-        "'s' may be empty", &arena));
+        "'s' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -686,7 +686,7 @@ STRATA_TEST(optional_deref_on_return_requires_fact)
 
     STRATA_CHECK(OptDerefRejected(
         "string f() { string? s; return s; }\n",
-        "'s' may be empty", &arena));
+        "'s' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -698,7 +698,7 @@ STRATA_TEST(optional_deref_on_assignment_requires_fact)
     /* plain string target */
     STRATA_CHECK(OptDerefRejected(
         "int entry() { string? s; string t = \"x\"; t = s; return 0; }\n",
-        "'s' may be empty", &arena));
+        "'s' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -710,7 +710,7 @@ STRATA_TEST(optional_deref_content_assign_into_box_requires_fact)
     STRATA_CHECK(OptDerefRejected(
         "struct Weapon { int dmg; };\n"
         "int entry() { Weapon? w; ^Weapon b = Weapon { .dmg = 1 }; b = w; return 0; }\n",
-        "'w' may be empty", &arena));
+        "'w' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -722,7 +722,7 @@ STRATA_TEST(optional_deref_array_push_element_requires_fact)
     STRATA_CHECK(OptDerefRejected(
         "struct Weapon { int dmg; };\n"
         "int entry() { Weapon[] arr; Weapon? v; array_push(arr, v); return 0; }\n",
-        "'v' may be empty", &arena));
+        "'v' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -734,7 +734,7 @@ STRATA_TEST(optional_deref_struct_field_requires_fact)
     STRATA_CHECK(OptDerefRejected(
         "struct Holder { string name; };\n"
         "int entry() { string? s; Holder h = Holder { .name = s }; return 0; }\n",
-        "'s' may be empty", &arena));
+        "'s' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1117,7 +1117,7 @@ STRATA_TEST(narrowed_element_fact_is_index_precise)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "'a[9].next' may be empty", &arena));
+        "'a[9].next' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1213,7 +1213,7 @@ STRATA_TEST(narrowed_element_index_mutation_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1235,7 +1235,7 @@ STRATA_TEST(narrowed_element_index_ref_pass_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1302,7 +1302,7 @@ STRATA_TEST(narrowed_element_arithmetic_index_mutation_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1324,7 +1324,7 @@ STRATA_TEST(narrowed_element_index_spelling_mismatch_is_unproven)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1346,7 +1346,7 @@ STRATA_TEST(narrowed_element_parenthesization_is_unambiguous)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1402,7 +1402,7 @@ STRATA_TEST(narrowed_element_length_index_push_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1549,7 +1549,7 @@ STRATA_TEST(nested_dependent_array_index_precise_at_both_levels)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "'foo.items[1].nested[0]' may be empty", &arena));
+        "'foo.items[1].nested[0]' has not been blessed", &arena));
 
     /* ...nor the other ELEMENT of the same item's nested array. */
     STRATA_CHECK(OptDerefRejected(
@@ -1567,7 +1567,7 @@ STRATA_TEST(nested_dependent_array_index_precise_at_both_levels)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "'foo.items[0].nested[2]' may be empty", &arena));
+        "'foo.items[0].nested[2]' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1594,7 +1594,7 @@ STRATA_TEST(nested_dependent_array_index_var_mutation_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     /* ...and so does mutating the INNER one. */
     STRATA_CHECK(OptDerefRejected(
@@ -1614,7 +1614,7 @@ STRATA_TEST(nested_dependent_array_index_var_mutation_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1726,7 +1726,7 @@ STRATA_TEST(nested_index_as_index_source_write_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1748,7 +1748,7 @@ STRATA_TEST(nested_index_as_index_var_mutation_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1773,7 +1773,7 @@ STRATA_TEST(nested_index_as_index_ref_source_pass_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1832,7 +1832,7 @@ STRATA_TEST(two_d_index_precision_at_both_levels)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "'grid[1][0]' may be empty", &arena));
+        "'grid[1][0]' has not been blessed", &arena));
 
     /* ...nor the other COLUMN of the same row. */
     STRATA_CHECK(OptDerefRejected(
@@ -1846,7 +1846,7 @@ STRATA_TEST(two_d_index_precision_at_both_levels)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "'grid[0][2]' may be empty", &arena));
+        "'grid[0][2]' has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1870,7 +1870,7 @@ STRATA_TEST(two_d_index_var_mutation_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -1923,7 +1923,7 @@ STRATA_TEST(nested_member_through_optional_element_requires_proof)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "'items[1]' may be empty", &arena));
+        "'items[1]' has not been blessed", &arena));
 
     arena_free(&arena);
 
@@ -1983,7 +1983,7 @@ STRATA_TEST(narrowed_element_resize_invalidates)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -2004,7 +2004,7 @@ STRATA_TEST(narrowed_global_fact_dies_across_call)
         "  }\n"
         "  return 0;\n"
         "}\n",
-        "may be empty", &arena));
+        "has not been blessed", &arena));
 
     arena_free(&arena);
 }
@@ -2103,7 +2103,7 @@ STRATA_TEST(optional_while_fact_does_not_survive_loop)
     STRATA_CHECK(OptDerefRejected(
         "extern int puts(string s);\n"
         "int entry() { string? s = \"x\"; while (s?) { puts(s); } puts(s); return 0; }\n",
-        "'s' may be empty", &arena));
+        "'s' has not been blessed", &arena));
 
     arena_free(&arena);
 }

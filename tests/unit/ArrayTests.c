@@ -1031,7 +1031,7 @@ STRATA_TEST(optional_array_use_without_narrowing_is_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(strstr(d, "'b.items' may be empty") != NULL);
+    STRATA_CHECK(strstr(d, "'b.items' has not been blessed") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
