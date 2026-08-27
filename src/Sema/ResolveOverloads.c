@@ -709,6 +709,10 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
     (void)range;
 
     ClearNullableFacts(r, name);
+
+    /* The source is now definitely empty: later `path?` tests resolve to the
+       "definitely empty" fact rather than an unproven read. */
+    MarkPathEmpty(r, name);
 }
 
 /* True if `name` is a module global - untracked as a precise index spelling. */
@@ -2828,10 +2832,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             /* Re-walk to map literal entries onto struct fields the same way
                the checking loop above does. */
             size_t positionalSeen = 0;
-            bool covered[256] = {false};
-            bool overflow = structType->fields.count > 256;
+            size_t fieldCount = structType->fields.count;
+            bool* covered = (bool*)arena_alloc(r->m_arena, fieldCount * sizeof(bool));
 
-            for (size_t i = 0; i < structInitExpr->fields.count && !overflow; i++)
+            for (size_t i = 0; i < structInitExpr->fields.count; i++)
             {
                 StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
                 size_t idx = (size_t)-1;
@@ -2850,13 +2854,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     }
                 }
 
-                if (idx < 256)
+                if (idx < fieldCount)
                 {
                     covered[idx] = true;
                 }
             }
 
-            for (size_t f = 0; f < structType->fields.count && !overflow; f++)
+            for (size_t f = 0; f < fieldCount; f++)
             {
                 FieldDecl* fd = (FieldDecl*)VecGet(&structType->fields, f);
 
@@ -2869,7 +2873,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                 && (TypeNameIsOwning(&fd->type)
                                     || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
 
-                if (mustInit && (f >= 256 || !covered[f]))
+                if (mustInit && !covered[f])
                 {
                     /* Suggest the optional spelling of the inner type. A
                        `^string` field's optional is spelled `string?`. */
@@ -2881,13 +2885,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                  "(declare it '%s?' if it may be empty)",
                                  fd->name, structInitExpr->typeName, optSpelling);
                 }
-            }
-
-            if (overflow)
-            {
-                DiagErrorFmt(r->m_diag, structInitExpr->base.range,
-                             "struct '%s' has too many fields to check for missing initializers",
-                             structInitExpr->typeName);
             }
         }
 

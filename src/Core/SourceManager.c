@@ -29,6 +29,13 @@ static void ComputeLineStarts(SourceManager* sm)
 {
     sm->m_lineCount = 0;
 
+    if (!sm->m_text)
+    {
+        sm->m_lineStarts[0] = 0;
+        sm->m_lineCount = 1;
+        return;
+    }
+
     if (sm->m_lineCap == 0)
     {
         sm->m_lineCap = 64;

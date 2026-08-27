@@ -1565,6 +1565,11 @@ static Node* ParseAssign(Parser* p)
 {
     Node* lhs = ParseBinary(p, 0);
 
+    if (!lhs)
+    {
+        return NULL;
+    }
+
     if (IsAssignOp(p->m_cur.kind))
     {
         AssignOp op = MapAssign(p->m_cur.kind);
@@ -1631,6 +1636,11 @@ static Node* ParseBinary(Parser* p, int minPrec)
         Advance(p);
 
         Node* rhs = ParseBinary(p, prec + 1);
+
+        if (!rhs)
+        {
+            return NULL;
+        }
 
         BinaryExpr* node = AST_NEW(p->m_arena, BinaryExpr);
         node->base.kind = NodeBinary;
@@ -1723,6 +1733,11 @@ static Node* ParseUnary(Parser* p)
                         Advance(p);
                         Node* operand = ParseUnary(p);
 
+                        if (!operand)
+                        {
+                            return NULL;
+                        }
+
                         CastExpr* node = AST_NEW(p->m_arena, CastExpr);
                         node->base.kind = NodeCast;
                         node->base.range = lparen.range;
@@ -1790,6 +1805,11 @@ static Node* ParsePostfix(Parser* p)
 
             Node* index = ParseExpr(p);
             Token close = ParserExpect(p, TokRBracket, "']'");
+
+            if (!index)
+            {
+                return NULL;
+            }
 
             IndexExpr* node = AST_NEW(p->m_arena, IndexExpr);
             node->base.kind = NodeIndex;
@@ -1891,7 +1911,10 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
             field->value = ParseExpr(p);
         }
 
-        VecPush(&init->fields, field);
+        if (field->value)
+        {
+            VecPush(&init->fields, field);
+        }
 
         if (ParserConsume(p, TokComma))
         {

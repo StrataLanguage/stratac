@@ -321,7 +321,9 @@ static void Br(Builder* b, LLVMBasicBlockRef dest)
 
 static LLVMValueRef IdxConst(Builder* b, unsigned i)
 {
-    return LLVMConstInt(I32Ty(b), i, 1);
+    /* All GEP indices must share one integer width; use i64 to stay consistent
+       with the runtime (i64) indices produced by AsI64Index. */
+    return LLVMConstInt(I64Ty(b), i, 0);
 }
 
 /* LLVM member index for logical field `idx` of a struct, mapping through the
@@ -1658,6 +1660,10 @@ static LValue EmitLValue(Builder* b, Node* n)
 
         if (base.typeDesc.isBox)
         {
+            if (!base.typeDesc.boxInner)
+            {
+                return none;
+            }
             structPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box");
             structName = base.typeDesc.boxInner->name;
             structTy = Resolve(b, base.typeDesc.boxInner).type;

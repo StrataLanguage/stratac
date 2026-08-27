@@ -225,6 +225,10 @@ void VecReserve(Vec* v, size_t n)
 
     while (newcap < n)
     {
+        if (newcap > (SIZE_MAX / 2))
+        {
+            STRATA_OOM();
+        }
         newcap *= 2;
     }
 
@@ -386,6 +390,10 @@ static void SbEnsure(Sb* sb, size_t extra)
     size_t newcap = sb->cap ? sb->cap * 2 : 64;
     while (newcap < sb->len + extra)
     {
+        if (newcap > (SIZE_MAX / 2))
+        {
+            STRATA_OOM();
+        }
         newcap *= 2;
     }
 
@@ -571,7 +579,12 @@ char* ReadWholeFile(const char* path, size_t* outLen)
         return NULL;
     }
 
-    long size = ftell(in);
+    long long size;
+#if defined(_WIN32)
+    size = _ftelli64(in);
+#else
+    size = ftell(in);
+#endif
     if (size < 0)
     {
         fclose(in);
