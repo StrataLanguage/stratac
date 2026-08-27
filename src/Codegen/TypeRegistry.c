@@ -452,17 +452,15 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
     {
         if (packed)
         {
-            /* Explicit offsets: the pad members above already encode the
-               full layout, so backends emit the struct packed (no compiler
-               padding of its own) and the size is exact. */
+            /* Explicit offsets: pads encode the full layout, so backends emit
+               packed and the size is exact. */
             st->sizeBytes = cursor;
             st->alignBytes = 1;
         }
         else
         {
-            /* Natural layout: no explicit pads needed — the backend's own
-               padding rules produce the same offsets computed here (drop
-               the bookkeeping pads and keep identity member indices). */
+            /* Natural layout: backend padding yields the same offsets, so drop
+               the bookkeeping pads and use identity member indices. */
             st->sizeBytes = AlignUp(cursor, maxAlign);
             st->alignBytes = maxAlign;
             padCount = 0;

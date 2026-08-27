@@ -17,15 +17,11 @@ typedef enum VecC
     VC_W
 } VecC;
 
-/**
- * @brief Build a list of components from a member string.
- * @returns ER_MALFORMED on error, or the number of components otherwise.
- */
+/* Builds the component list from a swizzle string; ER_MALFORMED on error. */
 static int BuildComponents(VecC* buffer, const char* memberAccess)
 {
     int count = 0;
 
-    /* Set all components to null */
     for (int i = 0; i < 4; i++)
     {
         buffer[i] = VC_NULL;
@@ -188,7 +184,7 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
 
     case BinBitOr:
     {
-        /* Bitcast LHS and LHS to int vectors, OR, then bitcast back to floats */
+        /* Bitcast LHS and RHS to int vectors, OR, then bitcast back to floats */
         LLVMTypeRef intVecTy = LLVMVectorType(intType, 4);
 
         LLVMValueRef lhsInt = LLVMBuildBitCast(b->m_builder, vec, intVecTy, "or.lhs.bc");

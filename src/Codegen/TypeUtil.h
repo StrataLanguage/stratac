@@ -13,7 +13,7 @@ typedef struct {
     int bits;
     int vec;
 
-    /// The number of lanes if the type is a SIMD vector (2, 4, or 8).
+    /// Lanes for a SIMD vector (2/4/8).
     int lanes;
 
     char elemIr[16];

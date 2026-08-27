@@ -49,16 +49,10 @@ typedef struct {
 #define AST_NEW(arena, type) ((type*)arena_alloc((arena), sizeof(type)))
 #define AsNode(type, node) ((type*)(node))
 
-/* Types are structural: `^T` (box), `T?` (optional box), and `T[]`/`T[N]`
-   (array) are dedicated nodes wrapping an inner/element TypeName; `name` is
-   the canonical spelling of the whole subtree ("Foo", "^Foo", "Foo?",
-   "^Foo[]", "int[][]", "int[4]"), derived at parse time and kept consistent
-   by the wrap helpers below. A node is either a leaf (name set), a box
-   (isBox + inner), an optional (isOptional + inner), or an array
-   (isArray + elem). A dynamic array `T[]` has length < 0; a fixed-size
-   array `T[N]` (C-ABI inline storage, struct fields only) has length >= 1.
-   `^T` is a NON-NULL owning box; `T?` ("optional") is the maybe-empty form
-   and shares its runtime representation. */
+/* Types are structural: `^T` (box), `T?` (optional), and `T[]`/`T[N]` (array)
+   wrap an inner/element TypeName. `name` is the canonical spelling ("^Foo",
+   "int[4]"), used for display/mangling/map keys — never parse it for shape.
+   A dynamic array has length < 0; a fixed `T[N]` (inline storage) >= 1. */
 typedef struct TypeName {
     char* name;
     SourceRange range;
@@ -141,9 +135,8 @@ static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long 
     return t;
 }
 
-/* ---- Structural type queries -------------------------------------------
-   These are the authority for "what shape is this type". The `name` spelling
-   is derived data (display, mangling, map keys) — never parse it for shape. */
+/* Structural type queries — the authority for a type's shape. `name` is derived
+   data (display, mangling, map keys); never parse it for shape. */
 
 static inline bool TypeNameIsArray(const TypeName* t)
 {
@@ -184,9 +177,8 @@ static inline bool TypeNameIsOptional(const TypeName* t)
     return t && t->isOptional;
 }
 
-/* Inner `T` of a box `^T` or optional `T?`, or NULL. A box never wraps an
-   array (no such spelling); an optional may (`T[]?` wraps a dynamic array,
-   sharing its fat {ptr, len} representation with empty = {null, 0}). */
+/* Inner `T` of a box/optional, or NULL. A box never wraps an array; an optional
+   may (`T[]?` wraps a dynamic array, sharing its fat {ptr, len} with empty = {null, 0}). */
 static inline const TypeName* TypeNameBoxInner(const TypeName* t)
 {
     if (!t || !(t->isBox || t->isOptional))
@@ -390,10 +382,8 @@ typedef struct {
     bool isExtern;
     bool hasReturnStmt;
     char* mangledName;
-    /* Accepts a variable number of trailing arguments.
-       If isCVararg is set, the function is extern and takes bare `...`
-       (call-only; the host provides the body). Otherwise the last param
-       is a typed rest param (isVarargRest) collecting the extras into a T[]. */
+    /* isVariadic + isCVararg: extern with bare `...` (host provides the body).
+       Otherwise the last param is a typed rest collecting trailing args into a T[]. */
     bool isVariadic;
     bool isCVararg;
 } FunctionDecl;

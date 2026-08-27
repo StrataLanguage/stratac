@@ -83,8 +83,7 @@ disk access.
 
 ## Repo layout
 
-- `include/strata/strata.h` — the only public header
-- `src/` — compiler sources (`Core`, `Lex`, `Parse`, `Sema`, `Codegen`, `Import`)
+- `include/strata/strata.h` — public header
+- `src/` — compiler sources
 - `samples/` — example scripts and host drivers
 - `tests/unit/` — test suite (runs via `ctest`)
-- `AGENTS.md` — detailed architecture and contribution notes

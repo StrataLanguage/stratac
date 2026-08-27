@@ -25,9 +25,8 @@ typedef struct
     TypeDesc typeDesc;
 } LValue;
 
-/* An owning local: a slot that must be dropped (freed) on scope exit.
-   Carries its type so the drop can dispatch between box/string and array
-   (which must free its backing buffer, and recursively drop owning elems). */
+/* A slot dropped (freed) on scope exit; carries its type so the drop can
+   dispatch box/string vs array. */
 typedef struct
 {
     LLVMValueRef slot;
@@ -239,8 +238,7 @@ static LLVMTypeRef I1Ty(Builder* b)
     return LLVMInt1TypeInContext(b->m_ctx);
 }
 
-/* The fat {ptr, i64} representation shared by every T[]: a data pointer and
-   a u64 length. Cached so all arrays share one struct type. */
+/* The shared {ptr, u64} fat struct for every T[] (cached so all arrays share one type). */
 static LLVMValueRef IdxConst(Builder* b, unsigned i); /* forward decl */
 
 static LLVMTypeRef ArrayStructType(Builder* b)
@@ -345,6 +343,7 @@ Value EmitExpr(Builder* b, Node* n);
 static Value EmitIdent(Builder* b, IdentExpr* n);
 static LValue EmitLValue(Builder* b, Node* n);
 static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
+static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 static LLVMValueRef StrataStrdupFn(Builder* b);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
@@ -400,9 +399,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(found, 0, t->name);
     }
 
-    /* T[N]: fixed-size inline array ([N x T], C ABI). Struct fields only.
-        All TypeNames reaching codegen are structural (parser-produced or
-        TypeNameParse-synthesized), so the tree is authoritative. */
+    /* T[N]: fixed-size inline [N x T] (C ABI, struct fields only). */
     if (t->isArray && t->length >= 0)
     {
         TypeDesc elemTd = Resolve(b, t->elem);
@@ -773,6 +770,33 @@ static bool ElemNeedsScratchDummy(Builder* b, TypeDesc td)
    -> field-wise construct, T[] -> {NULL, 0}. `chain` guards compile-time
    recursion on self-referential types: a field whose struct type is already
    under construction gets a zero value instead of a nested dummy. */
+/* Iterates the fields of an owning struct, dummy-storing owning fields
+   recursively and zeroing the rest, into `base`. */
+static void EmitDummyStoreStructFields(Builder* b, LLVMValueRef base, const StructType* st,
+                                       LLVMTypeRef structTy, Vec* chain, const char* structName)
+{
+    VecPush(chain, (void*)structName);
+
+    for (size_t j = 0; j < st->fields.count; j++)
+    {
+        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
+        TypeDesc fieldTd = Resolve(b, &f->type);
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
+        LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, base, idxs, 2, "df");
+
+        if (TypeNameIsOwning(&f->type) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
+        {
+            EmitDummyStore(b, fieldAddr, fieldTd, chain);
+        }
+        else
+        {
+            LLVMBuildStore(b->m_builder, LLVMConstNull(fieldTd.type), fieldAddr);
+        }
+    }
+
+    VecPop(chain);
+}
+
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain)
 {
     if (!td.type)
@@ -814,26 +838,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
             LLVMValueRef heap
                 = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "dbox");
 
-            VecPush(chain, (void*)td.boxInner->name);
-
-            for (size_t j = 0; j < st->fields.count; j++)
-            {
-                FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
-                TypeDesc fieldTd = Resolve(b, &f->type);
-                LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-                LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "df");
-
-                if (TypeNameIsOwning(&f->type) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
-                {
-                    EmitDummyStore(b, fieldAddr, fieldTd, chain);
-                }
-                else
-                {
-                    LLVMBuildStore(b->m_builder, LLVMConstNull(fieldTd.type), fieldAddr);
-                }
-            }
-
-            VecPop(chain);
+            EmitDummyStoreStructFields(b, heap, st, structTy, chain, td.boxInner->name);
             LLVMBuildStore(b->m_builder, heap, slot);
             return;
         }
@@ -874,26 +879,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
             return;
         }
 
-        VecPush(chain, (void*)td.structTypeName);
-
-        for (size_t j = 0; j < st->fields.count; j++)
-        {
-            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
-            TypeDesc fieldTd = Resolve(b, &f->type);
-            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-            LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, slot, idxs, 2, "df");
-
-            if (TypeNameIsOwning(&f->type) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
-            {
-                EmitDummyStore(b, fieldAddr, fieldTd, chain);
-            }
-            else
-            {
-                LLVMBuildStore(b->m_builder, LLVMConstNull(fieldTd.type), fieldAddr);
-            }
-        }
-
-        VecPop(chain);
+        EmitDummyStoreStructFields(b, slot, st, structTy, chain, td.structTypeName);
         return;
     }
 
@@ -908,8 +894,7 @@ static void EmitDummyInit(Builder* b, LLVMValueRef slot, TypeDesc td)
     free(chain.items);
 }
 
-/* The plain in-bounds element address. For aliased rest arrays the data is a
-   T* slot array: load the slot to reach the source lvalue. */
+/* In-bounds element address; aliased rest arrays hold T* slots, so load the slot. */
 static LLVMValueRef PlainElemPtr(Builder* b, LLVMValueRef dataPtr, LLVMValueRef idxVal, LLVMTypeRef elemTy,
                                  bool aliased)
 {
@@ -1005,8 +990,7 @@ static LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValu
     return phi;
 }
 
-/* Element address inside a fixed-size inline array ([N x T] at `arrPtr`).
-   The leading 0 walks into the array; the runtime index is the element. */
+/* Element address in a fixed inline [N x T]; the leading 0 walks into the array. */
 static LLVMValueRef FixedElemPtr(Builder* b, LLVMValueRef arrPtr, LLVMValueRef idxVal, LLVMTypeRef arrTy)
 {
     LLVMValueRef idxArgs[2] = {IdxConst(b, 0), idxVal};
@@ -1065,9 +1049,7 @@ static LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, lon
     return phi;
 }
 
-/* Heap-copies a string (srcPtr, NUL-terminated, `len` chars) into a fresh
-   allocation so the copy can be owned and freed. Used when a string literal
-   flows into an owning location (struct field, array element). */
+/* Heap-copies a NUL-terminated string so the copy can be owned and freed. */
 static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
 {
     size_t copyLen = len + 1;
@@ -1090,9 +1072,7 @@ static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
     return heap;
 }
 
-/* Drops the owning fields of a by-value struct at `structPtr` (used when
-   dropping a ^StructType - the pointed-to struct's owning fields must be
-   freed before the struct allocation itself). */
+/* Drops the owning fields of a struct at `structPtr`. */
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName);
 
 /* Returns (creating if needed) a per-struct-type LLVM function that drops
@@ -1215,8 +1195,7 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
     EmitDropOneInternal(b, slot, td, true);
 }
 
-/* Drops the owning ELEMENTS of a stack-backed T[] (vararg rest) without
-   freeing the caller's stack buffer. */
+/* Drops owning ELEMENTS of a stack-backed T[] (vararg rest) without freeing the buffer. */
 static void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td)
 {
     EmitDropOneInternal(b, slot, td, false);
@@ -1740,8 +1719,7 @@ static LValue EmitLValue(Builder* b, Node* n)
                 return none;
             }
 
-            /* Fixed inline array: GEP straight into the [N x T] storage;
-               the length is the compile-time dimension. */
+        /* Fixed inline array: GEP into the [N x T]; length is the compile-time dimension. */
             TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
             LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
@@ -1902,8 +1880,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 
     if (base.typeDesc.isFixedArray)
     {
-        /* Fixed inline array rvalue (e.g. MakeS().data): park the value in
-           an entry alloca so a runtime index can address it. */
+        /* Fixed inline array rvalue: park in an entry alloca so a runtime index can address it. */
         TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
 
         LLVMValueRef slot = EntryAlloca(b, base.typeDesc.type, "fxr");

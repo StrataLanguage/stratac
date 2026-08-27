@@ -28,8 +28,7 @@ typedef struct
     Vec* m_liveLog; /* when set, MarkBoxLive records keys here (loop warmup) */
 } Resolver;
 
-/* Intern a TypeName tree for a canonical spelling. Expressions that need a
-   synthesized type (literals, builtin results) share one tree per spelling. */
+/* Intern a TypeName tree per canonical spelling (shared by synthesized types). */
 static const TypeName* InternTypeName(Resolver* r, const char* name)
 {
     const TypeName* cached = (const TypeName*)StrMapGet(&r->m_typeCache, name);
@@ -79,8 +78,7 @@ static bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
     return t && t->opaque && t->incomplete;
 }
 
-/* True if a fixed-size array dimension (`T[N]`) appears anywhere in a type
-   tree (including inside boxes: `^T[N]` is an array of boxes). */
+/* True if any fixed-size array dimension (`T[N]`) appears in the type tree (even inside a box). */
 static bool TypeTreeHasFixedArray(const TypeName* t)
 {
     for (; t; t = (t->isBox || t->isOptional) ? t->inner : (t->isArray ? t->elem : NULL))
@@ -94,9 +92,7 @@ static bool TypeTreeHasFixedArray(const TypeName* t)
     return false;
 }
 
-/* Descend through the leading fixed-size array dimensions of a field type,
-   returning the innermost non-fixed node and the total element count
-   (product of the dimensions, 1 when the type is not a fixed array). */
+/* Returns the innermost non-fixed node and the product of leading fixed dimensions (1 if none). */
 static const TypeName* FixedArrayLeaf(const TypeName* t, long* totalCount)
 {
     long count = 1;
@@ -111,12 +107,28 @@ static const TypeName* FixedArrayLeaf(const TypeName* t, long* totalCount)
     return t;
 }
 
-/* Places the leaves of a (shape-checked) fixed-array initializer into
-   `flat` (pre-sized to the type's total element count) at their ROW-MAJOR
-   offsets: a short row leaves NULL holes and the next row still starts at
-   its own offset, matching C (`{ {1,2}, {4} }` for `int[2][3]` puts 4 at
-   cells[1][0], not cells[0][2]). Returns false when an element would land
-   beyond the type's capacity. */
+/* Strips a leading optional then box, returning the inner type (or NULL). */
+static const TypeName* UnwrapBoxPtr(const TypeName* t)
+{
+    if (!t)
+    {
+        return NULL;
+    }
+
+    if (t->isOptional)
+    {
+        t = t->inner;
+    }
+
+    if (t && t->isBox)
+    {
+        t = t->inner;
+    }
+
+    return t;
+}
+
+/* Places fixed-array init leaves into `flat` at row-major offsets; short rows leave NULL holes. Returns false if an element lands beyond capacity. */
 static bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExpr* ai)
 {
     const TypeName* rowType = t->elem;
@@ -153,12 +165,7 @@ static bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, Array
     return true;
 }
 
-/* Enforces the SHAPE of a fixed-size array initializer against its type:
-   multidimensional fields require nested rows - one brace level per
-   dimension (`{ {1,2,3}, {4,5,6} }` for `int[2][3]`; rows may be short,
-   missing elements zero) - and single-dimension fields require a flat
-   leaf list (a braced element is still fine when the leaf is a struct:
-   it is a struct init). Returns false (with a diagnostic) on a violation. */
+/* Verifies a fixed-array initializer's SHAPE: nested rows for multidimensional fields, a flat list for single-dimension. Returns false (with a diagnostic) on mismatch. */
 static bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai, const TypeName* leaf,
                                      const char* fieldName)
 {
@@ -196,12 +203,7 @@ static bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitEx
     return true;
 }
 
-/* Move-state tracking for box locals.
- *   value 1 = fully moved (value/field is gone)
- *   value 2 = re-live (reassigned as a whole)
- *   value 3 = partially moved (a descendant field was moved out; whole-
- *             value use is rejected but non-moved fields are accessible)
- */
+/* Move-state values: 1 = fully moved, 2 = re-live, 3 = partially moved. */
 static bool IsBoxMoved(const Resolver* r, const char* name)
 {
     return StrMapGet(&r->m_movedBoxes, name) == (void*)1;
@@ -212,30 +214,20 @@ static void MarkBoxMoved(Resolver* r, const char* name)
     StrMapPut(&r->m_movedBoxes, name, (void*)1);
 }
 
-/* A value is unusable as a whole if fully moved (1) or partially moved (3).
-   Individual non-moved field access into a partially-moved value is still
-   allowed (handled by the context-sensitive base resolution). */
+/* Whole-value use is rejected when fully (1) or partially (3) moved; non-moved fields stay accessible. */
 static bool IsBoxUnusable(const Resolver* r, const char* name)
 {
     void* v = StrMapGet(&r->m_movedBoxes, name);
     return v == (void*)1 || v == (void*)3;
 }
 
-/* A descendant field was moved out of `name`, but `name` itself was not moved
-   as a whole: non-moved fields are still accessible, only whole-value use is
-   rejected. */
+/* A descendant field moved out, but the value itself wasn't: whole-value use rejected, fields still accessible. */
 static bool IsBoxPartiallyMoved(const Resolver* r, const char* name)
 {
     return StrMapGet(&r->m_movedBoxes, name) == (void*)3;
 }
 
-/* Is `child` a path at or below `parent`? Rules beyond a plain prefix:
-   - a '.' or '[' after the prefix continues the path ("a" covers "a.b"
-     and "a[3].b");
-   - the erased any-element form "a[]" covers every "a[<anything>]" key
-     ("a[]" covers "a[3].b", "a[i].w", and "a[]" itself).
-   The '[' case matters because element facts/keys are spelled precisely
-   ("a[3]", "a[i]") while whole-array actions clear from the bare root. */
+/* Is `child` at or below `parent`? A '.' or '[' after the prefix continues the path; the erased "a[]" form covers every "a[...]" key. */
 static bool PathIsDescendant(const char* parent, const char* child)
 {
     if (strcmp(child, parent) == 0)
@@ -266,11 +258,13 @@ static bool PathIsDescendant(const char* parent, const char* child)
     return false;
 }
 
-/* Clears `key` and all its descendants from the move-state map.
-   Used when a whole-value reassignment re-lives the binding. */
-static void ClearBoxSubtree(Resolver* r, const char* key)
+/* Nulls every key in `m` that is `key` or a descendant of it. */
+static void ClearSubtreeByPath(StrMap* m, const char* key)
 {
-    StrMap* m = &r->m_movedBoxes;
+    if (!key)
+    {
+        return;
+    }
 
     for (size_t i = 0; i < m->cap; i++)
     {
@@ -286,10 +280,18 @@ static void ClearBoxSubtree(Resolver* r, const char* key)
     }
 }
 
+/* Clears `key` and all its descendants from the move-state map.
+   Used when a whole-value reassignment re-lives the binding. */
+static void ClearBoxSubtree(Resolver* r, const char* key)
+{
+    ClearSubtreeByPath(&r->m_movedBoxes, key);
+}
+
 /* Nullable (`T?`) narrowing facts - defined below, used by move tracking. */
 static void MarkPathNonEmpty(Resolver* r, const char* key);
 static void ClearNonEmptySubtree(Resolver* r, const char* key);
 static void ClearEmptySubtree(Resolver* r, const char* key);
+static void ClearNullableFacts(Resolver* r, const char* key);
 
 static void MarkBoxLive(Resolver* r, const char* name)
 {
@@ -301,39 +303,31 @@ static void MarkBoxLive(Resolver* r, const char* name)
         VecPush(r->m_liveLog, (void*)name);
     }
 
-    /* A whole-value reassignment installs a fresh, definitely-initialized
-       value - the path is non-empty again (and so are no stale descendants). */
-    ClearNonEmptySubtree(r, name);
-    ClearEmptySubtree(r, name);
+    /* Reassignment re-lives the binding; clear stale nullable facts and re-establish non-empty. */
+    ClearNullableFacts(r, name);
     MarkPathNonEmpty(r, name);
 }
 
-/* Reassigning a single owning field (e.g. `bob.name = ...`) re-lives that
-   field. Each partially-moved (3) ancestor prefix whose moved descendants
-   have all been restored is cleared too, so a whole-value use of the parent
-   becomes valid again once every moved field has been reassigned. */
+/* Reassigning one owning field re-lives it and any ancestor whose moved descendants are all restored. */
 static void RevalidateOwningField(Resolver* r, const char* key)
 {
     ClearBoxSubtree(r, key);
     /* Reassigning a single owning field re-installs a valid value there. */
-    ClearNonEmptySubtree(r, key);
-    ClearEmptySubtree(r, key);
+    ClearNullableFacts(r, key);
     MarkPathNonEmpty(r, key);
 
     StrMap* m = &r->m_movedBoxes;
 
-    /* Walk every dotted ancestor prefix of `key` (bob.name -> bob;
-       holder.gun.ammo -> holder.gun, holder). */
-    for (const char* dot = strchr(key, '.'); dot; dot = strchr(dot + 1, '.'))
+        /* Walk each dotted ancestor prefix of `key`. */
+        for (const char* dot = strchr(key, '.'); dot; dot = strchr(dot + 1, '.'))
     {
         const char* prefix = arena_strndup(r->m_arena, key, (size_t)(dot - key));
 
-        /* Only a partially-moved (3) ancestor can be restored this way; a
-           fully-moved (1) or re-live (2) one is left untouched. */
-        if (StrMapGet(m, prefix) != (void*)3)
-        {
-            continue;
-        }
+            /* Only a partially-moved (3) ancestor can be restored. */
+            if (StrMapGet(m, prefix) != (void*)3)
+            {
+                continue;
+            }
 
         size_t plen = strlen(prefix);
         bool hasMovedDescendant = false;
@@ -367,18 +361,13 @@ static bool IsBoxGlobalName(const Resolver* r, const char* name)
     return StrMapGet(&r->m_boxGlobals, name) != NULL;
 }
 
-/* The identifier a move key is rooted in - "holder.gun" -> "holder",
-   "arr[3]" / "arr[i]" / "arr[]" -> "arr", "g.arr[i].w" -> "g". Used to
-   check the underlying binding (a global, or a ref ^T param), not just
-   the literal access text, so the move ban applies transitively through
-   struct fields and array elements. */
+/* The binding a move key is rooted in ("holder.gun" -> "holder", "arr[3]" -> "arr") - used for global/ref-param checks. */
 static const char* KeyRoot(Arena* arena, const char* key)
 {
     const char* dot = strchr(key, '.');
     const char* base = dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
 
-    /* Strip the trailing bracket group, whatever it spells: the erased
-       "[]", a literal "[3]", or a variable "[i]". */
+    /* Drop the trailing bracket group (erased/var/literal). */
     const char* open = strrchr(base, '[');
 
     if (open)
@@ -389,9 +378,7 @@ static const char* KeyRoot(Arena* arena, const char* key)
     return base;
 }
 
-/* Marks every proper path prefix of `key` as partially moved (value 3),
-    unless already fully moved (1). For "a[i].b.c": marks "a", "a[i]" and
-    "a[i].b" - prefixes break at dots AND at index brackets. */
+/* Marks every proper path prefix of `key` as partially moved (3), unless already fully moved (1). Prefixes break at dots and brackets. */
 static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
 {
     for (size_t i = 0; key[i]; i++)
@@ -415,15 +402,8 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
     }
 }
 
-/* ---- Nullable (`T?`) narrowing facts ("blessings") ------------------------
-   A path ("weap.model") maps to 1 while sema can prove the box is
-   non-empty (inside `if (weap.model?) { ... }`, or after a definite
-   assignment) - the path is BLESSED. Reading through an un-blessed
-   optional is a compile error ("'x' has not been blessed"). This is the
-   mirror image of move poisoning (a moved-from value is "poisoned";
-   an unproven one is merely un-blessed): blessings must be invalidated
-   by anything that could empty/rebind the path (move-out, reassignment,
-   shadowing). */
+/* ---- Nullable (`T?`) "blessings" ----------------------------------------
+   A path maps to 1 while provably non-empty. Reading an un-blessed optional is an error. Blessings die on any rebind/move/shadow, like move poisoning. */
 
 static bool IsPathNonEmpty(const Resolver* r, const char* key);
 static void MarkPathNonEmpty(Resolver* r, const char* key);
@@ -434,9 +414,7 @@ static bool IsPathNonEmpty(const Resolver* r, const char* key)
     return key && StrMapGet(&r->m_nonEmptyPaths, key) == (void*)1;
 }
 
-/* True when the key contains the erased any-element form ("a[]"). Such
-   keys are never provable: the spelling came from an index expression we
-   could not pin to a constant or a tracked variable. */
+/* True when `key` contains the erased any-element form "a[]" - never provable. */
 static bool PathKeyIsErased(const char* key)
 {
     return key && strstr(key, "[]") != NULL;
@@ -452,10 +430,7 @@ static bool IsIdentCont(char c)
     return isalnum((unsigned char)c) || c == '_';
 }
 
-/* Registers the fact key's index-variable dependencies: every identifier
-   token inside a bracket group names a local whose mutation (assignment,
-   ++/--, non-const ref pass, or a length change for `.length` spellings)
-   must later drop the fact. */
+/* Records each bracketed identifier in `key` as a dependency: mutating that local later drops the fact. */
 static void TrackIndexDeps(Resolver* r, const char* key)
 {
     for (const char* open = strchr(key, '['); open; open = strchr(open + 1, '['))
@@ -508,8 +483,7 @@ static void MarkPathNonEmpty(Resolver* r, const char* key)
     TrackIndexDeps(r, key);
 }
 
-/* Drops every fact whose key was spelled with `[var]` - called when the
-   variable is assigned, incremented, or passed as a non-const ref. */
+/* Drops every fact spelled with `[var]`; called when `var` is assigned, incremented, or passed non-const ref. */
 static void InvalidateIndexVar(Resolver* r, const char* var)
 {
     if (!var)
@@ -528,8 +502,7 @@ static void InvalidateIndexVar(Resolver* r, const char* var)
     {
         const char* key = (const char*)VecGet(deps, i);
 
-        ClearNonEmptySubtree(r, key);
-        ClearEmptySubtree(r, key);
+        ClearNullableFacts(r, key);
     }
 
     StrMapPut(&r->m_indexDeps, var, NULL);
@@ -538,25 +511,7 @@ static void InvalidateIndexVar(Resolver* r, const char* var)
 /* Drops `key` and all `key.*` descendants from the non-empty map. */
 static void ClearNonEmptySubtree(Resolver* r, const char* key)
 {
-    if (!key)
-    {
-        return;
-    }
-
-    StrMap* m = &r->m_nonEmptyPaths;
-
-    for (size_t i = 0; i < m->cap; i++)
-    {
-        if (!m->keys[i])
-        {
-            continue;
-        }
-
-        if (PathIsDescendant(key, m->keys[i]))
-        {
-            m->values[i] = NULL;
-        }
-    }
+    ClearSubtreeByPath(&r->m_nonEmptyPaths, key);
 }
 
 static void ClearAllNonEmptyFacts(Resolver* r)
@@ -577,11 +532,7 @@ static void ClearAllNonEmptyFacts(Resolver* r)
 }
 
 /* ---- Definitely-EMPTY facts ---------------------------------------------
-   The else branch of `if (path?)` proves the path is empty. An empty fact
-   never leaves its else block, and is dropped by anything that could give
-   the path a value (assignment, move-in, shadowing). Its main consumer is
-   diagnostics: reading through a definitely-empty path gets a sharper
-   message than a merely-unproven one. */
+   The else branch of `if (path?)` proves the path empty. Never leaves its block; dropped by any rebind. Sharper diagnostics than a merely-unproven path. */
 
 static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
 {
@@ -604,31 +555,18 @@ static void MarkPathEmpty(Resolver* r, const char* key)
 /* Drops `key` and all its descendants from the EMPTY map. */
 static void ClearEmptySubtree(Resolver* r, const char* key)
 {
-    if (!key)
-    {
-        return;
-    }
+    ClearSubtreeByPath(&r->m_emptyPaths, key);
+}
 
-    StrMap* m = &r->m_emptyPaths;
-
-    for (size_t i = 0; i < m->cap; i++)
-    {
-        if (!m->keys[i])
-        {
-            continue;
-        }
-
-        if (PathIsDescendant(key, m->keys[i]))
-        {
-            m->values[i] = NULL;
-        }
-    }
+/* Drops both nullable narrowing facts (non-empty and empty) for `key`. */
+static void ClearNullableFacts(Resolver* r, const char* key)
+{
+    ClearNonEmptySubtree(r, key);
+    ClearEmptySubtree(r, key);
 }
 
 
-/* Picks the right "unblessed" wording: a path narrowed by an enclosing
-   else block IS empty; anything else merely has not been BLESSED (proven
-   non-empty) yet. */
+/* "is definitely empty" for else-proven paths, else "has not been blessed". */
 static const char* EmptyWording(const Resolver* r, const char* key)
 {
     return IsPathDefinitelyEmpty(r, key) ? "is definitely empty" : "has not been blessed";
@@ -636,11 +574,7 @@ static const char* EmptyWording(const Resolver* r, const char* key)
 
 static const char* MovableBoxSourceKey(Resolver* r, Node* n);
 
-/* Shared diagnostic for reading through an un-BLESSED optional (one that
-   has not been proven non-empty by a `?` test). An erased key ("arr[]")
-   means the index expression could not be pinned to a constant or tracked
-   variable - no blessing can ever be established for it, so point at the
-   materialize-into-a-local idiom instead. */
+/* Diagnostic for reading an un-blessed optional. An erased key ("arr[]") can never be blessed - suggest materializing into a local. */
 static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* key, const char* typeName)
 {
     if (PathKeyIsErased(key))
@@ -661,13 +595,7 @@ static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* ke
                  key ? key : "<expr>");
 }
 
-/* Reading the CONTENTS of a maybe-empty optional - passing it where its
-   non-optional inner `T` is expected (call arg, var init, assignment,
-   return, array element), so the value gets unwrapped - requires a
-   narrowing fact, exactly like a member read through a `T?`. Targets
-   that keep the box shape (`T?`, `^T`) rebind/move and never read
-   contents, so they are exempt. A NULL target means "unknown" and is
-   skipped (callers that know a deref happens pass the inner type). */
+/* Reading optional CONTENTS into a non-optional target needs a narrowing fact. Box-shaped targets (`T?`/`^T`) rebind, so exempt. */
 static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueType, const TypeName* targetType,
                                SourceRange range)
 {
@@ -691,11 +619,7 @@ static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueTy
     DiagOptionalReadError(r, range, key, valueType->name);
 }
 
-/* Extracts the tested path from an if/while/for condition shaped like
-   `path?` or `!path?` (any number of `!` wrappers - parity tracked).
-   Returns the null-test OPERAND node, or NULL when the condition isn't
-   a null test. `*negated` tells whether the condition asserts the path
-   EMPTY (then-branch) rather than non-empty. */
+/* Extracts the operand of `path?`/`!path?` (any `!` count); `*negated` is true when the condition asserts EMPTY. */
 static Node* CondNullTestOperand(Node* cond, bool* negated)
 {
     bool neg = false;
@@ -717,8 +641,7 @@ static Node* CondNullTestOperand(Node* cond, bool* negated)
     return NULL;
 }
 
-/* Intersects two fact sets: a path stays definitely-non-empty only when BOTH
-   branches prove it. Dual of MergeMovedBoxes (which unions badness). */
+/* Intersect fact sets: a path stays non-empty only if both branches prove it. */
 static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
 {
     for (size_t i = 0; i < dst->cap; i++)
@@ -737,10 +660,7 @@ static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
     /* Keys that exist only in `other` cannot survive the merge either. */
 }
 
-/* Marks 'name' moved, unless it's a box global or rooted in a `ref ^T`
-   param - a borrow of the caller's box, which the callee doesn't own and
-   can't validly move out of (the caller's own liveness tracking has no way
-   to see a move that happens inside a different function). */
+/* Marks `name` moved, unless it's a box global or `ref ^T` param (borrowed, not owned). */
 static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 {
     const char* root = KeyRoot(r->m_arena, name);
@@ -763,30 +683,19 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 
     MarkBoxMoved(r, name);
     MarkBoxPartiallyMoved(r, name);
-    /* Moving out also invalidates any "definitely non-empty" fact for the
-        path and its descendants - a moved-from optional is empty again. */
+    /* Moving out also clears the path's non-empty fact. */
     ClearNonEmptySubtree(r, name);
 }
 
-/* Moving out an OPTIONAL path (`T?`) differs from a ^T/string move: the
-    source slot is nulled in place and left EMPTY - a legal state, not a
-    broken one. The move is not tracked as "moved" at all: the source just
-    becomes an un-blessed (in fact empty) optional, so later `path?` tests
-    read false and un-narrowed reads error with the ordinary "has not
-    been blessed" wording. Neither whole-value move restriction applies:
-    the parent box is not poisoned, and moving through a `ref` or out of
-    a box global is a visible in-place mutation, never a dangling owner. */
+/* Moving a `T?` leaves the source EMPTY (legal), not moved. No poison; later `path?` reads false. */
 static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 {
     (void)range;
 
-    ClearNonEmptySubtree(r, name);
-    ClearEmptySubtree(r, name);
+    ClearNullableFacts(r, name);
 }
 
-/* True when `name` is a module-level global - its mutation inside this
-   function is not observable/tracked, so it cannot serve as a precise
-   (dependency-tracked) index spelling. */
+/* True if `name` is a module global - untracked as a precise index spelling. */
 static bool IsModuleGlobalName(const Resolver* r, const char* name)
 {
     for (size_t i = 0; i < r->m_mod->globals.count; i++)
@@ -802,13 +711,7 @@ static bool IsModuleGlobalName(const Resolver* r, const char* name)
     return false;
 }
 
-/* Prints a stable, unambiguous spelling of an index expression for path
-   keys: literals, locals, `.length` of a local array, unary -/+/~ and the
-   integer binary operators over those. Binaries are FULLY parenthesized so
-   distinct trees never collide ("(i+(1*2))" vs "((i+1)*2)").
-   Returns NULL when the expression cannot be pinned (calls, comparisons,
-   globals, other node kinds) - the caller then erases the key, which is
-   conservative for moves and never provable as a fact. */
+/* Stable index spelling for path keys: literals, locals, `.length`, unary, and integer binaries (fully parenthesized). Returns NULL when unpinnable - caller erases the key (conservative for moves). */
 static char* IndexExprSpelling(Resolver* r, Node* n)
 {
     if (!n)
@@ -825,14 +728,13 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
     {
         const char* name = ((IdentExpr*)n)->name;
 
-        /* A global mentions no observable mutation site: erase. */
+        /* A global has no observable mutation site: erase. */
         return IsModuleGlobalName(r, name) ? NULL : arena_format(r->m_arena, "%s", name);
     }
 
     case NodeMember:
     {
-        /* `.length` of a BARE LOCAL only: member bases have no observable
-           invalidation point for their length. */
+        /* `.length` of a bare local only. */
         MemberExpr* m = (MemberExpr*)n;
 
         if (strcmp(m->member, "length") == 0 && m->base_node->kind == NodeIdent
@@ -846,10 +748,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
 
     case NodeIndex:
     {
-        /* A nested index used AS an index (`foo[other[bar]]`): spell base
-           and bracket recursively. The base must itself be spellable (a
-           bare local array); element writes into it are invalidated by the
-           assignment/++/-- hooks, and rebinds/builtins by the root hooks. */
+        /* Nested index: spell base and bracket recursively. */
         IndexExpr* ix = (IndexExpr*)n;
         char* baseSpell = IndexExprSpelling(r, ix->base_node);
         char* inner = IndexExprSpelling(r, ix->index);
@@ -942,8 +841,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
     }
 }
 
-/* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
-    Identifier -> its name; member chain -> dotted key ("holder.gun"). */
+/* Move-tracking key for `n` (casts unwrapped); NULL if not movable. */
 static const char* MovableBoxSourceKey(Resolver* r, Node* n)
 {
     /* Shared "what can be moved" rule (unwrap casts; ident/member/index). */
@@ -977,16 +875,7 @@ static const char* MovableBoxSourceKey(Resolver* r, Node* n)
             return NULL;
         }
 
-        /* Spell the index precisely so distinct elements are distinct keys:
-           a literal ("a[3]"), a local ("a[i]"), or any arithmetic/length
-           expression over locals ("a[i + 1]", "a[b.length - 1]") - the
-           latter two carry dependency-tracked variables. Anything the
-           printer refuses (calls, comparisons, globals) erases to the
-           any-element form ("a[]"), which is conservative for move
-           poisoning and NEVER provable as a narrowing fact. The "[]"
-           marker also keeps element-moves distinct from whole-array moves
-           in the moved-state map, while KeyRoot still reduces every
-           "base[...]" to "base" for the global / ref-param check. */
+        /* Spell the index precisely (literal/local/arithmetic) so distinct elements are distinct keys; unpinnable spellings erase to "a[]" (conservative, never provable). "[]" also separates element moves from whole-array moves. */
         char* idxSpell = IndexExprSpelling(r, ix->index);
 
         if (idxSpell)
@@ -1026,11 +915,7 @@ static void ReplaceStrMapContents(StrMap* dst, const StrMap* src)
     }
 }
 
-/* Conservatively folds 'other' into 'dst' (both moved-box state snapshots):
-   a name ends up moved if either side has it moved, else live if either
-   side has it live, else it's left as dst's value. Used to combine the
-   moved-state left by two mutually exclusive if/else branches, since only
-   one of them actually runs. */
+/* Conservative branch merge: a name is moved if either side moved it, else live if either side re-lived it. */
 static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
 {
     for (size_t i = 0; i < other->cap; i++)
@@ -1115,10 +1000,7 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
     }
 }
 
-/**
- * @brief Attempt to resolve calls for SIMD types (e.g. `float3(x, y, z)` or `float4(w, x, y, z)`).
- * @returns True if this was a valid constructor or false if it was malformed.
- */
+/* Resolves SIMD vector constructors (`float3(x)`, `float4(w,x,y,z)`); returns true if this was one. */
 static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // The function name is the same as the type name, so we can use TypeUtil functions on it.
@@ -1166,8 +1048,7 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 
 //-- Array intrinsics.
 
-/* Returns the result type of `copy(arg)`, or NULL if this isn't one.
-   copy returns the same type as its argument (e.g. copy(string) → string). */
+/* Result type of `copy(arg)`, or NULL if not a copy call. */
 static const TypeName* CopyBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee || strcmp(c->callee, "copy") != 0) return NULL;
@@ -1200,8 +1081,7 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* Result type of an array builtin call, or NULL if `c` isn't one.
-   array_push -> ulong (new length); array_pop -> element type; array_resize -> void. */
+/* Result type of array_push/pop/resize, or NULL if not one. */
 static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee)
@@ -1239,9 +1119,7 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
 
-/* True if `n` (after unwrapping casts) is an array-element read like `arr[i]`:
-   a borrow whose owner (the array) retains the value. Such a value cannot be
-   moved, so pushing it into an array would duplicate ownership. */
+/* True if `n` (casts unwrapped) is an array-element read `arr[i]` - a borrow whose owner retains the value. */
 static bool IsArrayElementBorrow(Node* n)
 {
     while (n && n->kind == NodeCast)
@@ -1252,8 +1130,7 @@ static bool IsArrayElementBorrow(Node* n)
     return n && n->kind == NodeIndex;
 }
 
-/* Validates an array builtin call and marks it a pseudo-call. Returns true if
-   `c` is one of array_push/pop/resize (regardless of whether it was valid). */
+/* Validates an array builtin and marks it pseudo; returns true if it's a push/pop/resize (valid or not). */
 static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee)
@@ -1283,9 +1160,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     const TypeName* arrType = InferType(r, arg0, scope);
 
-    /* A `T[]?` receiver is an optional array: the builtin mutates its
-       contents, so it derefs like any optional read (checked in
-       CheckCallArgOptionalDerefs). Unwrap for the element type. */
+    /* A `T[]?` receiver derefs like an optional read; unwrap for element type. */
     const TypeName* unwrapped = arrType && arrType->isOptional ? arrType->inner : arrType;
 
     if (!TypeNameIsDynamicArray(unwrapped))
@@ -1302,9 +1177,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    /* All three builtins can change the receiver's LENGTH: any fact whose
-        key was spelled through `[recv.length ...]` is stale. (Element-value
-        facts survive push; resize/pop drop those separately below.) */
+    /* Length may change: drop facts spelled through `[recv.length ...]`. Push keeps element facts; resize/pop drop them below. */
     {
         const char* lenRecvKey = MovableBoxSourceKey(r, arg0);
 
@@ -1314,18 +1187,14 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    /* array_resize (shrink drops trailing elements) and array_pop (removes
-        the last element) can empty indexed slots we hold facts about; the
-        lengths aren't tracked, so drop every element fact of the receiver.
-        array_push preserves existing element values - facts survive it. */
+    /* resize/pop empty slots we track - drop all element facts. push preserves them. */
     if (isResize || isPop)
     {
         const char* recvKey = MovableBoxSourceKey(r, arg0);
 
         if (recvKey)
         {
-            ClearNonEmptySubtree(r, recvKey);
-            ClearEmptySubtree(r, recvKey);
+            ClearNullableFacts(r, recvKey);
         }
     }
 
@@ -1350,9 +1219,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (valueType && elemType && !IsAssignableType(r, elemType, valueType))
         {
-            /* A narrowed `T?` pushes into a `^T[]` element slot: the
-                narrowing fact proves the box exists, so the move may take
-                it (leaving the source optional empty). */
+            /* A blessed `T?` pushed into `^T[]` may be moved (source left empty). */
             const TypeName* vi = TypeNameBoxInner(valueType);
             const TypeName* ei = TypeNameBoxInner(elemType);
 
@@ -1368,9 +1235,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
             }
         }
 
-        /* Pushing an owning value read out of an array element
-            (a borrow) would duplicate the owning pointer - the source array
-            keeps it too, so both would free it. Move it into a local first. */
+        /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
         if (valueType && TypeNameIsOwning(valueType) && IsArrayElementBorrow(arg1))
         {
             DiagErrorFmt(r->m_diag, arg1->range,
@@ -1379,13 +1244,10 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
                          valueType->name);
         }
 
-        /* Deref check before the move tracking below clears the pushed
-            optional's fact. */
+        /* Deref check before the move tracking below clears the pushed optional's fact. */
         CheckCallArgOptionalDerefs(r, c, scope);
 
-        /* Pushing an owning value (string/box) moves it into the array.
-            An optional source moves out cleanly: it is left EMPTY (a legal
-            state) and never poisons its parent box. */
+        /* Pushing an owning value moves it in; an optional source is left EMPTY, never poisoning its parent. */
         if (valueType && TypeNameIsOwning(valueType))
         {
             const char* movedKey = MovableBoxSourceKey(r, arg1);
@@ -1410,9 +1272,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 }
 //--
 
-/* Types the C ABI can carry through a bare extern `...` as a plain value:
-   scalars, string (const char*), and handles. Structs, arrays, SIMD
-   vectors, and void can't. */
+/* Types a bare extern `...` can carry: scalars, string, handles. Not structs/arrays/SIMD/void. */
 static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
 {
     if (!type)
@@ -1438,10 +1298,7 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
     return false;
 }
 
-/* Types that may be passed through a bare extern `...` (C varargs).
-   Scalars, string, handles, and ^T (which derefs to its value) reduce
-   to something the C ABI can carry; ^T is only allowed when T itself is
-   scalar/string/handle, since a boxed struct would have to cross by value. */
+/* Types allowed through extern `...`: scalars/string/handles, and `^T` only when T is scalar/string/handle. */
 static bool IsCVarargCompatible(Resolver* r, const TypeName* type)
 {
     if (!type || strcmp(type->name, "void") == 0)
@@ -1462,29 +1319,18 @@ static bool IsCVarargCompatible(Resolver* r, const TypeName* type)
     return false;
 }
 
-/* Moves box/string sources into owned (non-ref) params, and into the
-    collected array of a typed rest param when its element type is owning.
-    Also performs call-side fact invalidation: a non-const `ref` argument
-    may be mutated (or re-bound) by the callee, and any real call may
-    mutate globals - narrowing facts that could observe those must go. */
+/* Moves box/string sources into owned params and rest-collected arrays. Also invalidates narrowing facts a real call could break (non-const ref mutation, global rebinds). */
 static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
 {
-    /* Any real (non-pseudo) call can rebind module globals between the
-        caller's test and use: global-rooted narrowing facts never survive
-        a call. Locals cannot be seen by the callee (no captures; only
-        `ref` args below can be mutated). */
+    /* A real call may rebind globals - global-rooted facts never survive; locals are unaffected. */
     for (size_t g = 0; g < r->m_mod->globals.count; g++)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, g);
 
-        ClearNonEmptySubtree(r, gd->name);
-        ClearEmptySubtree(r, gd->name);
+        ClearNullableFacts(r, gd->name);
     }
 
-    /* For a typed rest, the last param is the collected T[] array itself, so
-        the arg at that slot is really the first ELEMENT. Only args before it
-        map to named params; everything from the rest slot onward moves only if
-        the ELEMENT type is owning (e.g. ^T...), not because T[] is. */
+    /* With a typed rest, the rest slot holds the first ELEMENT; later args move only if the element type owns. */
     bool typedRest = best->isVariadic && !best->isCVararg;
     size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
 
@@ -1492,10 +1338,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     {
         Node* arg = (Node*)VecGet(&c->args, j);
 
-        /* A non-const `ref` slot hands the callee a mutable view: any fact
-            under that path (including array-element facts spelled through
-            it) may no longer hold, and an ident arg's use as an index
-            variable is untrackable from here on. */
+        /* A non-const `ref` arg may be mutated by the callee - drop its facts and index use. */
         if (j < namedCount)
         {
             const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, j);
@@ -1511,12 +1354,9 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
 
                 if (refKey)
                 {
-                    /* The callee may empty/rebind through the ref, and it may
-                        write elements of a passed array - nested-index
-                        spellings ("foo[other[bar]]") die with it. */
+                    /* Callee may rebind/empty through the ref and write array elements - drop nested facts. */
                     InvalidateIndexVar(r, KeyRoot(r->m_arena, refKey));
-                    ClearNonEmptySubtree(r, refKey);
-                    ClearEmptySubtree(r, refKey);
+                    ClearNullableFacts(r, refKey);
                 }
             }
         }
@@ -1563,11 +1403,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     }
 }
 
-/* After resolution, every call argument whose type is `T?` but whose
-   destination wants the CONTENTS (a plain `T` param, a typed rest's
-   element, a struct-constructor field, an array_push element, or a bare
-   extern `...` slot) must be proven non-empty - the call would unwrap
-   the maybe-empty box. */
+/* Every `T?` arg whose target wants the CONTENTS (T param, rest element, struct field, array_push element, or extern `...`) must be proven non-empty. */
 static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->args.count == 0)
@@ -1600,8 +1436,7 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
             }
             else if (fd->isCVararg)
             {
-                /* Bare extern `...`: the C ABI carries the unwrapped value,
-                   so the optional's inner is the effective target. */
+                /* Extern `...`: the inner type is the effective target. */
                 target = TypeNameBoxInner(at);
             }
 
@@ -1627,8 +1462,7 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
-    /* array_push(arr, opt): the element slot is the target; a `T[]?`
-       receiver is itself dereferenced (its contents are mutated). */
+    /* array_push: the element slot is the target; a `T[]?` receiver is itself dereferenced. */
     if (c->callee && strcmp(c->callee, "array_push") == 0 && c->args.count == 2)
     {
         const TypeName* arrType = InferType(r, (Node*)VecGet(&c->args, 0), scope);
@@ -1647,10 +1481,7 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
     }
 }
 
-/* Rebuilds a braced list node as a positional StructInitExpr of `structName`.
-   The parser cannot know a `{...}` in expression position initializes a
-   struct rather than an array, so sema rewrites the node once the expected
-   (target/param/field) type is known. Elements become positional fields. */
+/* Rewrites a braced list into a positional StructInitExpr of `structName` (parser can't tell struct vs array init). */
 static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structName)
 {
     ArrayInitExpr* ai = AsNode(ArrayInitExpr, braced);
@@ -1673,15 +1504,10 @@ static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structNam
     return (Node*)init;
 }
 
-/* Applies a struct-shaped expected type to a context-free braced node:
-   rewrites a braced array list into a positional struct init, or fills the
-   missing typeName of a designator form parsed in expression position
-   (`{ .a = 1 }`). Returns the (possibly new) node; unchanged when the
-   expected type is not a defined struct. */
+/* Applies a struct target type to a context-free braced node, or fills a designator's typeName. Unchanged if target isn't a defined struct. */
 static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target)
 {
-    const TypeName* unwrapped = target && target->isOptional ? target->inner : target;
-    unwrapped = unwrapped && unwrapped->isBox ? unwrapped->inner : unwrapped;
+    const TypeName* unwrapped = UnwrapBoxPtr(target);
 
     if (!unwrapped || !TypeRegistryIsUserType(&r->m_registry, unwrapped->name)
         || TypeRegistryIsOpaque(&r->m_registry, unwrapped->name))
@@ -1706,11 +1532,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
     {
-        /* Constructor call FooBar(arg): an owning field initialized from an
-            owning source is a move — enforce the same rules as var-decl and
-            array_push (globals / ref params can't be moved). The optional
-            deref check runs BEFORE the moves: moving out of a `T?` clears
-            its narrowing fact, but the fact held at call time. */
+        /* Struct ctor: an owning field from an owning source is a move (same rules as var-decl). Deref checks run before moves so the fact at call time is used. */
         const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
 
         for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
@@ -1718,10 +1540,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
 
-            /* A braced list against a STRUCT field is a positional struct
-                init (`Outer({}, ...)`); against an ARRAY field it is an
-                array literal. The parser can't know, so decide here - and
-                before any type inference below. */
+            /* A braced arg against a struct field is a positional struct init; against an array field, an array literal. */
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &fd->type);
 
             if (resolvedArg != arg)
@@ -1730,13 +1549,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             }
             else if (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
             {
-                /* A braced list argument initializes an array field
-                    positionally (`FooBar("x", {1, 2})`): it carries no
-                    element type from the parser, so infer it from the
-                    field. The argument's own resolution pass already ran
-                    with a NULL element type, so its per-element move
-                    marking was skipped - do it here (mirrors the
-                    NodeArrayInit resolution body). */
+                /* Array field from a braced list: infer element type and redo move-marking (skipped when first resolved with NULL type). */
                 const TypeName* ft = &fd->type;
                 const TypeName* ftArr = ft->isOptional ? ft->inner : ft;
 
@@ -1764,9 +1577,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             }
         }
 
-        /* Facts first, moves second: the loop below may move an argument
-            out of a `T?` (clearing its narrowing fact), but the fact held
-            at call time. */
+        /* Facts before moves: a move clears the fact, but the call-time fact must be used. */
         CheckCallArgOptionalDerefs(r, c, scope);
 
         for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
@@ -1806,18 +1617,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
-    /* Already resolved on an earlier pass over this same call (e.g. the
-       warmup walk in WalkLoopBody) - c->callee has been rewritten to the
-       chosen overload's mangled name, so a fresh name lookup below would
-       find nothing. Reuse the cached decl and just redo the move-tracking
-       side effects, which do need to run again for the real pass. */
+    /* Call already resolved (e.g. warmup); reuse cached decl and rerun move tracking. */
     if (c->resolvedDecl)
     {
         const FunctionDecl* best = c->resolvedDecl;
 
-        /* Facts first, moves second: TrackCallArgMoves clears the narrowing
-            fact of an optional it moves out of, but the fact held at call
-            time. */
+        /* Facts before moves. */
         CheckCallArgOptionalDerefs(r, c, scope);
         TrackCallArgMoves(r, best, c);
 
@@ -1859,9 +1664,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (functionDecl->isVariadic)
         {
-            /* A bare extern `...` adds no declared param; a typed rest param
-               is already one of params.count, so its minimal call is one
-               fewer than that. */
+            /* Extern `...` adds no param; a typed rest counts as one, so min args is one fewer. */
             size_t minArgs = functionDecl->isCVararg ? functionDecl->params.count
                                                      : functionDecl->params.count - 1;
 
@@ -1877,8 +1680,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         int score = 0;
 
-        /* Variadic candidates are a fallback: an exact-arity non-variadic
-           overload with the same name always wins when the call fits it. */
+        /* Variadic candidates are a lower-priority fallback. */
         if (functionDecl->isVariadic)
         {
             score += 1;
@@ -1896,16 +1698,13 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 continue;
             }
 
-            /* Trailing args beyond the named params are collected by the
-                variadic tail. A bare extern `...` adds no param; a typed rest
-                param already counts as one, so its tail starts one earlier. */
+            /* Trailing args past named params go to the variadic tail; rest starts one earlier than its count. */
             bool isTail = functionDecl->isVariadic
                 && j >= (functionDecl->isCVararg ? functionDecl->params.count : functionDecl->params.count - 1);
 
             if (functionDecl->isCVararg && isTail)
             {
-                /* Bare extern `...`: no declared element type. The arg must be
-                    representable in a C vararg call. */
+                /* Extern `...`: arg must be C-vararg representable. */
                 if (!IsCVarargCompatible(r, argType))
                 {
                     viable = false;
@@ -1950,9 +1749,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             }
             else if (paramType->isOptional)
             {
-                /* `Weapon` (boxed on the fly, like rest-tail elements) and
-                    `^Weapon` (widened) both coerce into a `Weapon?` param
-                    when the inner types match. */
+                /* `Weapon` and `^Weapon` coerce into `Weapon?` when inners match. */
                 const char* paramInner = TypeNameBoxInner(paramType) ? TypeNameBoxInner(paramType)->name : NULL;
 
                 bool optMatch = false;
@@ -1999,10 +1796,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             {
                 const TypeName* paramInner = TypeNameBoxInner(paramType);
 
-                /* T coerces to ^T (implicit boxing), matching array
-                    literals. Only valid for owned (non-ref) typed-rest tail
-                    args, where the collector boxes each element inline and the
-                    callee owns it; a ref rest borrows, so it can't box. */
+                /* T coerces to ^T on an owned typed-rest tail (collector boxes inline); a ref rest can't box. */
                 if (paramInner && strcmp(paramInner->name, argType->name) == 0)
                 {
                     score += 1;
@@ -2053,9 +1847,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     c->callee = best->mangledName;
     c->resolvedDecl = best;
 
-    /* A braced call argument against a struct param (`take({});`) is a
-       positional struct init, not an array literal - rewrite before the
-       checks/moves below consult argument types. */
+    /* Braced arg against a struct param is a positional struct init; rewrite before checks. */
     {
         bool typedRest = best->isVariadic && !best->isCVararg;
         size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
@@ -2186,17 +1978,8 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
 
         const TypeName* baseType = InferType(r, m->base_node, scope);
 
-        /* Member access through an optional goes through the same box
-           pointer as through a `^T`. */
-        if (baseType && baseType->isOptional)
-        {
-            baseType = baseType->inner;
-        }
-
-        if (baseType && baseType->isBox)
-        {
-            baseType = baseType->inner;
-        }
+        /* Optional member access follows the box pointer. */
+        baseType = UnwrapBoxPtr(baseType);
 
         if (!baseType)
         {
@@ -2296,10 +2079,7 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
     {
         const TypeName* inner = TypeNameBoxInner(targetType);
 
-        /* A `T?` slot accepts a `^T` (and vice versa) when the inner types
-           match - same runtime representation. The reverse direction is NOT
-           accepted here on purpose: moving an optional into a non-optional
-           box requires a narrowing fact, which the callers check. */
+        /* `T?` accepts `^T` (and vice versa) when inners match (same ABI). The reverse needs a narrowing fact (checked by callers). */
         const TypeName* valueInner = TypeNameBoxInner(valueType);
 
         if (targetType->isOptional && valueType->isBox && inner && valueInner)
@@ -2366,10 +2146,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
         else if (TypeNameIsOwning(varType))
         {
-            /* Whole-value use (asMemberBase=false): reject if fully OR
-               partially moved. Member-base use (asMemberBase=true): reject
-               only if fully moved — allows descending into a partially
-               moved struct to access non-moved fields. */
+            /* Whole-value use: reject if fully or partially moved. Member-base use: reject only if fully moved (descend into partial). */
             bool blocked = asMemberBase ? IsBoxMoved(r, ident->name)
                                         : IsBoxUnusable(r, ident->name);
 
@@ -2413,19 +2190,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         CheckConstAssign(r, a->target, a->base.range);
 
-        /* Assigning a scalar local re-binds it: every narrowing fact spelled
-            with it as an index ("arr[i]") is stale. This covers `=`,
-            compound assigns, and for-loop updates alike. */
+        /* Reassigning a scalar local invalidates its index spellings' facts. */
         if (a->target->kind == NodeIdent)
         {
             InvalidateIndexVar(r, ((IdentExpr*)a->target)->name);
         }
         else if (a->target->kind == NodeIndex)
         {
-            /* Writing an ARRAY ELEMENT (`other[j] = v`) changes the value of
-                any nested-index spelling ("foo[other[bar]]") or length-based
-                one, at an untrackable position: kill the array root's
-                dependent facts. */
+            /* Writing an array element kills nested-index/length facts of the array root. */
             const char* targetKey = MovableBoxSourceKey(r, a->target);
 
             if (targetKey)
@@ -2437,11 +2209,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
         bool targetIsBox = tt && TypeNameIsOwning(tt);
 
-        /* An owning struct field target (`bob.name = ...` where `name` is a
-            string/box/array) is reassigned, not read - so it must re-life the
-            field rather than trip the "used after move" check that a plain
-            read of the target would. */
-        const char* fieldKey = NULL;
+            /* An owning field target is reassigned, not read - re-life it instead of tripping use-after-move. */
+            const char* fieldKey = NULL;
         bool targetIsOwningField = false;
 
         if (a->target->kind == NodeMember)
@@ -2454,10 +2223,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 fieldKey = MovableBoxSourceKey(r, a->target);
             }
 
-            /* Writing THROUGH an optional link (addressing a field inside a
-               maybe-empty box) needs every optional ancestor proven - same
-               rule as a read, since codegen must compute the field address. */
-            for (Node* anc = ((MemberExpr*)a->target)->base_node; anc;)
+                /* Writing through an optional link requires every optional ancestor proven. */
+                for (Node* anc = ((MemberExpr*)a->target)->base_node; anc;)
             {
                 const TypeName* at2 = InferType(r, anc, scope);
 
@@ -2481,20 +2248,15 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        /* A bare braced RHS (`a = {1,2,3};`, `s.field = {...};`, `box = {};`)
-            carries no type from the parser - infer it from the target so
-            codegen and the type checks below see a real type. A non-array,
-            non-struct target cannot take a braced list at all. */
+        /* A bare braced RHS carries no type - infer it from the target. Non-array/struct targets reject it. */
         if ((a->value->kind == NodeArrayInit || a->value->kind == NodeStructInit)
             && (a->target->kind == NodeIdent || a->target->kind == NodeMember))
         {
             const TypeName* at = (a->target->kind == NodeIdent) ? tt : InferType(r, a->target, scope);
             const TypeName* atArr = at && at->isOptional ? at->inner : at;
 
-            /* A braced RHS against a struct-shaped target (`foo = {};`,
-                `boxVar = { ... };`, `opt = {};`) is a struct initializer,
-                not an array literal. */
-            a->value = ApplyBracedStructTarget(r, a->value, atArr);
+                /* A braced RHS against a struct target is a struct init. */
+                a->value = ApplyBracedStructTarget(r, a->value, atArr);
 
             if (a->value->kind == NodeArrayInit && at && TypeNameIsDynamicArray(atArr))
             {
@@ -2525,18 +2287,11 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         if (targetIsBox)
         {
-            /* Resolve the value first (so a call gets its resolvedDecl set)
-                before inferring its type - otherwise an unresolved call's
-                type reads as unknown, misclassifying the assignment below. */
+            /* Resolve the value first so a call's resolvedDecl is set before type inference. */
             ResolveExpr(r, a->value, scope);
             const TypeName* vt = InferType(r, a->value, scope);
 
-            /* `=` rebinds the box (moves in a new box of the same type);
-                any other assignment into a ^T - including `=` with a
-                plain T value, e.g. `x = 5;` - mutates its contents instead.
-                An optional target (`T?`) may be empty, so its contents can
-                never be mutated in place: every `=` rebinds the whole slot
-                (drop old + take new), and compound ops are rejected. */
+            /* `=` rebinds the box; other assigns mutate contents. An optional target is always rebound (compound ops rejected). */
             bool optionalTarget = tt->isOptional;
 
             if (optionalTarget && a->op != AssignSet)
@@ -2561,12 +2316,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     return;
                 }
 
-                /* A `ref ^T` is a view of the caller's box binding, not
-                    something this function owns - rebinding it (`inBox =
-                    otherBox;`) would silently rebind the caller's variable
-                    too. Only the box's contents can be assigned through a
-                    ref (`inBox = someInnerValue;`), same restriction as a
-                    box global. */
+                /* A `ref ^T` is the caller's box - rebinding would rebind the caller; only contents may be assigned. */
                 if (StrMapGet(&r->m_refBoxParams, targetName))
                 {
                     DiagErrorFmt(r->m_diag, a->base.range,
@@ -2588,10 +2338,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
             else
             {
-                /* Assigning a plain T (or compound-assigning) into a
-                    ^T (`x = 5;`, `val -= amt;`) mutates the boxed value
-                    in place - not a move, so it's allowed even for a box
-                    global or a moved-and-revalidated box. */
+                /* Plain/compound assign into a ^T mutates contents in place (not a move). */
                 if (IsBoxMoved(r, targetName))
                 {
                     DiagErrorFmt(r->m_diag, a->base.range, "'%s' used after move", targetName);
@@ -2605,21 +2352,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                  targetName);
                 }
 
-                /* Content-assigning a `T?` reads through the optional to
-                    move its inner value out - the content target is the
-                    box inner for ^T targets, or the target itself for a
-                    plain owning `string`. */
+                /* Content-assigning a `T?` reads through it (inner for ^T, target for string). */
                 CheckOptionalDeref(r, a->value, vt, inner ? inner : tt, a->base.range);
             }
         }
         else if (targetIsOwningField)
         {
-            /* Writing to an owning field re-lives it. Only the root binding
-               needs a move-check: a fully-moved root can't be written to, but
-               a partially-moved root (or a partially-moved ancestor of a
-               deeper field) is fine - one of its fields is being restored.
-               Intermediate members are not read here, so their partially-
-               moved state must not block the write. */
+            /* Writing an owning field re-lives it. Only the root needs a move-check; partial ancestors are fine. */
             Node* root = a->target;
 
             while (root->kind == NodeMember || root->kind == NodeIndex)
@@ -2679,10 +2418,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
             }
 
-            /* A ^T value assigned into a plain (non-box) T target - a
-                ref T param, a local, a field - reads through the box (same
-                "^T -> T" coercion already used for var-decl inits, call
-                args, and returns), not a move. */
+            /* `^T` into a plain `T` target reads through the box (same coercion as inits/calls/returns), not a move. */
             if (tt)
             {
                 const TypeName* vt = InferType(r, a->value, scope);
@@ -2715,8 +2451,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         CheckConstAssign(r, inc->operand, inc->base.range);
         ResolveExpr(r, inc->operand, scope);
 
-        /* ++/-- mutates the operand: any narrowing fact spelled with this
-            variable as an index ("arr[i]") is stale. */
+        /* ++/-- invalidates index spellings of the operand. */
         if (inc->operand->kind == NodeIdent)
         {
             InvalidateIndexVar(r, ((IdentExpr*)inc->operand)->name);
@@ -2769,8 +2504,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         const TypeName* rawBaseType = InferType(r, m->base_node, scope);
 
-        /* Reading through a possibly-empty optional requires a narrowing
-            fact (`if (path?)`) - or an explicit reassignment of it. */
+        /* Reading a possibly-empty optional needs a narrowing fact. */
         if (rawBaseType && rawBaseType->isOptional)
         {
             const char* baseKey = MovableBoxSourceKey(r, m->base_node);
@@ -2781,17 +2515,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        const TypeName* baseType = rawBaseType;
-
-        if (baseType && baseType->isOptional)
-        {
-            baseType = baseType->inner;
-        }
-
-        if (baseType && baseType->isBox)
-        {
-            baseType = baseType->inner;
-        }
+        const TypeName* baseType = UnwrapBoxPtr(rawBaseType);
 
         if (baseType && TypeRegistryIsOpaque(&r->m_registry, baseType->name))
         {
@@ -2805,9 +2529,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        /* A box-typed field can be moved out too - check the same way.
-            IsBoxUnusable catches both fully-moved (exact field moved) and
-            partially-moved (a descendant of this field was moved). */
+        /* Box fields can be moved out too; IsBoxUnusable catches full or partial moves. */
         const TypeName* selfType = InferType(r, n, scope);
 
         if (selfType && TypeNameIsOwning(selfType))
@@ -2848,10 +2570,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     {
         StructInitExpr* structInitExpr = (StructInitExpr*)n;
 
-        /* A context-free braced literal (`{ .a = 1 }` in expression
-            position) has no type name yet - the surrounding
-            call/assignment fills it. Resolve the field values only; the
-            full checking runs on a later pass over the now-typed node. */
+        /* A context-free braced literal has no type yet - resolve field values; full checks run later. */
         if (!structInitExpr->typeName)
         {
             for (size_t i = 0; i < structInitExpr->fields.count; i++)
@@ -2921,9 +2640,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (fieldDecl && field->value)
             {
-                /* A braced value against a struct-shaped field
-                    (`Outer { .inner = {} };`) is a nested struct init, not
-                    an array literal. */
+                /* A braced value against a struct-shaped field is a nested struct init. */
                 if (field->value->kind == NodeArrayInit || field->value->kind == NodeStructInit)
                 {
                     field->value = ApplyBracedStructTarget(r, field->value, &fieldDecl->type);
@@ -2935,12 +2652,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                     if (fieldDecl->type.isArray && fieldDecl->type.length >= 0)
                     {
-                        /* Fixed-size array field: the initializer's SHAPE
-                            must mirror the type - nested rows (one brace
-                            level per dimension, rows may be short) for
-                            multidimensional fields, a flat leaf list for
-                            single-dimension ones. Rows then place at their
-                            row-major offsets; missing elements zero. */
+                        /* Fixed array: shape must mirror type - nested rows per dimension, flat list for 1-D; rows place row-major. */
                         long total = 0;
                         const TypeName* leaf = FixedArrayLeaf(&fieldDecl->type, &total);
 
@@ -2978,11 +2690,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                             free(oldItems);
                         }
 
-                        /* Bare-brace leaf elements (`{ .v = 1 }`, `{}`) are
-                            struct inits of the leaf type - the parser can't
-                            know that deep inside row literals, so fill them
-                            now that the leaf type is known. */
-                        for (size_t k = 0; k < ai->elements.count; k++)
+                            /* Bare-brace leaves are struct inits of the leaf type; fill now. */
+                            for (size_t k = 0; k < ai->elements.count; k++)
                         {
                             Node* elem = (Node*)VecGet(&ai->elements, k);
 
@@ -3018,9 +2727,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     }
                     else if (TypeNameIsDynamicArray(&fieldDecl->type))
                     {
-                        /* Dynamic array field: the braced literal allocates a
-                            fresh array. Fill the element type for codegen and
-                            check per-element types. */
+                        /* Dynamic array field: braced literal allocates a fresh array; fill element type and check. */
                         const TypeName* elem = TypeNameArrayElem(&fieldDecl->type);
 
                         if (!ai->elementType)
@@ -3064,9 +2771,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     CheckOptionalDeref(r, field->value, fieldValueType, &fieldDecl->type, field->value->range);
                 }
 
-                /* A ^T field moves its source — but only when the source
-                    value itself is owning (^T into ^T, string into
-                    ^string). A bare T boxed into a ^T field is a copy. */
+                /* A ^T field moves its source only when that source is itself owning. */
                 const TypeName* fieldValueType2 = InferType(r, field->value, scope);
 
                 const char* movedFieldKey
@@ -3081,10 +2786,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        /* Non-optional box fields (`^T`) must be explicitly initialized:
-           an omitted field would be zero-filled, leaving a NULL box that
-           every subsequent operation would trip over. Optionals (`T?`)
-           may legitimately stay empty. */
+        /* Non-optional `^T` fields must be initialized (NULL would trip every use); `T?` may stay empty. */
         if (structType && !TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
         {
             size_t positionalIndex = 0;
@@ -3196,9 +2898,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     {
         NullTestExpr* nt = (NullTestExpr*)n;
 
-        /* Testing `a.b.c?` reaches c by dereferencing a and a.b - so every
-           optional ANCESTOR of the tested path must already be proven
-           non-empty, otherwise the test itself would fault. */
+        /* Every optional ANCESTOR of the tested path must already be proven non-empty, or the test itself faults. */
         Node* anc = NULL;
 
         if (nt->operand->kind == NodeMember)
@@ -3255,9 +2955,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             Node* elem = (Node*)VecGet(&ai->elements, i);
 
-            /* Nested array literal (`int[][] g = { {1, 2}, {3} }`): the
-                parser types only the outermost literal, so propagate the
-                element type's own element into the row literals. */
+            /* Nested array literal: propagate the element type's element into row literals. */
             if (ai->elementType && ai->elementType->isArray && elem->kind == NodeArrayInit
                 && !((ArrayInitExpr*)elem)->elementType)
             {
@@ -3271,8 +2969,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             ResolveExpr(r, elem, scope);
 
-            /* An owning value (string/box) stored in an array literal moves
-                its source, so mark it moved just like a var-decl move. */
+            /* An owning value in an array literal moves its source (like a var-decl move). */
             if (ai->elementType && TypeNameIsOwning(ai->elementType))
             {
                 const char* movedKey = MovableBoxSourceKey(r, elem);
@@ -3294,13 +2991,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     }
 }
 
-/* A loop body runs repeatedly, so a box move it contains must stay valid
-   across the "loop back" edge too - not just top-to-bottom once. Walk the
-   body once with diagnostics suppressed to propagate the moved-state one
-   iteration would leave behind (this is what the next iteration actually
-   starts from), then walk it again for real; any move violation that only
-   shows up because of that carried-over state - like moving the same box
-   on every iteration of a loop - is caught by the second walk. */
+/* A loop body repeats, so a move must stay valid across the back edge. Walk once muted (warmup) to carry state forward, then walk again for real; errors needing carried-over state surface on the second pass. */
 static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey, bool condFactNegated)
 {
     DiagnosticEngine warmup;
@@ -3309,8 +3000,7 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* con
     DiagnosticEngine* realDiag = r->m_diag;
     r->m_diag = &warmup;
 
-    /* Warmup pass: simulate a second iteration with diagnostics muted, so
-       genuinely unsound bodies still surface their errors below. */
+    /* Muted warmup simulating a second iteration. */
     Vec liveLog;
     VecInit(&liveLog);
     r->m_liveLog = &liveLog;
@@ -3321,22 +3011,15 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* con
     r->m_diag = realDiag;
     DiagnosticEngineFree(&warmup);
 
-    /* Back-edge credit: anything the body REASSIGNED as a whole is fresh
-       again at the top of the next iteration - clear its subtree (and stale
-       narrowing facts). Without this, `cur = cur.next;` in a list walk reads
-       as a use-after-move even though each iteration binds a fresh cell. */
+    /* Clear state of whole-reassigned bindings so the next iteration starts fresh (e.g. `cur = cur.next;`). */
     for (size_t i = 0; i < liveLog.count; i++)
     {
         const char* key = (const char*)VecGet(&liveLog, i);
         ClearBoxSubtree(r, key);
-        ClearNonEmptySubtree(r, key);
-        ClearEmptySubtree(r, key);
+        ClearNullableFacts(r, key);
     }
 
-    /* The condition is re-tested every iteration: its narrowing fact holds
-        throughout the body even if the body reassigned that very path
-        (`while (cur?) { ... cur = cur.next; }`). A negated condition
-        (`while (!cur?)`) proves the path EMPTY inside the body instead. */
+    /* The condition's fact holds through the body (even if reassigned); negated proves EMPTY. */
     if (condFactKey)
     {
         if (condFactNegated)
@@ -3382,9 +3065,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                          vd->name, vd->type.name);
         }
 
-        /* Owning types must be initialized so they hold a valid heap pointer
-            - except arrays, which default to an empty {null, 0} fat struct,
-            and optionals (`T?`), for which empty is a valid state. */
+        /* Owning types need an init (arrays default empty; optionals may be empty). */
         if (TypeNameIsOwning(&vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
             && !vd->init)
         {
@@ -3402,8 +3083,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                          vd->type.name, vd->type.name);
         }
 
-        /* An owning struct held by value as an array element would leak its
-            owning fields on drop - it must be boxed too (^S[]). */
+        /* An owning struct element would leak on drop - box it (^S[]). */
         {
             const TypeName* arrElem = TypeNameArrayElem(&vd->type);
 
@@ -3441,19 +3121,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
-        /* Fresh binding: clear any stale moved-state a same-named variable
-            left behind (e.g. from a prior loop iteration or an earlier,
-            unrelated declaration in this function) - including field-level
-            partial-move markers and nullable narrowing facts. A fresh `i`
-            also orphans facts spelled with the old `i` as an index. */
+        /* Fresh binding: clear stale moved-state, nullable facts, and index deps from any prior same-named var. */
         ClearBoxSubtree(r, vd->name);
-        ClearNonEmptySubtree(r, vd->name);
-        ClearEmptySubtree(r, vd->name);
+        ClearNullableFacts(r, vd->name);
         InvalidateIndexVar(r, vd->name);
 
-        /* An initialized declaration proves the binding non-empty - same as
-           a whole-value assignment would (`Weapon? w = Weapon { ... };`
-           establishes `w?` for everything that follows). */
+        /* An initialized declaration proves the binding non-empty. */
         if (vd->init)
         {
             MarkPathNonEmpty(r, vd->name);
@@ -3541,18 +3214,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         IfStmt* i = (IfStmt*)n;
         ResolveExpr(r, i->condition, scope);
 
-        /* A direct `if (path?)` condition establishes a definitely-non-empty
-            fact for the then-branch; the negated `if (!path?)` form mirrors
-            it: then-branch proves EMPTY, else-branch proves non-empty. Facts
-            from both branches are intersected at the join; moved-state keeps
-            its own conservative union merge. */
+        /* `if (path?)` blesses the then-branch; `if (!path?)` blesses the else. Facts intersect at the join; moved-state unions. */
         bool factNegated = false;
         Node* factOperand = CondNullTestOperand(i->condition, &factNegated);
         const char* factKey = factOperand ? MovableBoxSourceKey(r, factOperand) : NULL;
 
-        /* then/else are mutually exclusive - each is walked from the same
-            starting moved-state (not one after the other), and the state
-            after the if is a conservative merge of both outcomes. */
+        /* then/else are walked from the same pre-state; the result merges both. */
         StrMap beforeBranches;
         CopyStrMap(&r->m_movedBoxes, &beforeBranches);
 
@@ -3584,15 +3251,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
         ReplaceStrMapContents(&r->m_nonEmptyPaths, &beforeFacts);
-        /* Empty facts never escape their branch - not even the then-branch
-            of a negated test. */
+        /* Empty facts never escape their branch. */
         ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
 
-        /* The else side of the if - an EXPLICIT else block, or the implicit
-            fall-through when there is none - runs only when the condition is
-            false: `path?` false means the path is definitely empty, while
-            `!path?` false means it is non-empty (this implicit-else fact is
-            what makes `if (!p?) { p = v; }` prove `p` at the join). */
+        /* The implicit/explicit else runs when the condition is false: establishes the opposite fact. */
         if (factKey && factNegated)
         {
             MarkPathNonEmpty(r, factKey);
@@ -3633,8 +3295,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         WalkLoopBody(r, w->body, scope, factKey, whileFactNegated);
 
-        /* Nothing survives a loop: the condition may have been false on the
-           last check, and any fact established inside may not hold. */
+        /* Nothing survives a loop: facts never hold after it. */
         ClearAllNonEmptyFacts(r);
 
         return;
@@ -3816,9 +3477,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             continue;
         }
 
-        /* Layout conflicts (extern struct redeclarations, overlapping
-           fieldoffsets, unsizeable field types) are computed in the type
-           registry; report them here where a source range is available. */
+        /* Layout conflicts are computed in the type registry; report them here where a source range is available. */
         const StructType* registered = TypeRegistryFind(&r.m_registry, sd->name);
 
         if (registered && registered->layoutError)

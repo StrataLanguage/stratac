@@ -13,9 +13,7 @@ typedef struct {
 void LLVMJitInit(LLVMJit* jit);
 void LLVMJitDestroy(LLVMJit* jit);
 
-/* Set host-provided alloc/free used by the JIT runtime
-    Note, this is optional: by default, malloc and free will be used.
-    Call with null to restore/null malloc. */
+/* Optionally override the JIT runtime allocator (NULL restores malloc/free). */
 void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn);
 
 bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage);

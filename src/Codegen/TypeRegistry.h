@@ -5,10 +5,9 @@
 
 #include "Codegen/TypeUtil.h"
 
-/* A padding member inserted into the physical member list of a struct whose
-   layout contains explicit `fieldoffset` markers (or gaps created by them).
-   `beforeField` is the logical field index the pad precedes; a trailing pad
-   (rounding the struct to its final size) uses beforeField == fields.count. */
+/* A pad inserted into the physical member list where explicit `fieldoffset`
+   markers (or the gaps they create) require it. A trailing pad (struct
+   rounding) uses beforeField == fields.count. */
 typedef struct {
     size_t beforeField;
     long bytes;

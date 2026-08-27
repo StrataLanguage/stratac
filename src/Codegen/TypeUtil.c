@@ -10,15 +10,13 @@ static inline void BuildLLVMIrType(MappedType* mappedType, int numLanes, const c
 
     strncpy(mappedType->elemIr, elemIr, sizeof(mappedType->elemIr) - 1);
 
-    // Single scalar value
     if (numLanes == 1)
     {
         strncpy(mappedType->ir, elemIr, sizeof(mappedType->ir) - 1);
     }
-    // Vector
     else
     {
-        // Build the LLVM vector string (e.g <4 x float>)
+        // <numLanes x type>
         snprintf(mappedType->ir, sizeof(mappedType->ir), "<%d x %s>", numLanes, elemIr);
     }
 }
@@ -51,12 +49,11 @@ static MappedType MakeSimdVector(bool isFloat, int bits, int lanes, const char* 
     m.isSimdVector = true;
     m.bits = bits;
 
-    // Using a new `lanes` member here instead of `vec` as i want to avoid breaking current functionality with vectors.
-    // TODO: unify to one member and replace existing vector stuff with SIMD vectors.
+    // Keep a separate `lanes` member so existing `vec` logic is unaffected; TODO: unify.
     m.vec = 1;
     m.lanes = lanes;
 
-    // Use `vec.lanes` here as we want the LLVM backend to use <numLanes x type>
+    // Emit as <numLanes x type> for the backend.
     BuildLLVMIrType(&m, m.lanes, elemIr);
 
     return m;
@@ -74,37 +71,6 @@ MappedType MapType(const TypeName* t)
     const char* base = t->name;
     char candidate[32] = {0};
     int vec = 1;
-
-    // size_t len = strlen(base);
-    // size_t split = len;
-
-    // while (split > 0 && base[split - 1] >= '0' && base[split - 1] <= '9')
-    // {
-    //     --split;
-    // }
-
-    // if (split > 0 && split < len)
-    // {
-    //     int parsedSize = 0;
-    //     for (size_t i = split; i < len; ++i)
-    //     {
-    //         parsedSize = parsedSize * 10 + (base[i] - '0');
-    //     }
-
-    //     if (parsedSize >= 1 && parsedSize <= 4)
-    //     {
-    //         size_t clen = split < sizeof(candidate) - 1 ? split : sizeof(candidate) - 1;
-    //         memcpy(candidate, base, clen);
-    //         candidate[clen] = '\0';
-
-    //         if (strcmp(candidate, "float") == 0 || strcmp(candidate, "int") == 0 || strcmp(candidate, "uint") == 0
-    //             || strcmp(candidate, "double") == 0 || strcmp(candidate, "bool") == 0)
-    //         {
-    //             base = candidate;
-    //             vec = parsedSize;
-    //         }
-    //     }
-    // }
 
     if (strcmp(base, "void") == 0)
     {

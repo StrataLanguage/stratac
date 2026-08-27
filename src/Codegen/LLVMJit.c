@@ -61,6 +61,18 @@ static char* TakeOrcError(LLVMErrorRef err)
     return copy;
 }
 
+/* Formats an LLVMErrorRef into a malloc'd errorMessage (caller frees), then
+   disposes the error. */
+static void SetOrcError(char** errorMessage, LLVMErrorRef err, const char* fmt)
+{
+    char* msg = TakeOrcError(err);
+    int needed = snprintf(NULL, 0, fmt, msg);
+    char* buf = (char*)malloc((size_t)needed + 1);
+    snprintf(buf, (size_t)needed + 1, fmt, msg);
+    *errorMessage = buf;
+    free(msg);
+}
+
 static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
 {
     LLVMOrcExecutorAddress addr = 0;
@@ -148,12 +160,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     if (err)
     {
-        char* msg = TakeOrcError(err);
-        int needed = snprintf(NULL, 0, "could not create execution engine: %s", msg);
-        char* buf = (char*)malloc((size_t)needed + 1);
-        snprintf(buf, (size_t)needed + 1, "could not create execution engine: %s", msg);
-        *errorMessage = buf;
-        free(msg);
+        SetOrcError(errorMessage, err, "could not create execution engine: %s");
 
         LLVMDisposeModule(bm->mod);
         LLVMContextDispose(bm->ctx);
@@ -171,12 +178,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     if (err)
     {
-        char* msg = TakeOrcError(err);
-        int needed = snprintf(NULL, 0, "could not create execution engine: %s", msg);
-        char* buf = (char*)malloc((size_t)needed + 1);
-        snprintf(buf, (size_t)needed + 1, "could not create execution engine: %s", msg);
-        *errorMessage = buf;
-        free(msg);
+        SetOrcError(errorMessage, err, "could not create execution engine: %s");
 
         LLVMDisposeModule(bm->mod);
         LLVMContextDispose(bm->ctx);
@@ -252,12 +254,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     if (err)
     {
-        char* msg = TakeOrcError(err);
-        int needed = snprintf(NULL, 0, "could not add module to execution engine: %s", msg);
-        char* buf = (char*)malloc((size_t)needed + 1);
-        snprintf(buf, (size_t)needed + 1, "could not add module to execution engine: %s", msg);
-        *errorMessage = buf;
-        free(msg);
+        SetOrcError(errorMessage, err, "could not add module to execution engine: %s");
 
         LLVMOrcDisposeThreadSafeModule(tsm);
 

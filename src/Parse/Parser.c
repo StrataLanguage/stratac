@@ -126,6 +126,33 @@ static char* ToOwned(Arena* arena, Str s)
     return arena_strndup(arena, s.data, s.len);
 }
 
+/* Snapshot of lexer + parser position so a speculative parse can be undone
+   without emitting diagnostics. */
+typedef struct {
+    size_t pos;
+    bool hasPeek;
+    Token peeked;
+    Token cur;
+} LexerCheckpoint;
+
+static LexerCheckpoint SaveLexerState(Parser* p)
+{
+    LexerCheckpoint c;
+    c.pos = LexerPosition(p->m_lex);
+    c.hasPeek = p->m_lex->m_hasPeek;
+    c.peeked = p->m_lex->m_peeked;
+    c.cur = p->m_cur;
+    return c;
+}
+
+static void RestoreLexerState(Parser* p, LexerCheckpoint c)
+{
+    p->m_lex->m_pos = c.pos;
+    p->m_lex->m_hasPeek = c.hasPeek;
+    p->m_lex->m_peeked = c.peeked;
+    p->m_cur = c.cur;
+}
+
 void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, const char* moduleName)
 {
     p->m_lex = lex;
@@ -230,14 +257,9 @@ static bool LooksLikeVarDecl(Parser* p)
         return true;
     case TokIdent:
     {
-        /* A user-type decl may carry postfix array brackets before the name
-           (`Pt[] pts`, `Vec3[][] grid`), so a one-token peek isn't enough.
-           Speculatively parse a type and see whether an identifier follows,
-           then restore the parser/lexer state. */
-        size_t savedPos = LexerPosition(p->m_lex);
-        bool savedHasPeek = p->m_lex->m_hasPeek;
-        Token savedPeeked = p->m_lex->m_peeked;
-        Token savedCur = p->m_cur;
+        /* A user-type decl may carry postfix array brackets before the name,
+           so peek one token too far; speculatively parse the type, then undo. */
+        LexerCheckpoint saved = SaveLexerState(p);
 
         TypeName tn = {0};
         bool isDecl = false;
@@ -247,10 +269,7 @@ static bool LooksLikeVarDecl(Parser* p)
             isDecl = p->m_cur.kind == TokIdent;
         }
 
-        p->m_lex->m_pos = savedPos;
-        p->m_lex->m_hasPeek = savedHasPeek;
-        p->m_lex->m_peeked = savedPeeked;
-        p->m_cur = savedCur;
+        RestoreLexerState(p, saved);
 
         return isDecl;
     }
@@ -259,17 +278,12 @@ static bool LooksLikeVarDecl(Parser* p)
     }
 }
 
-/* Consume well-formed postfix bracket pairs (e.g. `int[]`, `^S[]`,
-   `int[][]`). A pair holding an integer literal (`int[4]`) declares a
-   fixed-size (C-ABI inline) array dimension. Anything else (e.g. `foo[i]`,
-   `foo[3 + 1]`) leaves the `[` intact so speculative type-parse is safe;
-   fixed dimensions are verified as a complete `[ N ]` trio before any token
-   is consumed, so speculation never emits diagnostics.
-
-   Dimension order matches C: in `T[A][B]` the FIRST group is the outermost
-   dimension (A elements of T[B]), so `int[2][6]` mirrors C `int x[2][6]`.
-   The wraps are applied inside-out and the canonical name is rebuilt in
-   source order so it round-trips. */
+/* Consume postfix bracket pairs (`int[]`, `int[4]`). An integer literal
+   inside declares a fixed-size (C-ABI inline) dimension; anything else (e.g.
+   `foo[i]`) is left intact so speculative type-parse stays diagnostic-free —
+   fixed dimensions are only taken when the full `[ N ]` trio is seen first.
+   Wraps are applied inside-out and the canonical name rebuilt in source order
+   so it round-trips, matching C dimension order (`int[2][6]` = 2 of `int[6]`). */
 typedef struct {
     bool isFixed;
     long length;
@@ -297,10 +311,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         }
         else if (next.kind == TokIntLit)
         {
-            size_t savedPos = LexerPosition(p->m_lex);
-            bool savedHasPeek = p->m_lex->m_hasPeek;
-            Token savedPeeked = p->m_lex->m_peeked;
-            Token savedCur = p->m_cur;
+            LexerCheckpoint saved = SaveLexerState(p);
 
             Advance(p); /* '[' */
 
@@ -323,8 +334,8 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
                 memcpy(tmp, sv.data, n);
                 tmp[n] = '\0';
 
-                /* Length < 1 is diagnosed later (sema); parsing continues
-                   so speculation stays diagnostic-free. */
+                /* Length < 1 is diagnosed later in sema; keep parsing so
+                   speculation stays diagnostic-free. */
                 dim.isFixed = true;
                 dim.length = (long)strtoull(tmp, NULL, 0);
                 consumed = true;
@@ -332,10 +343,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
             else
             {
                 /* Not a fixed dimension after all — put everything back. */
-                p->m_lex->m_pos = savedPos;
-                p->m_lex->m_hasPeek = savedHasPeek;
-                p->m_lex->m_peeked = savedPeeked;
-                p->m_cur = savedCur;
+                RestoreLexerState(p, saved);
             }
         }
 
@@ -352,9 +360,8 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         return;
     }
 
-    /* Apply inside-out (last source group is the innermost array), then
-       rebuild the canonical name in source order. The pre-bracket type is
-       never itself an array, so its name is the leaf spelling. */
+    /* Apply inside-out (last source group is the innermost array) and rebuild
+       the canonical name in source order; the pre-bracket type is the leaf. */
     const char* leafName = out->name;
 
     for (int i = dimCount - 1; i >= 0; i--)
@@ -399,9 +406,8 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
     if (p->m_cur.kind == TokCaret)
     {
-        /* `^T` — boxed type. `^` always takes the next type; it binds
-           tighter than a trailing `[]`, so `^S[]` is an array of boxed S
-           and `^S[]`'s element type is `^S`. */
+        /* `^T` — boxed type. `^` always takes the next type and binds tighter
+           than a trailing `[]`, so `^S[]` is an array of boxed S. */
         SourceRange caretRange = p->m_cur.range;
         Advance(p);
 
@@ -413,13 +419,10 @@ bool ParserTryParseType(Parser* p, TypeName* out)
             return false;
         }
 
-        /* `^` binds tighter than a trailing `[]`: the recursive parse may
-           have consumed postfix brackets into `inner` (`^T[]` read as
-           ^(T[])). Unwrap them from the inner type and re-apply them
-           around the box so the result is (^T)[N] (or (^T)[]). Dimension
-           lengths are preserved and the name rebuilt in source order so
-           the spelling round-trips. There is no spelling for a box whose
-           inner type is an array. */
+        /* `^` binds tighter than a trailing `[]`: the recursive parse may have
+           swallowed brackets into `inner` (`^T[]` read as ^(T[])). Unwrap them
+           and re-apply around the box so the result is (^T)[N] (or (^T)[]),
+           preserving lengths and rebuilding the name in source order. */
         TypeName base = inner;
         long depths[8];
         int arrayDepth = 0;
@@ -476,9 +479,9 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         ApplyArrayBrackets(p, out, constRange);
 
         /* A trailing `?` after brackets wraps the ARRAY in an optional
-           (`^S[]?` = optional array of boxes) - legal. Without brackets
-           (`^S?`) it would wrap the box, which is never empty. Fixed
-           dimensions have no empty state either. */
+           (`^S[]?` = optional array of boxes). Without brackets (`^S?`) it
+           would wrap the box, which is never empty; fixed dims have no empty
+           state either. */
         if (p->m_cur.kind == TokQuestion)
         {
             bool anyFixed = false;
@@ -604,9 +607,8 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     ApplyArrayBrackets(p, out, constRange);
 
     /* A trailing `?` after brackets wraps the whole array in an optional:
-       `int[]?` is an optional (maybe-empty) dynamic array, distinct from
-       `int?[]` (an array of optionals). Fixed-size arrays have no empty
-       state, so they cannot be optional. */
+       `int[]?` (maybe-empty dynamic array) differs from `int?[]` (array of
+       optionals). Fixed-size arrays have no empty state, so cannot be optional. */
     if (p->m_cur.kind == TokQuestion)
     {
         SourceRange qRange = p->m_cur.range;
@@ -818,8 +820,7 @@ static ParamDecl* ParseParam(Parser* p)
     ParamMod mod = ModNone;
     bool isConst = false;
 
-    /* Parameter modifiers: 'const' and 'ref' may appear together in either
-       order (`const ref int x`, `ref const int x`). Each may appear once. */
+    /* 'const' and 'ref' may appear together in either order, each at most once. */
     for (int i = 0; i < 2; i++)
     {
         if (ParserConsume(p, TokKwRef))
@@ -1057,9 +1058,9 @@ static Node* ParseFunction(Parser* p)
 
     p->m_hasReturnStmt = false;
 
-    /* `return { ... };` infers its struct type from the function's return type.
-        For ^T/string this is the inner T; for T[] the whole array type is
-        kept so a braced return is parsed as an array literal. */
+    /* `return { ... };` infers its struct type from the return type: for ^T
+       and string it is the inner T, for T[] the whole array is kept so the
+       braced return parses as an array literal. */
     p->m_returnType = node->returnType.isArray
                           ? &node->returnType
                           : (node->returnType.isBox
@@ -1359,9 +1360,8 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
             }
             else
                 {
-                    /* `^T x = {...};` infers T, not "^T"; a `T? x = {};`
-                        constructs a NON-EMPTY boxed T, so it also infers
-                        the inner struct type. */
+                    /* `^T x = {...}` / `T? x = {}` infer the inner T, not the box
+                       type (a `T?{}` is a non-empty boxed T). */
                     const char* initTypeName
                         = (type.isBox || type.isOptional) && type.inner ? type.inner->name
                                                                          : (strcmp(type.name, "string") == 0 ? NULL : type.name);
@@ -1420,8 +1420,7 @@ static Node* ParseReturn(Parser* p)
             }
             else
             {
-                /* `Foo f() { return {}; }` - and through a box/optional
-                   return type (`^Foo f() { return {}; }`), the braced list
+                /* `return {};` through a plain or box/optional return type
                    initializes the inner struct. */
                 const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : p->m_returnType;
 
@@ -1577,10 +1576,8 @@ static Node* ParseAssign(Parser* p)
         Token opToken = p->m_cur;
         Advance(p);
 
-        /* `arr = { ... };` — a bare braced RHS is an array literal whose
-            element type is inferred from the target during sema; a
-            designator form (`{ .field = ... }`) is a struct literal whose
-            type name is filled in the same way. */
+        /* A bare braced RHS is an array literal (element type inferred in sema);
+           a designator form (`{ .field = ... }`) is a struct literal. */
         Node* rhs;
 
         if (p->m_cur.kind == TokLBrace)
@@ -1709,10 +1706,7 @@ static Node* ParseUnary(Parser* p)
 
             if (isScalarCast || isHandleCast || isBoxCast)
             {
-                size_t savedPos = LexerPosition(p->m_lex);
-                bool savedPeek = p->m_lex->m_hasPeek;
-                Token savedPeeked = p->m_lex->m_peeked;
-                Token savedCur = p->m_cur;
+                LexerCheckpoint saved = SaveLexerState(p);
 
                 Token lparen = p->m_cur;
                 Advance(p);
@@ -1744,10 +1738,7 @@ static Node* ParseUnary(Parser* p)
                     }
                 }
 
-                p->m_lex->m_pos = savedPos;
-                p->m_lex->m_hasPeek = savedPeek;
-                p->m_lex->m_peeked = savedPeeked;
-                p->m_cur = savedCur;
+                RestoreLexerState(p, saved);
             }
         }
 
@@ -1889,9 +1880,9 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
 
         if (p->m_cur.kind == TokLBrace)
         {
-            /* `{ ... }` initializes a fixed-size array field; the element
-                type is filled in from the field during sema. A designator
-                form is a nested struct literal. */
+            /* `{ ... }` initializes a fixed-size array field (element type
+               filled from the field in sema); a designator form is a nested
+               struct literal. */
             if (LexerPeekToken(p->m_lex).kind == TokDot)
             {
                 field->value = ParseStructInitBody(p, p->m_cur, NULL);
@@ -2202,11 +2193,9 @@ static Node* ParsePrimary(Parser* p)
 
     case TokLBrace:
     {
-        /* A braced list in expression position (call argument, nested
-            initializer): `{1, 2, 3}` / `{}` as an array literal, or
-            `{ .field = ... }` as a struct literal. The element/struct type
-            is inferred from context by sema. Statement position never gets
-            here - a leading `{` starts a block there. */
+        /* A braced list in expression position: `{1,2,3}` as an array literal
+           or `{ .field = ... }` as a struct literal (types inferred in sema).
+           Statement position never reaches here — a leading `{` starts a block. */
         if (LexerPeekToken(p->m_lex).kind == TokDot)
         {
             return ParseStructInitBody(p, token, NULL);

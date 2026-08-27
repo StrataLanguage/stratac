@@ -8,6 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+static size_t GrowCap(size_t cap)
+{
+    return cap ? cap * 2 : 8;
+}
+
 static char* ResolveImportPath(Arena* arena, const char* importerPath, const char* importPath)
 {
     size_t impLen = strlen(importPath);
@@ -28,7 +33,7 @@ static void PushBuffer(ModuleLoader* loader, char* buf)
 {
     if (loader->bufferCount >= loader->bufferCap)
     {
-        loader->bufferCap = loader->bufferCap ? loader->bufferCap * 2 : 8;
+        loader->bufferCap = GrowCap(loader->bufferCap);
         loader->buffers = (char**)realloc(loader->buffers, loader->bufferCap * sizeof(char*));
     }
     loader->buffers[loader->bufferCount++] = buf;
@@ -38,7 +43,7 @@ static void PushVisited(ModuleLoader* loader, const char* path)
 {
     if (loader->visitedCount >= loader->visitedCap)
     {
-        loader->visitedCap = loader->visitedCap ? loader->visitedCap * 2 : 8;
+        loader->visitedCap = GrowCap(loader->visitedCap);
         loader->visited = (const char**)realloc(loader->visited, loader->visitedCap * sizeof(const char*));
     }
 
@@ -104,7 +109,7 @@ static void LoadModule(ModuleLoader* loader, const char* name, const char* text,
 
     if (loader->sourceCount >= loader->sourceCap)
     {
-        loader->sourceCap = loader->sourceCap ? loader->sourceCap * 2 : 8;
+        loader->sourceCap = GrowCap(loader->sourceCap);
         loader->sources = (SourceManager*)realloc(loader->sources, loader->sourceCap * sizeof(SourceManager));
     }
 

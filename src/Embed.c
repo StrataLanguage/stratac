@@ -53,6 +53,25 @@ extern "C"
         return buf;
     }
 
+    /* Sets up the per-compile arena/diagnostics/loader and binds the host
+       resolver (if any) so `import` directives are routed to it. */
+    static void InitModuleLoader(Arena* arena, DiagnosticEngine* diag, ModuleLoader* loader, StrataCompiler* c)
+    {
+        arena_init(arena, 0);
+        DiagnosticEngineInit(diag);
+        ModuleLoaderInit(loader, arena, diag);
+        ModuleLoaderSetResolver(loader, c->importResolver, c->importResolverUserData);
+    }
+
+    /* Releases everything owned by a ModuleLoader-based compile. */
+    static void TeardownCompile(Module* mod, ModuleLoader* loader, DiagnosticEngine* diag, Arena* arena)
+    {
+        AstDispose((Node*)mod);
+        ModuleLoaderDispose(loader);
+        DiagnosticEngineFree(diag);
+        arena_free(arena);
+    }
+
     StrataCompiler* strataCompilerCreate(void)
     {
         StrataCompiler* compiler = (StrataCompiler*)malloc(sizeof(StrataCompiler));
@@ -180,26 +199,18 @@ extern "C"
         if (c && c->importResolver)
         {
             /* A resolver is installed: route through the module loader so that
-               `import X;` directives are resolved by the host. */
+                `import X;` directives are resolved by the host. */
             Arena arena;
-            arena_init(&arena, 0);
-
             DiagnosticEngine diag;
-            DiagnosticEngineInit(&diag);
-
             ModuleLoader loader;
-            ModuleLoaderInit(&loader, &arena, &diag);
-            ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+            InitModuleLoader(&arena, &diag, &loader, c);
 
             Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
             ResolveOverloads(mod, &diag, &arena);
 
             StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, arch);
 
-            AstDispose((Node*)mod);
-            ModuleLoaderDispose(&loader);
-            DiagnosticEngineFree(&diag);
-            arena_free(&arena);
+            TeardownCompile(mod, &loader, &diag, &arena);
 
             return r;
         }
@@ -271,24 +282,16 @@ extern "C"
         }
 
         Arena arena;
-        arena_init(&arena, 0);
-
         DiagnosticEngine diag;
-        DiagnosticEngineInit(&diag);
-
         ModuleLoader loader;
-        ModuleLoaderInit(&loader, &arena, &diag);
-        ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+        InitModuleLoader(&arena, &diag, &loader, c);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
         ResolveOverloads(mod, &diag, &arena);
 
         StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, c->arch);
 
-        AstDispose((Node*)mod);
-        ModuleLoaderDispose(&loader);
-        DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        TeardownCompile(mod, &loader, &diag, &arena);
 
         return r;
     }
@@ -322,14 +325,9 @@ extern "C"
     }
 
     Arena arena;
-    arena_init(&arena, 0);
-
     DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-
     ModuleLoader loader;
-    ModuleLoaderInit(&loader, &arena, &diag);
-    ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+    InitModuleLoader(&arena, &diag, &loader, c);
 
     Module* mod = ModuleLoaderLoad(&loader, inputPath);
     ResolveOverloads(mod, &diag, &arena);
@@ -343,11 +341,7 @@ extern "C"
             *errOut = DupString(diagText ? diagText : "compilation failed");
         }
 
-        AstDispose((Node*)mod);
-        ModuleLoaderDispose(&loader);
-        DiagnosticEngineFree(&diag);
-
-        arena_free(&arena);
+        TeardownCompile(mod, &loader, &diag, &arena);
 
         return 0;
     }
@@ -364,10 +358,7 @@ extern "C"
         }
 
         BuiltModuleDispose(&bm);
-        AstDispose((Node*)mod);
-        ModuleLoaderDispose(&loader);
-        DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        TeardownCompile(mod, &loader, &diag, &arena);
 
         return 0;
     }
@@ -381,10 +372,7 @@ extern "C"
     }
 
     BuiltModuleDispose(&bm);
-    AstDispose((Node*)mod);
-    ModuleLoaderDispose(&loader);
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    TeardownCompile(mod, &loader, &diag, &arena);
 
     return ok;
 #endif
@@ -590,16 +578,11 @@ extern "C"
         if (c && c->importResolver)
         {
             /* A resolver is installed: route through the module loader so that
-               `import X;` directives are resolved by the host. */
+                `import X;` directives are resolved by the host. */
             Arena arena;
-            arena_init(&arena, 0);
-
             DiagnosticEngine diag;
-            DiagnosticEngineInit(&diag);
-
             ModuleLoader loader;
-            ModuleLoaderInit(&loader, &arena, &diag);
-            ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+            InitModuleLoader(&arena, &diag, &loader, c);
 
             Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
             ResolveOverloads(mod, &diag, &arena);
@@ -607,11 +590,7 @@ extern "C"
             StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
                                               c->allocFn, c->freeFn, c->jitBackend, &c->profile);
 
-            AstDispose((Node*)mod);
-            ModuleLoaderDispose(&loader);
-            DiagnosticEngineFree(&diag);
-
-            arena_free(&arena);
+            TeardownCompile(mod, &loader, &diag, &arena);
 
             return handle;
         }
@@ -695,14 +674,9 @@ extern "C"
         }
 
         Arena arena;
-        arena_init(&arena, 0);
-
         DiagnosticEngine diag;
-        DiagnosticEngineInit(&diag);
-
         ModuleLoader loader;
-        ModuleLoaderInit(&loader, &arena, &diag);
-        ModuleLoaderSetResolver(&loader, c->importResolver, c->importResolverUserData);
+        InitModuleLoader(&arena, &diag, &loader, c);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
         ResolveOverloads(mod, &diag, &arena);
@@ -710,11 +684,7 @@ extern "C"
         StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
                                        c->allocFn, c->freeFn, c->jitBackend, &c->profile);
 
-        AstDispose((Node*)mod);
-        ModuleLoaderDispose(&loader);
-        DiagnosticEngineFree(&diag);
-
-        arena_free(&arena);
+        TeardownCompile(mod, &loader, &diag, &arena);
 
         return jit;
     }
