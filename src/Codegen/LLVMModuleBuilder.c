@@ -2805,6 +2805,107 @@ static LLVMValueRef StrataStrdupFn(Builder* b)
     return b->m_strdupFn;
 }
 
+/* Deep-copies the CELL behind a non-null box pointer `src` into a fresh
+   allocation, returning the new cell pointer. Callers guard optionals. */
+static Value EmitCopyValue(Builder* b, Value src, TypeDesc td);
+
+/* Copies a non-empty fat array value: fresh buffer + per-element deep copy
+   for owning element types, memcpy-style loop otherwise. Callers guard
+   empty optionals. */
+static Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy,
+                                LLVMValueRef oldLen, LLVMValueRef oldData)
+{
+    LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), oldLen, "cby");
+    LLVMValueRef allocArgs[1] = {totalBytes};
+    StrataAllocFn(b);
+    LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "cpya");
+
+    if (TypeNameIsOwning(td.arrayInner))
+    {
+        LLVMBasicBlockRef cond = NewBb(b, "ccp.cond");
+        LLVMBasicBlockRef body = NewBb(b, "ccp.body");
+        LLVMBasicBlockRef end = NewBb(b, "ccp.end");
+        LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "ccp.i");
+        LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
+        Br(b, cond);
+
+        PositionAtEnd(b, cond);
+        LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+        LLVMValueRef cnt = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, oldLen, "cclt");
+        LLVMBuildCondBr(b->m_builder, cnt, body, end);
+        b->m_terminated = true;
+
+        PositionAtEnd(b, body);
+        LLVMValueRef ep[1] = {i};
+        LLVMValueRef srcElem = LLVMBuildGEP2(b->m_builder, elemTy, oldData, ep, 1, "cse");
+        LLVMValueRef dstElem = LLVMBuildGEP2(b->m_builder, elemTy, newData, ep, 1, "cde");
+        Value elemVal = ValueMake(LLVMBuildLoad2(b->m_builder, elemTy, srcElem, "ev"), elemTd);
+        Value copied = EmitCopyValue(b, elemVal, elemTd);
+        LLVMBuildStore(b->m_builder, copied.value, dstElem);
+        LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "nxt");
+        LLVMBuildStore(b->m_builder, next, iSlot);
+        Br(b, cond);
+
+        PositionAtEnd(b, end);
+    }
+    else
+    {
+        EmitArrayCopyLoop(b, newData, oldData, oldLen, elemTy);
+    }
+
+    LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
+    arr = LLVMBuildInsertValue(b->m_builder, arr, newData, 0, "ci");
+    arr = LLVMBuildInsertValue(b->m_builder, arr, oldLen, 1, "cl");
+    return ValueMake(arr, td);
+}
+
+static LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
+{
+    TypeDesc innerTd = Resolve(b, td.boxInner);
+    LLVMValueRef sz = SizeOfConst(b, innerTd.type);
+    LLVMValueRef args[1] = {sz};
+    StrataAllocFn(b);
+    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "cpbox");
+
+    const StructType* st = TypeRegistryFind(&b->m_registry, td.boxInner->name);
+    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, td.boxInner->name) : NULL;
+
+    if (st && structTy)
+    {
+        for (size_t j = 0; j < st->fields.count; j++)
+        {
+            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
+            TypeDesc fieldTd = Resolve(b, &f->type);
+            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
+            LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
+            LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
+
+            if (TypeNameIsOwning(&f->type))
+            {
+                Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
+                Value copied = EmitCopyValue(b, fv, fieldTd);
+                LLVMBuildStore(b->m_builder, copied.value, dstField);
+            }
+            else
+            {
+                LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
+                LLVMBuildStore(b->m_builder, loaded, dstField);
+            }
+        }
+    }
+    else
+    {
+        /* Inner is not a registered struct: a scalar, or a bare owning
+            value such as string (^string), another box, or an array.
+            Deep-copy it. */
+        Value innerVal = ValueMake(LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv"), innerTd);
+        Value copied = EmitCopyValue(b, innerVal, innerTd);
+        LLVMBuildStore(b->m_builder, copied.value, heap);
+    }
+
+    return heap;
+}
+
 static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 {
     if (td.isBox && !td.boxInner)
@@ -2817,49 +2918,32 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 
     if (td.isBox && td.boxInner)
     {
-        TypeDesc innerTd = Resolve(b, td.boxInner);
-        LLVMValueRef sz = SizeOfConst(b, innerTd.type);
-        LLVMValueRef args[1] = {sz};
-        StrataAllocFn(b);
-        LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "cpbox");
-
-        const StructType* st = TypeRegistryFind(&b->m_registry, td.boxInner->name);
-        LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, td.boxInner->name) : NULL;
-
-        if (st && structTy)
+        /* An optional source may be EMPTY (null): copy null as null instead
+           of dereferencing it. */
+        if (td.isOptional)
         {
-            for (size_t j = 0; j < st->fields.count; j++)
-            {
-                FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
-                TypeDesc fieldTd = Resolve(b, &f->type);
-                LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-                LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
-                LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
+            LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, src.value, LLVMConstNull(b->m_ptrTy), "ocn");
+            LLVMValueRef resSlot = EntryAlloca(b, b->m_ptrTy, "optcp");
+            LLVMBasicBlockRef nullBb = NewBb(b, "oc.null");
+            LLVMBasicBlockRef copyBb = NewBb(b, "oc.copy");
+            LLVMBasicBlockRef endBb = NewBb(b, "oc.end");
+            LLVMBuildCondBr(b->m_builder, isNull, nullBb, copyBb);
+            b->m_terminated = true;
 
-                if (TypeNameIsOwning(&f->type))
-                {
-                    Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
-                    Value copied = EmitCopyValue(b, fv, fieldTd);
-                    LLVMBuildStore(b->m_builder, copied.value, dstField);
-                }
-                else
-                {
-                    LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
-                    LLVMBuildStore(b->m_builder, loaded, dstField);
-                }
-            }
-        }
-        else
-        {
-            /* Inner is not a registered struct: a scalar, or a bare owning
-               value such as string (^string), another box, or an array.
-               Deep-copy it. */
-            Value innerVal = ValueMake(LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv"), innerTd);
-            Value copied = EmitCopyValue(b, innerVal, innerTd);
-            LLVMBuildStore(b->m_builder, copied.value, heap);
+            PositionAtEnd(b, nullBb);
+            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), resSlot);
+            Br(b, endBb);
+
+            PositionAtEnd(b, copyBb);
+            LLVMValueRef heap = EmitBoxCellCopy(b, src, td);
+            LLVMBuildStore(b->m_builder, heap, resSlot);
+            Br(b, endBb);
+
+            PositionAtEnd(b, endBb);
+            return ValueMake(LLVMBuildLoad2(b->m_builder, b->m_ptrTy, resSlot, "oconv"), td);
         }
 
-        return ValueMake(heap, td);
+        return ValueMake(EmitBoxCellCopy(b, src, td), td);
     }
 
     if (td.isArray)
@@ -2869,48 +2953,32 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         LLVMValueRef oldLen = LLVMBuildExtractValue(b->m_builder, src.value, 1, "cln");
         LLVMValueRef oldData = LLVMBuildExtractValue(b->m_builder, src.value, 0, "cdt");
 
-        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), oldLen, "cby");
-        LLVMValueRef allocArgs[1] = {totalBytes};
-        StrataAllocFn(b);
-        LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "cpya");
-
-        if (TypeNameIsOwning(td.arrayInner))
+        /* Copying an EMPTY optional array yields the canonical empty
+           {null, 0} - never a {malloc(0), 0} that would test non-empty. */
+        if (td.isOptional)
         {
-            LLVMBasicBlockRef cond = NewBb(b, "ccp.cond");
-            LLVMBasicBlockRef body = NewBb(b, "ccp.body");
-            LLVMBasicBlockRef end = NewBb(b, "ccp.end");
-            LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "ccp.i");
-            LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
-            Br(b, cond);
-
-            PositionAtEnd(b, cond);
-            LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
-            LLVMValueRef cnt = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, oldLen, "cclt");
-            LLVMBuildCondBr(b->m_builder, cnt, body, end);
+            LLVMValueRef isEmpty = LLVMBuildICmp(b->m_builder, LLVMIntEQ, oldLen, LLVMConstInt(I64Ty(b), 0, 0), "oae");
+            LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "oacp");
+            LLVMBasicBlockRef emptyBb = NewBb(b, "oa.empty");
+            LLVMBasicBlockRef copyBb2 = NewBb(b, "oa.copy");
+            LLVMBasicBlockRef endBb2 = NewBb(b, "oa.end");
+            LLVMBuildCondBr(b->m_builder, isEmpty, emptyBb, copyBb2);
             b->m_terminated = true;
 
-            PositionAtEnd(b, body);
-            LLVMValueRef ep[1] = {i};
-            LLVMValueRef srcElem = LLVMBuildGEP2(b->m_builder, elemTy, oldData, ep, 1, "cse");
-            LLVMValueRef dstElem = LLVMBuildGEP2(b->m_builder, elemTy, newData, ep, 1, "cde");
-            Value elemVal = ValueMake(LLVMBuildLoad2(b->m_builder, elemTy, srcElem, "ev"), elemTd);
-            Value copied = EmitCopyValue(b, elemVal, elemTd);
-            LLVMBuildStore(b->m_builder, copied.value, dstElem);
-            LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "nxt");
-            LLVMBuildStore(b->m_builder, next, iSlot);
-            Br(b, cond);
+            PositionAtEnd(b, emptyBb);
+            LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), slot);
+            Br(b, endBb2);
 
-            PositionAtEnd(b, end);
-        }
-        else
-        {
-            EmitArrayCopyLoop(b, newData, oldData, oldLen, elemTy);
+            PositionAtEnd(b, copyBb2);
+            Value copiedArr = EmitArrayValueCopy(b, src, td, elemTd, elemTy, oldLen, oldData);
+            LLVMBuildStore(b->m_builder, copiedArr.value, slot);
+            Br(b, endBb2);
+
+            PositionAtEnd(b, endBb2);
+            return ValueMake(LLVMBuildLoad2(b->m_builder, ArrayStructType(b), slot, "oaconv"), td);
         }
 
-        LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
-        arr = LLVMBuildInsertValue(b->m_builder, arr, newData, 0, "ci");
-        arr = LLVMBuildInsertValue(b->m_builder, arr, oldLen, 1, "cl");
-        return ValueMake(arr, td);
+        return EmitArrayValueCopy(b, src, td, elemTd, elemTy, oldLen, oldData);
     }
 
     return src;

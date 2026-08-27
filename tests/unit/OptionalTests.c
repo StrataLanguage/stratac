@@ -875,6 +875,225 @@ STRATA_TEST(optional_double_negation_matches_positive)
     arena_free(&arena);
 }
 
+/* ---- copy() with optionals ------------------------------------------------
+   copy(T?) must yield an independent deep copy when non-empty and stay
+   EMPTY when the source is empty (null copied as null, never dereferenced);
+   the same holds for optional FIELDS inside copied structs, for T[]?
+   arrays (canonical {null, 0} when empty), and for arrays of optionals. */
+
+STRATA_TEST(copy_of_empty_optional_is_empty)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon? e;\n"
+        "  Weapon? c = copy(e);\n"                 /* empty -> empty, no deref */
+        "  if (c?) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(copy_of_nonempty_optional_deep_copies)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; string? title; };\n"
+        "int entry() {\n"
+        "  Weapon? orig = Weapon { .dmg = 10, .title = \"iron\" };\n"
+        "  Weapon? c = copy(orig);\n"
+        "  if (!c?) { return 1; }\n"
+        "  if (c?)\n"
+        "  {\n"
+        "    int before = c.dmg;                 /* 10 */\n"
+        "    if (orig?)\n"
+        "    {\n"
+        "      orig.dmg = 99;                    /* mutate the ORIGINAL */\n"
+        "      if (orig.title?) { orig.title = \"junk\"; }\n"
+        "    }\n"
+        "    int afterTitle = 0;\n"
+        "    if (c.title?) { afterTitle = 1; }   /* copy kept its title */\n"
+        "    return before * 10 + c.dmg + afterTitle * 100;\n"   /* 100 + 10 + 100 */ 
+        "  }\n"
+        "  return 1;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 210);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(copy_of_box_with_optional_fields)
+{
+    /* Copying a ^T whose T has optional fields: empty fields copy as
+       empty, non-empty fields deep-copy independently. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "struct Holder { string name; Weapon? w; Weapon? spare; };\n"
+        "int entry() {\n"
+        "  ^Holder h = Holder { .name = \"h\", .w = Weapon { .dmg = 7 } };\n"   /* spare omitted */
+        "  ^Holder hc = copy(h);\n"
+        "  int r = 0;\n"
+        "  if (hc.w?) { r += hc.w.dmg; }\n"        /* 7 - deep-copied */ 
+        "  if (hc.spare?) { r += 1000; }\n"        /* empty stays empty */ 
+        "  if (h.w?) { h.w.dmg = 50; }\n"          /* mutate the original */ 
+        "  if (hc.w?) { r += hc.w.dmg * 10; }\n"   /* 70 - copy unaffected */ 
+        "  return r;\n"                            /* 77 */ 
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 77);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(copy_of_optional_array_empty_and_full)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "int entry() {\n"
+        "  int[]? e;\n"
+        "  int[]? ec = copy(e);\n"
+        "  int r = 0;\n"
+        "  if (ec?) { r += 1000; }\n"              /* empty -> canonical empty */ 
+        "  int[]? a = {1, 2, 3};\n"
+        "  int[]? ac = copy(a);\n"
+        "  if (ac?)\n"
+        "  {\n"
+        "    a[0] = 99;                            /* mutate the original */ \n"
+        "    r += ac[0] + ac[1] + ac[2];           /* 6 */\n"
+        "    r += (int)ac.length;                  /* 3 */\n"
+        "  }\n"
+        "  return r;\n"                            /* 9 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 9);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(copy_of_array_of_optionals)
+{
+    /* Per-element deep copy: mixed non-empty/empty elements must survive
+       the copy, each element independent. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] arr;\n"
+        "  array_push(arr, Weapon { .dmg = 5 });\n"
+        "  Weapon? e;\n"
+        "  array_push(arr, e);\n"                  /* empty element */ 
+        "  array_push(arr, Weapon { .dmg = 8 });\n"
+        "  Weapon?[] cp = copy(arr);\n"
+        "  int r = (int)cp.length * 100;\n"        /* 300 */
+        "  if (cp[0]?) { r += cp[0].dmg; }\n"      /* +5 */
+        "  if (cp[1]?) { r += 1000; } else { r += 1; }\n"   /* empty */
+        "  if (cp[2]?)\n"
+        "  {\n"
+        "    r += cp[2].dmg;\n"                    /* +8 */
+        "    if (arr[2]?) { arr[2] = Weapon { .dmg = 70 }; }\n"   /* rebind orig */
+        "    if (cp[2]?) { r += cp[2].dmg; }\n"    /* +8, copy unaffected */
+        "  }\n"
+        "  return r;\n"                            /* 322 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 322);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(copy_of_non_owning_value_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() { int x = 42; int y = copy(x); return y; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'copy' expects an owning type"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 /* ---- `while (foo?)` condition narrowing -----------------------------------
    The loop condition is re-tested every iteration, so its fact holds
    throughout the body - including for call args that unwrap the optional

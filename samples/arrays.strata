@@ -81,7 +81,7 @@ void PrintAll(ref ^FooBar[] elems) {
 int entry() {
     PrintAll(testGlobalArray);
 
-    ^FooBar[] fooBars = { FooBar("hello", {}, {}), FooBar("world", {}, {}) };
+    ^FooBar[] fooBars = { FooBar("hello", {}, { "ANOTHER ONE!" }), FooBar("world", {}, {}) };
     PrintAll(fooBars);
 
     int[] nums = {1, 2, 3, 4, 5};
