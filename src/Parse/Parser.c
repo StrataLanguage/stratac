@@ -475,12 +475,42 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
         ApplyArrayBrackets(p, out, constRange);
 
+        /* A trailing `?` after brackets wraps the ARRAY in an optional
+           (`^S[]?` = optional array of boxes) - legal. Without brackets
+           (`^S?`) it would wrap the box, which is never empty. Fixed
+           dimensions have no empty state either. */
         if (p->m_cur.kind == TokQuestion)
         {
-            DiagErrorFmt(p->m_diag, p->m_cur.range,
-                         "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
-                         base.name, base.name);
-            Advance(p);
+            bool anyFixed = false;
+
+            for (int i = 0; i < arrayDepth && i < 8; i++)
+            {
+                anyFixed = anyFixed || depths[i] >= 0;
+            }
+
+            if (arrayDepth == 0)
+            {
+                DiagErrorFmt(p->m_diag, p->m_cur.range,
+                             "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
+                             base.name, base.name);
+                Advance(p);
+            }
+            else if (anyFixed)
+            {
+                DiagErrorFmt(p->m_diag, p->m_cur.range,
+                             "fixed-size array '%s' cannot be optional; it is never empty", out->name);
+                Advance(p);
+            }
+            else
+            {
+                SourceRange qRange = p->m_cur.range;
+                Advance(p);
+
+                TypeName arr = *out;
+                TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
+                optWrapped.range = qRange;
+                *out = optWrapped;
+            }
         }
 
         out->isConst = isConst;
@@ -572,6 +602,38 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     }
 
     ApplyArrayBrackets(p, out, constRange);
+
+    /* A trailing `?` after brackets wraps the whole array in an optional:
+       `int[]?` is an optional (maybe-empty) dynamic array, distinct from
+       `int?[]` (an array of optionals). Fixed-size arrays have no empty
+       state, so they cannot be optional. */
+    if (p->m_cur.kind == TokQuestion)
+    {
+        SourceRange qRange = p->m_cur.range;
+
+        if (out->isArray && out->length >= 0)
+        {
+            DiagErrorFmt(p->m_diag, qRange,
+                         "fixed-size array '%s' cannot be optional; it is never empty", out->name);
+            Advance(p);
+        }
+        else if (out->isArray)
+        {
+            Advance(p);
+
+            TypeName arr = *out;
+            TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
+            optWrapped.range
+                = (SourceRange){constRange.start, (uint16_t)(p->m_cur.range.start - constRange.start), constRange.fileId};
+            *out = optWrapped;
+        }
+        else
+        {
+            /* A second `?` with no brackets (`int??`) - not a type. */
+            DiagErrorFmt(p->m_diag, qRange, "unexpected '?' after type '%s'", out->name);
+            Advance(p);
+        }
+    }
 
     out->isConst = isConst;
     out->isVector = isVector;
@@ -874,6 +936,13 @@ static Node* ParseFunction(Parser* p)
             if (p->m_cur.kind == TokLBrace && returnType.isArray)
             {
                 gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem);
+            }
+            else if (p->m_cur.kind == TokLBrace && returnType.isOptional && returnType.inner
+                     && returnType.inner->isArray)
+            {
+                /* `T[]? g = { ... };` - a braced literal initializes the
+                   inner dynamic array. */
+                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.inner->elem);
             }
             else
             {
@@ -1278,11 +1347,17 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace)
             {
-                if (type.isArray)
-                {
-                    node->init = ParseArrayInitBody(p, start, type.elem);
-                }
-                else
+            if (type.isArray)
+            {
+                node->init = ParseArrayInitBody(p, start, type.elem);
+            }
+            else if (type.isOptional && type.inner && type.inner->isArray)
+            {
+                /* `T[]? x = { ... };` - a braced literal initializes the
+                   inner dynamic array. */
+                node->init = ParseArrayInitBody(p, start, type.inner->elem);
+            }
+            else
                 {
                     /* `^T x = {...};` infers T, not "^T". */
                     const char* initTypeName
@@ -1335,13 +1410,21 @@ static Node* ParseReturn(Parser* p)
     {
         if (p->m_cur.kind == TokLBrace && p->m_returnType)
         {
-            if (TypeNameIsDynamicArray(p->m_returnType))
+            const TypeName* rtArr = p->m_returnType->isOptional ? p->m_returnType->inner : p->m_returnType;
+
+            if (TypeNameIsDynamicArray(rtArr))
             {
-                node->value = ParseArrayInitBody(p, p->m_cur, p->m_returnType->elem);
+                node->value = ParseArrayInitBody(p, p->m_cur, rtArr->elem);
             }
             else
             {
-                node->value = ParseStructInitBody(p, p->m_cur, p->m_returnType->name);
+                /* `Foo f() { return {}; }` - and through a box/optional
+                   return type (`^Foo f() { return {}; }`), the braced list
+                   initializes the inner struct. */
+                const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : p->m_returnType;
+
+                node->value = ParseStructInitBody(p, p->m_cur,
+                                                  rtStruct ? rtStruct->name : p->m_returnType->name);
             }
         }
         else
@@ -1493,12 +1576,21 @@ static Node* ParseAssign(Parser* p)
         Advance(p);
 
         /* `arr = { ... };` — a bare braced RHS is an array literal whose
-           element type is inferred from the target during sema. */
+            element type is inferred from the target during sema; a
+            designator form (`{ .field = ... }`) is a struct literal whose
+            type name is filled in the same way. */
         Node* rhs;
 
         if (p->m_cur.kind == TokLBrace)
         {
-            rhs = ParseArrayInitBody(p, p->m_cur, NULL);
+            if (LexerPeekToken(p->m_lex).kind == TokDot)
+            {
+                rhs = ParseStructInitBody(p, p->m_cur, NULL);
+            }
+            else
+            {
+                rhs = ParseArrayInitBody(p, p->m_cur, NULL);
+            }
         }
         else
         {
@@ -1766,7 +1858,7 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
     StructInitExpr* init = AST_NEW(p->m_arena, StructInitExpr);
     init->base.kind = NodeStructInit;
     init->base.range = startTok.range;
-    init->typeName = arena_strdup(p->m_arena, typeName);
+    init->typeName = typeName ? arena_strdup(p->m_arena, typeName) : NULL;
     VecInit(&init->fields);
 
     Advance(p);
@@ -1796,8 +1888,16 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
         if (p->m_cur.kind == TokLBrace)
         {
             /* `{ ... }` initializes a fixed-size array field; the element
-               type is filled in from the field during sema. */
-            field->value = ParseArrayInitBody(p, p->m_cur, NULL);
+                type is filled in from the field during sema. A designator
+                form is a nested struct literal. */
+            if (LexerPeekToken(p->m_lex).kind == TokDot)
+            {
+                field->value = ParseStructInitBody(p, p->m_cur, NULL);
+            }
+            else
+            {
+                field->value = ParseArrayInitBody(p, p->m_cur, NULL);
+            }
         }
         else
         {
@@ -2096,6 +2196,21 @@ static Node* ParsePrimary(Parser* p)
         ParserExpect(p, TokRParen, "')'");
 
         return e;
+    }
+
+    case TokLBrace:
+    {
+        /* A braced list in expression position (call argument, nested
+            initializer): `{1, 2, 3}` / `{}` as an array literal, or
+            `{ .field = ... }` as a struct literal. The element/struct type
+            is inferred from context by sema. Statement position never gets
+            here - a leading `{` starts a block there. */
+        if (LexerPeekToken(p->m_lex).kind == TokDot)
+        {
+            return ParseStructInitBody(p, token, NULL);
+        }
+
+        return ParseArrayInitBody(p, token, NULL);
     }
 
     default:

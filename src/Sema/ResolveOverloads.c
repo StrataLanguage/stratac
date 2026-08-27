@@ -841,7 +841,12 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     const TypeName* arrType = InferType(r, arg0, scope);
 
-    if (!TypeNameIsDynamicArray(arrType))
+    /* A `T[]?` receiver is an optional array: the builtin mutates its
+       contents, so it derefs like any optional read (checked in
+       CheckCallArgOptionalDerefs). Unwrap for the element type. */
+    const TypeName* unwrapped = arrType && arrType->isOptional ? arrType->inner : arrType;
+
+    if (!TypeNameIsDynamicArray(unwrapped))
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'%s' expects an array argument, not '%s'", c->callee,
                      arrType ? arrType->name : "");
@@ -872,7 +877,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         Node* arg1 = (Node*)VecGet(&c->args, 1);
 
         const TypeName* valueType = InferType(r, arg1, scope);
-        const TypeName* elemType = TypeNameArrayElem(arrType);
+        const TypeName* elemType = TypeNameArrayElem(unwrapped);
 
         if (valueType && elemType && !IsAssignableType(r, elemType, valueType))
         {
@@ -1078,14 +1083,79 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
-    /* array_push(arr, opt): the element slot is the target. */
+    /* array_push(arr, opt): the element slot is the target; a `T[]?`
+       receiver is itself dereferenced (its contents are mutated). */
     if (c->callee && strcmp(c->callee, "array_push") == 0 && c->args.count == 2)
     {
         const TypeName* arrType = InferType(r, (Node*)VecGet(&c->args, 0), scope);
+        const TypeName* elem = arrType && arrType->isOptional ? TypeNameArrayElem(arrType->inner)
+                                                              : TypeNameArrayElem(arrType);
         Node* valArg = (Node*)VecGet(&c->args, 1);
 
-        CheckOptionalDeref(r, valArg, InferType(r, valArg, scope), TypeNameArrayElem(arrType), valArg->range);
+        CheckOptionalDeref(r, valArg, InferType(r, valArg, scope), elem, valArg->range);
+
+        if (arrType && arrType->isOptional)
+        {
+            Node* arrArg = (Node*)VecGet(&c->args, 0);
+
+            CheckOptionalDeref(r, arrArg, arrType, arrType->inner, arrArg->range);
+        }
     }
+}
+
+/* Rebuilds a braced list node as a positional StructInitExpr of `structName`.
+   The parser cannot know a `{...}` in expression position initializes a
+   struct rather than an array, so sema rewrites the node once the expected
+   (target/param/field) type is known. Elements become positional fields. */
+static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structName)
+{
+    ArrayInitExpr* ai = AsNode(ArrayInitExpr, braced);
+
+    StructInitExpr* init = (StructInitExpr*)arena_alloc(r->m_arena, sizeof(StructInitExpr));
+    memset(init, 0, sizeof(StructInitExpr));
+    init->base.kind = NodeStructInit;
+    init->base.range = ai->base.range;
+    init->typeName = (char*)structName;
+    VecInit(&init->fields);
+
+    for (size_t i = 0; i < ai->elements.count; i++)
+    {
+        StructInitField* field = (StructInitField*)arena_alloc(r->m_arena, sizeof(StructInitField));
+        field->name = NULL;
+        field->value = (Node*)VecGet(&ai->elements, i);
+        VecPush(&init->fields, field);
+    }
+
+    return (Node*)init;
+}
+
+/* Applies a struct-shaped expected type to a context-free braced node:
+   rewrites a braced array list into a positional struct init, or fills the
+   missing typeName of a designator form parsed in expression position
+   (`{ .a = 1 }`). Returns the (possibly new) node; unchanged when the
+   expected type is not a defined struct. */
+static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target)
+{
+    const TypeName* unwrapped = target && target->isOptional ? target->inner : target;
+    unwrapped = unwrapped && unwrapped->isBox ? unwrapped->inner : unwrapped;
+
+    if (!unwrapped || !TypeRegistryIsUserType(&r->m_registry, unwrapped->name)
+        || TypeRegistryIsOpaque(&r->m_registry, unwrapped->name))
+    {
+        return node;
+    }
+
+    if (node->kind == NodeArrayInit && !((ArrayInitExpr*)node)->elementType)
+    {
+        return BracedToStructInit(r, node, unwrapped->name);
+    }
+
+    if (node->kind == NodeStructInit && !((StructInitExpr*)node)->typeName)
+    {
+        ((StructInitExpr*)node)->typeName = (char*)unwrapped->name;
+    }
+
+    return node;
 }
 
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
@@ -1099,6 +1169,40 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             its narrowing fact, but the fact held at call time. */
         const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
 
+        for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
+        {
+            FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
+            Node* arg = (Node*)VecGet(&c->args, j);
+
+            /* A braced list against a STRUCT field is a positional struct
+                init (`Outer({}, ...)`); against an ARRAY field it is an
+                array literal. The parser can't know, so decide here - and
+                before any type inference below. */
+            Node* resolvedArg = ApplyBracedStructTarget(r, arg, &fd->type);
+
+            if (resolvedArg != arg)
+            {
+                VecSet(&c->args, j, resolvedArg);
+            }
+            else if (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
+            {
+                /* A braced list argument initializes an array field
+                    positionally (`FooBar("x", {1, 2})`): it carries no
+                    element type from the parser, so infer it from the
+                    field. */
+                const TypeName* ft = &fd->type;
+                const TypeName* ftArr = ft->isOptional ? ft->inner : ft;
+
+                if (TypeNameIsDynamicArray(ftArr))
+                {
+                    ((ArrayInitExpr*)arg)->elementType = TypeNameArrayElem(ftArr);
+                }
+            }
+        }
+
+        /* Facts first, moves second: the loop below may move an argument
+            out of a `T?` (clearing its narrowing fact), but the fact held
+            at call time. */
         CheckCallArgOptionalDerefs(r, c, scope);
 
         for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
@@ -1385,6 +1489,32 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     c->callee = best->mangledName;
     c->resolvedDecl = best;
 
+    /* A braced call argument against a struct param (`take({});`) is a
+       positional struct init, not an array literal - rewrite before the
+       checks/moves below consult argument types. */
+    {
+        bool typedRest = best->isVariadic && !best->isCVararg;
+        size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
+
+        for (size_t j = 0; j < c->args.count && j < namedCount; j++)
+        {
+            Node* arg = (Node*)VecGet(&c->args, j);
+
+            if (arg->kind != NodeArrayInit && arg->kind != NodeStructInit)
+            {
+                continue;
+            }
+
+            const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
+            Node* resolvedArg = ApplyBracedStructTarget(r, arg, &param->type);
+
+            if (resolvedArg != arg)
+            {
+                VecSet(&c->args, j, resolvedArg);
+            }
+        }
+    }
+
     CheckCallArgOptionalDerefs(r, c, scope);
     TrackCallArgMoves(r, best, c);
 }
@@ -1572,10 +1702,16 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         return NULL;
     }
     case NodeStructInit:
-        return InternTypeName(r, ((StructInitExpr*)n)->typeName);
+        return ((StructInitExpr*)n)->typeName ? InternTypeName(r, ((StructInitExpr*)n)->typeName) : NULL;
     case NodeIndex:
     {
         const TypeName* baseType = InferType(r, ((IndexExpr*)n)->base_node, scope);
+
+        /* Indexing through an optional array (`T[]?`) unwraps it. */
+        if (baseType && baseType->isOptional)
+        {
+            baseType = baseType->inner;
+        }
 
         return baseType ? TypeNameArrayElem(baseType) : NULL;
     }
@@ -1765,26 +1901,39 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        /* A bare braced array literal RHS (`a = {1,2,3};`, `s.field = {...};`)
-            carries no element type from the parser - infer it from the
-            target so codegen and the type checks below see a real type.
-            A non-array target cannot take a braced list at all (fixed-size
-            array targets are rejected later with a more specific message). */
-        if (a->value->kind == NodeArrayInit
+        /* A bare braced RHS (`a = {1,2,3};`, `s.field = {...};`, `box = {};`)
+            carries no type from the parser - infer it from the target so
+            codegen and the type checks below see a real type. A non-array,
+            non-struct target cannot take a braced list at all. */
+        if ((a->value->kind == NodeArrayInit || a->value->kind == NodeStructInit)
             && (a->target->kind == NodeIdent || a->target->kind == NodeMember))
         {
             const TypeName* at = (a->target->kind == NodeIdent) ? tt : InferType(r, a->target, scope);
+            const TypeName* atArr = at && at->isOptional ? at->inner : at;
 
-            if (at && TypeNameIsDynamicArray(at))
+            /* A braced RHS against a struct-shaped target (`foo = {};`,
+                `boxVar = { ... };`, `opt = {};`) is a struct initializer,
+                not an array literal. */
+            a->value = ApplyBracedStructTarget(r, a->value, atArr);
+
+            if (a->value->kind == NodeArrayInit && at && TypeNameIsDynamicArray(atArr))
             {
                 ArrayInitExpr* ai = (ArrayInitExpr*)a->value;
 
                 if (!ai->elementType)
                 {
-                    ai->elementType = TypeNameArrayElem(at);
+                    ai->elementType = TypeNameArrayElem(atArr);
                 }
             }
-            else if (at && !TypeNameIsFixedArray(at))
+            else if (a->value->kind == NodeStructInit && !((StructInitExpr*)a->value)->typeName)
+            {
+                const char* targetKey = MovableBoxSourceKey(r, a->target);
+
+                DiagErrorFmt(r->m_diag, a->value->range,
+                             "cannot infer a struct type for the braced initializer assigned to '%s' ('%s')",
+                             targetKey ? targetKey : "target", at ? at->name : "unknown");
+            }
+            else if (a->value->kind == NodeArrayInit && at && !TypeNameIsFixedArray(atArr))
             {
                 const char* targetKey = MovableBoxSourceKey(r, a->target);
 
@@ -2104,6 +2253,25 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     {
         StructInitExpr* structInitExpr = (StructInitExpr*)n;
 
+        /* A context-free braced literal (`{ .a = 1 }` in expression
+            position) has no type name yet - the surrounding
+            call/assignment fills it. Resolve the field values only; the
+            full checking runs on a later pass over the now-typed node. */
+        if (!structInitExpr->typeName)
+        {
+            for (size_t i = 0; i < structInitExpr->fields.count; i++)
+            {
+                StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
+
+                if (field->value)
+                {
+                    ResolveExpr(r, field->value, scope);
+                }
+            }
+
+            return;
+        }
+
         if (!TypeRegistryIsUserType(&r->m_registry, structInitExpr->typeName))
         {
             DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is not a known aggregate type",
@@ -2158,6 +2326,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (fieldDecl && field->value)
             {
+                /* A braced value against a struct-shaped field
+                    (`Outer { .inner = {} };`) is a nested struct init, not
+                    an array literal. */
+                if (field->value->kind == NodeArrayInit || field->value->kind == NodeStructInit)
+                {
+                    field->value = ApplyBracedStructTarget(r, field->value, &fieldDecl->type);
+                }
+
                 if (field->value->kind == NodeArrayInit)
                 {
                     ArrayInitExpr* ai = (ArrayInitExpr*)field->value;
@@ -2353,6 +2529,26 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         IndexExpr* ix = (IndexExpr*)n;
         ResolveExprImpl(r, ix->base_node, scope, true);
         ResolveExprImpl(r, ix->index, scope, false);
+
+        /* Indexing an optional array (`opt[i]`) reads its contents - the
+            same narrowing rule as a member read through a `T?`. */
+        {
+            const TypeName* baseType = InferType(r, ix->base_node, scope);
+
+            if (baseType && baseType->isOptional)
+            {
+                const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
+
+                if (!IsPathNonEmpty(r, baseKey))
+                {
+                    DiagErrorFmt(r->m_diag, ix->base.range,
+                                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
+                                 baseKey ? baseKey : "<expression>", EmptyWording(r, baseKey), baseType->name,
+                                 baseKey ? baseKey : "<expr>");
+                }
+            }
+        }
+
         return;
     }
     case NodeNullTest:

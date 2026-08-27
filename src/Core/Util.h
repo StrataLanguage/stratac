@@ -122,6 +122,14 @@ static inline void* VecGet(const Vec* v, size_t i)
     return (i < v->count) ? v->items[i] : NULL;
 }
 
+static inline void VecSet(Vec* v, size_t i, void* item)
+{
+    if (i < v->count)
+    {
+        v->items[i] = item;
+    }
+}
+
 // -- StrMap
 
 typedef struct {

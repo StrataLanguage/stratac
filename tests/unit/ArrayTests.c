@@ -67,12 +67,26 @@ STRATA_TEST(type_name_parse_round_trips)
     /* Owning-ness is structural: string, ^T and dynamic T[] own; T[N] does not. */
     STRATA_CHECK(TypeNameIsOwning(&(TypeName){.name = (char*)"string"}));
     TypeName fixed = TypeNameParse(&arena, "int[4]");
-    STRATA_CHECK(!TypeNameIsOwning(&fixed));
-    TypeName dyn = TypeNameParse(&arena, "int[]");
+    STRATA_CHECK(!TypeNameIsOwning(&fixed));    TypeName dyn = TypeNameParse(&arena, "int[]");
     STRATA_CHECK(TypeNameIsOwning(&dyn));
     TypeName box = TypeNameParse(&arena, "^Foo");
     STRATA_CHECK(TypeNameIsOwning(&box));
     STRATA_CHECK(TypeNameBoxInner(&box) && strcmp(TypeNameBoxInner(&box)->name, "Foo") == 0);
+
+    /* `T[]?` round-trips as an optional wrapping a dynamic array - distinct
+       from `T?[]`, which is an array of optionals. */
+    TypeName optArr = TypeNameParse(&arena, "int[]?");
+    STRATA_CHECK(optArr.name && strcmp(optArr.name, "int[]?") == 0);
+    STRATA_CHECK(optArr.isOptional);
+    STRATA_CHECK(optArr.inner && TypeNameIsDynamicArray(optArr.inner));
+    STRATA_CHECK(optArr.inner && strcmp(optArr.inner->name, "int[]") == 0);
+    STRATA_CHECK(TypeNameIsOwning(&optArr));
+
+    TypeName arrOfOpt = TypeNameParse(&arena, "int?[]");
+    STRATA_CHECK(!arrOfOpt.isOptional);
+    STRATA_CHECK(TypeNameIsDynamicArray(&arrOfOpt));
+    STRATA_CHECK(TypeNameArrayElem(&arrOfOpt) != NULL);
+    STRATA_CHECK(TypeNameArrayElem(&arrOfOpt)->isOptional);
 
     arena_free(&arena);
 }
@@ -535,6 +549,181 @@ STRATA_TEST(box_field_omitted_still_an_error)
     STRATA_CHECK(strstr(d, "'Inner?'") != NULL);
 
     DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* A braced list is valid in expression position: positional constructor
+   args accept `{}` (empty array) and `{1, 2, ...}` (element type inferred
+   from the field). */
+STRATA_TEST(braced_literal_as_constructor_argument)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct FooBar { string str; int[] ints; };\n"
+        "int entry() {\n"
+        "  ^FooBar a = FooBar(\"x\", {});\n"
+        "  ^FooBar b = FooBar(\"y\", {1, 2, 3});\n"
+        "  int sum = 0;\n"
+        "  for (uint i = 0; i < b.ints.length; i++) { sum += b.ints[i]; }\n"
+        "  return sum * 10 + (int)a.ints.length;\n"     /* 60 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 60);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* Braced STRUCT literals in expression position: `{}` and `{ .f = ... }`
+   against struct-shaped targets - call args, assignments, nested fields,
+   returns through plain/box types. Sema fills the type from context. */
+STRATA_TEST(braced_struct_literals_in_expression_position)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "struct Inner { int a; };\n"
+        "struct Outer { Inner in; int tag; };\n"
+        "int take_vec(Vec3 v) { return (int)(v.x + v.y + v.z); }\n"
+        "Vec3 zero() { return {}; }\n"
+        "^Inner boxed_empty() { return {}; }\n"
+        "int entry() {\n"
+        "  Vec3 v = {};\n"
+        "  ^Outer o = {};\n"
+        "  o = {};\n"                                /* re-assign braces into the box */
+        "  int a = take_vec({});\n"                  /* 0 */
+        "  int b = take_vec({1, 2, 3});\n"           /* 6: positional struct */
+        "  ^Outer p = Outer({ .a = 7 }, 1);\n"       /* designator braced ctor arg */
+        "  Vec3 z = zero();\n"
+        "  ^Inner be = boxed_empty();\n"
+        "  return a + b + p.in.a + (int)z.x + be.a + o.tag;\n"   /* 6 + 7 = 13 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 13);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Optional dynamic arrays (`T[]?`) ------------------------------------
+   A `T[]?` field/local is an optional array: it shares the fat {ptr, len}
+   representation with `T[]` (empty = {null, 0}), but reading it requires
+   narrowing - unlike a plain T[], which is always usable. */
+
+STRATA_TEST(optional_array_field_narrows_and_runs)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Bag { int[]? items; string label; };\n"
+        "int entry() {\n"
+        "  ^Bag b = Bag { .label = \"empty\" };\n"
+        "  int unset = 0;\n"
+        "  if (b.items?) { } else { unset = 1; }\n"
+        "  ^Bag o = Bag { .label = \"full\" };\n"
+        "  o.items = {1, 2, 3};\n"                    /* rebind the optional array */
+        "  int sum = 0;\n"
+        "  if (o.items?)\n"
+        "  {\n"
+        "    array_push(o.items, 4);\n"
+        "    for (uint i = 0; i < o.items.length; i++) { sum += o.items[i]; }\n"
+        "  }\n"
+        "  return unset * 1000 + sum;\n"              /* 1010 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 1010);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(optional_array_use_without_narrowing_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Bag { int[]? items; };\n"
+        "int entry() {\n"
+        "  ^Bag b = Bag { };\n"
+        "  int x = b.items[0];\n"
+        "  array_push(b.items, 1);\n"
+        "  int n = (int)b.items.length;\n"
+        "  return x + n;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "'b.items' may be empty") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(fixed_array_cannot_be_optional)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct S { int[2] ints; };\n"
+        "int entry() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));   /* sanity: plain fixed array still fine */
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    DiagnosticEngine diag2; DiagnosticEngineInit(&diag2);
+    ParseAndResolve(
+        "struct S { int[2]? ints; };\n"
+        "int entry() { return 0; }\n",
+        &diag2, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+
+    SourceManager sm2; SourceManagerInit(&sm2);
+    char* d2 = DiagFormat(&diag2, &sm2, 1, &arena);
+    STRATA_CHECK(strstr(d2, "cannot be optional") != NULL);
+
+    DiagnosticEngineFree(&diag2);
     arena_free(&arena);
 }
 

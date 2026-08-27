@@ -184,8 +184,9 @@ static inline bool TypeNameIsOptional(const TypeName* t)
     return t && t->isOptional;
 }
 
-/* Inner `T` of a box `^T` or optional `T?`, or NULL. Never an array (no
-   such spelling). */
+/* Inner `T` of a box `^T` or optional `T?`, or NULL. A box never wraps an
+   array (no such spelling); an optional may (`T[]?` wraps a dynamic array,
+   sharing its fat {ptr, len} representation with empty = {null, 0}). */
 static inline const TypeName* TypeNameBoxInner(const TypeName* t)
 {
     if (!t || !(t->isBox || t->isOptional))
@@ -224,8 +225,25 @@ static inline TypeName TypeNameLeaf(char* name)
 }
 
 static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_t baseLen, const char* groups,
-                                           size_t groupsLen)
+                                            size_t groupsLen)
 {
+    /* A trailing '?' AFTER bracket groups wraps the whole type: `int[]?`
+       is an optional array (distinct from `int?[]`, an array of optionals).
+       Boxes still never wrap arrays, but an optional may. */
+    if (groupsLen > 0 && groups[groupsLen - 1] == '?')
+    {
+        TypeName inner = TypeNameParseGroups(arena, base, baseLen, groups, groupsLen - 1);
+
+        TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+        *i = inner;
+
+        TypeName t = {0};
+        t.isOptional = true;
+        t.inner = i;
+        t.name = arena_format(arena, "%s?", i->name);
+        return t;
+    }
+
     if (groupsLen == 0)
     {
         /* Trailing '?' marks an optional (`Weapon?`). */

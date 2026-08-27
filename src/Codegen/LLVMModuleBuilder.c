@@ -429,6 +429,17 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return td;
     }
 
+    /* T[]?: an optional dynamic array. It shares the fat {ptr, u64}
+        representation with T[] (empty = the canonical {null, 0}); the
+        optional flag only drives sema-level narrowing, so the unwrap
+        T[]? -> T[] is representation-identity. */
+    if (t->isOptional && t->inner && t->inner->isArray && t->inner->length < 0)
+    {
+        TypeDesc td = Resolve(b, t->inner);
+        td.isOptional = true;
+        return td;
+    }
+
     if (TypeNameIsOwning(t))
     {
         TypeDesc td = TypeDescMake(b->m_ptrTy, 0, NULL);
@@ -3430,6 +3441,20 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
 
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 {
+    /* An empty braced literal with no contextual element type (`FooBar("x", {})`)
+        is the canonical empty array - nothing to resolve or allocate. */
+    if (!n->elementType && n->elements.count == 0)
+    {
+        LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
+        arr = LLVMBuildInsertValue(b->m_builder, arr, LLVMConstNull(b->m_ptrTy), 0, "arri");
+        arr = LLVMBuildInsertValue(b->m_builder, arr, LLVMConstInt(I64Ty(b), 0, 0), 1, "arrl");
+
+        TypeDesc td = {0};
+        td.type = ArrayStructType(b);
+        td.isArray = true;
+        return ValueMake(arr, td);
+    }
+
     return EmitArrayFromNodes(b, n->elementType, &n->elements, false, false);
 }
 
@@ -3676,11 +3701,27 @@ Value EmitExpr(Builder* b, Node* n)
 
     case NodeNullTest:
     {
-        /* `expr?` — load the optional slot's pointer and test it. Zero
-           runtime cost beyond the compare; sema guarantees the operand is
-           a nullable path. */
+        /* `expr?` — test whether the optional holds anything. Zero runtime
+            cost beyond the compare; sema guarantees the operand is a
+            nullable path. A pointer slot (T? / ^T) tests the pointer; an
+            optional array tests its fat struct: set = non-null data OR a
+            non-zero length (either means it is not the canonical empty). */
         NullTestExpr* nt = (NullTestExpr*)n;
         LValue lv = EmitLValue(b, nt->operand);
+
+        if (lv.valid && lv.typeDesc.isArray)
+        {
+            LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "oad");
+            LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, lv.ptr), "oal");
+
+            LLVMValueRef dataNonNull
+                = LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "nn");
+            LLVMValueRef lenNonZero = LLVMBuildICmp(b->m_builder, LLVMIntNE, len,
+                                                    LLVMConstInt(I64Ty(b), 0, 0), "nz");
+
+            return ValueMake(LLVMBuildOr(b->m_builder, dataNonNull, lenNonZero, "opt"),
+                             TypeDescMake(I1Ty(b), 0, NULL));
+        }
 
         LLVMValueRef slotPtr = lv.valid ? lv.ptr : EmitExpr(b, nt->operand).value;
         LLVMValueRef boxPtr = lv.valid ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slotPtr, "opt")
