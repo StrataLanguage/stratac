@@ -513,8 +513,24 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     MarkBoxMoved(r, name);
     MarkBoxPartiallyMoved(r, name);
     /* Moving out also invalidates any "definitely non-empty" fact for the
-       path and its descendants - a moved-from optional is empty again. */
+        path and its descendants - a moved-from optional is empty again. */
     ClearNonEmptySubtree(r, name);
+}
+
+/* Moving out an OPTIONAL path (`T?`) differs from a ^T/string move: the
+   source slot is nulled in place and left EMPTY - a legal state, not a
+   broken one. The move is not tracked as "moved" at all: the source just
+   becomes an unproven (in fact empty) optional, so later `path?` tests
+   read false and un-narrowed reads error with the ordinary "may be
+   empty" wording. Neither whole-value move restriction applies: the
+   parent box is not poisoned, and moving through a `ref` or out of a box
+   global is a visible in-place mutation, never a dangling owner. */
+static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
+{
+    (void)range;
+
+    ClearNonEmptySubtree(r, name);
+    ClearEmptySubtree(r, name);
 }
 
 /* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
@@ -881,9 +897,22 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (valueType && elemType && !IsAssignableType(r, elemType, valueType))
         {
-            DiagErrorFmt(r->m_diag, arg1->range,
-                         "cannot push a value of type '%s' into '%s' (element type '%s')",
-                         valueType->name, arrType->name, elemType->name);
+            /* A narrowed `T?` pushes into a `^T[]` element slot: the
+                narrowing fact proves the box exists, so the move may take
+                it (leaving the source optional empty). */
+            const TypeName* vi = TypeNameBoxInner(valueType);
+            const TypeName* ei = TypeNameBoxInner(elemType);
+
+            bool narrowedOptIntoBox = valueType->isOptional && elemType->isBox && vi && ei
+                                      && strcmp(vi->name, ei->name) == 0
+                                      && IsPathNonEmpty(r, MovableBoxSourceKey(r, arg1));
+
+            if (!narrowedOptIntoBox)
+            {
+                DiagErrorFmt(r->m_diag, arg1->range,
+                             "cannot push a value of type '%s' into '%s' (element type '%s')",
+                             valueType->name, arrType->name, elemType->name);
+            }
         }
 
         /* Pushing an owning value read out of an array element
@@ -901,14 +930,23 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
             optional's fact. */
         CheckCallArgOptionalDerefs(r, c, scope);
 
-        /* Pushing an owning value (string/box) moves it into the array. */
+        /* Pushing an owning value (string/box) moves it into the array.
+            An optional source moves out cleanly: it is left EMPTY (a legal
+            state) and never poisons its parent box. */
         if (valueType && TypeNameIsOwning(valueType))
         {
             const char* movedKey = MovableBoxSourceKey(r, arg1);
 
             if (movedKey)
             {
-                MoveBoxIdent(r, movedKey, c->base.range);
+                if (valueType->isOptional)
+                {
+                    MoveOptionalSource(r, movedKey, c->base.range);
+                }
+                else
+                {
+                    MoveBoxIdent(r, movedKey, c->base.range);
+                }
             }
         }
     }

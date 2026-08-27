@@ -590,8 +590,7 @@ STRATA_TEST(braced_literal_as_constructor_argument)
 /* Braced STRUCT literals in expression position: `{}` and `{ .f = ... }`
    against struct-shaped targets - call args, assignments, nested fields,
    returns through plain/box types. Sema fills the type from context. */
-STRATA_TEST(braced_struct_literals_in_expression_position)
-{
+STRATA_TEST(braced_struct_literals_in_expression_position){
     const char* err = NULL;
     StrataJit* jit = CompileArr(
         "struct Vec3 { float x; float y; float z; };\n"
@@ -629,6 +628,115 @@ STRATA_TEST(braced_struct_literals_in_expression_position)
     }
 
     strataJitDestroy(jit);
+}
+
+/* `{}` against a `T?` field constructs the boxed T (non-empty), the same
+   as a plain `T` field - it does NOT leave the optional empty/null. */
+STRATA_TEST(braced_empty_against_optional_field_constructs)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Node { int v; Node? next; };\n"
+        "int entry() {\n"
+        "  ^Node a = Node(1, {});\n"              /* next = boxed default Node */
+        "  if (a.next?)\n"
+        "  {\n"
+        "    return 10 + a.next.v;\n"              /* 10 */
+        "  }\n"
+        "  return 1;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 10);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Pushing a narrowed `T?` into a `^T[]` --------------------------------
+   `if (x.next?) { array_push(arr, x.next); }` moves the proven box into
+   the element slot: the source optional is left EMPTY (legal), the parent
+   box is NOT poisoned, and the move works through refs and box globals. */
+STRATA_TEST(push_narrowed_optional_into_box_array)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Node { int v; Node? next; };\n"
+        "int drain(ref ^Node[] sink, ^Node src)\n"
+        "{\n"
+        "  if (src.next?) { array_push(sink, src.next); }\n"   /* through a ref */
+        "  return 0;\n"
+        "}\n"
+        "int entry() {\n"
+        "  ^Node[] arr;\n"
+        "  ^Node a = Node(1, {});\n"                /* next constructed, non-empty */
+        "  if (a.next?)\n"
+        "  {\n"
+        "    array_push(arr, a.next);\n"             /* the move */
+        "  }\n"
+        "  int r = (int)arr.length * 10;\n"          /* 10 */
+        "  if (a.next?) { r += 5; } else { r += 1; }\n"   /* emptied -> +1 -> 11 */
+        "  ^Node[] more;\n"
+        "  array_push(more, a);\n"                   /* parent NOT poisoned */
+        "  r += (int)more.length * 100;\n"           /* +100 -> 111 */ 
+        "  ^Node b = Node(7, {});\n"
+        "  drain(arr, b);\n"                         /* pushes b's nested next (v == 0) */
+        "  r += (int)arr.length;\n"                  /* 2 -> 113 */
+        "  return r + arr[1].v;\n"                   /* +0 -> 113 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 113);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Node { int v; Node? next; };\n"
+        "int entry() {\n"
+        "  ^Node[] arr;\n"
+        "  ^Node a = Node(1, {});\n"
+        "  array_push(arr, a.next);\n"      /* no `if (a.next?)` guard */
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "cannot push a value of type 'Node?'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
 }
 
 /* ---- Optional dynamic arrays (`T[]?`) ------------------------------------
@@ -1093,7 +1201,92 @@ STRATA_TEST(array_return_cleans_up_memory)
     }
 
     strataJitDestroy(jit);
-    strataCompilerDestroy(c);
+}
+
+/* `{}` against a `T?` in every position constructs the boxed T (non-empty);
+   OMITTING the value entirely is what leaves the optional empty. */
+STRATA_TEST(optional_braced_empty_constructs_in_all_positions)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Node { int v; Node? next; };\n"
+        "int entry() {\n"
+        "  /* named-literal field */\n"
+        "  ^Node a = Node { .v = 1, .next = {} };\n"
+        "  int r = 0;\n"
+        "  if (a.next?) { r += 1; }\n"
+        "  /* assignment into an optional field */\n"
+        "  ^Node b = Node { .v = 2 };\n"
+        "  b.next = {};\n"
+        "  if (b.next?) { r += 10; }\n"
+        "  /* plain optional local initialized from braces */\n"
+        "  Node? n = {};\n"
+        "  if (n?) { r += 100; }\n"
+        "  /* omitted trailing ctor arg leaves the optional EMPTY */\n"
+        "  ^Node c = Node(3);\n"
+        "  if (c.next?) { r += 5000; } else { r += 1000; }\n"
+        "  /* reading the constructed default through the narrow */\n"
+        "  if (a.next?) { r += a.next.v; }\n"       /* +0 */
+        "  return r;\n"                              /* 1111 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 1111);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* The recursive-owning-struct shape from samples/arrays.strata: a `{}`
+   against the self-referential `T?` field constructs a zeroed cell whose
+   owning fields (null string, empty array) drop cleanly, and the
+   two-arg-of-three ctor form (trailing arg omitted) stays legal. */
+STRATA_TEST(recursive_struct_braced_ctor_sample_shape)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct FooBar { string str; int[] ints; FooBar? next; };\n"
+        "int take(^FooBar f) { return (int)f.ints.length; }\n"
+        "int entry() {\n"
+        "  ^FooBar[] elems;\n"
+        "  array_push(elems, FooBar(\"hello\", {}, {}));\n"
+        "  array_push(elems, FooBar(\"world\", {}, {}));\n"
+        "  array_push(elems, FooBar(\"again\"));\n"   /* next omitted -> empty */
+        "  int r = (int)elems.length * 100;\n"        /* 300 */
+        "  if (elems[0].next?) { r += 10; }\n"        /* constructed, non-empty */
+        "  if (elems[2].next?) { r += 5000; } else { r += 1; }\n"   /* omitted */
+        "  return r + take(elems[0]);\n"              /* 311 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 311);
+    }
+
+    strataJitDestroy(jit);
 }
 
 #if STRATA_TEST_HAS_LLVM

@@ -67,6 +67,10 @@ void PrintAll(ref ^FooBar[] elems) {
     string foo1 = "hi";
     ^FooBar fb1 = {foo1};
     array_push(elems, fb1);
+    if (elems[0].next?)
+    {
+        array_push(elems, elems[0].next);   // narrowed T? moves into the ^T[] element slot
+    }
     array_push(elems, FooBar("again", {}, {}));
     array_push(elems, FooBar(copy(testGlobalString), {}, {}));
     for (uint i = 0; i < elems.length; i++) {

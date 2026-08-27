@@ -3009,10 +3009,28 @@ static Value EmitCall(Builder* b, CallExpr* n)
             Value argValue;
 
             /* An owning string field takes a heap copy of a literal so the
-               field can be freed without freeing a string global. */
+                field can be freed without freeing a string global. */
             if (fieldTd.isBox && !fieldTd.boxInner && argNode->kind == NodeStrLiteral)
             {
                 argValue = ValueMake(HeapCopyString(b, rawArg.value, strlen(((StrLiteral*)argNode)->value)), fieldTd);
+            }
+            else if (fieldTd.isBox && fieldTd.boxInner
+                     && !(rawArg.typeDesc.isBox && rawArg.typeDesc.boxInner
+                          && strcmp(rawArg.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
+            {
+                /* ^T / T? field from a non-box value (bare T, braced
+                    struct literal): allocate a T slot and construct the
+                    value into it. A braced `{}` against a `T?` field
+                    constructs a NON-EMPTY boxed T - same rule as the
+                    named-literal form. */
+                TypeDesc innerTd = Resolve(b, fieldTd.boxInner);
+                LLVMValueRef size = SizeOfConst(b, innerTd.type);
+                LLVMValueRef args[1] = {size};
+                StrataAllocFn(b);
+                LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "argbox");
+                LLVMValueRef inner = EmitOwnedValue(b, rawArg, argNode, fieldTd.boxInner);
+                LLVMBuildStore(b->m_builder, inner, heap);
+                argValue = ValueMake(heap, fieldTd);
             }
             else
             {

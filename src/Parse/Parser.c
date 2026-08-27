@@ -1359,10 +1359,12 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
             }
             else
                 {
-                    /* `^T x = {...};` infers T, not "^T". */
+                    /* `^T x = {...};` infers T, not "^T"; a `T? x = {};`
+                        constructs a NON-EMPTY boxed T, so it also infers
+                        the inner struct type. */
                     const char* initTypeName
-                        = type.isBox ? type.inner->name
-                                     : (strcmp(type.name, "string") == 0 ? NULL : type.name);
+                        = (type.isBox || type.isOptional) && type.inner ? type.inner->name
+                                                                         : (strcmp(type.name, "string") == 0 ? NULL : type.name);
 
                     node->init = ParseStructInitBody(p, start, initTypeName);
                 }
