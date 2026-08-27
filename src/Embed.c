@@ -205,10 +205,7 @@ extern "C"
         r.error_count = DiagErrorCount(diag);
         r.ok = !DiagHasErrors(diag) ? 1 : 0;
 
-        if (r.ok)
-        {
-            free(irOwned);
-        }
+        free(irOwned);
         return r;
     }
 
@@ -364,6 +361,8 @@ extern "C"
     {
         SetErrOut(errOut, emitErr, "emission failed");
     }
+
+    free(emitErr);
 
     BuiltModuleDispose(&bm);
     TeardownCompile(mod, &loader, &diag, &arena);

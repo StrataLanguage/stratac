@@ -571,6 +571,7 @@ int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, cons
 bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base)
 {
     const StructType* t = TypeRegistryFind(reg, derived);
+    size_t depth = 0;
 
     while (t && t->opaque && t->extendsFrom)
     {
@@ -580,6 +581,12 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
         }
 
         t = TypeRegistryFind(reg, t->extendsFrom);
+
+        /* Guard against circular `extends` chains (e.g. A extends B; B extends A). */
+        if (++depth > reg->count)
+        {
+            return false;
+        }
     }
 
     return false;

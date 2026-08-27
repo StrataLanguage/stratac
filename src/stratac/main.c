@@ -412,10 +412,12 @@ static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler)
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 {
     const char* asmFilename = state->outputFileName;
+    bool owned = false;
 
     if (asmFilename == NULL)
     {
         asmFilename = ReplaceExt(state->sourceFileName, ".s");
+        owned = true;
     }
     const char* asmErr = NULL;
     int asmOk = strataCompileToObject(compiler, state->sourceFileName, asmFilename, true, &asmErr);
@@ -430,7 +432,7 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
         fprintf(stderr, "wrote assembly: %s\n", asmFilename);
     }
 
-    free((void*)asmFilename);
+    if (owned) free((void*)asmFilename);
 
     return RCSuccess;
 }
@@ -498,6 +500,8 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
     }
 
     int exitCode = entry();
+
+    strataJitDestroy(jit);
 
     return exitCode;
 }

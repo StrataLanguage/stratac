@@ -105,7 +105,7 @@ void* arena_alloc_aligned(Arena* a, size_t size, size_t align)
     uintptr_t aligned = (p + align - 1) & ~((uintptr_t)align - 1);
     size_t pad = aligned - p;
 
-    if (a->ptr + pad + size > a->end)
+    if (!a->ptr || a->ptr + pad + size > a->end)
     {
         ArenaGrow(a, size + align);
     }
@@ -137,6 +137,13 @@ void* arena_dup(Arena* a, const void* src, size_t size)
 
 char* arena_strdup(Arena* a, const char* s)
 {
+    if (!s)
+    {
+        char* dst = (char*)arena_alloc(a, 1);
+        dst[0] = '\0';
+        return dst;
+    }
+
     size_t n = strlen(s) + 1;
     char* dst = (char*)arena_alloc(a, n);
     memcpy(dst, s, n);

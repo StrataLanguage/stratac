@@ -14,7 +14,8 @@ typedef struct {
 
 static inline uint32_t SourceRangeEnd(SourceRange r)
 {
-    return r.start + r.length;
+    uint64_t end = (uint64_t)r.start + r.length;
+    return end > UINT32_MAX ? UINT32_MAX : (uint32_t)end;
 }
 
 static inline bool SourceRangeValid(SourceRange r)

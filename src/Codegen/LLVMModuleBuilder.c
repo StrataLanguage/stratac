@@ -38,6 +38,8 @@ typedef struct
 {
     LLVMBasicBlockRef cont;
     LLVMBasicBlockRef end;
+    size_t headerMark; /* owning-locals count before the loop statement (dropped on break) */
+    size_t bodyMark;   /* owning-locals count before the loop body (dropped on continue) */
 } Loop;
 
 typedef enum TypeDescFlag
@@ -2058,7 +2060,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         case BinLtEq:
         case BinGt:
         case BinGtEq:
-            typeDesc = TypeDescMake(I64Ty(b), 0, NULL);
+            typeDesc = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
             flt = false;
             if (l.typeDesc.type == b->m_ptrTy)
             {
@@ -2982,6 +2984,10 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
 
     Value v;
     v.value = LSimdVectorConstruct(b, n);
+    if (!v.value)
+    {
+        v.value = LLVMGetPoison(typeDesc.type);
+    }
     v.typeDesc = typeDesc;
 
     return v;
@@ -4133,6 +4139,8 @@ static void EmitStmt(Builder* b, Node* n)
         Loop* loop = (Loop*)arena_alloc(b->m_arena, sizeof(Loop));
         loop->cont = condBB;
         loop->end = endBB;
+        loop->headerMark = b->m_owningLocals.count;
+        loop->bodyMark = b->m_owningLocals.count;
         VecPush(&b->m_loops, loop);
 
         EmitStmt(b, w->body);
@@ -4149,6 +4157,8 @@ static void EmitStmt(Builder* b, Node* n)
     case NodeFor:
     {
         ForStmt* fs = (ForStmt*)n;
+
+        size_t headerMark = b->m_owningLocals.count;
 
         if (fs->init)
         {
@@ -4180,6 +4190,8 @@ static void EmitStmt(Builder* b, Node* n)
         Loop* loop = (Loop*)arena_alloc(b->m_arena, sizeof(Loop));
         loop->cont = updBB;
         loop->end = endBB;
+        loop->headerMark = headerMark;
+        loop->bodyMark = b->m_owningLocals.count;
         VecPush(&b->m_loops, loop);
 
         EmitStmt(b, fs->body);
@@ -4207,7 +4219,13 @@ static void EmitStmt(Builder* b, Node* n)
         if (b->m_loops.count > 0)
         {
             Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
+            EmitDrops(b, loop->headerMark);
+            b->m_owningLocals.count = loop->headerMark;
             Br(b, loop->end);
+        }
+        else
+        {
+            DiagError(b->m_diag, n->range, "break statement not inside a loop");
         }
 
         return;
@@ -4218,7 +4236,13 @@ static void EmitStmt(Builder* b, Node* n)
         if (b->m_loops.count > 0)
         {
             Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
+            EmitDrops(b, loop->bodyMark);
+            b->m_owningLocals.count = loop->bodyMark;
             Br(b, loop->cont);
+        }
+        else
+        {
+            DiagError(b->m_diag, n->range, "continue statement not inside a loop");
         }
 
         return;
@@ -4602,6 +4626,16 @@ void BuiltModuleInit(BuiltModule* bm)
 
 void BuiltModuleDispose(BuiltModule* bm)
 {
+    if (bm->mod)
+    {
+        LLVMDisposeModule(bm->mod);
+        bm->mod = NULL;
+    }
+    if (bm->ctx)
+    {
+        LLVMContextDispose(bm->ctx);
+        bm->ctx = NULL;
+    }
     if (bm->externSymbols.items)
     {
         free(bm->externSymbols.items);

@@ -11,6 +11,7 @@ void SourceManagerInit(SourceManager* sm)
     sm->m_textLen = 0;
     sm->m_name = "<string>";
     sm->m_lineStarts = (uint32_t*)malloc(sizeof(uint32_t));
+    if (!sm->m_lineStarts) STRATA_OOM();
     sm->m_lineStarts[0] = 0;
     sm->m_lineCount = 1;
     sm->m_lineCap = 1;
@@ -32,6 +33,7 @@ static void ComputeLineStarts(SourceManager* sm)
     {
         sm->m_lineCap = 64;
         sm->m_lineStarts = (uint32_t*)malloc(sm->m_lineCap * sizeof(uint32_t));
+        if (!sm->m_lineStarts) STRATA_OOM();
     }
 
     sm->m_lineStarts[sm->m_lineCount++] = 0;
@@ -45,7 +47,9 @@ static void ComputeLineStarts(SourceManager* sm)
             if (sm->m_lineCount >= sm->m_lineCap)
             {
                 sm->m_lineCap *= 2;
-                sm->m_lineStarts = (uint32_t*)realloc(sm->m_lineStarts, sm->m_lineCap * sizeof(uint32_t));
+                uint32_t* grown = (uint32_t*)realloc(sm->m_lineStarts, sm->m_lineCap * sizeof(uint32_t));
+                if (!grown) STRATA_OOM();
+                sm->m_lineStarts = grown;
             }
             sm->m_lineStarts[sm->m_lineCount++] = (uint32_t)(i + 1);
         }
@@ -59,7 +63,9 @@ static void ComputeLineStarts(SourceManager* sm)
             if (sm->m_lineCount >= sm->m_lineCap)
             {
                 sm->m_lineCap *= 2;
-                sm->m_lineStarts = (uint32_t*)realloc(sm->m_lineStarts, sm->m_lineCap * sizeof(uint32_t));
+                uint32_t* grown = (uint32_t*)realloc(sm->m_lineStarts, sm->m_lineCap * sizeof(uint32_t));
+                if (!grown) STRATA_OOM();
+                sm->m_lineStarts = grown;
             }
             sm->m_lineStarts[sm->m_lineCount++] = (uint32_t)(i + 1);
         }

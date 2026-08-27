@@ -1863,6 +1863,14 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     c->callee = best->mangledName;
     c->resolvedDecl = best;
 
+    /* Ambiguity is already reported above; stop here so we don't run move-tracking /
+       optional-deref / type-inference side effects against the (arbitrary) winning
+       candidate and emit spurious cascading diagnostics. */
+    if (ambiguous)
+    {
+        return;
+    }
+
     /* Braced arg against a struct param is a positional struct init; rewrite before checks. */
     {
         bool typedRest = best->isVariadic && !best->isCVararg;
@@ -2314,13 +2322,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 DiagErrorFmt(r->m_diag, a->base.range,
                              "cannot compound-assign into '%s' of nullable type '%s'; it has not been blessed",
-                             ((IdentExpr*)a->target)->name, tt->name);
+                             MovableBoxSourceKey(r, a->target), tt->name);
 
                 return;
             }
 
             bool boxMove = a->op == AssignSet && vt && (strcmp(vt->name, tt->name) == 0 || optionalTarget);
-            const char* targetName = ((IdentExpr*)a->target)->name;
+            const char* targetName = MovableBoxSourceKey(r, a->target);
 
             if (boxMove)
             {
@@ -3221,6 +3229,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
             }
         }
+        else if (r->m_currentReturnType && strcmp(r->m_currentReturnType->name, "void") != 0)
+        {
+            DiagErrorFmt(r->m_diag, rs->base.range, "non-void function must return a value");
+        }
 
         return;
     }
@@ -3296,6 +3308,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         StrMapFree(&afterThen);
         StrMapFree(&beforeFacts);
         StrMapFree(&factsThen);
+        StrMapFree(&beforeEmpty);
 
         return;
     }
@@ -3434,16 +3447,21 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, j);
             StrMapPut(&scope, gd->name, (void*)&gd->type);
+        }
+
+        ResetStrMap(&r.m_constVars);
+        ResetStrMap(&r.m_movedBoxes);
+        ResetStrMap(&r.m_refBoxParams);
+
+        for (size_t j = 0; j < mod->globals.count; j++)
+        {
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, j);
 
             if (gd->type.isConst)
             {
                 StrMapPut(&r.m_constVars, gd->name, (void*)1);
             }
         }
-
-        ResetStrMap(&r.m_constVars);
-        ResetStrMap(&r.m_movedBoxes);
-        ResetStrMap(&r.m_refBoxParams);
 
         for (size_t j = 0; j < functionDecl->params.count; j++)
         {

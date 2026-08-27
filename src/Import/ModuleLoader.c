@@ -34,7 +34,9 @@ static void PushBuffer(ModuleLoader* loader, char* buf)
     if (loader->bufferCount >= loader->bufferCap)
     {
         loader->bufferCap = GrowCap(loader->bufferCap);
-        loader->buffers = (char**)realloc(loader->buffers, loader->bufferCap * sizeof(char*));
+        char** grown = (char**)realloc(loader->buffers, loader->bufferCap * sizeof(char*));
+        if (!grown) STRATA_OOM();
+        loader->buffers = grown;
     }
     loader->buffers[loader->bufferCount++] = buf;
 }
@@ -44,7 +46,9 @@ static void PushVisited(ModuleLoader* loader, const char* path)
     if (loader->visitedCount >= loader->visitedCap)
     {
         loader->visitedCap = GrowCap(loader->visitedCap);
-        loader->visited = (const char**)realloc(loader->visited, loader->visitedCap * sizeof(const char*));
+        const char** grownVisited = (const char**)realloc(loader->visited, loader->visitedCap * sizeof(const char*));
+        if (!grownVisited) STRATA_OOM();
+        loader->visited = grownVisited;
     }
 
     loader->visited[loader->visitedCount++] = path;
@@ -109,7 +113,9 @@ static void LoadModule(ModuleLoader* loader, const char* name, const char* text,
     if (loader->sourceCount >= loader->sourceCap)
     {
         loader->sourceCap = GrowCap(loader->sourceCap);
-        loader->sources = (SourceManager*)realloc(loader->sources, loader->sourceCap * sizeof(SourceManager));
+        SourceManager* grownSources = (SourceManager*)realloc(loader->sources, loader->sourceCap * sizeof(SourceManager));
+        if (!grownSources) STRATA_OOM();
+        loader->sources = grownSources;
     }
 
     uint16_t fileId = (uint16_t)loader->sourceCount;
