@@ -118,6 +118,9 @@ LLVMValueRef LLVMConstVector(LLVMValueRef* maskv, int ncomp);
 LLVMValueRef LLVMConstNull(LLVMTypeRef ty);
 LLVMValueRef LLVMConstGEP2(LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* indices, unsigned numIndices);
 LLVMValueRef LLVMConstPtrToInt(LLVMValueRef constantVal, LLVMTypeRef toType);
+LLVMValueRef LLVMConstBitCast(LLVMValueRef constantVal, LLVMTypeRef toType);
+LLVMValueRef LLVMConstNamedStruct(LLVMTypeRef structTy, LLVMValueRef* constantMembers, unsigned memberCount);
+LLVMValueRef LLVMConstArray(LLVMTypeRef elementTy, LLVMValueRef* constantVals, unsigned length);
 LLVMValueRef LLVMBuildPtrToInt(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
 void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
@@ -325,8 +328,9 @@ LLVMErrorRef LLVMOrcLLJITLookup(LLVMOrcLLJITRef j, LLVMOrcExecutorAddress* outRe
 
 #define kReturnStatusAction 1
 
+#define LLVMAppendingLinkage 7
+#define LLVMInternalLinkage 8
 #define LLVMPrivateLinkage 9
-#define LLVMInternalLinkage 3
 
 #ifdef __cplusplus
 }

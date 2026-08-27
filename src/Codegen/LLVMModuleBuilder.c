@@ -3158,17 +3158,20 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
             Value av = EmitExpr(b, argNode);
 
+            /* deref */
+            bool paramIsRealBox = extTy->isBox || extTy->isOptional;
+
             if (av.typeDesc.isBox)
             {
-                args[k] = av.value;
+                args[k] = paramIsRealBox ? av.value : DerefBoxValue(b, av).value;
             }
             else
             {
                 const TypeName* innerTn = TypeNameBoxInner(extTy) ? TypeNameBoxInner(extTy) : StringTypeName(b);
 
-                if (!extTy->isBox && !extTy->isOptional)
+                if (!paramIsRealBox)
                 {
-                    /* Unreachable for box-like params - kept defensive. */
+                    /* Plain `string` param: the value already is the char*. */
                     args[k] = av.value;
                 }
                 else
@@ -4477,6 +4480,27 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             }
 
             LLVMBuildRetVoid(b->m_builder);
+
+            /* AOT: register the initializer as a CRT constructor
+               (`llvm.global_ctors`, default priority) so it runs
+               automatically when a host links the object — no host-side
+               call needed. ELF lowers to .init_array, COFF to .CRT$XCU.
+               The JIT keeps its explicit lookup+call (LLVMJit.c) and skips
+               this list; registering it there too would double-init. */
+            if (!b->m_jitMode)
+            {
+                LLVMTypeRef fields[3] = {I32Ty(b), b->m_ptrTy, b->m_ptrTy};
+                LLVMTypeRef ctorTy = LLVMStructTypeInContext(b->m_ctx, fields, 3, 0);
+                LLVMTypeRef arrTy = LLVMArrayType(ctorTy, 1);
+                LLVMValueRef elems[3] = {LLVMConstInt(I32Ty(b), 65535, 0),
+                                         LLVMConstBitCast(initFn, b->m_ptrTy),
+                                         LLVMConstNull(b->m_ptrTy)};
+                LLVMValueRef entry = LLVMConstNamedStruct(ctorTy, elems, 3);
+                LLVMValueRef arr = LLVMConstArray(ctorTy, &entry, 1);
+                LLVMValueRef ctors = LLVMAddGlobal(b->m_mod, arrTy, "llvm.global_ctors");
+                LLVMSetInitializer(ctors, arr);
+                LLVMSetLinkage(ctors, LLVMAppendingLinkage);
+            }
         }
     }
 

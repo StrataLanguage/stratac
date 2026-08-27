@@ -235,6 +235,11 @@ main) are the internal entry points.
 ## extern and the host boundary
 
 - AOT: `extern` lowers to a body-less `declare`; the host links it.
+  Owning globals (`^T` / `T[]` with runtime initializers) self-initialize:
+  `__strata_module_init` is registered in `llvm.global_ctors`, which lowers
+  to `.init_array` (ELF) / `.CRT$XCU` (COFF), so it runs before the host's
+  `main` with no host-side call. (`__strata_module_teardown` still exists as
+  an export the host MAY call; nothing runs it automatically.)
 - JIT: each `extern` call goes through a writable global pointer slot
   `__strata_ext_<name>`. `strataJitAddSymbol` writes the host address.
 - Structs cross the boundary as pointers (`ptr`); handles are already
