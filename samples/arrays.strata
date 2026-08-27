@@ -63,14 +63,31 @@ void PrintAll(ref int[] elems)
     puts("");
 }
 
+void maybe_mutate(ref int i)
+{
+++i;
+}
+
 void PrintAll(ref ^FooBar[] elems) {
     string foo1 = "hi";
     ^FooBar fb1 = {foo1};
     array_push(elems, fb1);
     if (elems[0].next?)
     {
-        array_push(elems, elems[0].next);   // narrowed T? moves into the ^T[] element slot
+        //array_push(elems, elems[0].next);   // narrowed T? moves into the ^T[] element slot
+
+        int idx = 0;
+        if (elems[idx].next?)
+        {
+            maybe_mutate(idx);
+
+            if(elems[idx].next?)
+            {
+                puts(elems[idx].next.str);         // would NOT compile: elems[9] is a different element
+            }
+        }
     }
+
     array_push(elems, FooBar("again", {}, {}));
     array_push(elems, FooBar(copy(testGlobalString), {}, {}));
     for (uint i = 0; i < elems.length; i++) {

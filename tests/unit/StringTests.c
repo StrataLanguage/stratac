@@ -186,7 +186,9 @@ STRATA_TEST(global_string_array_element_move_is_an_error)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "g[]' cannot be moved as it is not owned because it is global"));
+    /* Element keys are spelled precisely ("g[0]"); the root check still
+       reduces them to the global "g". */
+    STRATA_CHECK(Contains(d, "g[0]' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

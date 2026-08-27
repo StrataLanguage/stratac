@@ -175,7 +175,14 @@ main) are the internal entry points.
   Reading through a `T?` — a member/index reach, a call argument,
   return, assignment, or initializer that unwraps it to `T`, an array
   element, a bare extern `...` slot — requires a narrowing fact from
-  `if (path?)`, definite reassignment, or while/for condition narrowing — facts use the
+  `if (path?)`, definite reassignment, or while/for condition narrowing.
+  Array-element facts are index-precise: a literal index (`arr[0]`) is a
+  constant key; a local variable index (`arr[i]`) is tracked and the fact
+  dies on any mutation of `i` (assignment, `++`/`--`, or passing it as a
+  non-const `ref`); any other index expression is never provable (hint
+  suggests moving/copying the element into a local). `array_resize`/
+  `array_pop` drop the receiver's element facts; `array_push` preserves
+  them; any real call drops global-rooted facts — facts use the
   same dotted-path machinery as move poisoning (`m_nonEmptyPaths`) with
   intersection-merge at if/else joins and full invalidation at loop exits.
   An initialized declaration also establishes the fact

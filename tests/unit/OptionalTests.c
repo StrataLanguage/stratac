@@ -1094,6 +1094,277 @@ STRATA_TEST(copy_of_non_owning_value_is_error)
     arena_free(&arena);
 }
 
+/* ---- Index-precise narrowing facts ----------------------------------------
+   Element keys are spelled precisely: "arr[0]" (constant) or "arr[i]"
+   (dependency-tracked local). Proving one element proves ONLY that element;
+   mutating the index variable, passing it as a non-const ref, resizing or
+   popping the array, or calling anything that could touch globals drops
+   the affected facts. */
+
+STRATA_TEST(narrowed_element_fact_is_index_precise)
+{
+    /* The motivating bug: proving arr[0] must NOT prove arr[9]. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "extern int puts(string s);\n"
+        "struct Node { string str; Node? next; };\n"
+        "int entry() {\n"
+        "  ^Node[] a = { Node(\"x\") };\n"
+        "  if (a[0].next?)\n"
+        "  {\n"
+        "    puts(a[9].next.str);\n"      /* different element - unproven */
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'a[9].next' may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_same_index_runs)
+{
+    /* The mirror positive: the SAME (constant) index stays proven. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int str_len(string s);\n"
+        "struct Node { string str; Node? next; };\n"
+        "int entry() {\n"
+        "  ^Node[] a = { Node(\"me\", Node(\"child\")) };\n"
+        "  int r = 0;\n"
+        "  if (a[0].next?)\n"
+        "  {\n"
+        "    r += str_len(a[0].next.str);\n"     /* 5 - same element */ 
+        "  }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 5);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(narrowed_element_variable_index_runs)
+{
+    /* A tracked local index is precise: test and use agree on `i`. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack;\n"
+        "  array_push(rack, Weapon { .dmg = 3 });\n"
+        "  Weapon? e;\n"
+        "  array_push(rack, e);\n"
+        "  array_push(rack, Weapon { .dmg = 7 });\n"
+        "  int sum = 0;\n"
+        "  for (uint i = 0; i < rack.length; i++)\n"
+        "  {\n"
+        "    if (rack[i]?) { sum += rack[i].dmg; }\n"    /* 3 + 7 */
+        "  }\n"
+        "  return sum;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 10);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(narrowed_element_index_mutation_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  uint i = 0;\n"
+        "  if (rack[i]?)\n"
+        "  {\n"
+        "    i = 1;\n"                     /* the index changed under us */
+        "    return rack[i].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_index_ref_pass_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "void bump(ref uint n) { n = n + 1; }\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  uint i = 0;\n"
+        "  if (rack[i]?)\n"
+        "  {\n"
+        "    bump(i);\n"                   /* callee may mutate the index */
+        "    return rack[i].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_complex_index_is_refused)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  uint i = 0;\n"
+        "  if (rack[i + 1]?) { }\n"
+        "  return 0;\n"
+        "}\n"
+        "int probe() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  uint i = 0;\n"
+        "  if (rack[i + 1]?)\n"
+        "  {\n"
+        "    return rack[i + 1].dmg;\n"    /* complex index: never provable */
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "not a constant or a trackable variable", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_resize_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  if (rack[0]?)\n"
+        "  {\n"
+        "    array_resize(rack, 0);\n"     /* dropped the element we proved */
+        "    return rack[0].dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_global_fact_dies_across_call)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Weapon { int dmg; };\n"
+        "Weapon? gw = Weapon { .dmg = 3 };\n"
+        "int side() { return 1; }\n"
+        "int entry() {\n"
+        "  if (gw?)\n"
+        "  {\n"
+        "    side();\n"                    /* any call may rebind the global */
+        "    return gw.dmg;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "may be empty", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(narrowed_element_survives_array_push)
+{
+    /* push preserves existing element values - the fact stays valid. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Weapon { int dmg; };\n"
+        "int entry() {\n"
+        "  Weapon?[] rack = { Weapon { .dmg = 3 } };\n"
+        "  int r = 0;\n"
+        "  if (rack[0]?)\n"
+        "  {\n"
+        "    array_push(rack, Weapon { .dmg = 9 });\n"
+        "    r += rack[0].dmg;\n"          /* 3 - fact survived the push */
+        "  }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(literal_element_move_does_not_poison_siblings)
+{
+    /* Precise keys make literal-index moves element-exact: moving rack[0]
+       leaves rack[1] usable (the erased form used to poison both). */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Weapon { int dmg; };\n"
+        "int take(^Weapon w) { return w.dmg; }\n"
+        "int entry() {\n"
+        "  ^Weapon[] rack = { Weapon { .dmg = 3 }, Weapon { .dmg = 4 } };\n"
+        "  int a = take(rack[0]);\n"       /* moves element 0 */
+        "  int b = take(rack[1]);\n"       /* sibling unaffected */
+        "  return a + b;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 /* ---- `while (foo?)` condition narrowing -----------------------------------
    The loop condition is re-tested every iteration, so its fact holds
    throughout the body - including for call args that unwrap the optional

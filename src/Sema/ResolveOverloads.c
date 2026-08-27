@@ -1,6 +1,7 @@
 #include "Sema/ResolveOverloads.h"
 #include "Codegen/TypeRegistry.h"
 
+#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,6 +16,10 @@ typedef struct
     StrMap m_movedBoxes;
     StrMap m_nonEmptyPaths; /* dotted path -> 1 = definitely non-empty (`T?` narrowing) */
     StrMap m_emptyPaths;    /* dotted path -> 1 = definitely EMPTY (else branch of `if (path?)`) */
+    StrMap m_indexDeps;     /* index variable name -> Vec<const char*> of fact keys
+                                spelled with it ("i" -> {"arr[i].w"}); mutating the
+                                variable (or passing it as a non-const ref) must
+                                drop those facts */
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
@@ -138,12 +143,48 @@ static bool IsBoxPartiallyMoved(const Resolver* r, const char* name)
     return StrMapGet(&r->m_movedBoxes, name) == (void*)3;
 }
 
-/* Clears `key` and all its `key.*` descendants from the move-state map.
+/* Is `child` a path at or below `parent`? Rules beyond a plain prefix:
+   - a '.' or '[' after the prefix continues the path ("a" covers "a.b"
+     and "a[3].b");
+   - the erased any-element form "a[]" covers every "a[<anything>]" key
+     ("a[]" covers "a[3].b", "a[i].w", and "a[]" itself).
+   The '[' case matters because element facts/keys are spelled precisely
+   ("a[3]", "a[i]") while whole-array actions clear from the bare root. */
+static bool PathIsDescendant(const char* parent, const char* child)
+{
+    if (strcmp(child, parent) == 0)
+    {
+        return true;
+    }
+
+    size_t plen = strlen(parent);
+
+    if (strncmp(child, parent, plen) != 0)
+    {
+        return false;
+    }
+
+    char next = child[plen];
+
+    if (next == '.' || next == '[')
+    {
+        return true;
+    }
+
+    /* "a[]" (erased) is the parent of every "a[...]" key. */
+    if (plen >= 2 && parent[plen - 1] == ']' && parent[plen - 2] == '[')
+    {
+        return child[plen - 2] == '[';
+    }
+
+    return false;
+}
+
+/* Clears `key` and all its descendants from the move-state map.
    Used when a whole-value reassignment re-lives the binding. */
 static void ClearBoxSubtree(Resolver* r, const char* key)
 {
     StrMap* m = &r->m_movedBoxes;
-    size_t klen = strlen(key);
 
     for (size_t i = 0; i < m->cap; i++)
     {
@@ -152,10 +193,7 @@ static void ClearBoxSubtree(Resolver* r, const char* key)
             continue;
         }
 
-        const char* k = m->keys[i];
-
-        if (strcmp(k, key) == 0 ||
-            (strncmp(k, key, klen) == 0 && k[klen] == '.'))
+        if (PathIsDescendant(key, m->keys[i]))
         {
             m->values[i] = NULL;
         }
@@ -244,32 +282,45 @@ static bool IsBoxGlobalName(const Resolver* r, const char* name)
 }
 
 /* The identifier a move key is rooted in - "holder.gun" -> "holder",
-   "arr[]" -> "arr", "g.arr[]" -> "g". Used to check the underlying binding
-   (a global, or a ref ^T param), not just the literal access text, so
-   the move ban applies transitively through struct fields and array
-   elements. */
+   "arr[3]" / "arr[i]" / "arr[]" -> "arr", "g.arr[i].w" -> "g". Used to
+   check the underlying binding (a global, or a ref ^T param), not just
+   the literal access text, so the move ban applies transitively through
+   struct fields and array elements. */
 static const char* KeyRoot(Arena* arena, const char* key)
 {
     const char* dot = strchr(key, '.');
     const char* base = dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
 
-    size_t len = strlen(base);
+    /* Strip the trailing bracket group, whatever it spells: the erased
+       "[]", a literal "[3]", or a variable "[i]". */
+    const char* open = strrchr(base, '[');
 
-    if (len >= 2 && base[len - 1] == ']' && base[len - 2] == '[')
+    if (open)
     {
-        return arena_strndup(arena, base, len - 2);
+        return arena_strndup(arena, base, (size_t)(open - base));
     }
 
     return base;
 }
 
-/* Marks every proper dotted prefix of `key` as partially moved (value 3),
-   unless already fully moved (1). For "a.b.c": marks "a.b" and "a". */
+/* Marks every proper path prefix of `key` as partially moved (value 3),
+    unless already fully moved (1). For "a[i].b.c": marks "a", "a[i]" and
+    "a[i].b" - prefixes break at dots AND at index brackets. */
 static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
 {
-    for (const char* dot = strchr(key, '.'); dot; dot = strchr(dot + 1, '.'))
+    for (size_t i = 0; key[i]; i++)
     {
-        char* prefix = arena_strndup(r->m_arena, key, (size_t)(dot - key));
+        if (key[i] != '.' && key[i] != '[')
+        {
+            continue;
+        }
+
+        if (i == 0)
+        {
+            continue;
+        }
+
+        char* prefix = arena_strndup(r->m_arena, key, i);
 
         if (StrMapGet(&r->m_movedBoxes, prefix) != (void*)1)
         {
@@ -294,12 +345,112 @@ static bool IsPathNonEmpty(const Resolver* r, const char* key)
     return key && StrMapGet(&r->m_nonEmptyPaths, key) == (void*)1;
 }
 
+/* True when the key contains the erased any-element form ("a[]"). Such
+   keys are never provable: the spelling came from an index expression we
+   could not pin to a constant or a tracked variable. */
+static bool PathKeyIsErased(const char* key)
+{
+    return key && strstr(key, "[]") != NULL;
+}
+
+static bool IsIdentStart(char c)
+{
+    return isalpha((unsigned char)c) || c == '_';
+}
+
+static bool IsIdentCont(char c)
+{
+    return isalnum((unsigned char)c) || c == '_';
+}
+
+/* Registers the fact key's index-variable dependencies: every `[ident]`
+   component names a local whose mutation must later drop the fact. */
+static void TrackIndexDeps(Resolver* r, const char* key)
+{
+    for (const char* open = strchr(key, '['); open; open = strchr(open + 1, '['))
+    {
+        const char* close = strchr(open + 1, ']');
+
+        if (!close)
+        {
+            continue;
+        }
+
+        size_t len = (size_t)(close - open - 1);
+
+        /* A single identifier only - literals and anything complex carry
+           no dependency. */
+        if (len == 0 || !IsIdentStart(open[1]))
+        {
+            continue;
+        }
+
+        bool ident = true;
+
+        for (size_t i = 1; i < len; i++)
+        {
+            if (!IsIdentCont(open[1 + i]))
+            {
+                ident = false;
+                break;
+            }
+        }
+
+        if (!ident)
+        {
+            continue;
+        }
+
+        char* var = arena_strndup(r->m_arena, open + 1, len);
+        Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
+
+        if (!deps)
+        {
+            deps = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
+            VecInit(deps);
+            StrMapPut(&r->m_indexDeps, var, deps);
+        }
+
+        VecPush(deps, (void*)key);
+    }
+}
+
 static void MarkPathNonEmpty(Resolver* r, const char* key)
 {
-    if (key)
+    if (!key || PathKeyIsErased(key))
     {
-        StrMapPut(&r->m_nonEmptyPaths, key, (void*)1);
+        return;
     }
+
+    StrMapPut(&r->m_nonEmptyPaths, key, (void*)1);
+    TrackIndexDeps(r, key);
+}
+
+/* Drops every fact whose key was spelled with `[var]` - called when the
+   variable is assigned, incremented, or passed as a non-const ref. */
+static void InvalidateIndexVar(Resolver* r, const char* var)
+{
+    if (!var)
+    {
+        return;
+    }
+
+    Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
+
+    if (!deps)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < deps->count; i++)
+    {
+        const char* key = (const char*)VecGet(deps, i);
+
+        ClearNonEmptySubtree(r, key);
+        ClearEmptySubtree(r, key);
+    }
+
+    StrMapPut(&r->m_indexDeps, var, NULL);
 }
 
 /* Drops `key` and all `key.*` descendants from the non-empty map. */
@@ -311,7 +462,6 @@ static void ClearNonEmptySubtree(Resolver* r, const char* key)
     }
 
     StrMap* m = &r->m_nonEmptyPaths;
-    size_t klen = strlen(key);
 
     for (size_t i = 0; i < m->cap; i++)
     {
@@ -320,10 +470,7 @@ static void ClearNonEmptySubtree(Resolver* r, const char* key)
             continue;
         }
 
-        const char* k = m->keys[i];
-
-        if (strcmp(k, key) == 0 ||
-            (strncmp(k, key, klen) == 0 && k[klen] == '.'))
+        if (PathIsDescendant(key, m->keys[i]))
         {
             m->values[i] = NULL;
         }
@@ -361,15 +508,18 @@ static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
 
 static void MarkPathEmpty(Resolver* r, const char* key)
 {
-    if (key)
+    if (!key || PathKeyIsErased(key))
     {
-        /* A path cannot be both. */
-        ClearNonEmptySubtree(r, key);
-        StrMapPut(&r->m_emptyPaths, key, (void*)1);
+        return;
     }
+
+    /* A path cannot be both. */
+    ClearNonEmptySubtree(r, key);
+    StrMapPut(&r->m_emptyPaths, key, (void*)1);
+    TrackIndexDeps(r, key);
 }
 
-/* Drops `key` and all `key.*` descendants from the EMPTY map. */
+/* Drops `key` and all its descendants from the EMPTY map. */
 static void ClearEmptySubtree(Resolver* r, const char* key)
 {
     if (!key)
@@ -378,7 +528,6 @@ static void ClearEmptySubtree(Resolver* r, const char* key)
     }
 
     StrMap* m = &r->m_emptyPaths;
-    size_t klen = strlen(key);
 
     for (size_t i = 0; i < m->cap; i++)
     {
@@ -387,10 +536,7 @@ static void ClearEmptySubtree(Resolver* r, const char* key)
             continue;
         }
 
-        const char* k = m->keys[i];
-
-        if (strcmp(k, key) == 0 ||
-            (strncmp(k, key, klen) == 0 && k[klen] == '.'))
+        if (PathIsDescendant(key, m->keys[i]))
         {
             m->values[i] = NULL;
         }
@@ -406,6 +552,27 @@ static const char* EmptyWording(const Resolver* r, const char* key)
 }
 
 static const char* MovableBoxSourceKey(Resolver* r, Node* n);
+
+/* Shared diagnostic for reading through an unproven optional. An erased
+   key ("arr[]") means the index expression could not be pinned to a
+   constant or tracked variable - no fact can ever be established for it,
+   so point at the materialize-into-a-local idiom instead. */
+static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* key, const char* typeName)
+{
+    if (PathKeyIsErased(key))
+    {
+        DiagErrorFmt(r->m_diag, range,
+                     "'%s' may be empty ('%s'); the array index is not a constant or a trackable variable - "
+                     "move or copy the element into a local first ('%s? x = %s; if (x?) ...')",
+                     key, typeName, typeName, key);
+        return;
+    }
+
+    DiagErrorFmt(r->m_diag, range,
+                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
+                 key ? key : "<expression>", EmptyWording(r, key), typeName,
+                 key ? key : "<expr>");
+}
 
 /* Reading the CONTENTS of a maybe-empty optional - passing it where its
    non-optional inner `T` is expected (call arg, var init, assignment,
@@ -434,10 +601,7 @@ static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueTy
         return;
     }
 
-    DiagErrorFmt(r->m_diag, range,
-                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
-                 key ? key : "<expression>", EmptyWording(r, key), valueType->name,
-                 key ? key : "<expr>");
+    DiagOptionalReadError(r, range, key, valueType->name);
 }
 
 /* Extracts the tested path from an if/while/for condition shaped like
@@ -533,8 +697,26 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
     ClearEmptySubtree(r, name);
 }
 
+/* True when `name` is a module-level global - its mutation inside this
+   function is not observable/tracked, so it cannot serve as a precise
+   (dependency-tracked) index spelling. */
+static bool IsModuleGlobalName(const Resolver* r, const char* name)
+{
+    for (size_t i = 0; i < r->m_mod->globals.count; i++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, i);
+
+        if (strcmp(gd->name, name) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 /* Move-tracking key for 'n' (unwraps casts), or NULL if not movable.
-   Identifier -> its name; member chain -> dotted key ("holder.gun"). */
+    Identifier -> its name; member chain -> dotted key ("holder.gun"). */
 static const char* MovableBoxSourceKey(Resolver* r, Node* n)
 {
     /* Shared "what can be moved" rule (unwrap casts; ident/member/index). */
@@ -563,12 +745,35 @@ static const char* MovableBoxSourceKey(Resolver* r, Node* n)
         const IndexExpr* ix = (const IndexExpr*)moved;
         const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
 
-        /* An owning array element is movable: reading it into an owning
-           binding steals the element's pointer. The "[]" marker keeps
+        if (!baseKey)
+        {
+            return NULL;
+        }
+
+        /* Spell the index precisely so distinct elements are distinct keys:
+           a literal ("a[3]") is constant; a bare identifier ("a[i]") gets a
+           dependency-tracked key; anything else erases to the any-element
+           form ("a[]"), which is conservative for move poisoning and NEVER
+           provable as a narrowing fact. The "[]" marker also keeps
            element-moves distinct from whole-array moves in the moved-state
-           map, while KeyRoot still reduces "base[]" to "base" for the
-           global / ref-param ownership check. */
-        return baseKey ? arena_format(r->m_arena, "%s[]", baseKey) : NULL;
+           map, while KeyRoot still reduces every "base[...]" to "base" for
+           the global / ref-param ownership check. */
+        Node* idx = ix->index;
+
+        if (idx && idx->kind == NodeIntLiteral)
+        {
+            return arena_format(r->m_arena, "%s[%llu]", baseKey, ((IntLiteral*)idx)->value);
+        }
+
+        if (idx && idx->kind == NodeIdent && !IsModuleGlobalName(r, ((const IdentExpr*)idx)->name))
+        {
+            /* A variable index is precise only when it names a local of this
+               function whose mutation we can observe and invalidate. A
+               global index is spelled the same but untracked - erase it. */
+            return arena_format(r->m_arena, "%s[%s]", baseKey, ((const IdentExpr*)idx)->name);
+        }
+
+        return arena_format(r->m_arena, "%s[]", baseKey);
     }
 
     return NULL;
@@ -876,6 +1081,21 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
+    /* array_resize (shrink drops trailing elements) and array_pop (removes
+        the last element) can empty indexed slots we hold facts about; the
+        lengths aren't tracked, so drop every element fact of the receiver.
+        array_push preserves existing element values - facts survive it. */
+    if (isResize || isPop)
+    {
+        const char* recvKey = MovableBoxSourceKey(r, arg0);
+
+        if (recvKey)
+        {
+            ClearNonEmptySubtree(r, recvKey);
+            ClearEmptySubtree(r, recvKey);
+        }
+    }
+
     if (isResize)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
@@ -1010,19 +1230,68 @@ static bool IsCVarargCompatible(Resolver* r, const TypeName* type)
 }
 
 /* Moves box/string sources into owned (non-ref) params, and into the
-   collected array of a typed rest param when its element type is owning. */
+    collected array of a typed rest param when its element type is owning.
+    Also performs call-side fact invalidation: a non-const `ref` argument
+    may be mutated (or re-bound) by the callee, and any real call may
+    mutate globals - narrowing facts that could observe those must go. */
 static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
 {
+    /* Any real (non-pseudo) call can rebind module globals between the
+        caller's test and use: global-rooted narrowing facts never survive
+        a call. Locals cannot be seen by the callee (no captures; only
+        `ref` args below can be mutated). */
+    for (size_t g = 0; g < r->m_mod->globals.count; g++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, g);
+
+        ClearNonEmptySubtree(r, gd->name);
+        ClearEmptySubtree(r, gd->name);
+    }
+
     /* For a typed rest, the last param is the collected T[] array itself, so
-       the arg at that slot is really the first ELEMENT. Only args before it
-       map to named params; everything from the rest slot onward moves only if
-       the ELEMENT type is owning (e.g. ^T...), not because T[] is. */
+        the arg at that slot is really the first ELEMENT. Only args before it
+        map to named params; everything from the rest slot onward moves only if
+        the ELEMENT type is owning (e.g. ^T...), not because T[] is. */
     bool typedRest = best->isVariadic && !best->isCVararg;
     size_t namedCount = typedRest && best->params.count > 0 ? best->params.count - 1 : best->params.count;
 
     for (size_t j = 0; j < c->args.count; j++)
     {
         Node* arg = (Node*)VecGet(&c->args, j);
+
+        /* A non-const `ref` slot hands the callee a mutable view: any fact
+            under that path (including array-element facts spelled through
+            it) may no longer hold, and an ident arg's use as an index
+            variable is untrackable from here on. */
+        if (j < namedCount)
+        {
+            const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, j);
+
+            if (rp->mod == ModRef && !rp->type.isConst)
+            {
+                if (arg->kind == NodeIdent)
+                {
+                    InvalidateIndexVar(r, ((IdentExpr*)arg)->name);
+                }
+
+                const char* refKey = MovableBoxSourceKey(r, arg);
+
+                if (refKey)
+                {
+                    ClearNonEmptySubtree(r, refKey);
+                    ClearEmptySubtree(r, refKey);
+                }
+            }
+        }
+        else if (typedRest && best->params.count > 0)
+        {
+            const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, best->params.count - 1);
+
+            if (rp->mod == ModRef && !rp->type.isConst && arg->kind == NodeIdent)
+            {
+                InvalidateIndexVar(r, ((IdentExpr*)arg)->name);
+            }
+        }
 
         const TypeName* targetType = NULL;
         bool moves = false;
@@ -1887,6 +2156,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         CheckConstAssign(r, a->target, a->base.range);
 
+        /* Assigning a scalar local re-binds it: every narrowing fact spelled
+            with it as an index ("arr[i]") is stale. This covers `=`,
+            compound assigns, and for-loop updates alike. */
+        if (a->target->kind == NodeIdent)
+        {
+            InvalidateIndexVar(r, ((IdentExpr*)a->target)->name);
+        }
+
         const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
         bool targetIsBox = tt && TypeNameIsOwning(tt);
 
@@ -1914,15 +2191,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 const TypeName* at2 = InferType(r, anc, scope);
 
-                if (at2 && at2->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
-                {
-                    const char* ancKey = MovableBoxSourceKey(r, anc);
-
-                    DiagErrorFmt(r->m_diag, a->base.range,
-                                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
-                                 ancKey ? ancKey : "<expression>", EmptyWording(r, ancKey), at2->name,
-                                 ancKey ? ancKey : "<expr>");
-                }
+            if (at2 && at2->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
+            {
+                DiagOptionalReadError(r, a->base.range, MovableBoxSourceKey(r, anc), at2->name);
+            }
 
                 if (anc->kind == NodeMember)
                 {
@@ -2172,6 +2444,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         IncDecExpr* inc = (IncDecExpr*)n;
         CheckConstAssign(r, inc->operand, inc->base.range);
         ResolveExpr(r, inc->operand, scope);
+
+        /* ++/-- mutates the operand: any narrowing fact spelled with this
+            variable as an index ("arr[i]") is stale. */
+        if (inc->operand->kind == NodeIdent)
+        {
+            InvalidateIndexVar(r, ((IdentExpr*)inc->operand)->name);
+        }
+
         return;
     }
     case NodeCast:
@@ -2210,17 +2490,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         const TypeName* rawBaseType = InferType(r, m->base_node, scope);
 
         /* Reading through a possibly-empty optional requires a narrowing
-           fact (`if (path?)`) - or an explicit reassignment of it. */
+            fact (`if (path?)`) - or an explicit reassignment of it. */
         if (rawBaseType && rawBaseType->isOptional)
         {
             const char* baseKey = MovableBoxSourceKey(r, m->base_node);
 
             if (!IsPathNonEmpty(r, baseKey))
             {
-                DiagErrorFmt(r->m_diag, m->base.range,
-                             "'%s' %s ('%s'); test it first: if (%s?) { ... }",
-                             baseKey ? baseKey : "<expression>", EmptyWording(r, baseKey), rawBaseType->name,
-                             baseKey ? baseKey : "<expr>");
+                DiagOptionalReadError(r, m->base.range, baseKey, rawBaseType->name);
             }
         }
 
@@ -2579,10 +2856,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 if (!IsPathNonEmpty(r, baseKey))
                 {
-                    DiagErrorFmt(r->m_diag, ix->base.range,
-                                 "'%s' %s ('%s'); test it first: if (%s?) { ... }",
-                                 baseKey ? baseKey : "<expression>", EmptyWording(r, baseKey), baseType->name,
-                                 baseKey ? baseKey : "<expr>");
+                    DiagOptionalReadError(r, ix->base.range, baseKey, baseType->name);
                 }
             }
         }
@@ -2613,12 +2887,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (at && at->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
             {
-                const char* ancKey = MovableBoxSourceKey(r, anc);
-
-                DiagErrorFmt(r->m_diag, nt->base.range,
-                             "'%s' %s ('%s'); test it first: if (%s?) { ... }",
-                             ancKey ? ancKey : "<expression>", EmptyWording(r, ancKey), at->name,
-                             ancKey ? ancKey : "<expr>");
+                DiagOptionalReadError(r, nt->base.range, MovableBoxSourceKey(r, anc), at->name);
             }
 
             if (anc->kind == NodeMember)
@@ -2831,10 +3100,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         /* Fresh binding: clear any stale moved-state a same-named variable
             left behind (e.g. from a prior loop iteration or an earlier,
             unrelated declaration in this function) - including field-level
-            partial-move markers and nullable narrowing facts. */
+            partial-move markers and nullable narrowing facts. A fresh `i`
+            also orphans facts spelled with the old `i` as an index. */
         ClearBoxSubtree(r, vd->name);
         ClearNonEmptySubtree(r, vd->name);
         ClearEmptySubtree(r, vd->name);
+        InvalidateIndexVar(r, vd->name);
 
         /* An initialized declaration proves the binding non-empty - same as
            a whole-value assignment would (`Weapon? w = Weapon { ... };`
@@ -3087,6 +3358,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
     StrMapInit(&r.m_nonEmptyPaths);
+    StrMapInit(&r.m_indexDeps);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_typeCache);
@@ -3399,6 +3671,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_constVars);
     StrMapFree(&r.m_movedBoxes);
     StrMapFree(&r.m_nonEmptyPaths);
+    StrMapFree(&r.m_indexDeps);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
     StrMapFree(&r.m_typeCache);
