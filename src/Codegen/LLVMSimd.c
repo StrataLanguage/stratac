@@ -90,7 +90,7 @@ LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
 
-    LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
+    LLVMTypeRef vecType = LLVMVectorType(scalarType, 2);
 
     LLVMValueRef poisonVec = LLVMGetPoison(vecType);
 
@@ -124,7 +124,7 @@ LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
 
-    LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
+    LLVMTypeRef vecType = LLVMVectorType(scalarType, 2);
 
     /* Splat scalar to all lanes */
     if (n->args.count == 1)
@@ -239,13 +239,23 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
 
-    LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
+    unsigned laneCount = LLVMGetVectorSize(LLVMTypeOf(vec));
+    LLVMTypeRef vecType = LLVMVectorType(scalarType, laneCount);
 
     /* Broadcast rhs if it's a scalar, not a vector */
     LLVMValueRef rhsVec = rhs;
     if (LLVMGetTypeKind(LLVMTypeOf(rhs)) != LLVMVectorTypeKind)
     {
-        rhsVec = LSimdVector4Broadcast(b, rhs);
+        LLVMValueRef single
+            = LLVMBuildInsertElement(b->m_builder, LLVMGetPoison(vecType), rhs, LLVMConstInt(intType, 0, 0), "splat");
+
+        LLVMValueRef maskV[4];
+        for (unsigned i = 0; i < laneCount; i++)
+        {
+            maskV[i] = LLVMConstInt(intType, i, 0);
+        }
+        LLVMValueRef mask = LLVMConstVector(maskV, laneCount);
+        rhsVec = LLVMBuildShuffleVector(b->m_builder, single, single, mask, "shuf");
     }
 
     switch (binexp->op)
@@ -265,7 +275,7 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
     case BinBitOr:
     {
         /* Bitcast LHS and RHS to int vectors, OR, then bitcast back to floats */
-        LLVMTypeRef intVecTy = LLVMVectorType(intType, 4);
+        LLVMTypeRef intVecTy = LLVMVectorType(intType, laneCount);
 
         LLVMValueRef lhsInt = LLVMBuildBitCast(b->m_builder, vec, intVecTy, "or.lhs.bc");
         LLVMValueRef rhsInt = LLVMBuildBitCast(b->m_builder, rhsVec, intVecTy, "or.rhs.bc");
@@ -312,6 +322,11 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
 
         LLVMValueRef idx = LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), index, 0);
         return LLVMBuildExtractElement(b->m_builder, vec, idx, "vecext");
+    }
+
+    if (numComponents == 2)
+    {
+        return LSimdVector2Shuffle(b, vec, vec, c[0], c[1]);
     }
 
     if (numComponents == 3)
