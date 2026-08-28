@@ -154,6 +154,12 @@ LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
     return NULL;
 }
 
+#define IS_VECTOR(x_) ((x_).typeDesc.isSimdVector == true)
+
+#define IS_SCALAR(x_) ((x_).typeDesc.isSimdVector == false)
+#define IS_ALL_SCALAR3(x_, y_, z_) (IS_SCALAR(x_) && IS_SCALAR(y_) && IS_SCALAR(z_))
+#define IS_ALL_SCALAR4(x_, y_, z_, w_) (IS_SCALAR(x_) && IS_SCALAR(y_) && IS_SCALAR(z_) && IS_SCALAR(w_))
+
 LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
 {
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
@@ -168,7 +174,20 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         return LSimdVector4Broadcast(b, scalarValue.value);
     }
 
-    /* Load float3 */
+    else if (n->args.count == 2)
+    {
+        Value x = EmitExpr(b, (Node*)n->args.items[0]);
+        Value y = EmitExpr(b, (Node*)n->args.items[1]);
+
+        LLVMValueRef vec = LLVMGetPoison(vecType);
+
+        /* float4(float2(1.0, 2.0), float2(3.0, 4.0)) */
+        /* float3(float2(1.0, 2.0), 3.0) */
+
+        vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
+    }
+
     else if (n->args.count == 3)
     {
         Value x = EmitExpr(b, (Node*)n->args.items[0]);
@@ -176,6 +195,8 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         Value z = EmitExpr(b, (Node*)n->args.items[2]);
 
         LLVMValueRef vec = LLVMGetPoison(vecType);
+
+        /* float3(1.0, 2.0, 3.0) */
 
         vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
         vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
@@ -187,7 +208,6 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         return vec;
     }
 
-    /* Load float4 */
     else if (n->args.count == 4)
     {
         Value x = EmitExpr(b, (Node*)n->args.items[0]);
@@ -196,6 +216,8 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         Value w = EmitExpr(b, (Node*)n->args.items[3]);
 
         LLVMValueRef vec = LLVMGetPoison(vecType);
+
+        /* float4(1.0, 2.0, 3.0, 4.0) */
 
         vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
         vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
