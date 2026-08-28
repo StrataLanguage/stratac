@@ -472,6 +472,33 @@ void SbPrintf(Sb* sb, const char* fmt, ...)
     va_end(args2);
 }
 
+Str SbCDup(Sb* sb)
+{
+    /* Add the null terminator if it does not exist */
+    if (sb->data[sb->len - 1] != '\0')
+    {
+        SbEnsure(sb, 1);
+        sb->data[sb->len++] = '\0';
+    }
+
+    char* outb = malloc(sb->len + 1);
+    memcpy(outb, sb->data, sb->len);
+
+    return STR_N(outb, sb->len);
+}
+
+void SbFree(Sb* sb)
+{
+    if (sb->data != NULL)
+    {
+        free(sb->data);
+    }
+
+    sb->data = NULL;
+    sb->len = 0;
+    sb->cap = 0;
+}
+
 char* SbFinish(Sb* sb, Arena* arena)
 {
     char* result = (char*)arena_alloc(arena, sb->len + 1);
@@ -482,11 +509,7 @@ char* SbFinish(Sb* sb, Arena* arena)
     }
 
     result[sb->len] = '\0';
-    free(sb->data);
-
-    sb->data = NULL;
-    sb->len = 0;
-    sb->cap = 0;
+    SbFree(sb);
 
     return result;
 }

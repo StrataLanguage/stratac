@@ -34,6 +34,7 @@ void DiagWarning(DiagnosticEngine* diag, SourceRange range, const char* message)
 void DiagNote(DiagnosticEngine* diag, SourceRange range, const char* message);
 
 void DiagErrorFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...);
+void DiagNoteFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...);
 
 uint32_t DiagErrorCount(const DiagnosticEngine* diag);
 bool DiagHasErrors(const DiagnosticEngine* diag);
