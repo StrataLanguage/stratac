@@ -3395,6 +3395,23 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     {
         VarDeclStmt* vd = (VarDeclStmt*)n;
 
+        /* An unknown type must be reported at sema time so codegen is skipped
+           (otherwise the backend keeps lowering it and corrupts). Walk through
+           box/optional/array wrappers to the leaf type name. */
+        {
+            const TypeName* t = &vd->type;
+            while (t && (t->isBox || t->isOptional || t->isArray))
+            {
+                t = (t->isBox || t->isOptional) ? t->inner : t->elem;
+            }
+            if (t && t->name && strcmp(t->name, "string") != 0 && !IsScalarTypeName(t->name)
+                && !IsSimdVector(t->name) && !TypeRegistryIsUserType(&r->m_registry, t->name))
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range, "unknown type '%s'", t->name);
+                return;
+            }
+        }
+
         if (IsIncompleteStruct(&r->m_registry, vd->type.name))
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
