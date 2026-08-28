@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 typedef struct
 {
@@ -96,6 +97,8 @@ static const TypeName* StringTypeName(Builder* b)
 
 static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
 {
+    assert(t->lanes <= 1);
+
     if (t->isVoid)
     {
         return LLVMVoidTypeInContext(ctx);
@@ -139,11 +142,6 @@ static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
     else
     {
         elem = LLVMInt32TypeInContext(ctx);
-    }
-
-    if (MappedTypeIsVector(t))
-    {
-        return LLVMVectorType(elem, (unsigned)t->vec);
     }
 
     return elem;

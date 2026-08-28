@@ -21,7 +21,7 @@ static inline void BuildLLVMIrType(MappedType* mappedType, int numLanes, const c
     }
 }
 
-static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const char* elemIr, int vec)
+static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const char* elemIr)
 {
     MappedType m = {0};
 
@@ -30,9 +30,8 @@ static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const c
     m.isUnsigned = isUnsigned;
     m.isSimdVector = false;
     m.bits = bits;
-    m.vec = vec;
 
-    BuildLLVMIrType(&m, m.vec, elemIr);
+    BuildLLVMIrType(&m, 1, elemIr);
 
     return m;
 }
@@ -48,9 +47,6 @@ static MappedType MakeSimdVector(bool isFloat, int bits, int lanes, const char* 
     m.isUnsigned = false;
     m.isSimdVector = true;
     m.bits = bits;
-
-    // Keep a separate `lanes` member so existing `vec` logic is unaffected; TODO: unify.
-    m.vec = 1;
     m.lanes = lanes;
 
     // Emit as <numLanes x type> for the backend.
@@ -69,8 +65,6 @@ MappedType MapType(const TypeName* t)
     }
 
     const char* base = t->name;
-    char candidate[32] = {0};
-    int vec = 1;
 
     if (strcmp(base, "void") == 0)
     {
@@ -84,57 +78,57 @@ MappedType MapType(const TypeName* t)
 
     if (strcmp(base, "bool") == 0)
     {
-        return MakePrimitive(false, false, 1, "i1", vec);
+        return MakePrimitive(false, false, 1, "i1");
     }
 
     if (strcmp(base, "int") == 0)
     {
-        return MakePrimitive(false, false, 32, "i32", vec);
+        return MakePrimitive(false, false, 32, "i32");
     }
 
     if (strcmp(base, "uint") == 0)
     {
-        return MakePrimitive(false, true, 32, "i32", vec);
+        return MakePrimitive(false, true, 32, "i32");
     }
 
     if (strcmp(base, "long") == 0)
     {
-        return MakePrimitive(false, false, 64, "i64", vec);
+        return MakePrimitive(false, false, 64, "i64");
     }
 
     if (strcmp(base, "ulong") == 0)
     {
-        return MakePrimitive(false, true, 64, "i64", vec);
+        return MakePrimitive(false, true, 64, "i64");
     }
 
     if (strcmp(base, "sbyte") == 0)
     {
-        return MakePrimitive(false, false, 8, "i8", vec);
+        return MakePrimitive(false, false, 8, "i8");
     }
 
     if (strcmp(base, "byte") == 0)
     {
-        return MakePrimitive(false, true, 8, "i8", vec);
+        return MakePrimitive(false, true, 8, "i8");
     }
 
     if (strcmp(base, "short") == 0)
     {
-        return MakePrimitive(false, false, 16, "i16", vec);
+        return MakePrimitive(false, false, 16, "i16");
     }
 
     if (strcmp(base, "ushort") == 0)
     {
-        return MakePrimitive(false, true, 16, "i16", vec);
+        return MakePrimitive(false, true, 16, "i16");
     }
 
     if (strcmp(base, "float") == 0)
     {
-        return MakePrimitive(true, false, 32, "float", vec);
+        return MakePrimitive(true, false, 32, "float");
     }
 
     if (strcmp(base, "double") == 0)
     {
-        return MakePrimitive(true, false, 64, "double", vec);
+        return MakePrimitive(true, false, 64, "double");
     }
 
     if (strcmp(base, "float2") == 0)

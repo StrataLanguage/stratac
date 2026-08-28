@@ -11,7 +11,6 @@ typedef struct {
     bool isUnsigned;
     bool isSimdVector;
     int bits;
-    int vec;
 
     /// Lanes for a SIMD vector (2/4/8).
     int lanes;
@@ -19,11 +18,6 @@ typedef struct {
     char elemIr[16];
     char ir[32];
 } MappedType;
-
-static inline bool MappedTypeIsVector(const MappedType* m)
-{
-    return m->vec > 1;
-}
 
 MappedType MapType(const TypeName* t);
 
