@@ -1056,8 +1056,6 @@ static bool CheckAllowListSingle(Resolver* r, CallExpr* c, StrMap* scope, const 
 
         if (!argType)
         {
-            printf("INCORRECT %s\n", c->callee);
-
             continue;
         }
 
@@ -1092,6 +1090,37 @@ static bool CheckAllowListSingle(Resolver* r, CallExpr* c, StrMap* scope, const 
     return true;
 }
 
+static Str GenerateCallSignatureString(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    int emittedLength = 0;
+
+    Sb b;
+    SbInit(&b);
+
+    SbPrintf(&b, "%s(", c->callee);
+
+    for (size_t i = 0; i < c->args.count; i++)
+    {
+        Node* arg = (Node*)VecGet(&c->args, i);
+
+        const TypeName* argType = InferType(r, arg, scope);
+
+        if (!argType)
+        {
+            continue;
+        }
+
+        SbPrintf(&b, "%s%s", argType->name, (i < c->args.count - 1) ? ", " : "");
+    }
+
+    SbPutc(&b, ')');
+
+    Str finalStr = SbCDup(&b);
+    SbFree(&b);
+
+    return finalStr;
+}
+
 static bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const AllowList* allowed,
                                    const int allowedSize)
 {
@@ -1112,9 +1141,31 @@ static bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, cons
 
     char* tmpBuffer = formatBuffer;
 
+    int numFilteredSignatures = 0;
     for (int i = 0; i < allowedSize; i++)
     {
         const AllowList* al = &allowed[i];
+
+        /* Only add the prototypes with the matching amount of arguments */
+        if (al->size != c->args.count)
+        {
+            continue;
+        }
+
+        ++numFilteredSignatures;
+    }
+
+    int filteredIndex = 0;
+
+    for (int i = 0; i < allowedSize; i++)
+    {
+        const AllowList* al = &allowed[i];
+
+        /* Only add the prototypes with the matching amount of arguments */
+        if (al->size != c->args.count)
+        {
+            continue;
+        }
 
         int skip = snprintf(tmpBuffer, formatBufferSize, "%s(", c->callee);
         if (skip < 0)
@@ -1134,16 +1185,23 @@ static bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, cons
             tmpBuffer += skip;
         }
 
-        skip = snprintf(tmpBuffer, formatBufferSize, ")%s", ((i < allowedSize - 1) ? ", " : ""));
+        skip
+            = snprintf(tmpBuffer, formatBufferSize, ")%s", ((filteredIndex < numFilteredSignatures - 1) ? " or " : ""));
         if (skip < 0)
         {
             break;
         }
+
+        ++filteredIndex;
+
         tmpBuffer += skip;
     }
 
-    DiagErrorFmt(r->m_diag, c->base.range, "call to '%s' is not one of the allowed prototypes: %s ", c->callee,
-                 formatBuffer);
+    Str callSig = GenerateCallSignatureString(r, c, scope);
+    DiagErrorFmt(r->m_diag, c->base.range, "no matching call '%s'", callSig.data);
+    free((void*)callSig.data);
+
+    DiagNoteFmt(r->m_diag, c->base.range, "did you mean %s?", formatBuffer);
 
     return false;
 }

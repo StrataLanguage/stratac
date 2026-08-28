@@ -115,6 +115,18 @@ void DiagErrorFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ..
     DiagReport(diag, SevError, range, msg ? msg : "");
 }
 
+void DiagNoteFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+
+    char* msg = arena_vformat(&diag->m_arena, fmt, args);
+
+    va_end(args);
+
+    DiagReport(diag, SevNote, range, msg ? msg : "");
+}
+
 uint32_t DiagErrorCount(const DiagnosticEngine* diag)
 {
     return diag->m_errorCount;
