@@ -436,6 +436,19 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(ScalarLlvmType(b->m_ctx, &mapped), flags, NULL);
     }
 
+    /* Type alias: resolve to the underlying type's LLVM representation. */
+    if (TypeRegistryIsTypeAlias(&b->m_registry, t->name))
+    {
+        const char* underlying = TypeRegistryGetUnderlyingType(&b->m_registry, t->name);
+        TypeName resolved = MakeTypeName(b, underlying);
+
+        /* Propagate const/vector/array flags from the alias wrapper. */
+        resolved.isConst = t->isConst;
+        resolved.isVector = t->isVector;
+
+        return Resolve(b, &resolved);
+    }
+
     LLVMTypeRef found = (LLVMTypeRef)StrMapGet(&b->m_structTypes, t->name);
 
     if (found)

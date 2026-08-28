@@ -21,6 +21,8 @@ typedef struct {
     const char* extendsFrom;
     Vec fields;
     bool isExtern;      /* `extern struct` — mirrors a host-defined layout */
+    bool isTypeAlias;   /* `struct Foo = uint;` — strongly typed alias */
+    const char* underlyingType; /* underlying type name for aliases */
     /* Computed layout (complete, non-opaque structs). hasLayout is only set
        when the layout is valid; on failure layoutError holds a malloc'd
        message that sema reports. */
@@ -36,7 +38,7 @@ typedef struct {
     char* layoutError;
 } StructType;
 
-typedef struct {
+typedef struct TypeRegistry {
     StructType* types;
     size_t count;
     size_t cap;
@@ -55,6 +57,12 @@ int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, cons
    TypeNameIs* accessors in AST/AST.h. The canonical `name` spelling is
    display/mangling data only. */
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
+
+/* Type alias queries. */
+bool TypeRegistryIsTypeAlias(const TypeRegistry* reg, const char* name);
+const char* TypeRegistryGetUnderlyingType(const TypeRegistry* reg, const char* name);
+/* Recursively resolves type aliases to their final non-alias underlying type. */
+const char* TypeRegistryResolveAlias(const TypeRegistry* reg, const char* name);
 
 /* Returns the lvalue actually being moved (identifier, member chain, or array
    element), unwrapping casts */

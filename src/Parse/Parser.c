@@ -721,6 +721,31 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     Token nameTok = p->m_cur;
     Advance(p);
 
+    /* Type alias: `struct Foo = type;` */
+    if (ParserConsume(p, TokAssign))
+    {
+        TypeName underlying = {0};
+        if (!ParserTryParseType(p, &underlying) || !underlying.name)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type after '='");
+            Synchronize(p);
+            return NULL;
+        }
+
+        ParserExpect(p, TokSemicolon, "';'");
+
+        StructDecl* node = AST_NEW(p->m_arena, StructDecl);
+        node->base.kind = NodeStruct;
+        node->base.range = nameTok.range;
+        node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+        VecInit(&node->fields);
+        node->isExtern = false;
+        node->isTypeAlias = true;
+        node->underlyingType = underlying.name;
+
+        return node;
+    }
+
     StructDecl* node = AST_NEW(p->m_arena, StructDecl);
     node->base.kind = NodeStruct;
     node->base.range = nameTok.range;

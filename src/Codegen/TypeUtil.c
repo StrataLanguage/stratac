@@ -1,4 +1,5 @@
 #include "Codegen/TypeUtil.h"
+#include "Codegen/TypeRegistry.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -195,4 +196,30 @@ bool IsScalarTypeName(const char* t)
 bool IsFloatType(const char* t)
 {
     return strcmp(t, "double") == 0 || strcmp(t, "float") == 0;
+}
+
+const char* ResolveAliasName(const TypeRegistry* reg, const char* name)
+{
+    if (!reg || !name)
+    {
+        return name;
+    }
+
+    return TypeRegistryResolveAlias(reg, name);
+}
+
+bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
+{
+    if (IsScalarTypeName(t))
+    {
+        return true;
+    }
+
+    if (reg && TypeRegistryIsTypeAlias(reg, t))
+    {
+        const char* underlying = TypeRegistryResolveAlias(reg, t);
+        return IsScalarTypeName(underlying);
+    }
+
+    return false;
 }

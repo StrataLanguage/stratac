@@ -359,6 +359,8 @@ typedef struct {
     Vec fields;
     bool incomplete;
     bool isExtern; // `extern struct` — mirrors a host-defined layout
+    bool isTypeAlias;       // `struct Foo = uint;` — strongly typed alias
+    char* underlyingType;   // underlying type name for type aliases (NULL for normal structs)
 } StructDecl;
 
 typedef struct {

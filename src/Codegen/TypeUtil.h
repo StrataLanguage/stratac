@@ -19,7 +19,15 @@ typedef struct {
     char ir[32];
 } MappedType;
 
+/* Forward declaration — full definition lives in TypeRegistry.h. */
+typedef struct TypeRegistry TypeRegistry;
+
 MappedType MapType(const TypeName* t);
+
+/* Resolve a type alias name through the registry, returning the final
+   non-alias name. If `name` is not a type alias, returns `name` unchanged.
+   Requires the registry; if reg is NULL the name is returned as-is. */
+const char* ResolveAliasName(const TypeRegistry* reg, const char* name);
 
 bool IsNumeric(const char* t);
 
@@ -33,3 +41,7 @@ int GetSimdVectorLanes(const char* t);
 
 bool IsScalarTypeName(const char* t);
 bool IsFloatType(const char* t);
+
+/* True if `t` is a scalar type or a type alias whose underlying type is scalar.
+   Requires the registry to resolve aliases; if reg is NULL, only built-in scalars match. */
+bool IsScalarLikeType(const TypeRegistry* reg, const char* t);

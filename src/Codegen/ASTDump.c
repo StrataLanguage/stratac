@@ -157,6 +157,11 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeStruct:
     {
         StructDecl* struct_decl = AsNode(StructDecl, n);
+        if (struct_decl->isTypeAlias)
+        {
+            SbPrintf(out, "struct %s = %s;\n", struct_decl->name, struct_decl->underlyingType);
+            return;
+        }
         if (struct_decl->incomplete)
         {
             SbPrintf(out, "struct %s;  ; forward\n", struct_decl->name);

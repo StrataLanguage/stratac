@@ -234,6 +234,7 @@ if(NOT STRATA_SHARED)
             tests/unit/CodegenTests.c
             tests/unit/SampleTests.c
             tests/unit/ExternStructTests.c
+            tests/unit/TypeAliasTests.c
         )
     endif()
     add_executable(strata_tests ${STRATA_TEST_SOURCES})

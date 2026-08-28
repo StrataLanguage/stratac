@@ -1323,8 +1323,11 @@ static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
     const TypeName* t0 = InferType(r, a0, scope);
     const TypeName* t1 = InferType(r, a1, scope);
 
-    int lanes0 = t0 ? GetSimdVectorLanes(t0->name) : 0;
-    int lanes1 = t1 ? GetSimdVectorLanes(t1->name) : 0;
+    /* Resolve type aliases to check for SIMD vector compatibility. */
+    const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
+    const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
+    int lanes0 = GetSimdVectorLanes(resolved0);
+    int lanes1 = GetSimdVectorLanes(resolved1);
 
     if (lanes0 == 0 || lanes1 == 0)
     {
@@ -2366,7 +2369,8 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             Node* a0 = (Node*)VecGet(&c->args, 0);
             const TypeName* a0Type = InferType(r, a0, scope);
 
-            if (strcmp(c->callee, "dot") == 0 || GetSimdVectorLanes(a0Type ? a0Type->name : "") == 2)
+            const char* resolved0 = TypeRegistryResolveAlias(&r->m_registry, a0Type ? a0Type->name : "");
+            if (strcmp(c->callee, "dot") == 0 || GetSimdVectorLanes(resolved0) == 2)
             {
                 return InternTypeName(r, "float");
             }
@@ -2454,14 +2458,31 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
     // Assignment to a SIMD vector: the lane counts must match exactly; a scalar splat-broadcasts
     // into any vector. A non-vector never lands in a vector slot.
 
-    const int isTargetVector = IsSimdVector(targetType->name);
-    const int isValueVector = IsSimdVector(valueType->name);
+    const char* resolvedTarget = TypeRegistryResolveAlias(&r->m_registry, targetType->name);
+    const char* resolvedValue = TypeRegistryResolveAlias(&r->m_registry, valueType->name);
+    const int isTargetVector = IsSimdVector(resolvedTarget);
+    const int isValueVector = IsSimdVector(resolvedValue);
 
-    if ((isTargetVector && isValueVector && isTargetVector == isValueVector)    /* vector = same-lane vector */
-        || (isTargetVector && isValueVector == 0 && IsNumeric(valueType->name)) /* vector = scalar splat */
-    )
+    if (isTargetVector && isValueVector && isTargetVector == isValueVector)
     {
-        return true;
+        /* vector = same-lane vector — only when both are the same type (raw or same alias). */
+        if (strcmp(targetType->name, valueType->name) == 0)
+        {
+            return true;
+        }
+
+        /* Both resolve to the same raw SIMD type but have different names — that means
+           they are different type aliases of the same underlying SIMD type.  Reject
+           (no implicit conversion between distinct alias types). */
+    }
+
+    if (isTargetVector && isValueVector == 0 && IsNumeric(resolvedValue))
+    {
+        /* vector = scalar splat — only when the target is a raw SIMD type, not an alias. */
+        if (!TypeRegistryIsTypeAlias(&r->m_registry, targetType->name))
+        {
+            return true;
+        }
     }
 
     const TypeName* valueInner = TypeNameBoxInner(valueType);
@@ -2832,17 +2853,26 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         const char* srcName = src ? src->name : "";
         const char* dstName = dst->name;
 
-        bool scalarPair = src && IsScalarTypeName(srcName) && IsScalarTypeName(dstName);
+        /* Resolve type aliases to their underlying types for cast compatibility. */
+        const char* resolvedSrc = TypeRegistryResolveAlias(&r->m_registry, srcName);
+        const char* resolvedDst = TypeRegistryResolveAlias(&r->m_registry, dstName);
+
+        bool scalarPair = src && (IsScalarLikeType(&r->m_registry, srcName) && IsScalarLikeType(&r->m_registry, dstName));
         bool handlePair = src && IsHandleType(&r->m_registry, srcName) && IsHandleType(&r->m_registry, dstName)
                           && (HandleExtendsFrom(&r->m_registry, dstName, srcName)
                               || HandleExtendsFrom(&r->m_registry, srcName, dstName));
+
+        /* SIMD vector pair: same lane count (including through type aliases). */
+        const int srcLanes = IsSimdVector(resolvedSrc);
+        const int dstLanes = IsSimdVector(resolvedDst);
+        bool simdPair = src && srcLanes != 0 && dstLanes != 0 && srcLanes == dstLanes;
 
         /* ^T -> ^U only when T or U is opaque (erase/cast-back). */
         bool boxPair = src && TypeNameIsOwning(src) && TypeNameIsOwning(dst)
                        && ((TypeNameBoxInner(src) && TypeRegistryIsOpaque(&r->m_registry, src->inner->name))
                            || (TypeNameBoxInner(dst) && TypeRegistryIsOpaque(&r->m_registry, dst->inner->name)));
 
-        if (src && !scalarPair && !handlePair && !boxPair)
+        if (src && !scalarPair && !handlePair && !simdPair && !boxPair)
         {
             DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
         }
@@ -2940,6 +2970,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         if (!TypeRegistryIsUserType(&r->m_registry, structInitExpr->typeName))
         {
             DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is not a known aggregate type",
+                         structInitExpr->typeName);
+        }
+        else if (TypeRegistryIsTypeAlias(&r->m_registry, structInitExpr->typeName))
+        {
+            DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+                         "'%s' is a type alias and cannot be initialized with a struct literal",
                          structInitExpr->typeName);
         }
         else if (TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))

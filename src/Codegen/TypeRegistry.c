@@ -55,6 +55,8 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     t->extendsFrom = NULL;
     VecInit(&t->fields);
     t->isExtern = false;
+    t->isTypeAlias = false;
+    t->underlyingType = NULL;
     t->hasLayout = false;
     t->packedLayout = false;
     t->sizeBytes = 0;
@@ -109,6 +111,28 @@ static bool FieldsIdentical(const Vec* a, const Vec* b)
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
 {
     reg->count = 0;
+
+    /* Type aliases — registered early so other types can reference them. */
+    for (size_t i = 0; i < m->structs.count; i++)
+    {
+        StructDecl* sd = (StructDecl*)VecGet((Vec*)&m->structs, i);
+
+        if (!sd->isTypeAlias)
+        {
+            continue;
+        }
+
+        if (TypeRegistryFindIndex(reg, sd->name) >= 0)
+        {
+            continue;
+        }
+
+        StructType* t = TypeRegistryAdd(reg, sd->name);
+        t->isTypeAlias = true;
+        t->underlyingType = sd->underlyingType;
+        t->opaque = false;
+        t->incomplete = false;
+    }
 
     /* Structs */
     for (size_t i = 0; i < m->structs.count; i++)
@@ -522,6 +546,41 @@ bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
     const StructType* t = TypeRegistryFind(reg, name);
 
     return t && !t->opaque && t->owning;
+}
+
+bool TypeRegistryIsTypeAlias(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = TypeRegistryFind(reg, name);
+    return t && t->isTypeAlias;
+}
+
+const char* TypeRegistryGetUnderlyingType(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = TypeRegistryFind(reg, name);
+    return (t && t->isTypeAlias) ? t->underlyingType : NULL;
+}
+
+const char* TypeRegistryResolveAlias(const TypeRegistry* reg, const char* name)
+{
+    size_t depth = 0;
+
+    while (name)
+    {
+        const StructType* t = TypeRegistryFind(reg, name);
+        if (!t || !t->isTypeAlias)
+        {
+            return name;
+        }
+
+        name = t->underlyingType;
+
+        if (++depth > reg->count)
+        {
+            return name;
+        }
+    }
+
+    return name;
 }
 
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name)
