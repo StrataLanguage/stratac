@@ -2277,6 +2277,11 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return &c->resolvedDecl->returnType;
         }
 
+        if (c->isPseudoCall && IsSimdVector(c->callee) != 0)
+        {
+            return InternTypeName(r, c->callee);
+        }
+
         const TypeName* builtinType = ArrayBuiltinType(r, c, scope);
 
         if (builtinType)
@@ -2354,8 +2359,15 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
         return true;
     }
 
-    // Assignment to a SIMD vector (vector = scalar, vector = vector)
-    if (IsSimdVector(targetType->name) && (IsSimdVector(valueType->name) || IsNumeric(valueType->name)))
+    // Assignment to a SIMD vector: the lane counts must match exactly; a scalar splat-broadcasts
+    // into any vector. A non-vector never lands in a vector slot.
+
+    const int isTargetVector = IsSimdVector(targetType->name);
+    const int isValueVector = IsSimdVector(valueType->name);
+
+    if ((isTargetVector && isValueVector && isTargetVector == isValueVector) /* vector = same-lane vector */
+        || (isTargetVector && isValueVector == 0 && IsNumeric(valueType->name)) /* vector = scalar splat */
+    )
     {
         return true;
     }
