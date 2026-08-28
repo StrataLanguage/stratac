@@ -238,6 +238,41 @@ static LLVMTypeRef I1Ty(Builder* b)
     return LLVMInt1TypeInContext(b->m_ctx);
 }
 
+/*
+   Return types smaller than 32-bit integers are returned sign/zero-extended
+   in a 32-bit register (the callee is responsible for the extension). The ARM64
+   ORC/JIT backend leaves the upper bits in the old wider value, so a C caller
+   reading the full register at high optimization levels get garbage.
+
+   Widen the LLVM return type to 32-bits so the register always holds a properly extended value.
+*/
+static LLVMTypeRef WidenRetType(Builder* b, LLVMTypeRef t)
+{
+    if (t && LLVMGetTypeKind(t) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(t) < 32)
+    {
+        return I32Ty(b);
+    }
+
+    return t;
+}
+
+/* Extend a value of the semantic return type into the (widened) ABI return
+   register: zero-extend unsigned / bool, sign-extend signed variants. */
+static LLVMValueRef ExtendToRetWidth(Builder* b, LLVMValueRef value, TypeDesc semantic, LLVMTypeRef retLlvm)
+{
+    if (retLlvm == semantic.type)
+    {
+        return value;
+    }
+
+    if (semantic.isUnsigned || semantic.type == I1Ty(b))
+    {
+        return LLVMBuildZExt(b->m_builder, value, retLlvm, "ret.zext");
+    }
+
+    return LLVMBuildSExt(b->m_builder, value, retLlvm, "ret.sext");
+}
+
 /* The shared {ptr, u64} fat struct for every T[] (cached so all arrays share one type). */
 static LLVMValueRef IdxConst(Builder* b, unsigned i); /* forward decl */
 
@@ -1327,6 +1362,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
 
     info->returnType = Resolve(b, &f->returnType);
+    info->returnType.type = WidenRetType(b, info->returnType.type);
 
     size_t pcount = f->params.count;
     info->paramByPtr = (bool*)arena_alloc(b->m_arena, pcount * sizeof(bool));
@@ -1400,6 +1436,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     StrMapClear(&b->m_symbols);
     b->m_terminated = false;
     b->m_curRet = Resolve(b, &f->returnType);
+    b->m_curRetAbi = WidenRetType(b, b->m_curRet.type);
     b->m_loops.count = 0;
     b->m_owningLocals.count = 0;
 
@@ -1486,7 +1523,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         }
         else
         {
-            LLVMBuildRet(b->m_builder, ZeroOf(b->m_curRet));
+            LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_curRetAbi));
         }
     }
 }
@@ -3376,7 +3413,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
             else
             {
-                LLVMBuildRet(b->m_builder, ZeroOf(b->m_curRet));
+                LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_curRetAbi));
             }
         }
 
@@ -3735,7 +3772,11 @@ Value EmitExpr(Builder* b, Node* n)
     {
         IntLiteral* literal = (IntLiteral*)n;
 
-        if (literal->value > 0xFFFFFFFFULL)
+        /* A magnitude that can't be represented as a non-negative signed
+           i32 (>= 2^31) must be a 64-bit literal - otherwise LLVMConstInt on
+           an i32 sign-wraps it and the value is lost (e.g. `long a = 3000000000`
+           previously became a negative i32). */
+        if (literal->value > 0x7FFFFFFFULL)
         {
             TypeDesc typeDesc = TypeDescMake(I64Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
 
@@ -3978,7 +4019,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (r->value)
         {
-            LLVMBuildRet(b->m_builder, v.value);
+            LLVMBuildRet(b->m_builder, ExtendToRetWidth(b, v.value, b->m_curRet, b->m_curRetAbi));
         }
         else
         {

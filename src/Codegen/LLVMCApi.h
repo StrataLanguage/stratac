@@ -132,6 +132,7 @@ void LLVMSetGlobalConstant(LLVMValueRef global, LLVMBool isConstant);
 LLVMValueRef LLVMConstStringInContext(LLVMContextRef c, const char* str, unsigned length, LLVMBool dontNullTerminate);
 LLVMTypeRef LLVMTypeOf(LLVMValueRef val);
 LLVMTypeKind LLVMGetTypeKind(LLVMTypeRef Ty);
+unsigned LLVMGetIntTypeWidth(LLVMTypeRef IntegerTy);
 
 LLVMValueRef LLVMAddFunction(LLVMModuleRef m, const char* name, LLVMTypeRef functionTy);
 LLVMBasicBlockRef LLVMAppendBasicBlockInContext(LLVMContextRef c, LLVMValueRef func, const char* name);
