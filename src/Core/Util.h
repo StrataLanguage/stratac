@@ -172,6 +172,8 @@ void SbPuts(Sb* sb, const char* s);
 void SbPutn(Sb* sb, const char* s, size_t n);
 void SbPutr(Sb* sb, char c, size_t repeat);
 void SbPrintf(Sb* sb, const char* fmt, ...);
+Str SbCDup(Sb* sb);
+void SbFree(Sb* sb);
 char* SbFinish(Sb* sb, Arena* arena);
 
 uint64_t HashStr64(const char* s);
@@ -181,8 +183,6 @@ uint64_t HashStr64(const char* s);
 size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);
 
 const char* GenerateId(char* buffer, int size);
-
-char* ReplaceExt(const char* path, const char* ext);
 
 // -- Files
 
