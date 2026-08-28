@@ -3181,6 +3181,26 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
         }
 
+        /* `extern` array decay - T[] in extern functions are punned to T* */
+        if (fd && fd->isExtern && k < fd->params.count)
+        {
+            const ParamDecl* pd = (ParamDecl*)VecGet(&fd->params, k);
+
+            if (pd->mod == ModNone)
+            {
+                const TypeName* pty = &pd->type;
+                const TypeName* elem = TypeNameArrayElem(pty);
+
+                if (TypeNameIsDynamicArray(pty) && !(elem && TypeNameIsOwning(elem)))
+                {
+                    LLVMValueRef arrAddr = ArgAddress(b, argNode);
+                    LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
+                    args[k] = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataSlot, "arrptr");
+                    continue;
+                }
+            }
+        }
+
         if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
         {
             StrLiteral* lit = AsNode(StrLiteral, argNode);

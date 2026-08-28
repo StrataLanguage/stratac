@@ -276,6 +276,15 @@ main) are the internal entry points.
   before the call. A `T?`/`^T` return is likewise one pointer; ownership
   transfers to the caller (the host hands back memory Strata will free).
   The LLVM backend implements this.
+- Array-decay at `extern`: a **by-value** (`mod == ModNone`),
+  **non-owning-element** dynamic array param (`int[]`, `uint[]`, `handle[]`,
+  `Foo[]`, …) decays to a pointer to its first element — the inner buffer
+  pointer of the fat `{ptr,len}` struct — matching a C `T*` parameter. The
+  caller passes the element count separately as `arr.length`. `ref`/`const`
+  array params and owning-element arrays (`^T[]`, `string[]`) keep crossing as
+  the fat `{ptr,len}` struct so the host can read `ptr`/`len` or replace the
+  array. This is what lets Strata call C APIs that take `T*` + a length (e.g.
+  LLVM-C's array-taking functions).
 
 ## Adding a language feature (typical path)
 

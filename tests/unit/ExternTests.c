@@ -117,13 +117,12 @@ static const char* HostStrConcat(const char* a, const char* b)
 
 /* ---- Array hosts ---- */
 
-static int HostArrSum(const HostArr* a)
+static int HostArrSum(const int* a, int n)
 {
-    const int* p = (const int*)a->data;
     int total = 0;
-    for (unsigned long long i = 0; i < a->len; i++)
+    for (int i = 0; i < n; i++)
     {
-        total += p[i];
+        total += a[i];
     }
     return total;
 }
@@ -393,11 +392,11 @@ STRATA_TEST(extern_int_array_param_borrows)
     /* An extern owned `int[]` param is passed by address of the slot and
        never moves the caller's array. */
     HostSymbol hosts[] = { { "host_arr_sum", (void*)&HostArrSum } };
-    CheckExtern("extern int host_arr_sum(int[] a);\n"
+    CheckExtern("extern int host_arr_sum(int[] a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {1, 2, 3};\n"
-                "  int s = host_arr_sum(a);\n"       /* 6; a borrowed, still live */
+                "  int s = host_arr_sum(a, (int)a.length);\n"       /* 6; a borrowed, still live */
                 "  return s + (int)a.length;\n"      /* 6 + 3 = 9 */
                 "}\n",
                 hosts, 1, 9);
@@ -407,13 +406,13 @@ STRATA_TEST(extern_ref_int_array_mutates_elements)
 {
     HostSymbol hosts[] = { { "host_arr_bump", (void*)&HostArrBump }, { "host_arr_sum", (void*)&HostArrSum } };
     CheckExtern("extern void host_arr_bump(ref int[] a);\n"
-                "extern int host_arr_sum(int[] a);\n"
+                "extern int host_arr_sum(int[] a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {1, 2, 3};\n"
                 "  host_arr_bump(a);\n"              /* {2,3,4} */
                 "  host_arr_bump(a);\n"              /* {3,4,5} */
-                "  return host_arr_sum(a);\n"        /* 12 */
+                "  return host_arr_sum(a, (int)a.length);\n"        /* 12 */
                 "}\n",
                 hosts, 2, 12);
 }
@@ -424,12 +423,12 @@ STRATA_TEST(extern_ref_int_array_out_param)
        (and frees) the buffer the host allocated. */
     HostSymbol hosts[] = { { "host_arr_fill", (void*)&HostArrFill }, { "host_arr_sum", (void*)&HostArrSum } };
     CheckExtern("extern void host_arr_fill(ref int[] a, int n);\n"
-                "extern int host_arr_sum(int[] a);\n"
+                "extern int host_arr_sum(int[] a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a;\n"
                 "  host_arr_fill(a, 3);\n"           /* a = {0, 10, 20} */
-                "  return host_arr_sum(a) + (int)a.length;\n" /* 30 + 3 = 33 */
+                "  return host_arr_sum(a, (int)a.length) + (int)a.length;\n" /* 30 + 3 = 33 */
                 "}\n",
                 hosts, 2, 33);
 }
