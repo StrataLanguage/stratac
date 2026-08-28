@@ -3365,13 +3365,18 @@ static Value EmitCall(Builder* b, CallExpr* n)
             StrataPanicFn(b);
             LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args2, 1, "");
 
-            if (LLVMGetTypeKind(info->returnType.type) == LLVMVoidTypeKind)
+            /* The `ret` here terminates the ENCLOSING Strata function, so it
+               must use the enclosing function's return type (m_curRet), not the
+               extern's. Returning the extern's type (e.g. a ptr for a `handle`
+               return inside an i32 fn) produces malformed IR that crashes LLVM
+               optimizers. */
+            if (b->m_curRet.isVoid)
             {
                 LLVMBuildRetVoid(b->m_builder);
             }
             else
             {
-                LLVMBuildRet(b->m_builder, LLVMConstNull(info->returnType.type));
+                LLVMBuildRet(b->m_builder, ZeroOf(b->m_curRet));
             }
         }
 

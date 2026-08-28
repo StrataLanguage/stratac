@@ -1277,6 +1277,22 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 
 //-- SIMD vector dot / cross intrinsics.
 
+/* Returns true if the module declares any user-defined function with `name`.
+   `dot`/`cross` are only intrinsic fallbacks when no user overload exists, so a
+   user's `dot(Vec3, Vec3)` is never hijacked by the SIMD resolver. */
+static bool ModuleHasFunctionNamed(Resolver* r, const char* name)
+{
+    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    {
+        FunctionDecl* fd = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        if (strcmp(fd->name, name) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Validates a `dot(a, b)` / `cross(a, b)` intrinsic call and marks it pseudo.
    Returns true if `c` was one (valid, or a misused dot/cross that was reported). */
 static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
@@ -1285,6 +1301,12 @@ static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
     bool isCross = strcmp(c->callee, "cross") == 0;
 
     if (!isDot && !isCross)
+    {
+        return false;
+    }
+
+    /* A user-defined overload takes precedence over the SIMD intrinsic. */
+    if (ModuleHasFunctionNamed(r, c->callee))
     {
         return false;
     }
