@@ -29,3 +29,9 @@ LLVMValueRef LSimdVector4Construct(struct Builder* builder, CallExpr* n);
 
 LLVMValueRef LSimdVectorBinExpr(struct Builder* b, LLVMValueRef vec, LLVMValueRef rhs, const struct BinaryExpr* binexp);
 LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const struct MemberExpr* expr);
+
+/* Dot product of two SIMD vectors: scalar float result (sums all lanes). */
+LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
+/* Cross product: float3/float4 -> a vector (float2 -> scalar z). */
+LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
+LLVMValueRef LSimdVector3Dot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);

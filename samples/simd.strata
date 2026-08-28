@@ -4,6 +4,9 @@
 // (+, -, *, /), construction float3(x, y, z), splatting float3(s), swizzles
 // (.xyz, .zyx, .yyy, ...), and single-lane reads (.x, .y, .z, .w).
 //
+// Dot and cross intrinsics work on SIMD vectors: dot(a, b) reduces to a scalar
+// float, cross(a, b) returns a vector for float3/float4 (float2 -> scalar z).
+//
 // The C backend lowers these to SSE intrinsics (x64) or NEON (arm64) when SIMD
 // is enabled, or to a plain __strata_float128 struct otherwise (used by the JIT).
 
@@ -56,6 +59,14 @@ int run()
 
     float3 sw = vecs[vecs.length - 1].zyx;              // swizzle {3, 2, 1}
 
+    // Dot and cross intrinsics.
+    float3 u = float3(1.0, 2.0, 3.0);
+    float3 v = float3(4.0, 5.0, 6.0);
+    float d = dot(u, v);             // 4 + 10 + 18 = 32
+    float3 cr = cross(u, v);         // (-3, 6, -3)
+    float cz = cross(float2(1.0, 2.0), float2(3.0, 4.0));  // 1*4 - 2*3 = -2
+
     return (int)(combo.x + combo.y + combo.z)   // 16 + 27 + 38 = 81
-         + (int)(sw.x + sw.y + sw.z);           // 3 + 2 + 1 = 6  => 87
+         + (int)(sw.x + sw.y + sw.z)           // 3 + 2 + 1 = 6  => 87
+         + (int)(d + cr.x + cr.y + cr.z + cz); // 32 + 0 + (-2) = 30  => 117
 }

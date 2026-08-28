@@ -221,3 +221,132 @@ STRATA_TEST(vector_assign_same_lane_and_scalar_splat_ok)
     arena_free(&arena);
 }
 
+STRATA_TEST(vector_dot3)
+{
+    /* dot(float3, float3) reduces to a scalar float: 1*4 + 2*5 + 3*6 = 32. */
+    run_int(
+        "int entry() {\n"
+        "  float3 a = float3(1.0, 2.0, 3.0);\n"
+        "  float3 b = float3(4.0, 5.0, 6.0);\n"
+        "  float d = dot(a, b);\n"
+        "  return (int)d;\n"                    /* 32 */
+        "}\n",
+        32);
+}
+
+STRATA_TEST(vector_cross3)
+{
+    /* cross(float3, float3) = (ay*bz-az*by, az*bx-ax*bz, ax*by-ay*bx)
+       = (2*6-3*5, 3*4-1*6, 1*5-2*4) = (-3, 6, -3); sum = 0. */
+    run_int(
+        "int entry() {\n"
+        "  float3 a = float3(1.0, 2.0, 3.0);\n"
+        "  float3 b = float3(4.0, 5.0, 6.0);\n"
+        "  float3 c = cross(a, b);\n"
+        "  return (int)(c.x + c.y + c.z);\n"   /* 0 */
+        "}\n",
+        0);
+}
+
+STRATA_TEST(vector_dot4)
+{
+    /* 1*4 + 2*5 + 3*6 + 4*7 = 60. */
+    run_int(
+        "int entry() {\n"
+        "  float4 a = float4(1.0, 2.0, 3.0, 4.0);\n"
+        "  float4 b = float4(4.0, 5.0, 6.0, 7.0);\n"
+        "  return (int)dot(a, b);\n"            /* 60 */
+        "}\n",
+        60);
+}
+
+STRATA_TEST(vector_cross4)
+{
+    /* cross(float4, float4) treats lanes 0..2 as the 3-vector and zeroes w:
+       y*bz - z*by etc. = (-3, 6, -3, 0); sum = 0. */
+    run_int(
+        "int entry() {\n"
+        "  float4 a = float4(1.0, 2.0, 3.0, 4.0);\n"
+        "  float4 b = float4(4.0, 5.0, 6.0, 7.0);\n"
+        "  float4 c = cross(a, b);\n"
+        "  return (int)(c.x + c.y + c.z + c.w);\n"  /* 0 */
+        "}\n",
+        0);
+}
+
+STRATA_TEST(vector_dot2)
+{
+    /* 1*3 + 2*4 = 11. */
+    run_int(
+        "int entry() {\n"
+        "  float2 a = float2(1.0, 2.0);\n"
+        "  float2 b = float2(3.0, 4.0);\n"
+        "  return (int)dot(a, b);\n"            /* 11 */
+        "}\n",
+        11);
+}
+
+STRATA_TEST(vector_cross2_is_scalar_z)
+{
+    /* cross(float2, float2) returns the scalar z: 1*4 - 2*3 = -2. */
+    run_int(
+        "int entry() {\n"
+        "  float2 a = float2(1.0, 2.0);\n"
+        "  float2 b = float2(3.0, 4.0);\n"
+        "  float z = cross(a, b);\n"
+        "  return (int)z;\n"                    /* -2 */
+        "}\n",
+        -2);
+}
+
+STRATA_TEST(vector_dot_cross_combined_checksum)
+{
+    /* Exercises dot/cross across float2/3/4 in one function:
+       dot3=32, cross3=(−3,6,−3)->0, dot4=60, cross4=(-3,6,-3,0)->0,
+       dot2=11, cross2=-2.  Total = 101. */
+    run_int(
+        "int entry() {\n"
+        "  float3 a = float3(1.0, 2.0, 3.0);\n"
+        "  float3 b = float3(4.0, 5.0, 6.0);\n"
+        "  float d = dot(a, b);\n"
+        "  float3 c = cross(a, b);\n"
+        "  float4 a4 = float4(1.0, 2.0, 3.0, 4.0);\n"
+        "  float4 b4 = float4(4.0, 5.0, 6.0, 7.0);\n"
+        "  float d4 = dot(a4, b4);\n"
+        "  float4 c4 = cross(a4, b4);\n"
+        "  float2 a2 = float2(1.0, 2.0);\n"
+        "  float2 b2 = float2(3.0, 4.0);\n"
+        "  float d2 = dot(a2, b2);\n"
+        "  float z2 = cross(a2, b2);\n"
+        "  int r = (int)(d + c.x + c.y + c.z + d4 + c4.x + c4.y + c4.z + d2 + z2);\n"
+        "  return r;\n"                         /* 101 */
+        "}\n",
+        101);
+}
+
+STRATA_TEST(vector_dot_cross_lane_mismatch_is_error)
+{
+    /* Both operands of dot/cross must be SIMD vectors with matching lanes. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  float3 a = float3(1.0, 2.0, 3.0);\n"
+        "  float3 b = float3(4.0, 5.0, 6.0);\n"
+        "  float x = dot(a, b);\n"              /* ok */
+        "  float y = dot(a, float4(1.0, 2.0, 3.0, 4.0));\n" /* lane mismatch */
+        "  float z = cross(a, 1.0);\n"          /* second arg not a vector */
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "same lane count") != NULL);
+    STRATA_CHECK(strstr(d, "SIMD vector arguments") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+

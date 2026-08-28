@@ -52,7 +52,7 @@ int main(void)
 
     if (run)
     {
-        printf("run() = %d\n", run());   /* 87 */
+        printf("run() = %d\n", run());   /* 117 */
     }
     else
     {
