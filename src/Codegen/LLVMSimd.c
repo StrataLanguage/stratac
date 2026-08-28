@@ -327,3 +327,80 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
     DiagError(b->m_diag, expr->base.range, "malformed components in vector destructure");
     return NULL;
 }
+
+/* Extracts lane `i` of `v` as a scalar. */
+static LLVMValueRef SimdExtract(struct Builder* b, LLVMValueRef v, unsigned i)
+{
+    return LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), i, 0), "vecext");
+}
+
+/* Builds an `N`-lane vector from `count` scalar components. */
+static LLVMValueRef SimdBuildVector(struct Builder* b, LLVMValueRef* comps, unsigned count)
+{
+    LLVMTypeRef vecType = LLVMVectorType(LLVMFloatTypeInContext(b->m_ctx), count);
+    LLVMValueRef result = LLVMGetPoison(vecType);
+
+    for (unsigned i = 0; i < count; i++)
+    {
+        result = LLVMBuildInsertElement(b->m_builder, result, comps[i], LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), i, 0),
+                                        "vecins");
+    }
+
+    return result;
+}
+
+LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB)
+{
+    LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
+    unsigned lanes = LLVMGetVectorSize(LLVMTypeOf(vecA));
+
+    /* Element-wise product, then horizontal (lane-wise) sum of all lanes. */
+    LLVMValueRef vecMul = LLVMBuildFMul(b->m_builder, vecA, vecB, "dot_mul");
+
+    LLVMValueRef acc = LLVMConstReal(floatType, 0.0);
+
+    for (unsigned i = 0; i < lanes; i++)
+    {
+        acc = LLVMBuildFAdd(b->m_builder, acc, SimdExtract(b, vecMul, i), "dot_acc");
+    }
+
+    return acc;
+}
+
+LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB)
+{
+    unsigned lanes = LLVMGetVectorSize(LLVMTypeOf(vecA));
+
+    LLVMValueRef ax = SimdExtract(b, vecA, 0);
+    LLVMValueRef ay = SimdExtract(b, vecA, 1);
+    LLVMValueRef bx = SimdExtract(b, vecB, 0);
+    LLVMValueRef by = SimdExtract(b, vecB, 1);
+
+    /* float2 cross is the scalar z-component: ax*by - ay*bx. */
+    if (lanes == 2)
+    {
+        return LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, ax, by, ""),
+                             LLVMBuildFMul(b->m_builder, ay, bx, ""), "cross_z");
+    }
+
+    LLVMValueRef az = SimdExtract(b, vecA, 2);
+    LLVMValueRef bz = SimdExtract(b, vecB, 2);
+
+    LLVMValueRef x = LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, ay, bz, ""),
+                                   LLVMBuildFMul(b->m_builder, az, by, ""), "cross_x");
+    LLVMValueRef y = LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, az, bx, ""),
+                                   LLVMBuildFMul(b->m_builder, ax, bz, ""), "cross_y");
+    LLVMValueRef z = LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, ax, by, ""),
+                                   LLVMBuildFMul(b->m_builder, ay, bx, ""), "cross_z");
+
+    /* float3 is stored as a 4-lane vector with lane 3 zeroed; float4 w = 0. */
+    LLVMValueRef zero = LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 0.0);
+    LLVMValueRef comps[4] = {x, y, z, zero};
+
+    return SimdBuildVector(b, comps, 4);
+}
+
+LLVMValueRef LSimdVector3Dot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB)
+{
+    return LSimdVectorDot(b, vecA, vecB);
+}

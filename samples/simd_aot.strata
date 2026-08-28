@@ -1,7 +1,7 @@
 
 int main()
 {
-    float4 result = float4(float2(1.0, 2.0), float2(3.0, 4.0));
+	float3 result = dot(float3(1.0), float3(2.0));
 
     return result.x;
 }

@@ -3011,6 +3011,33 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
     return v;
 }
 
+static Value EmitVectorDotCross(Builder* b, CallExpr* n)
+{
+    bool isDot = strcmp(n->callee, "dot") == 0;
+
+    Value a = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    Value bb = EmitExpr(b, (Node*)VecGet(&n->args, 1));
+
+    LLVMValueRef value = isDot ? LSimdVectorDot(b, a.value, bb.value) : LSimdVectorCross(b, a.value, bb.value);
+
+    TypeDesc resultTd;
+
+    /* dot always reduces to a scalar float; cross(float2) yields the scalar z. */
+    bool scalarResult = isDot || LLVMGetVectorSize(LLVMTypeOf(a.value)) == 2;
+
+    if (scalarResult)
+    {
+        resultTd = ResolveByName(b, "float");
+    }
+    else
+    {
+        /* cross(float3/float4): same vector type as the operands. */
+        resultTd = a.typeDesc;
+    }
+
+    return ValueMake(value, resultTd);
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
     // Inline array helpers (array_push / array_pop / array_resize)?
@@ -3024,6 +3051,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
     if (n->isPseudoCall && strcmp(n->callee, "copy") == 0)
     {
         return EmitCopyBuiltin(b, n);
+    }
+
+    if (n->isPseudoCall && (strcmp(n->callee, "dot") == 0 || strcmp(n->callee, "cross") == 0))
+    {
+        return EmitVectorDotCross(b, n);
     }
 
     if (n->isPseudoCall && IsSimdVector(n->callee))
