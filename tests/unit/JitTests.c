@@ -283,3 +283,138 @@ STRATA_TEST(jit_custom_allocator_is_used)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
+
+STRATA_TEST(jit_runs_defer_in_lifo_order)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "int g = 0;\n"
+        "void run() {\n"
+        "    defer g = g * 10 + 3;\n"
+        "    defer g = g * 10 + 2;\n"
+        "    g = g * 10 + 1;\n"
+        "}\n"
+        "int getg() { return g; }\n",
+        "defer_lifo", &err);
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    void (*run)(void) = (void (*)(void))strataJitGetFunction(jit, "run");
+    int (*getg)(void) = (int (*)(void))strataJitGetFunction(jit, "getg");
+    STRATA_CHECK(run != NULL);
+    STRATA_CHECK(getg != NULL);
+
+    if (run && getg)
+    {
+        run();
+        /* body sets g=1, then LIFO defers: (+2) -> 12, (+3) -> 123 */
+        STRATA_CHECK_EQ(getg(), 123);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(jit_runs_defer_on_early_return)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "int g = 0;\n"
+        "int run() {\n"
+        "    defer g = g * 10 + 9;\n"
+        "    g = g * 10 + 1;\n"
+        "    if (g > 0) return g;\n"
+        "    return 0;\n"
+        "}\n"
+        "int getg() { return g; }\n",
+        "defer_ret", &err);
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+    int (*getg)(void) = (int (*)(void))strataJitGetFunction(jit, "getg");
+    STRATA_CHECK(run != NULL);
+    STRATA_CHECK(getg != NULL);
+
+    if (run && getg)
+    {
+        int r = run();
+        STRATA_CHECK_EQ(r, 1);   /* return value snapshotted before defers run */
+        STRATA_CHECK_EQ(getg(), 19); /* defer ran despite the early return */
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(jit_runs_defer_on_break_and_continue)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "int gb = 0;\n"
+        "int gc = 0;\n"
+        "void run_break() {\n"
+        "    int i = 0;\n"
+        "    while (i < 3) {\n"
+        "        defer gb = gb * 10 + i;\n"
+        "        i = i + 1;\n"
+        "        if (i == 2) break;\n"
+        "    }\n"
+        "}\n"
+        "void run_continue() {\n"
+        "    for (int i = 0; i < 3; i = i + 1) {\n"
+        "        defer gc = gc * 10 + i;\n"
+        "    }\n"
+        "}\n"
+        "int getgb() { return gb; }\n"
+        "int getgc() { return gc; }\n",
+        "defer_loop", &err);
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    void (*run_break)(void) = (void (*)(void))strataJitGetFunction(jit, "run_break");
+    void (*run_continue)(void) = (void (*)(void))strataJitGetFunction(jit, "run_continue");
+    int (*getgb)(void) = (int (*)(void))strataJitGetFunction(jit, "getgb");
+    int (*getgc)(void) = (int (*)(void))strataJitGetFunction(jit, "getgc");
+    STRATA_CHECK(run_break != NULL);
+    STRATA_CHECK(run_continue != NULL);
+    STRATA_CHECK(getgb != NULL);
+    STRATA_CHECK(getgc != NULL);
+
+    if (run_break && getgb)
+    {
+        run_break();
+        /* iter0: i becomes 1, defer runs (gb=0*10+1=1); iter1: i=2, break, defer runs (gb=1*10+2=12) */
+        STRATA_CHECK_EQ(getgb(), 12);
+    }
+    if (run_continue && getgc)
+    {
+        run_continue();
+        /* each iteration's defer runs: i=0->0, i=1->1, i=2->12 */
+        STRATA_CHECK_EQ(getgc(), 12);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}

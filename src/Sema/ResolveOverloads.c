@@ -3499,6 +3499,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     case NodeExprStmt:
         ResolveExpr(r, ((ExprStmt*)n)->expr, scope);
         return;
+    case NodeDefer:
+    {
+        DeferStmt* d = (DeferStmt*)n;
+        /* Analyze the deferred statement at its textual position (move/const
+           checks apply here); it is executed later, at enclosing-block exit. */
+        WalkStmt(r, d->stmt, scope);
+        return;
+    }
     case NodeReturn:
     {
         ReturnStmt* rs = (ReturnStmt*)n;

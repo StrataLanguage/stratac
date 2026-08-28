@@ -1278,6 +1278,26 @@ static Node* ParseStatement(Parser* p)
         return ParseWhile(p);
     case TokKwFor:
         return ParseFor(p);
+    case TokKwDefer:
+    {
+        Token token = p->m_cur;
+        Advance(p);
+
+        Node* stmt = ParseStatement(p);
+
+        if (!stmt || (stmt->kind == NodeExprStmt && ((ExprStmt*)stmt)->expr == NULL))
+        {
+            DiagError(p->m_diag, token.range, "expected a statement after 'defer'");
+            return NULL;
+        }
+
+        DeferStmt* node = AST_NEW(p->m_arena, DeferStmt);
+        node->base.kind = NodeDefer;
+        node->base.range = token.range;
+        node->stmt = stmt;
+
+        return (Node*)node;
+    }
     case TokKwBreak:
     {
         Token token = p->m_cur;

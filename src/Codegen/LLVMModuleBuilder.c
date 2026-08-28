@@ -41,7 +41,14 @@ typedef struct
     LLVMBasicBlockRef end;
     size_t headerMark; /* owning-locals count before the loop statement (dropped on break) */
     size_t bodyMark;   /* owning-locals count before the loop body (dropped on continue) */
+    size_t scopeDepth; /* number of active defer scopes when the loop began (defers exit on break/continue) */
 } Loop;
+
+/* A `defer` scope: holds the statements queued to run at the block's exit. */
+typedef struct
+{
+    Vec defers; /* Node* (DeferStmt.stmt) in source order; run LIFO */
+} BlockScope;
 
 typedef enum TypeDescFlag
 {
@@ -1357,6 +1364,59 @@ static void EmitDrops(Builder* b, size_t fromIndex)
     }
 }
 
+/* A `defer` scope: deferred statements queued for the enclosing block's exit. */
+
+static void PushScope(Builder* b)
+{
+    BlockScope* bs = (BlockScope*)arena_alloc(b->m_arena, sizeof(BlockScope));
+    VecInit(&bs->defers);
+    VecPush(&b->m_scopes, bs);
+}
+
+static void PopScope(Builder* b)
+{
+    VecPop(&b->m_scopes);
+}
+
+static BlockScope* TopScope(Builder* b)
+{
+    if (b->m_scopes.count == 0)
+    {
+        return NULL;
+    }
+
+    return (BlockScope*)VecGet(&b->m_scopes, b->m_scopes.count - 1);
+}
+
+/* Run one scope's deferred statements, LIFO (last `defer` first), Zig-style. */
+static void RunDefers(Builder* b, BlockScope* scope)
+{
+    if (!scope)
+    {
+        return;
+    }
+
+    for (size_t i = scope->defers.count; i-- > 0;)
+    {
+        if (b->m_terminated)
+        {
+            break;
+        }
+
+        EmitStmt(b, (Node*)VecGet(&scope->defers, i));
+    }
+}
+
+/* Run deferred statements of every active scope in [fromIndex, count), innermost
+   scope first (Zig exits inner blocks before outer ones), each scope LIFO. */
+static void RunDefersFrom(Builder* b, size_t fromIndex)
+{
+    for (size_t s = b->m_scopes.count; s-- > fromIndex;)
+    {
+        RunDefers(b, (BlockScope*)VecGet(&b->m_scopes, s));
+    }
+}
+
 static void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
@@ -1439,6 +1499,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_curRetAbi = WidenRetType(b, b->m_curRet.type);
     b->m_loops.count = 0;
     b->m_owningLocals.count = 0;
+    b->m_scopes.count = 0;
 
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
     b->m_curFn = info ? info->function : NULL;
@@ -1502,6 +1563,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
 
     Block* blk = (Block*)f->body;
 
+    PushScope(b);
+
     for (size_t i = 0; i < blk->statements.count; i++)
     {
         Node* s = (Node*)VecGet(&blk->statements, i);
@@ -1512,6 +1575,13 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
             break;
         }
     }
+
+    if (!b->m_terminated)
+    {
+        RunDefers(b, TopScope(b));
+    }
+
+    PopScope(b);
 
     if (!b->m_terminated)
     {
@@ -4015,6 +4085,7 @@ static void EmitStmt(Builder* b, Node* n)
             }
         }
 
+        RunDefersFrom(b, 0);
         EmitDrops(b, 0);
 
         if (r->value)
@@ -4174,15 +4245,42 @@ static void EmitStmt(Builder* b, Node* n)
         return;
     }
 
+    case NodeDefer:
+    {
+        DeferStmt* d = (DeferStmt*)n;
+        BlockScope* scope = TopScope(b);
+
+        if (scope)
+        {
+            VecPush(&scope->defers, d->stmt);
+        }
+
+        return;
+    }
+
     case NodeBlock:
     {
         Block* blk = (Block*)n;
         size_t mark = b->m_owningLocals.count;
 
+        PushScope(b);
+
         for (size_t i = 0; i < blk->statements.count; i++)
         {
             EmitStmt(b, (Node*)VecGet(&blk->statements, i));
+
+            if (b->m_terminated)
+            {
+                break;
+            }
         }
+
+        if (!b->m_terminated)
+        {
+            RunDefers(b, TopScope(b));
+        }
+
+        PopScope(b);
 
         if (!b->m_terminated)
         {
@@ -4208,13 +4306,25 @@ static void EmitStmt(Builder* b, Node* n)
         b->m_terminated = true;
 
         PositionAtEnd(b, thenBB);
+        PushScope(b);
         EmitStmt(b, i->thenBranch);
+        if (!b->m_terminated)
+        {
+            RunDefers(b, TopScope(b));
+        }
+        PopScope(b);
         Br(b, endBB);
 
         if (i->elseBranch)
         {
             PositionAtEnd(b, elseBB);
+            PushScope(b);
             EmitStmt(b, i->elseBranch);
+        if (!b->m_terminated)
+        {
+            RunDefers(b, TopScope(b));
+        }
+            PopScope(b);
             Br(b, endBB);
         }
 
@@ -4250,13 +4360,23 @@ static void EmitStmt(Builder* b, Node* n)
         loop->end = endBB;
         loop->headerMark = b->m_owningLocals.count;
         loop->bodyMark = b->m_owningLocals.count;
+        loop->scopeDepth = b->m_scopes.count;
         VecPush(&b->m_loops, loop);
 
+        PushScope(b);
         EmitStmt(b, w->body);
-
+        bool term = b->m_terminated;
+        if (!term)
+        {
+            RunDefers(b, TopScope(b));
+        }
+        PopScope(b);
         VecPop(&b->m_loops);
 
-        Br(b, condBB);
+        if (!term)
+        {
+            Br(b, condBB);
+        }
 
         PositionAtEnd(b, endBB);
 
@@ -4301,13 +4421,23 @@ static void EmitStmt(Builder* b, Node* n)
         loop->end = endBB;
         loop->headerMark = headerMark;
         loop->bodyMark = b->m_owningLocals.count;
+        loop->scopeDepth = b->m_scopes.count;
         VecPush(&b->m_loops, loop);
 
+        PushScope(b);
         EmitStmt(b, fs->body);
-
+        bool term = b->m_terminated;
+        if (!term)
+        {
+            RunDefers(b, TopScope(b));
+        }
+        PopScope(b);
         VecPop(&b->m_loops);
 
-        Br(b, updBB);
+        if (!term)
+        {
+            Br(b, updBB);
+        }
 
         PositionAtEnd(b, updBB);
 
@@ -4316,7 +4446,10 @@ static void EmitStmt(Builder* b, Node* n)
             (void)EmitExpr(b, fs->update);
         }
 
-        Br(b, condBB);
+        if (!term)
+        {
+            Br(b, condBB);
+        }
 
         PositionAtEnd(b, endBB);
 
@@ -4328,6 +4461,7 @@ static void EmitStmt(Builder* b, Node* n)
         if (b->m_loops.count > 0)
         {
             Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
+            RunDefersFrom(b, loop->scopeDepth);
             EmitDrops(b, loop->headerMark);
             b->m_owningLocals.count = loop->headerMark;
             Br(b, loop->end);
@@ -4345,6 +4479,7 @@ static void EmitStmt(Builder* b, Node* n)
         if (b->m_loops.count > 0)
         {
             Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
+            RunDefersFrom(b, loop->scopeDepth);
             EmitDrops(b, loop->bodyMark);
             b->m_owningLocals.count = loop->bodyMark;
             Br(b, loop->cont);
@@ -4767,6 +4902,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
     VecInit(&b.m_owningLocals);
+    VecInit(&b.m_scopes);
     b.m_allocFn = NULL;
     b.m_allocFnType = NULL;
     b.m_freeFn = NULL;

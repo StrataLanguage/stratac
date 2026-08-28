@@ -198,5 +198,8 @@ void AstDispose(Node* node)
     case NodeNullTest:
         AstDispose(((NullTestExpr*)node)->operand);
         return;
+    case NodeDefer:
+        AstDispose(((DeferStmt*)node)->stmt);
+        return;
     }
 }

@@ -67,6 +67,7 @@ typedef struct Builder
     LLVMValueRef m_entryAllocaPt;
     Vec m_loops;
     Vec m_owningLocals;
+    Vec m_scopes;        /* active block scopes for `defer` (BlockScope*) */
     LLVMTypeRef m_arrayType; /* cached {ptr, i64} fat struct for T[] */
     LLVMValueRef m_allocFn;
     LLVMTypeRef m_allocFnType;

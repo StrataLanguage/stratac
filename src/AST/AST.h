@@ -39,6 +39,7 @@ typedef enum {
     NodeIndex,
     NodeArrayInit,
     NodeNullTest,
+    NodeDefer,
 } NodeKind;
 
 typedef struct {
@@ -594,6 +595,14 @@ typedef struct {
     Node base;
     Node* operand;
 } NullTestExpr;
+
+// `defer <stmt>` — schedules `stmt` to run at the end of the enclosing block
+// (Zig-style), in LIFO order. The deferred statement is analyzed at its textual
+// position but executed at scope exit (including on `return`/`break`/`continue`).
+typedef struct {
+    Node base;
+    Node* stmt;
+} DeferStmt;
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);

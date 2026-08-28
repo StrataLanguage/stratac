@@ -18,6 +18,10 @@ int main()
     // Boxed / owned heap allocation (^T): auto-freed at scope end.
     ^float4 acc = float4(1.0, 2.0, 3.0, 4.0);
 
+    // `defer` schedules a statement to run at the end of the enclosing block
+    defer printf("[defer] acc = %f %f %f %f\n", acc.x, acc.y, acc.z, acc.w);
+    defer printf("[defer] cleaning up\n");
+
     // Dynamic array; elements created via array_push / literals.
     float4[] points = { float4(10.0, 20.0, 30.0, 40.0) };
 

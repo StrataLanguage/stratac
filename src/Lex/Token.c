@@ -42,7 +42,8 @@ static const Spelling keywords[] = {
     { TokKwFalse, "false" },
     { TokKwStruct, "struct" },
     { TokKwImport, "import" },
-    { TokKwNamespace, "namespace" }
+    { TokKwNamespace, "namespace" },
+    { TokKwDefer, "defer" }
 };
 
 static const Spelling punct[] = {

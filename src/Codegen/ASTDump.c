@@ -573,6 +573,14 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     }
 
+    case NodeDefer:
+    {
+        DeferStmt* d = AsNode(DeferStmt, n);
+        SbPuts(out, "defer ");
+        Dump(d->stmt, 0, out);
+        return;
+    }
+
     case NodeParam:
         SbPuts(out, "(param)\n");
         return;

@@ -50,6 +50,7 @@ typedef enum {
     TokKwFieldoffset,
     TokKwImport,
     TokKwNamespace,
+    TokKwDefer,
 
     TokLParen,
     TokRParen,
