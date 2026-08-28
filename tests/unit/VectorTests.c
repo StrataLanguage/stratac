@@ -172,3 +172,52 @@ STRATA_TEST(vector_ref_rest_aliases_sources)
         108);
 }
 
+STRATA_TEST(vector_assign_lane_count_mismatch_is_error)
+{
+    /* Vector init/assignment requires an exact lane count. Truncations
+       (float4 -> float2), widenings (float2 -> float4) and mixed-lane
+       moves (float3 <-> float4) are rejected; only a scalar may splat into
+       a vector. A non-vector never lands in a vector slot. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "int entry() {\n"
+        "  float2 a = float4(1.0, 2.0, 3.0, 4.0);\n"
+        "  float4 b = float2(1.0, 2.0);\n"
+        "  float3 c = float4(1.0, 2.0, 3.0, 4.0);\n"
+        "  float2 d = float3(1.0, 2.0, 3.0);\n"
+        "  float2 e = Vec3 { 1.0, 2.0, 3.0 };\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "cannot be initialized") != NULL);
+    STRATA_CHECK(strstr(d, "type 'float4'") != NULL);
+    STRATA_CHECK(strstr(d, "type 'Vec3'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(vector_assign_same_lane_and_scalar_splat_ok)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  float2 a = float2(1.0, 2.0);\n"
+        "  float4 b = float4(1.0, 2.0, 3.0, 4.0);\n"
+        "  float3 c = float3(1.0, 2.0, 3.0);\n"
+        "  float2 d = 3.5;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+

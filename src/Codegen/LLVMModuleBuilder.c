@@ -2989,12 +2989,12 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
 
     Value v;
 
-    // Only float2 here
+    /* Float2 */
     if (numVectorLanes == 2)
     {
         v.value = LSimdVector2Construct(b, n);
     }
-    // If we have a vector3 or vector4, treat it like a vector4 (float128).
+    /* If we have a vector3 or vector4, treat it like a vector4 (float128). */
     else if (numVectorLanes >= 3)
     {
         v.value = LSimdVector4Construct(b, n);
