@@ -29,7 +29,10 @@ MappedType MapType(const TypeName* t);
 
 bool IsNumeric(const char* t);
 
-bool IsSimdVector(const char* t);
+/**
+ * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
+ */
+int IsSimdVector(const char* t);
 
 // Returns the number of vector components held by the type.
 int GetSimdVectorLanes(const char* t);

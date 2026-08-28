@@ -6,19 +6,10 @@
 #include <assert.h>
 #include <string.h>
 
-#define ER_MALFORMED -1
-
-typedef enum VecC
-{
-    VC_NULL = -1,
-    VC_X = 0,
-    VC_Y,
-    VC_Z,
-    VC_W
-} VecC;
+#define ER_MALFORMED (-1)
 
 /* Builds the component list from a swizzle string; ER_MALFORMED on error. */
-static int BuildComponents(VecC* buffer, const char* memberAccess)
+static int BuildComponents(LSimdVecC* buffer, const char* memberAccess)
 {
     int count = 0;
 
@@ -63,7 +54,22 @@ static int BuildComponents(VecC* buffer, const char* memberAccess)
     return count;
 }
 
-LLVMValueRef LSimdVectorShuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, VecC x, VecC y, VecC z, VecC w)
+LLVMValueRef LSimdVector2Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y)
+{
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+    LLVMValueRef maskV[] = {
+        LLVMConstInt(intType, (x != VC_NULL) ? x : VC_X, 0),
+        LLVMConstInt(intType, (y != VC_NULL) ? y : VC_Y, 0),
+    };
+
+    LLVMValueRef mask = LLVMConstVector(maskV, 2);
+
+    return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
+}
+
+LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y,
+                                 LSimdVecC z, LSimdVecC w)
 {
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
 
@@ -79,7 +85,7 @@ LLVMValueRef LSimdVectorShuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef
     return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
 }
 
-LLVMValueRef LSimdVectorBroadcast(struct Builder* b, LLVMValueRef scalar)
+LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
 {
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
@@ -93,10 +99,27 @@ LLVMValueRef LSimdVectorBroadcast(struct Builder* b, LLVMValueRef scalar)
         = LLVMBuildInsertElement(b->m_builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
 
     /* Reorder to XXXX */
-    return LSimdVectorShuffle(b, singleComp, poisonVec, VC_X, VC_X, VC_X, VC_X);
+    return LSimdVector2Shuffle(b, singleComp, poisonVec, VC_X, VC_X);
 }
 
-LLVMValueRef LSimdVectorConstruct(struct Builder* b, CallExpr* n)
+LLVMValueRef LSimdVector4Broadcast(struct Builder* b, LLVMValueRef scalar)
+{
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+    LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
+
+    LLVMValueRef poisonVec = LLVMGetPoison(vecType);
+
+    /* Insert scalar into first lane */
+    LLVMValueRef singleComp
+        = LLVMBuildInsertElement(b->m_builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
+
+    /* Reorder to XXXX */
+    return LSimdVector4Shuffle(b, singleComp, poisonVec, VC_X, VC_X, VC_X, VC_X);
+}
+
+LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
 {
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
@@ -107,7 +130,42 @@ LLVMValueRef LSimdVectorConstruct(struct Builder* b, CallExpr* n)
     if (n->args.count == 1)
     {
         Value scalarValue = EmitExpr(b, (Node*)n->args.items[0]);
-        return LSimdVectorBroadcast(b, scalarValue.value);
+        return LSimdVector2Broadcast(b, scalarValue.value);
+    }
+
+    /* Load float2 */
+    else if (n->args.count == 2)
+    {
+        Value x = EmitExpr(b, (Node*)n->args.items[0]);
+        Value y = EmitExpr(b, (Node*)n->args.items[1]);
+
+        LLVMValueRef vec = LLVMGetPoison(vecType);
+
+        vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
+
+        return vec;
+    }
+    else
+    {
+        DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector2 construct");
+    }
+
+    return NULL;
+}
+
+LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
+{
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+    LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
+
+    /* Splat scalar to all lanes */
+    if (n->args.count == 1)
+    {
+        Value scalarValue = EmitExpr(b, (Node*)n->args.items[0]);
+        return LSimdVector4Broadcast(b, scalarValue.value);
     }
 
     /* Load float3 */
@@ -165,7 +223,7 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
     LLVMValueRef rhsVec = rhs;
     if (LLVMGetTypeKind(LLVMTypeOf(rhs)) != LLVMVectorTypeKind)
     {
-        rhsVec = LSimdVectorBroadcast(b, rhs);
+        rhsVec = LSimdVector4Broadcast(b, rhs);
     }
 
     switch (binexp->op)
@@ -213,7 +271,7 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
 
 LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const struct MemberExpr* expr)
 {
-    VecC c[4];
+    LSimdVecC c[4];
     int numComponents = BuildComponents(c, expr->member);
 
     if (numComponents == ER_MALFORMED)
@@ -225,7 +283,7 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
     /* Single lane extract */
     if (numComponents == 1)
     {
-        VecC index = c[0];
+        LSimdVecC index = c[0];
 
         /* numComponents should be ER_MALFORMED or 0 if there are no valid components */
         assert(index != VC_NULL);
@@ -236,12 +294,12 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
 
     if (numComponents == 3)
     {
-        return LSimdVectorShuffle(b, vec, vec, c[0], c[1], c[2], VC_W);
+        return LSimdVector4Shuffle(b, vec, vec, c[0], c[1], c[2], VC_W);
     }
 
     if (numComponents == 4)
     {
-        return LSimdVectorShuffle(b, vec, vec, c[0], c[1], c[2], c[3]);
+        return LSimdVector4Shuffle(b, vec, vec, c[0], c[1], c[2], c[3]);
     }
 
     DiagError(b->m_diag, expr->base.range, "malformed components in vector destructure");

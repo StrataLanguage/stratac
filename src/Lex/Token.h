@@ -27,6 +27,7 @@ typedef enum {
     TokKwUshort,
     TokKwFloat,
     TokKwDouble,
+    TokKwFloat2,
     TokKwFloat3,
     TokKwFloat4,
     TokKwString,

@@ -149,7 +149,8 @@ static bool StripUnsignedSuffix(Str* sv)
 }
 
 // Snapshot of lexer + parser position so a speculative parse can be undone without emitting diagnostics.
-typedef struct {
+typedef struct
+{
     size_t pos;
     bool hasPeek;
     Token peeked;
@@ -271,6 +272,7 @@ static bool LooksLikeVarDecl(Parser* p)
     case TokKwUshort:
     case TokKwFloat:
     case TokKwDouble:
+    case TokKwFloat2:
     case TokKwFloat3:
     case TokKwFloat4:
     case TokKwString:
@@ -302,7 +304,8 @@ static bool LooksLikeVarDecl(Parser* p)
    non-literal indices stay intact so speculation is diagnostic-free. Wraps apply
    inside-out and the canonical name is rebuilt in source order to round-trip C
    dimension order (`int[2][6]` = 2 of `int[6]`). */
-typedef struct {
+typedef struct
+{
     bool isFixed;
     long length;
 } ArrayDim;
@@ -502,15 +505,16 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
             if (arrayDepth == 0)
             {
-                DiagErrorFmt(p->m_diag, p->m_cur.range,
-                             "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
-                             base.name, base.name);
+                DiagErrorFmt(
+                    p->m_diag, p->m_cur.range,
+                    "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
+                    base.name, base.name);
                 Advance(p);
             }
             else if (anyFixed)
             {
-                DiagErrorFmt(p->m_diag, p->m_cur.range,
-                             "fixed-size array '%s' cannot be optional; it is never empty", out->name);
+                DiagErrorFmt(p->m_diag, p->m_cur.range, "fixed-size array '%s' cannot be optional; it is never empty",
+                             out->name);
                 Advance(p);
             }
             else
@@ -570,6 +574,10 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     case TokKwDouble:
         name = "double";
         break;
+    case TokKwFloat2:
+        name = "float2";
+        isVector = true;
+        break;
     case TokKwFloat3:
         name = "float3";
         isVector = true;
@@ -622,8 +630,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
         if (out->isArray && out->length >= 0)
         {
-            DiagErrorFmt(p->m_diag, qRange,
-                         "fixed-size array '%s' cannot be optional; it is never empty", out->name);
+            DiagErrorFmt(p->m_diag, qRange, "fixed-size array '%s' cannot be optional; it is never empty", out->name);
             Advance(p);
         }
         else if (out->isArray)
@@ -852,7 +859,8 @@ static ParamDecl* ParseParam(Parser* p)
     {
         isVarargRest = true;
 
-        // `ref int... rest` borrows the collected stack array (non-owning); `const int... rest` makes the view read-only. Both are allowed.
+        // `ref int... rest` borrows the collected stack array (non-owning); `const int... rest` makes the view
+        // read-only. Both are allowed.
         type = TypeNameArrayWrap(p->m_arena, type);
     }
 
@@ -1059,11 +1067,11 @@ static Node* ParseFunction(Parser* p)
     /* `return { ... };` infers its struct type from the return type: for ^T
        and string it is the inner T, for T[] the whole array is kept so the
        braced return parses as an array literal. */
-    p->m_returnType = node->returnType.isArray
-                          ? &node->returnType
-                          : (node->returnType.isBox
-                                 ? node->returnType.inner
-                                 : (strcmp(node->returnType.name, "string") == 0 ? NULL : &node->returnType));
+    p->m_returnType
+        = node->returnType.isArray
+              ? &node->returnType
+              : (node->returnType.isBox ? node->returnType.inner
+                                        : (strcmp(node->returnType.name, "string") == 0 ? NULL : &node->returnType));
 
     node->body = ParseBlock(p);
 
@@ -1346,21 +1354,21 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         {
             if (p->m_cur.kind == TokLBrace)
             {
-            if (type.isArray)
-            {
-                node->init = ParseArrayInitBody(p, start, type.elem);
-            }
-            else if (type.isOptional && type.inner && type.inner->isArray)
-            {
-                // `T[]? x = { ... };` - a braced literal initializes the inner dynamic array.
-                node->init = ParseArrayInitBody(p, start, type.inner->elem);
-            }
-            else
+                if (type.isArray)
+                {
+                    node->init = ParseArrayInitBody(p, start, type.elem);
+                }
+                else if (type.isOptional && type.inner && type.inner->isArray)
+                {
+                    // `T[]? x = { ... };` - a braced literal initializes the inner dynamic array.
+                    node->init = ParseArrayInitBody(p, start, type.inner->elem);
+                }
+                else
                 {
                     // `^T x = {...}` / `T? x = {}` infer the inner T, not the box (a `T?{}` is a non-empty boxed T).
-                    const char* initTypeName
-                        = (type.isBox || type.isOptional) && type.inner ? type.inner->name
-                                                                         : (strcmp(type.name, "string") == 0 ? NULL : type.name);
+                    const char* initTypeName = (type.isBox || type.isOptional) && type.inner
+                                                   ? type.inner->name
+                                                   : (strcmp(type.name, "string") == 0 ? NULL : type.name);
 
                     node->init = ParseStructInitBody(p, start, initTypeName);
                 }
@@ -1420,8 +1428,7 @@ static Node* ParseReturn(Parser* p)
                    initializes the inner struct. */
                 const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : p->m_returnType;
 
-                node->value = ParseStructInitBody(p, p->m_cur,
-                                                  rtStruct ? rtStruct->name : p->m_returnType->name);
+                node->value = ParseStructInitBody(p, p->m_cur, rtStruct ? rtStruct->name : p->m_returnType->name);
             }
         }
         else
@@ -1577,7 +1584,8 @@ static Node* ParseAssign(Parser* p)
         Token opToken = p->m_cur;
         Advance(p);
 
-        // A bare braced RHS is an array literal (element type inferred in sema); a designator form (`{ .field = ... }`) is a struct literal.
+        // A bare braced RHS is an array literal (element type inferred in sema); a designator form (`{ .field = ... }`)
+        // is a struct literal.
         Node* rhs;
 
         if (p->m_cur.kind == TokLBrace)
@@ -2132,6 +2140,7 @@ static Node* ParsePrimary(Parser* p)
         return (Node*)node;
     }
 
+    case TokKwFloat2:
     case TokKwFloat3:
     case TokKwFloat4:
     case TokIdent:

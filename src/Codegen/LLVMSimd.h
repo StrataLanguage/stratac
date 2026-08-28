@@ -7,8 +7,25 @@ struct Builder;
 struct BinaryExpr;
 struct MemberExpr;
 
+
+typedef enum LSimdVecC
+{
+    VC_NULL = -1,
+    VC_X = 0,
+    VC_Y,
+    VC_Z,
+    VC_W
+} LSimdVecC;
+
+LLVMValueRef LSimdVector2Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y);
+LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y, LSimdVecC z, LSimdVecC w);
+
+LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar);
 /* Broadcast `scalar` to all lanes of a returned vector. */
-LLVMValueRef LSimdVectorBroadcast(struct Builder* b, LLVMValueRef scalar);
-LLVMValueRef LSimdVectorConstruct(struct Builder* builder, CallExpr* n);
+LLVMValueRef LSimdVector4Broadcast(struct Builder* b, LLVMValueRef scalar);
+
+LLVMValueRef LSimdVector2Construct(struct Builder* builder, CallExpr* n);
+LLVMValueRef LSimdVector4Construct(struct Builder* builder, CallExpr* n);
+
 LLVMValueRef LSimdVectorBinExpr(struct Builder* b, LLVMValueRef vec, LLVMValueRef rhs, const struct BinaryExpr* binexp);
 LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const struct MemberExpr* expr);

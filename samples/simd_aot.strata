@@ -1,10 +1,7 @@
 
 int main()
 {
-    float3 x = float3(1.0, 2.0, 3.0);
-    float3 y = float3(4.0, 5.0, 6.0);
-
-    float3 result = x.xxx + y.yyy;
+    float2 result = float2(2.0);
 
     return result.x;
 }

@@ -97,8 +97,7 @@ static bool FieldsIdentical(const Vec* a, const Vec* b)
         FieldDecl* fa = (FieldDecl*)VecGet((Vec*)a, i);
         FieldDecl* fb = (FieldDecl*)VecGet((Vec*)b, i);
 
-        if (strcmp(fa->name, fb->name) != 0 || strcmp(fa->type.name, fb->type.name) != 0
-            || fa->offset != fb->offset)
+        if (strcmp(fa->name, fb->name) != 0 || strcmp(fa->type.name, fb->type.name) != 0 || fa->offset != fb->offset)
         {
             return false;
         }
@@ -230,7 +229,8 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
 
 //--
 
-typedef struct {
+typedef struct
+{
     long size;
     long align;
 } SizeAlign;
@@ -264,6 +264,13 @@ static bool ScalarSizeAlign(const char* name, SizeAlign* out)
     }
 
     if (strcmp(name, "long") == 0 || strcmp(name, "ulong") == 0 || strcmp(name, "double") == 0)
+    {
+        out->size = 8;
+        out->align = 8;
+        return true;
+    }
+
+    if (strcmp(name, "float2") == 0)
     {
         out->size = 8;
         out->align = 8;
@@ -402,7 +409,8 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
 
         if (!FieldSizeAlign(reg, state, &f->type, &sa))
         {
-            SetLayoutError(st, "field '%s' has type '%s' with no computable size (unknown, incomplete, or by-value cycle)",
+            SetLayoutError(st,
+                           "field '%s' has type '%s' with no computable size (unknown, incomplete, or by-value cycle)",
                            f->name, f->type.name);
             ok = false;
             break;
@@ -417,7 +425,8 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
 
             if (off < cursor)
             {
-                SetLayoutError(st, "fieldoffset(%ld) for field '%s' overlaps the previous field (data ends at byte %ld)",
+                SetLayoutError(st,
+                               "fieldoffset(%ld) for field '%s' overlaps the previous field (data ends at byte %ld)",
                                off, f->name, cursor);
                 ok = false;
                 break;

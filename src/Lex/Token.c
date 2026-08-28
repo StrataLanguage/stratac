@@ -20,6 +20,7 @@ static const Spelling keywords[] = {
     { TokKwUshort, "ushort" },
     { TokKwFloat, "float" },
     { TokKwDouble, "double" },
+    { TokKwFloat2, "float2" },
     { TokKwFloat3, "float3" },
     { TokKwFloat4, "float4" },
     { TokKwString, "string" },

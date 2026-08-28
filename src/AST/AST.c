@@ -24,7 +24,10 @@ void AstReleaseModuleLists(Module* module)
 
 void AstDispose(Node* node)
 {
-    if (!node) return;
+    if (!node)
+    {
+        return;
+    }
 
     switch (node->kind)
     {
@@ -32,7 +35,9 @@ void AstDispose(Node* node)
     {
         Module* module = (Module*)node;
 
-#define DISPOSE_ALL(field) for (size_t i = 0; i < module->field.count; ++i) AstDispose((Node*)VecGet(&module->field, i))
+#define DISPOSE_ALL(field)                                                                                             \
+    for (size_t i = 0; i < module->field.count; ++i)                                                                   \
+    AstDispose((Node*)VecGet(&module->field, i))
 
         DISPOSE_ALL(structs);
         DISPOSE_ALL(handles);
@@ -134,7 +139,7 @@ void AstDispose(Node* node)
         }
 
         DisposeVec(&expression->args);
-        
+
         return;
     }
     case NodeMember:
@@ -189,6 +194,9 @@ void AstDispose(Node* node)
     case NodeBoolLiteral:
     case NodeStrLiteral:
     case NodeIdent:
+        return;
+    case NodeNullTest:
+        AstDispose(((NullTestExpr*)node)->operand);
         return;
     }
 }

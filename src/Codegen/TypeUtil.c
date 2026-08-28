@@ -137,13 +137,12 @@ MappedType MapType(const TypeName* t)
         return MakePrimitive(true, false, 64, "double", vec);
     }
 
-    if (strcmp(base, "float3") == 0)
+    if (strcmp(base, "float2") == 0)
     {
-        // Note that float3's still require 4 components
-        return MakeSimdVector(true, 32, 4, "float");
+        return MakeSimdVector(true, 32, 2, "float");
     }
 
-    if (strcmp(base, "float4") == 0)
+    if (strcmp(base, "float3") == 0 || strcmp(base, "float4") == 0)
     {
         return MakeSimdVector(true, 32, 4, "float");
     }
@@ -153,26 +152,35 @@ MappedType MapType(const TypeName* t)
 
 bool IsNumeric(const char* t)
 {
-    return strcmp(t, "int") == 0
-           || strcmp(t, "uint") == 0
-           || strcmp(t, "long") == 0
-           || strcmp(t, "ulong") == 0
-           || strcmp(t, "byte") == 0
-           || strcmp(t, "sbyte") == 0
-           || strcmp(t, "short") == 0
-           || strcmp(t, "ushort") == 0
-           || strcmp(t, "float") == 0
-           || strcmp(t, "double") == 0
-           || strcmp(t, "bool") == 0;
+    return strcmp(t, "int") == 0 || strcmp(t, "uint") == 0 || strcmp(t, "long") == 0 || strcmp(t, "ulong") == 0
+           || strcmp(t, "byte") == 0 || strcmp(t, "sbyte") == 0 || strcmp(t, "short") == 0 || strcmp(t, "ushort") == 0
+           || strcmp(t, "float") == 0 || strcmp(t, "double") == 0 || strcmp(t, "bool") == 0;
 }
 
-bool IsSimdVector(const char* t)
+int IsSimdVector(const char* t)
 {
-    return strcmp(t, "float3") == 0 || strcmp(t, "float4") == 0;
+    if (strcmp(t, "float2") == 0)
+    {
+        return 2;
+    }
+    if (strcmp(t, "float3") == 0)
+    {
+        return 3;
+    }
+    if (strcmp(t, "float4") == 0)
+    {
+        return 4;
+    }
+
+    return 0;
 }
 
 int GetSimdVectorLanes(const char* t)
 {
+    if (strcmp(t, "float2") == 0)
+    {
+        return 2;
+    }
     if (strcmp(t, "float3") == 0)
     {
         return 3;
