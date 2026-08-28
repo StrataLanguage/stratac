@@ -101,6 +101,7 @@ LLVMTypeRef LLVMFloatTypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMDoubleTypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMVoidTypeInContext(LLVMContextRef c);
 LLVMTypeRef LLVMVectorType(LLVMTypeRef elementType, unsigned elementCount);
+unsigned LLVMGetVectorSize(LLVMTypeRef ty);
 LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef c, const char* name);
 LLVMBool LLVMStructSetBody(LLVMTypeRef structTy, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
 

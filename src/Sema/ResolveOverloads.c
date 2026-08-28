@@ -1275,6 +1275,54 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+//-- SIMD vector dot / cross intrinsics.
+
+/* Validates a `dot(a, b)` / `cross(a, b)` intrinsic call and marks it pseudo.
+   Returns true if `c` was one (valid, or a misused dot/cross that was reported). */
+static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    bool isDot = strcmp(c->callee, "dot") == 0;
+    bool isCross = strcmp(c->callee, "cross") == 0;
+
+    if (!isDot && !isCross)
+    {
+        return false;
+    }
+
+    if (c->args.count != 2)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects 2 arguments, got %zu", c->callee, c->args.count);
+        return true;
+    }
+
+    Node* a0 = (Node*)VecGet(&c->args, 0);
+    Node* a1 = (Node*)VecGet(&c->args, 1);
+
+    const TypeName* t0 = InferType(r, a0, scope);
+    const TypeName* t1 = InferType(r, a1, scope);
+
+    int lanes0 = t0 ? GetSimdVectorLanes(t0->name) : 0;
+    int lanes1 = t1 ? GetSimdVectorLanes(t1->name) : 0;
+
+    if (lanes0 == 0 || lanes1 == 0)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
+                     c->callee, t0 ? t0->name : "?");
+        return true;
+    }
+
+    if (lanes0 != lanes1)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' requires both vectors to have the same lane count ('%s' vs '%s')",
+                     c->callee, t0->name, t1->name);
+        return true;
+    }
+
+    c->isPseudoCall = true;
+
+    return true;
+}
+
 //-- Array intrinsics.
 
 /* Result type of `copy(arg)`, or NULL if not a copy call. */
@@ -1848,6 +1896,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
+    // SIMD vector intrinsics: dot(a, b) and cross(a, b).
+    if (c->callee != NULL && ResolveVectorIntrinsics(r, c, scope))
+    {
+        return;
+    }
+
     // Inline array helpers: array_push / array_pop / array_resize.
     if (c->callee != NULL && ResolveArrayBuiltin(r, c, scope))
     {
@@ -2282,6 +2336,21 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return InternTypeName(r, c->callee);
         }
 
+        /* SIMD intrinsics: dot() reduces to scalar float; cross() keeps the arg vector type
+           (cross(float2) reduces to the scalar z-component). */
+        if (c->isPseudoCall && (strcmp(c->callee, "dot") == 0 || strcmp(c->callee, "cross") == 0))
+        {
+            Node* a0 = (Node*)VecGet(&c->args, 0);
+            const TypeName* a0Type = InferType(r, a0, scope);
+
+            if (strcmp(c->callee, "dot") == 0 || GetSimdVectorLanes(a0Type ? a0Type->name : "") == 2)
+            {
+                return InternTypeName(r, "float");
+            }
+
+            return a0Type;
+        }
+
         const TypeName* builtinType = ArrayBuiltinType(r, c, scope);
 
         if (builtinType)
@@ -2365,7 +2434,7 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
     const int isTargetVector = IsSimdVector(targetType->name);
     const int isValueVector = IsSimdVector(valueType->name);
 
-    if ((isTargetVector && isValueVector && isTargetVector == isValueVector) /* vector = same-lane vector */
+    if ((isTargetVector && isValueVector && isTargetVector == isValueVector)    /* vector = same-lane vector */
         || (isTargetVector && isValueVector == 0 && IsNumeric(valueType->name)) /* vector = scalar splat */
     )
     {
