@@ -56,6 +56,7 @@ typedef struct Builder
     StrMap m_dropFns; /* structName -> LLVMValueRef, per-type struct-field drop helper */
     Vec m_externNames;
     TypeDesc m_curRet;
+    LLVMTypeRef m_curRetAbi; /* widened signature return type (i32 for sub-word ints) */
     bool m_terminated;
     bool m_jitMode;
     bool m_boundsCheck;     /* emit array bounds checks (StrataProfile) */

@@ -2214,7 +2214,8 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     {
         const IntLiteral* lit = (const IntLiteral*)n;
 
-        if (lit->value > 0xFFFFFFFFULL)
+        /* Values that don't fit a non-negative signed i32 are 64-bit */
+        if (lit->value > 0x7FFFFFFFULL)
         {
             return InternTypeName(r, lit->isUnsigned ? "ulong" : "long");
         }
