@@ -90,10 +90,6 @@ Vec3 return_bare_vec3()
     return newVec;   // reads newVec's value, then frees it (not a move)
 }
 
-void drop(^Vec3 inBox)
-{
-}
-
 // Mutate inner value of box.
 // (Doesn't drop mem)
 void mutate_box(ref ^Vec3 inBox)
@@ -150,7 +146,7 @@ float entry()
 
 
     // test read OOB
-    printf("globalStringArray[9] = %s\n", globalStringArray[9]);
+    //printf("globalStringArray[9] = %s\n", globalStringArray[9]);
 
     printf("globalStringArray[0] = %s\n", globalStringArray[0]);
     globalStringArray[0] = "goodbye";
@@ -174,7 +170,9 @@ float entry()
     ^BaseEntity casted = (^BaseEntity)eBox;
     take_entity(casted);
 
-    ^Vec3 v = make_vec3(1.0, 2.0, 0.0);   // factory return — caller owns
+    ^Vec3 v = make_vec3(2.0, 2.0, 2.0);   // factory return — caller owns
+    drop(v);
+    v = make_vec3(1.0, 2.0, 0.0);
 
     float a = read_through_ref(v);             // borrow — v stays alive
     v.y = 4.0;                                 // mutate through the borrow

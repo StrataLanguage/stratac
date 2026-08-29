@@ -3075,6 +3075,44 @@ static Value EmitCopyBuiltin(Builder* b, CallExpr* n)
     return EmitCopyValue(b, v, v.typeDesc);
 }
 
+/* Emits drop(arg) — invalidates an owning value by nulling its source slot.
+   For ^T boxes, store a null pointer.
+   For string/T[] fat structs, store a null {ptr, len} struct. */
+static Value EmitDropBuiltin(Builder* b, CallExpr* n)
+{
+    Node* arg0 = (Node*)VecGet(&n->args, 0);
+
+    /* Evaluate the argument (may have side effects). */
+    EmitExpr(b, arg0);
+
+    /* Resolve the movable box source and null it. */
+    Node* moved = (Node*)MovableBoxSourceNode(arg0);
+    if (moved)
+    {
+        b->m_nullStoreLValue = true;
+        LValue src = EmitLValue(b, moved);
+        b->m_nullStoreLValue = false;
+
+        if (src.valid)
+        {
+            /* Determine null value: fat struct for arrays/strings, pointer for ^T boxes. */
+            LLVMValueRef nullVal;
+            if (src.typeDesc.isArray || src.typeDesc.type == ArrayStructType(b))
+            {
+                nullVal = LLVMConstNull(ArrayStructType(b));
+            }
+            else
+            {
+                nullVal = LLVMConstNull(b->m_ptrTy);
+            }
+            LLVMBuildStore(b->m_builder, nullVal, src.ptr);
+        }
+    }
+
+    LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
+    return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
+}
+
 /* Applies C default argument promotions to a value passed through a bare
    extern varargs */
 static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
@@ -3169,6 +3207,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
     if (n->isPseudoCall && strcmp(n->callee, "copy") == 0)
     {
         return EmitCopyBuiltin(b, n);
+    }
+
+    if (n->isPseudoCall && strcmp(n->callee, "drop") == 0)
+    {
+        return EmitDropBuiltin(b, n);
     }
 
     if (n->isPseudoCall && (strcmp(n->callee, "dot") == 0 || strcmp(n->callee, "cross") == 0))

@@ -1392,6 +1392,48 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+/* Result type of `drop(arg)` — always void (NULL TypeName). */
+static const TypeName* DropBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    (void)r; (void)c; (void)scope;
+    return NULL;
+}
+
+static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || strcmp(c->callee, "drop") != 0)
+    {
+        return false;
+    }
+
+    if (c->args.count != 1)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'drop' expects 1 argument, got %zu", c->args.count);
+        return true;
+    }
+
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    const TypeName* argType = InferType(r, arg0, scope);
+
+    if (!argType || !TypeNameIsOwning(argType))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "'drop' expects an owning type (string, ^T, T[]) — not '%s'",
+                     argType ? argType->name : "");
+        return true;
+    }
+
+    c->isPseudoCall = true;
+
+    /* Move the source — the box is invalidated after drop(). */
+    const char* movedKey = MovableBoxSourceKey(r, arg0);
+    if (movedKey)
+    {
+        MoveBoxIdent(r, movedKey, arg0->range);
+    }
+
+    return true;
+}
+
 /* Result type of array_push/pop/resize, or NULL if not one. */
 static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
@@ -1939,6 +1981,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
+    // drop(string/^T/T[]): invalidate an owning value.
+    if (c->callee != NULL && ResolveDropBuiltin(r, c, scope))
+    {
+        return;
+    }
+
     /* Call already resolved (e.g. warmup); reuse cached decl and rerun move tracking. */
     if (c->resolvedDecl)
     {
@@ -2386,6 +2434,13 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         }
 
         builtinType = CopyBuiltinType(r, c, scope);
+
+        if (builtinType)
+        {
+            return builtinType;
+        }
+
+        builtinType = DropBuiltinType(r, c, scope);
 
         if (builtinType)
         {

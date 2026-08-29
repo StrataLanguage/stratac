@@ -1,6 +1,7 @@
 #include "Util.h"
 #include "Test.h"
 #include "strata/strata.h"
+#include "Codegen/CodegenBackend.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -2039,3 +2040,103 @@ STRATA_TEST(partial_move_two_fields_both_moved)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+STRATA_TEST(drop_box_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Cell { int v; };\n"
+        "int entry() {\n"
+        "  ^Cell c = Cell { .v = 42 };\n"
+        "  drop(c);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(drop_string_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  string s = \"hello\";\n"
+        "  drop(s);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(drop_array_invalidates)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "int entry() {\n"
+        "  int[] arr = {1, 2, 3};\n"
+        "  drop(arr);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(drop_use_after_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Cell { int v; };\n"
+        "int use(^Cell c) { return c.v; }\n"
+        "int entry() {\n"
+        "  ^Cell c = Cell { .v = 42 };\n"
+        "  drop(c);\n"
+        "  return use(c);\n"  /* error: c used after drop */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(drop_wrong_arg_count)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  drop();\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(drop_non_owning_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  int x = 42;\n"
+        "  drop(x);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+
