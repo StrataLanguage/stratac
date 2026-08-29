@@ -323,18 +323,15 @@ static void MarkBoxLive(Resolver* r, const char* name)
         VecPush(r->m_liveLog, (void*)name);
     }
 
-    /* Reassignment re-lives the binding; clear stale nullable facts and re-establish non-empty. */
+    /* Reassignment re-lives the binding and drops its stale nullable facts; whether it is non-empty again depends on
+     * the value assigned (the caller re-blesses when the new value proves it). */
     ClearNullableFacts(r, name);
-    MarkPathNonEmpty(r, name);
 }
 
 /* Reassigning one owning field re-lives it and any ancestor whose moved descendants are all restored. */
 static void RevalidateOwningField(Resolver* r, const char* key)
 {
     ClearBoxSubtree(r, key);
-    /* Reassigning a single owning field re-installs a valid value there. */
-    ClearNullableFacts(r, key);
-    MarkPathNonEmpty(r, key);
 
     StrMap* m = &r->m_movedBoxes;
 
@@ -2756,13 +2753,31 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     return;
                 }
 
+                /* The rebind drops the target's blessing; a plain `=` proves it non-empty again only when the new
+                 * value does - a non-optional source, or an optional path already blessed (checked before
+                 * MarkBoxLive clears the target subtree's facts). */
+                const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+                bool valueProvesNonEmpty = !optionalTarget || (vt && !vt->isOptional)
+                                           || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
+
                 MarkBoxLive(r, targetName);
 
-                const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+                if (valueProvesNonEmpty)
+                {
+                    MarkPathNonEmpty(r, targetName);
+                }
 
                 if (movedValueKey)
                 {
-                    MoveBoxIdent(r, movedValueKey, a->base.range);
+                    if (vt && vt->isOptional)
+                    {
+                        /* Moving from a `T?` leaves the source empty, never poisoned. */
+                        MoveOptionalSource(r, movedValueKey, a->base.range);
+                    }
+                    else
+                    {
+                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                    }
                 }
             }
             else
@@ -2809,7 +2824,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             else
             {
                 /* Compound assign (+=, ...) reads the field first, so it's
-                   only allowed while the field is still live. */
+                    only allowed while the field is still live. */
                 ResolveExpr(r, a->target, scope);
             }
 
@@ -2817,13 +2832,34 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (a->op == AssignSet)
             {
-                /* If the RHS is itself an owning binding, it moves out of
-                   that source - same as a box-to-box assignment. */
+                const TypeName* vt = InferType(r, a->value, scope);
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
+                /* The rebind drops the field's stale facts; it is provably non-empty again only when the assigned
+                 * value is (checked before ClearNullableFacts wipes the subtree). */
+                bool valueProvesNonEmpty = !vt || !vt->isOptional
+                                           || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
+
+                ClearNullableFacts(r, fieldKey);
+
+                if (valueProvesNonEmpty)
+                {
+                    MarkPathNonEmpty(r, fieldKey);
+                }
+
+                /* If the RHS is itself an owning binding, it moves out of
+                    that source - same as a box-to-box assignment; an optional
+                    source is left empty, never poisoned. */
                 if (movedValueKey)
                 {
-                    MoveBoxIdent(r, movedValueKey, a->base.range);
+                    if (vt && vt->isOptional)
+                    {
+                        MoveOptionalSource(r, movedValueKey, a->base.range);
+                    }
+                    else
+                    {
+                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                    }
                 }
             }
         }
@@ -3545,6 +3581,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
+        bool initProvesNonEmpty = true;
+
         if (vd->init)
         {
             ResolveExpr(r, vd->init, scope);
@@ -3566,9 +3604,25 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                                            ? MovableBoxSourceKey(r, vd->init)
                                            : NULL;
 
+            /* An optional-typed initializer proves the binding non-empty only when it is itself blessed (checked
+             * before the move below clears that fact). */
+            if (vd->type.isOptional)
+            {
+                initProvesNonEmpty = (initType && !initType->isOptional)
+                                     || (movedInitKey && IsPathNonEmpty(r, movedInitKey));
+            }
+
             if (movedInitKey)
             {
-                MoveBoxIdent(r, movedInitKey, vd->base.range);
+                if (initType->isOptional)
+                {
+                    /* Moving from a `T?` leaves the source empty, never poisoned. */
+                    MoveOptionalSource(r, movedInitKey, vd->base.range);
+                }
+                else
+                {
+                    MoveBoxIdent(r, movedInitKey, vd->base.range);
+                }
             }
         }
 
@@ -3577,8 +3631,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ClearNullableFacts(r, vd->name);
         InvalidateIndexVar(r, vd->name);
 
-        /* An initialized declaration proves the binding non-empty. */
-        if (vd->init)
+        /* An initialized declaration proves the binding non-empty - unless initialized from a maybe-empty `T?`. */
+        if (vd->init && initProvesNonEmpty)
         {
             MarkPathNonEmpty(r, vd->name);
         }

@@ -2148,3 +2148,138 @@ STRATA_TEST(optional_jit_while_walk_passes_narrowed_arg)
 
     strataJitDestroy(jit);
 }
+
+/* ---- Rebinding a `T?` ------------------------------------------------------
+   Every `=` into a `T?` rebinds the whole slot: the old blessing dies, and a
+   new one exists only when the assigned value is itself provably non-empty
+   (a non-optional source, or an optional path already blessed). Moving OUT
+   of a `T?` leaves the source empty - never a use-after-move poison. */
+
+STRATA_TEST(optional_rebind_from_unblessed_drops_fact)
+{
+    /* The readme_demo walkthrough: after `cur = cur.next` the condition's
+       blessing is gone - reads through `cur` are rejected again. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct Cell { int n; Cell? next; };\n"
+        "int entry() {\n"
+        "  ^Cell a = Cell { .n = 1 };\n"
+        "  Cell? cur = a;\n"
+        "  while (cur?)\n"
+        "  {\n"
+        "    cur = cur.next;\n"
+        "    return cur.n;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "'cur' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_decl_from_unblessed_source_is_not_blessed)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct W { int d; };\n"
+        "int entry() {\n"
+        "  W? a;\n"
+        "  W? b = a;\n"
+        "  return b.d;\n"
+        "}\n",
+        "'b' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_field_rebind_from_unblessed_drops_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct M { int v; };\n"
+        "struct W { M? m; };\n"
+        "int entry() {\n"
+        "  ^W w = W {};\n"
+        "  M? x;\n"
+        "  w.m = x;\n"
+        "  return w.m.v;\n"
+        "}\n",
+        "'w.m' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_rebind_from_blessed_source_keeps_fact)
+{
+    /* A blessed source transfers its proof: the lookahead advance stays
+       legal because `cur = cur.next` happens under `if (cur.next?)`. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct Cell { int n; Cell? next; };\n"
+        "int entry() {\n"
+        "  ^Cell b = Cell { .n = 2 };\n"
+        "  ^Cell a = Cell { .n = 1, .next = b };\n"
+        "  Cell? cur = a;\n"
+        "  if (cur.next?)\n"
+        "  {\n"
+        "    cur = cur.next;\n"
+        "    return cur.n;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 2);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(optional_move_out_leaves_source_empty_not_moved)
+{
+    /* `W? b = a;` moves the value: `a` tests empty afterwards (no poison),
+       and `b` inherits `a`'s proof so it is readable without a re-test. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "struct W { int d; };\n"
+        "int entry() {\n"
+        "  W? a = W { .d = 1 };\n"
+        "  W? b = a;\n"
+        "  if (a?) { return 10; }\n"
+        "  if (b?) { return b.d * 100; }\n"
+        "  return 0;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 100);
+    }
+
+    strataJitDestroy(jit);
+}

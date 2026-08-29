@@ -194,12 +194,19 @@ main) are the internal entry points.
   same dotted-path machinery as move poisoning (`m_nonEmptyPaths`) with
   intersection-merge at if/else joins and full invalidation at loop exits.
   An initialized declaration also establishes the fact
-  (`Weapon? w = Weapon {}` proves `w`). The else branch of `if (path?)`
+  (`Weapon? w = Weapon {}` proves `w`) — unless the initializer is a
+  maybe-empty `T?` that is not itself blessed (`Weapon? b = a;` proves `b`
+  only when `a` is proven). The else branch of `if (path?)`
   carries a definitely-EMPTY fact (`m_emptyPaths`, scoped to that block):
   reads there get a sharper "is definitely empty" error, and assigning in
   the else is what makes the lazy-init idiom join to a non-empty fact.
   Testing `a.b.c?` also requires every optional ancestor proven. Every
-  `=` into a `T?` rebinds the whole slot (drop old + take new); compound
+  `=` into a `T?` rebinds the whole slot (drop old + take new) and drops
+  the old blessing: the rebinding `=` re-establishes it only when the new
+  value is provably non-empty (a non-optional source, or an optional path
+  already blessed — `cur = cur.next` alone does NOT re-bless `cur`), and
+  moving out of a `T?` leaves the source definitely empty, never poisoned
+  (so `if (a?)` after `W? b = a;` is legal and false). Compound
   assignment into optionals is rejected. Recursive owning structs use
   optionals for self-references (`struct Node { int v; Node? next; };`).
 - Fixed-size arrays: `byte[16] name;` — C-ABI inline storage (`[16 x i8]`

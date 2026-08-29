@@ -40,6 +40,10 @@ int main()
         printf("pos = %f %f %f %f\n",
                cur.pos.x, cur.pos.y, cur.pos.z, cur.pos.w);
         cur = cur.next;           // advance; old binding becomes empty again
+
+        // will not compile:
+        // printf("pos = %f %f %f %f\n",
+        //        cur.pos.x, cur.pos.y, cur.pos.z, cur.pos.w);
     }
 
     return (int)(acc.x + acc.y);  // 11 + 22 = 33
