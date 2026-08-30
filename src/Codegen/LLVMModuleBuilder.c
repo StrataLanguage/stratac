@@ -3075,41 +3075,46 @@ static Value EmitCopyBuiltin(Builder* b, CallExpr* n)
     return EmitCopyValue(b, v, v.typeDesc);
 }
 
-/* Emits drop(arg) — invalidates an owning value by nulling its source slot.
-   For ^T boxes, store a null pointer.
-   For string/T[] fat structs, store a null {ptr, len} struct. */
+/* Emits drop(arg) — destroys the owning argument immediately, as if it were
+   moved into an empty `void drop(^T v) {}` whose owned param is dropped at
+   scope exit. Although it works for un-blessed optionals too */
 static Value EmitDropBuiltin(Builder* b, CallExpr* n)
 {
     Node* arg0 = (Node*)VecGet(&n->args, 0);
+    LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
 
-    /* Evaluate the argument (may have side effects). */
-    EmitExpr(b, arg0);
-
-    /* Resolve the movable box source and null it. */
+    /* Drop the owning lvalue in place (frees recursively, then nulls the slot). */
     Node* moved = (Node*)MovableBoxSourceNode(arg0);
+
     if (moved)
     {
-        b->m_nullStoreLValue = true;
         LValue src = EmitLValue(b, moved);
-        b->m_nullStoreLValue = false;
 
         if (src.valid)
         {
-            /* Determine null value: fat struct for arrays/strings, pointer for ^T boxes. */
-            LLVMValueRef nullVal;
-            if (src.typeDesc.isArray || src.typeDesc.type == ArrayStructType(b))
-            {
-                nullVal = LLVMConstNull(ArrayStructType(b));
-            }
-            else
-            {
-                nullVal = LLVMConstNull(b->m_ptrTy);
-            }
-            LLVMBuildStore(b->m_builder, nullVal, src.ptr);
+            EmitDropOne(b, src.ptr, src.typeDesc);
         }
+        else
+        {
+            EmitExpr(b, arg0); /* error recovery: keep any side effects */
+        }
+
+        return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
     }
 
-    LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
+    /* Temporary (non-lvalue) owning value. A string literal is a static
+       global with nothing to free; anything else (call result, array
+       literal) is freshly owned — park it in a temp slot and drop it. */
+    if (arg0->kind == NodeStrLiteral)
+    {
+        return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
+    }
+
+    Value v = EmitExpr(b, arg0);
+    LLVMValueRef slot = EntryAlloca(b, v.typeDesc.isArray ? ArrayStructType(b) : b->m_ptrTy, "drop.tmp");
+    LLVMBuildStore(b->m_builder, v.value, slot);
+    EmitDropOne(b, slot, v.typeDesc);
+
     return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
 }
 

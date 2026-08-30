@@ -1421,11 +1421,20 @@ static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     c->isPseudoCall = true;
 
-    /* Move the source — the box is invalidated after drop(). */
+    /* Move the source — the box is invalidated after drop(). An optional
+       source is left definitely EMPTY (legal to test later), never poisoned,
+       like any other move out of a T?. */
     const char* movedKey = MovableBoxSourceKey(r, arg0);
     if (movedKey)
     {
-        MoveBoxIdent(r, movedKey, arg0->range);
+        if (argType->isOptional)
+        {
+            MoveOptionalSource(r, movedKey, arg0->range);
+        }
+        else
+        {
+            MoveBoxIdent(r, movedKey, arg0->range);
+        }
     }
 
     return true;

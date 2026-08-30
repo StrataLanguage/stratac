@@ -2139,4 +2139,175 @@ STRATA_TEST(drop_non_owning_is_error)
     arena_free(&arena);
 }
 
+/* ---- drop() must really destroy: alloc/free balance ---- */
+
+static int g_dropAllocs = 0;
+static int g_dropFrees = 0;
+
+static void* DropCountAlloc(unsigned long long n)
+{
+    g_dropAllocs++;
+    return malloc((size_t)n);
+}
+
+/* Only non-null frees count: the backend emits unconditional
+   strata_free(NULL) on empty guards, which is harmless. */
+static void DropCountFree(void* p)
+{
+    if (p)
+    {
+        g_dropFrees++;
+    }
+    free(p);
+}
+
+STRATA_TEST(drop_box_recursively_frees)
+{
+    /* drop(head) must free the whole chain: the box, and every box held
+       through its optional fields. 3 nodes allocated, 3 freed - exactly
+       once each, no leak, no double-free. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&DropCountAlloc, (void*)&DropCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct Node { int v; Node? next; };\n"
+        "^Node build() {\n"
+        "  ^Node c = Node { .v = 3 };\n"
+        "  ^Node b = Node { .v = 2, .next = c };\n"
+        "  ^Node a = Node { .v = 1, .next = b };\n"
+        "  return a;\n"
+        "}\n"
+        "int entry() {\n"
+        "  ^Node head = build();\n"
+        "  int sum = head.v;\n"
+        "  if (head.next?)\n"
+        "  {\n"
+        "    sum = sum + head.next.v;\n"
+        "    if (head.next.next?)\n"
+        "    {\n"
+        "      sum = sum + head.next.next.v;\n"
+        "    }\n"
+        "  }\n"
+        "  drop(head);\n"
+        "  return sum;\n"
+        "}\n",
+        "dropchain", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    g_dropAllocs = 0;
+    g_dropFrees = 0;
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 6);
+        STRATA_CHECK_EQ(g_dropAllocs, 3);
+        STRATA_CHECK_EQ(g_dropFrees, 3);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(drop_string_and_array_free)
+{
+    /* drop(string) frees the heap copy; drop(string[]) frees every owning
+       element and the backing buffer. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&DropCountAlloc, (void*)&DropCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "int entry() {\n"
+        "  string s = \"hello\";\n"
+        "  string[] a = { \"x\", \"y\" };\n"
+        "  drop(s);\n"
+        "  drop(a);\n"
+        "  return 0;\n"
+        "}\n",
+        "dropown", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    g_dropAllocs = 0;
+    g_dropFrees = 0;
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+        /* 1 string copy + 2 element copies + 1 array buffer */
+        STRATA_CHECK_EQ(g_dropAllocs, 4);
+        STRATA_CHECK_EQ(g_dropFrees, 4);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(drop_optional_empty_frees_nothing_and_drop_leaves_it_empty)
+{
+    /* drop(T?) on an empty optional does nothing (no crash, no free).
+       Dropping a non-empty optional frees its box and leaves the source
+       definitely empty: a later `w?` test compiles (no poison) and runs
+       false. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&DropCountAlloc, (void*)&DropCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct W { int x; };\n"
+        "int entry() {\n"
+        "  W? e;\n"
+        "  drop(e);\n"             /* empty: frees nothing */
+        "  W? w = W { .x = 1 };\n"
+        "  drop(w);\n"             /* frees w's box, leaves w empty */
+        "  if (w?)\n"              /* legal: definitely empty now */
+        "  {\n"
+        "    return 1;\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        "dropopt", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    g_dropAllocs = 0;
+    g_dropFrees = 0;
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(g_dropAllocs, 1);
+        STRATA_CHECK_EQ(g_dropFrees, 1);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 
