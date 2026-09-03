@@ -112,47 +112,48 @@ static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
         return LLVMVoidTypeInContext(ctx);
     }
 
-    LLVMTypeRef elem = NULL;
-
     if (strcmp(t->elemIr, "i1") == 0)
     {
-        elem = LLVMInt1TypeInContext(ctx);
+        return LLVMInt1TypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "i8") == 0)
     {
-        elem = LLVMInt8TypeInContext(ctx);
+        return LLVMInt8TypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "i16") == 0)
     {
-        elem = LLVMInt16TypeInContext(ctx);
+        return LLVMInt16TypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "i32") == 0)
     {
-        elem = LLVMInt32TypeInContext(ctx);
+        return LLVMInt32TypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "i64") == 0)
     {
-        elem = LLVMInt64TypeInContext(ctx);
+        return LLVMInt64TypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "float") == 0)
     {
-        elem = LLVMFloatTypeInContext(ctx);
-
-        if (t->isSimdVector)
-        {
-            return LLVMVectorType(elem, (unsigned int)t->lanes);
-        }
+        return LLVMFloatTypeInContext(ctx);
     }
     else if (strcmp(t->elemIr, "double") == 0)
     {
-        elem = LLVMDoubleTypeInContext(ctx);
-    }
-    else
-    {
-        elem = LLVMInt32TypeInContext(ctx);
+        return LLVMDoubleTypeInContext(ctx);
     }
 
-    return elem;
+    return LLVMInt32TypeInContext(ctx);
+}
+
+/* SIMD vectors route here (lanes > 1); ScalarLlvmType stays scalar-only. */
+static LLVMTypeRef VectorLlvmType(LLVMContextRef ctx, const MappedType* t)
+{
+    assert(t->isSimdVector);
+    assert(t->lanes > 1);
+
+    LLVMTypeRef elem = strcmp(t->elemIr, "double") == 0 ? LLVMDoubleTypeInContext(ctx)
+                                                        : LLVMFloatTypeInContext(ctx);
+
+    return LLVMVectorType(elem, (unsigned int)t->lanes);
 }
 
 static LLVMIntPredicate PredNameToPredicate(const char* p, bool uns)
@@ -777,6 +778,8 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         if (mapped.isSimdVector)
         {
             flags |= TD_VECTOR;
+
+            return TypeDescMake(VectorLlvmType(b->m_ctx, &mapped), flags, NULL);
         }
 
         return TypeDescMake(ScalarLlvmType(b->m_ctx, &mapped), flags, NULL);
