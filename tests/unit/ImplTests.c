@@ -122,19 +122,51 @@ STRATA_TEST(impl_rejects_body_and_duplicates)
     arena_free(&arena2);
 }
 
-STRATA_TEST(impl_requires_handle_target)
+STRATA_TEST(impl_requires_handle_or_struct_target)
+{
+    /* impl now targets any non-alias type (handles, defined structs, and
+       forward-declared structs). Undeclared types and type aliases are still
+       rejected. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("impl Ghost {\n"
+                    "    extern float Get(Ghost self);\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "not a declared struct or handle"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("struct Meter = int;\n"
+                    "impl Meter {\n"
+                    "    extern int Get(Meter self);\n"
+                    "}\n",
+                    &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "not a declared struct or handle"));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+}
+
+STRATA_TEST(impl_on_forward_declared_struct_parses)
 {
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct Vec { float x; }\n"
-                    "impl Vec {\n"
-                    "    extern float Get(Vec self);\n"
+    ParseAndResolve("struct TheType;\n"
+                    "impl TheType {\n"
+                    "    extern int Get(TheType self);\n"
                     "}\n",
                     &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
-    STRATA_CHECK(Contains(ErrText(&diag, &arena), "not a declared handle"));
+    STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -538,6 +570,76 @@ STRATA_TEST(impl_astdump_shows_impl_block)
 }
 
 #if STRATA_TEST_HAS_LLVM
+/* Host side of impl_on_opaque_struct_jit: TheType is never defined in Strata;
+   the host owns the layout and hands boxes (opaque pointers) across. */
+static void OpaqueGetTypeImpl(void** out)
+{
+    int* p = (int*)malloc(sizeof(int));
+    if (p)
+    {
+        *p = 42;
+    }
+    *out = p;
+}
+
+static int  OpaqueGetValueImpl(void* self)        { return *((int*)self); }
+static void OpaqueSetValueImpl(void* self, int v) { *((int*)self) = v; }
+static int  OpaqueBumpImpl(void* self)
+{
+    int old = *((int*)self);
+    *((int*)self) = old + 1;
+    return old;
+}
+
+STRATA_TEST(impl_on_opaque_struct_jit)
+{
+    /* A forward-declared struct with no body, driven opaquely through a
+       `^TheType` box (return param) and impl-declared extern methods, via the
+       public embed API. */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct TheType;\n"
+        "extern void GetType(return ^TheType t);\n"
+        "impl TheType {\n"
+        "    extern int GetValue(TheType self);\n"
+        "    extern void SetValue(TheType self, int v);\n"
+        "    extern int Bump(TheType self);\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  ^TheType t = GetType();\n"      /* box { 42 } */
+        "  int v = t.GetValue();\n"        /* 42 */
+        "  t.SetValue(v + 1);\n"           /* host stores 43 */
+        "  int w = t.Bump();\n"            /* reads 43, stores 44, returns 43 */
+        "  return w + t.GetValue();\n"     /* 43 + 44 = 87 */
+        "}\n",
+        "opaque_impl", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "GetType", (void*)&OpaqueGetTypeImpl));
+    STRATA_CHECK(strataJitAddSymbol(jit, "TheType_GetValue", (void*)&OpaqueGetValueImpl));
+    STRATA_CHECK(strataJitAddSymbol(jit, "TheType_SetValue", (void*)&OpaqueSetValueImpl));
+    STRATA_CHECK(strataJitAddSymbol(jit, "TheType_Bump", (void*)&OpaqueBumpImpl));
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 87);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 static float Camera_GetFOVThunk(void* self)
 {
     return *(float*)self;

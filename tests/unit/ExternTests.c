@@ -590,6 +590,22 @@ STRATA_TEST(extern_return_param_struct)
                 hosts, 1, 42);
 }
 
+STRATA_TEST(extern_return_param_forward_declared_struct)
+{
+    /* A forward-declared struct may appear in the `return` param declaration;
+       the definition (here anywhere in the module) is what the CALL needs. */
+    HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet } };
+    CheckExtern("struct Foo;\n"
+                "extern void host_foo_get(return Foo f);\n"
+                "struct Foo { int v; };\n"
+                "int entry()\n"
+                "{\n"
+                "  Foo f = host_foo_get();\n" /* Foo { .v = 42 } */
+                "  return f.v;\n"             /* 42 */
+                "}\n",
+                hosts, 1, 42);
+}
+
 STRATA_TEST(extern_return_param_struct_passed_to_ref)
 {
     /* The returned value is a real local; it can be handed to another
@@ -685,4 +701,110 @@ STRATA_TEST(extern_return_param_rejects_struct_by_value_return)
     STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "must declare 'void' return") != NULL);
     strataResultFree(&r);
     strataCompilerDestroy(c);
+}
+
+/* ================= `impl` on structs ================= */
+
+static void HostOpaqueGetType(void** out)
+{
+    int* p = (int*)malloc(sizeof(int));
+    if (p)
+    {
+        *p = 42;
+    }
+    *out = p;
+}
+
+static void HostOpaqueSetValue(void* self, int v)
+{
+    *((int*)self) = v;
+}
+
+static int HostOpaqueBump(void* self)
+{
+    int old = *((int*)self);
+    *((int*)self) = old + 1;
+    return old;
+}
+
+static int HostOpaqueGetValue(void* self)
+{
+    return *((int*)self);
+}
+
+STRATA_TEST(impl_on_forward_declared_struct_via_box)
+{
+    /* `struct TheType;` is never defined: the host owns the layout, and the
+       script drives it opaquely through a `^TheType` box (a `return` param)
+       and impl-declared extern methods. */
+    HostSymbol hosts[] = {
+        { "host_get_type", (void*)&HostOpaqueGetType },
+        { "TheType_GetValue", (void*)&HostOpaqueGetValue },
+        { "TheType_SetValue", (void*)&HostOpaqueSetValue },
+        { "TheType_Bump", (void*)&HostOpaqueBump },
+    };
+    CheckExtern("struct TheType;\n"
+                "extern void host_get_type(return ^TheType t);\n"
+                "impl TheType {\n"
+                "    extern int GetValue(TheType self);\n"
+                "    extern void SetValue(TheType self, int v);\n"
+                "    extern int Bump(TheType self);\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "  ^TheType t = host_get_type();\n" /* box { 42 } */
+                "  int v = t.GetValue();\n"          /* 42 */
+                "  t.SetValue(v + 1);\n"             /* host stores 43 */
+                "  int w = t.Bump();\n"              /* reads 43, stores 44, returns 43 */
+                "  return w + t.GetValue();\n"       /* 43 + 44 = 87 */
+                "}\n",
+                hosts, 4, 87);
+}
+
+typedef struct
+{
+    int a;
+    int b;
+} HostPair;
+
+static int HostPairSum(HostPair* p)
+{
+    return p->a + p->b;
+}
+
+static int HostPairStaticSum(int a, int b)
+{
+    return a + b;
+}
+
+STRATA_TEST(impl_on_defined_struct)
+{
+    /* `impl` also works on a fully defined struct: the self param crosses
+       by reference like any struct parameter. */
+    HostSymbol hosts[] = { { "Pair_Sum", (void*)&HostPairSum } };
+    CheckExtern("struct Pair { int a; int b; };\n"
+                "impl Pair {\n"
+                "    extern int Sum(Pair self);\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "  Pair p = { 3, 4 };\n"
+                "  return p.Sum();\n" /* 7 */
+                "}\n",
+                hosts, 1, 7);
+}
+
+STRATA_TEST(impl_on_defined_struct_static_method)
+{
+    /* A parameterless-self impl method resolves as a static call. */
+    HostSymbol hosts[] = { { "Pair_StaticSum", (void*)&HostPairStaticSum } };
+    CheckExtern("struct Pair { int a; int b; };\n"
+                "impl Pair {\n"
+                "    extern int StaticSum(int a, int b);\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "  return Pair.StaticSum(3, 4);\n" /* 7 */
+                "}\n",
+                hosts, 1, 7);
 }

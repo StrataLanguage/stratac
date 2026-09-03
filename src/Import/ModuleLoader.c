@@ -89,19 +89,6 @@ static bool AlreadyVisited(const ModuleLoader* loader, const char* path)
     return false;
 }
 
-static bool RootHasStruct(const Module* root, const char* name, bool definedOnly)
-{
-    for (size_t i = 0; i < root->structs.count; i++)
-    {
-        StructDecl* s = (StructDecl*)VecGet(&root->structs, i);
-        if (strcmp(s->name, name) == 0 && (!definedOnly || !s->incomplete))
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
 static bool RootHasHandle(const Module* root, const char* name)
 {
     for (size_t i = 0; i < root->handles.count; i++)
@@ -137,11 +124,40 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
     {
         StructDecl* s = (StructDecl*)VecGet(&src->structs, i);
 
-        if (!s->isExtern && RootHasStruct(root, s->name, true))
+        if (s->isExtern)
+        {
+            VecPush(&root->structs, s);
+            continue;
+        }
+
+        bool hasAny = false;
+        bool hasDefined = false;
+
+        for (size_t j = 0; j < root->structs.count; j++)
+        {
+            StructDecl* r = (StructDecl*)VecGet(&root->structs, j);
+
+            if (strcmp(r->name, s->name) != 0)
+            {
+                continue;
+            }
+
+            hasAny = true;
+
+            if (!r->incomplete)
+            {
+                hasDefined = true;
+            }
+        }
+
+        /* A forward declaration may coexist with (and be satisfied by) a
+           definition in the other module - only two definitions conflict. */
+        if (hasAny && !s->incomplete && hasDefined)
         {
             DiagErrorFmt(diag, s->base.range, "redefinition of struct '%s'", s->name);
             continue;
         }
+
         VecPush(&root->structs, s);
     }
 

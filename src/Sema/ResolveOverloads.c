@@ -2483,13 +2483,13 @@ static PropertyDecl* FindImplProperty(Resolver* r, const char* handleName, const
     return NULL;
 }
 
-/* If `n` is a property read on a handle (after unwrapping `T?`/`^T`), returns
-   the property; NULL when the member is not an impl property. */
+/* If `n` is a property read on an impl target (after unwrapping `T?`/`^T`),
+   returns the property; NULL when the member is not an impl property. */
 static PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char* member)
 {
     const TypeName* inner = UnwrapBoxPtr(baseType);
 
-    if (!inner || !IsHandleType(&r->m_registry, inner->name))
+    if (!inner || !TypeRegistryIsImplTarget(&r->m_registry, inner->name))
     {
         return NULL;
     }
@@ -2539,7 +2539,7 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* inner = UnwrapBoxPtr(raw);
 
-        if (!inner || !IsHandleType(&r->m_registry, inner->name))
+        if (!inner || !TypeRegistryIsImplTarget(&r->m_registry, inner->name))
         {
             DiagErrorFmt(r->m_diag, c->base.range, "type '%s' has no method '%s'", raw && inner ? inner->name : "?",
                          c->callee);
@@ -2560,22 +2560,23 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         }
         else
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "handle '%s' has no method '%s'", handleName, c->callee);
+            DiagErrorFmt(r->m_diag, c->base.range, "type '%s' has no method '%s'", handleName, c->callee);
         }
 
         return true;
     }
 
     /* Instance call: when the method's first parameter is the receiver slot
-       (a handle the receiver's type extends or equals), prepend the base
+       (the impl type the receiver's type extends or equals), prepend the base
        expression as the self argument. Parameterless methods (factories) and
        static calls map arguments 1:1. */
     if (!isStatic && method->params.count > 0)
     {
         const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
 
-        if (IsHandleType(&r->m_registry, p0->type.name)
-            && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->m_registry, handleName, p0->type.name)))
+        if (TypeRegistryIsImplTarget(&r->m_registry, p0->type.name)
+            && (strcmp(p0->type.name, handleName) == 0
+                || HandleExtendsFrom(&r->m_registry, handleName, p0->type.name)))
         {
             VecPushFront(&c->args, c->calleeBase);
         }
@@ -2689,9 +2690,10 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
     {
         ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, i);
 
-        if (!IsHandleType(registry, impl->handleName))
+        if (!TypeRegistryIsImplTarget(registry, impl->handleName))
         {
-            DiagErrorFmt(diag, impl->base.range, "impl type '%s' is not a declared handle", impl->handleName);
+            DiagErrorFmt(diag, impl->base.range, "impl type '%s' is not a declared struct or handle",
+                         impl->handleName);
             continue;
         }
 
@@ -3089,6 +3091,16 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
        candidate and emit spurious cascading diagnostics. */
     if (ambiguous)
     {
+        return;
+    }
+
+    /* A `return` param's caller allocates the out slot, so the return type
+       must be a defined (sized) struct at every call site. The declaration
+       itself may use a forward-declared type; only the call requires it. */
+    if (FunctionHasReturnParam(best) && IsIncompleteStruct(&r->m_registry, best->returnType.name))
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "call to '%s' has incomplete return type '%s'", best->name,
+                     best->returnType.name);
         return;
     }
 
@@ -4043,8 +4055,16 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             if (IsIncompleteStruct(&r->m_registry, baseType->name))
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'",
-                             baseType->name);
+                if (FindImplMethod(r, baseType->name, m->member))
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'",
+                                 m->member, baseType->name, m->member);
+                }
+                else
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'",
+                                 baseType->name);
+                }
             }
             else if (IsHandleType(&r->m_registry, baseType->name))
             {
@@ -5516,7 +5536,11 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
 
-        if (IsIncompleteStruct(&r.m_registry, functionDecl->returnType.name))
+        /* A `return` param (out pointer) is exempt: its type comes back
+           through the pointer, which needs no size - exactly like a `ref Foo`
+           parameter. The CALLER still needs a defined type to allocate the
+           out slot, so the call site requires it (see ResolveCall). */
+        if (!functionDecl->hasReturnParam && IsIncompleteStruct(&r.m_registry, functionDecl->returnType.name))
         {
             DiagErrorFmt(diag, functionDecl->base.range, "function cannot return incomplete type '%s'",
                          functionDecl->returnType.name);

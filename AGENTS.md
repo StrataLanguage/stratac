@@ -188,6 +188,19 @@ main) are the internal entry points.
 - Handles: `handle Entity;` — opaque, pointer-sized, passed by value.
 - Handle inheritance: `handle Player extends Entity;` — `Player` is
   passable anywhere `Entity` is expected (checked by `HandleExtendsFrom`)
+- Impl blocks: `impl H { extern R M(H self, ...); property T P { get = H_G; set = H_S; } }`
+  attach host externs as methods/properties of a type. `impl` targets ANY
+  registered non-alias type — handles, **defined structs**, and
+  **forward-declared (bodyless) structs** (`struct Foo;`) alike. Methods hoist
+  to module-scope externs named `Type_Method`; `expr.M(args)` (or `Type.M(args)`
+  for a parameterless/static method) rewrites to `Type_M(expr, args...)`.
+  `expr.P` / `expr.P = v` route to the getter/setter externs. An `impl` target
+  that is a forward-declared struct stays opaque: Strata never sees its layout,
+  and the only way to hold a value is `^Foo` (a box — the cell IS the opaque
+  pointer, so box→T unwrapping for these is identity, never a second deref).
+  This lets a host hand Strata an opaque struct via a `return ^Foo` out-param
+  and have the script call extern methods on it. See
+  `samples/opaque_struct.strata` + `samples/hosts/opaque_struct_host.c`.
 - Boxes: `^T` — an owning, heap-allocated, move-only handle to a `T`
   (e.g. `^Vec3 v = Vec3 { ... };`). `^` always takes the next type and
   binds tighter than `[]`: `^Foo[]` is an array of boxed `Foo`. There is
@@ -286,6 +299,14 @@ main) are the internal entry points.
   check is skipped for these). Works for any type: structs, scalars, `string`
   (host writes the fat `{ptr, len}` — caller owns), `T[]`, `^T`/`T?` (host
   writes the pointer; NULL = empty for `T?`), and handles.
+  The return type may be a **forward-declared** struct at the declaration
+  (`struct Name;` + `extern void GetName(return Name n);` compiles standalone
+  — the ABI is just a `Name*`, like any `ref` param) — but every **call**
+  requires the struct to be defined (the caller allocates the out slot), so
+  a call against an undefined type errors `call to '...' has incomplete
+  return type '...'`. A definition anywhere in the module (or via an
+  `import`) satisfies it, and a forward declaration in one module merges
+  cleanly with a definition in another.
 
 ### Operators
 

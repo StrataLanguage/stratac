@@ -939,6 +939,15 @@ static Value DerefBoxValue(Builder* b, Value value)
     }
 
     TypeDesc innerTd = Resolve(b, value.typeDesc.boxInner);
+
+    /* ^T where T is opaque (an incomplete struct or handle): the box cell
+       holds the T* ITSELF, so unwrapping to T is identity - dereferencing
+       again would read whatever the pointer points at as a pointer. */
+    if (innerTd.structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd.structTypeName))
+    {
+        return ValueMake(value.value, innerTd);
+    }
+
     LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, value.value, "boxval");
 
     return ValueMake(loaded, innerTd);
@@ -1001,9 +1010,7 @@ static Value UnboxIfBox(Builder* b, Value value, TypeDesc target)
 {
     if (value.typeDesc.isBox && !target.isBox && value.typeDesc.boxInner)
     {
-        TypeDesc innerTd = Resolve(b, value.typeDesc.boxInner);
-        LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, value.value, "unbox");
-        return ValueMake(loaded, innerTd);
+        return DerefBoxValue(b, value);
     }
 
     return value;

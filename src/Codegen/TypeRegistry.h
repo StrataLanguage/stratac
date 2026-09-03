@@ -55,6 +55,9 @@ void ComputeAllLayouts(TypeRegistry* reg);
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
+/* An `impl` target: any registered non-alias type — handles, defined
+   structs, and forward-declared (incomplete) structs alike. */
+bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
 /* Type shape queries (arrays, boxes, owning-ness) are structural — see the

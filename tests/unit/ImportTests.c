@@ -639,6 +639,103 @@ STRATA_TEST(resolver_mutual_import_with_shared_function)
     strataCompilerDestroy(c);
 }
 
+/* A module that forward-declares a struct and declares host externs against
+   it - the importing module supplies the definition. */
+static int ResolverReturnParamSdk(void* ud, const char* importer, const char* path, StrataResolvedModule* out)
+{
+    (void)ud;
+    (void)importer;
+    if (strcmp(path, "sdk") == 0)
+    {
+        out->text = "struct Foo;\n"
+                    "extern void GetFoo(return Foo f);\n"
+                    "extern int UseFoo(Foo f);\n";
+        out->length = strlen(out->text);
+        out->name = "sdk";
+        return 1;
+    }
+    if (strcmp(path, "sdkdef") == 0)
+    {
+        out->text = "struct Foo { int x; };\n"
+                    "extern void GetFoo(return Foo f);\n"
+                    "extern int UseFoo(Foo f);\n";
+        out->length = strlen(out->text);
+        out->name = "sdkdef";
+        return 1;
+    }
+    return 0;
+}
+
+typedef struct
+{
+    int v;
+} HostImportedFoo;
+
+static void HostSdkGetFoo(HostImportedFoo* f)
+{
+    f->v = 40;
+}
+
+static int HostSdkUseFoo(HostImportedFoo* f)
+{
+    return f->v + 1;
+}
+
+STRATA_TEST(resolver_return_param_forward_decl_import)
+{
+    /* sdk forward-declares `struct Foo;` and declares `GetFoo(return Foo)`;
+       the importing module defines Foo and calls it. The declaration
+       survives the merge with the definition. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverReturnParamSdk, NULL);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "import sdk;\n"
+        "struct Foo { int x; };\n"
+        "int entry() { Foo f = GetFoo(); return UseFoo(f) + f.x; }\n",
+        "main", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "GetFoo", (void*)&HostSdkGetFoo), 1);
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "UseFoo", (void*)&HostSdkUseFoo), 1);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 81);  /* UseFoo(40)+1 + 40 */
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(resolver_return_param_forward_decl_import_reverse)
+{
+    /* The other direction: the importing module forward-declares Foo while
+       the imported module defines it. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverReturnParamSdk, NULL);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "import sdkdef;\n"
+        "struct Foo;\n"
+        "int entry() { Foo f = GetFoo(); return UseFoo(f) + f.x; }\n",
+        "main", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "GetFoo", (void*)&HostSdkGetFoo), 1);
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "UseFoo", (void*)&HostSdkUseFoo), 1);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry) STRATA_CHECK_EQ(entry(), 81);
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 /* A module exposing a global that the importer reads directly and via a fn. */
 static int ResolverGlobals(void* ud, const char* importer, const char* path, StrataResolvedModule* out)
 {

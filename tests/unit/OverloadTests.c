@@ -355,6 +355,54 @@ STRATA_TEST(forward_struct_param_is_allowed)
     arena_free(&arena);
 }
 
+STRATA_TEST(forward_struct_return_param_decl_allowed)
+{
+    /* A `return` param is implicitly ref, so its declaration may use a
+       forward-declared (incomplete) type - only the CALL needs a definition. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo;\nextern void GetFoo(return Foo f);\nint entry() { return 0; }\n", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(forward_struct_return_param_call_requires_definition)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Foo;\n"
+        "extern void GetFoo(return Foo f);\n"
+        "int entry() { Foo f = GetFoo(); return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "incomplete return type 'Foo'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(forward_struct_then_definition_return_param_call_ok)
+{
+    /* A forward declaration plus a definition anywhere in the module
+       satisfies the call's need for a sized return type. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Foo;\n"
+        "extern void GetFoo(return Foo f);\n"
+        "struct Foo { int x; };\n"
+        "int entry() { Foo f = GetFoo(); return f.x; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(cast_scalar_to_scalar_is_allowed)
 {
     Arena arena; arena_init(&arena, 0);

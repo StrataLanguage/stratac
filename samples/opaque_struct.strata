@@ -1,0 +1,39 @@
+// opaque_struct.strata -- a host-owned opaque struct driven through impl methods.
+//
+// `struct TheType;` is forward-declared and NEVER given a body: Strata never
+// sees the layout. The host owns it. Strata only touches it through `^TheType`
+// boxes (opaque pointers — the box is the host's heap cell) and the extern
+// methods declared in `impl TheType`. The type works opaquely BECAUSE it is
+// only ever used as a pointer (`^TheType`, never a by-value `TheType`).
+//
+// `GetType(return ^TheType t)` hands the script a host-allocated box through
+// the return-param idiom; `t.GetValue()` / `t.SetValue()` / `t.Bump()` are
+// host methods declared with `impl TheType`. The box drops (strata_free) when
+// the local goes out of scope.
+//
+//   stratac opaque_struct.strata -o opaque_struct.o
+//   clang hosts/opaque_struct_host.c opaque_struct.o -o opaque_struct.exe
+//   ./opaque_struct.exe
+
+struct TheType;                      // forward-declared: never defined here
+
+// return-param out-params: the host writes the box pointer into the slot.
+extern void GetType(return ^TheType t);
+
+impl TheType {
+    extern int GetValue(TheType self);         // -> TheType_GetValue
+    extern void SetValue(TheType self, int v); // -> TheType_SetValue
+    extern int Bump(TheType self);             // -> TheType_Bump
+}
+
+int entry()
+{
+    ^TheType a = GetType();          // host allocates { v = 42 } into the box
+
+    int v = a.GetValue();            // 42
+    a.SetValue(v + 1);               // host stores 43 into the opaque struct
+
+    int w = a.Bump();                // host reads 43, stores 44, returns 43
+
+    return w + a.GetValue();         // 43 + 44 = 87
+}

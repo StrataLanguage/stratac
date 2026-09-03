@@ -611,6 +611,11 @@ bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name)
     return TypeRegistryFind(reg, name) != NULL;
 }
 
+bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name)
+{
+    return TypeRegistryIsUserType(reg, name) && !TypeRegistryIsTypeAlias(reg, name);
+}
+
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name)
 {
     const StructType* t = TypeRegistryFind(reg, name);
