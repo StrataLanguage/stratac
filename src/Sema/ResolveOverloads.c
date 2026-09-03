@@ -2605,10 +2605,12 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
         }
 
         /* Validate the pre-existing declaration against the accessor shape:
-           getter (self) -> propType; setter (self, value propType) -> void. */
+           getter (self) -> propType; setter (self, value propType) -> void.
+           A getter may use a `return` out-param (`void Get(self, return T c)`)
+           which the shape check counts implicitly (NamedParamCount). */
         size_t wantParams = isSetter ? 2 : 1;
 
-        if (fn->params.count != wantParams)
+        if (NamedParamCount(fn) != wantParams)
         {
             DiagErrorFmt(diag, range,
                          "property %s '%s' must take (%s self%s); found %zu parameter(s)",

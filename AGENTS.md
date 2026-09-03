@@ -194,7 +194,10 @@ main) are the internal entry points.
   **forward-declared (bodyless) structs** (`struct Foo;`) alike. Methods hoist
   to module-scope externs named `Type_Method`; `expr.M(args)` (or `Type.M(args)`
   for a parameterless/static method) rewrites to `Type_M(expr, args...)`.
-  `expr.P` / `expr.P = v` route to the getter/setter externs. An `impl` target
+  `expr.P` / `expr.P = v` route to the getter/setter externs. A property
+  **getter** may use a `return` out-param (`extern void Get(H self, return T c);`)
+  — useful for struct-typed properties, which externs can't return by value.
+  Setters still must take `(self, value)`. An `impl` target
   that is a forward-declared struct stays opaque: Strata never sees its layout,
   and the only way to hold a value is `^Foo` (a box — the cell IS the opaque
   pointer, so box→T unwrapping for these is identity, never a second deref).

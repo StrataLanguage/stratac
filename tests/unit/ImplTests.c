@@ -640,6 +640,141 @@ STRATA_TEST(impl_on_opaque_struct_jit)
     strataCompilerDestroy(c);
 }
 
+/* Host side of the property-return-param tests. */
+typedef struct
+{
+    int count;
+} HostWidget;
+
+static void HostWidgetGetCount(void* self, int* out)
+{
+    *out = ((HostWidget*)self)->count;
+}
+
+static void HostWidgetSetCount(void* self, int v)
+{
+    ((HostWidget*)self)->count = v;
+}
+
+typedef struct
+{
+    float x, y, z;
+} HostVec3;
+
+static void HostWidgetGetPos(void* self, HostVec3* out)
+{
+    out->x = 1;
+    out->y = 2;
+    out->z = 3;
+}
+
+STRATA_TEST(impl_property_getter_return_param_jit)
+{
+    /* A property getter may use a `return` out-param: the host writes the
+       value through the out pointer instead of returning it. */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "handle Widget;\n"
+        "impl Widget {\n"
+        "    extern void GetCount(Widget self, return int c);\n"
+        "    extern void SetCount(Widget self, int v);\n"
+        "    property int Count { get = Widget_GetCount; set = Widget_SetCount; }\n"
+        "}\n"
+        "int entry(Widget w)\n"
+        "{\n"
+        "  int c = w.Count;\n"
+        "  w.Count = c + 1;\n"
+        "  return w.Count;\n"
+        "}\n",
+        "prop_return_param", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "Widget_GetCount", (void*)&HostWidgetGetCount));
+    STRATA_CHECK(strataJitAddSymbol(jit, "Widget_SetCount", (void*)&HostWidgetSetCount));
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        HostWidget w = { 5 };
+        STRATA_CHECK_EQ(entry(&w), 6); /* read 5, write 6, read 6 */
+        STRATA_CHECK_EQ(w.count, 6);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(impl_property_getter_return_param_struct_jit)
+{
+    /* A struct-typed property via a `return` out-param: externs can't return
+       a struct by value, but the out-param crosses the whole struct through
+       a pointer. */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct Vec3 { float x; float y; float z; };\n"
+        "handle Widget;\n"
+        "impl Widget {\n"
+        "    extern void GetPos(Widget self, return Vec3 p);\n"
+        "    property Vec3 Pos { get = Widget_GetPos; }\n"
+        "}\n"
+        "int entry(Widget w)\n"
+        "{\n"
+        "  Vec3 p = w.Pos;\n"
+        "  return (int)(p.x + p.y + p.z);\n"
+        "}\n",
+        "prop_return_param_struct", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "Widget_GetPos", (void*)&HostWidgetGetPos));
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 6); /* 1 + 2 + 3 */
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(impl_property_setter_return_param_rejected)
+{
+    /* A setter must take (self, value); a `return` out-param in that slot
+       leaves no value param, so it is rejected. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Widget;\n"
+                    "impl Widget {\n"
+                    "    extern void SetCount(Widget self, return int v);\n"
+                    "    property int Count { set = Widget_SetCount; }\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "must take (Widget self, value)"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 static float Camera_GetFOVThunk(void* self)
 {
     return *(float*)self;
