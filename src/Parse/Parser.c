@@ -1370,7 +1370,7 @@ static ImportDecl* ParseImport(Parser* p)
     Token kw = p->m_cur;
     Advance(p);
 
-    if (p->m_cur.kind != TokIdent)
+    if (p->m_cur.kind != TokIdent && p->m_cur.kind != TokDot)
     {
         DiagErrorFmt(p->m_diag, p->m_cur.range, "expected module path after 'import' but found '%s'",
                      TokSpelling(p->m_cur.kind));

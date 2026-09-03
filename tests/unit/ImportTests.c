@@ -136,6 +136,62 @@ STRATA_TEST(import_error_names_imported_file)
     strataCompilerDestroy(c);
 }
 
+STRATA_TEST(import_parent_path_jit_runs)
+{
+    char path[512];
+    SamplePath("child/uses_parent.strata", path, sizeof(path));
+
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileFile(c, path, &err);
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 23);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(import_grandparent_path_jit_runs)
+{
+    char path[512];
+    SamplePath("child/grandchild/uses_grandparent.strata", path, sizeof(path));
+
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileFile(c, path, &err);
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 123);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 /* ================= Custom import resolver ================= */
 
 /* A resolver that serves a single virtual module named "lib". */

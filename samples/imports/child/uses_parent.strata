@@ -1,0 +1,5 @@
+import ../parent_mod;
+
+int entry() {
+    return parent_val();
+}

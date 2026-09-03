@@ -1,8 +1,8 @@
 #include "Import/ModuleLoader.h"
 
+#include "Core/Util.h"
 #include "Lex/Lexer.h"
 #include "Parse/Parser.h"
-#include "Core/Util.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,7 +57,10 @@ static void PushBuffer(ModuleLoader* loader, char* buf)
     {
         loader->bufferCap = GrowCap(loader->bufferCap);
         char** grown = (char**)realloc(loader->buffers, loader->bufferCap * sizeof(char*));
-        if (!grown) STRATA_OOM();
+        if (!grown)
+        {
+            STRATA_OOM();
+        }
         loader->buffers = grown;
     }
     loader->buffers[loader->bufferCount++] = buf;
@@ -69,7 +72,10 @@ static void PushVisited(ModuleLoader* loader, const char* path)
     {
         loader->visitedCap = GrowCap(loader->visitedCap);
         const char** grownVisited = (const char**)realloc(loader->visited, loader->visitedCap * sizeof(const char*));
-        if (!grownVisited) STRATA_OOM();
+        if (!grownVisited)
+        {
+            STRATA_OOM();
+        }
         loader->visited = grownVisited;
     }
 
@@ -219,8 +225,12 @@ static void LoadModule(ModuleLoader* loader, const char* name, const char* text,
     if (loader->sourceCount >= loader->sourceCap)
     {
         loader->sourceCap = GrowCap(loader->sourceCap);
-        SourceManager* grownSources = (SourceManager*)realloc(loader->sources, loader->sourceCap * sizeof(SourceManager));
-        if (!grownSources) STRATA_OOM();
+        SourceManager* grownSources
+            = (SourceManager*)realloc(loader->sources, loader->sourceCap * sizeof(SourceManager));
+        if (!grownSources)
+        {
+            STRATA_OOM();
+        }
         loader->sources = grownSources;
     }
 
@@ -338,8 +348,8 @@ void ModuleLoaderDispose(ModuleLoader* loader)
         free(loader->buffers[i]);
     }
 
-    free(loader->buffers);
-    free(loader->visited);
+    free((void*)loader->buffers);
+    free((void*)loader->visited);
 
     *loader = (ModuleLoader){0};
 }
