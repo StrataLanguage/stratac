@@ -135,8 +135,55 @@ static void Dump(Node* n, int indent, Sb* out)
         for (size_t i = 0; i < module->functions.count; i++)
         {
             Node* func = (Node*)VecGet(&module->functions, i);
+
+            /* Impl methods and synthesized property accessors print inside
+               their impl blocks instead. */
+            if (((FunctionDecl*)func)->fromImpl)
+            {
+                continue;
+            }
+
             Dump(func, indent + 2, out);
         }
+        for (size_t i = 0; i < module->impls.count; i++)
+        {
+            Node* impl = (Node*)VecGet(&module->impls, i);
+            Dump(impl, indent + 2, out);
+        }
+        return;
+    }
+
+    case NodeImpl:
+    {
+        ImplDecl* impl = AsNode(ImplDecl, n);
+        SbPrintf(out, "impl %s {\n", impl->handleName);
+
+        for (size_t i = 0; i < impl->methods.count; i++)
+        {
+            Dump((Node*)VecGet(&impl->methods, i), indent + 4, out);
+        }
+
+        for (size_t i = 0; i < impl->properties.count; i++)
+        {
+            PropertyDecl* prop = (PropertyDecl*)VecGet(&impl->properties, i);
+            Pad(indent + 4, out);
+            SbPrintf(out, "property %s %s {", prop->returnType.name, prop->name);
+
+            if (prop->getterSymbol)
+            {
+                SbPrintf(out, " get = %s;", prop->getterSymbol);
+            }
+
+            if (prop->setterSymbol)
+            {
+                SbPrintf(out, " set = %s;", prop->setterSymbol);
+            }
+
+            SbPuts(out, " }\n");
+        }
+
+        Pad(indent + 2, out);
+        SbPuts(out, "}\n");
         return;
     }
 
@@ -193,7 +240,8 @@ static void Dump(Node* n, int indent, Sb* out)
             SbPuts(out, "extern ");
         }
         
-        SbPrintf(out, "%s %s(", function_decl->returnType.name, function_decl->name);
+        SbPrintf(out, "%s %s(", function_decl->returnType.name,
+                 function_decl->methodName ? function_decl->methodName : function_decl->name);
 
         for (size_t i = 0; i < function_decl->params.count; i++)
         {
@@ -458,7 +506,17 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeCall:
     {
         CallExpr* call_expr = AsNode(CallExpr, n);
-        SbPrintf(out, "(call %s", call_expr->callee);
+
+        if (call_expr->calleeBase)
+        {
+            /* Pre-sema member call: `base.Member(args...)`. */
+            SbPrintf(out, "(callmethod %s ", call_expr->callee);
+            Dump(call_expr->calleeBase, 0, out);
+        }
+        else
+        {
+            SbPrintf(out, "(call %s", call_expr->callee);
+        }
 
         for (size_t i = 0; i < call_expr->args.count; i++)
         {
@@ -466,7 +524,7 @@ static void Dump(Node* n, int indent, Sb* out)
             SbPutc(out, ' ');
             Dump(arg, 0, out);
         }
-        
+
         return;
     }
 

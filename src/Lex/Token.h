@@ -51,6 +51,8 @@ typedef enum {
     TokKwImport,
     TokKwNamespace,
     TokKwDefer,
+    TokKwImpl,
+    TokKwProperty,
 
     TokLParen,
     TokRParen,

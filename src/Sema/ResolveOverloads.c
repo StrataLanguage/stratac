@@ -878,6 +878,13 @@ static const char* MovableBoxSourceKey(Resolver* r, Node* n)
         return NULL;
     }
 
+    /* Impl property reads are call-like (the getter returns a fresh value),
+       never moves out of the receiver. */
+    if (moved->kind == NodeMember && ((const MemberExpr*)moved)->isImplProperty)
+    {
+        return NULL;
+    }
+
     if (moved->kind == NodeIdent)
     {
         return ((const IdentExpr*)moved)->name;
@@ -1889,8 +1896,297 @@ static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* ta
     return node;
 }
 
+// -- Impl blocks (methods + properties on handle types)
+
+/* Finds the first impl block for `handleName` (NULL if none). */
+static ImplDecl* FindImplDecl(Resolver* r, const char* handleName)
+{
+    for (size_t i = 0; i < r->m_mod->impls.count; i++)
+    {
+        ImplDecl* impl = (ImplDecl*)VecGet(&r->m_mod->impls, i);
+
+        if (strcmp(impl->handleName, handleName) == 0)
+        {
+            return impl;
+        }
+    }
+
+    return NULL;
+}
+
+/* Method lookup with `extends` walk: a Player sees impl Entity methods. */
+static FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
+{
+    const char* hn = handleName;
+    size_t depth = 0;
+
+    while (hn && depth <= r->m_registry.count)
+    {
+        for (size_t i = 0; i < r->m_mod->impls.count; i++)
+        {
+            ImplDecl* impl = (ImplDecl*)VecGet(&r->m_mod->impls, i);
+
+            if (strcmp(impl->handleName, hn) != 0)
+            {
+                continue;
+            }
+
+            for (size_t j = 0; j < impl->methods.count; j++)
+            {
+                FunctionDecl* fn = (FunctionDecl*)VecGet(&impl->methods, j);
+
+                if (fn->methodName && strcmp(fn->methodName, methodName) == 0)
+                {
+                    return fn;
+                }
+            }
+        }
+
+        const StructType* t = TypeRegistryFind(&r->m_registry, hn);
+        hn = (t && t->opaque && t->extendsFrom) ? t->extendsFrom : NULL;
+        depth++;
+    }
+
+    return NULL;
+}
+
+/* Property lookup on the exact handle (no inheritance). */
+static PropertyDecl* FindImplProperty(Resolver* r, const char* handleName, const char* name)
+{
+    ImplDecl* impl = FindImplDecl(r, handleName);
+
+    if (!impl)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < impl->properties.count; i++)
+    {
+        PropertyDecl* prop = (PropertyDecl*)VecGet(&impl->properties, i);
+
+        if (strcmp(prop->name, name) == 0)
+        {
+            return prop;
+        }
+    }
+
+    return NULL;
+}
+
+/* If `n` is a property read on a handle (after unwrapping `T?`/`^T`), returns
+   the property; NULL when the member is not an impl property. */
+static PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char* member)
+{
+    const TypeName* inner = UnwrapBoxPtr(baseType);
+
+    if (!inner || !IsHandleType(&r->m_registry, inner->name))
+    {
+        return NULL;
+    }
+
+    return FindImplProperty(r, inner->name, member);
+}
+
+static void VecPushFront(Vec* v, void* item)
+{
+    VecPush(v, NULL);
+    memmove(v->items + 1, v->items, (v->count - 1) * sizeof(void*));
+    v->items[0] = item;
+}
+
+/* Resolves `expr.Member(args...)` / `Type.Member(args...)` against impl blocks.
+   Returns true when the call was fully handled (diagnostic emitted); false
+   after a successful rewrite (fall through to normal overload resolution). */
+static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    Node* base = c->calleeBase;
+
+    /* `Type.Method(args)` — static call when the base is a type name. */
+    bool isStatic = base->kind == NodeIdent && TypeRegistryIsUserType(&r->m_registry, ((IdentExpr*)base)->name);
+
+    const char* handleName = NULL;
+
+    if (isStatic)
+    {
+        handleName = ((IdentExpr*)base)->name;
+    }
+    else
+    {
+        ResolveExpr(r, base, scope);
+
+        const TypeName* raw = InferType(r, base, scope);
+
+        if (raw && raw->isOptional)
+        {
+            /* Reading through a `T?` receiver needs a narrowing fact. */
+            const char* key = MovableBoxSourceKey(r, base);
+
+            if (!IsPathNonEmpty(r, key))
+            {
+                DiagOptionalReadError(r, c->base.range, key, raw->name);
+            }
+        }
+
+        const TypeName* inner = UnwrapBoxPtr(raw);
+
+        if (!inner || !IsHandleType(&r->m_registry, inner->name))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "type '%s' has no method '%s'", raw && inner ? inner->name : "?",
+                         c->callee);
+            return true;
+        }
+
+        handleName = inner->name;
+    }
+
+    FunctionDecl* method = FindImplMethod(r, handleName, c->callee);
+
+    if (!method)
+    {
+        if (FindImplProperty(r, handleName, c->callee))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'%s' is a property of '%s', not a method; access it without ()",
+                         c->callee, handleName);
+        }
+        else
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "handle '%s' has no method '%s'", handleName, c->callee);
+        }
+
+        return true;
+    }
+
+    /* Instance call: when the method's first parameter is the receiver slot
+       (a handle the receiver's type extends or equals), prepend the base
+       expression as the self argument. Parameterless methods (factories) and
+       static calls map arguments 1:1. */
+    if (!isStatic && method->params.count > 0)
+    {
+        const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
+
+        if (IsHandleType(&r->m_registry, p0->type.name)
+            && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->m_registry, handleName, p0->type.name)))
+        {
+            VecPushFront(&c->args, c->calleeBase);
+        }
+    }
+
+    c->calleeBase = NULL;
+    c->isPseudoCall = false;
+    c->callee = method->name; /* qualified extern symbol, e.g. Camera_GetFOV */
+
+    return false;
+}
+
+/* Synthesizes the extern declaration a property accessor refers to, unless a
+   function with that name is already declared (e.g. a flat extern). */
+static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, const TypeName* propType,
+                               const char* handleName, bool isSetter, SourceRange range)
+{
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
+
+        if (strcmp(fn->name, symbol) == 0)
+        {
+            return;
+        }
+    }
+
+    FunctionDecl* fn = AST_NEW(arena, FunctionDecl);
+    fn->base.kind = NodeFunction;
+    fn->base.range = range;
+    fn->name = arena_strdup(arena, symbol);
+    fn->mangledName = fn->name;
+    fn->isExtern = true;
+    fn->fromImpl = true;
+    VecInit(&fn->params);
+
+    if (isSetter)
+    {
+        fn->returnType.name = arena_strdup(arena, "void");
+    }
+    else
+    {
+        fn->returnType = *propType;
+    }
+
+    ParamDecl* self = AST_NEW(arena, ParamDecl);
+    self->base.kind = NodeParam;
+    self->base.range = range;
+    self->mod = ModNone;
+    self->type = TypeNameLeaf(arena_strdup(arena, handleName));
+    self->name = arena_strdup(arena, "self");
+    VecPush(&fn->params, self);
+
+    if (isSetter)
+    {
+        ParamDecl* value = AST_NEW(arena, ParamDecl);
+        value->base.kind = NodeParam;
+        value->base.range = range;
+        value->mod = ModNone;
+        value->type = *propType;
+        value->name = arena_strdup(arena, "value");
+        VecPush(&fn->params, value);
+    }
+
+    VecPush(&mod->functions, fn);
+}
+
+/* Validates impl targets and materializes property accessor externs (before
+   the overload/mangling pass, so accessors flow through the normal pipeline). */
+static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, const TypeRegistry* registry)
+{
+    for (size_t i = 0; i < mod->impls.count; i++)
+    {
+        ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, i);
+
+        if (!IsHandleType(registry, impl->handleName))
+        {
+            DiagErrorFmt(diag, impl->base.range, "impl type '%s' is not a declared handle", impl->handleName);
+            continue;
+        }
+
+        for (size_t j = 0; j < impl->properties.count; j++)
+        {
+            PropertyDecl* prop = (PropertyDecl*)VecGet(&impl->properties, j);
+
+            if (!prop->getterSymbol && !prop->setterSymbol)
+            {
+                DiagErrorFmt(diag, prop->range, "property '%s' must declare at least one of 'get' or 'set'",
+                             prop->name);
+                continue;
+            }
+
+            if (prop->getterSymbol)
+            {
+                SynthesizeAccessor(mod, arena, prop->getterSymbol, &prop->returnType, impl->handleName, false,
+                                   prop->range);
+            }
+
+            if (prop->setterSymbol)
+            {
+                SynthesizeAccessor(mod, arena, prop->setterSymbol, &prop->returnType, impl->handleName, true,
+                                   prop->range);
+            }
+        }
+    }
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
+    /* `expr.Member(args)` / `Type.Static(args)` — resolve against impl blocks.
+       On success the call is rewritten to the extern symbol (the receiver is
+       prepended as the first argument for instance methods) and resolution
+       falls through to the normal overload machinery. */
+    if (c->calleeBase)
+    {
+        if (ResolveMemberCall(r, c, scope))
+        {
+            return;
+        }
+    }
+
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
     {
         /* Struct ctor: an owning field from an owning source is a move (same rules as var-decl). Deref checks run
@@ -2362,6 +2658,16 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
 
         const TypeName* baseType = InferType(r, m->base_node, scope);
 
+        /* Impl properties: a member read on a handle with a matching
+           `property` yields the property's type. Methods are call-only
+           (NULL here; the resolve pass diagnoses bare access). */
+        PropertyDecl* prop = PropertyOnHandle(r, baseType, m->member);
+
+        if (prop)
+        {
+            return &prop->returnType;
+        }
+
         /* Optional member access follows the box pointer. */
         baseType = UnwrapBoxPtr(baseType);
 
@@ -2623,6 +2929,56 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
 
         CheckConstAssign(r, a->target, a->base.range);
+
+        /* Property write (`cam.FOV = v`): lowered to the setter extern call.
+           Compound assignment is rejected, read-only properties error, and
+           the value must be assignable to the property type. */
+        if (a->target->kind == NodeMember)
+        {
+            MemberExpr* tm = (MemberExpr*)a->target;
+            PropertyDecl* prop = PropertyOnHandle(r, InferType(r, tm->base_node, scope), tm->member);
+
+            if (prop)
+            {
+                const TypeName* rawBase = InferType(r, tm->base_node, scope);
+
+                if (rawBase && rawBase->isOptional)
+                {
+                    const char* baseKey = MovableBoxSourceKey(r, tm->base_node);
+
+                    if (!IsPathNonEmpty(r, baseKey))
+                    {
+                        DiagOptionalReadError(r, a->base.range, baseKey, rawBase->name);
+                    }
+                }
+
+                ResolveExpr(r, tm->base_node, scope);
+                ResolveExpr(r, a->value, scope);
+
+                if (a->op != AssignSet)
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "cannot compound-assign to property '%s'; assign it directly", tm->member);
+                    return;
+                }
+
+                if (!prop->setterSymbol)
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range, "property '%s' is read-only", tm->member);
+                    return;
+                }
+
+                const TypeName* vt = InferType(r, a->value, scope);
+
+                if (vt && !IsAssignableType(r, &prop->returnType, vt))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to property '%s' of type '%s'",
+                                 vt->name, tm->member, prop->returnType.name);
+                }
+
+                return;
+            }
+        }
 
         /* Reassigning a scalar local invalidates its index spellings' facts. */
         if (a->target->kind == NodeIdent)
@@ -2921,6 +3277,22 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     case NodeIncDec:
     {
         IncDecExpr* inc = (IncDecExpr*)n;
+
+        /* Properties have no addressable storage: ++/-- would need a
+           get+set pair; require explicit assignment instead. */
+        if (inc->operand->kind == NodeMember)
+        {
+            MemberExpr* tm = (MemberExpr*)inc->operand;
+
+            if (PropertyOnHandle(r, InferType(r, tm->base_node, scope), tm->member))
+            {
+                DiagErrorFmt(r->m_diag, inc->base.range,
+                             "cannot %s property '%s'; assign it explicitly instead", inc->isDec ? "decrement" : "increment",
+                             tm->member);
+                return;
+            }
+        }
+
         CheckConstAssign(r, inc->operand, inc->base.range);
         ResolveExpr(r, inc->operand, scope);
 
@@ -2986,6 +3358,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         const TypeName* rawBaseType = InferType(r, m->base_node, scope);
 
+        /* Impl property reads are call-like: no lvalue, no move source. */
+        m->isImplProperty = PropertyOnHandle(r, rawBaseType, m->member) != NULL;
+
         /* Reading a possibly-empty optional needs a narrowing fact. */
         if (rawBaseType && rawBaseType->isOptional)
         {
@@ -3005,6 +3380,28 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'",
                              baseType->name);
+            }
+            else if (IsHandleType(&r->m_registry, baseType->name))
+            {
+                PropertyDecl* prop = PropertyOnHandle(r, rawBaseType, m->member);
+
+                if (prop)
+                {
+                    if (!prop->getterSymbol)
+                    {
+                        DiagErrorFmt(r->m_diag, m->base.range, "property '%s' is write-only", m->member);
+                    }
+                }
+                else if (FindImplMethod(r, baseType->name, m->member))
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'", m->member,
+                                 baseType->name, m->member);
+                }
+                else
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range, "handle '%s' has no member '%s'", baseType->name,
+                                 m->member);
+                }
             }
             else
             {
@@ -4054,6 +4451,10 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     TypeRegistryInit(&r.m_registry);
     TypeRegistryBuild(&r.m_registry, mod);
+
+    /* Validate impl targets and declare property accessor externs before the
+       overload/mangling pass runs. */
+    ResolveImpls(mod, diag, arena, &r.m_registry);
 
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);

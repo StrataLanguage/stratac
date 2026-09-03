@@ -11,6 +11,7 @@ typedef enum {
     NodeImport,
     NodeStruct,
     NodeHandle,
+    NodeImpl,
     NodeFunction,
     NodeParam,
     NodeBlock,
@@ -381,7 +382,34 @@ typedef struct {
     // isVariadic + isCVararg: extern with bare `...` (host provides the body); otherwise the last param is a typed rest collecting trailing args into a T[].
     bool isVariadic;
     bool isCVararg;
+    // impl-block members: `methodName` is the unqualified name inside
+    // `impl H { extern R M(...); }` while `name`/`mangledName` carry the
+    // extern symbol `H_M`. NULL/false for regular functions.
+    char* methodName;
+    bool fromImpl;
 } FunctionDecl;
+
+/* A single property inside an impl block:
+   `property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }`
+   Getter/setter symbols name extern functions (synthesized as extern
+   declarations in sema when not user-declared). Either side may be absent. */
+typedef struct {
+    TypeName returnType;
+    char* name;
+    char* getterSymbol; // NULL = write-only
+    char* setterSymbol; // NULL = read-only
+    SourceRange range;
+} PropertyDecl;
+
+/* `impl HandleName { ... }` — associates extern methods and properties with a
+   handle type. Methods are hoisted into Module::functions as extern decls
+   named `HandleName_MethodName` (shared pointers, disposed with the module). */
+typedef struct {
+    Node base;
+    char* handleName;
+    Vec methods;    // Vec<FunctionDecl*> (also in Module::functions)
+    Vec properties; // Vec<PropertyDecl*>
+} ImplDecl;
 
 typedef struct {
     Node base;
@@ -391,6 +419,7 @@ typedef struct {
     Vec functions;
     Vec globals;
     Vec imports;
+    Vec impls;
 } Module;
 
 typedef struct {
@@ -539,12 +568,16 @@ typedef struct CallExpr {
     const FunctionDecl* resolvedDecl;
     Vec args;
     bool isPseudoCall;
+    /* `expr.Member(args)` — non-NULL until sema resolves the member against
+       impl blocks (then the base moves into `args` as the self argument). */
+    Node* calleeBase;
 } CallExpr;
 
 typedef struct MemberExpr {
     Node base;
     Node* base_node;
     char* member;
+    bool isImplProperty; /* set by sema: member names an impl property (call-like read, never a move source) */
 } MemberExpr;
 
 typedef struct {

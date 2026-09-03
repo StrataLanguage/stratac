@@ -171,6 +171,13 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
         }
         VecPush(&root->globals, g);
     }
+
+    /* Impl blocks merge wholesale; duplicate qualified method symbols across
+       impls are diagnosed in sema (duplicate signature / extern overload). */
+    for (size_t i = 0; i < src->impls.count; i++)
+    {
+        VecPush(&root->impls, VecGet(&src->impls, i));
+    }
 }
 
 // Forward declarations.
@@ -283,6 +290,7 @@ static Module* NewRootModule(Arena* arena, const char* name)
     VecInit(&root->functions);
     VecInit(&root->globals);
     VecInit(&root->imports);
+    VecInit(&root->impls);
 
     return root;
 }

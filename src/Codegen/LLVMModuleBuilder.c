@@ -404,6 +404,172 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg);
 static void DeclareFunction(Builder* b, const FunctionDecl* f);
 static void DefineFunction(Builder* b, const FunctionDecl* f);
 
+// -- Impl properties (methods are rewritten to plain extern calls by sema)
+
+typedef struct {
+    PropertyDecl* decl;
+    const FunctionDecl* getter; // NULL for write-only
+    const FunctionDecl* setter; // NULL for read-only
+} ImplPropEntry;
+
+static const FunctionDecl* FindModuleFunction(const Module* module, const char* name)
+{
+    if (!name)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < module->functions.count; i++)
+    {
+        const FunctionDecl* f = (const FunctionDecl*)VecGet((Vec*)&module->functions, i);
+
+        if (strcmp(f->name, name) == 0)
+        {
+            return f;
+        }
+    }
+
+    return NULL;
+}
+
+/* Statically names the handle type of `n` WITHOUT emitting IR (used to detect
+   impl property access before the regular lvalue paths). NULL when unknown. */
+static const char* StaticExprTypeName(Builder* b, Node* n)
+{
+    if (!n)
+    {
+        return NULL;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIdent:
+    {
+        IdentExpr* id = (IdentExpr*)n;
+        Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+
+        if (!sym)
+        {
+            sym = (Value*)StrMapGet(&b->m_globals, id->name);
+        }
+
+        if (!sym)
+        {
+            return NULL;
+        }
+
+        if (sym->typeDesc.structTypeName && TypeRegistryIsOpaque(&b->m_registry, sym->typeDesc.structTypeName))
+        {
+            return sym->typeDesc.structTypeName;
+        }
+
+        if ((sym->typeDesc.isBox || sym->typeDesc.isOptional) && sym->typeDesc.boxInner
+            && TypeRegistryIsOpaque(&b->m_registry, sym->typeDesc.boxInner->name))
+        {
+            return sym->typeDesc.boxInner->name; /* `T?` receiver */
+        }
+
+        return NULL;
+    }
+    case NodeCall:
+    {
+        const FunctionDecl* fd = ((CallExpr*)n)->resolvedDecl;
+
+        return (fd && TypeRegistryIsOpaque(&b->m_registry, fd->returnType.name)) ? fd->returnType.name : NULL;
+    }
+    case NodeCast:
+    {
+        const TypeName* t = &((CastExpr*)n)->type;
+
+        return TypeRegistryIsOpaque(&b->m_registry, t->name) ? t->name : NULL;
+    }
+    case NodeNullTest:
+        return StaticExprTypeName(b, ((NullTestExpr*)n)->operand); /* `T?` -> T */
+    case NodeMember:
+    {
+        MemberExpr* m = (MemberExpr*)n;
+        const char* baseName = StaticExprTypeName(b, m->base_node);
+
+        if (!baseName)
+        {
+            return NULL;
+        }
+
+        if (TypeRegistryIsOpaque(&b->m_registry, baseName))
+        {
+            /* Member of a handle: only an impl property continues the chain. */
+            ImplPropEntry* e
+                = (ImplPropEntry*)StrMapGet(&b->m_implProps, arena_format(b->m_arena, "%s.%s", baseName, m->member));
+
+            return (e && TypeRegistryIsOpaque(&b->m_registry, e->decl->returnType.name)) ? e->decl->returnType.name
+                                                                                         : NULL;
+        }
+
+        int idx = TypeRegistryFieldIndex(&b->m_registry, baseName, m->member);
+
+        if (idx < 0)
+        {
+            return NULL;
+        }
+
+        const StructType* st = TypeRegistryFind(&b->m_registry, baseName);
+        FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
+        const TypeName* inner = (field->type.isBox || field->type.isOptional) ? field->type.inner : &field->type;
+
+        return (inner && TypeRegistryIsOpaque(&b->m_registry, inner->name)) ? inner->name : NULL;
+    }
+    default:
+        return NULL;
+    }
+}
+
+/* Builds the getter/setter extern call for `m` (valueNode NULL = read).
+   `found` reports whether `m` is an impl property at all. */
+static Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
+{
+    *found = false;
+
+    const char* handleName = StaticExprTypeName(b, m->base_node);
+
+    if (!handleName || !TypeRegistryIsOpaque(&b->m_registry, handleName))
+    {
+        return ZeroInt(b);
+    }
+
+    ImplPropEntry* entry
+        = (ImplPropEntry*)StrMapGet(&b->m_implProps, arena_format(b->m_arena, "%s.%s", handleName, m->member));
+
+    if (!entry)
+    {
+        return ZeroInt(b);
+    }
+
+    *found = true;
+
+    const FunctionDecl* acc = valueNode ? entry->setter : entry->getter;
+
+    if (!acc)
+    {
+        return ZeroInt(b);
+    }
+
+    CallExpr tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    tmp.base.kind = NodeCall;
+    tmp.base.range = m->base.range;
+    tmp.callee = (char*)acc->mangledName;
+    tmp.resolvedDecl = acc;
+    VecInit(&tmp.args);
+    VecPush(&tmp.args, m->base_node);
+
+    if (valueNode)
+    {
+        VecPush(&tmp.args, valueNode);
+    }
+
+    return EmitCall(b, &tmp);
+}
+
 static TypeDesc Resolve(Builder* b, const TypeName* t)
 {
     if (!t)
@@ -1885,6 +2051,16 @@ static LLVMValueRef AsI64Index(Builder* b, Value v)
 
 static Value EmitMember(Builder* b, MemberExpr* n)
 {
+    /* Impl property read: lower to the getter extern call. Checked first —
+       handles have no fields, so the lvalue path could never serve them. */
+    bool isProp = false;
+    Value prop = EmitImplProperty(b, n, NULL, &isProp);
+
+    if (isProp)
+    {
+        return prop;
+    }
+
     LValue lvalue = EmitLValue(b, (Node*)n);
 
     if (lvalue.valid)
@@ -2311,6 +2487,19 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
 static Value EmitAssign(Builder* b, AssignExpr* n)
 {
+    /* Impl property write (`cam.FOV = v`): lower to the setter extern call
+       (compound assigns are rejected in sema). */
+    if (n->target->kind == NodeMember && n->op == AssignSet)
+    {
+        bool isProp = false;
+        Value prop = EmitImplProperty(b, (MemberExpr*)n->target, n->value, &isProp);
+
+        if (isProp)
+        {
+            return prop;
+        }
+    }
+
     Value rhs = EmitExpr(b, n->value);
 
     if (n->target->kind == NodeIdent || n->target->kind == NodeMember || n->target->kind == NodeIndex)
@@ -4576,6 +4765,24 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
     TypeRegistryBuild(&b->m_registry, module);
 
+    /* Impl property table: "Handle.Prop" -> accessors, resolved against the
+       module's function list (sema guarantees the externs exist). */
+    for (size_t i = 0; i < module->impls.count; i++)
+    {
+        const ImplDecl* impl = (const ImplDecl*)VecGet((Vec*)&module->impls, i);
+
+        for (size_t j = 0; j < impl->properties.count; j++)
+        {
+            PropertyDecl* prop = (PropertyDecl*)VecGet(&impl->properties, j);
+            ImplPropEntry* entry = (ImplPropEntry*)arena_alloc(b->m_arena, sizeof(ImplPropEntry));
+            entry->decl = prop;
+            entry->getter = FindModuleFunction(module, prop->getterSymbol);
+            entry->setter = FindModuleFunction(module, prop->setterSymbol);
+
+            StrMapPut(&b->m_implProps, arena_format(b->m_arena, "%s.%s", impl->handleName, prop->name), entry);
+        }
+    }
+
     for (size_t i = 0; i < b->m_registry.count; i++)
     {
         StructType* st = &b->m_registry.types[i];
@@ -4959,6 +5166,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_symbols);
     StrMapInit(&b.m_globals);
     StrMapInit(&b.m_externSlots);
+    StrMapInit(&b.m_implProps);
     StrMapInit(&b.m_dropFns);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
@@ -4984,6 +5192,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_symbols);
     StrMapFree(&b.m_globals);
     StrMapFree(&b.m_externSlots);
+    StrMapFree(&b.m_implProps);
     StrMapFree(&b.m_dropFns);
     free(b.m_loops.items);
     free(b.m_owningLocals.items);

@@ -20,6 +20,7 @@ void AstReleaseModuleLists(Module* module)
     DisposeVec(&module->functions);
     DisposeVec(&module->globals);
     DisposeVec(&module->imports);
+    DisposeVec(&module->impls);
 }
 
 void AstDispose(Node* node)
@@ -44,6 +45,7 @@ void AstDispose(Node* node)
         DISPOSE_ALL(functions);
         DISPOSE_ALL(globals);
         DISPOSE_ALL(imports);
+        DISPOSE_ALL(impls);
 
 #undef DISPOSE_ALL
 
@@ -140,6 +142,10 @@ void AstDispose(Node* node)
 
         DisposeVec(&expression->args);
 
+        /* Pre-sema member calls keep the base outside args; after the sema
+           rewrite it has been moved into args (and calleeBase cleared). */
+        AstDispose(expression->calleeBase);
+
         return;
     }
     case NodeMember:
@@ -195,6 +201,14 @@ void AstDispose(Node* node)
     case NodeStrLiteral:
     case NodeIdent:
         return;
+    case NodeImpl:
+    {
+        /* Method FunctionDecls are shared with Module::functions (disposed
+           there); only the impl's own membership lists go away here. */
+        DisposeVec(&((ImplDecl*)node)->methods);
+        DisposeVec(&((ImplDecl*)node)->properties);
+        return;
+    }
     case NodeNullTest:
         AstDispose(((NullTestExpr*)node)->operand);
         return;

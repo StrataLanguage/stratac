@@ -921,6 +921,7 @@ static Node* ParsePostfix(Parser* p);
 static Node* ParsePrimary(Parser* p);
 static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName);
 static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType);
+static void ParseCallArgs(Parser* p, CallExpr* call);
 
 static Node* ParseFunction(Parser* p)
 {
@@ -1108,6 +1109,185 @@ static Node* ParseFunction(Parser* p)
     return (Node*)node;
 }
 
+static bool ImplHasMethod(const ImplDecl* impl, const char* methodName)
+{
+    for (size_t i = 0; i < impl->methods.count; i++)
+    {
+        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&impl->methods, i);
+
+        if (fn->methodName && strcmp(fn->methodName, methodName) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* `property ReturnType Name { get = Symbol; set = Symbol; }` — `get`/`set` are
+   contextual (identifier spellings), so user code may still use them as names. */
+static PropertyDecl* ParsePropertyDecl(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p);
+
+    TypeName retType = {0};
+    if (!ParserTryParseType(p, &retType) || !retType.name)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a property type");
+        return NULL;
+    }
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a property name");
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    ParserExpect(p, TokLBrace, "'{'");
+
+    char* getter = NULL;
+    char* setter = NULL;
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        Str word = ParserIdentText(p, p->m_cur);
+        bool isGet = p->m_cur.kind == TokIdent && StrEqC(word, "get");
+        bool isSet = p->m_cur.kind == TokIdent && StrEqC(word, "set");
+
+        if (!isGet && !isSet)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected 'get' or 'set' inside property block");
+            break;
+        }
+
+        Advance(p);
+        ParserExpect(p, TokAssign, "'='");
+
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected an extern symbol name after '='");
+            break;
+        }
+
+        char** slot = isGet ? &getter : &setter;
+
+        if (*slot)
+        {
+            DiagError(p->m_diag, p->m_cur.range, isGet ? "duplicate 'get' accessor" : "duplicate 'set' accessor");
+        }
+
+        *slot = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+        Advance(p);
+
+        if (ParserExpect(p, TokSemicolon, "';'").kind != TokSemicolon)
+        {
+            break;
+        }
+    }
+
+    ParserExpect(p, TokRBrace, "'}'");
+
+    PropertyDecl* prop = AST_NEW(p->m_arena, PropertyDecl);
+    prop->returnType = retType;
+    prop->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    prop->getterSymbol = getter;
+    prop->setterSymbol = setter;
+    prop->range = kw.range;
+
+    return prop;
+}
+
+/* `impl HandleName { extern R Method(...); property T P { get = ...; set = ...; } }`
+   Extern methods are parsed by ParseFunction (extern-only enforced here), then
+   renamed to their extern symbol `HandleName_MethodName` and collected in
+   impl->methods; ParserParseModule hoists them into Module::functions. */
+static ImplDecl* ParseImplDecl(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p);
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a handle name after 'impl'");
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    ImplDecl* impl = AST_NEW(p->m_arena, ImplDecl);
+    impl->base.kind = NodeImpl;
+    impl->base.range = nameTok.range;
+    impl->handleName = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    VecInit(&impl->methods);
+    VecInit(&impl->properties);
+
+    Token openBrace = ParserExpect(p, TokLBrace, "'{'");
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        if (p->m_cur.kind == TokKwExtern)
+        {
+            Node* fnNode = ParseFunction(p);
+            FunctionDecl* fn = (fnNode && fnNode->kind == NodeFunction) ? (FunctionDecl*)fnNode : NULL;
+
+            if (!fn)
+            {
+                Synchronize(p);
+                continue;
+            }
+
+            if (!fn->isExtern)
+            {
+                DiagError(p->m_diag, fn->base.range, "impl methods must be extern declarations");
+            }
+            else if (ImplHasMethod(impl, fn->name))
+            {
+                DiagErrorFmt(p->m_diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
+                             impl->handleName);
+            }
+            else
+            {
+                fn->methodName = fn->name;
+                fn->name = arena_format(p->m_arena, "%s_%s", impl->handleName, fn->methodName);
+                fn->mangledName = arena_strdup(p->m_arena, fn->name);
+                fn->fromImpl = true;
+                VecPush(&impl->methods, fn);
+            }
+
+            continue;
+        }
+
+        if (p->m_cur.kind == TokKwProperty)
+        {
+            PropertyDecl* prop = ParsePropertyDecl(p);
+
+            if (prop)
+            {
+                VecPush(&impl->properties, prop);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
+            continue;
+        }
+
+        DiagError(p->m_diag, p->m_cur.range, "expected 'extern' or 'property' inside impl block");
+        Synchronize(p);
+    }
+
+    Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
+    impl->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : openBrace);
+
+    return impl;
+}
+
 static ImportDecl* ParseImport(Parser* p)
 {
     Token kw = p->m_cur;
@@ -1162,6 +1342,7 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->functions);
     VecInit(&mod->globals);
     VecInit(&mod->imports);
+    VecInit(&mod->impls);
 
     while (p->m_cur.kind != TokEof)
     {
@@ -1207,6 +1388,30 @@ Module* ParserParseModule(Parser* p)
             if (sd)
             {
                 VecPush(&mod->structs, sd);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
+            continue;
+        }
+
+        if (p->m_cur.kind == TokKwImpl)
+        {
+            ImplDecl* impl = ParseImplDecl(p);
+
+            if (impl)
+            {
+                VecPush(&mod->impls, impl);
+
+                /* Hoist extern methods into the module function list under
+                   their qualified symbol (`Camera_GetFOV`) so module merging,
+                   sema and codegen treat them like any other extern. */
+                for (size_t i = 0; i < impl->methods.count; i++)
+                {
+                    VecPush(&mod->functions, VecGet(&impl->methods, i));
+                }
             }
             else
             {
@@ -1908,9 +2113,57 @@ static Node* ParsePostfix(Parser* p)
         node->member = ToOwned(p->m_arena, ParserIdentText(p, memberTok));
 
         e = (Node*)node;
+
+        /* `expr.Member(args)` — a method call. The callee keeps the member
+           name; sema resolves it against impl blocks (prepending the base as
+           the self argument for instance methods). */
+        if (p->m_cur.kind == TokLParen)
+        {
+            CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+            call->base.kind = NodeCall;
+            call->base.range = node->base.range;
+            call->callee = node->member;
+            call->calleeBase = node->base_node;
+            call->isPseudoCall = false;
+            VecInit(&call->args);
+
+            ParseCallArgs(p, call);
+            call->base.range = SpanFrom(dot, p->m_cur);
+
+            e = (Node*)call;
+        }
     }
 
     return e;
+}
+
+/* Parses `(arg, ...)` after the opening paren has NOT yet been consumed.
+   Shared by plain calls (ParsePrimary) and member calls (ParsePostfix). */
+static void ParseCallArgs(Parser* p, CallExpr* call)
+{
+    Advance(p); /* '(' */
+
+    if (p->m_cur.kind != TokRParen)
+    {
+        while (true)
+        {
+            Node* arg = ParseExpr(p);
+
+            if (arg)
+            {
+                VecPush(&call->args, arg);
+            }
+
+            if (ParserConsume(p, TokComma))
+            {
+                continue;
+            }
+
+            break;
+        }
+    }
+
+    ParserExpect(p, TokRParen, "')'");
 }
 
 static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName)
@@ -2201,29 +2454,7 @@ static Node* ParsePrimary(Parser* p)
             call->isPseudoCall = false;
             VecInit(&call->args);
 
-            Advance(p);
-
-            if (p->m_cur.kind != TokRParen)
-            {
-                while (true)
-                {
-                    Node* arg = ParseExpr(p);
-
-                    if (arg)
-                    {
-                        VecPush(&call->args, arg);
-                    }
-
-                    if (ParserConsume(p, TokComma))
-                    {
-                        continue;
-                    }
-
-                    break;
-                }
-            }
-
-            ParserExpect(p, TokRParen, "')'");
+            ParseCallArgs(p, call);
 
             return (Node*)call;
         }

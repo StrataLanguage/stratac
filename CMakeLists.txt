@@ -211,6 +211,7 @@ if(NOT STRATA_SHARED)
         tests/unit/CapabilityTests.c
         tests/unit/EmbedTests.c
         tests/unit/OverloadTests.c
+        tests/unit/ImplTests.c
     )
 
     # These exercise the public strataJit* embed API (LLVM/ORCv2 - see
