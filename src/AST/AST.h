@@ -62,6 +62,7 @@ typedef struct TypeName {
     bool isVector;
     bool isArray;
     long length;
+    char* lengthName; // fixed dim spelled `[constName]` — sema resolves to `length`
     struct TypeName* elem;
     bool isBox;
     struct TypeName* inner;

@@ -24,9 +24,154 @@ typedef struct
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
+    StrMap m_constGlobals; /* const scalar global name -> ConstGlobalVal* (manifest constants) */
     const TypeName* m_currentReturnType;
     Vec* m_liveLog; /* when set, MarkBoxLive records keys here (loop warmup) */
 } Resolver;
+
+/* A folded manifest constant: a `const` scalar global whose initializer is a
+   compile-time constant. Emits no storage — the value is inlined at every
+   use (the #define/enum alternative for C++ consumers). */
+typedef struct
+{
+    long i;
+    double f;
+    bool isFloat;
+} ConstGlobalVal;
+
+/* Folds a const-global initializer to a compile-time value. Handles int/
+   float/bool literals, negation, scalar casts, and references to earlier
+   manifest constants (`const B = A;`). */
+static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
+{
+    if (!n)
+    {
+        return false;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        out->i = (long)((IntLiteral*)n)->value;
+        out->f = 0.0;
+        out->isFloat = false;
+        return true;
+    case NodeFloatLiteral:
+        out->f = ((FloatLiteral*)n)->value;
+        out->isFloat = true;
+        return true;
+    case NodeBoolLiteral:
+        out->i = ((BoolLiteral*)n)->value ? 1 : 0;
+        out->f = 0.0;
+        out->isFloat = false;
+        return true;
+    case NodeUnary:
+    {
+        UnaryExpr* u = (UnaryExpr*)n;
+
+        if (u->op != UnNeg || !SemaFoldConstInit(r, u->operand, out))
+        {
+            return false;
+        }
+
+        if (out->isFloat)
+        {
+            out->f = -out->f;
+        }
+        else
+        {
+            out->i = -out->i;
+        }
+
+        return true;
+    }
+    case NodeCast:
+    {
+        ConstGlobalVal inner;
+
+        if (!SemaFoldConstInit(r, ((CastExpr*)n)->operand, &inner))
+        {
+            return false;
+        }
+
+        *out = inner;
+        return true;
+    }
+    case NodeIdent:
+    {
+        ConstGlobalVal* prev = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, ((IdentExpr*)n)->name);
+
+        if (!prev)
+        {
+            return false;
+        }
+
+        *out = *prev;
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+/* True when the (alias-resolved) type is an integer kind usable as a fixed
+   array dimension. */
+static bool IsConstDimType(const TypeRegistry* reg, const char* name)
+{
+    const char* leaf = TypeRegistryResolveAlias(reg, name);
+
+    return strcmp(leaf, "int") == 0 || strcmp(leaf, "uint") == 0 || strcmp(leaf, "long") == 0
+           || strcmp(leaf, "ulong") == 0 || strcmp(leaf, "byte") == 0 || strcmp(leaf, "sbyte") == 0
+           || strcmp(leaf, "short") == 0 || strcmp(leaf, "ushort") == 0;
+}
+
+/* Resolves `[constName]` fixed-array dimensions on a type tree against the
+   manifest-constant table. */
+static bool SemaResolveConstDims(Resolver* r, TypeName* t)
+{
+    if (!t)
+    {
+        return true;
+    }
+
+    if (t->lengthName)
+    {
+        ConstGlobalVal* v = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, t->lengthName);
+
+        if (!v || v->isFloat)
+        {
+            DiagErrorFmt(r->m_diag, t->range,
+                         "array dimension '%s' is not a compile-time integer constant "
+                         "(declare it 'const int %s = ...;')",
+                         t->lengthName, t->lengthName);
+            return false;
+        }
+
+        t->length = v->i;
+        t->lengthName = NULL;
+
+        /* Rebuild the canonical spelling with the resolved dimension. */
+        char* open = strchr(t->name, '[');
+
+        if (open)
+        {
+            char* close = strchr(open, ']');
+
+            if (close)
+            {
+                t->name = arena_format(r->m_arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length,
+                                       close + 1);
+            }
+        }
+    }
+
+    if (!SemaResolveConstDims(r, t->elem))
+    {
+        return false;
+    }
+
+    return true;
+}
 
 /* Intern a TypeName tree per canonical spelling (shared by synthesized types). */
 static const TypeName* InternTypeName(Resolver* r, const char* name)
@@ -4632,6 +4777,45 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     r.m_arena = arena;
 
     TypeRegistryInit(&r.m_registry);
+
+    /* Manifest constants: fold `const` scalar global initializers FIRST, so
+       `[constName]` fixed-array dimensions resolve before layouts compute. */
+    StrMapInit(&r.m_constGlobals);
+
+    for (size_t i = 0; i < mod->globals.count; i++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+
+        if (!gd->type.isConst || !gd->init || !IsConstDimType(&r.m_registry, gd->type.name))
+        {
+            continue;
+        }
+
+        ConstGlobalVal* v = (ConstGlobalVal*)arena_alloc(arena, sizeof(ConstGlobalVal));
+
+        if (SemaFoldConstInit(&r, gd->init, v))
+        {
+            StrMapPut(&r.m_constGlobals, gd->name, v);
+        }
+    }
+
+    for (size_t i = 0; i < mod->structs.count; i++)
+    {
+        StructDecl* sd = (StructDecl*)VecGet(&mod->structs, i);
+
+        if (sd->incomplete || sd->isTypeAlias)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < sd->fields.count; j++)
+        {
+            FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
+
+            SemaResolveConstDims(&r, &field->type);
+        }
+    }
+
     TypeRegistryBuild(&r.m_registry, mod);
 
     /* Validate impl targets and declare property accessor externs before the
@@ -4996,6 +5180,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 
     StrMapFree(&r.m_constVars);
+    StrMapFree(&r.m_constGlobals);
     StrMapFree(&r.m_movedBoxes);
     StrMapFree(&r.m_nonEmptyPaths);
     StrMapFree(&r.m_indexDeps);

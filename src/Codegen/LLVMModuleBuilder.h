@@ -53,6 +53,7 @@ typedef struct Builder
     StrMap m_funcs;
     StrMap m_symbols;
     StrMap m_globals;
+    StrMap m_constValues; /* manifest-const global name -> ConstValueSlot* (no storage emitted) */
     StrMap m_externSlots;
     StrMap m_implProps; /* "Handle.Prop" -> ImplPropEntry (getter/setter lowering) */
     StrMap m_dropFns; /* structName -> LLVMValueRef, per-type struct-field drop helper */

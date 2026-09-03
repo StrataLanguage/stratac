@@ -687,6 +687,133 @@ STRATA_TEST(pseudo_enum_global_codegen_ir)
     arena_free(&arena);
 }
 
+/* ── Manifest constants: `const` scalar globals with constant inits ─────── */
+
+STRATA_TEST(manifest_const_no_global_emitted)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int maxAllowed = 32;\n"
+        "int test() { return maxAllowed; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* No symbol at all (C++ const globals have internal linkage, so a
+       `const int` global can never be linked against) and the use is
+       folded to the literal. */
+    STRATA_CHECK(strstr(res.output, "@maxAllowed") == NULL);
+    STRATA_CHECK(strstr(res.output, "ret i32 32") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_chain)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int base = 4;\n"
+        "const int doubled = base;\n"
+        "int test() { return doubled; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "@base") == NULL);
+    STRATA_CHECK(strstr(res.output, "@doubled") == NULL);
+    STRATA_CHECK(strstr(res.output, "ret i32 4") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_array_dimension)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int maxAllowed = 32;\n"
+        "const int rows = 2;\n"
+        "const int cols = 3;\n"
+        "struct Table {\n"
+        "    byte[maxAllowed] name;\n"
+        "    int[rows][cols] grid;\n"
+        "};\n"
+        "int test() { Table t; return t.name[0]; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* Dimensions resolve to exact C-ABI shapes before layout. */
+    STRATA_CHECK(strstr(res.output, "%struct.Table = type { [32 x i8], [2 x [3 x i32]] }") != NULL);
+    STRATA_CHECK(strstr(res.output, "@maxAllowed") == NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_non_constant_dim_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "int notConst = 5;\n"
+        "struct Bad {\n"
+        "    byte[notConst] data;\n"
+        "};\n"
+        "int test() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_jit_dimension_and_value)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "const int maxAllowed = 32;\n"
+        "const int scaled = maxAllowed;\n"
+        "struct Table {\n"
+        "    byte[maxAllowed] name;\n"
+        "};\n"
+        "int run() {\n"
+        "    Table t;\n"
+        "    t.name[3] = 65;\n"
+        "    return t.name[3] + scaled;\n"
+        "}\n",
+        "manifest_const", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+        STRATA_CHECK(run != NULL);
+        if (run)
+        {
+            STRATA_CHECK_EQ(run(), 97); /* 65 + 32 */
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
 STRATA_TEST(pseudo_enum_jit_global_def)
 {
     StrataCompiler* c = strataCompilerCreate();

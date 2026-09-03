@@ -20,6 +20,32 @@ typedef struct
     bool externStringReturn; /* extern fn returning string: ABI is char*, caller wraps to fat */
 } FuncInfo;
 
+/* A folded compile-time constant initializer value. Kept as a tagged C value
+ * (not an LLVMValueRef) so conversions happen host-side; the shipped LLVM-C
+ * build does not export the LLVMConst*Cast family. */
+typedef enum
+{
+    CIK_INT,
+    CIK_FLOAT,
+    CIK_BOOL
+} ConstInitKind;
+
+typedef struct
+{
+    ConstInitKind kind;
+    unsigned long long i; /* CIK_INT / CIK_BOOL (0 or 1) */
+    double f;             /* CIK_FLOAT */
+} ConstInitVal;
+
+/* A manifest constant: a `const` scalar global with a compile-time constant
+   initializer. No LLVM global is emitted — uses inline the value. */
+typedef struct
+{
+    ConstInitVal civ;
+    TypeDesc td;
+    LLVMValueRef constant;
+} ConstValueSlot;
+
 typedef struct
 {
     bool valid;
@@ -2017,6 +2043,17 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
     if (!sym)
     {
         sym = (Value*)StrMapGet(&b->m_globals, n->name);
+    }
+
+    if (!sym)
+    {
+        ConstValueSlot* cs = (ConstValueSlot*)StrMapGet(&b->m_constValues, n->name);
+
+        if (cs)
+        {
+            /* Manifest constant: inline the value, no load. */
+            return ValueMake(cs->constant, cs->td);
+        }
     }
 
     if (!sym)
@@ -5116,23 +5153,6 @@ static void EmitStmt(Builder* b, Node* n)
     }
 }
 
-/* A folded compile-time constant initializer value. Kept as a tagged C value
- * (not an LLVMValueRef) so conversions happen host-side; the shipped LLVM-C
- * build does not export the LLVMConst*Cast family. */
-typedef enum
-{
-    CIK_INT,
-    CIK_FLOAT,
-    CIK_BOOL
-} ConstInitKind;
-
-typedef struct
-{
-    ConstInitKind kind;
-    unsigned long long i; /* CIK_INT / CIK_BOOL (0 or 1) */
-    double f;             /* CIK_FLOAT */
-} ConstInitVal;
-
 /* Convert a folded constant to `td` (const-level mirror of Coerce). Integer
  * width truncation is left to LLVMConstInt (same as direct literal lowering). */
 static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
@@ -5228,6 +5248,19 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
         }
 
         *out = CastConstVal(b, inner, td);
+        return true;
+    }
+    case NodeIdent:
+    {
+        /* Chained manifest constants: `const B = A;` */
+        ConstValueSlot* cv = (ConstValueSlot*)StrMapGet(&b->m_constValues, ((IdentExpr*)n)->name);
+
+        if (!cv)
+        {
+            return false;
+        }
+
+        *out = cv->civ;
         return true;
     }
     default:
@@ -5359,15 +5392,17 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         }
 
         LLVMValueRef init = LLVMConstNull(typeDesc.type);
+        ConstInitVal foldedVal;
+        bool folded = false;
 
         if (gd->init)
         {
-            ConstInitVal folded;
+            folded = FoldConstInit(b, typeDesc, gd->init, &foldedVal);
 
-            if (FoldConstInit(b, typeDesc, gd->init, &folded))
+            if (folded)
             {
-                init = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, folded.f)
-                                        : LLVMConstInt(typeDesc.type, folded.i, 0);
+                init = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, foldedVal.f)
+                                        : LLVMConstInt(typeDesc.type, foldedVal.i, 0);
             }
             else if (b->m_diag)
             {
@@ -5378,8 +5413,28 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             }
         }
 
+        /* A `const` scalar global with a constant initializer is a MANIFEST
+           constant: no storage, no symbol — uses inline the value. This is
+           the C++-safe alternative to `const int X = N;` globals (C++ gives
+           const globals internal linkage, so the symbol can never be linked
+           against) and the enabler for `[constName]` array dimensions. */
+        if (gd->type.isConst && folded)
+        {
+            ConstValueSlot* cs = (ConstValueSlot*)arena_alloc(b->m_arena, sizeof(ConstValueSlot));
+            cs->civ = foldedVal;
+            cs->td = typeDesc;
+            cs->constant = init;
+            StrMapPut(&b->m_constValues, gd->name, cs);
+            continue;
+        }
+
         LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
         LLVMSetInitializer(global, init);
+
+        if (gd->type.isConst)
+        {
+            LLVMSetGlobalConstant(global, 1);
+        }
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
         sym->value = global;
@@ -5606,6 +5661,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_funcs);
     StrMapInit(&b.m_symbols);
     StrMapInit(&b.m_globals);
+    StrMapInit(&b.m_constValues);
     StrMapInit(&b.m_externSlots);
     StrMapInit(&b.m_implProps);
     StrMapInit(&b.m_dropFns);
@@ -5632,6 +5688,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_funcs);
     StrMapFree(&b.m_symbols);
     StrMapFree(&b.m_globals);
+    StrMapFree(&b.m_constValues);
     StrMapFree(&b.m_externSlots);
     StrMapFree(&b.m_implProps);
     StrMapFree(&b.m_dropFns);

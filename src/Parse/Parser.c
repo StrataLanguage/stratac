@@ -308,6 +308,7 @@ typedef struct
 {
     bool isFixed;
     long length;
+    char* lengthName; // `[constName]` — resolved to `length` by sema
 } ArrayDim;
 
 static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
@@ -328,6 +329,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
             dim.isFixed = false;
             dim.length = -1;
+            dim.lengthName = NULL;
             consumed = true;
         }
         else if (next.kind == TokIntLit)
@@ -352,11 +354,36 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
                 // Length < 1 is diagnosed later in sema; keep parsing diagnostic-free.
                 dim.isFixed = true;
                 dim.length = (long)strtoull(tmp, NULL, 0);
+                dim.lengthName = NULL;
                 consumed = true;
             }
             else
             {
                 // Not a fixed dimension after all — put everything back.
+                RestoreLexerState(p, saved);
+            }
+        }
+        else if (next.kind == TokIdent)
+        {
+            // `[constName]` — a manifest-constant dimension, resolved by sema.
+            LexerCheckpoint saved = SaveLexerState(p);
+
+            Advance(p); /* '[' */
+
+            Token nameTok = p->m_cur;
+            Advance(p);
+
+            if (p->m_cur.kind == TokRBracket)
+            {
+                Advance(p); /* ']' */
+
+                dim.isFixed = true;
+                dim.length = -2; /* unresolved sentinel */
+                dim.lengthName = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+                consumed = true;
+            }
+            else
+            {
                 RestoreLexerState(p, saved);
             }
         }
@@ -375,7 +402,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
     }
 
     /* Apply inside-out (last source group is the innermost array) and rebuild
-       the canonical name in source order; the pre-bracket type is the leaf. */
+        the canonical name in source order; the pre-bracket type is the leaf. */
     const char* leafName = out->name;
 
     for (int i = dimCount - 1; i >= 0; i--)
@@ -383,6 +410,11 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         TypeName wrapped = dims[i].isFixed ? TypeNameFixedArrayWrap(p->m_arena, *out, dims[i].length)
                                            : TypeNameArrayWrap(p->m_arena, *out);
         *out = wrapped;
+
+        if (dims[i].lengthName)
+        {
+            out->lengthName = dims[i].lengthName;
+        }
     }
 
     Sb sb;
@@ -393,7 +425,14 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
     {
         if (dims[i].isFixed)
         {
-            SbPrintf(&sb, "[%ld]", dims[i].length);
+            if (dims[i].lengthName)
+            {
+                SbPrintf(&sb, "[%s]", dims[i].lengthName);
+            }
+            else
+            {
+                SbPrintf(&sb, "[%ld]", dims[i].length);
+            }
         }
         else
         {
