@@ -4904,9 +4904,21 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 continue;
             }
 
+            /* string / alias-of-string / string? globals default to the
+                canonical empty {null, 0} fat - no init required, exactly
+                like arrays. An initializer is still type-checked below. */
+            bool stringLike
+                = strcmp(TypeRegistryResolveAlias(&r.m_registry, gd->type.name), "string") == 0
+                  || (gd->type.isOptional && gd->type.inner
+                      && strcmp(TypeRegistryResolveAlias(&r.m_registry, gd->type.inner->name), "string") == 0);
+
             if (!gd->init)
             {
-                DiagErrorFmt(diag, gd->base.range, "box global '%s' must be initialized", gd->name);
+                if (!stringLike)
+                {
+                    DiagErrorFmt(diag, gd->base.range, "box global '%s' must be initialized", gd->name);
+                }
+
                 continue;
             }
 

@@ -151,6 +151,9 @@ main) are the internal entry points.
   C never sees NULL; `string?` passes the RAW pointer (NULL = empty); an
   extern string RETURN is `char*` and the caller wraps it via an inline
   strlen. Literals are borrowed constant fats; owning consumers heap-copy.
+  Globals: `string g;` is legal and defaults to the canonical empty fat —
+  no init required, exactly like `T[]` globals (box-global rebind rules
+  apply: it stays empty forever; only initialized globals hold values).
   `extern struct` fields may not be `string` (no C-layout mirror for a fat).
 - Type aliases: `struct Meter = int;` — a strong newtype over any type.
   Identity is by NAME: no implicit conversion in either direction (including

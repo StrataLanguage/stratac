@@ -978,16 +978,23 @@ STRATA_TEST(type_alias_string_local_requires_init)
     arena_free(&arena);
 }
 
-STRATA_TEST(type_alias_string_global_requires_init)
+STRATA_TEST(type_alias_string_global_no_init_defaults_empty)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(
         "struct Name = string;\n"
-        "Name g;\n",
+        "Name g;\n"
+        "int test() { return 0; }\n",
         &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(!DiagHasErrors(&diag));
 
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* Like arrays: the global is the canonical empty {null, 0} fat. */
+    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i64 } zeroinitializer") != NULL);
+
+    free((void*)res.output);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -1012,6 +1019,36 @@ STRATA_TEST(type_alias_string_global_literal_init)
     free((void*)res.output);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
+}
+
+STRATA_TEST(string_global_no_init_jit_empty)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "string g;\n"
+        "struct Name = string;\n"
+        "Name h;\n"
+        "int run() { return (int)g.length; }\n",
+        "string_global_empty", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+        STRATA_CHECK(run != NULL);
+        if (run)
+        {
+            STRATA_CHECK_EQ(run(), 0); /* canonical empty: length 0, nothing allocated */
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
 }
 
 STRATA_TEST(string_global_owns_and_tears_down)
