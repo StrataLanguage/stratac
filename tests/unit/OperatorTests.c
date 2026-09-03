@@ -14,6 +14,16 @@ static StrataJit* CompileJit(const char* src)
     return jit;
 }
 
+/* Like CompileJit but keeps the error message for assertions. The compiler
+ * intentionally outlives the returned jit (see TypeAliasTests.c usage). */
+static StrataJit* CompileJitErr(const char* src, const char** err)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    *err = NULL;
+    StrataJit* jit = strataJitCompileString(c, src, "ops", err);
+    return jit;
+}
+
 STRATA_TEST(jit_prefix_increment)
 {
     StrataJit* jit = CompileJit("int entry() {\n"
@@ -451,6 +461,126 @@ STRATA_TEST(jit_global_negative_init)
         }
         strataJitDestroy(jit);
     }
+}
+
+STRATA_TEST(jit_global_cast_literal_init)
+{
+    StrataJit* jit = CompileJit("struct ErrorCode = int;\n"
+                                "ErrorCode g_err = (ErrorCode)404;\n"
+                                "int g_plain = (int)7;\n"
+                                "int entry() {\n"
+                                "  return (int)g_err + g_plain;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 411);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_global_int_to_float_init)
+{
+    StrataJit* jit = CompileJit("float g_scale = 2;\n"
+                                "int entry() {\n"
+                                "  return (int)(g_scale * 2.5);\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 5);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_global_float_to_int_init)
+{
+    StrataJit* jit = CompileJit("int g_trunc = (int)3.7;\n"
+                                "int entry() {\n"
+                                "  return g_trunc;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_global_bool_from_int_init_is_nonzero_test)
+{
+    /* `bool = 2` is a numeric-pair conversion: the value must be a (non)zero
+     * test (true), NOT a bit-truncation of 2 into i1 (false). */
+    StrataJit* jit = CompileJit("bool g_flag = 2;\n"
+                                "int entry() {\n"
+                                "  if (g_flag) { return 1; }\n"
+                                "  return 0;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(global_init_undefined_ident_is_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int g = nope;\n"
+                                   "int entry() { return 0; }\n",
+                                   &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
+STRATA_TEST(global_init_nonconstant_expr_is_error)
+{
+    /* Sema accepts int = int, but the initializer must be a compile-time
+     * constant - referencing another global is not foldable. */
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int g_a = 1;\n"
+                                   "int g_b = g_a;\n"
+                                   "int entry() { return g_b; }\n",
+                                   &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
+}
+
+STRATA_TEST(global_const_without_init_is_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("const int g_max;\n"
+                                   "int entry() { return g_max; }\n",
+                                   &err);
+
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL);
+    strataFree((char*)err);
 }
 
 STRATA_TEST(jit_long_type)

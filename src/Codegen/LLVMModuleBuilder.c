@@ -406,6 +406,9 @@ static void DefineFunction(Builder* b, const FunctionDecl* f);
 
 // -- Impl properties (methods are rewritten to plain extern calls by sema)
 
+static LLVMValueRef ZeroOf(TypeDesc typeDesc);
+static TypeDesc Resolve(Builder* b, const TypeName* t);
+
 typedef struct {
     PropertyDecl* decl;
     const FunctionDecl* getter; // NULL for write-only
@@ -458,7 +461,9 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
             return NULL;
         }
 
-        if (sym->typeDesc.structTypeName && TypeRegistryIsOpaque(&b->m_registry, sym->typeDesc.structTypeName))
+        /* Names a struct or handle (both carry structTypeName); chains and
+           property lookup branch on opacity downstream. */
+        if (sym->typeDesc.structTypeName)
         {
             return sym->typeDesc.structTypeName;
         }
@@ -485,6 +490,46 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
     }
     case NodeNullTest:
         return StaticExprTypeName(b, ((NullTestExpr*)n)->operand); /* `T?` -> T */
+    case NodeIndex:
+    {
+        /* `cams[i].Prop` — the element type comes from the base's TypeDesc
+           (arrayInner points into the declaration's stable TypeName tree). */
+        IndexExpr* ix = (IndexExpr*)n;
+        Node* baseNode = ix->base_node;
+        const TypeName* inner = NULL;
+
+        if (baseNode->kind == NodeIdent)
+        {
+            IdentExpr* id = (IdentExpr*)baseNode;
+            Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+
+            if (!sym)
+            {
+                sym = (Value*)StrMapGet(&b->m_globals, id->name);
+            }
+
+            inner = sym ? sym->typeDesc.arrayInner : NULL;
+        }
+        else if (baseNode->kind == NodeMember)
+        {
+            MemberExpr* bm = (MemberExpr*)baseNode;
+            const char* bn = StaticExprTypeName(b, bm->base_node);
+
+            if (bn && !TypeRegistryIsOpaque(&b->m_registry, bn))
+            {
+                int fidx = TypeRegistryFieldIndex(&b->m_registry, bn, bm->member);
+
+                if (fidx >= 0)
+                {
+                    const StructType* st = TypeRegistryFind(&b->m_registry, bn);
+                    FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)fidx);
+                    inner = field->type.isArray ? field->type.elem : NULL;
+                }
+            }
+        }
+
+        return (inner && TypeRegistryIsOpaque(&b->m_registry, inner->name)) ? inner->name : NULL;
+    }
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
@@ -567,7 +612,19 @@ static Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* 
         VecPush(&tmp.args, valueNode);
     }
 
-    return EmitCall(b, &tmp);
+    Value result = EmitCall(b, &tmp);
+
+    if (valueNode)
+    {
+        /* The setter returns void; the assignment-expression value is a
+           well-typed zero of the property type so any use stays valid IR
+           (sema rejects the chained-assignment form outright). */
+        TypeDesc td = Resolve(b, &entry->decl->returnType);
+
+        return ValueMake(ZeroOf(td), td);
+    }
+
+    return result;
 }
 
 static TypeDesc Resolve(Builder* b, const TypeName* t)
@@ -4750,6 +4807,125 @@ static void EmitStmt(Builder* b, Node* n)
     }
 }
 
+/* A folded compile-time constant initializer value. Kept as a tagged C value
+ * (not an LLVMValueRef) so conversions happen host-side; the shipped LLVM-C
+ * build does not export the LLVMConst*Cast family. */
+typedef enum
+{
+    CIK_INT,
+    CIK_FLOAT,
+    CIK_BOOL
+} ConstInitKind;
+
+typedef struct
+{
+    ConstInitKind kind;
+    unsigned long long i; /* CIK_INT / CIK_BOOL (0 or 1) */
+    double f;             /* CIK_FLOAT */
+} ConstInitVal;
+
+/* Convert a folded constant to `td` (const-level mirror of Coerce). Integer
+ * width truncation is left to LLVMConstInt (same as direct literal lowering). */
+static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
+{
+    if (td.type == I1Ty(b)) /* conversion to bool is a (non)zero test */
+    {
+        ConstInitVal r;
+        r.kind = CIK_BOOL;
+        r.i = (v.kind == CIK_FLOAT ? v.f != 0.0 : v.i != 0) ? 1 : 0;
+        r.f = 0.0;
+        return r;
+    }
+
+    if (td.isFloat)
+    {
+        if (v.kind == CIK_FLOAT)
+        {
+            return v;
+        }
+
+        ConstInitVal r;
+        r.kind = CIK_FLOAT;
+        r.i = 0;
+        r.f = (double)(long long)v.i;
+        return r;
+    }
+
+    if (v.kind == CIK_FLOAT)
+    {
+        ConstInitVal r;
+        r.kind = CIK_INT;
+        r.i = (unsigned long long)(long long)v.f;
+        r.f = 0.0;
+        return r;
+    }
+
+    return v;
+}
+
+/* Constant-fold a global initializer expression (literals, negation, and
+ * scalar casts thereof - the forms sema accepts for non-owning globals).
+ * Returns false when the expression is not a compile-time constant. */
+static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
+{
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        *out = CastConstVal(b, (ConstInitVal){CIK_INT, .i = ((IntLiteral*)n)->value, .f = 0.0}, td);
+        return true;
+    case NodeFloatLiteral:
+        *out = CastConstVal(b, (ConstInitVal){CIK_FLOAT, .i = 0, .f = ((FloatLiteral*)n)->value}, td);
+        return true;
+    case NodeBoolLiteral:
+        *out = CastConstVal(b, (ConstInitVal){CIK_BOOL, .i = ((BoolLiteral*)n)->value ? 1 : 0, .f = 0.0}, td);
+        return true;
+    case NodeUnary:
+    {
+        UnaryExpr* u = AsNode(UnaryExpr, n);
+        ConstInitVal inner;
+
+        if (u->op != UnNeg || !FoldConstInit(b, td, u->operand, &inner))
+        {
+            return false;
+        }
+
+        if (inner.kind == CIK_FLOAT)
+        {
+            inner.f = -inner.f;
+        }
+        else
+        {
+            inner.i = 0ULL - inner.i;
+        }
+
+        *out = inner;
+        return true;
+    }
+    case NodeCast:
+    {
+        CastExpr* c = AsNode(CastExpr, n);
+        TypeDesc innerTd = Resolve(b, &c->type);
+
+        if (innerTd.isVoid || innerTd.structTypeName || innerTd.isArray || innerTd.isBox || innerTd.isSimdVector)
+        {
+            return false;
+        }
+
+        ConstInitVal inner;
+
+        if (!FoldConstInit(b, innerTd, c->operand, &inner))
+        {
+            return false;
+        }
+
+        *out = CastConstVal(b, inner, td);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngine* diag, bool jitMode,
                                 const StrataProfile* profile)
 {
@@ -4919,29 +5095,19 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
         if (gd->init)
         {
-            if (gd->init->kind == NodeIntLiteral)
+            ConstInitVal folded;
+
+            if (FoldConstInit(b, typeDesc, gd->init, &folded))
             {
-                init = LLVMConstInt(typeDesc.type, ((IntLiteral*)gd->init)->value, 0);
+                init = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, folded.f)
+                                        : LLVMConstInt(typeDesc.type, folded.i, 0);
             }
-            else if (gd->init->kind == NodeFloatLiteral)
+            else if (b->m_diag)
             {
-                init = LLVMConstReal(typeDesc.type, ((FloatLiteral*)gd->init)->value);
-            }
-            else if (gd->init->kind == NodeBoolLiteral)
-            {
-                init = LLVMConstInt(typeDesc.type, ((BoolLiteral*)gd->init)->value ? 1 : 0, 0);
-            }
-            else if (gd->init->kind == NodeUnary && ((UnaryExpr*)gd->init)->op == UnNeg)
-            {
-                Node* operand = ((UnaryExpr*)gd->init)->operand;
-                if (operand->kind == NodeIntLiteral)
-                {
-                    init = LLVMConstInt(typeDesc.type, -((IntLiteral*)operand)->value, 1);
-                }
-                else if (operand->kind == NodeFloatLiteral)
-                {
-                    init = LLVMConstReal(typeDesc.type, -((FloatLiteral*)operand)->value);
-                }
+                DiagErrorFmt(b->m_diag, gd->base.range,
+                             "global '%s' initializer must be a compile-time constant "
+                             "(a scalar literal, a negation, or a scalar cast of one)",
+                             gd->name);
             }
         }
 

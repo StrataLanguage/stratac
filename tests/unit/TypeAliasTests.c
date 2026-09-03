@@ -571,8 +571,8 @@ STRATA_TEST(pseudo_enum_global_def_int_alias)
     Module* mod = ParseAndResolve(
         "struct ErrorCode = int;\n"
         "ErrorCode Opaque = (ErrorCode)0;\n"
-        "ErrorCode Not Found = (ErrorCode)404;\n"
-        "ErrorCode Server Error = (ErrorCode)500;\n",
+        "ErrorCode Not_Found = (ErrorCode)404;\n"
+        "ErrorCode Server_Error = (ErrorCode)500;\n",
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -608,7 +608,7 @@ STRATA_TEST(pseudo_enum_global_def_mixed_aliases)
         "struct ErrorCode = int;\n"
         "struct Priority = int;\n"
         "ErrorCode Ok = (ErrorCode)200;\n"
-        "ErrorCode Not Found = (ErrorCode)404;\n"
+        "ErrorCode Not_Found = (ErrorCode)404;\n"
         "Priority Low = (Priority)0;\n"
         "Priority High = (Priority)10;\n",
         &diag, &arena);
@@ -627,7 +627,7 @@ STRATA_TEST(pseudo_enum_global_used_in_function)
     Module* mod = ParseAndResolve(
         "struct ErrorCode = int;\n"
         "ErrorCode Ok = (ErrorCode)200;\n"
-        "ErrorCode Not Found = (ErrorCode)404;\n"
+        "ErrorCode Not_Found = (ErrorCode)404;\n"
         "ErrorCode classify(int raw) { return (ErrorCode)raw; }\n"
         "bool is_success(ErrorCode e) { return (int)e == (int)Ok; }\n",
         &diag, &arena);
@@ -694,10 +694,10 @@ STRATA_TEST(pseudo_enum_jit_global_def)
     StrataJit* jit = strataJitCompileString(c,
         "struct ErrorCode = int;\n"
         "ErrorCode Opaque = (ErrorCode)0;\n"
-        "ErrorCode Not Found = (ErrorCode)404;\n"
-        "ErrorCode Server Error = (ErrorCode)500;\n"
+        "ErrorCode Not_Found = (ErrorCode)404;\n"
+        "ErrorCode Server_Error = (ErrorCode)500;\n"
         "int get_value(ErrorCode e) { return (int)e; }\n"
-        "int caller() { return get_value(Not Found); }\n",
+        "int caller() { return get_value(Not_Found); }\n",
         "pseudo_enum", &err);
     STRATA_CHECK(jit != NULL);
     if (jit)

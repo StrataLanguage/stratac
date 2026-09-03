@@ -78,6 +78,7 @@ static void* resolve_extern(const char* name) {
     if (strcmp(name, "get_x")   == 0) return (void*)&get_x;
     if (strcmp(name, "get_y")   == 0) return (void*)&get_y;
     if (strcmp(name, "move")    == 0) return (void*)&move;
+    if (strcmp(name, "printf")  == 0) return (void*)&printf;
     return NULL;
 }
 

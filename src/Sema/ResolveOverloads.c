@@ -2078,19 +2078,57 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     return false;
 }
 
-/* Synthesizes the extern declaration a property accessor refers to, unless a
-   function with that name is already declared (e.g. a flat extern). */
+/* Synthesizes the extern declaration a property accessor refers to. When a
+   function with that name already exists (e.g. a flat extern), its signature
+   is validated against the accessor shape instead. */
 static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, const TypeName* propType,
-                               const char* handleName, bool isSetter, SourceRange range)
+                               const char* handleName, bool isSetter, SourceRange range, DiagnosticEngine* diag)
 {
     for (size_t i = 0; i < mod->functions.count; i++)
     {
-        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
+        FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, i);
 
-        if (strcmp(fn->name, symbol) == 0)
+        if (strcmp(fn->name, symbol) != 0)
         {
+            continue;
+        }
+
+        /* Validate the pre-existing declaration against the accessor shape:
+           getter (self) -> propType; setter (self, value propType) -> void. */
+        size_t wantParams = isSetter ? 2 : 1;
+
+        if (fn->params.count != wantParams)
+        {
+            DiagErrorFmt(diag, range,
+                         "property %s '%s' must take (%s self%s); found %zu parameter(s)",
+                         isSetter ? "setter" : "getter", symbol, handleName, isSetter ? ", value" : "",
+                         fn->params.count);
             return;
         }
+
+        const ParamDecl* p0 = (const ParamDecl*)VecGet(&fn->params, 0);
+
+        if (strcmp(p0->type.name, handleName) != 0)
+        {
+            DiagErrorFmt(diag, range, "property %s '%s' must take '%s' as its first parameter; found '%s'",
+                         isSetter ? "setter" : "getter", symbol, handleName, p0->type.name);
+            return;
+        }
+
+        if (isSetter && strcmp(fn->returnType.name, "void") != 0)
+        {
+            DiagErrorFmt(diag, range, "property setter '%s' must return void; found '%s'", symbol,
+                         fn->returnType.name);
+            return;
+        }
+
+        if (!isSetter && strcmp(fn->returnType.name, propType->name) != 0)
+        {
+            DiagErrorFmt(diag, range, "property getter '%s' must return '%s'; found '%s'", symbol, propType->name,
+                         fn->returnType.name);
+        }
+
+        return;
     }
 
     FunctionDecl* fn = AST_NEW(arena, FunctionDecl);
@@ -2158,16 +2196,34 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
                 continue;
             }
 
+            /* 'void' has no value to get/set; a dynamic `T[]` crosses extern
+               as a fat {ptr,len} struct no C thunk can sanely implement for a
+               single accessor. Fixed `T[N]` is rejected later by the
+               function-level fixed-array rules (synthesized getter/setter). */
+            if (strcmp(prop->returnType.name, "void") == 0)
+            {
+                DiagErrorFmt(diag, prop->range, "property '%s' may not have type 'void'", prop->name);
+                continue;
+            }
+
+            if (TypeNameIsDynamicArray(&prop->returnType))
+            {
+                DiagErrorFmt(diag, prop->range,
+                             "property '%s' may not have a dynamic array type ('%s')", prop->name,
+                             prop->returnType.name);
+                continue;
+            }
+
             if (prop->getterSymbol)
             {
                 SynthesizeAccessor(mod, arena, prop->getterSymbol, &prop->returnType, impl->handleName, false,
-                                   prop->range);
+                                   prop->range, diag);
             }
 
             if (prop->setterSymbol)
             {
                 SynthesizeAccessor(mod, arena, prop->setterSymbol, &prop->returnType, impl->handleName, true,
-                                   prop->range);
+                                   prop->range, diag);
             }
         }
     }
@@ -2954,6 +3010,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 ResolveExpr(r, tm->base_node, scope);
                 ResolveExpr(r, a->value, scope);
+
+                /* The setter call produces no value: `a.P = b.Q = v` has no
+                   meaningful result (and an inner write used as a value would
+                   flow a void into the outer setter). */
+                if (a->value->kind == NodeAssign && ((AssignExpr*)a->value)->isImplPropertyWrite)
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range,
+                                 "cannot chain property assignment; assign each property separately");
+                    return;
+                }
+
+                a->isImplPropertyWrite = true;
 
                 if (a->op != AssignSet)
                 {
@@ -4664,6 +4732,12 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                              gd->name, gd->type.name);
             }
 
+            /* Mirrors the local rule: a const binding needs a value. */
+            if (gd->type.isConst && !gd->init)
+            {
+                DiagErrorFmt(diag, gd->base.range, "const global '%s' must be initialized", gd->name);
+            }
+
             /* Array globals default to an empty {null, 0} fat struct. */
             if (TypeNameIsDynamicArray(&gd->type))
             {
@@ -4683,8 +4757,24 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 continue;
             }
 
+            /* Scalar / alias / struct globals: the initializer is type-checked
+               like a local declaration (the backend only lowers compile-time
+               constant initializers, so nothing here may slip through). */
             if (!TypeNameIsOwning(&gd->type))
             {
+                if (gd->init)
+                {
+                    ResolveExpr(&r, gd->init, &globalScope);
+                    const TypeName* initType = InferType(&r, gd->init, &globalScope);
+
+                    if (initType && !IsAssignableType(&r, &gd->type, initType))
+                    {
+                        DiagErrorFmt(diag, gd->base.range,
+                                     "global '%s' of type '%s' cannot be initialized by expression of type '%s'",
+                                     gd->name, gd->type.name, initType->name);
+                    }
+                }
+
                 continue;
             }
 

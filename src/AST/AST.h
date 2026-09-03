@@ -534,6 +534,7 @@ typedef struct {
     AssignOp op;
     Node* target;
     Node* value;
+    bool isImplPropertyWrite; /* set by sema: target is an impl property (no assigned-value semantics) */
 } AssignExpr;
 
 typedef struct {

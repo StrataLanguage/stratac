@@ -30,6 +30,19 @@ struct Wrapper { ^Any target; };
 
 extern int printf(string str, ...);
 
+struct EWeaponType = uint;
+const EWeaponType Gun = (EWeaponType)0;
+const EWeaponType Melee = (EWeaponType)1;
+
+void foo()
+{
+    printf("Gun = %u\n", (uint)Gun);
+    printf("Melee = %u\n", (uint)Melee);
+    const EWeaponType myWeaponType = Gun;
+
+}
+
+
 int chase(Entity attacker, Entity target, int step)
 {
     ^Pistol p = MakePistol(100);

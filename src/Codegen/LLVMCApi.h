@@ -171,7 +171,6 @@ typedef enum {
     LLVMRealULT = 12, LLVMRealULE = 13, LLVMRealUNE = 14, LLVMRealPredicateTrue = 15
 } LLVMRealPredicate;
 
-
 LLVMValueRef LLVMBuildSDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
 LLVMValueRef LLVMBuildUDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);
 LLVMValueRef LLVMBuildFDiv(LLVMBuilderRef b, LLVMValueRef l, LLVMValueRef r, const char* name);

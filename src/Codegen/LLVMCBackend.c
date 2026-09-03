@@ -28,9 +28,12 @@ CodegenResult GenerateLlvmIr(const Module* mod)
             SbPrintf(&sb, ";   %s\n", diag.m_diagnostics[i].message);
         }
 
-        res.output = SbFinish(&sb, scratch_arena());
+        /* The caller free()s `output`, so it must be heap-owned — NOT an
+           arena/scratch pointer (a free() on scratch memory corrupts the
+           heap and crashes at teardown). */
+        res.output = DupString(SbFinish(&sb, scratch_arena()));
         res.ok = false;
-        
+
         DiagnosticEngineFree(&diag);
         BuiltModuleDispose(&bm);
 

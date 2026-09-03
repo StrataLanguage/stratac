@@ -555,6 +555,11 @@ static void* Camera_NewThunk(void)
     return cell;
 }
 
+static void* Camera_GetSelfThunk(void* self)
+{
+    return self;
+}
+
 STRATA_TEST(impl_jit_end_to_end)
 {
     StrataCompiler* c = strataCompilerCreate();
@@ -605,6 +610,151 @@ STRATA_TEST(impl_jit_end_to_end)
         void* cam = make();
         STRATA_CHECK(cam != NULL);
         free(cam);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(impl_jit_property_on_array_elem)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "handle Camera;\n"
+        "impl Camera {\n"
+        "    extern float GetFOV(Camera self);\n"
+        "    extern void SetFOV(Camera self, float v);\n"
+        "    extern Camera New();\n"
+        "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
+        "}\n"
+        "float entry()\n"
+        "{\n"
+        "    Camera a = Camera.New();\n"
+        "    Camera b = Camera.New();\n"
+        "    Camera[] cams = { a, b };\n"
+        "    cams[0].FOV = 7.0;\n"
+        "    cams[1].FOV = 9.0;\n"
+        "    return cams[0].FOV + cams[1].FOV;\n"
+        "}\n",
+        "impl_arr", &err);
+
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "Camera_GetFOV", (void*)&Camera_GetFOVThunk));
+    STRATA_CHECK(strataJitAddSymbol(jit, "Camera_SetFOV", (void*)&Camera_SetFOVThunk));
+    STRATA_CHECK(strataJitAddSymbol(jit, "Camera_New", (void*)&Camera_NewThunk));
+
+    /* The array is built inside Strata (a `T[]` param owns its buffer, so
+       passing a host stack buffer here would be freed by the callee's drop
+       glue and corrupt the heap). */
+    float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        float sum = entry();
+        STRATA_CHECK_EQ((long)(sum * 100.0f), 1600); /* 7 + 9 */
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(impl_jit_property_through_struct_field)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "handle Camera;\n"
+        "struct Holder { Camera cam; };\n"
+        "impl Camera {\n"
+        "    extern float GetFOV(Camera self);\n"
+        "    extern void SetFOV(Camera self, float v);\n"
+        "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
+        "}\n"
+        "float entry(Holder h)\n"
+        "{\n"
+        "    h.cam.FOV = 5.5;\n"
+        "    return h.cam.FOV;\n"
+        "}\n",
+        "impl_field", &err);
+
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "Camera_GetFOV", (void*)&Camera_GetFOVThunk));
+    STRATA_CHECK(strataJitAddSymbol(jit, "Camera_SetFOV", (void*)&Camera_SetFOVThunk));
+
+    typedef struct
+    {
+        void* cam;
+    } Holder;
+
+    float (*entry)(Holder*) = (float (*)(Holder*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        float cell = 1.0f;
+        Holder h = {&cell};
+
+        float v = entry(&h);
+        STRATA_CHECK_EQ((long)(v * 100.0f), 550);
+        STRATA_CHECK_EQ((long)(cell * 100.0f), 550);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(impl_jit_recursive_property_chain)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "handle Camera;\n"
+        "impl Camera {\n"
+        "    extern Camera GetSelf(Camera self);\n"
+        "    extern float GetFOV(Camera self);\n"
+        "    property Camera Self { get = GetSelf; }\n"
+        "    property float FOV { get = GetFOV; }\n"
+        "}\n"
+        "float entry(Camera c) { return c.Self.Self.Self.FOV; }\n",
+        "impl_rec", &err);
+
+    if (!jit)
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        STRATA_CHECK(false);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "GetSelf", (void*)&Camera_GetSelfThunk));
+    STRATA_CHECK(strataJitAddSymbol(jit, "GetFOV", (void*)&Camera_GetFOVThunk));
+
+    float (*entry)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        float cell = 3.25f;
+        STRATA_CHECK_EQ((long)(entry(&cell) * 100.0f), 325);
     }
 
     strataJitDestroy(jit);
