@@ -1014,6 +1014,30 @@ STRATA_TEST(type_alias_string_global_literal_init)
     arena_free(&arena);
 }
 
+STRATA_TEST(string_global_owns_and_tears_down)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "string g = \"just me\";\n"
+        "int test() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* String globals use the same owning representation as every other
+       owning global: null slot, runtime init fills it, teardown drops it.
+       No static constant-pool pointer, no name-keyed skips. */
+    STRATA_CHECK(strstr(res.output, "@g = global ptr null") != NULL);
+    STRATA_CHECK(strstr(res.output, "store ptr %str, ptr @g") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_module_teardown") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(type_alias_string_arithmetic_rejected)
 {
     Arena arena; arena_init(&arena, 0);

@@ -9,6 +9,8 @@
 
 import imports/weapons/pistol;
 
+string[] gStr;
+
 handle Entity;
 
 extern Entity spawn(int x, int y);
@@ -45,6 +47,9 @@ void foo()
 
 int chase(Entity attacker, Entity target, int step)
 {
+    array_push(gStr, "123");
+    printf("gStr[0] = %s\n", gStr[0]);
+
     ^Pistol p = MakePistol(100);
     ^Wrapper wrapper = { (^Any)p };
 

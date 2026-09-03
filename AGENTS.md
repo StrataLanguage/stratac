@@ -281,11 +281,15 @@ main) are the internal entry points.
 ## extern and the host boundary
 
 - AOT: `extern` lowers to a body-less `declare`; the host links it.
-  Owning globals (`^T` / `T[]` with runtime initializers) self-initialize:
+  Owning globals (`string`, aliases of it, `^T` / `T[]`) self-initialize:
   `__strata_module_init` is registered in `llvm.global_ctors`, which lowers
   to `.init_array` (ELF) / `.CRT$XCU` (COFF), so it runs before the host's
-  `main` with no host-side call. (`__strata_module_teardown` still exists as
-  an export the host MAY call; nothing runs it automatically.)
+  `main` with no host-side call. All owning globals share ONE representation
+  (null slot + runtime construct + teardown drop) — a string global is a
+  heap copy, never a static constant-pool pointer. AOT hosts must provide
+  `strata_alloc`/`strata_free` whenever the module has ANY owning global
+  (including plain `string g = "...";`). (`__strata_module_teardown` still
+  exists as an export the host MAY call; nothing runs it automatically.)
 - JIT: each `extern` call goes through a writable global pointer slot
   `__strata_ext_<name>`. `strataJitAddSymbol` writes the host address.
 - Structs cross the boundary as pointers (`ptr`); handles are already

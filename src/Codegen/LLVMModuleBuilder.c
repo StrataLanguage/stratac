@@ -5075,51 +5075,9 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
         TypeDesc typeDesc = Resolve(b, &gd->type);
 
-        /* A string global is a pointer global. AOT has no teardown, so a
-           literal initializer can point directly at a private string constant
-           (which lives for the whole program). */
-        if (strcmp(gd->type.name, "string") == 0)
-        {
-            if (b->m_diag && gd->init && gd->init->kind != NodeStrLiteral)
-            {
-                DiagErrorFmt(b->m_diag, gd->base.range,
-                             "string global '%s' initializer is not supported by the LLVM backend "
-                             "(use a string literal)",
-                             gd->name);
-                continue;
-            }
-
-            LLVMValueRef init = LLVMConstNull(b->m_ptrTy);
-
-            if (gd->init && gd->init->kind == NodeStrLiteral)
-            {
-                StrLiteral* lit = AsNode(StrLiteral, gd->init);
-                size_t len = strlen(lit->value);
-                LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, lit->value, (unsigned)len, 0);
-                LLVMTypeRef strType = LLVMTypeOf(strConst);
-                char* gName = arena_format(b->m_arena, ".gstr.%d", b->m_strLitCount++);
-                LLVMValueRef strGlobal = LLVMAddGlobal(b->m_mod, strType, gName);
-                LLVMSetInitializer(strGlobal, strConst);
-                LLVMSetLinkage(strGlobal, LLVMPrivateLinkage);
-                LLVMSetUnnamedAddr(strGlobal, 1);
-                LLVMSetGlobalConstant(strGlobal, 1);
-                LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
-                LLVMValueRef idx[2] = {zero, zero};
-                init = LLVMConstGEP2(strType, strGlobal, idx, 2);
-            }
-
-            LLVMValueRef global = LLVMAddGlobal(b->m_mod, b->m_ptrTy, gd->name);
-            LLVMSetInitializer(global, init);
-
-            Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-            sym->value = global;
-            sym->typeDesc = typeDesc;
-            StrMapPut(&b->m_globals, gd->name, sym);
-            continue;
-        }
-
-        /* ^T / T[] / alias-of-string globals: storage starts null (box) or
-           zero (array). The runtime init (__strata_module_init) fills them. */
+        /* ^T / T[] / string / alias-of-string globals: storage starts null
+           (box) or zero (array). The runtime init (__strata_module_init)
+           fills them and __strata_module_teardown drops them. */
         if (BuilderIsOwningType(b, &gd->type))
         {
             LLVMValueRef init = LLVMConstNull(typeDesc.type);
@@ -5168,10 +5126,9 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         DefineFunction(b, f);
     }
 
-    /* Emit __strata_module_init + __strata_module_teardown when the module has
-       owning globals (^T / T[]) that need runtime initialization.  String
-       globals are excluded — they already point at a string-constant global
-       and don't need teardown in the LLVM backend. */
+    /* Emit __strata_module_init + __strata_module_teardown when the module
+       has owning globals (^T / T[] / string / alias) that need runtime
+       initialization or teardown. */
     {
         bool hasOwningGlobal = false;
 
@@ -5179,7 +5136,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-            if (strcmp(gd->type.name, "string") != 0 && BuilderIsOwningType(b, &gd->type))
+            if (BuilderIsOwningType(b, &gd->type))
             {
                 hasOwningGlobal = true;
                 break;
@@ -5207,7 +5164,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             {
                 GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-                if (strcmp(gd->type.name, "string") == 0 || !BuilderIsOwningType(b, &gd->type))
+                if (!BuilderIsOwningType(b, &gd->type))
                 {
                     continue;
                 }
@@ -5279,7 +5236,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             {
                 GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-                if (strcmp(gd->type.name, "string") == 0 || !BuilderIsOwningType(b, &gd->type))
+                if (!BuilderIsOwningType(b, &gd->type))
                 {
                     continue;
                 }
