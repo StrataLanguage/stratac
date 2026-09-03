@@ -549,3 +549,140 @@ STRATA_TEST(extern_box_struct_return_is_owned)
                 "}\n",
                 hosts, 1, 42);
 }
+
+/* ================= `return` out-params =================
+   `extern void F(return T x)` is the out-param idiom for C functions that
+   cannot return a struct by value: the Strata signature reads `T F()` and
+   the caller writes `T x = F();`. The ABI is void ret + one pointer. */
+
+static void HostFooGet(HostFoo* f)
+{
+    f->v = 42;
+}
+
+static void HostIntGet(int* v)
+{
+    *v = 7;
+}
+
+static void HostStrGet(HostArr* s)
+{
+    char* buf = HostDup("hoststr");
+    s->data = buf;
+    s->len = 7;
+}
+
+static void HostHandleGet(void** h)
+{
+    *h = (void*)0x1234;
+}
+
+STRATA_TEST(extern_return_param_struct)
+{
+    HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet } };
+    CheckExtern("struct Foo { int v; };\n"
+                "extern void host_foo_get(return Foo f);\n"
+                "int entry()\n"
+                "{\n"
+                "  Foo f = host_foo_get();\n" /* Foo { .v = 42 } */
+                "  return f.v;\n"             /* 42 */
+                "}\n",
+                hosts, 1, 42);
+}
+
+STRATA_TEST(extern_return_param_struct_passed_to_ref)
+{
+    /* The returned value is a real local; it can be handed to another
+       extern (by-ref struct param) and read again. */
+    HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet }, { "host_box_read", (void*)&HostBoxRead } };
+    CheckExtern("struct Foo { int v; };\n"
+                "extern void host_foo_get(return Foo f);\n"
+                "extern int host_box_read(Foo f);\n"
+                "int entry()\n"
+                "{\n"
+                "  Foo f = host_foo_get();\n"   /* { .v = 42 } */
+                "  int r = host_box_read(f);\n" /* 42 (by-ref struct param) */
+                "  return r + f.v;\n"           /* 84 */
+                "}\n",
+                hosts, 2, 84);
+}
+
+STRATA_TEST(extern_return_param_scalar)
+{
+    HostSymbol hosts[] = { { "host_int_get", (void*)&HostIntGet } };
+    CheckExtern("extern void host_int_get(return int v);\n"
+                "int entry()\n"
+                "{\n"
+                "  int v = host_int_get();\n"
+                "  return v + 1;\n" /* 8 */
+                "}\n",
+                hosts, 1, 8);
+}
+
+STRATA_TEST(extern_return_param_string)
+{
+    /* The callee writes the fat {ptr, len} into the out slot; the caller
+       owns the buffer and frees it at scope exit (no leak). */
+    HostSymbol hosts[] = { { "host_str_get", (void*)&HostStrGet }, { "host_str_len", (void*)&HostStrLen } };
+    CheckExtern("extern void host_str_get(return string s);\n"
+                "extern int host_str_len(string s);\n"
+                "int entry()\n"
+                "{\n"
+                "  string s = host_str_get();\n" /* owns \"hoststr\" (7 chars) */
+                "  return host_str_len(s);\n"     /* 7 */
+                "}\n",
+                hosts, 2, 7);
+}
+
+STRATA_TEST(extern_return_param_handle)
+{
+    HostSymbol hosts[] = { { "host_handle_get", (void*)&HostHandleGet } };
+    CheckExtern("handle Entity;\n"
+                "extern void host_handle_get(return Entity e);\n"
+                "int entry()\n"
+                "{\n"
+                "  Entity e = host_handle_get();\n" /* e = 0x1234 */
+                "  return 1;\n"
+                "}\n",
+                hosts, 1, 1);
+}
+
+static void HostFooBoxGet(HostFoo** f)
+{
+    HostFoo* p = (HostFoo*)malloc(sizeof(HostFoo));
+    if (p)
+    {
+        p->v = 42;
+    }
+    *f = p;
+}
+
+STRATA_TEST(extern_return_param_box)
+{
+    /* `return ^Foo f` crosses as a single out-pointer (Foo**); the caller
+       owns the box and frees it at scope exit. */
+    HostSymbol hosts[] = { { "host_foo_box_get", (void*)&HostFooBoxGet } };
+    CheckExtern("struct Foo { int v; };\n"
+                "extern void host_foo_box_get(return ^Foo f);\n"
+                "int entry()\n"
+                "{\n"
+                "  ^Foo f = host_foo_box_get();\n" /* owns a heap Foo { .v = 42 } */
+                "  return f.v;\n"                  /* 42 */
+                "}\n",
+                hosts, 1, 42);
+}
+
+STRATA_TEST(extern_return_param_rejects_struct_by_value_return)
+{
+    /* The declared return must be `void`; a struct by value is rejected. */
+    StrataCompiler* c = strataCompilerCreate();
+    StrataResult r = strataCompileString(c,
+                                         "struct Foo { int v; };\n"
+                                         "extern Foo GetBad(return Foo f);\n"
+                                         "int entry() { Foo f = GetBad(); return f.v; }",
+                                         "bad_return_param", STRATA_EMIT_LLVM_IR, 0);
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "must declare 'void' return") != NULL);
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}

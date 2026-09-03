@@ -1828,6 +1828,8 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
 
+    bool hasReturnParam = FunctionHasReturnParam(f);
+
     info->returnType = Resolve(b, &f->returnType);
     info->returnType.type = WidenRetType(b, info->returnType.type);
 
@@ -1882,11 +1884,16 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
     /* An extern function returning string: the C ABI is char* (one ptr).
        The caller wraps it back into a fat via an inline strlen. Internal
-       (defined) functions return the fat struct itself. */
-    info->externStringReturn = f->isExtern
+       (defined) functions return the fat struct itself. A `return` param
+       (out pointer) never uses this: its type comes back through the
+       pointer, so the ABI return stays void. */
+    info->externStringReturn = f->isExtern && !hasReturnParam
                                && strcmp(TypeRegistryResolveAlias(&b->m_registry, f->returnType.name), "string") == 0;
 
-    LLVMTypeRef abiRetType = info->externStringReturn ? b->m_ptrTy : info->returnType.type;
+    /* A `return` param means the C function is void ret + out-pointer:
+       the Strata-level return type never reaches the return register. */
+    LLVMTypeRef abiRetType
+        = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
 
     info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
@@ -3814,11 +3821,14 @@ static Value EmitCall(Builder* b, CallExpr* n)
     /* A typed rest param collects the trailing call args into one T[] array
        passed in the rest param's slot, so the LLVM call has exactly
        `params.count` args. A bare extern `...` passes every arg straight
-       through as a real C vararg call. */
+       through as a real C vararg call. A `return` param is synthesized by
+       the caller as one out-pointer slot, so the LLVM call also has exactly
+       `params.count` args (one more than the user wrote). */
+    bool hasReturnParam = fd && FunctionHasReturnParam(fd);
     bool typedRest = fd && fd->isVariadic && !fd->isCVararg && fd->params.count > 0;
     bool cVararg = fd && fd->isCVararg;
 
-    size_t nargs = typedRest ? fd->params.count : n->args.count;
+    size_t nargs = (typedRest || hasReturnParam) ? fd->params.count : n->args.count;
     LLVMValueRef* args = NULL;
 
     if (nargs > 0)
@@ -3826,8 +3836,21 @@ static Value EmitCall(Builder* b, CallExpr* n)
         args = (LLVMValueRef*)arena_alloc(b->m_arena, nargs * sizeof(LLVMValueRef));
     }
 
+    LLVMValueRef returnParamSlot = NULL;
+    TypeDesc returnParamTd = {0};
+
     for (size_t k = 0; k < nargs; k++)
     {
+        /* Return-param slot: a fresh temp the callee writes its result into;
+           loaded back into a value after the call. */
+        if (hasReturnParam && k == fd->params.count - 1)
+        {
+            returnParamTd = Resolve(b, &fd->returnType);
+            returnParamSlot = EntryAlloca(b, returnParamTd.type, "retparam");
+            args[k] = returnParamSlot;
+            continue;
+        }
+
         /* Typed rest slot: gather the trailing call args into a T[]. The
            buffer is stack-allocated; a `ref` rest borrows owning elements
            instead of moving them. */
@@ -4060,6 +4083,15 @@ static Value EmitCall(Builder* b, CallExpr* n)
     else
     {
         call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+    }
+
+    /* Return-param call: the C function wrote the result into our temp slot;
+       load it back as the Strata-level return value. */
+    if (hasReturnParam)
+    {
+        LLVMValueRef retVal = LLVMBuildLoad2(b->m_builder, returnParamTd.type, returnParamSlot, "retparam.val");
+
+        return ValueMake(retVal, returnParamTd);
     }
 
     /* Extern string return: the C ABI handed back a char* (NUL-terminated

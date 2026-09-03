@@ -276,6 +276,16 @@ main) are the internal entry points.
   scalar/`string`/handle/`^T`; the LLVM backend applies C default argument
   promotions (`float`→`double`, small ints→`int`) explicitly. Variadic string
   params cross as `const char*`.
+- `return` out-param (extern only, last param): `extern void GetName(return Name n);`
+  is the out-param idiom for C functions that can't return a struct by value.
+  The param is implicitly `ref`; the declared return must be `void`, and the
+  Strata-level signature becomes `Name GetName()` — the caller writes
+  `Name n = GetName();` (never `Name n; GetName(n);`). The C ABI is void ret +
+  one out-pointer (`void GetName(Name*)`), and the type comes back through the
+  pointer in either direction (the sema "extern cannot return a struct by value"
+  check is skipped for these). Works for any type: structs, scalars, `string`
+  (host writes the fat `{ptr, len}` — caller owns), `T[]`, `^T`/`T?` (host
+  writes the pointer; NULL = empty for `T?`), and handles.
 
 ### Operators
 

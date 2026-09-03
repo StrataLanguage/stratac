@@ -550,11 +550,19 @@ static void ResetStrMap(StrMap* m)
     }
 }
 
-/* Count of non-rest params for a call (excludes the trailing typed-rest param). */
+/* Count of params a call actually passes arguments for: excludes the
+   trailing typed-rest param and the implicit `return` out-param of externs. */
 static size_t NamedParamCount(const FunctionDecl* f)
 {
     bool typedRest = f->isVariadic && !f->isCVararg;
-    return typedRest && f->params.count > 0 ? f->params.count - 1 : f->params.count;
+    size_t n = typedRest && f->params.count > 0 ? f->params.count - 1 : f->params.count;
+
+    if (FunctionHasReturnParam(f))
+    {
+        n -= 1;
+    }
+
+    return n;
 }
 
 /* True if any fixed-size array dimension (`T[N]`) appears in the type tree (even inside a box). */
@@ -2902,7 +2910,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 continue;
             }
         }
-        else if (functionDecl->params.count != c->args.count)
+        else if (NamedParamCount(functionDecl) != c->args.count)
         {
             continue;
         }
@@ -5498,8 +5506,10 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         }
 
         /* Resolve aliases first: `struct Name = string;` returns a scalar
-           pointer across the boundary, not a struct. */
-        if (functionDecl->isExtern
+           pointer across the boundary, not a struct. A `return` param (out
+           pointer) is exempt: its type comes back through the parameter,
+           never in the return register. */
+        if (functionDecl->isExtern && !functionDecl->hasReturnParam
             && IsDefinedStruct(&r.m_registry,
                                TypeRegistryResolveAlias(&r.m_registry, functionDecl->returnType.name)))
         {

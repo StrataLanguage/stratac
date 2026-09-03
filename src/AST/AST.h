@@ -347,6 +347,8 @@ typedef struct {
     TypeName type;
     char* name;
     bool isVarargRest;
+    bool isReturn; /* `return T x` — last param of an extern fn: the callee writes `x` as its
+                      out-param; the Strata-level return type becomes T. */
 } ParamDecl;
 
 typedef struct {
@@ -383,12 +385,32 @@ typedef struct {
     // isVariadic + isCVararg: extern with bare `...` (host provides the body); otherwise the last param is a typed rest collecting trailing args into a T[].
     bool isVariadic;
     bool isCVararg;
+    // A `return T x` last param (extern only): the declared `void` return is
+    // replaced by T, and the C ABI is void ret + `x` passed by pointer.
+    bool hasReturnParam;
     // impl-block members: `methodName` is the unqualified name inside
     // `impl H { extern R M(...); }` while `name`/`mangledName` carry the
     // extern symbol `H_M`. NULL/false for regular functions.
     char* methodName;
     bool fromImpl;
 } FunctionDecl;
+
+static inline const ParamDecl* FunctionReturnParam(const FunctionDecl* f)
+{
+    if (!f || !f->hasReturnParam || f->params.count == 0)
+    {
+        return NULL;
+    }
+
+    const ParamDecl* last = (const ParamDecl*)VecGet(&f->params, f->params.count - 1);
+
+    return (last && last->isReturn) ? last : NULL;
+}
+
+static inline bool FunctionHasReturnParam(const FunctionDecl* f)
+{
+    return FunctionReturnParam(f) != NULL;
+}
 
 /* A single property inside an impl block:
    `property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }`

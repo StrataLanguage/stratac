@@ -890,9 +890,10 @@ static ParamDecl* ParseParam(Parser* p)
     SourceRange start = p->m_cur.range;
     ParamMod mod = ModNone;
     bool isConst = false;
+    bool isReturn = false;
 
-    // 'const' and 'ref' may appear together in either order, each at most once.
-    for (int i = 0; i < 2; i++)
+    // 'const', 'ref' and 'return' may appear together in either order, each at most once.
+    for (int i = 0; i < 3; i++)
     {
         if (ParserConsume(p, TokKwRef))
         {
@@ -903,6 +904,13 @@ static ParamDecl* ParseParam(Parser* p)
         if (ParserConsume(p, TokKwConst))
         {
             isConst = true;
+            continue;
+        }
+
+        if (ParserConsume(p, TokKwReturn))
+        {
+            mod = ModRef;
+            isReturn = true;
             continue;
         }
 
@@ -946,6 +954,7 @@ static ParamDecl* ParseParam(Parser* p)
     node->type = type;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     node->isVarargRest = isVarargRest;
+    node->isReturn = isReturn;
 
     return node;
 }
@@ -1092,6 +1101,35 @@ static Node* ParseFunction(Parser* p)
             {
                 DiagError(p->m_diag, param->base.range, "rest parameter must be the last parameter");
             }
+        }
+
+        if (param->isReturn)
+        {
+            if (!isExtern)
+            {
+                DiagError(p->m_diag, param->base.range, "'return' parameter is only allowed on extern functions");
+                continue;
+            }
+
+            if (i + 1 != node->params.count)
+            {
+                DiagError(p->m_diag, param->base.range, "'return' parameter must be the last parameter");
+                continue;
+            }
+
+            if (strcmp(node->returnType.name, "void") != 0)
+            {
+                DiagErrorFmt(p->m_diag, node->base.range,
+                             "extern function with a 'return' parameter must declare 'void' return; found '%s'",
+                             node->returnType.name);
+                continue;
+            }
+
+            /* The Strata-level signature returns the `return` param's type;
+               at the ABI the C function is void ret + out-pointer (codegen). */
+            node->hasReturnParam = true;
+            node->returnType = param->type;
+            node->returnType.isConst = false;
         }
     }
 

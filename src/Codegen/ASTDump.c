@@ -268,16 +268,23 @@ static void Dump(Node* n, int indent, Sb* out)
                 continue;
             }
 
-            if (param->type.isConst)
+            if (param->isReturn)
             {
-                SbPuts(out, "const ");
+                SbPuts(out, "return ");
             }
-
-            SbPuts(out, ParamModSpelling(param->mod));
-
-            if (param->mod != ModNone)
+            else
             {
-                SbPutc(out, ' ');
+                if (param->type.isConst)
+                {
+                    SbPuts(out, "const ");
+                }
+
+                SbPuts(out, ParamModSpelling(param->mod));
+
+                if (param->mod != ModNone)
+                {
+                    SbPutc(out, ' ');
+                }
             }
 
             SbPrintf(out, "%s %s", param->type.name, param->name);

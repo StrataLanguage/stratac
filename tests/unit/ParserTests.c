@@ -80,6 +80,56 @@ STRATA_TEST(parser_inout_parameter)
     arena_free(&arena);
 }
 
+STRATA_TEST(parser_extern_return_param)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule(
+        "struct Name { int x; };\n"
+        "extern void GetName(return Name n);\n"
+        "extern void GetValue(const return int v);\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* getter = (FunctionDecl*)VecGet(&mod->functions, 0);
+    STRATA_CHECK(getter->isExtern);
+    STRATA_CHECK(getter->hasReturnParam);
+    STRATA_CHECK(strcmp(getter->returnType.name, "Name") == 0);
+    STRATA_CHECK_EQ((long)getter->params.count, 1);
+
+    ParamDecl* p = (ParamDecl*)VecGet(&getter->params, 0);
+    STRATA_CHECK(p->isReturn);
+    STRATA_CHECK(p->mod == ModRef);
+    STRATA_CHECK(strcmp(p->type.name, "Name") == 0);
+
+    FunctionDecl* constGetter = (FunctionDecl*)VecGet(&mod->functions, 1);
+    STRATA_CHECK(constGetter->hasReturnParam);
+    STRATA_CHECK(strcmp(constGetter->returnType.name, "int") == 0);
+    STRATA_CHECK(!constGetter->returnType.isConst);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_extern_return_param_errors)
+{
+    struct { const char* src; const char* msg; } cases[] = {
+        {"void f(return int x) {}", "'return' parameter is only allowed on extern"},
+        {"extern void f(int a, return int b) {}", "must be the last parameter"},
+        {"extern int f(return int x);", "must declare 'void' return"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        ParseModule(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
 STRATA_TEST(parser_binary_precedence)
 {
     Arena arena; arena_init(&arena, 0);
