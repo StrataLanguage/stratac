@@ -1232,7 +1232,7 @@ static bool CheckAllowListSingle(Resolver* r, CallExpr* c, StrMap* scope, const 
 {
     const int maxAllowed = 32;
 
-    bool typesDepleted[maxAllowed];
+    bool typesDepleted[32];
     memset(typesDepleted, 0, sizeof(typesDepleted));
 
     assert(allowedSize < maxAllowed);
@@ -1326,7 +1326,7 @@ static bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, cons
     /* No valid format found, build an error message */
 
     const int formatBufferSize = 2048;
-    char formatBuffer[formatBufferSize];
+    char formatBuffer[2048]; /* literal: a VLA under MSVC */
 
     char* tmpBuffer = formatBuffer;
 

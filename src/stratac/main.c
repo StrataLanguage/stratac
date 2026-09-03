@@ -252,7 +252,7 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
                     "Options:\n");
 
     const int tmpBufferSize = 512;
-    char tmpCmdBuffer[tmpBufferSize];
+    char tmpCmdBuffer[512];
 
     const int numCommands = sizeof(commands) / sizeof(commands[0]);
     for (int i = 0; i < numCommands; i++)
