@@ -17,6 +17,7 @@ typedef struct
     TypeDesc returnType;
     bool* paramByPtr;
     size_t paramByPtrCount;
+    bool externStringReturn; /* extern fn returning string: ABI is char*, caller wraps to fat */
 } FuncInfo;
 
 typedef struct
@@ -307,6 +308,7 @@ static LLVMValueRef ArrayLenPtr(Builder* b, LLVMValueRef slot)
     return LLVMBuildGEP2(b->m_builder, ArrayStructType(b), slot, idx, 2, "alen");
 }
 
+
 static LLVMBasicBlockRef NewBb(Builder* b, const char* name)
 {
     return LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, name);
@@ -359,11 +361,104 @@ static void Br(Builder* b, LLVMBasicBlockRef dest)
     }
 }
 
+static LLVMValueRef StrataAllocFn(Builder* b);
+
+/* Assembles a fat string value from a data pointer and a length. */
+static LLVMValueRef MakeStringFatValue(Builder* b, LLVMValueRef dataPtr, LLVMValueRef lenVal)
+{
+    LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
+    fat = LLVMBuildInsertValue(b->m_builder, fat, dataPtr, 0, "sfat.p");
+    return LLVMBuildInsertValue(b->m_builder, fat, lenVal, 1, "sfat.l");
+}
+
 static LLVMValueRef IdxConst(Builder* b, unsigned i)
 {
     /* All GEP indices must share one integer width; use i64 to stay consistent
        with the runtime (i64) indices produced by AsI64Index. */
     return LLVMConstInt(I64Ty(b), i, 0);
+}
+
+/* The TypeDesc of a `string` value: fat {ptr, len}, like T[]. */
+static TypeDesc StringFatDesc(Builder* b)
+{
+    TypeDesc td = {0};
+    td.type = ArrayStructType(b);
+    td.isArray = true;
+    td.isString = true;
+    return td;
+}
+
+/* Builds an OWNED fat string value from srcPtr[0..len): allocates len+1
+   bytes, copies, and writes the NUL terminator at [len] — the invariant
+   the extern-boundary pun (fat -> char*) relies on. */
+static LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMValueRef lenVal)
+{
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+    LLVMValueRef one = LLVMConstInt(I64Ty(b), 1, 0);
+    LLVMValueRef copyBytes = LLVMBuildAdd(b->m_builder, lenVal, one, "slen");
+    LLVMValueRef allocArgs[1] = {copyBytes};
+    StrataAllocFn(b);
+    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "sbuf");
+
+    /* Copy loop: heap[i] = srcPtr[i] for i in [0, len). */
+    LLVMBasicBlockRef cond = NewBb(b, "scpy.cond");
+    LLVMBasicBlockRef body = NewBb(b, "scpy.body");
+    LLVMBasicBlockRef done = NewBb(b, "scpy.done");
+    LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "scpy.i");
+    LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, cond);
+    LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+    LLVMValueRef more = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, lenVal, "slt");
+    LLVMBuildCondBr(b->m_builder, more, body, done);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, body);
+    LLVMValueRef srcByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcPtr, &i, 1, "sb"), "b");
+    LLVMBuildStore(b->m_builder, srcByte, LLVMBuildGEP2(b->m_builder, i8Ty, heap, &i, 1, "db"));
+    LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, one, "next");
+    LLVMBuildStore(b->m_builder, next, iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, done);
+    /* NUL terminator at [len]. */
+    LLVMValueRef termIdx[1] = {lenVal};
+    LLVMBuildStore(b->m_builder, LLVMConstNull(i8Ty), LLVMBuildGEP2(b->m_builder, i8Ty, heap, termIdx, 1, "sterm"));
+
+    return MakeStringFatValue(b, heap, lenVal);
+}
+
+/* Cached static NUL byte: a valid empty C string for the extern pun. */
+static LLVMValueRef EmptyNulString(Builder* b)
+{
+    if (!b->m_emptyNul)
+    {
+        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+        LLVMTypeRef arrTy = LLVMArrayType(i8Ty, 1);
+        LLVMValueRef global = LLVMAddGlobal(b->m_mod, arrTy, ".emptystr");
+        LLVMSetInitializer(global, LLVMConstNull(arrTy));
+        LLVMSetLinkage(global, LLVMPrivateLinkage);
+        LLVMSetUnnamedAddr(global, 1);
+        LLVMSetGlobalConstant(global, 1);
+
+        LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+        LLVMValueRef idx[2] = {zero, zero};
+        b->m_emptyNul = LLVMConstGEP2(arrTy, global, idx, 2);
+    }
+
+    return b->m_emptyNul;
+}
+
+/* Extracts the char* the C ABI sees for a string value: the data pointer,
+   with a valid empty NUL-terminated buffer substituted when the string is
+   the canonical empty {null, 0} (passing NULL to C string APIs is UB). */
+static LLVMValueRef BuildExternStringPtr(Builder* b, Value v)
+{
+    LLVMValueRef dataPtr = LLVMBuildExtractValue(b->m_builder, v.value, 0, "sptr");
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, dataPtr, LLVMConstNull(b->m_ptrTy), "snull");
+
+    return LLVMBuildSelect(b->m_builder, isNull, EmptyNulString(b), dataPtr, "sextern");
 }
 
 /* LLVM member index for logical field `idx` of a struct, mapping through the
@@ -743,6 +838,25 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         TypeDesc td = Resolve(b, t->inner);
         td.isOptional = true;
         return td;
+    }
+
+    /* `string?` / `AliasOfString?`: same fat representation as string
+       itself; empty = the canonical {null, 0}. */
+    if (t->isOptional && t->inner
+        && strcmp(TypeRegistryResolveAlias(&b->m_registry, t->inner->name), "string") == 0)
+    {
+        TypeDesc td = StringFatDesc(b);
+        td.isOptional = true;
+        return td;
+    }
+
+    /* `string` / alias-of-string: a fat {ptr, len} pair, exactly like T[].
+       Empty = {null, 0} (nothing allocated); every constructed buffer
+       carries a NUL terminator at [len], which the extern-boundary pun
+       (fat -> char*) relies on. */
+    if (strcmp(TypeRegistryResolveAlias(&b->m_registry, t->name), "string") == 0)
+    {
+        return StringFatDesc(b);
     }
 
     if (TypeNameIsOwning(t))
@@ -1708,12 +1822,17 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         bool byPtr = p->mod != ModNone || structVal || BuilderIsOwningType(b, &p->type);
 
-        /* For extern functions, a string param passes the data pointer
-           (const char*) directly, not a pointer to the owner slot.  The
-           host can read the string without taking ownership. Aliases of
-           string follow the same rule (resolved to the same char*). */
-        if (byPtr && f->isExtern
-            && strcmp(TypeRegistryResolveAlias(&b->m_registry, p->type.name), "string") == 0)
+        /* Extern string params pun to char*: a plain string (or alias) passes
+           its data pointer (NUL-terminated); an optional `string?` passes the
+           raw pointer (NULL = empty). The host reads without taking
+           ownership. */
+        bool optionalString = p->type.isOptional && p->type.inner
+                              && strcmp(TypeRegistryResolveAlias(&b->m_registry, p->type.inner->name), "string") == 0;
+        bool externStringParam
+            = f->isExtern
+              && (strcmp(TypeRegistryResolveAlias(&b->m_registry, p->type.name), "string") == 0 || optionalString);
+
+        if (byPtr && externStringParam)
         {
             byPtr = false;
         }
@@ -1728,10 +1847,19 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         info->paramByPtr[i] = byPtr;
 
-        params[i] = byPtr ? b->m_ptrTy : Resolve(b, &p->type).type;
+        /* Extern string params pun to char* (the fat's first member). */
+        params[i] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
     }
 
-    info->type = LLVMFunctionType(info->returnType.type, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
+    /* An extern function returning string: the C ABI is char* (one ptr).
+       The caller wraps it back into a fat via an inline strlen. Internal
+       (defined) functions return the fat struct itself. */
+    info->externStringReturn = f->isExtern
+                               && strcmp(TypeRegistryResolveAlias(&b->m_registry, f->returnType.name), "string") == 0;
+
+    LLVMTypeRef abiRetType = info->externStringReturn ? b->m_ptrTy : info->returnType.type;
+
+    info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
     if (b->m_jitMode && f->isExtern)
     {
@@ -1930,7 +2058,15 @@ static void NullMovedSource(Builder* b, Node* n)
 
     if (src.valid)
     {
-        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+        if (src.typeDesc.isArray)
+        {
+            /* Array / string slots rebind wholesale: zero the whole fat. */
+            LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
+        }
+        else
+        {
+            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+        }
     }
 }
 
@@ -1947,8 +2083,12 @@ static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, cons
 
     if (init->kind == NodeStrLiteral)
     {
-        StrLiteral* lit = AsNode(StrLiteral, init);
-        return HeapCopyString(b, evaluated.value, strlen(lit->value));
+        /* A string literal evaluates to a borrowed constant fat {ptr, len};
+           an owning destination gets its own heap copy (NUL at [len]). */
+        LLVMValueRef srcPtr = LLVMBuildExtractValue(b->m_builder, evaluated.value, 0, "slit.p");
+        LLVMValueRef lenVal = LLVMBuildExtractValue(b->m_builder, evaluated.value, 1, "slit.l");
+
+        return BuildOwnedStringFat(b, srcPtr, lenVal);
     }
 
     NullMovedSource(b, init);
@@ -2104,7 +2244,9 @@ static LValue EmitLValue(Builder* b, Node* n)
 
         LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, base.ptr), "ap");
 
-        TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
+        /* string[i]: the element is a byte (arrayInner is unused for strings). */
+        TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
+                                                 : Resolve(b, base.typeDesc.arrayInner);
         LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
@@ -2285,7 +2427,9 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 
     LLVMValueRef dataPtr = LLVMBuildExtractValue(b->m_builder, base.value, 0, "ap");
 
-    TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
+    /* string[i]: the element is a byte (arrayInner is unused for strings). */
+    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
+                                             : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
 
     LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
@@ -2403,6 +2547,25 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     Value r = DerefBoxValue(b, EmitExpr(b, n->rhs));
 
     TypeDesc typeDesc = l.typeDesc;
+
+    /* String equality/inequality compares the data pointers (identity,
+       matching the previous representation's semantics). Other comparisons
+       on strings are meaningless. */
+    if (l.typeDesc.isString || r.typeDesc.isString)
+    {
+        if (n->op == BinEqEq || n->op == BinNotEq)
+        {
+            LLVMValueRef lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
+            LLVMValueRef rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
+            LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, n->op == BinEqEq ? LLVMIntEQ : LLVMIntNE, lp, rp, "seq");
+
+            return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
+        }
+
+        DiagError(b->m_diag, n->base.range, "strings only support '==' and '!=' comparisons");
+
+        return ValueMake(LLVMConstNull(I1Ty(b)), TypeDescMake(I1Ty(b), 0, NULL));
+    }
 
     if (l.typeDesc.isFloat && !r.typeDesc.isFloat)
     {
@@ -2595,10 +2758,18 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (lvalue.valid)
         {
-            /* Whole-array rebind: free the old buffer, take the new {ptr,len}
-               struct, and null a moved source. */
+            /* Whole-array / string rebind: free the old buffer, take the new
+               {ptr,len} struct, and null a moved source. A string literal RHS
+               is a borrowed constant, so it is heap-copied first. */
             if (lvalue.typeDesc.isArray && n->op == AssignSet)
             {
+                if (lvalue.typeDesc.isString && n->value->kind == NodeStrLiteral)
+                {
+                    LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rhs.value, 0, "aslit.p");
+                    LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rhs.value, 1, "aslit.l");
+                    rhs = ValueMake(BuildOwnedStringFat(b, sp, sl), rhs.typeDesc);
+                }
+
                 EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
 
@@ -3010,7 +3181,9 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
                                       && strcmp(elemTd.boxInner->name, v.typeDesc.boxInner->name) == 0))
                               && valNode->kind != NodeStrLiteral;
 
-        if (sameOwningType)
+        bool stringMove = elemTd.isString && v.typeDesc.isString && valNode->kind != NodeStrLiteral;
+
+        if (sameOwningType || stringMove)
         {
             LLVMBuildStore(b->m_builder, v.value, elAddr);
             NullMovedSource(b, valNode);
@@ -3029,7 +3202,7 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
             LLVMBuildStore(b->m_builder, inner, heap);
             LLVMBuildStore(b->m_builder, heap, elAddr);
         }
-        else if (elemTd.isBox)
+        else if (elemTd.isString)
         {
             /* string element: heap-copy literal, move source. */
             LLVMValueRef owned = EmitOwnedValue(b, v, valNode, StringTypeName(b));
@@ -3266,6 +3439,15 @@ static LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
 
 static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 {
+    if (td.isString)
+    {
+        /* Deep copy: fresh buffer with the NUL terminator at [len]. */
+        LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, src.value, 0, "cp.p");
+        LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, src.value, 1, "cp.l");
+
+        return ValueMake(BuildOwnedStringFat(b, sp, sl), td);
+    }
+
     if (td.isBox && !td.boxInner)
     {
         StrataStrdupFn(b);
@@ -3398,6 +3580,12 @@ static Value EmitDropBuiltin(Builder* b, CallExpr* n)
    extern varargs */
 static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
 {
+    /* A string vararg crosses as char* (printf("%s", s) et al). */
+    if (v.typeDesc.isString)
+    {
+        return BuildExternStringPtr(b, v);
+    }
+
     LLVMTypeRef ty = v.typeDesc.type;
 
     if (ty == I1Ty(b))
@@ -3531,11 +3719,13 @@ static Value EmitCall(Builder* b, CallExpr* n)
             Value rawArg = EmitExpr(b, argNode);
             Value argValue;
 
-            /* An owning string field takes a heap copy of a literal so the
-                field can be freed without freeing a string global. */
-            if (fieldTd.isBox && !fieldTd.boxInner && argNode->kind == NodeStrLiteral)
+            /* A string field takes a heap copy of a literal so the field can
+               be freed without freeing a (borrowed) string constant. */
+            if (fieldTd.isString && argNode->kind == NodeStrLiteral)
             {
-                argValue = ValueMake(HeapCopyString(b, rawArg.value, strlen(((StrLiteral*)argNode)->value)), fieldTd);
+                LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawArg.value, 0, "fslit.p");
+                LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawArg.value, 1, "fslit.l");
+                argValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
             }
             else if (fieldTd.isBox && fieldTd.boxInner
                      && !(rawArg.typeDesc.isBox && rawArg.typeDesc.boxInner
@@ -3557,7 +3747,8 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
             /* If an owning field was moved from an owning lvalue source,
                null the source so its scope-exit drop is a no-op. */
-            if (fieldTd.isBox && rawArg.typeDesc.isBox && argNode->kind != NodeStrLiteral)
+            if ((fieldTd.isBox || fieldTd.isString) && (rawArg.typeDesc.isBox || rawArg.typeDesc.isString)
+                && argNode->kind != NodeStrLiteral)
             {
                 NullMovedSource(b, argNode);
             }
@@ -3679,33 +3870,16 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
         if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
         {
-            StrLiteral* lit = AsNode(StrLiteral, argNode);
-            size_t copyLen = strlen(lit->value) + 1;
-
-            LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
-            LLVMValueRef args2[1] = {size};
-            StrataAllocFn(b);
-
-            LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args2, 1, "argstr");
-
+            /* Internal string param (by slot address): the callee owns and
+               drops the value, so materialize an owned fat into a fresh
+               temp slot instead of handing out the borrowed constant. */
             Value litVal = EmitExpr(b, argNode);
-            LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
-            LLVMValueRef srcGep = litVal.value;
-            LLVMValueRef dstGep = heap;
+            LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, litVal.value, 0, "arglit.p");
+            LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, litVal.value, 1, "arglit.l");
+            LLVMValueRef owned = BuildOwnedStringFat(b, sp, sl);
 
-            for (size_t ci = 0; ci < copyLen; ci++)
-            {
-                LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
-                LLVMValueRef srcIdx[1] = {ciVal};
-                LLVMValueRef dstIdx[1] = {ciVal};
-                LLVMValueRef byteVal = LLVMBuildLoad2(
-                    b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "asrc"), "ab");
-
-                LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "adst"));
-            }
-
-            LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "stslot");
-            LLVMBuildStore(b->m_builder, heap, slot);
+            LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "stslot");
+            LLVMBuildStore(b->m_builder, owned, slot);
 
             args[k] = slot;
         }
@@ -3726,7 +3900,23 @@ static Value EmitCall(Builder* b, CallExpr* n)
             /* deref */
             bool paramIsRealBox = extTy->isBox || extTy->isOptional;
 
-            if (av.typeDesc.isBox)
+            if (av.typeDesc.isString)
+            {
+                if (paramIsRealBox)
+                {
+                    /* `string?` param: pass the RAW data pointer — NULL stays
+                       NULL (empty optional), preserving the C-side NULL check. */
+                    args[k] = LLVMBuildExtractValue(b->m_builder, av.value, 0, "optstr");
+                }
+                else
+                {
+                    /* Extern string param: pun the fat to char*
+                       (NUL-terminated; empty {null, 0} materializes a valid
+                       empty C string). */
+                    args[k] = BuildExternStringPtr(b, av);
+                }
+            }
+            else if (av.typeDesc.isBox)
             {
                 args[k] = paramIsRealBox ? av.value : DerefBoxValue(b, av).value;
             }
@@ -3832,6 +4022,41 @@ static Value EmitCall(Builder* b, CallExpr* n)
         call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
     }
 
+    /* Extern string return: the C ABI handed back a char* (NUL-terminated
+       by contract). Wrap it into a fat: substitute a valid empty buffer for
+       NULL and measure the length with an inline scan. */
+    if (info->externStringReturn)
+    {
+        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, call, LLVMConstNull(b->m_ptrTy), "retnull");
+        LLVMValueRef dataPtr = LLVMBuildSelect(b->m_builder, isNull, EmptyNulString(b), call, "retstr");
+
+        /* Inline strlen: len = 0 while dataPtr[len] != 0. */
+        LLVMBasicBlockRef cond = NewBb(b, "slen.cond");
+        LLVMBasicBlockRef body = NewBb(b, "slen.body");
+        LLVMBasicBlockRef done = NewBb(b, "slen.done");
+        LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "slen.i");
+        LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
+        Br(b, cond);
+
+        PositionAtEnd(b, cond);
+        LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
+        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+        LLVMValueRef byte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &i, 1, "sc"), "c");
+        LLVMValueRef more = LLVMBuildICmp(b->m_builder, LLVMIntNE, byte, LLVMConstNull(i8Ty), "nz");
+        LLVMBuildCondBr(b->m_builder, more, body, done);
+        b->m_terminated = true;
+
+        PositionAtEnd(b, body);
+        LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "next");
+        LLVMBuildStore(b->m_builder, next, iSlot);
+        Br(b, cond);
+
+        PositionAtEnd(b, done);
+        LLVMValueRef lenVal = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "len");
+
+        return ValueMake(MakeStringFatValue(b, dataPtr, lenVal), info->returnType);
+    }
+
     return ValueMake(call, info->returnType);
 }
 
@@ -3917,7 +4142,27 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                 continue;
             }
 
-            if (elemTd.isArray)
+            if (elemTd.isString)
+            {
+                /* string element: literals are heap-copied (the constant is
+                   borrowed; the array owns its elements); variables move. */
+                if (borrow)
+                {
+                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                }
+                else if (eNode->kind == NodeStrLiteral)
+                {
+                    LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, v.value, 0, "aelit.p");
+                    LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, v.value, 1, "aelit.l");
+                    LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), elemAddr);
+                }
+                else
+                {
+                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                    NullMovedSource(b, eNode);
+                }
+            }
+            else if (elemTd.isArray)
             {
                 /* Nested array literal element: recurse into the inline slot. */
                 if (eNode->kind == NodeArrayInit)
@@ -4129,11 +4374,12 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         Value rawField = EmitExpr(b, field->value);
         Value fieldValue;
 
-        if (fieldTd.isBox && !fieldTd.boxInner && field->value->kind == NodeStrLiteral)
+        if (fieldTd.isString && field->value->kind == NodeStrLiteral)
         {
-            /* owning string field from a literal -> heap copy (safe to free). */
-            fieldValue
-                = ValueMake(HeapCopyString(b, rawField.value, strlen(((StrLiteral*)field->value)->value)), fieldTd);
+            /* string field from a literal -> heap copy (safe to free). */
+            LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawField.value, 0, "fslit.p");
+            LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawField.value, 1, "fslit.l");
+            fieldValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
         }
         else if (fieldTd.isBox && fieldTd.boxInner
                  && !(rawField.typeDesc.isBox && rawField.typeDesc.boxInner
@@ -4156,7 +4402,8 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         /* If an owning field was moved from an owning lvalue source (string,
            ^T, or a dynamic array), null the source so its scope-exit drop
            is a no-op. */
-        if (((fieldTd.isBox && rawField.typeDesc.isBox) || (fieldTd.isArray && rawField.typeDesc.isArray))
+        if (((fieldTd.isBox && (rawField.typeDesc.isBox || rawField.typeDesc.isString))
+             || (fieldTd.isArray && rawField.typeDesc.isArray))
             && field->value->kind != NodeStrLiteral && field->value->kind != NodeArrayInit)
         {
             NullMovedSource(b, field->value);
@@ -4219,6 +4466,8 @@ Value EmitExpr(Builder* b, Node* n)
         StrLiteral* literal = (StrLiteral*)n;
 
         size_t len = strlen(literal->value);
+        /* The constant carries its NUL terminator (flag 0 in this LLVM
+           build), upholding the fat-string invariant: NUL at [len]. */
         LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
         LLVMTypeRef strType = LLVMTypeOf(strConst);
 
@@ -4233,9 +4482,12 @@ Value EmitExpr(Builder* b, Node* n)
         LLVMValueRef idx[2] = {zero, zero};
         LLVMValueRef gep = LLVMConstGEP2(strType, global, idx, 2);
 
-        TypeDesc td = ResolveByName(b, "string");
+        /* A literal is a borrowed fat {ptr, len}: no allocation, NUL at
+           [len]. Owning consumers heap-copy via EmitOwnedValue. */
+        TypeDesc td = StringFatDesc(b);
+        LLVMValueRef fat = LLVMConstNamedStruct(ArrayStructType(b), (LLVMValueRef[2]){gep, LLVMConstInt(I64Ty(b), (unsigned long long)len, 0)}, 2);
 
-        return ValueMake(gep, td);
+        return ValueMake(fat, td);
     }
 
     case NodeIdent:
@@ -4340,21 +4592,23 @@ Value EmitExpr(Builder* b, Node* n)
         Value operand = EmitExpr(b, cast->operand);
         TypeDesc target = Resolve(b, &cast->type);
 
-        if (operand.typeDesc.isBox && target.isBox)
+        /* `(Name)"lit"` / `(string)"lit"`: the result must OWN its bytes, so
+           heap-copy the static literal (drop glue frees real memory, never
+           the constant pool). Movable sources stay a retag - the consumer
+           nulls the source, exactly like `string t = s;`. */
+        if (target.isString && cast->operand->kind == NodeStrLiteral)
+        {
+            LLVMValueRef srcPtr = LLVMBuildExtractValue(b->m_builder, operand.value, 0, "clit.p");
+            LLVMValueRef lenVal = LLVMBuildExtractValue(b->m_builder, operand.value, 1, "clit.l");
+            LLVMValueRef owned = BuildOwnedStringFat(b, srcPtr, lenVal);
+
+            return ValueMake(owned, target);
+        }
+
+        if ((operand.typeDesc.isBox && target.isBox)
+            || (operand.typeDesc.isString && target.isString))
         {
             /* Retag with the destination type; Coerce would keep the source's. */
-            if (!target.boxInner && !operand.typeDesc.boxInner && cast->operand->kind == NodeStrLiteral)
-            {
-                /* `(Name)"lit"`: the result must OWN its bytes, so heap-copy
-                   the static literal (drop glue frees real memory, never the
-                   constant pool). Movable sources stay a retag - the consumer
-                   nulls the source, exactly like `string t = s;`. */
-                StrLiteral* lit = AsNode(StrLiteral, cast->operand);
-                LLVMValueRef owned = HeapCopyString(b, operand.value, strlen(lit->value));
-
-                return ValueMake(owned, target);
-            }
-
             return ValueMake(operand.value, target);
         }
 
@@ -4404,10 +4658,10 @@ static void EmitStmt(Builder* b, Node* n)
             {
                 v = UnboxIfBox(b, Coerce(b, raw, b->m_curRet), b->m_curRet);
 
-                if (v.typeDesc.isBox && !v.typeDesc.boxInner)
+                if (v.typeDesc.isString)
                 {
-                    /* Return type is string: construct the owned value (heap-copy
-                       literal, move source). */
+                    /* Returning a string: construct the owned value
+                       (heap-copy literal, move source). */
                     LLVMValueRef owned = EmitOwnedValue(b, v, r->value, StringTypeName(b));
                     v = ValueMake(owned, b->m_curRet);
                 }
@@ -4479,11 +4733,21 @@ static void EmitStmt(Builder* b, Node* n)
                     LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, varDecl->init)).value;
                     LLVMBuildStore(b->m_builder, arr, slot);
                 }
+                else if (typeDesc.isString && varDecl->init->kind == NodeStrLiteral)
+                {
+                    /* string from a literal: heap-copy (the constant is
+                       borrowed; the binding owns its bytes). */
+                    Value value = EmitExpr(b, varDecl->init);
+                    LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, value.value, 0, "vslit.p");
+                    LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, value.value, 1, "vslit.l");
+                    LLVMValueRef owned = BuildOwnedStringFat(b, sp, sl);
+                    LLVMBuildStore(b->m_builder, owned, slot);
+                }
                 else
                 {
-                    /* Move from another array binding: copy the {ptr,len}
-                       struct and zero the source (whole slot) to avoid a
-                       double free. */
+                    /* Move from another array/string binding: copy the
+                       {ptr,len} struct and zero the source (whole slot) to
+                       avoid a double free. */
                     Node* movedNode = (Node*)MovableBoxSourceNode(varDecl->init);
                     LValue src = movedNode ? EmitLValueForNullStore(b, movedNode) : (LValue){0};
 
@@ -5188,11 +5452,11 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                     LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
                     LLVMBuildStore(b->m_builder, arr, sym->value);
                 }
-                else if (td.isBox && !td.boxInner)
+                else if (td.isString)
                 {
-                    /* Alias-of-string global: construct the owned value
-                       directly into the slot (heap-copy a literal; take a
-                       call result). Teardown drops it. */
+                    /* string / alias-of-string global: construct the owned
+                       value directly into the slot (heap-copy a literal; take
+                       a call result). Teardown drops it. */
                     Value val = EmitExpr(b, gd->init);
                     LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, StringTypeName(b));
                     LLVMBuildStore(b->m_builder, owned, sym->value);

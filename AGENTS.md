@@ -140,6 +140,18 @@ main) are the internal entry points.
 ### Types
 
 - Scalars: `void bool int uint long ulong byte sbyte short ushort float double`
+- Strings: `string` — an owning fat `{ptr, len}` pair, the SAME representation
+  as `T[]` (codegen `TypeDesc.isString`; empty = canonical `{null, 0}`,
+  never allocated). Every constructed buffer keeps a NUL at `[len]` — the
+  invariant the extern pun relies on — so `.length` is O(1) (like arrays;
+  sema types it `ulong`) and `s[i]` is a bounds-checked `byte` read.
+  Move-on-assign (source fat zeroed), drop frees the buffer. Equality is
+  POINTER identity (`==`/`!=` only). Extern: puns to `char*` — the fat's
+  first member — with a static empty buffer substituted for `{null, 0}` so
+  C never sees NULL; `string?` passes the RAW pointer (NULL = empty); an
+  extern string RETURN is `char*` and the caller wraps it via an inline
+  strlen. Literals are borrowed constant fats; owning consumers heap-copy.
+  `extern struct` fields may not be `string` (no C-layout mirror for a fat).
 - Type aliases: `struct Meter = int;` — a strong newtype over any type.
   Identity is by NAME: no implicit conversion in either direction (including
   literals), no overload matching across it, and distinct aliases of the same

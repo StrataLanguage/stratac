@@ -2788,6 +2788,14 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return NULL;
         }
 
+        /* `string.length` (through aliases and `string?`): the fat length
+           field, like T[] — ulong, matching arrays. */
+        if (strcmp(m->member, "length") == 0
+            && strcmp(TypeRegistryResolveAlias(&r->m_registry, baseType->name), "string") == 0)
+        {
+            return InternTypeName(r, "ulong");
+        }
+
         const StructType* structType = TypeRegistryFind(&r->m_registry, baseType->name);
         if (!structType)
         {
@@ -2872,6 +2880,12 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         if (baseType && baseType->isOptional)
         {
             baseType = baseType->inner;
+        }
+
+        if (baseType && strcmp(TypeRegistryResolveAlias(&r->m_registry, baseType->name), "string") == 0)
+        {
+            /* `s[i]` yields the byte at i (bounds-checked in codegen). */
+            return InternTypeName(r, "byte");
         }
 
         return baseType ? TypeNameArrayElem(baseType) : NULL;
@@ -4751,6 +4765,18 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         for (size_t j = 0; j < sd->fields.count; j++)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
+
+            if (sd->isExtern
+                && strcmp(TypeRegistryResolveAlias(&r.m_registry, field->type.name), "string") == 0)
+            {
+                /* A string is a fat {ptr, len} pair internally; an extern
+                   struct must mirror the host's C layout byte-for-byte, so a
+                   char* member has no string spelling. */
+                DiagErrorFmt(diag, field->type.range,
+                             "extern struct field '%s' may not have type 'string' "
+                             "(use a '^byte' or integer-typed member for a raw char*)",
+                             field->name);
+            }
 
             if (IsIncompleteStruct(&r.m_registry, field->type.name))
             {

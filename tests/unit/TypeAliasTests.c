@@ -1027,10 +1027,11 @@ STRATA_TEST(string_global_owns_and_tears_down)
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
     /* String globals use the same owning representation as every other
-       owning global: null slot, runtime init fills it, teardown drops it.
-       No static constant-pool pointer, no name-keyed skips. */
-    STRATA_CHECK(strstr(res.output, "@g = global ptr null") != NULL);
-    STRATA_CHECK(strstr(res.output, "store ptr %str, ptr @g") != NULL);
+       owning global: a zeroed fat {ptr, len} slot, runtime init fills it,
+       teardown drops it. No static constant-pool pointer, no name-keyed
+       skips. */
+    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i64 } zeroinitializer") != NULL);
+    STRATA_CHECK(strstr(res.output, "store { ptr, i64 } %sfat.l, ptr @g") != NULL);
     STRATA_CHECK(strstr(res.output, "__strata_module_teardown") != NULL);
 
     free((void*)res.output);
