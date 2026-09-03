@@ -228,6 +228,46 @@ static bool IsBoxMoved(const Resolver* r, const char* name)
     return StrMapGet(&r->m_movedBoxes, name) == (void*)1;
 }
 
+/* Owning-ness with alias resolution: `struct Name = string;` binds a type
+   that moves, requires init, and drops exactly like its underlying type.
+   Plain leaves are non-owning; a leaf alias is owning when its fully
+   resolved underlying type is. */
+static bool AliasIsOwning(const Resolver* r, const TypeName* t)
+{
+    if (!t || !t->name || TypeNameIsOwning(t))
+    {
+        return TypeNameIsOwning(t);
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, t->name);
+
+    if (!leaf || strcmp(leaf, t->name) == 0)
+    {
+        return false;
+    }
+
+    if (strcmp(leaf, "string") == 0)
+    {
+        return true;
+    }
+
+    TypeName parsed = TypeNameParse(r->m_arena, leaf);
+
+    return TypeNameIsOwning(&parsed);
+}
+
+/* True when both spellings resolve to the same underlying type through the
+   alias table. Identity is otherwise preserved (two distinct aliases of
+   `string` never unify implicitly); this is the explicit-cast escape hatch
+   (`(Name)s`, `(string)n`) and nothing more. */
+static bool SameResolvedType(const Resolver* r, const char* a, const char* b)
+{
+    const char* la = a ? TypeRegistryResolveAlias(&r->m_registry, a) : NULL;
+    const char* lb = b ? TypeRegistryResolveAlias(&r->m_registry, b) : NULL;
+
+    return la && lb && strcmp(la, lb) == 0;
+}
+
 static void MarkBoxMoved(Resolver* r, const char* name)
 {
     StrMapPut(&r->m_movedBoxes, name, (void*)1);
@@ -1385,7 +1425,7 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     Node* arg0 = (Node*)VecGet(&c->args, 0);
     const TypeName* argType = InferType(r, arg0, scope);
 
-    if (!argType || !TypeNameIsOwning(argType))
+    if (!argType || !AliasIsOwning(r, argType))
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'copy' expects an owning type (string, ^T, T[]) — not '%s'",
                      argType ? argType->name : "");
@@ -1419,7 +1459,7 @@ static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     Node* arg0 = (Node*)VecGet(&c->args, 0);
     const TypeName* argType = InferType(r, arg0, scope);
 
-    if (!argType || !TypeNameIsOwning(argType))
+    if (!argType || !AliasIsOwning(r, argType))
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'drop' expects an owning type (string, ^T, T[]) — not '%s'",
                      argType ? argType->name : "");
@@ -1601,7 +1641,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
 
         /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
-        if (valueType && TypeNameIsOwning(valueType) && IsArrayElementBorrow(arg1))
+        if (valueType && AliasIsOwning(r, valueType) && IsArrayElementBorrow(arg1))
         {
             DiagErrorFmt(r->m_diag, arg1->range,
                          "cannot push '%s' read from an array element - it would be owned by two arrays; "
@@ -1613,7 +1653,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         CheckCallArgOptionalDerefs(r, c, scope);
 
         /* Pushing an owning value moves it in; an optional source is left EMPTY, never poisoning its parent. */
-        if (valueType && TypeNameIsOwning(valueType))
+        if (valueType && AliasIsOwning(r, valueType))
         {
             const char* movedKey = MovableBoxSourceKey(r, arg1);
 
@@ -1645,7 +1685,7 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
         return false;
     }
 
-    if (IsNumeric(type->name) || strcmp(type->name, "string") == 0)
+    if (IsNumeric(type->name) || strcmp(TypeRegistryResolveAlias(&r->m_registry, type->name), "string") == 0)
     {
         return true;
     }
@@ -1744,7 +1784,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
             const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
 
             targetType = &param->type;
-            moves = TypeNameIsOwning(&param->type) && param->mod == ModNone && !best->isExtern;
+            moves = AliasIsOwning(r, &param->type) && param->mod == ModNone && !best->isExtern;
         }
         else if (typedRest)
         {
@@ -1752,7 +1792,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
             const TypeName* elem = TypeNameArrayElem(&restParam->type);
 
             targetType = elem;
-            moves = targetType && TypeNameIsOwning(targetType) && restParam->mod == ModNone && !best->isExtern;
+            moves = targetType && AliasIsOwning(r, targetType) && restParam->mod == ModNone && !best->isExtern;
         }
 
         if (!moves || !targetType)
@@ -2276,7 +2316,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
                     ai->elementType = elem;
 
-                    if (elem && TypeNameIsOwning(elem))
+                    if (elem && AliasIsOwning(r, elem))
                     {
                         for (size_t k = 0; k < ai->elements.count; k++)
                         {
@@ -2301,7 +2341,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
 
-            if (TypeNameIsOwning(&fd->type))
+            if (AliasIsOwning(r, &fd->type))
             {
                 const char* movedKey = MovableBoxSourceKey(r, arg);
 
@@ -2942,7 +2982,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
         }
-        else if (TypeNameIsOwning(varType))
+        else if (AliasIsOwning(r, varType))
         {
             /* Whole-value use: reject if fully or partially moved. Member-base use: reject only if fully moved (descend
              * into partial). */
@@ -2972,6 +3012,49 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         ResolveExpr(r, b->lhs, scope);
         ResolveExpr(r, b->rhs, scope);
+
+        /* Arithmetic/bitwise operators need numeric operands, or two vectors
+           of the same shape (raw or through a shared alias). Anything else
+           used to fall through to a bogus `int` inference and lower to
+           invalid pointer arithmetic. */
+        switch (b->op)
+        {
+        case BinAdd:
+        case BinSub:
+        case BinMul:
+        case BinDiv:
+        case BinMod:
+        case BinBitAnd:
+        case BinBitOr:
+        case BinBitXor:
+        case BinShl:
+        case BinShr:
+        {
+            const TypeName* lt = InferType(r, b->lhs, scope);
+            const TypeName* rt = InferType(r, b->rhs, scope);
+            const char* ln = lt ? lt->name : "";
+            const char* rn = rt ? rt->name : "";
+
+            /* An unknown operand type (inference returns NULL for some
+               extern-struct member/index chains) is not proof of invalidity.
+               A box/optional operand derefs to its inner for arithmetic. */
+            const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : ln;
+            const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
+
+            bool numericPair = IsNumeric(ln2) && IsNumeric(rn2);
+            bool vectorPair = SameResolvedType(r, ln2, rn2)
+                              && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
+
+            if (lt && rt && !numericPair && !vectorPair)
+            {
+                DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+            }
+
+            break;
+        }
+        default:
+            break;
+        }
 
         return;
     }
@@ -3065,7 +3148,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
 
         const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
-        bool targetIsBox = tt && TypeNameIsOwning(tt);
+        bool targetIsBox = tt && AliasIsOwning(r, tt);
 
         /* An owning field target is reassigned, not read - re-life it instead of tripping use-after-move. */
         const char* fieldKey = NULL;
@@ -3075,7 +3158,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             const TypeName* ft = InferType(r, a->target, scope);
 
-            if (ft && TypeNameIsOwning(ft))
+            if (ft && AliasIsOwning(r, ft))
             {
                 targetIsOwningField = true;
                 fieldKey = MovableBoxSourceKey(r, a->target);
@@ -3364,6 +3447,16 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         CheckConstAssign(r, inc->operand, inc->base.range);
         ResolveExpr(r, inc->operand, scope);
 
+        /* ++/-- only makes sense on numeric storage; anything else would
+           fall through to pointer arithmetic. */
+        const TypeName* incType = InferType(r, inc->operand, scope);
+
+        if (incType && !IsNumeric(incType->name))
+        {
+            DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
+                         inc->isDec ? "decrement" : "increment", incType->name);
+        }
+
         /* ++/-- invalidates index spellings of the operand. */
         if (inc->operand->kind == NodeIdent)
         {
@@ -3412,7 +3505,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                        && ((TypeNameBoxInner(src) && TypeRegistryIsOpaque(&r->m_registry, src->inner->name))
                            || (TypeNameBoxInner(dst) && TypeRegistryIsOpaque(&r->m_registry, dst->inner->name)));
 
-        if (src && !scalarPair && !handlePair && !simdPair && !boxPair)
+        /* Alias <-> underlying (or alias <-> alias) of the SAME resolved type:
+           the explicit escape hatch for strong typedefs (`(Name)s`, `(string)n`).
+           Distinct aliases still never convert implicitly. */
+        bool aliasPair = src && SameResolvedType(r, srcName, dstName)
+                         && (TypeRegistryIsTypeAlias(&r->m_registry, srcName)
+                             || TypeRegistryIsTypeAlias(&r->m_registry, dstName));
+
+        if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair)
         {
             DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
         }
@@ -3480,7 +3580,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* Box fields can be moved out too; IsBoxUnusable catches full or partial moves. */
         const TypeName* selfType = InferType(r, n, scope);
 
-        if (selfType && TypeNameIsOwning(selfType))
+        if (selfType && AliasIsOwning(r, selfType))
         {
             const char* key = MovableBoxSourceKey(r, n);
 
@@ -3728,7 +3828,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 const TypeName* fieldValueType2 = InferType(r, field->value, scope);
 
                 const char* movedFieldKey
-                    = (TypeNameIsOwning(&fieldDecl->type) && fieldValueType2 && TypeNameIsOwning(fieldValueType2))
+                    = (AliasIsOwning(r, &fieldDecl->type) && fieldValueType2 && AliasIsOwning(r, fieldValueType2))
                           ? MovableBoxSourceKey(r, field->value)
                           : NULL;
 
@@ -3795,7 +3895,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                    {null, 0} fat struct). */
                 bool mustInit
                     = !fd->type.isOptional && !TypeNameIsDynamicArray(&fd->type)
-                      && (TypeNameIsOwning(&fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
+                      && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
 
                 if (mustInit && !covered[f])
                 {
@@ -3913,7 +4013,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             ResolveExpr(r, elem, scope);
 
             /* An owning value in an array literal moves its source (like a var-decl move). */
-            if (ai->elementType && TypeNameIsOwning(ai->elementType))
+            if (ai->elementType && AliasIsOwning(r, ai->elementType))
             {
                 const char* movedKey = MovableBoxSourceKey(r, elem);
 
@@ -4027,7 +4127,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         }
 
         /* Owning types need an init (arrays default empty; optionals may be empty). */
-        if (TypeNameIsOwning(&vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
+        if (AliasIsOwning(r, &vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
             && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
@@ -4074,7 +4174,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             CheckOptionalDeref(r, vd->init, initType, &vd->type, vd->base.range);
 
             /* ^T init from a box source (identifier/field/cast) moves it. */
-            const char* movedInitKey = initType && TypeNameIsOwning(&vd->type) && TypeNameIsOwning(initType)
+            const char* movedInitKey = initType && AliasIsOwning(r, &vd->type) && AliasIsOwning(r, initType)
                                            ? MovableBoxSourceKey(r, vd->init)
                                            : NULL;
 
@@ -4160,7 +4260,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             /* Only a move if the function itself returns ^T; otherwise
                 it's a read (unless the inner type is owning). */
             const char* movedReturnKey
-                = typeName && TypeNameIsOwning(typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
+                = typeName && AliasIsOwning(r, typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
 
             if (movedReturnKey)
             {
@@ -4536,7 +4636,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
-        if (TypeNameIsOwning(&gd->type))
+        if (AliasIsOwning(&r, &gd->type))
         {
             StrMapPut(&r.m_boxGlobals, gd->name, (void*)&gd->type);
         }
@@ -4609,7 +4709,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 StrMapPut(&r.m_constVars, p->name, (void*)1);
             }
 
-            if (TypeNameIsOwning(&p->type) && p->mod == ModRef)
+            if (AliasIsOwning(&r, &p->type) && p->mod == ModRef)
             {
                 StrMapPut(&r.m_refBoxParams, p->name, (void*)1);
             }
@@ -4674,7 +4774,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                     DiagErrorFmt(diag, field->type.range, "fixed-size array field '%s' may not contain a dynamic array",
                                  field->name);
                 }
-                else if (leaf->isBox || TypeNameIsOwning(leaf))
+                else if (leaf->isBox || AliasIsOwning(&r, leaf))
                 {
                     DiagErrorFmt(diag, field->type.range,
                                  "fixed-size array field '%s' may not own its elements ('%s' is owning); "
@@ -4760,7 +4860,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             /* Scalar / alias / struct globals: the initializer is type-checked
                like a local declaration (the backend only lowers compile-time
                constant initializers, so nothing here may slip through). */
-            if (!TypeNameIsOwning(&gd->type))
+            if (!AliasIsOwning(&r, &gd->type))
             {
                 if (gd->init)
                 {
@@ -4841,7 +4941,11 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                          functionDecl->name, functionDecl->returnType.name);
         }
 
-        if (functionDecl->isExtern && IsDefinedStruct(&r.m_registry, functionDecl->returnType.name))
+        /* Resolve aliases first: `struct Name = string;` returns a scalar
+           pointer across the boundary, not a struct. */
+        if (functionDecl->isExtern
+            && IsDefinedStruct(&r.m_registry,
+                               TypeRegistryResolveAlias(&r.m_registry, functionDecl->returnType.name)))
         {
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }

@@ -903,3 +903,266 @@ STRATA_TEST(pseudo_enum_jit_arithmetic_through_casts)
     }
     strataCompilerDestroy(c);
 }
+
+/* ── Strong newtype over string (owning underlying) ─────────────────────── */
+
+STRATA_TEST(type_alias_string_explicit_cast_both_ways)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "Name make() { return (Name)\"ada\"; }\n"
+        "string take(Name n) { return (string)n; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_no_implicit_conversion)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "void test() { Name n = \"ada\"; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_no_implicit_back)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "void test() { Name n = (Name)\"ada\"; string s = n; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_cross_alias_no_implicit)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "struct Id = string;\n"
+        "void test() { Name n = (Name)\"a\"; Id i = n; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_local_requires_init)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "void test() { Name n; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_global_requires_init)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "Name g;\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_global_literal_init)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "Name g = (Name)\"owned\";\n"
+        "int test() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* Owning-alias globals self-initialize and are torn down. */
+    STRATA_CHECK(strstr(res.output, "__strata_module_init") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_module_teardown") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_arithmetic_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "void test() { Name a = (Name)\"x\"; Name b = (Name)\"y\"; int bad = a + b; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_arithmetic_with_string_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "void test() { string a = \"x\"; string b = \"y\"; int bad = a + b; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_move_after_init)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "void test() { Name n = (Name)\"a\"; Name m = n; Name dead = n; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_pass_moves_source)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "int take(Name n) { return 1; }\n"
+        "void test() { Name n = (Name)\"a\"; int r = take(n); Name again = n; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_extern_return)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "extern Name host_make();\n"
+        "Name test() { return host_make(); }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* The alias crosses the extern boundary as one pointer, like string. */
+    STRATA_CHECK(strstr(res.output, "declare ptr @host_make") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_extern_param_by_value)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "extern int host_len(Name n);\n"
+        "int test() { Name n = (Name)\"ada\"; return host_len(n); }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "declare i32 @host_len(ptr)") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_literal_cast_heap_copies)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "Name test() { return (Name)\"ada\"; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* The result owns its bytes: the static literal is duplicated. */
+    STRATA_CHECK(strstr(res.output, "strata_alloc") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_string_jit_cast_and_move)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct Name = string;\n"
+        "int take_name(Name n) { return 1; }\n"
+        "int caller() {\n"
+        "    Name a = (Name)\"ada\";\n"
+        "    int r = take_name(a);\n"
+        "    Name b = (Name)\"bob\";\n"
+        "    string raw = (string)b;\n"
+        "    Name c2 = (Name)\"copy\";\n"
+        "    return r;\n"
+        "}\n",
+        "type_alias_string", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        STRATA_CHECK(caller != NULL);
+        if (caller)
+        {
+            STRATA_CHECK_EQ(caller(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}

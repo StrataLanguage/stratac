@@ -627,6 +627,34 @@ static Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* 
     return result;
 }
 
+/* Owning-ness with alias resolution — codegen counterpart of sema's
+   AliasIsOwning: a `struct Name = string;` binding moves and drops exactly
+   like its underlying type. Plain leaves are non-owning; a leaf alias is
+   owning when its fully resolved underlying type is. */
+static bool BuilderIsOwningType(Builder* b, const TypeName* t)
+{
+    if (!t || !t->name || TypeNameIsOwning(t))
+    {
+        return TypeNameIsOwning(t);
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(&b->m_registry, t->name);
+
+    if (!leaf || strcmp(leaf, t->name) == 0)
+    {
+        return false;
+    }
+
+    if (strcmp(leaf, "string") == 0)
+    {
+        return true;
+    }
+
+    TypeName parsed = TypeNameParse(b->m_arena, leaf);
+
+    return TypeNameIsOwning(&parsed);
+}
+
 static TypeDesc Resolve(Builder* b, const TypeName* t)
 {
     if (!t)
@@ -1061,7 +1089,7 @@ static void EmitDummyStoreStructFields(Builder* b, LLVMValueRef base, const Stru
         LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
         LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, base, idxs, 2, "df");
 
-        if (TypeNameIsOwning(&f->type) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
+        if (BuilderIsOwningType(b, &f->type) || TypeRegistryIsOwningStruct(&b->m_registry, f->type.name))
         {
             EmitDummyStore(b, fieldAddr, fieldTd, chain);
         }
@@ -1361,7 +1389,7 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
     {
         LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, slot), "adrop");
 
-        if (td.arrayInner && TypeNameIsOwning(td.arrayInner))
+        if (td.arrayInner && BuilderIsOwningType(b, td.arrayInner))
         {
             LLVMValueRef lenVal = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, slot), "adlen");
             TypeDesc elemTd = Resolve(b, td.arrayInner);
@@ -1430,7 +1458,7 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
             LLVMValueRef dropArgs[1] = {ptr};
             LLVMBuildCall2(b->m_builder, dropFnTy, dropFn, dropArgs, 1, "");
         }
-        else if (TypeNameIsOwning(td.boxInner))
+        else if (BuilderIsOwningType(b, td.boxInner))
         {
             LLVMValueRef innerPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ptr, "bin");
             LLVMValueRef iargs[1] = {innerPtr};
@@ -1481,7 +1509,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
     for (size_t j = 0; j < st->fields.count; j++)
     {
         FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
-        bool fieldOwning = TypeNameIsOwning(&f->type);
+        bool fieldOwning = BuilderIsOwningType(b, &f->type);
 
         /* A plain owning struct held by value is normally rejected (must be
            boxed), but handle it defensively for completeness. */
@@ -1678,12 +1706,14 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name)
                          && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
 
-        bool byPtr = p->mod != ModNone || structVal || TypeNameIsOwning(&p->type);
+        bool byPtr = p->mod != ModNone || structVal || BuilderIsOwningType(b, &p->type);
 
         /* For extern functions, a string param passes the data pointer
            (const char*) directly, not a pointer to the owner slot.  The
-           host can read the string without taking ownership. */
-        if (byPtr && f->isExtern && strcmp(p->type.name, "string") == 0)
+           host can read the string without taking ownership. Aliases of
+           string follow the same rule (resolved to the same char*). */
+        if (byPtr && f->isExtern
+            && strcmp(TypeRegistryResolveAlias(&b->m_registry, p->type.name), "string") == 0)
         {
             byPtr = false;
         }
@@ -1752,7 +1782,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
 
         bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name)
                          && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
-        bool boxParam = TypeNameIsOwning(&p->type);
+        bool boxParam = BuilderIsOwningType(b, &p->type);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
 
@@ -1767,7 +1797,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
             {
                 const TypeName* elem = TypeNameArrayElem(&p->type);
 
-                if (elem && !TypeNameIsOwning(elem))
+                if (elem && !BuilderIsOwningType(b, elem))
                 {
                     sym->typeDesc.aliasedArray = true;
                 }
@@ -1910,7 +1940,7 @@ static void NullMovedSource(Builder* b, Node* n)
    as-is. Used for vars, ^T inners, fields, returns. */
 static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeName* innerType)
 {
-    if (!TypeNameIsOwning(innerType))
+    if (!BuilderIsOwningType(b, innerType))
     {
         return evaluated.value;
     }
@@ -2709,7 +2739,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
                 TypeDesc innerTd = Resolve(b, innerTn);
 
-                if (TypeNameIsOwning(innerTn))
+                if (BuilderIsOwningType(b, innerTn))
                 {
                     /* Content-assigning an OWNING inner (^string = "x"): drop
                        only the old inner value (free it in place, NOT the box
@@ -3036,7 +3066,7 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     EmitArrayCopyLoop(b, newData, oldData, copyCount, elemTy);
     EmitArrayZeroLoop(b, newData, copyCount, newLen, elemTy);
 
-    if (arr.typeDesc.arrayInner && TypeNameIsOwning(arr.typeDesc.arrayInner))
+    if (arr.typeDesc.arrayInner && BuilderIsOwningType(b, arr.typeDesc.arrayInner))
     {
         EmitArrayDropRange(b, oldData, newLen, oldLen, elemTd, elemTy);
     }
@@ -3148,7 +3178,7 @@ static Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc ele
     StrataAllocFn(b);
     LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "cpya");
 
-    if (TypeNameIsOwning(td.arrayInner))
+    if (BuilderIsOwningType(b, td.arrayInner))
     {
         LLVMBasicBlockRef cond = NewBb(b, "ccp.cond");
         LLVMBasicBlockRef body = NewBb(b, "ccp.body");
@@ -3208,7 +3238,7 @@ static LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
             LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
             LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
 
-            if (TypeNameIsOwning(&f->type))
+            if (BuilderIsOwningType(b, &f->type))
             {
                 Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
                 Value copied = EmitCopyValue(b, fv, fieldTd);
@@ -3603,7 +3633,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
         /* ^T coerced to T: if the param is a plain struct (not box),
            and the arg is a box, the heap pointer IS the T* the param wants. */
         bool paramIsBoxType
-            = fd && k < fd->params.count && TypeNameIsOwning(&((ParamDecl*)VecGet(&fd->params, k))->type);
+            = fd && k < fd->params.count && BuilderIsOwningType(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
 
         bool argIsBox = false;
 
@@ -3637,7 +3667,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 const TypeName* pty = &pd->type;
                 const TypeName* elem = TypeNameArrayElem(pty);
 
-                if (TypeNameIsDynamicArray(pty) && !(elem && TypeNameIsOwning(elem)))
+                if (TypeNameIsDynamicArray(pty) && !(elem && BuilderIsOwningType(b, elem)))
                 {
                     LLVMValueRef arrAddr = ArgAddress(b, argNode);
                     LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
@@ -3820,7 +3850,7 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
 
     /* A `ref T... rest` with non-owning elements holds POINTERS to the source
         arguments (aliased), so element writes propagate to the caller. */
-    bool aliased = stackBuffer && borrow && !TypeNameIsOwning(elementType);
+    bool aliased = stackBuffer && borrow && !BuilderIsOwningType(b, elementType);
     LLVMTypeRef slotTy = aliased ? b->m_ptrTy : elemTy;
 
     size_t count = elements->count;
@@ -4313,6 +4343,18 @@ Value EmitExpr(Builder* b, Node* n)
         if (operand.typeDesc.isBox && target.isBox)
         {
             /* Retag with the destination type; Coerce would keep the source's. */
+            if (!target.boxInner && !operand.typeDesc.boxInner && cast->operand->kind == NodeStrLiteral)
+            {
+                /* `(Name)"lit"`: the result must OWN its bytes, so heap-copy
+                   the static literal (drop glue frees real memory, never the
+                   constant pool). Movable sources stay a retag - the consumer
+                   nulls the source, exactly like `string t = s;`. */
+                StrLiteral* lit = AsNode(StrLiteral, cast->operand);
+                LLVMValueRef owned = HeapCopyString(b, operand.value, strlen(lit->value));
+
+                return ValueMake(owned, target);
+            }
+
             return ValueMake(operand.value, target);
         }
 
@@ -5076,9 +5118,9 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             continue;
         }
 
-        /* ^T / T[] globals: storage starts null (box) or zero (array).
-           The runtime init (__strata_module_init) fills them. */
-        if (TypeNameIsOwning(&gd->type))
+        /* ^T / T[] / alias-of-string globals: storage starts null (box) or
+           zero (array). The runtime init (__strata_module_init) fills them. */
+        if (BuilderIsOwningType(b, &gd->type))
         {
             LLVMValueRef init = LLVMConstNull(typeDesc.type);
             LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
@@ -5137,7 +5179,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-            if (strcmp(gd->type.name, "string") != 0 && TypeNameIsOwning(&gd->type))
+            if (strcmp(gd->type.name, "string") != 0 && BuilderIsOwningType(b, &gd->type))
             {
                 hasOwningGlobal = true;
                 break;
@@ -5165,7 +5207,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             {
                 GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-                if (strcmp(gd->type.name, "string") == 0 || !TypeNameIsOwning(&gd->type))
+                if (strcmp(gd->type.name, "string") == 0 || !BuilderIsOwningType(b, &gd->type))
                 {
                     continue;
                 }
@@ -5188,6 +5230,15 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                 {
                     LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
                     LLVMBuildStore(b->m_builder, arr, sym->value);
+                }
+                else if (td.isBox && !td.boxInner)
+                {
+                    /* Alias-of-string global: construct the owned value
+                       directly into the slot (heap-copy a literal; take a
+                       call result). Teardown drops it. */
+                    Value val = EmitExpr(b, gd->init);
+                    LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, StringTypeName(b));
+                    LLVMBuildStore(b->m_builder, owned, sym->value);
                 }
                 else if (td.isBox && td.boxInner)
                 {
@@ -5228,7 +5279,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             {
                 GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-                if (strcmp(gd->type.name, "string") == 0 || !TypeNameIsOwning(&gd->type))
+                if (strcmp(gd->type.name, "string") == 0 || !BuilderIsOwningType(b, &gd->type))
                 {
                     continue;
                 }

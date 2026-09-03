@@ -140,6 +140,22 @@ main) are the internal entry points.
 ### Types
 
 - Scalars: `void bool int uint long ulong byte sbyte short ushort float double`
+- Type aliases: `struct Meter = int;` — a strong newtype over any type.
+  Identity is by NAME: no implicit conversion in either direction (including
+  literals), no overload matching across it, and distinct aliases of the same
+  underlying never unify. The ONLY bridge is an explicit cast whose sides
+  resolve to the same underlying type (`(Meter)x`, `(int)m`, `(A)b` for
+  `struct B = A;`). Aliases of OWNING underlying types (`string`, `^T`, `T[]`)
+  are owning too: they move, require init, and drop exactly like the
+  underlying (sema `AliasIsOwning` / codegen `BuilderIsOwningType` resolve the
+  alias chain first). A cast of a string literal heap-copies (the result owns
+  its bytes); casting a movable lvalue moves it (source nulled by the
+  consumer). Extern: an alias of `string` crosses exactly like `string`
+  (returns one `ptr`, params pass `char*` by value even under `ref`); an
+  alias-of-struct return is still rejected ("cannot return a struct type by
+  value" checks the RESOLVED type, so alias-of-string returns are legal).
+  Arithmetic/bitwise operators require numeric (or same-shape SIMD) operands
+  and `++`/`--` requires numeric — no silent int fallback.
 - Structs: `struct Vec3 { float x; float y; float z; };` — value types,
   passed by reference by default (pointer at the ABI level)
 - Extern structs: `extern struct Header { fieldoffset(8) long size; byte[16] name; };`

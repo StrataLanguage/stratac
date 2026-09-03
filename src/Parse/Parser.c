@@ -1962,7 +1962,7 @@ static Node* ParseUnary(Parser* p)
             bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint || next.kind == TokKwLong
                                 || next.kind == TokKwUlong || next.kind == TokKwByte || next.kind == TokKwSbyte
                                 || next.kind == TokKwShort || next.kind == TokKwUshort || next.kind == TokKwFloat
-                                || next.kind == TokKwDouble || next.kind == TokKwBool;
+                                || next.kind == TokKwDouble || next.kind == TokKwBool || next.kind == TokKwString;
 
             bool isHandleCast = next.kind == TokIdent;
             bool isBoxCast = next.kind == TokCaret;
@@ -1981,10 +1981,10 @@ static Node* ParseUnary(Parser* p)
                     Token afterRparen = LexerPeekToken(p->m_lex);
                     bool startsExpr = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
                                       || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
-                                      || afterRparen.kind == TokLParen || afterRparen.kind == TokMinus
-                                      || afterRparen.kind == TokPlus || afterRparen.kind == TokBang
-                                      || afterRparen.kind == TokTilde || afterRparen.kind == TokInc
-                                      || afterRparen.kind == TokDec;
+                                      || afterRparen.kind == TokStrLit || afterRparen.kind == TokLParen
+                                      || afterRparen.kind == TokMinus || afterRparen.kind == TokPlus
+                                      || afterRparen.kind == TokBang || afterRparen.kind == TokTilde
+                                      || afterRparen.kind == TokInc || afterRparen.kind == TokDec;
 
                     if (startsExpr || isScalarCast || isBoxCast)
                     {
