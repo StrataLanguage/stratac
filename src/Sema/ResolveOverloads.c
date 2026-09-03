@@ -2595,6 +2595,9 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, const TypeName* propType,
                                const char* handleName, bool isSetter, SourceRange range, DiagnosticEngine* diag)
 {
+    size_t matchCount = 0;
+    FunctionDecl* match = NULL;
+
     for (size_t i = 0; i < mod->functions.count; i++)
     {
         FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, i);
@@ -2604,22 +2607,40 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
             continue;
         }
 
+        matchCount++;
+        match = fn;
+    }
+
+    if (matchCount > 1)
+    {
+        /* An accessor must name a unique function: with overloads there is no
+           way to tell which one `get`/`set` refers to, and first-match binding
+           would silently depend on declaration order. */
+        DiagErrorFmt(diag, range,
+                     "property %s '%s' is ambiguous: %zu functions share that name; "
+                     "property accessors must name a unique function",
+                     isSetter ? "setter" : "getter", symbol, matchCount);
+        return;
+    }
+
+    if (match)
+    {
         /* Validate the pre-existing declaration against the accessor shape:
            getter (self) -> propType; setter (self, value propType) -> void.
            A getter may use a `return` out-param (`void Get(self, return T c)`)
            which the shape check counts implicitly (NamedParamCount). */
         size_t wantParams = isSetter ? 2 : 1;
 
-        if (NamedParamCount(fn) != wantParams)
+        if (NamedParamCount(match) != wantParams)
         {
             DiagErrorFmt(diag, range,
                          "property %s '%s' must take (%s self%s); found %zu parameter(s)",
                          isSetter ? "setter" : "getter", symbol, handleName, isSetter ? ", value" : "",
-                         fn->params.count);
+                         match->params.count);
             return;
         }
 
-        const ParamDecl* p0 = (const ParamDecl*)VecGet(&fn->params, 0);
+        const ParamDecl* p0 = (const ParamDecl*)VecGet(&match->params, 0);
 
         if (strcmp(p0->type.name, handleName) != 0)
         {
@@ -2628,17 +2649,17 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
             return;
         }
 
-        if (isSetter && strcmp(fn->returnType.name, "void") != 0)
+        if (isSetter && strcmp(match->returnType.name, "void") != 0)
         {
             DiagErrorFmt(diag, range, "property setter '%s' must return void; found '%s'", symbol,
-                         fn->returnType.name);
+                         match->returnType.name);
             return;
         }
 
-        if (!isSetter && strcmp(fn->returnType.name, propType->name) != 0)
+        if (!isSetter && strcmp(match->returnType.name, propType->name) != 0)
         {
             DiagErrorFmt(diag, range, "property getter '%s' must return '%s'; found '%s'", symbol, propType->name,
-                         fn->returnType.name);
+                         match->returnType.name);
         }
 
         return;

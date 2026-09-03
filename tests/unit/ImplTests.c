@@ -371,6 +371,66 @@ STRATA_TEST(impl_property_type_mismatch_rejected)
     arena_free(&arena);
 }
 
+STRATA_TEST(impl_property_overloaded_accessor_rejected)
+{
+    /* A get/set symbol that names multiple functions (overloads) is ambiguous:
+       the accessor must be a unique function, regardless of which overload's
+       shape happens to appear first in the module. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Camera;\n"
+                    "int Camera_GetFOV(Camera self) { return 1; }\n"
+                    "int Camera_GetFOV(Camera self, int mode) { return 2; }\n"
+                    "impl Camera {\n"
+                    "    property int FOV { get = Camera_GetFOV; }\n"
+                    "}\n"
+                    "int entry(Camera c) { return c.FOV; }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "is ambiguous"));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "Camera_GetFOV"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    /* Same rule applies to the setter symbol. */
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("handle Camera;\n"
+                    "void Camera_SetFOV(Camera self, int v) {}\n"
+                    "void Camera_SetFOV(Camera self, int v, int w) {}\n"
+                    "impl Camera {\n"
+                    "    property int FOV { set = Camera_SetFOV; }\n"
+                    "}\n"
+                    "void entry(Camera c) { c.FOV = 1; }\n",
+                    &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "is ambiguous"));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+
+    /* A unique accessor symbol still compiles (no ambiguity). */
+    Arena arena3;
+    arena_init(&arena3, 0);
+    DiagnosticEngine diag3;
+    DiagnosticEngineInit(&diag3);
+    ParseAndResolve("handle Camera;\n"
+                    "int Camera_GetFOV(Camera self) { return 1; }\n"
+                    "int Camera_GetFOV(Camera self, int mode) { return 2; }\n"
+                    "int Camera_GetZoom(Camera self) { return 3; }\n"
+                    "impl Camera {\n"
+                    "    property int FOV { get = Camera_GetZoom; }\n"
+                    "}\n"
+                    "int entry(Camera c) { return c.FOV; }\n",
+                    &diag3, &arena3);
+    STRATA_CHECK(!DiagHasErrors(&diag3));
+    DiagnosticEngineFree(&diag3);
+    arena_free(&arena3);
+}
+
 STRATA_TEST(impl_readonly_write_and_writeonly_read_rejected)
 {
     Arena arena;

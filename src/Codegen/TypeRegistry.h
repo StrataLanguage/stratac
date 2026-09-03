@@ -15,14 +15,15 @@ typedef struct {
 
 typedef struct {
     const char* name;
-    bool opaque;
-    bool incomplete;
-    bool owning;        /* transitively contains a ^T field */
-    const char* extendsFrom;
-    Vec fields;
-    bool isExtern;      /* `extern struct` — mirrors a host-defined layout */
-    bool isTypeAlias;   /* `struct Foo = uint;` — strongly typed alias */
-    const char* underlyingType; /* underlying type name for aliases */
+    bool opaque;                 /* `struct Foo;`  (struct with no body) OR a `handle Foo;`. */
+    bool incomplete;             /* `struct Foo;` forward declaration */
+    bool owning;                 /* transitively contains a ^T, T?, T[], string, etc. field */
+    const char* extendsFrom;     /* base handle name for `handle X extends Y` */
+    Vec fields;               
+    bool isExtern;               /* `extern struct`. It is a C ABI struct type, allowing custom fieldoffset(X) on fields */
+    bool isTypeAlias;            /* A strongly typed alias. */
+    const char* underlyingType;  /* underlying type name for aliases */
+
     /* Computed layout (complete, non-opaque structs). hasLayout is only set
        when the layout is valid; on failure layoutError holds a malloc'd
        message that sema reports. */
@@ -46,6 +47,7 @@ typedef struct TypeRegistry {
 
 void TypeRegistryInit(TypeRegistry* reg);
 void TypeRegistryFree(TypeRegistry* reg);
+
 /* Registers only the module's type aliases (idempotent). Sema calls this
    before full registration so alias resolution works while manifest-constant
    array dimensions resolve, ahead of layout computation. */
