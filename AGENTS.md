@@ -190,8 +190,10 @@ main) are the internal entry points.
   passable anywhere `Entity` is expected (checked by `HandleExtendsFrom`)
 - Impl blocks: `impl H { extern R M(H self, ...); property T P { get = H_G; set = H_S; } }`
   attach host externs as methods/properties of a type. `impl` targets ANY
-  registered non-alias type — handles, **defined structs**, and
-  **forward-declared (bodyless) structs** (`struct Foo;`) alike. Methods hoist
+  registered type — handles, **defined structs**, **forward-declared
+  (bodyless) structs** (`struct Foo;`), and **type aliases**
+  (`struct Meter = int;` — the alias's own name, distinct from its
+  underlying's impls) alike. Methods hoist
   to module-scope externs named `Type_Method`; `expr.M(args)` (or `Type.M(args)`
   for a parameterless/static method) rewrites to `Type_M(expr, args...)`.
   `expr.P` / `expr.P = v` route to the getter/setter externs. A property

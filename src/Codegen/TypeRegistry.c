@@ -613,7 +613,9 @@ bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name)
 
 bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name)
 {
-    return TypeRegistryIsUserType(reg, name) && !TypeRegistryIsTypeAlias(reg, name);
+    /* Handles, defined structs, forward-declared structs, and type aliases are
+       all valid impl targets. Only undeclared names are rejected. */
+    return TypeRegistryIsUserType(reg, name);
 }
 
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name)

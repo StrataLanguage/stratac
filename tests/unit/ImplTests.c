@@ -124,8 +124,8 @@ STRATA_TEST(impl_rejects_body_and_duplicates)
 
 STRATA_TEST(impl_requires_handle_or_struct_target)
 {
-    /* impl now targets any non-alias type (handles, defined structs, and
-       forward-declared structs). Undeclared types and type aliases are still
+    /* impl targets any registered type (handles, defined structs,
+       forward-declared structs, and type aliases). Only undeclared types are
        rejected. */
     Arena arena;
     arena_init(&arena, 0);
@@ -149,8 +149,7 @@ STRATA_TEST(impl_requires_handle_or_struct_target)
                     "    extern int Get(Meter self);\n"
                     "}\n",
                     &diag2, &arena2);
-    STRATA_CHECK(DiagHasErrors(&diag2));
-    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "not a declared struct or handle"));
+    STRATA_CHECK(!DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
     arena_free(&arena2);
 }
@@ -167,6 +166,125 @@ STRATA_TEST(impl_on_forward_declared_struct_parses)
                     "}\n",
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(impl_on_type_alias_scalar_method_rewrites)
+{
+    /* `impl` on a strong alias of a scalar: `expr.M(args)` hoists to the
+       qualified extern `Meter_Get` with self prepended, exactly like a handle
+       or struct impl. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Meter = int;\n"
+                                  "impl Meter {\n"
+                                  "    extern int Get(Meter self);\n"
+                                  "}\n"
+                                  "int entry(Meter m) { return m.Get(); }\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* entry = (FunctionDecl*)FindFunction(mod, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    Block* body = (Block*)entry->body;
+    ReturnStmt* ret = (ReturnStmt*)VecGet(&body->statements, 0);
+    STRATA_CHECK(ret->value->kind == NodeCall);
+
+    CallExpr* call = (CallExpr*)ret->value;
+    STRATA_CHECK(strcmp(call->callee, "Meter_Get") == 0);
+    STRATA_CHECK(call->resolvedDecl != NULL);
+    STRATA_CHECK_EQ(call->args.count, 1);
+    STRATA_CHECK(((Node*)VecGet(&call->args, 0))->kind == NodeIdent);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(impl_on_type_alias_struct_method_rewrites)
+{
+    /* `impl` on a strong alias of a struct: the alias is a distinct impl
+       target from its underlying (no method leaks across). */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Foo { int x; };\n"
+                                  "struct X = Foo;\n"
+                                  "impl X {\n"
+                                  "    extern int GetX(X self);\n"
+                                  "}\n"
+                                  "int entry(X x) { return x.GetX(); }\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* entry = (FunctionDecl*)FindFunction(mod, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    Block* body = (Block*)entry->body;
+    ReturnStmt* ret = (ReturnStmt*)VecGet(&body->statements, 0);
+    STRATA_CHECK(ret->value->kind == NodeCall);
+
+    CallExpr* call = (CallExpr*)ret->value;
+    STRATA_CHECK(strcmp(call->callee, "X_GetX") == 0);
+    STRATA_CHECK(call->resolvedDecl != NULL);
+    STRATA_CHECK_EQ(call->args.count, 1);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(impl_on_type_alias_static_factory_has_no_self)
+{
+    /* Parameterless impl methods on an alias resolve as static calls. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Meter = int;\n"
+                                  "impl Meter {\n"
+                                  "    extern Meter New();\n"
+                                  "}\n"
+                                  "Meter make() { return Meter.New(); }\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* make = (FunctionDecl*)FindFunction(mod, "make");
+    STRATA_CHECK(make != NULL);
+
+    Block* body = (Block*)make->body;
+    ReturnStmt* ret = (ReturnStmt*)VecGet(&body->statements, 0);
+    STRATA_CHECK(ret->value->kind == NodeCall);
+
+    CallExpr* call = (CallExpr*)ret->value;
+    STRATA_CHECK(strcmp(call->callee, "Meter_New") == 0);
+    STRATA_CHECK_EQ(call->args.count, 0);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(impl_on_type_alias_distinct_from_underlying)
+{
+    /* The alias's impl is attached to the alias NAME only: the underlying
+       type does not see the method, and calls on the underlying are rejected
+       (no implicit conversion between an alias and its underlying). */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Meter = int;\n"
+                    "impl Meter {\n"
+                    "    extern int Get(Meter self);\n"
+                    "}\n"
+                    "int entry() { int i = 5; return i.Get(); }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "no method 'Get'"));
+
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -429,6 +547,43 @@ STRATA_TEST(impl_property_overloaded_accessor_rejected)
     STRATA_CHECK(!DiagHasErrors(&diag3));
     DiagnosticEngineFree(&diag3);
     arena_free(&arena3);
+}
+
+STRATA_TEST(impl_property_accessor_shape_mismatch_rejected)
+{
+    /* Setter value param must be the property's type, not just any (self, T). */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Camera;\n"
+                    "impl Camera {\n"
+                    "    extern void SetFOV(Camera self, float v);\n"
+                    "    property int FOV { set = Camera_SetFOV; }\n"
+                    "}\n"
+                    "void entry(Camera c) { c.FOV = 1; }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "must take 'int' as its value parameter"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    /* Getter with a `return` out-param whose type is not the property type. */
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("handle Camera;\n"
+                    "impl Camera {\n"
+                    "    extern void GetFOV(Camera self, return float v);\n"
+                    "    property int FOV { get = Camera_GetFOV; }\n"
+                    "}\n"
+                    "int entry(Camera c) { return c.FOV; }\n",
+                    &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "must return 'int'; found 'float'"));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
 }
 
 STRATA_TEST(impl_readonly_write_and_writeonly_read_rejected)

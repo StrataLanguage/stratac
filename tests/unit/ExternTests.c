@@ -777,6 +777,21 @@ static int HostPairStaticSum(int a, int b)
     return a + b;
 }
 
+static int HostMeterGet(int self)
+{
+    return self + 1;
+}
+
+static int HostXGet(HostPair* self)
+{
+    return self->a * 10 + self->b;
+}
+
+static int HostMeterNew(void)
+{
+    return 1234;
+}
+
 STRATA_TEST(impl_on_defined_struct)
 {
     /* `impl` also works on a fully defined struct: the self param crosses
@@ -807,6 +822,59 @@ STRATA_TEST(impl_on_defined_struct_static_method)
                 "  return Pair.StaticSum(3, 4);\n" /* 7 */
                 "}\n",
                 hosts, 1, 7);
+}
+
+STRATA_TEST(impl_on_type_alias_scalar_jit)
+{
+    /* `impl` on a strong alias of a scalar: self crosses by value (i32). */
+    HostSymbol hosts[] = { { "Meter_Get", (void*)&HostMeterGet } };
+    CheckExtern("struct Meter = int;\n"
+                "impl Meter {\n"
+                "    extern int Get(Meter self);\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "  Meter m = (Meter)41;\n"
+                "  return m.Get();\n" /* 42 */
+                "}\n",
+                hosts, 1, 42);
+}
+
+STRATA_TEST(impl_on_type_alias_struct_jit)
+{
+    /* `impl` on a strong alias of a struct: self crosses by reference like
+       any struct parameter. The alias is its own target — distinct from the
+       underlying's impl (see impl_on_defined_struct). */
+    HostSymbol hosts[] = { { "X_Get", (void*)&HostXGet } };
+    CheckExtern("struct Pair { int a; int b; };\n"
+                "struct X = Pair;\n"
+                "impl X {\n"
+                "    extern int Get(X self);\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "  Pair p = { 3, 4 };\n"
+                "  X x = (X)p;\n"
+                "  return x.Get();\n" /* 34 */
+                "}\n",
+                hosts, 1, 34);
+}
+
+STRATA_TEST(impl_on_type_alias_static_factory_jit)
+{
+    /* A parameterless impl method on an alias resolves as a static call and
+       returns the underlying scalar by value. */
+    HostSymbol hosts[] = { { "Meter_New", (void*)&HostMeterNew } };
+    CheckExtern("struct Meter = int;\n"
+                "impl Meter {\n"
+                "    extern Meter New();\n"
+                "}\n"
+                "int entry()\n"
+                "{\n"
+                "  Meter m = Meter.New();\n"
+                "  return (int)m;\n" /* 1234 */
+                "}\n",
+                hosts, 1, 1234);
 }
 
 /* ---- Strong typedef (type alias) ABI ---- */

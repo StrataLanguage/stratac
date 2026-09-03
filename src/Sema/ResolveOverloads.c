@@ -2627,8 +2627,10 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
     {
         /* Validate the pre-existing declaration against the accessor shape:
            getter (self) -> propType; setter (self, value propType) -> void.
-           A getter may use a `return` out-param (`void Get(self, return T c)`)
-           which the shape check counts implicitly (NamedParamCount). */
+           A getter may return the value via a plain return OR a trailing
+           `return propType` out-param (`void Get(self, return T c)`) — the
+           parser folds the out-param's type into fn->returnType and
+           NamedParamCount excludes it, so the checks below cover both forms. */
         size_t wantParams = isSetter ? 2 : 1;
 
         if (NamedParamCount(match) != wantParams)
@@ -2649,14 +2651,24 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
             return;
         }
 
-        if (isSetter && strcmp(match->returnType.name, "void") != 0)
+        if (isSetter)
         {
-            DiagErrorFmt(diag, range, "property setter '%s' must return void; found '%s'", symbol,
-                         match->returnType.name);
-            return;
-        }
+            if (strcmp(match->returnType.name, "void") != 0)
+            {
+                DiagErrorFmt(diag, range, "property setter '%s' must return void; found '%s'", symbol,
+                             match->returnType.name);
+                return;
+            }
 
-        if (!isSetter && strcmp(match->returnType.name, propType->name) != 0)
+            const ParamDecl* p1 = (const ParamDecl*)VecGet(&match->params, 1);
+
+            if (strcmp(p1->type.name, propType->name) != 0)
+            {
+                DiagErrorFmt(diag, range, "property setter '%s' must take '%s' as its value parameter; found '%s'",
+                             symbol, propType->name, p1->type.name);
+            }
+        }
+        else if (strcmp(match->returnType.name, propType->name) != 0)
         {
             DiagErrorFmt(diag, range, "property getter '%s' must return '%s'; found '%s'", symbol, propType->name,
                          match->returnType.name);
