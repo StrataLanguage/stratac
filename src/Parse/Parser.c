@@ -885,6 +885,124 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     return node;
 }
 
+/* Parses an optional `-` integer literal for an explicit enum member value.
+   Returns true with `outMag`/`outNegative` filled on success. */
+static bool ParseEnumMemberValue(Parser* p, uint64_t* outMag, bool* outNegative)
+{
+    *outMag = 0;
+    *outNegative = false;
+
+    if (ParserConsume(p, TokMinus))
+    {
+        *outNegative = true;
+    }
+
+    if (p->m_cur.kind != TokIntLit)
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an integer literal for the enum member value");
+        return false;
+    }
+
+    Token litTok = p->m_cur;
+    Advance(p);
+
+    Str sv = ParserIdentText(p, litTok);
+    StripUnsignedSuffix(&sv);
+
+    char tmp[64];
+    CopyStrToBuf(sv, tmp);
+
+    *outMag = strtoull(tmp, NULL, 0);
+
+    return true;
+}
+
+static EnumDecl* ParseEnumDecl(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p); /* 'enum' */
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an enum name after 'enum'");
+        Synchronize(p);
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    EnumDecl* node = AST_NEW(p->m_arena, EnumDecl);
+    node->base.kind = NodeEnum;
+    node->base.range = SpanFrom(kw, nameTok);
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->underlyingType = NULL;
+    VecInit(&node->members);
+
+    /* `: UnderlyingType` — optional; defaults to `int`. */
+    if (ParserConsume(p, TokColon))
+    {
+        TypeName underlying = {0};
+
+        if (!ParserTryParseType(p, &underlying) || !underlying.name)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an underlying type after ':'");
+            Synchronize(p);
+            return NULL;
+        }
+
+        node->underlyingType = underlying.name;
+    }
+
+    ParserExpect(p, TokLBrace, "'{'");
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an enum member name");
+            break;
+        }
+
+        Token memberTok = p->m_cur;
+        Advance(p);
+
+        EnumMemberDecl* member = AST_NEW(p->m_arena, EnumMemberDecl);
+        member->base.kind = NodeEnumMember;
+        member->base.range = memberTok.range;
+        member->name = ToOwned(p->m_arena, ParserIdentText(p, memberTok));
+        member->hasExplicitValue = false;
+        member->isNegative = false;
+        member->value = 0;
+
+        if (ParserConsume(p, TokAssign))
+        {
+            if (!ParseEnumMemberValue(p, &member->value, &member->isNegative))
+            {
+                break;
+            }
+
+            member->hasExplicitValue = true;
+        }
+
+        VecPush(&node->members, member);
+
+        if (ParserConsume(p, TokComma))
+        {
+            continue;
+        }
+
+        break;
+    }
+
+    Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
+    node->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : p->m_cur);
+
+    ParserExpect(p, TokSemicolon, "';'");
+
+    return node;
+}
+
 static ParamDecl* ParseParam(Parser* p)
 {
     SourceRange start = p->m_cur.range;
@@ -1416,6 +1534,7 @@ Module* ParserParseModule(Parser* p)
     mod->name = p->m_moduleName;
     VecInit(&mod->structs);
     VecInit(&mod->handles);
+    VecInit(&mod->enums);
     VecInit(&mod->functions);
     VecInit(&mod->globals);
     VecInit(&mod->imports);
@@ -1465,6 +1584,21 @@ Module* ParserParseModule(Parser* p)
             if (sd)
             {
                 VecPush(&mod->structs, sd);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
+            continue;
+        }
+
+        if (p->m_cur.kind == TokKwEnum)
+        {
+            EnumDecl* ed = ParseEnumDecl(p);
+            if (ed)
+            {
+                VecPush(&mod->enums, ed);
             }
             else
             {

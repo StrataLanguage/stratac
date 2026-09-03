@@ -22,6 +22,7 @@ typedef struct {
     Vec fields;               
     bool isExtern;               /* `extern struct`. It is a C ABI struct type, allowing custom fieldoffset(X) on fields */
     bool isTypeAlias;            /* A strongly typed alias. */
+    bool isEnum;                 /* `enum Foo` — a strong alias with scoped constants. */
     const char* underlyingType;  /* underlying type name for aliases */
 
     /* Computed layout (complete, non-opaque structs). hasLayout is only set
@@ -57,8 +58,8 @@ void ComputeAllLayouts(TypeRegistry* reg);
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
-/* An `impl` target: any registered non-alias type — handles, defined
-   structs, and forward-declared (incomplete) structs alike. */
+/* An `impl` target: any registered type — handles, defined structs,
+   forward-declared (incomplete) structs, type aliases, and enums alike. */
 bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
@@ -69,6 +70,7 @@ bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 
 /* Type alias queries. */
 bool TypeRegistryIsTypeAlias(const TypeRegistry* reg, const char* name);
+bool TypeRegistryIsEnum(const TypeRegistry* reg, const char* name);
 const char* TypeRegistryGetUnderlyingType(const TypeRegistry* reg, const char* name);
 /* Recursively resolves type aliases to their final non-alias underlying type. */
 const char* TypeRegistryResolveAlias(const TypeRegistry* reg, const char* name);

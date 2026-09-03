@@ -17,6 +17,7 @@ void AstReleaseModuleLists(Module* module)
 
     DisposeVec(&module->structs);
     DisposeVec(&module->handles);
+    DisposeVec(&module->enums);
     DisposeVec(&module->functions);
     DisposeVec(&module->globals);
     DisposeVec(&module->imports);
@@ -42,6 +43,7 @@ void AstDispose(Node* node)
 
         DISPOSE_ALL(structs);
         DISPOSE_ALL(handles);
+        DISPOSE_ALL(enums);
         DISPOSE_ALL(functions);
         DISPOSE_ALL(globals);
         DISPOSE_ALL(imports);
@@ -55,6 +57,11 @@ void AstDispose(Node* node)
     }
     case NodeStruct:
         DisposeVec(&((StructDecl*)node)->fields);
+        return;
+    case NodeEnum:
+        DisposeVec(&((EnumDecl*)node)->members);
+        return;
+    case NodeEnumMember:
         return;
     case NodeFunction:
     {

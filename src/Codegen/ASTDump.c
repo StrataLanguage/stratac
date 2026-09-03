@@ -127,6 +127,11 @@ static void Dump(Node* n, int indent, Sb* out)
             Node* h = (Node*)VecGet(&module->handles, i);
             Dump(h, indent + 2, out);
         }
+        for (size_t i = 0; i < module->enums.count; i++)
+        {
+            Node* e = (Node*)VecGet(&module->enums, i);
+            Dump(e, indent + 2, out);
+        }
         for (size_t i = 0; i < module->globals.count; i++)
         {
             Node* g = (Node*)VecGet(&module->globals, i);
@@ -200,6 +205,31 @@ static void Dump(Node* n, int indent, Sb* out)
         SbPrintf(out, "handle %s  ; opaque\n", handle_decl->name);
         return;
     }
+
+    case NodeEnum:
+    {
+        EnumDecl* enum_decl = AsNode(EnumDecl, n);
+        SbPrintf(out, "enum %s", enum_decl->name);
+
+        if (enum_decl->underlyingType)
+        {
+            SbPrintf(out, " : %s", enum_decl->underlyingType);
+        }
+
+        SbPuts(out, " {\n");
+        for (size_t i = 0; i < enum_decl->members.count; i++)
+        {
+            EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&enum_decl->members, i);
+            Pad(indent + 4, out);
+            SbPrintf(out, "%s%s\n", member->name, member->hasExplicitValue ? " = <value>" : "");
+        }
+        Pad(indent + 2, out);
+        SbPuts(out, "}\n");
+        return;
+    }
+
+    case NodeEnumMember:
+        return;
 
     case NodeStruct:
     {

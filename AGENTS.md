@@ -171,6 +171,22 @@ main) are the internal entry points.
   value" checks the RESOLVED type, so alias-of-string returns are legal).
   Arithmetic/bitwise operators require numeric (or same-shape SIMD) operands
   and `++`/`--` requires numeric — no silent int fallback.
+- Enums: `enum Color : int { Red, Green, Blue };` — a strong type alias for a
+  scalar integral underlying type (default `int`; `enum Foo : ulong`, etc. —
+  only the 8 integral scalars are legal, never float/bool/struct/string), plus
+  scoped constants accessed as `Color.Red`. Members get sequential values
+  (starting 0, continuing from the last explicit `= N`), and EVERY member value
+  — explicit or implicit — must fit the underlying type's range (`enum E : byte
+  { A = 255, B }` errors: B would be 256). Negative literals (`A = -2`) are
+  allowed only for signed underlying types; unsigned underlying rejects them.
+  The enum is its own strong type: `Color c = Color.Blue;` and same-enum
+  `==` work, but there is NO implicit conversion to/from the underlying or
+  other aliases — only an explicit cast (`(int)Color.Red`, `(Color)5`), and a
+  constant cast is range-checked against the underlying (`(Color)300` on a
+  byte-based enum errors). `Color.Red` is a compile-time constant (usable in
+  const folds/global inits); assigning to it errors. `impl` works on enums
+  exactly like on aliases (methods hoist as `Color_Method`, self crosses as
+  the underlying scalar).
 - Structs: `struct Vec3 { float x; float y; float z; };` — value types,
   passed by reference by default (pointer at the ABI level)
 - Extern structs: `extern struct Header { fieldoffset(8) long size; byte[16] name; };`
@@ -193,7 +209,8 @@ main) are the internal entry points.
   registered type — handles, **defined structs**, **forward-declared
   (bodyless) structs** (`struct Foo;`), and **type aliases**
   (`struct Meter = int;` — the alias's own name, distinct from its
-  underlying's impls) alike. Methods hoist
+  underlying's impls) and **enums** (`enum Color : byte { Red };` — exactly
+  like an alias) alike. Methods hoist
   to module-scope externs named `Type_Method`; `expr.M(args)` (or `Type.M(args)`
   for a parameterless/static method) rewrites to `Type_M(expr, args...)`.
   `expr.P` / `expr.P = v` route to the getter/setter externs. A property

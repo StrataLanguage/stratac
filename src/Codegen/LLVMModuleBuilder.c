@@ -2336,6 +2336,16 @@ static LLVMValueRef AsI64Index(Builder* b, Value v)
 
 static Value EmitMember(Builder* b, MemberExpr* n)
 {
+    /* Scoped enum constant: `EnumName.Member` — emit the underlying constant
+       value inline. */
+    if (n->isEnumConst)
+    {
+        TypeName tn = TypeNameLeaf((char*)n->enumTypeName);
+        TypeDesc td = Resolve(b, &tn);
+        LLVMValueRef v = LLVMConstInt(td.type, n->enumValue, td.isUnsigned);
+        return ValueMake(v, td);
+    }
+
     /* Impl property read: lower to the getter extern call. Checked first —
        handles have no fields, so the lvalue path could never serve them. */
     bool isProp = false;
@@ -5576,6 +5586,20 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
         }
 
         *out = cv->civ;
+        return true;
+    }
+    case NodeMember:
+    {
+        /* Scoped enum constant: `EnumName.Member` folds to its underlying
+           integer value (marked by sema). */
+        MemberExpr* m = (MemberExpr*)n;
+
+        if (!m->isEnumConst)
+        {
+            return false;
+        }
+
+        *out = (ConstInitVal){CIK_INT, .i = m->enumValue, .f = 0.0};
         return true;
     }
     default:

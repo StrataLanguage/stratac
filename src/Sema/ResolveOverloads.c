@@ -40,6 +40,162 @@ typedef struct
     bool isInt; /* integer-kind type: usable as a fixed-array dimension */
 } ConstGlobalVal;
 
+/* The scalar integral types an enum may be based on. */
+static bool IsEnumUnderlyingType(const char* t)
+{
+    return strcmp(t, "int") == 0 || strcmp(t, "uint") == 0 || strcmp(t, "long") == 0 || strcmp(t, "ulong") == 0
+           || strcmp(t, "byte") == 0 || strcmp(t, "sbyte") == 0 || strcmp(t, "short") == 0 || strcmp(t, "ushort") == 0;
+}
+
+/* Signed bounds for the enum underlying types. */
+static void EnumSignedRange(const char* underlying, bool* isUnsigned, int64_t* minVal, uint64_t* maxVal)
+{
+    if (strcmp(underlying, "byte") == 0)
+    {
+        *isUnsigned = true;
+        *minVal = 0;
+        *maxVal = UCHAR_MAX;
+    }
+    else if (strcmp(underlying, "ushort") == 0)
+    {
+        *isUnsigned = true;
+        *minVal = 0;
+        *maxVal = USHRT_MAX;
+    }
+    else if (strcmp(underlying, "uint") == 0)
+    {
+        *isUnsigned = true;
+        *minVal = 0;
+        *maxVal = UINT_MAX;
+    }
+    else if (strcmp(underlying, "ulong") == 0)
+    {
+        *isUnsigned = true;
+        *minVal = 0;
+        *maxVal = ULLONG_MAX;
+    }
+    else if (strcmp(underlying, "sbyte") == 0)
+    {
+        *isUnsigned = false;
+        *minVal = SCHAR_MIN;
+        *maxVal = (uint64_t)SCHAR_MAX;
+    }
+    else if (strcmp(underlying, "short") == 0)
+    {
+        *isUnsigned = false;
+        *minVal = SHRT_MIN;
+        *maxVal = (uint64_t)SHRT_MAX;
+    }
+    else if (strcmp(underlying, "int") == 0)
+    {
+        *isUnsigned = false;
+        *minVal = INT_MIN;
+        *maxVal = (uint64_t)INT_MAX;
+    }
+    else /* "long" */
+    {
+        *isUnsigned = false;
+        *minVal = LLONG_MIN;
+        *maxVal = (uint64_t)LLONG_MAX;
+    }
+}
+
+/* Interprets `mag` (with sign) as a signed value; false when the magnitude
+   cannot be represented in int64 (only reachable for `long` underlying). */
+static bool EnumSignedValue(uint64_t mag, bool isNegative, int64_t* out)
+{
+    if (isNegative)
+    {
+        if (mag == (1ULL << 63))
+        {
+            *out = INT64_MIN;
+            return true;
+        }
+
+        if (mag > (uint64_t)INT64_MAX)
+        {
+            return false;
+        }
+
+        *out = -(int64_t)mag;
+        return true;
+    }
+
+    if (mag > (uint64_t)INT64_MAX)
+    {
+        return false;
+    }
+
+    *out = (int64_t)mag;
+    return true;
+}
+
+/* Extracts a compile-time integer value from a RESOLVED constant expression:
+   an integer literal, a +/- literal, or an enum constant. */
+static bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative)
+{
+    *mag = 0;
+    *isNegative = false;
+
+    if (n->kind == NodeIntLiteral)
+    {
+        *mag = ((IntLiteral*)n)->value;
+        return true;
+    }
+
+    if (n->kind == NodeMember && ((MemberExpr*)n)->isEnumConst)
+    {
+        *mag = ((MemberExpr*)n)->enumValue;
+        return true;
+    }
+
+    if (n->kind == NodeUnary)
+    {
+        UnaryExpr* u = (UnaryExpr*)n;
+
+        if (u->op == UnNeg)
+        {
+            if (u->operand->kind == NodeIntLiteral)
+            {
+                *mag = ((IntLiteral*)u->operand)->value;
+                *isNegative = true;
+                return true;
+            }
+
+            if (u->operand->kind == NodeMember && ((MemberExpr*)u->operand)->isEnumConst)
+            {
+                *mag = ((MemberExpr*)u->operand)->enumValue;
+                *isNegative = true;
+                return true;
+            }
+        }
+        else if (u->op == UnPos && u->operand->kind == NodeIntLiteral)
+        {
+            *mag = ((IntLiteral*)u->operand)->value;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Range-checks a constant value against a scalar integral type name. */
+static bool EnumConstFits(const char* underlying, uint64_t mag, bool isNegative)
+{
+    bool isUnsigned = false;
+    int64_t minVal = 0;
+    uint64_t maxVal = 0;
+    EnumSignedRange(underlying, &isUnsigned, &minVal, &maxVal);
+
+    if (isUnsigned)
+    {
+        return !isNegative && mag <= maxVal;
+    }
+
+    int64_t sv = 0;
+    return EnumSignedValue(mag, isNegative, &sv) && sv >= minVal && (uint64_t)sv <= maxVal;
+}
+
 /* Integer constant arithmetic (two's complement). `div`/`mod`/`>>` apply
    C signed semantics; refuses division/modulo by zero and shifts whose
    count is negative or >= 64. */
@@ -409,6 +565,48 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
         *out = *prev;
         out->isInt = wasInt;
         return true;
+    }
+    case NodeMember:
+    {
+        /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
+           BEFORE the main resolution marks members, so scan the module. */
+        MemberExpr* m = (MemberExpr*)n;
+
+        if (m->base_node->kind != NodeIdent || !TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->base_node)->name))
+        {
+            return false;
+        }
+
+        const char* baseName = ((IdentExpr*)m->base_node)->name;
+
+        for (size_t i = 0; i < r->m_mod->enums.count; i++)
+        {
+            EnumDecl* ed = (EnumDecl*)VecGet(&r->m_mod->enums, i);
+
+            if (strcmp(ed->name, baseName) != 0)
+            {
+                continue;
+            }
+
+            for (size_t j = 0; j < ed->members.count; j++)
+            {
+                EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&ed->members, j);
+
+                if (strcmp(member->name, m->member) == 0)
+                {
+                    bool wasInt = out->isInt;
+                    out->i = (long long)member->value;
+                    out->f = 0.0;
+                    out->isFloat = false;
+                    out->isInt = wasInt;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return false;
     }
     default:
         return false;
@@ -2424,6 +2622,21 @@ static ImplDecl* FindImplDecl(Resolver* r, const char* handleName)
     return NULL;
 }
 
+static EnumDecl* FindEnum(Resolver* r, const char* name)
+{
+    for (size_t i = 0; i < r->m_mod->enums.count; i++)
+    {
+        EnumDecl* ed = (EnumDecl*)VecGet(&r->m_mod->enums, i);
+
+        if (strcmp(ed->name, name) == 0)
+        {
+            return ed;
+        }
+    }
+
+    return NULL;
+}
+
 /* Method lookup with `extends` walk: a Player sees impl Entity methods. */
 static FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
 {
@@ -2495,6 +2708,53 @@ static PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, con
     }
 
     return FindImplProperty(r, inner->name, member);
+}
+
+/* Resolves `EnumName.Member` — a scoped enum constant read. Returns true when
+   the member expression was handled (marked as an enum constant, or diagnosed
+   as a bad member). Only bare type-name bases are considered; a variable
+   shadowing the enum name takes precedence. */
+static bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
+{
+    if (m->base_node->kind != NodeIdent)
+    {
+        return false;
+    }
+
+    const char* baseName = ((IdentExpr*)m->base_node)->name;
+
+    if (StrMapGet(scope, baseName))
+    {
+        return false; /* a local shadows the enum type name */
+    }
+
+    if (!TypeRegistryIsEnum(&r->m_registry, baseName))
+    {
+        return false;
+    }
+
+    EnumDecl* ed = FindEnum(r, baseName);
+
+    if (!ed)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < ed->members.count; i++)
+    {
+        EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&ed->members, i);
+
+        if (strcmp(member->name, m->member) == 0)
+        {
+            m->isEnumConst = true;
+            m->enumValue = member->value;
+            m->enumTypeName = baseName;
+            return true;
+        }
+    }
+
+    DiagErrorFmt(r->m_diag, m->base.range, "enum '%s' has no member '%s'", baseName, m->member);
+    return true;
 }
 
 static void VecPushFront(Vec* v, void* item)
@@ -2719,6 +2979,121 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
 /* Validates impl targets and materializes property accessor externs (before
    the overload/mangling pass, so accessors flow through the normal pipeline). */
+/* Assigns enum member values (sequential from 0, or explicit) and validates
+   every value fits the underlying scalar integral type. Emits the enum's
+   underlying type in `registry` (registered as an alias earlier). */
+static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* registry)
+{
+    for (size_t i = 0; i < mod->enums.count; i++)
+    {
+        EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, i);
+
+        const char* underlying = ed->underlyingType ? ed->underlyingType : "int";
+        const char* resolved = TypeRegistryResolveAlias(registry, underlying);
+
+        if (!IsEnumUnderlyingType(resolved))
+        {
+            DiagErrorFmt(diag, ed->base.range, "enum '%s' underlying type '%s' must be a scalar integral type",
+                         ed->name, underlying);
+            continue;
+        }
+
+        for (size_t j = 0; j < ed->members.count; j++)
+        {
+            EnumMemberDecl* a = (EnumMemberDecl*)VecGet(&ed->members, j);
+
+            for (size_t k = j + 1; k < ed->members.count; k++)
+            {
+                EnumMemberDecl* b = (EnumMemberDecl*)VecGet(&ed->members, k);
+
+                if (strcmp(a->name, b->name) == 0)
+                {
+                    DiagErrorFmt(diag, b->base.range, "duplicate enum member '%s' in '%s'", b->name, ed->name);
+                }
+            }
+        }
+
+        bool isUnsigned = false;
+        int64_t minVal = 0;
+        uint64_t maxVal = 0;
+        EnumSignedRange(resolved, &isUnsigned, &minVal, &maxVal);
+
+        if (isUnsigned)
+        {
+            uint64_t next = 0;
+
+            for (size_t j = 0; j < ed->members.count; j++)
+            {
+                EnumMemberDecl* m = (EnumMemberDecl*)VecGet(&ed->members, j);
+
+                if (m->hasExplicitValue)
+                {
+                    if (m->isNegative)
+                    {
+                        DiagErrorFmt(diag, m->base.range,
+                                     "enum member '%s' may not be negative for unsigned underlying type '%s'",
+                                     m->name, underlying);
+                        continue;
+                    }
+
+                    if (m->value > maxVal)
+                    {
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'",
+                                     m->name, (unsigned long long)m->value, underlying);
+                        continue;
+                    }
+
+                    next = m->value + 1;
+                }
+                else
+                {
+                    if (next > maxVal)
+                    {
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'",
+                                     m->name, (unsigned long long)next, underlying);
+                        continue;
+                    }
+
+                    m->value = next;
+                    next++;
+                }
+            }
+        }
+        else
+        {
+            int64_t next = 0;
+
+            for (size_t j = 0; j < ed->members.count; j++)
+            {
+                EnumMemberDecl* m = (EnumMemberDecl*)VecGet(&ed->members, j);
+                int64_t sv = next;
+
+                if (m->hasExplicitValue)
+                {
+                    if (!EnumSignedValue(m->value, m->isNegative, &sv))
+                    {
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value does not fit in '%s'", m->name,
+                                     underlying);
+                        continue;
+                    }
+
+                    next = sv;
+                }
+
+                if (sv < minVal || sv > (int64_t)maxVal)
+                {
+                    DiagErrorFmt(diag, m->base.range, "enum member '%s' value %lld does not fit in '%s'", m->name,
+                                 (long long)sv, underlying);
+                    continue;
+                }
+
+                m->value = (uint64_t)sv;
+                next = sv + 1;
+            }
+        }
+    }
+}
+
 static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, const TypeRegistry* registry)
 {
     for (size_t i = 0; i < mod->impls.count; i++)
@@ -3281,6 +3656,12 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
+
+        /* Scoped enum constant: `EnumName.Member` has the enum's type. */
+        if (m->isEnumConst && m->enumTypeName)
+        {
+            return InternTypeName(r, m->enumTypeName);
+        }
 
         const TypeName* baseType = InferType(r, m->base_node, scope);
 
@@ -3928,6 +4309,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             ResolveExpr(r, a->target, scope);
             ResolveExpr(r, a->value, scope);
 
+            /* Enum constants are read-only: `Color.Red = v` is rejected. */
+            if (a->target->kind == NodeMember && ((MemberExpr*)a->target)->isEnumConst)
+            {
+                DiagErrorFmt(r->m_diag, a->base.range, "cannot assign to enum constant '%s.%s'",
+                             ((MemberExpr*)a->target)->enumTypeName, ((MemberExpr*)a->target)->member);
+                return;
+            }
+
             /* Whole fixed-size array fields cannot be assigned (no splice
                 semantics; element stores are the supported path). */
             if (a->target->kind == NodeMember || a->target->kind == NodeIndex)
@@ -4061,11 +4450,33 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
         }
 
+        /* Casting a compile-time constant to an enum: the value must fit the
+           enum's underlying range (`(Color)300` for a byte-based enum). */
+        if (TypeRegistryIsEnum(&r->m_registry, dstName))
+        {
+            uint64_t mag = 0;
+            bool neg = false;
+
+            if (ResolvedConstIntValue(cast->operand, &mag, &neg) && !EnumConstFits(resolvedDst, mag, neg))
+            {
+                DiagErrorFmt(r->m_diag, cast->base.range, "enum value does not fit in underlying type '%s'",
+                             resolvedDst);
+            }
+        }
+
         return;
     }
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
+
+        /* Scoped enum constant: `EnumName.Member` reads a constant — the base
+           is a type name, not a value, so skip the normal member path. */
+        if (TryResolveEnumMember(r, m, scope))
+        {
+            return;
+        }
+
         ResolveExprImpl(r, m->base_node, scope, true);
 
         const TypeName* rawBaseType = InferType(r, m->base_node, scope);
@@ -5165,6 +5576,10 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
        underlying scalar. */
     TypeRegistryRegisterAliases(&r.m_registry, mod);
     StrMapInit(&r.m_constGlobals);
+
+    /* Assign enum member values and validate underlying ranges, BEFORE the
+       manifest-constant fold so `const int N = (int)Color.Red;` resolves. */
+    ResolveEnums(mod, diag, &r.m_registry);
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {

@@ -108,6 +108,19 @@ static bool RootHasHandle(const Module* root, const char* name)
     return false;
 }
 
+static bool RootHasEnum(const Module* root, const char* name)
+{
+    for (size_t i = 0; i < root->enums.count; i++)
+    {
+        EnumDecl* e = (EnumDecl*)VecGet(&root->enums, i);
+        if (strcmp(e->name, name) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool RootHasGlobal(const Module* root, const char* name)
 {
     for (size_t i = 0; i < root->globals.count; i++)
@@ -176,6 +189,17 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
             continue;
         }
         VecPush(&root->handles, h);
+    }
+
+    for (size_t i = 0; i < src->enums.count; i++)
+    {
+        EnumDecl* e = (EnumDecl*)VecGet(&src->enums, i);
+        if (RootHasEnum(root, e->name))
+        {
+            DiagErrorFmt(diag, e->base.range, "redefinition of enum '%s'", e->name);
+            continue;
+        }
+        VecPush(&root->enums, e);
     }
 
     for (size_t i = 0; i < src->functions.count; i++)
@@ -313,6 +337,7 @@ static Module* NewRootModule(Arena* arena, const char* name)
     root->name = arena_strdup(arena, name);
     VecInit(&root->structs);
     VecInit(&root->handles);
+    VecInit(&root->enums);
     VecInit(&root->functions);
     VecInit(&root->globals);
     VecInit(&root->imports);

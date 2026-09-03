@@ -56,6 +56,7 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     VecInit(&t->fields);
     t->isExtern = false;
     t->isTypeAlias = false;
+    t->isEnum = false;
     t->underlyingType = NULL;
     t->hasLayout = false;
     t->packedLayout = false;
@@ -128,6 +129,24 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
         StructType* t = TypeRegistryAdd(reg, sd->name);
         t->isTypeAlias = true;
         t->underlyingType = sd->underlyingType;
+        t->opaque = false;
+        t->incomplete = false;
+    }
+
+    /* Enums are strong aliases too (underlying defaults to `int`). */
+    for (size_t i = 0; i < m->enums.count; i++)
+    {
+        EnumDecl* ed = (EnumDecl*)VecGet((Vec*)&m->enums, i);
+
+        if (TypeRegistryFindIndex(reg, ed->name) >= 0)
+        {
+            continue;
+        }
+
+        StructType* t = TypeRegistryAdd(reg, ed->name);
+        t->isTypeAlias = true;
+        t->isEnum = true;
+        t->underlyingType = ed->underlyingType ? ed->underlyingType : "int";
         t->opaque = false;
         t->incomplete = false;
     }
@@ -557,6 +576,12 @@ bool TypeRegistryIsTypeAlias(const TypeRegistry* reg, const char* name)
 {
     const StructType* t = TypeRegistryFind(reg, name);
     return t && t->isTypeAlias;
+}
+
+bool TypeRegistryIsEnum(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = TypeRegistryFind(reg, name);
+    return t && t->isEnum;
 }
 
 const char* TypeRegistryGetUnderlyingType(const TypeRegistry* reg, const char* name)

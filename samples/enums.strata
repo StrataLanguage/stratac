@@ -1,0 +1,37 @@
+// enums.strata — scoped enumerations over a scalar integral underlying type.
+
+enum Color : int { Red, Green, Blue };
+enum Permission : ulong { Read = 1, Write = 2, Execute = 4 };
+enum Direction { North, South, East, West };
+enum Scale : byte { Small = 1, Medium, Large, Huge };
+
+// A compile-time constant from an enum member feeds a const global.
+const int kBlueValue = (int)Color.Blue;
+
+struct Tagged {
+    Color c;
+    Scale s;
+};
+
+int main()
+{
+    Color c = Color.Blue;
+    if (c != (Color)2) { return 90; }
+
+    // Sequential values: Small=1, Medium=2, Large=3, Huge=4.
+    if ((int)Scale.Large != 3) { return 91; }
+
+    // Bit-flag style values over an unsigned underlying.
+    ulong p = (ulong)Permission.Read | (ulong)Permission.Execute;
+    if (p != 5) { return 92; }
+
+    // Enums are ordinary strong types: usable as struct fields and params.
+    Tagged t;
+    t.c = c;
+    t.s = Scale.Huge;
+    if (t.c != Color.Blue || (int)t.s != 4) { return 93; }
+
+    if (kBlueValue != 2) { return 94; }
+
+    return 0;
+}

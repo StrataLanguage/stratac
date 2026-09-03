@@ -11,6 +11,8 @@ typedef enum {
     NodeImport,
     NodeStruct,
     NodeHandle,
+    NodeEnum,
+    NodeEnumMember,
     NodeImpl,
     NodeFunction,
     NodeParam,
@@ -375,6 +377,25 @@ typedef struct {
 
 typedef struct {
     Node base;
+    char* name;
+    /* Explicit value (magnitude + sign) if the member wrote one; otherwise the
+       value is assigned sequentially from the previous member + 1 (starting 0)
+       by sema. `value` is the final bit pattern after resolution. */
+    uint64_t value;
+    bool isNegative;
+    bool hasExplicitValue;
+} EnumMemberDecl;
+
+typedef struct {
+    Node base;
+    char* name;
+    /* Underlying scalar integral type name (NULL = `int`). */
+    char* underlyingType;
+    Vec members; // Vec<EnumMemberDecl*>
+} EnumDecl;
+
+typedef struct {
+    Node base;
     TypeName returnType;
     char* name;
     Vec params;
@@ -439,6 +460,7 @@ typedef struct {
     char* name;
     Vec structs;
     Vec handles;
+    Vec enums;
     Vec functions;
     Vec globals;
     Vec imports;
@@ -602,6 +624,9 @@ typedef struct MemberExpr {
     Node* base_node;
     char* member;
     bool isImplProperty; /* set by sema: member names an impl property (call-like read, never a move source) */
+    bool isEnumConst;    /* set by sema: `EnumName.Member` scoped constant read */
+    uint64_t enumValue;  /* resolved bit pattern of the enum member (valid when isEnumConst) */
+    const char* enumTypeName; /* the enum's name (valid when isEnumConst) */
 } MemberExpr;
 
 typedef struct {
