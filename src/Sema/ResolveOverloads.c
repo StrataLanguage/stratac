@@ -34,14 +34,267 @@ typedef struct
    use (the #define/enum alternative for C++ consumers). */
 typedef struct
 {
-    long i;
+    long long i;
     double f;
     bool isFloat;
+    bool isInt; /* integer-kind type: usable as a fixed-array dimension */
 } ConstGlobalVal;
 
+/* Integer constant arithmetic (two's complement). `div`/`mod`/`>>` apply
+   C signed semantics; refuses division/modulo by zero and shifts whose
+   count is negative or >= 64. */
+static bool SemaFoldConstIntArith(BinaryOp op, unsigned long long a, unsigned long long b, long long* out)
+{
+    switch (op)
+    {
+    case BinAdd:
+        *out = (long long)((unsigned long long)0 + a + b);
+        return true;
+    case BinSub:
+        *out = (long long)((unsigned long long)0 + a - b);
+        return true;
+    case BinMul:
+        *out = (long long)((unsigned long long)0 + a * b);
+        return true;
+    case BinDiv:
+        if (b == 0)
+        {
+            return false;
+        }
+
+        *out = (long long)a / (long long)b;
+        return true;
+    case BinMod:
+        if (b == 0)
+        {
+            return false;
+        }
+
+        *out = (long long)a % (long long)b;
+        return true;
+    case BinBitAnd:
+        *out = (long long)(a & b);
+        return true;
+    case BinBitOr:
+        *out = (long long)(a | b);
+        return true;
+    case BinBitXor:
+        *out = (long long)(a ^ b);
+        return true;
+    case BinShl:
+        if (b >= 64)
+        {
+            return false;
+        }
+
+        *out = (long long)((unsigned long long)0 + a << b);
+        return true;
+    case BinShr:
+        if (b >= 64)
+        {
+            return false;
+        }
+
+        *out = (long long)a >> (long long)b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Float constant arithmetic (`+ - * /`); refuses division by zero so the
+   fold never embeds an inf/nan literal. */
+static bool SemaFoldConstFloatArith(BinaryOp op, double a, double b, double* out)
+{
+    switch (op)
+    {
+    case BinAdd:
+        *out = a + b;
+        return true;
+    case BinSub:
+        *out = a - b;
+        return true;
+    case BinMul:
+        *out = a * b;
+        return true;
+    case BinDiv:
+        if (b == 0.0)
+        {
+            return false;
+        }
+
+        *out = a / b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool SemaFoldConstCompare(BinaryOp op, long long a, long long b, bool* res)
+{
+    switch (op)
+    {
+    case BinEqEq:
+        *res = a == b;
+        return true;
+    case BinNotEq:
+        *res = a != b;
+        return true;
+    case BinLt:
+        *res = a < b;
+        return true;
+    case BinLtEq:
+        *res = a <= b;
+        return true;
+    case BinGt:
+        *res = a > b;
+        return true;
+    case BinGtEq:
+        *res = a >= b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool SemaFoldConstCompareFloat(BinaryOp op, double a, double b, bool* res)
+{
+    switch (op)
+    {
+    case BinEqEq:
+        *res = a == b;
+        return true;
+    case BinNotEq:
+        *res = a != b;
+        return true;
+    case BinLt:
+        *res = a < b;
+        return true;
+    case BinLtEq:
+        *res = a <= b;
+        return true;
+    case BinGt:
+        *res = a > b;
+        return true;
+    case BinGtEq:
+        *res = a >= b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Applies a binary operator to two folded values with C constant-expression
+   semantics: usual arithmetic conversions (int promotes to double when the
+   other side is float); bitwise/shift/modulo require integers; comparisons
+   and logical ops yield 0/1. */
+static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r, ConstGlobalVal* out)
+{
+    bool lFloat = l.isFloat;
+    bool rFloat = r.isFloat;
+
+    switch (op)
+    {
+    case BinAdd:
+    case BinSub:
+    case BinMul:
+    case BinDiv:
+    {
+        if (lFloat || rFloat)
+        {
+            double a = lFloat ? l.f : (double)l.i;
+            double b = rFloat ? r.f : (double)r.i;
+
+            out->i = 0;
+            out->isFloat = true;
+            return SemaFoldConstFloatArith(op, a, b, &out->f);
+        }
+
+        long long v;
+
+        if (!SemaFoldConstIntArith(op, (unsigned long long)l.i, (unsigned long long)r.i, &v))
+        {
+            return false;
+        }
+
+        out->i = (long)v;
+        out->f = 0.0;
+        out->isFloat = false;
+        return true;
+    }
+    case BinMod:
+    case BinBitAnd:
+    case BinBitOr:
+    case BinBitXor:
+    case BinShl:
+    case BinShr:
+    {
+        if (lFloat || rFloat)
+        {
+            return false;
+        }
+
+        long long v;
+
+        if (!SemaFoldConstIntArith(op, (unsigned long long)l.i, (unsigned long long)r.i, &v))
+        {
+            return false;
+        }
+
+        out->i = (long long)v;
+        out->f = 0.0;
+        out->isFloat = false;
+        return true;
+    }
+    case BinEqEq:
+    case BinNotEq:
+    case BinLt:
+    case BinLtEq:
+    case BinGt:
+    case BinGtEq:
+    {
+        bool res;
+
+        if (lFloat || rFloat)
+        {
+            double a = lFloat ? l.f : (double)l.i;
+            double b = rFloat ? r.f : (double)r.i;
+
+            if (!SemaFoldConstCompareFloat(op, a, b, &res))
+            {
+                return false;
+            }
+        }
+        else if (!SemaFoldConstCompare(op, l.i, r.i, &res))
+        {
+            return false;
+        }
+
+        out->i = res ? 1 : 0;
+        out->f = 0.0;
+        out->isFloat = false;
+        return true;
+    }
+    case BinLogicAnd:
+    case BinLogicOr:
+    {
+        bool a = lFloat ? l.f != 0.0 : l.i != 0;
+        bool b = rFloat ? r.f != 0.0 : r.i != 0;
+
+        out->i = (op == BinLogicAnd) ? (a && b) : (a || b);
+        out->f = 0.0;
+        out->isFloat = false;
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 /* Folds a const-global initializer to a compile-time value. Handles int/
-   float/bool literals, negation, scalar casts, and references to earlier
-   manifest constants (`const B = A;`). */
+   float/bool literals, unary ops, scalar casts, the C constant-expression
+   operators over folded operands, and references to earlier manifest
+   constants (`const B = A | (1 << 2);`). */
 static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
 {
     if (!n)
@@ -52,7 +305,7 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        out->i = (long)((IntLiteral*)n)->value;
+        out->i = (long long)((IntLiteral*)n)->value;
         out->f = 0.0;
         out->isFloat = false;
         return true;
@@ -69,32 +322,78 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
     {
         UnaryExpr* u = (UnaryExpr*)n;
 
-        if (u->op != UnNeg || !SemaFoldConstInit(r, u->operand, out))
+        if (!SemaFoldConstInit(r, u->operand, out))
         {
             return false;
         }
 
-        if (out->isFloat)
+        switch (u->op)
         {
-            out->f = -out->f;
-        }
-        else
-        {
-            out->i = -out->i;
+        case UnNeg:
+            if (out->isFloat)
+            {
+                out->f = -out->f;
+            }
+            else
+            {
+                out->i = -out->i;
+            }
+
+            return true;
+        case UnPos:
+            return true;
+        case UnNot:
+            if (out->isFloat)
+            {
+                out->i = out->f == 0.0;
+            }
+            else
+            {
+                out->i = out->i == 0;
+            }
+
+            out->f = 0.0;
+            out->isFloat = false;
+            return true;
+        case UnBitNot:
+            if (out->isFloat)
+            {
+                return false;
+            }
+
+            out->i = ~out->i;
+            return true;
         }
 
-        return true;
+        return false;
+    }
+    case NodeBinary:
+    {
+        BinaryExpr* e = (BinaryExpr*)n;
+        ConstGlobalVal l;
+        ConstGlobalVal rhs;
+
+        if (!SemaFoldConstInit(r, e->lhs, &l) || !SemaFoldConstInit(r, e->rhs, &rhs))
+        {
+            return false;
+        }
+
+        return SemaFoldConstBinary(e->op, l, rhs, out);
     }
     case NodeCast:
     {
-        ConstGlobalVal inner;
+        ConstGlobalVal inner = {0};
 
         if (!SemaFoldConstInit(r, ((CastExpr*)n)->operand, &inner))
         {
             return false;
         }
 
+        /* `isInt` describes the DECLARED type (set by the caller before the
+           fold); the value copy must not clobber it. */
+        bool wasInt = out->isInt;
         *out = inner;
+        out->isInt = wasInt;
         return true;
     }
     case NodeIdent:
@@ -106,7 +405,9 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
             return false;
         }
 
+        bool wasInt = out->isInt;
         *out = *prev;
+        out->isInt = wasInt;
         return true;
     }
     default:
@@ -125,6 +426,13 @@ static bool IsConstDimType(const TypeRegistry* reg, const char* name)
            || strcmp(leaf, "short") == 0 || strcmp(leaf, "ushort") == 0;
 }
 
+/* A `const` scalar global of any numeric type folds into the manifest table
+   (floats/bools inline at uses too — they just cannot size arrays). */
+static bool IsManifestConstType(const TypeRegistry* reg, const char* name)
+{
+    return IsNumeric(TypeRegistryResolveAlias(reg, name));
+}
+
 /* Resolves `[constName]` fixed-array dimensions on a type tree against the
    manifest-constant table. */
 static bool SemaResolveConstDims(Resolver* r, TypeName* t)
@@ -138,7 +446,7 @@ static bool SemaResolveConstDims(Resolver* r, TypeName* t)
     {
         ConstGlobalVal* v = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, t->lengthName);
 
-        if (!v || v->isFloat)
+        if (!v || !v->isInt)
         {
             DiagErrorFmt(r->m_diag, t->range,
                          "array dimension '%s' is not a compile-time integer constant "
@@ -147,8 +455,17 @@ static bool SemaResolveConstDims(Resolver* r, TypeName* t)
             return false;
         }
 
-        t->length = v->i;
+        t->length = (long)v->i;
+        char* dimName = t->lengthName;
         t->lengthName = NULL;
+
+        if (t->length < 1)
+        {
+            DiagErrorFmt(r->m_diag, t->range,
+                         "array dimension '%s' must be at least 1 (got %ld)",
+                         dimName ? dimName : "?", t->length);
+            return false;
+        }
 
         /* Rebuild the canonical spelling with the resolved dimension. */
         char* open = strchr(t->name, '[');
@@ -2856,6 +3173,19 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             const char* ln = lt ? lt->name : "";
             const char* rn = rt ? rt->name : "";
 
+            /* Box/optional operands deref to their inner for arithmetic
+               (mirrors the ResolveExpr operand check). Same-shape SIMD
+               vectors keep the vector type: the scalar ladder below would
+               report a bogus `int` and break overload matching for valid
+               vector arguments. */
+            const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : ln;
+            const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
+
+            if (SameResolvedType(r, ln2, rn2) && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
+            {
+                return InternTypeName(r, TypeRegistryResolveAlias(&r->m_registry, ln2));
+            }
+
             if (strcmp(ln, "double") == 0 || strcmp(rn, "double") == 0)
             {
                 return InternTypeName(r, "double");
@@ -4779,19 +5109,23 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     TypeRegistryInit(&r.m_registry);
 
     /* Manifest constants: fold `const` scalar global initializers FIRST, so
-       `[constName]` fixed-array dimensions resolve before layouts compute. */
+       `[constName]` fixed-array dimensions resolve before layouts compute.
+       Aliases register first — a `const AliasType` folds through to its
+       underlying scalar. */
+    TypeRegistryRegisterAliases(&r.m_registry, mod);
     StrMapInit(&r.m_constGlobals);
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
-        if (!gd->type.isConst || !gd->init || !IsConstDimType(&r.m_registry, gd->type.name))
+        if (!gd->type.isConst || !gd->init || !IsManifestConstType(&r.m_registry, gd->type.name))
         {
             continue;
         }
 
         ConstGlobalVal* v = (ConstGlobalVal*)arena_alloc(arena, sizeof(ConstGlobalVal));
+        v->isInt = IsConstDimType(&r.m_registry, gd->type.name);
 
         if (SemaFoldConstInit(&r, gd->init, v))
         {

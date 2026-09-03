@@ -46,6 +46,10 @@ typedef struct TypeRegistry {
 
 void TypeRegistryInit(TypeRegistry* reg);
 void TypeRegistryFree(TypeRegistry* reg);
+/* Registers only the module's type aliases (idempotent). Sema calls this
+   before full registration so alias resolution works while manifest-constant
+   array dimensions resolve, ahead of layout computation. */
+void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m);
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m);
 void ComputeAllLayouts(TypeRegistry* reg);
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name);

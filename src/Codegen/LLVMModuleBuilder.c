@@ -5192,43 +5192,314 @@ static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
     return v;
 }
 
-/* Constant-fold a global initializer expression (literals, negation, and
- * scalar casts thereof - the forms sema accepts for non-owning globals).
+/* Integer constant arithmetic in two's complement; `div`/`mod`/`>>` apply
+ * C signed (long long) semantics; refuses division/modulo by zero and
+ * shifts whose count is negative or >= 64. */
+static bool FoldConstIntArith(BinaryOp op, unsigned long long a, unsigned long long b, unsigned long long* out)
+{
+    switch (op)
+    {
+    case BinAdd:
+        *out = a + b;
+        return true;
+    case BinSub:
+        *out = a - b;
+        return true;
+    case BinMul:
+        *out = a * b;
+        return true;
+    case BinDiv:
+        if (b == 0)
+        {
+            return false;
+        }
+
+        *out = (unsigned long long)((long long)a / (long long)b);
+        return true;
+    case BinMod:
+        if (b == 0)
+        {
+            return false;
+        }
+
+        *out = (unsigned long long)((long long)a % (long long)b);
+        return true;
+    case BinBitAnd:
+        *out = a & b;
+        return true;
+    case BinBitOr:
+        *out = a | b;
+        return true;
+    case BinBitXor:
+        *out = a ^ b;
+        return true;
+    case BinShl:
+        if (b >= 64)
+        {
+            return false;
+        }
+
+        *out = a << b;
+        return true;
+    case BinShr:
+        if (b >= 64)
+        {
+            return false;
+        }
+
+        *out = (unsigned long long)((long long)a >> b);
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Float constant arithmetic (`+ - * /`); refuses division by zero so the
+ * fold never embeds an inf/nan literal. */
+static bool FoldConstFloatArith(BinaryOp op, double a, double b, double* out)
+{
+    switch (op)
+    {
+    case BinAdd:
+        *out = a + b;
+        return true;
+    case BinSub:
+        *out = a - b;
+        return true;
+    case BinMul:
+        *out = a * b;
+        return true;
+    case BinDiv:
+        if (b == 0.0)
+        {
+            return false;
+        }
+
+        *out = a / b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool FoldConstCompare(BinaryOp op, long long a, long long b, bool* res)
+{
+    switch (op)
+    {
+    case BinEqEq:
+        *res = a == b;
+        return true;
+    case BinNotEq:
+        *res = a != b;
+        return true;
+    case BinLt:
+        *res = a < b;
+        return true;
+    case BinLtEq:
+        *res = a <= b;
+        return true;
+    case BinGt:
+        *res = a > b;
+        return true;
+    case BinGtEq:
+        *res = a >= b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool FoldConstCompareFloat(BinaryOp op, double a, double b, bool* res)
+{
+    switch (op)
+    {
+    case BinEqEq:
+        *res = a == b;
+        return true;
+    case BinNotEq:
+        *res = a != b;
+        return true;
+    case BinLt:
+        *res = a < b;
+        return true;
+    case BinLtEq:
+        *res = a <= b;
+        return true;
+    case BinGt:
+        *res = a > b;
+        return true;
+    case BinGtEq:
+        *res = a >= b;
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Constant-fold a global initializer expression (literals, unary/binary
+ * operators with C constant-expression semantics, scalar casts, and
+ * references to other manifest constants). Values are folded at their
+ * NATURAL kind (raw int/float) — conversion to the declared global type
+ * happens once at the init site (and inside explicit NodeCasts), so a
+ * `bool` target must never collapse operands before an operator applies.
  * Returns false when the expression is not a compile-time constant. */
 static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
     switch (n->kind)
     {
     case NodeIntLiteral:
-        *out = CastConstVal(b, (ConstInitVal){CIK_INT, .i = ((IntLiteral*)n)->value, .f = 0.0}, td);
+        *out = (ConstInitVal){CIK_INT, .i = ((IntLiteral*)n)->value, .f = 0.0};
         return true;
     case NodeFloatLiteral:
-        *out = CastConstVal(b, (ConstInitVal){CIK_FLOAT, .i = 0, .f = ((FloatLiteral*)n)->value}, td);
+        *out = (ConstInitVal){CIK_FLOAT, .i = 0, .f = ((FloatLiteral*)n)->value};
         return true;
     case NodeBoolLiteral:
-        *out = CastConstVal(b, (ConstInitVal){CIK_BOOL, .i = ((BoolLiteral*)n)->value ? 1 : 0, .f = 0.0}, td);
+        *out = (ConstInitVal){CIK_BOOL, .i = ((BoolLiteral*)n)->value ? 1 : 0, .f = 0.0};
         return true;
     case NodeUnary:
     {
         UnaryExpr* u = AsNode(UnaryExpr, n);
         ConstInitVal inner;
 
-        if (u->op != UnNeg || !FoldConstInit(b, td, u->operand, &inner))
+        if (!FoldConstInit(b, td, u->operand, &inner))
         {
             return false;
         }
 
-        if (inner.kind == CIK_FLOAT)
+        switch (u->op)
         {
-            inner.f = -inner.f;
+        case UnNeg:
+            if (inner.kind == CIK_FLOAT)
+            {
+                inner.f = -inner.f;
+            }
+            else
+            {
+                inner.i = 0ULL - inner.i;
+            }
+
+            break;
+        case UnPos:
+            break;
+        case UnNot:
+        {
+            bool isZero = (inner.kind == CIK_FLOAT) ? inner.f == 0.0 : inner.i == 0;
+
+            inner.kind = CIK_INT;
+            inner.i = isZero;
+            inner.f = 0.0;
+            break;
         }
-        else
-        {
-            inner.i = 0ULL - inner.i;
+        case UnBitNot:
+            if (inner.kind == CIK_FLOAT)
+            {
+                return false;
+            }
+
+            inner.kind = CIK_INT;
+            inner.i = ~inner.i;
+            break;
+        default:
+            return false;
         }
 
         *out = inner;
         return true;
+    }
+    case NodeBinary:
+    {
+        BinaryExpr* e = AsNode(BinaryExpr, n);
+        ConstInitVal l;
+        ConstInitVal r;
+
+        if (!FoldConstInit(b, td, e->lhs, &l) || !FoldConstInit(b, td, e->rhs, &r))
+        {
+            return false;
+        }
+
+        bool lFloat = l.kind == CIK_FLOAT;
+        bool rFloat = r.kind == CIK_FLOAT;
+
+        switch (e->op)
+        {
+        case BinAdd:
+        case BinSub:
+        case BinMul:
+        case BinDiv:
+        {
+            if (lFloat || rFloat)
+            {
+                double a = lFloat ? l.f : (double)(long long)l.i;
+                double z = rFloat ? r.f : (double)(long long)r.i;
+
+                out->kind = CIK_FLOAT;
+                out->i = 0;
+                return FoldConstFloatArith(e->op, a, z, &out->f);
+            }
+
+            out->kind = CIK_INT;
+            out->f = 0.0;
+            return FoldConstIntArith(e->op, l.i, r.i, &out->i);
+        }
+        case BinMod:
+        case BinBitAnd:
+        case BinBitOr:
+        case BinBitXor:
+        case BinShl:
+        case BinShr:
+        {
+            if (lFloat || rFloat)
+            {
+                return false;
+            }
+
+            out->kind = CIK_INT;
+            out->f = 0.0;
+            return FoldConstIntArith(e->op, l.i, r.i, &out->i);
+        }
+        case BinEqEq:
+        case BinNotEq:
+        case BinLt:
+        case BinLtEq:
+        case BinGt:
+        case BinGtEq:
+        {
+            bool res;
+
+            if (lFloat || rFloat)
+            {
+                double a = lFloat ? l.f : (double)(long long)l.i;
+                double z = rFloat ? r.f : (double)(long long)r.i;
+
+                if (!FoldConstCompareFloat(e->op, a, z, &res))
+                {
+                    return false;
+                }
+            }
+            else if (!FoldConstCompare(e->op, (long long)l.i, (long long)r.i, &res))
+            {
+                return false;
+            }
+
+            out->kind = CIK_INT;
+            out->i = res ? 1 : 0;
+            out->f = 0.0;
+            return true;
+        }
+        case BinLogicAnd:
+        case BinLogicOr:
+        {
+            bool a = lFloat ? l.f != 0.0 : l.i != 0;
+            bool z = rFloat ? r.f != 0.0 : r.i != 0;
+
+            out->kind = CIK_INT;
+            out->i = (e->op == BinLogicAnd) ? (a && z) : (a || z);
+            out->f = 0.0;
+            return true;
+        }
+        default:
+            return false;
+        }
     }
     case NodeCast:
     {
@@ -5247,7 +5518,10 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             return false;
         }
 
-        *out = CastConstVal(b, inner, td);
+        /* First to the cast's own target type (the truncation/narrowing the
+           user asked for, e.g. `(int)1.5`), then to the declared global
+           type. */
+        *out = CastConstVal(b, CastConstVal(b, inner, innerTd), td);
         return true;
     }
     case NodeIdent:
@@ -5401,6 +5675,9 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
             if (folded)
             {
+                /* The fold is type-agnostic (natural int/float kinds);
+                   convert to the declared global type once here. */
+                foldedVal = CastConstVal(b, foldedVal, typeDesc);
                 init = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, foldedVal.f)
                                         : LLVMConstInt(typeDesc.type, foldedVal.i, 0);
             }
@@ -5408,7 +5685,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             {
                 DiagErrorFmt(b->m_diag, gd->base.range,
                              "global '%s' initializer must be a compile-time constant "
-                             "(a scalar literal, a negation, or a scalar cast of one)",
+                             "(scalar literals and operator expressions over them "
+                             "and other const globals)",
                              gd->name);
             }
         }

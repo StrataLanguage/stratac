@@ -107,6 +107,24 @@ STRATA_TEST(vector_passed_and_returned)
         60);
 }
 
+STRATA_TEST(vector_binary_expr_as_call_arg)
+{
+    /* A binary vector expression passed directly as a call argument must
+       infer the vector type (not fall through to the scalar `int` ladder)
+       so overload resolution matches the float3 param. */
+    run_int(
+        "float consume(float3 v)\n"
+        "{\n"
+        "  return (int)(v.x + v.y + v.z);\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  float3 a = float3(1.0, 2.0, 3.0);\n"
+        "  return consume(a * float3(10.0));\n" /* {10, 20, 30} */
+        "}\n",
+        60);
+}
+
 STRATA_TEST(vector_divide_lanes)
 {
     run_int(

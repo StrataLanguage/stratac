@@ -108,10 +108,8 @@ static bool FieldsIdentical(const Vec* a, const Vec* b)
     return true;
 }
 
-void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
+void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
 {
-    reg->count = 0;
-
     /* Type aliases — registered early so other types can reference them. */
     for (size_t i = 0; i < m->structs.count; i++)
     {
@@ -133,6 +131,13 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->opaque = false;
         t->incomplete = false;
     }
+}
+
+void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
+{
+    reg->count = 0;
+
+    TypeRegistryRegisterAliases(reg, m);
 
     /* Structs */
     for (size_t i = 0; i < m->structs.count; i++)

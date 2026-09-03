@@ -814,6 +814,257 @@ STRATA_TEST(manifest_const_jit_dimension_and_value)
     strataCompilerDestroy(c);
 }
 
+STRATA_TEST(manifest_const_alias_type_dim)
+{
+    /* The pseudo-enum pattern: an alias-of-int const sizing an array. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct EWeaponType = int;\n"
+        "const EWeaponType maxWeapons = (EWeaponType)8;\n"
+        "struct Arsenal {\n"
+        "    byte[maxWeapons] slots;\n"
+        "};\n"
+        "int test() { Arsenal a; a.slots[7] = 3; return a.slots[7]; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "%struct.Arsenal = type { [8 x i8] }") != NULL);
+    STRATA_CHECK(strstr(res.output, "@maxWeapons") == NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_chained_dim)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int base = 4;\n"
+        "const int doubled = base;\n"
+        "struct Buf {\n"
+        "    byte[doubled] data;\n"
+        "};\n"
+        "int test() { Buf b; b.data[3] = 18; return b.data[3] + doubled; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "%struct.Buf = type { [4 x i8] }") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_forward_reference_dim)
+{
+    /* Dims resolve after ALL consts fold, so a struct may appear before the
+       const it is sized with. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Late {\n"
+        "    byte[size] data;\n"
+        "};\n"
+        "const int size = 12;\n"
+        "int test() { Late l; l.data[11] = 5; return l.data[11]; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "%struct.Late = type { [12 x i8] }") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_float_dim_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const float scale = 1.5;\n"
+        "struct Bad {\n"
+        "    byte[scale] data;\n"
+        "};\n"
+        "int test() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_bool_dim_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const bool on = true;\n"
+        "struct Bad {\n"
+        "    byte[on] data;\n"
+        "};\n"
+        "int test() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_negative_dim_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int neg = -5;\n"
+        "struct Bad {\n"
+        "    byte[neg] data;\n"
+        "};\n"
+        "int test() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_float_and_bool_values)
+{
+    /* Non-int consts fold too (no symbol); they just cannot size arrays. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const float scale = 1.5;\n"
+        "const bool on = true;\n"
+        "float test() { if (on) { return scale; } return 0.0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "@scale") == NULL);
+    STRATA_CHECK(strstr(res.output, "@on") == NULL);
+    STRATA_CHECK(strstr(res.output, "ret float 1.500000e+00") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_expr_and_boundary_index)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "const int maxAllowed = 32;\n"
+        "struct Table {\n"
+        "    byte[maxAllowed] name;\n"
+        "};\n"
+        "int run() {\n"
+        "    Table t;\n"
+        "    t.name[maxAllowed - 1] = 9;   // boundary index, folded\n"
+        "    long len = t.name.length;     // compile-time 32\n"
+        "    if (len != 32)\n"
+        "    {\n"
+        "        return -1;\n"
+        "    }\n"
+        "    return t.name[maxAllowed - 1] + maxAllowed * 2;\n"
+        "}\n",
+        "manifest_const_expr", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+        STRATA_CHECK(run != NULL);
+        if (run)
+        {
+            STRATA_CHECK_EQ(run(), 73); /* 9 + 64 */
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(manifest_const_shadowed_by_local)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int v = 4;\n"
+        "int test() { const int v = 9; return v; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    /* The local const shadows the manifest global: it's a real alloca holding
+       9, and the global symbol is not emitted. */
+    STRATA_CHECK(strstr(res.output, "@v") == NULL);
+    STRATA_CHECK(strstr(res.output, "store i32 9, ptr %v") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_unfoldable_init_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "int runtimeVal = 7;\n"
+        "const int cap = runtimeVal;\n"
+        "int test() { return cap; }\n",
+        &diag, &arena);
+    /* Sema accepts it, but a const global's initializer must be a
+       compile-time constant — a mutable global's value is not one. */
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(!res.ok);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(manifest_const_foldable_init_is_immutable_global)
+{
+    /* A const global with a NON-manifest spelling... n/a — instead: a plain
+       (non-const) global keeps its symbol; a const alias-of-int folds. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "const int cap = 7;\n"
+        "int test() { return cap; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "@cap") == NULL);
+    STRATA_CHECK(strstr(res.output, "ret i32 7") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(pseudo_enum_jit_global_def)
 {
     StrataCompiler* c = strataCompilerCreate();
