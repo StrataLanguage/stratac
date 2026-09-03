@@ -1,27 +1,49 @@
 // extern_struct.strata -- structs cross the Strata->host boundary by pointer.
-//
-// Struct parameters are passed by reference (pointer) by default; use 'const'
-// for read-only access. See hosts/extern_struct_host.c.
+// Showcases return out-params, impl methods on defined + opaque structs, and
+// forward-declared structs held only as ^T boxes.
 //   stratac extern_struct.strata -o extern_struct.o
 //   clang hosts/extern_struct_host.c extern_struct.o -o extern_struct.exe
 //   ./extern_struct.exe
 
-struct Vec3 {
-    float x;
-    float y;
-    float z;
-};
+struct Vec3 { float x; float y; float z; };
 
-// `in` (host reads) and `out` (host writes) become pointers at the boundary:
-// the host implements `float length_sq(const Vec3*)` and
-// `void scale_into(const Vec3*, float, Vec3*)`.
+// struct params cross by pointer: host sees `const Vec3*` / `Vec3*`.
 extern float length_sq(const Vec3 v);
 extern void  scale_into(const Vec3 src, float s, Vec3 dst);
+
+// return out-param: caller writes `T x = F();`, ABI is void ret + out pointer.
+extern void MakeVec3(return Vec3 v);
+extern void NextId(return int id);
+
+// impl on a defined struct: self crosses by pointer.
+impl Vec3 {
+    extern float Length(Vec3 self);           // Vec3_Length(Vec3*)
+    extern float StaticSum(float a, float b); // Vec3.StaticSum(a, b)
+}
+
+// opaque struct: never defined, held only as ^Point, driven via impl methods.
+struct Point;
+extern void GetPoint(return ^Point p);        // GetPoint(Point**)
+impl Point {
+    extern int  GetX(Point self);
+    extern int  GetY(Point self);
+    extern void Move(Point self, int dx, int dy);
+}
 
 float entry()
 {
     Vec3 v = { .x = 3.0, .y = 4.0, .z = 0.0 };
     Vec3 d;
-    scale_into(v, 2.0, d);               // d = (6, 8, 0)
-    return length_sq(v) + length_sq(d);  // 25 + 100 = 125
+    scale_into(v, 2.0, d);                    // d = (6, 8, 0)
+
+    Vec3 m = MakeVec3();                      // (1, 2, 2)
+    int id = NextId();                        // 7
+
+    float len = m.Length();                   // 3
+    float st = Vec3.StaticSum(5.0, 6.0);      // 11
+
+    ^Point p = GetPoint();                    // (3, 4)
+    p.Move(10, 20);                           // (13, 24)
+
+    return length_sq(v) + length_sq(d) + len + st + (float)(id + p.GetX() + p.GetY());
 }
