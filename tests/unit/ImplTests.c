@@ -605,14 +605,15 @@ STRATA_TEST(impl_on_opaque_struct_jit)
         "    extern int GetValue(TheType self);\n"
         "    extern void SetValue(TheType self, int v);\n"
         "    extern int Bump(TheType self);\n"
+        "    property int Value { get = TheType_GetValue; set = TheType_SetValue; }\n"
         "}\n"
         "int entry()\n"
         "{\n"
         "  ^TheType t = GetType();\n"      /* box { 42 } */
-        "  int v = t.GetValue();\n"        /* 42 */
-        "  t.SetValue(v + 1);\n"           /* host stores 43 */
+        "  int v = t.Value;\n"             /* getter: 42 */
+        "  t.Value = v + 1;\n"             /* setter: host stores 43 */
         "  int w = t.Bump();\n"            /* reads 43, stores 44, returns 43 */
-        "  return w + t.GetValue();\n"     /* 43 + 44 = 87 */
+        "  return w + t.Value;\n"          /* 43 + 44 = 87 */
         "}\n",
         "opaque_impl", &err);
     STRATA_CHECK(jit != NULL);

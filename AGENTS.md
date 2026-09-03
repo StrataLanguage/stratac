@@ -202,7 +202,8 @@ main) are the internal entry points.
   and the only way to hold a value is `^Foo` (a box — the cell IS the opaque
   pointer, so box→T unwrapping for these is identity, never a second deref).
   This lets a host hand Strata an opaque struct via a `return ^Foo` out-param
-  and have the script call extern methods on it. See
+  and have the script call extern methods on it (or read/write properties).
+  See
   `samples/opaque_struct.strata` + `samples/hosts/opaque_struct_host.c`.
 - Boxes: `^T` — an owning, heap-allocated, move-only handle to a `T`
   (e.g. `^Vec3 v = Vec3 { ... };`). `^` always takes the next type and

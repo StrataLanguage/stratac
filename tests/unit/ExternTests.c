@@ -808,3 +808,178 @@ STRATA_TEST(impl_on_defined_struct_static_method)
                 "}\n",
                 hosts, 1, 7);
 }
+
+/* ---- Strong typedef (type alias) ABI ---- */
+
+static uint32_t HostStateGet(uint32_t s)
+{
+    return s;
+}
+
+static uint32_t HostStateReturn(uint32_t s)
+{
+    return s;
+}
+
+static int HostMix(uint32_t a, int b, uint32_t c)
+{
+    return (a == 1 && b == 2 && c == 3) ? 1 : 0;
+}
+
+static void HostStateInc(uint32_t* s)
+{
+    *s += 1;
+}
+
+static void* HostMakeEntity(void)
+{
+    return (void*)(uintptr_t)0x1234;
+}
+
+static int HostCheckHandle(void* h)
+{
+    return h == (void*)(uintptr_t)0x1234 ? 1 : 0;
+}
+
+typedef struct
+{
+    float x;
+    float y;
+    float z;
+} HostVec3;
+
+static int HostPointY(HostVec3* p)
+{
+    return (int)p->y;
+}
+
+STRATA_TEST(extern_alias_scalar_param)
+{
+    /* A strong typedef (`struct State = uint`) crosses the extern ABI as the
+       underlying scalar by VALUE (i32), not as a pointer to the caller's
+       slot. Regression: aliases were classified as structs in
+       DeclareFunction/DefineFunction, so the host received &s. */
+    HostSymbol hosts[] = { { "host_state_get", (void*)&HostStateGet } };
+    CheckExtern("struct State = uint;\n"
+                "extern uint host_state_get(State s);\n"
+                "int entry()\n"
+                "{\n"
+                "  State s = (State)12345;\n"
+                "  uint r = host_state_get(s);\n"
+                "  if (r == 12345) { return 1; }\n"
+                "  return 0;\n"
+                "}\n",
+                hosts, 1, 1);
+}
+
+STRATA_TEST(extern_alias_scalar_return)
+{
+    /* Alias return types cross as the underlying scalar value too. */
+    HostSymbol hosts[] = { { "host_state_return", (void*)&HostStateReturn } };
+    CheckExtern("struct State = uint;\n"
+                "extern State host_state_return(State s);\n"
+                "int entry()\n"
+                "{\n"
+                "  State s = (State)77;\n"
+                "  State r = host_state_return(s);\n"
+                "  if (r == (State)77) { return 1; }\n"
+                "  return 0;\n"
+                "}\n",
+                hosts, 1, 1);
+}
+
+STRATA_TEST(extern_alias_param_alias_of_alias)
+{
+    HostSymbol hosts[] = { { "host_state_get", (void*)&HostStateGet } };
+    CheckExtern("struct State = uint;\n"
+                "struct State2 = State;\n"
+                "extern uint host_state_get(State2 s);\n"
+                "int entry()\n"
+                "{\n"
+                "  State s = (State)9;\n"
+                "  uint r = host_state_get((State2)s);\n"
+                "  if (r == 9) { return 1; }\n"
+                "  return 0;\n"
+                "}\n",
+                hosts, 1, 1);
+}
+
+STRATA_TEST(extern_alias_param_mixed_args)
+{
+    /* Alias and primitive params interleaved each land in the right slot. */
+    HostSymbol hosts[] = { { "host_mix", (void*)&HostMix } };
+    CheckExtern("struct State = uint;\n"
+                "extern int host_mix(State a, int b, State c);\n"
+                "int entry()\n"
+                "{\n"
+                "  State s = (State)3;\n"
+                "  return host_mix((State)1, 2, s);\n"
+                "}\n",
+                hosts, 1, 1);
+}
+
+STRATA_TEST(extern_alias_param_ref)
+{
+    /* `ref State` stays a pointer to the caller's slot and mutates in place. */
+    HostSymbol hosts[] = { { "host_state_inc", (void*)&HostStateInc } };
+    CheckExtern("struct State = uint;\n"
+                "extern void host_state_inc(ref State s);\n"
+                "int entry()\n"
+                "{\n"
+                "  State s = (State)10;\n"
+                "  host_state_inc(s);\n"
+                "  if (s == (State)11) { return 1; }\n"
+                "  return 0;\n"
+                "}\n",
+                hosts, 1, 1);
+}
+
+STRATA_TEST(extern_alias_handle_param)
+{
+    /* An alias of a handle crosses by value like the handle itself. */
+    HostSymbol hosts[] = {
+        { "host_make_entity", (void*)&HostMakeEntity },
+        { "host_check_handle", (void*)&HostCheckHandle },
+    };
+    CheckExtern("handle Entity;\n"
+                "struct E2 = Entity;\n"
+                "extern Entity host_make_entity();\n"
+                "extern int host_check_handle(E2 h);\n"
+                "int entry()\n"
+                "{\n"
+                "  E2 e = (E2)host_make_entity();\n"
+                "  return host_check_handle(e);\n"
+                "}\n",
+                hosts, 2, 1);
+}
+
+STRATA_TEST(extern_alias_struct_param_still_by_ref)
+{
+    /* An alias of a DEFINED struct is still a struct at the ABI: by pointer. */
+    HostSymbol hosts[] = { { "host_point_y", (void*)&HostPointY } };
+    CheckExtern("struct Vec3 { float x; float y; float z; };\n"
+                "struct Point = Vec3;\n"
+                "extern int host_point_y(Point p);\n"
+                "int entry()\n"
+                "{\n"
+                "  Point p = (Point)Vec3 { 1.0, 5.0, 3.0 };\n"
+                "  return host_point_y(p);\n"
+                "}\n",
+                hosts, 1, 5);
+}
+
+STRATA_TEST(internal_alias_scalar_param)
+{
+    /* The same classification applies to DEFINED functions: a scalar-alias
+       param is a by-value i32 slot, so reads operate on the local copy. */
+    CheckExtern("struct State = uint;\n"
+                "int twice(State s) { return (int)s * 2; }\n"
+                "int entry()\n"
+                "{\n"
+                "  State s = (State)21;\n"
+                "  int r = twice(s);\n"
+                "  if (r == 42) { return 1; }\n"
+                "  return 0;\n"
+                "}\n",
+                NULL, 0, 1);
+}

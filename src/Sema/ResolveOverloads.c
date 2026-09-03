@@ -4055,44 +4055,32 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         if (baseType && TypeRegistryIsOpaque(&r->m_registry, baseType->name))
         {
-            if (IsIncompleteStruct(&r->m_registry, baseType->name))
+            /* Properties and methods work on handles AND on opaque
+               (forward-declared) structs; only the "no such member" wording
+               differs. */
+            PropertyDecl* prop = PropertyOnHandle(r, rawBaseType, m->member);
+
+            if (prop)
             {
-                if (FindImplMethod(r, baseType->name, m->member))
+                if (!prop->getterSymbol)
                 {
-                    DiagErrorFmt(r->m_diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'",
-                                 m->member, baseType->name, m->member);
-                }
-                else
-                {
-                    DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'",
-                                 baseType->name);
+                    DiagErrorFmt(r->m_diag, m->base.range, "property '%s' is write-only", m->member);
                 }
             }
-            else if (IsHandleType(&r->m_registry, baseType->name))
+            else if (FindImplMethod(r, baseType->name, m->member))
             {
-                PropertyDecl* prop = PropertyOnHandle(r, rawBaseType, m->member);
-
-                if (prop)
-                {
-                    if (!prop->getterSymbol)
-                    {
-                        DiagErrorFmt(r->m_diag, m->base.range, "property '%s' is write-only", m->member);
-                    }
-                }
-                else if (FindImplMethod(r, baseType->name, m->member))
-                {
-                    DiagErrorFmt(r->m_diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'", m->member,
-                                 baseType->name, m->member);
-                }
-                else
-                {
-                    DiagErrorFmt(r->m_diag, m->base.range, "handle '%s' has no member '%s'", baseType->name,
-                                 m->member);
-                }
+                DiagErrorFmt(r->m_diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'", m->member,
+                             baseType->name, m->member);
+            }
+            else if (IsIncompleteStruct(&r->m_registry, baseType->name))
+            {
+                DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'",
+                             baseType->name);
             }
             else
             {
-                DiagError(r->m_diag, m->base.range, "cannot access a member of an opaque handle");
+                DiagErrorFmt(r->m_diag, m->base.range, "handle '%s' has no member '%s'", baseType->name,
+                             m->member);
             }
         }
 

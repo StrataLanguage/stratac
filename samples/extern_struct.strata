@@ -28,6 +28,7 @@ impl Point {
     extern int  GetX(Point self);
     extern int  GetY(Point self);
     extern void Move(Point self, int dx, int dy);
+    property int X { get = Point_GetX; }
 }
 
 float entry()
@@ -45,5 +46,5 @@ float entry()
     ^Point p = GetPoint();                    // (3, 4)
     p.Move(10, 20);                           // (13, 24)
 
-    return length_sq(v) + length_sq(d) + len + st + (float)(id + p.GetX() + p.GetY());
+    return length_sq(v) + length_sq(d) + len + st + (float)(id + p.X + p.GetY());
 }

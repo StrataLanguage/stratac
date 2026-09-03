@@ -1855,8 +1855,9 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     {
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
 
-        bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name)
-                         && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
+        const char* leafName = TypeRegistryResolveAlias(&b->m_registry, p->type.name);
+        bool structVal = TypeRegistryIsUserType(&b->m_registry, leafName)
+                         && !TypeRegistryIsOpaque(&b->m_registry, leafName);
 
         bool byPtr = p->mod != ModNone || structVal || BuilderIsOwningType(b, &p->type);
 
@@ -1951,8 +1952,9 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
         TypeDesc typeDesc = Resolve(b, &p->type);
 
-        bool structVal = TypeRegistryIsUserType(&b->m_registry, p->type.name)
-                         && !TypeRegistryIsOpaque(&b->m_registry, p->type.name);
+        const char* leafName = TypeRegistryResolveAlias(&b->m_registry, p->type.name);
+        bool structVal = TypeRegistryIsUserType(&b->m_registry, leafName)
+                         && !TypeRegistryIsOpaque(&b->m_registry, leafName);
         bool boxParam = BuilderIsOwningType(b, &p->type);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
