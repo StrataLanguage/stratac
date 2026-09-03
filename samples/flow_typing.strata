@@ -1,0 +1,123 @@
+// flow_typing.strata -- flow-sensitive typing on a realistic problem:
+// serving requests where the signed-in user, their profile, and rows of
+// a result page are all only MAYBE there.
+//
+// `T?` is the maybe-empty form of a box. The compiler tracks emptiness
+// per control-flow path: `if (x?)` proves x inside the branch, the else
+// branch knows x is definitely empty, and a definite assignment proves
+// the path from that point on. Reading through an unproven `T?` is a
+// COMPILE error, so "forgot the null check" never survives to runtime:
+//
+//   User? anon;
+//   printf("%s", anon.name);          // error: 'anon' has not been
+//                                       // blessed; test it first
+//
+// Run:
+//   stratac flow_typing.strata --run
+
+extern int printf(string fmt, ...);
+
+struct Profile
+{
+    string displayName;
+    int followers;
+};
+
+struct User
+{
+    int id;
+    string name;
+    Profile? profile;    // a user may never have written one
+};
+
+// The row constructor a data-access layer would wrap around a DB insert.
+^User MakeUser(int id, string name)
+{
+    return User { .id = id, .name = name };
+}
+
+// Render a profile page. The argument is the result of the session
+// lookup: "found" lives in the type (`User?`), not in a bool out-param.
+int RenderProfile(User? viewer)
+{
+    if (viewer?)
+    {
+        printf("GET /user -> @%s\n", viewer.name);
+
+        if (viewer.profile?)
+        {
+            // Nested narrowing: `viewer` is proven above, so we may
+            // reach `viewer.profile`; this test proves the profile.
+            printf("  profile: %s (%d followers)\n", viewer.profile.displayName, viewer.profile.followers);
+        }
+        else
+        {
+            // The else branch KNOWS the slot is empty, so lazy-init on
+            // first view is safe -- no re-test needed before the read.
+            viewer.profile = Profile { .displayName = viewer.name, .followers = 0 };
+            printf("  profile created for %s\n", viewer.profile.displayName);
+        }
+
+        // Lazy-init join: BOTH branches left `viewer.profile` proven
+        // (narrowing on one side, assignment on the other), so this
+        // read after the if/else needs no test of its own.
+        return 200 + viewer.profile.followers;
+    }
+
+    printf("GET /user -> 404 (no such session)\n");
+    return 404;
+}
+
+// Scan a page of search rows. Dynamic-array elements are optional
+// slots: rows the query never fetched stay empty.
+int CountRows(ref User?[] rows)
+{
+    int hits = 0;
+
+    for (uint i = 0; i < rows.length; i++)
+    {
+        if (rows[i]?)
+        {
+            hits += 1;
+            printf("  row %d: @%s\n", i, rows[i].name);
+        }
+        else
+        {
+            printf("  row %d: (not fetched)\n", i);
+        }
+    }
+
+    return hits;
+}
+
+int main()
+{
+    // Two signed-in users: one with a profile, one who never wrote one.
+    ^User grace = MakeUser(3, "grace");
+    grace.profile = Profile { .displayName = "Grace H.", .followers = 34 };
+    ^User linus = MakeUser(2, "linus");
+
+    int code = 0;
+
+    // Hit the profile page three ways: warm, cold (lazy-init), and
+    // anonymous. Passing `grace`/`linus` moves each box into the
+    // optional parameter slot, just like a real per-request copy.
+    code += RenderProfile(grace);     // 200 + 34 -> profile branch
+    code += RenderProfile(linus);     // 200 + 0  -> lazy-init branch
+
+    User? anonymous;                  // an empty optional local is legal
+    code += RenderProfile(anonymous); // 404      -> definitively empty
+
+    // A page of search results: one real row, one fresh row, one hole.
+    User?[] page = {};
+    array_push(page, MakeUser(7, "rob"));
+    array_push(page, MakeUser(8, "ken"));
+    User? unfetched;
+    array_push(page, unfetched);
+
+    printf("GET /search?q=strata ->\n");
+    code += CountRows(page);          // 2 hits, 1 hole
+
+    printf("session checksum = %d (expect 840)\n", code);
+    return code;
+}

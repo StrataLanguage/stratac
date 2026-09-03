@@ -305,3 +305,601 @@ STRATA_TEST(type_alias_simd_return_type)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+/* ── Pseudo-enum tests: multiple int-based aliases ─────────────────────── */
+
+STRATA_TEST(pseudo_enum_multiple_int_aliases_compile)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "struct Channel = int;\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    TypeRegistry reg;
+    TypeRegistryInit(&reg);
+    TypeRegistryBuild(&reg, mod);
+
+    STRATA_CHECK(TypeRegistryIsTypeAlias(&reg, "ErrorCode"));
+    STRATA_CHECK(TypeRegistryIsTypeAlias(&reg, "Priority"));
+    STRATA_CHECK(TypeRegistryIsTypeAlias(&reg, "Channel"));
+    STRATA_CHECK(strcmp(TypeRegistryResolveAlias(&reg, "ErrorCode"), "int") == 0);
+    STRATA_CHECK(strcmp(TypeRegistryResolveAlias(&reg, "Priority"), "int") == 0);
+    STRATA_CHECK(strcmp(TypeRegistryResolveAlias(&reg, "Channel"), "int") == 0);
+
+    TypeRegistryFree(&reg);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_no_implicit_cross_cast)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "void test() { ErrorCode e = (ErrorCode)42; Priority p = e; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_no_implicit_from_int)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "void test() { ErrorCode e = 42; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_no_implicit_to_int)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "void test() { ErrorCode e = (ErrorCode)42; int x = e; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_explicit_cast_int_to_alias)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "ErrorCode test() { return (ErrorCode)42; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "define i32 @test") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_explicit_cast_alias_to_int)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "int test() { ErrorCode e = (ErrorCode)42; return (int)e; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "define i32 @test") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_explicit_cross_alias_cast)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "Priority test() { ErrorCode e = (ErrorCode)42; return (Priority)e; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "define i32 @test") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_cast_through_underlying)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "Priority test() { ErrorCode e = (ErrorCode)7; int raw = (int)e; return (Priority)raw; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_function_params)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "ErrorCode classify(ErrorCode e) { return e; }\n"
+        "Priority lift(ErrorCode e) { return (Priority)e; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "define i32 @classify") != NULL);
+    STRATA_CHECK(strstr(res.output, "define i32 @lift") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_arithmetic_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "void test() { ErrorCode a = (ErrorCode)1; Priority b = (Priority)2; void* c = a + b; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_comparison_allowed_same_underlying)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "bool test() { ErrorCode a = (ErrorCode)1; Priority b = (Priority)2; return a == b; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_comparison_different_underlying_allowed)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Rate = float;\n"
+        "bool test() { ErrorCode a = (ErrorCode)1; Rate b = (Rate)2.0; return a == b; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_chained_alias)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct HttpError = ErrorCode;\n"
+        "HttpError test() { return (HttpError)404; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    TypeRegistry reg;
+    TypeRegistryInit(&reg);
+    TypeRegistryBuild(&reg, mod);
+
+    STRATA_CHECK(TypeRegistryIsTypeAlias(&reg, "HttpError"));
+    STRATA_CHECK(strcmp(TypeRegistryResolveAlias(&reg, "HttpError"), "int") == 0);
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "define i32 @test") != NULL);
+
+    free((void*)res.output);
+    TypeRegistryFree(&reg);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_chained_alias_no_implicit_mix)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct HttpError = ErrorCode;\n"
+        "struct Priority = int;\n"
+        "void test() { HttpError e = (HttpError)404; Priority p = e; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ── Pseudo-enum: module-level constants ───────────────────────────────── */
+
+STRATA_TEST(pseudo_enum_global_def_int_alias)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "ErrorCode Opaque = (ErrorCode)0;\n"
+        "ErrorCode Not Found = (ErrorCode)404;\n"
+        "ErrorCode Server Error = (ErrorCode)500;\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    STRATA_CHECK_EQ((long)mod->globals.count, 3);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_global_def_uint_alias)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct RenderBucket = uint;\n"
+        "RenderBucket Opaque = (RenderBucket)0;\n"
+        "RenderBucket Translucent = (RenderBucket)1;\n"
+        "RenderBucket Additive = (RenderBucket)2;\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    STRATA_CHECK_EQ((long)mod->globals.count, 3);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_global_def_mixed_aliases)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "ErrorCode Ok = (ErrorCode)200;\n"
+        "ErrorCode Not Found = (ErrorCode)404;\n"
+        "Priority Low = (Priority)0;\n"
+        "Priority High = (Priority)10;\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    STRATA_CHECK_EQ((long)mod->globals.count, 4);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_global_used_in_function)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "ErrorCode Ok = (ErrorCode)200;\n"
+        "ErrorCode Not Found = (ErrorCode)404;\n"
+        "ErrorCode classify(int raw) { return (ErrorCode)raw; }\n"
+        "bool is_success(ErrorCode e) { return (int)e == (int)Ok; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_global_cross_type_init_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "Priority Bad = (ErrorCode)42;\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_global_raw_int_init_rejected)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct ErrorCode = int;\n"
+        "ErrorCode Bad = 42;\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_global_codegen_ir)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct RenderBucket = uint;\n"
+        "RenderBucket Opaque = (RenderBucket)0;\n"
+        "RenderBucket Translucent = (RenderBucket)1;\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "@Opaque") != NULL);
+    STRATA_CHECK(strstr(res.output, "@Translucent") != NULL);
+
+    free((void*)res.output);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(pseudo_enum_jit_global_def)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct ErrorCode = int;\n"
+        "ErrorCode Opaque = (ErrorCode)0;\n"
+        "ErrorCode Not Found = (ErrorCode)404;\n"
+        "ErrorCode Server Error = (ErrorCode)500;\n"
+        "int get_value(ErrorCode e) { return (int)e; }\n"
+        "int caller() { return get_value(Not Found); }\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        STRATA_CHECK(caller != NULL);
+        if (caller)
+        {
+            STRATA_CHECK_EQ(caller(), 404);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(pseudo_enum_jit_global_switch)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct RenderBucket = uint;\n"
+        "RenderBucket Opaque = (RenderBucket)0;\n"
+        "RenderBucket Translucent = (RenderBucket)1;\n"
+        "RenderBucket Additive = (RenderBucket)2;\n"
+        "RenderBucket current() { return Translucent; }\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*current)(void) = (int (*)(void))strataJitGetFunction(jit, "current");
+        STRATA_CHECK(current != NULL);
+        if (current)
+        {
+            STRATA_CHECK_EQ(current(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+/* ── JIT runtime tests: verify casts produce correct values ───────────── */
+
+STRATA_TEST(pseudo_enum_jit_cast_int_to_alias)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct ErrorCode = int;\n"
+        "ErrorCode make_error() { return (ErrorCode)42; }\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*make_error)(void) = (int (*)(void))strataJitGetFunction(jit, "make_error");
+        STRATA_CHECK(make_error != NULL);
+        if (make_error)
+        {
+            STRATA_CHECK_EQ(make_error(), 42);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(pseudo_enum_jit_cast_alias_to_int)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct ErrorCode = int;\n"
+        "int unwrap(ErrorCode e) { return (int)e; }\n"
+        "int caller() { ErrorCode e = (ErrorCode)99; return unwrap(e); }\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        STRATA_CHECK(caller != NULL);
+        if (caller)
+        {
+            STRATA_CHECK_EQ(caller(), 99);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(pseudo_enum_jit_cross_alias_cast)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "Priority promote(ErrorCode e) { return (Priority)e; }\n"
+        "int caller() { ErrorCode e = (ErrorCode)7; return (int)promote(e); }\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        STRATA_CHECK(caller != NULL);
+        if (caller)
+        {
+            STRATA_CHECK_EQ(caller(), 7);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(pseudo_enum_jit_chained_cast)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct ErrorCode = int;\n"
+        "struct HttpError = ErrorCode;\n"
+        "struct Priority = int;\n"
+        "int caller() { HttpError e = (HttpError)404; Priority p = (Priority)e; return (int)p; }\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        STRATA_CHECK(caller != NULL);
+        if (caller)
+        {
+            STRATA_CHECK_EQ(caller(), 404);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(pseudo_enum_jit_arithmetic_through_casts)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct ErrorCode = int;\n"
+        "struct Priority = int;\n"
+        "int combine() {\n"
+        "    ErrorCode a = (ErrorCode)10;\n"
+        "    Priority b = (Priority)20;\n"
+        "    int raw_a = (int)a;\n"
+        "    int raw_b = (int)b;\n"
+        "    return raw_a + raw_b;\n"
+        "}\n",
+        "pseudo_enum", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*combine)(void) = (int (*)(void))strataJitGetFunction(jit, "combine");
+        STRATA_CHECK(combine != NULL);
+        if (combine)
+        {
+            STRATA_CHECK_EQ(combine(), 30);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        printf("  JIT compile failed: %s\n", err ? err : "(no message)");
+        strataFree((char*)err);
+        STRATA_CHECK(false);
+    }
+    strataCompilerDestroy(c);
+}
