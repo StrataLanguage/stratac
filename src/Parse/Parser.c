@@ -490,6 +490,14 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
         TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
 
+        /* `^string` is redundant: `string?` is already the maybe-empty
+           string, so a box that can never be empty but holds a string has
+           no distinct meaning. */
+        if (base.name && strcmp(base.name, "string") == 0)
+        {
+            DiagError(p->m_diag, caretRange, "redundant boxing of type 'string'");
+        }
+
         for (int i = arrayDepth - 1; i >= 0; i--)
         {
             if (i < 8 && depths[i] >= 0)

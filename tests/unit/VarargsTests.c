@@ -734,22 +734,22 @@ STRATA_TEST(varargs_extern_cvararg_ints_parity)
                       "host_vsum", (void*)&HostVSum, 100);
 }
 
-STRATA_TEST(box_string_reads_correctly_via_printf)
+STRATA_TEST(string_move_chains_read_correctly_via_printf)
 {
-    /* ^string reads as its string: printf's return value (chars written)
-       proves the content is correct on both backends. Covers literal creation,
-       moving a string into a box, box moves, and box reassignment. */
+    /* string reads as its string: printf's return value (chars written)
+       proves the content is correct. Covers literal creation, moving a
+       string into a local, moves, and reassignment. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry()\n"
                       "{\n"
-                      "  ^string a = \"hello\";\n"
+                      "  string a = \"hello\";\n"
                       "  int n1 = printf(\"box=%s\\n\", a);\n"
                       "  string src = \"world\";\n"
-                      "  ^string b = src;\n"
+                      "  string b = src;\n"
                       "  int n2 = printf(\"box2=%s\\n\", b);\n"
-                      "  ^string c = a;\n"
+                      "  string c = a;\n"
                       "  int n3 = printf(\"box3=%s\\n\", c);\n"
-                      "  ^string d = \"test\";\n"
+                      "  string d = \"test\";\n"
                       "  d = c;\n"
                       "  int n4 = printf(\"box4=%s\\n\", d);\n"
                       "  return n1 + n2 + n3 + n4;\n"
@@ -757,60 +757,60 @@ STRATA_TEST(box_string_reads_correctly_via_printf)
                       "printf", (void*)&printf, 43);
 }
 
-STRATA_TEST(box_string_global_reads_correctly_via_printf)
+STRATA_TEST(string_global_reads_correctly_via_printf)
 {
-    /* A ^string global initialized from a literal reads correctly. */
+    /* A string global initialized from a literal reads correctly. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "^string g = \"Hello!\";\n"
+                      "string g = \"Hello!\";\n"
                       "int entry() { return printf(\"g=%s\\n\", g); }\n",   /* 9 */
                       "printf", (void*)&printf, 9);
 }
 
-STRATA_TEST(box_string_passes_to_extern_string_param)
+STRATA_TEST(string_passes_to_extern_string_param)
 {
-    /* ^string passed to an extern `string` param (by-value const char*)
-       reads correctly on both backends. */
+    /* A string passed to an extern `string` param (by-value const char*)
+       reads correctly. */
     CheckVarargExtern("extern int puts(string s);\n"
-                      "^string g = \"Hello!\";\n"
-                      "int entry() { puts(g); ^string l = \"world\"; puts(l); return 0; }\n",
+                      "string g = \"Hello!\";\n"
+                      "int entry() { puts(g); string l = \"world\"; puts(l); return 0; }\n",
                       "puts", (void*)&puts, 0);
 }
 
-/* ---- ^string and ^T to extern `...` (C varargs) ---- */
+/* ---- string and ^T to extern `...` (C varargs) ---- */
 
-STRATA_TEST(box_string_to_extern_cvararg_parity)
+STRATA_TEST(string_to_extern_cvararg_parity)
 {
-    /* ^string arg in extern `...` position derefs to its char* and
-       printf reads it correctly on both backends. */
+    /* string arg in extern `...` position puns to its char* and printf
+       reads it correctly. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  ^string a = \"alpha\";\n"
-                      "  ^string b = \"beta\";\n"
+                      "  string a = \"alpha\";\n"
+                      "  string b = \"beta\";\n"
                       "  return printf(\"%s %s\", a, b);\n"   /* 10 */
                       "}\n",
                       "printf", (void*)&printf, 10);
 }
 
-STRATA_TEST(box_string_from_return_to_extern_parity)
+STRATA_TEST(string_from_return_to_extern_parity)
 {
-    /* ^string returned from a function then passed to extern: the
-       returned box must be readable by printf. */
+    /* string returned from a function then passed to extern: the
+       returned value must be readable by printf. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "^string make(string s) { ^string b = s; return b; }\n"
+                      "string make(string s) { string b = s; return b; }\n"
                       "int entry() {\n"
-                      "  ^string g = make(\"gamma\");\n"
+                      "  string g = make(\"gamma\");\n"
                       "  return printf(\"%s\", g);\n"         /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
 
-STRATA_TEST(box_string_multiple_extern_calls_parity)
+STRATA_TEST(string_multiple_extern_calls_parity)
 {
-    /* Multiple sequential extern calls with ^string verify the box
+    /* Multiple sequential extern calls with a string verify the value
        survives each call (borrow, not moved) when passed to string param. */
     CheckVarargExtern("extern int puts(string s);\n"
                       "int entry() {\n"
-                      "  ^string b = \"shared\";\n"
+                      "  string b = \"shared\";\n"
                       "  puts(b);\n"
                       "  puts(b);\n"
                       "  puts(b);\n"
@@ -830,17 +830,15 @@ STRATA_TEST(box_int_to_extern_int_param_parity)
                       "printf", (void*)&printf, 2);
 }
 
-/* ---- ^string[] array element to extern ---- */
+/* ---- string[] array element to extern ---- */
 
-STRATA_TEST(box_string_array_element_to_puts_parity)
+STRATA_TEST(string_array_element_to_puts_parity)
 {
-    /* The original crash bug: array_push of a string literal into ^string[]
-       stored a raw char* into a char** slot. puts(arr[0]) then dereferenced
-       garbage. This test verifies the element is properly boxed and its
-       string content is readable via puts. */
+    /* array_push of a string literal into string[] stores the owned fat;
+       puts(arr[0]) reads the content correctly. */
     CheckVarargExtern("extern int puts(string s);\n"
                       "int entry() {\n"
-                      "  ^string[] arr;\n"
+                      "  string[] arr;\n"
                       "  array_push(arr, \"hello\");\n"
                       "  puts(arr[0]);\n"
                       "  return 0;\n"
@@ -848,25 +846,25 @@ STRATA_TEST(box_string_array_element_to_puts_parity)
                       "puts", (void*)&puts, 0);
 }
 
-STRATA_TEST(box_string_array_element_to_printf_parity)
+STRATA_TEST(string_array_element_to_printf_parity)
 {
     /* printf("%s", arr[0]) verifies the element's string content is intact
        (not just non-crashing). The return value is the character count. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  ^string[] arr;\n"
+                      "  string[] arr;\n"
                       "  array_push(arr, \"world\");\n"
                       "  return printf(\"%s\", arr[0]);\n"   /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
 
-STRATA_TEST(box_string_array_multiple_elements_to_printf_parity)
+STRATA_TEST(string_array_multiple_elements_to_printf_parity)
 {
     /* Multiple pushes, each must be independently readable. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  ^string[] arr;\n"
+                      "  string[] arr;\n"
                       "  array_push(arr, \"ab\");\n"
                       "  array_push(arr, \"cd\");\n"
                       "  array_push(arr, \"ef\");\n"
@@ -875,37 +873,37 @@ STRATA_TEST(box_string_array_multiple_elements_to_printf_parity)
                       "printf", (void*)&printf, 6);
 }
 
-STRATA_TEST(box_string_array_literal_element_to_printf_parity)
+STRATA_TEST(string_array_literal_element_to_printf_parity)
 {
-    /* ^string[] initialized from a literal, then element passed to
-       printf — verifies the literal init path boxes each string correctly. */
+    /* string[] initialized from a literal, then element passed to
+       printf — verifies the literal init path owns each string correctly. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  ^string[] arr = { \"hi\" };\n"
+                      "  string[] arr = { \"hi\" };\n"
                       "  return printf(\"%s\", arr[0]);\n"   /* 2 */
                       "}\n",
                       "printf", (void*)&printf, 2);
 }
 
-STRATA_TEST(box_string_array_push_var_then_read_parity)
+STRATA_TEST(string_array_push_var_then_read_parity)
 {
-    /* Push a ^string variable (move), then read it back via printf. */
+    /* Push a string variable (move), then read it back via printf. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
-                      "  ^string[] arr;\n"
-                      "  ^string a = \"moved\";\n"
+                      "  string[] arr;\n"
+                      "  string a = \"moved\";\n"
                       "  array_push(arr, a);\n"
                       "  return printf(\"%s\", arr[0]);\n"   /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
 
-STRATA_TEST(box_string_in_struct_array_to_printf_parity)
+STRATA_TEST(string_in_struct_array_to_printf_parity)
 {
-    /* A ^Holder where Holder has a ^string field, stored in a
+    /* A ^Holder where Holder has a string field, stored in a
        ^Holder[], then the nested string read via printf. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "struct Holder { ^string name; };\n"
+                      "struct Holder { string name; };\n"
                       "int entry() {\n"
                       "  ^Holder[] arr;\n"
                       "  array_push(arr, Holder { .name = \"nested\" });\n"
@@ -958,19 +956,6 @@ STRATA_TEST(string_member_passed_to_ref_string_param_parity)
                       "  return n + printf(\" again\", p.name);\n"  /* 5 + 6 = 11 */
                       "}\n",
                       "printf", (void*)&printf, 11);
-}
-
-STRATA_TEST(box_string_member_passed_to_extern_via_printf_parity)
-{
-    /* A struct with a ^string field. The member is passed to printf —
-       the nested ^string must deref through two levels to char*. */
-    CheckVarargExtern("extern int printf(string fmt, ...);\n"
-                      "struct Wrapper { ^string title; };\n"
-                      "int entry() {\n"
-                      "  ^Wrapper w = Wrapper { .title = \"hello\" };\n"
-                      "  return printf(\"%s\", w.title);\n"   /* 5 */
-                      "}\n",
-                      "printf", (void*)&printf, 5);
 }
 
 STRATA_TEST(string_member_reassigned_then_read_parity)

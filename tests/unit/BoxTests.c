@@ -183,14 +183,34 @@ STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
     arena_free(&arena);
 }
 
-STRATA_TEST(box_string_moves_owned_string_source)
+STRATA_TEST(string_box_is_rejected)
 {
-    /* string is owned (like a box), so boxing a string value into ^string
-       is a move: the source string is consumed, like boxing a ^T. */
+    /* `^string` is banned — `string?` is already the maybe-empty string,
+       so a box that is never empty but holds a string is redundant. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
-                    "int entry() { string src = \"world\"; ^string b = src; return puts(src); }\n",
+                    "struct Holder { ^string name; };\n"
+                    "int entry() { ^string b = \"x\"; ^string[] arr; return puts(b); }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "redundant boxing of type 'string'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(string_assign_moves_owned_source)
+{
+    /* string is move-on-assign: assigning a string to another local
+       consumes the source, so using it afterward is an error. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("extern int puts(string s);\n"
+                    "int entry() { string src = \"world\"; string b = src; return puts(src); }\n",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -811,16 +831,15 @@ STRATA_TEST(box_global_returned_is_an_error)
     arena_free(&arena);
 }
 
-STRATA_TEST(box_string_array_global_element_moved_to_local_is_an_error)
+STRATA_TEST(string_array_global_element_moved_to_local_is_an_error)
 {
-    /* Moving an owning element out of a global array must be rejected, even
-       when the element is a ^string that auto-derefs to string. This
+    /* Moving an owning element out of a global array must be rejected; this
        exercises the transitive global-root check across globals + arrays +
-       the boxed string type (^string is char**; string is char*). */
+       the string element type. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
-        "^string[] boxStrings = { \"\" };\n"
+        "string[] boxStrings = { \"\" };\n"
         "int entry() { string str = boxStrings[0]; return 0; }\n",
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));

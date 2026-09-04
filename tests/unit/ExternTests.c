@@ -2,7 +2,7 @@
  *
  * Covers the full passing matrix for the owning types that most commonly
  * cross into C code: string (plain / const / ref / const ref), arrays
- * (int[] / ref int[] / string[]), and boxes (^T, ^string, ^T[]),
+ * (int[] / ref int[] / string[]), and boxes (^T, ^T[]),
  * each as parameters AND return values. All scenarios run on the LLVM JIT.
  *
  * ABI notes locked in here:
@@ -264,12 +264,6 @@ static HostFoo* HostBoxMake(int v)
         f->v = v;
     }
     return f;
-}
-
-static int HostStrBoxLen(char** b)
-{
-    /* ^string crosses as the cell pointer: one deref reaches the chars. */
-    return (int)strlen(*b);
 }
 
 static int HostBoxArrFirst(const HostArr* a)
@@ -770,20 +764,23 @@ STRATA_TEST(extern_ref_box_struct_param)
                 hosts, 1, 10);
 }
 
-STRATA_TEST(extern_box_string_param)
+STRATA_TEST(extern_string_box_is_rejected)
 {
-    /* ^string crosses as the cell pointer (char**): one deref reaches
-       the string content.
-       Runs LLVM-only for now: the TCC leg miscompiles this case and TCC
-       is slated for removal. */
-    HostSymbol hosts[] = { { "host_str_box_len", (void*)&HostStrBoxLen } };
-    CheckLlvmOnlyExtern("extern int host_str_box_len(^string b);\n"
-                        "int entry()\n"
-                        "{\n"
-                        "  ^string b = \"hello\";\n"
-                        "  return host_str_box_len(b);\n"    /* 5; b still live */
-                        "}\n",
-                        hosts, 1, 5);
+    /* `^string` is banned everywhere, extern params included — a plain
+       `string` param already crosses as `const char*`. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("extern int host_str_box_len(^string b);\n"
+                    "int entry() { return 0; }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "redundant boxing of type 'string'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
 }
 
 STRATA_TEST(extern_box_struct_array_param)

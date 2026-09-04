@@ -245,7 +245,10 @@ main) are the internal entry points.
   See
   `samples/opaque_struct.strata` + `samples/hosts/opaque_struct_host.c`.
 - Boxes: `^T` — an owning, heap-allocated, move-only handle to a `T`
-  (e.g. `^Vec3 v = Vec3 { ... };`). `^` always takes the next type and
+  (e.g. `^Vec3 v = Vec3 { ... };`). `^string` is BANNED (the parser rejects
+  it with "redundant boxing of type 'string'": `string?` is already the
+  maybe-empty string, so a never-empty box holding a string has no distinct
+  meaning — use `string` / `string?`). `^` always takes the next type and
   binds tighter than `[]`: `^Foo[]` is an array of boxed `Foo`. There is
   no spelling for a box whose inner type is an array. In the compiler a
   box is a structural `TypeName` flag (`isBox`/`inner`); canonical type

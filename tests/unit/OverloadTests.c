@@ -188,20 +188,20 @@ STRATA_TEST(returning_mismatched_type_is_an_error)
 
 STRATA_TEST(returning_array_of_wrong_element_type_is_an_error)
 {
-    /* Returning ^string[] from a string[] function must be a compile-time
-       type error, not a miscompile that crashes at runtime (the elements are
-       char**, not char*). */
+    /* Returning int[] from a string[] function must be a compile-time
+       type error, not a miscompile that crashes at runtime (the elements
+       are 4-byte ints, not {ptr, len} fats). */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
-        "^string[] g = { \"Hi\" };\n"
+        "int[] g = { 1 };\n"
         "string[] f() { return g; }\n",
         &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "cannot return a value of type '^string[]'"));
+    STRATA_CHECK(Contains(d, "cannot return a value of type 'int[]'"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

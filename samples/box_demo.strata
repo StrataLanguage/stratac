@@ -131,7 +131,7 @@ void say_hi_to_person(ref Person person)
     printf("hello, %s\n", person.name);
 }
 
-^string[] globalStringArrayBox = { "hi" };
+string[] globalStringArrayBox = { "hi" };
 string[] globalStringArray = { "hi" };
 
 // Entrypoint
@@ -141,7 +141,7 @@ float entry()
     globalStringArrayBox[0] = "goodbye";
     printf("globalStringArrayBox[0] = %s\n", globalStringArrayBox[0]);
 
-    ^string sCopy = copy(globalStringArrayBox[0]);
+    string sCopy = copy(globalStringArrayBox[0]);
     printf("sCopy = %s\n", sCopy);
 
 

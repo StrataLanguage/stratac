@@ -174,9 +174,9 @@ static void CheckErrorRejected(StrataJitBackend backend, const char* source, con
 STRATA_TEST(errored_module_rejected_cleanly_llvm)
 {
     CheckErrorRejected(STRATA_JIT_BACKEND_LLVM,
-                       "^string[] g = { \"Hi\" };\n"
+                       "int[] g = { 1 };\n"
                        "string[] f() { return g; }\n",
-                       "cannot return a value of type '^string[]'");
+                       "cannot return a value of type 'int[]'");
 }
 
 STRATA_TEST(errored_module_rejected_cleanly_string_mismatch)

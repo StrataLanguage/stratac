@@ -30,8 +30,8 @@ int take_string(string s)
 
 string globalString = "Test global";
 
-^string boxedString = "Hello!";
-^string[] arrayOfBoxedStrings;
+string boxedString = "Hello!";
+string[] arrayOfBoxedStrings;
 
 struct MyStruct
 {
