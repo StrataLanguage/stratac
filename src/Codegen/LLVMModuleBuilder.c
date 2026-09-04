@@ -3668,7 +3668,6 @@ static void EmitStrataStrEqBody(Builder* b)
 
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "entry");
     LLVMBasicBlockRef lenEq = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "len.eq");
-    LLVMBasicBlockRef ptrEq = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "ptr.eq");
     LLVMBasicBlockRef loopCond = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "cmp.cond");
     LLVMBasicBlockRef loopBody = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "cmp.body");
     LLVMBasicBlockRef falseBB = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "neq");

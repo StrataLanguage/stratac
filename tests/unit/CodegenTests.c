@@ -143,10 +143,10 @@ STRATA_TEST(llvm_scalar_pseudo_constants_emit_correct_bits)
                                 "  return x;\n"
                                 "}\n");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "store float 0x47EFFFFFE0000000"));  /* FLT_MAX */
-    STRATA_CHECK(Contains(res.output, "store float 0x3810000000000000"));  /* FLT_MIN */
-    STRATA_CHECK(Contains(res.output, "store double 0x7FEFFFFFFFFFFFFF")); /* DBL_MAX */
-    STRATA_CHECK(Contains(res.output, "store double 0x10000000000000"));   /* DBL_MIN */
+    STRATA_CHECK(Contains(res.output, "store float f0x7F7FFFFF"));             /* FLT_MAX */
+    STRATA_CHECK(Contains(res.output, "store float f0x00800000"));             /* FLT_MIN */
+    STRATA_CHECK(Contains(res.output, "store double f0x7FEFFFFFFFFFFFFF"));    /* DBL_MAX */
+    STRATA_CHECK(Contains(res.output, "store double f0x0010000000000000"));    /* DBL_MIN */
 }
 
 /* A float literal assigned to a double local must be fpext'd, not stored as
