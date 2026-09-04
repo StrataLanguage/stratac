@@ -6,9 +6,9 @@
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 typedef struct
 {
@@ -176,8 +176,7 @@ static LLVMTypeRef VectorLlvmType(LLVMContextRef ctx, const MappedType* t)
     assert(t->isSimdVector);
     assert(t->lanes > 1);
 
-    LLVMTypeRef elem = strcmp(t->elemIr, "double") == 0 ? LLVMDoubleTypeInContext(ctx)
-                                                        : LLVMFloatTypeInContext(ctx);
+    LLVMTypeRef elem = strcmp(t->elemIr, "double") == 0 ? LLVMDoubleTypeInContext(ctx) : LLVMFloatTypeInContext(ctx);
 
     return LLVMVectorType(elem, (unsigned int)t->lanes);
 }
@@ -335,7 +334,6 @@ static LLVMValueRef ArrayLenPtr(Builder* b, LLVMValueRef slot)
     return LLVMBuildGEP2(b->m_builder, ArrayStructType(b), slot, idx, 2, "alen");
 }
 
-
 static LLVMBasicBlockRef NewBb(Builder* b, const char* name)
 {
     return LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, name);
@@ -442,7 +440,8 @@ static LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMVal
     b->m_terminated = true;
 
     PositionAtEnd(b, body);
-    LLVMValueRef srcByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcPtr, &i, 1, "sb"), "b");
+    LLVMValueRef srcByte
+        = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcPtr, &i, 1, "sb"), "b");
     LLVMBuildStore(b->m_builder, srcByte, LLVMBuildGEP2(b->m_builder, i8Ty, heap, &i, 1, "db"));
     LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, one, "next");
     LLVMBuildStore(b->m_builder, next, iSlot);
@@ -531,7 +530,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f);
 static LLVMValueRef ZeroOf(TypeDesc typeDesc);
 static TypeDesc Resolve(Builder* b, const TypeName* t);
 
-typedef struct {
+typedef struct
+{
     PropertyDecl* decl;
     const FunctionDecl* getter; // NULL for write-only
     const FunctionDecl* setter; // NULL for read-only
@@ -871,8 +871,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     /* `string?` / `AliasOfString?`: same fat representation as string
        itself; empty = the canonical {null, 0}. */
-    if (t->isOptional && t->inner
-        && strcmp(TypeRegistryResolveAlias(&b->m_registry, t->inner->name), "string") == 0)
+    if (t->isOptional && t->inner && strcmp(TypeRegistryResolveAlias(&b->m_registry, t->inner->name), "string") == 0)
     {
         TypeDesc td = StringFatDesc(b);
         td.isOptional = true;
@@ -1899,8 +1898,8 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
     /* A `return` param means the C function is void ret + out-pointer:
        the Strata-level return type never reaches the return register. */
-    LLVMTypeRef abiRetType
-        = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
+    LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx)
+                                            : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
 
     info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
@@ -3690,61 +3689,90 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
     return v;
 }
 
-static Value EmitVectorDotCross(Builder* b, CallExpr* n)
+static Value EmitVectorDot(Builder* b, CallExpr* n)
 {
-    bool isDot = strcmp(n->callee, "dot") == 0;
+    Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    Value vB = EmitExpr(b, (Node*)VecGet(&n->args, 1));
 
-    Value a = EmitExpr(b, (Node*)VecGet(&n->args, 0));
-    Value bb = EmitExpr(b, (Node*)VecGet(&n->args, 1));
+    return ValueMake(LSimdVectorDot(b, vA.value, vB.value), ResolveByName(b, "float"));
+}
 
-    LLVMValueRef value = isDot ? LSimdVectorDot(b, a.value, bb.value) : LSimdVectorCross(b, a.value, bb.value);
+static Value EmitVectorCross(Builder* b, CallExpr* n)
+{
+    Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    Value vB = EmitExpr(b, (Node*)VecGet(&n->args, 1));
+
+    LLVMValueRef value = LSimdVectorCross(b, vA.value, vB.value);
 
     TypeDesc resultTd;
 
-    /* dot always reduces to a scalar float; cross(float2) yields the scalar z. */
-    bool scalarResult = isDot || LLVMGetVectorSize(LLVMTypeOf(a.value)) == 2;
-
-    if (scalarResult)
+    /* The cross product of float2 yields a scalar value */
+    if (LLVMGetVectorSize(LLVMTypeOf(vA.value)) == 2)
     {
         resultTd = ResolveByName(b, "float");
     }
     else
     {
-        /* cross(float3/float4): same vector type as the operands. */
-        resultTd = a.typeDesc;
+        /* The cross product of float3 and float4 return the same vector type as the arguments */
+        resultTd = vA.typeDesc;
     }
 
     return ValueMake(value, resultTd);
 }
 
+typedef struct PseudoCallDefinition
+{
+    const char* name;
+    Value (*callDef)(Builder* b, CallExpr* n);
+} IntrinsicDefinition;
+
+static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
+{
+    static const IntrinsicDefinition intrinsics[] = {
+        /* Array calls */
+        {"array_push",   EmitArrayBuiltin   },
+        {"array_pop",    EmitArrayBuiltin   },
+        {"array_resize", EmitArrayBuiltin   },
+
+        /* Misc */
+        {"copy",         EmitCopyBuiltin    },
+        {"drop",         EmitDropBuiltin    },
+
+        /* Vectors */
+        {"float2",       EmitVectorConstruct},
+        {"float3",       EmitVectorConstruct},
+        {"float4",       EmitVectorConstruct},
+
+        {"dot",          EmitVectorDot      },
+        {"cross",        EmitVectorCross    },
+    };
+
+    for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
+    {
+        const IntrinsicDefinition* pcall = &intrinsics[i];
+
+        if (pcall != NULL && strcmp(pcall->name, n->callee) == 0)
+        {
+            (*isValid) = true;
+            return pcall->callDef(b, n);
+        }
+    }
+
+    Value value = {.value = NULL, .typeDesc = {0}};
+    return value;
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
-    // Inline array helpers (array_push / array_pop / array_resize)?
-    if (n->isPseudoCall
-        && (strcmp(n->callee, "array_push") == 0 || strcmp(n->callee, "array_pop") == 0
-            || strcmp(n->callee, "array_resize") == 0))
+    if (n->isPseudoCall)
     {
-        return EmitArrayBuiltin(b, n);
-    }
+        bool isValid = 0;
+        Value result = EmitIntrinsicCall(b, n, &isValid);
 
-    if (n->isPseudoCall && strcmp(n->callee, "copy") == 0)
-    {
-        return EmitCopyBuiltin(b, n);
-    }
-
-    if (n->isPseudoCall && strcmp(n->callee, "drop") == 0)
-    {
-        return EmitDropBuiltin(b, n);
-    }
-
-    if (n->isPseudoCall && (strcmp(n->callee, "dot") == 0 || strcmp(n->callee, "cross") == 0))
-    {
-        return EmitVectorDotCross(b, n);
-    }
-
-    if (n->isPseudoCall && IsSimdVector(n->callee))
-    {
-        return EmitVectorConstruct(b, n);
+        if (isValid)
+        {
+            return result;
+        }
     }
 
     // Is it a struct initializer call?
@@ -4120,7 +4148,8 @@ static Value EmitCall(Builder* b, CallExpr* n)
         PositionAtEnd(b, cond);
         LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
         LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
-        LLVMValueRef byte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &i, 1, "sc"), "c");
+        LLVMValueRef byte
+            = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &i, 1, "sc"), "c");
         LLVMValueRef more = LLVMBuildICmp(b->m_builder, LLVMIntNE, byte, LLVMConstNull(i8Ty), "nz");
         LLVMBuildCondBr(b->m_builder, more, body, done);
         b->m_terminated = true;
@@ -4564,7 +4593,8 @@ Value EmitExpr(Builder* b, Node* n)
         /* A literal is a borrowed fat {ptr, len}: no allocation, NUL at
            [len]. Owning consumers heap-copy via EmitOwnedValue. */
         TypeDesc td = StringFatDesc(b);
-        LLVMValueRef fat = LLVMConstNamedStruct(ArrayStructType(b), (LLVMValueRef[2]){gep, LLVMConstInt(I64Ty(b), (unsigned long long)len, 0)}, 2);
+        LLVMValueRef fat = LLVMConstNamedStruct(
+            ArrayStructType(b), (LLVMValueRef[2]){gep, LLVMConstInt(I64Ty(b), (unsigned long long)len, 0)}, 2);
 
         return ValueMake(fat, td);
     }
@@ -4684,8 +4714,7 @@ Value EmitExpr(Builder* b, Node* n)
             return ValueMake(owned, target);
         }
 
-        if ((operand.typeDesc.isBox && target.isBox)
-            || (operand.typeDesc.isString && target.isString))
+        if ((operand.typeDesc.isBox && target.isBox) || (operand.typeDesc.isString && target.isString))
         {
             /* Retag with the destination type; Coerce would keep the source's. */
             return ValueMake(operand.value, target);
@@ -5012,10 +5041,10 @@ static void EmitStmt(Builder* b, Node* n)
             PositionAtEnd(b, elseBB);
             PushScope(b);
             EmitStmt(b, i->elseBranch);
-        if (!b->m_terminated)
-        {
-            RunDefers(b, TopScope(b));
-        }
+            if (!b->m_terminated)
+            {
+                RunDefers(b, TopScope(b));
+            }
             PopScope(b);
             Br(b, endBB);
         }
