@@ -17,7 +17,6 @@ typedef struct
     TypeDesc returnType;
     bool* paramByPtr;
     size_t paramByPtrCount;
-    bool externStringReturn; // Extern string return: C ABI is char*.
 } FuncInfo;
 
 // Folded constant init (host-side values; LLVM-C lacks Const*Cast).
@@ -1880,13 +1879,9 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         params[i] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
     }
 
-    // Extern string return: C ABI is char*, caller wraps to a fat.
-    info->externStringReturn = f->isExtern && !hasReturnParam
-                               && TypeIsString(&b->m_registry, f->returnType.name);
-
-    // A `return` param lowers to void ret + out-pointer.
+    // A function with a `return` param == void ret + out-pointer
     LLVMTypeRef abiRetType
-        = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
+        = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : info->returnType.type;
 
     info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
@@ -4924,41 +4919,6 @@ static Value EmitCall(Builder* b, CallExpr* n)
         LLVMValueRef retVal = LLVMBuildLoad2(b->m_builder, returnParamTd.type, returnParamSlot, "retparam.val");
 
         return ValueMake(retVal, returnParamTd);
-    }
-
-    /* Extern string return: the C ABI handed back a char* (NUL-terminated
-       by contract). Wrap it into a fat: substitute a valid empty buffer for
-       NULL and measure the length with an inline scan. */
-    if (info->externStringReturn)
-    {
-        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, call, LLVMConstNull(b->m_ptrTy), "retnull");
-        LLVMValueRef dataPtr = LLVMBuildSelect(b->m_builder, isNull, EmptyNulString(b), call, "retstr");
-
-        /* Inline strlen: len = 0 while dataPtr[len] != 0. */
-        LLVMBasicBlockRef cond = NewBb(b, "slen.cond");
-        LLVMBasicBlockRef body = NewBb(b, "slen.body");
-        LLVMBasicBlockRef done = NewBb(b, "slen.done");
-        LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "slen.i");
-        LLVMBuildStore(b->m_builder, LLVMConstInt(I64Ty(b), 0, 0), iSlot);
-        Br(b, cond);
-
-        PositionAtEnd(b, cond);
-        LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "i");
-        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
-        LLVMValueRef byte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &i, 1, "sc"), "c");
-        LLVMValueRef more = LLVMBuildICmp(b->m_builder, LLVMIntNE, byte, LLVMConstNull(i8Ty), "nz");
-        LLVMBuildCondBr(b->m_builder, more, body, done);
-        b->m_terminated = true;
-
-        PositionAtEnd(b, body);
-        LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "next");
-        LLVMBuildStore(b->m_builder, next, iSlot);
-        Br(b, cond);
-
-        PositionAtEnd(b, done);
-        LLVMValueRef lenVal = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "len");
-
-        return ValueMake(MakeStringFatValue(b, dataPtr, lenVal), info->returnType);
     }
 
     return ValueMake(call, info->returnType);

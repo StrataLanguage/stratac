@@ -154,8 +154,9 @@ main) are the internal entry points.
   is a compile error. Extern: puns to `char*` — the fat's
   first member — with a static empty buffer substituted for `{null, 0}` so
   C never sees NULL; `string?` passes the RAW pointer (NULL = empty); an
-  extern string RETURN is `char*` and the caller wraps it via an inline
-  strlen. Literals are borrowed constant fats; owning consumers heap-copy.
+  extern string RETURN is BANNED (the caller would own a buffer the host
+  may not have allocated — use a `return string` out-param: the host
+  writes the fat `{ptr, len}` and the caller owns it). Literals are borrowed constant fats; owning consumers heap-copy.
   Globals: `string g;` is legal and defaults to the canonical empty fat —
   no init required, exactly like `T[]` globals (box-global rebind rules
   apply: it stays empty forever; only initialized globals hold values).
@@ -393,12 +394,13 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   check is skipped for these). Works for any type: structs, scalars, `string`
   (host writes the fat `{ptr, len}` — caller owns), `T[]`, `^T`/`T?` (host
   writes the pointer; NULL = empty for `T?`), and handles.
-  Like structs, the `{data, len}` fat (`T[]`, `T[]?`, `string?` — or an alias
-  of them) CANNOT be an extern return: C compilers disagree on the ABI for a
-  16-byte aggregate (hidden sret pointer on MS x64 vs register return
-  elsewhere), so a direct return would read garbage at the call site. Sema
-  rejects it with a hint to use a `return` out-param. Plain `string` returns
-  are unaffected (they cross as a `char*` the caller owns and frees).
+  Like structs, the `string` and `{data, len}` fat returns (`T[]`, `T[]?`,
+  `string?` — or an alias of them) CANNOT be extern returns. A `string`
+  return would cross as a `char*` the caller owns and frees — an ownership
+  footgun if the host returns a static/borrowed buffer — and the fat is a
+  16-byte aggregate C compilers disagree on (hidden sret pointer on MS x64
+  vs register return elsewhere), so a direct return would read garbage at
+  the call site. Sema rejects both with a hint to use a `return` out-param.
   The return type may be a **forward-declared** struct at the declaration
   (`struct Name;` + `extern void GetName(return Name n);` compiles standalone
   — the ABI is just a `Name*`, like any `ref` param) — but every **call**

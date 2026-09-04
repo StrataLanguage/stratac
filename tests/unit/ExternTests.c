@@ -8,8 +8,7 @@
  * ABI notes locked in here:
  *   - extern `string` params cross by value as `const char*`, even when
  *     spelled `ref string` / `const ref string` (the host reads content).
- *   - extern `string` returns are OWNED: the caller frees the returned
- *     buffer, so hosts must hand back malloc'd memory.
+ *   - extern `string` RETURNS are banned: use a return-param instead
  *   - extern array params cross as a pointer to the {data, len} fat struct;
  *     a `ref int[]` host can rewrite the whole array (out-param).
  *   - extern array returns are OWNED: the caller frees `.data`, so hosts
@@ -95,24 +94,28 @@ static int HostStrShout(char* s)
     return (unsigned char)s[0];
 }
 
-/* Returns an OWNED buffer the caller will free. */
-static const char* HostStrMake(void)
+/* Returns an OWNED buffer through the `return string` out-param: the host
+   writes the {ptr, len} fat and the caller owns it. */
+static void HostStrMake(HostArr* out)
 {
-    return HostDup("fromhost");
+    char* buf = HostDup("fromhost");
+    out->data = buf;
+    out->len = 8;
 }
 
-/* Returns an OWNED buffer; params are by-value const char*. */
-static const char* HostStrConcat(const char* a, const char* b)
+/* Params are by-value const char*; the result fat goes through the out slot. */
+static void HostStrConcat(const char* a, const char* b, HostArr* out)
 {
     size_t na = strlen(a);
     size_t nb = strlen(b);
-    char* out = (char*)malloc(na + nb + 1);
-    if (out)
+    char* buf = (char*)malloc(na + nb + 1);
+    if (buf)
     {
-        memcpy(out, a, na);
-        memcpy(out + na, b, nb + 1);
+        memcpy(buf, a, na);
+        memcpy(buf + na, b, nb + 1);
     }
-    return out;
+    out->data = buf;
+    out->len = na + nb;
 }
 
 /* ---- Array hosts ---- */
@@ -417,12 +420,36 @@ STRATA_TEST(extern_ref_string_host_mutates_in_place)
 
 /* ================= String returns ================= */
 
-STRATA_TEST(extern_string_return_is_owned)
+STRATA_TEST(extern_string_return_is_rejected)
+{
+    /* A bare `string` return crosses as a char* the caller would own and
+       free — but the host may hand back a static or borrowed buffer, an
+       ownership footgun. Sema requires the `return` out-param instead. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "extern string bad_make();\n"
+        "extern void good_make(return string s);\n"
+        "extern string bad_echo(string a);\n"
+        "int entry() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "extern function cannot return 'string' by value") != NULL);
+    STRATA_CHECK(strstr(d, "return string out") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(extern_string_return_out_param_is_owned)
 {
     /* The caller owns the returned buffer and frees it at scope exit
        (no double-free / leak with two live results). */
     HostSymbol hosts[] = { { "host_str_make", (void*)&HostStrMake }, { "host_str_len", (void*)&HostStrLen } };
-    CheckExtern("extern string host_str_make();\n"
+    CheckExtern("extern void host_str_make(return string s);\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
@@ -433,12 +460,12 @@ STRATA_TEST(extern_string_return_is_owned)
                 hosts, 2, 16);
 }
 
-STRATA_TEST(extern_string_param_and_return)
+STRATA_TEST(extern_string_param_and_out_param_return)
 {
-    /* Params arrive by value and stay borrowed; the returned string is
-       owned and read back through another extern call. */
+    /* Params arrive by value and stay borrowed; the returned string comes
+       back through the out-param and is read through another extern call. */
     HostSymbol hosts[] = { { "host_str_concat", (void*)&HostStrConcat }, { "host_str_len", (void*)&HostStrLen } };
-    CheckExtern("extern string host_str_concat(string a, string b);\n"
+    CheckExtern("extern void host_str_concat(string a, string b, return string c);\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
