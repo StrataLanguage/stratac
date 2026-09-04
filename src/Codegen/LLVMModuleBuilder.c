@@ -4462,6 +4462,14 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
 static Value EmitVectorReduce(Builder* b, CallExpr* n)
 {
     Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+
+    /* float2 is a 2-lane LLVM vector: the 4-lane horizontal-add trick would
+       emit a shuffle whose mask walks off the vector. */
+    if (LLVMGetVectorSize(LLVMTypeOf(vA.value)) == 2)
+    {
+        return ValueMake(LSimdVector2HAdd(b, vA.value), ResolveByName(b, "float"));
+    }
+
     return ValueMake(LSimdVector4HAdd(b, vA.value), ResolveByName(b, "float"));
 }
 
