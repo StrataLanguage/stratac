@@ -85,6 +85,23 @@ LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRe
     return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
 }
 
+LLVMValueRef LSimdVector4HAdd(struct Builder* b, LLVMValueRef v)
+{
+    // To do a horizontal add, we need to first add pairwise (x + y, x + y, z + w, z + w)
+    LLVMValueRef swap = LSimdVector4Shuffle(b, v, v, VC_Y, VC_X, VC_W, VC_Z);
+    LLVMValueRef sum1 = LLVMBuildFAdd(b->m_builder, v, swap, "hadd1");
+
+    // Extract lane 0 (x + y) and lane 2 (z + w) add as scalars
+    LLVMValueRef lo
+        = LLVMBuildExtractElement(b->m_builder, sum1, LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), 0, 0), "lo");
+
+    LLVMValueRef hi
+        = LLVMBuildExtractElement(b->m_builder, sum1, LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), 2, 0), "hi");
+
+    // Finally, add and return scalar value
+    return LLVMBuildFAdd(b->m_builder, lo, hi, "hadd_scalar");
+}
+
 LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
 {
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
@@ -357,8 +374,8 @@ static LLVMValueRef SimdBuildVector(struct Builder* b, LLVMValueRef* comps, unsi
 
     for (unsigned i = 0; i < count; i++)
     {
-        result = LLVMBuildInsertElement(b->m_builder, result, comps[i], LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), i, 0),
-                                        "vecins");
+        result = LLVMBuildInsertElement(b->m_builder, result, comps[i],
+                                        LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), i, 0), "vecins");
     }
 
     return result;

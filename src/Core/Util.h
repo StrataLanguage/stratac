@@ -45,6 +45,8 @@
 #error "Unsupported platform"
 #endif
 
+#define ARRAY_COUNT(arr_) (sizeof(arr_) / sizeof((arr_)[0]))
+
 // -- Arena
 
 typedef struct ArenaChunk {

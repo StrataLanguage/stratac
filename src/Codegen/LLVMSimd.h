@@ -35,3 +35,8 @@ LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef v
 /* Cross product: float3/float4 -> a vector (float2 -> scalar z). */
 LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
 LLVMValueRef LSimdVector3Dot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
+
+/**
+ * @brief Compute the sum (aka horizontal add or reduce) of all components in a float4. Returns a scalar value.
+ */
+LLVMValueRef LSimdVector4HAdd(struct Builder* b, LLVMValueRef v);
