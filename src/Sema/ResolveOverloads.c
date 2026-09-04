@@ -150,6 +150,24 @@ static bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative)
         return true;
     }
 
+    /* `int.max` / `float.min`: integral pseudo-properties fold to their
+       bit pattern (floats are not integer constants). */
+    if (n->kind == NodeMember && ((MemberExpr*)n)->isScalarConst)
+    {
+        MemberExpr* m = (MemberExpr*)n;
+        uint64_t intVal = 0;
+        bool isFloat = false;
+
+        if (m->base_node->kind == NodeIdent
+            && ScalarPseudoConst(((IdentExpr*)m->base_node)->name, m->member, &intVal, NULL, &isFloat) && !isFloat)
+        {
+            *mag = intVal;
+            return true;
+        }
+
+        return false;
+    }
+
     if (n->kind == NodeUnary)
     {
         UnaryExpr* u = (UnaryExpr*)n;
@@ -569,11 +587,32 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
     }
     case NodeMember:
     {
-        /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
-           BEFORE the main resolution marks members, so scan the module. */
+        /* `int.max` / `float.min` — builtin scalar pseudo-properties fold
+           to their constants, exactly like enum constants. */
         MemberExpr* m = (MemberExpr*)n;
 
-        if (m->base_node->kind != NodeIdent || !TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->base_node)->name))
+        if (m->base_node->kind != NodeIdent)
+        {
+            return false;
+        }
+
+        uint64_t intVal = 0;
+        double floatVal = 0.0;
+        bool isFloat = false;
+
+        if (ScalarPseudoConst(((IdentExpr*)m->base_node)->name, m->member, &intVal, &floatVal, &isFloat))
+        {
+            bool wasInt = out->isInt;
+            out->i = (long long)intVal;
+            out->f = floatVal;
+            out->isFloat = isFloat;
+            out->isInt = wasInt;
+            return true;
+        }
+
+        /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
+           BEFORE the main resolution marks members, so scan the module. */
+        if (!TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->base_node)->name))
         {
             return false;
         }
@@ -900,6 +939,30 @@ static bool IsBoxMoved(const Resolver* r, const char* name)
 static bool AliasIsOwning(const Resolver* r, const TypeName* t)
 {
     return TypeIsOwningResolved(&r->m_registry, r->m_arena, t);
+}
+
+/* True when the type is a dynamic array, or its alias resolves to one. */
+static bool ResolvesToDynamicArray(const Resolver* r, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    if (TypeNameIsDynamicArray(t))
+    {
+        return true;
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, t->name);
+
+    if (!leaf || strcmp(leaf, t->name) == 0)
+    {
+        return false;
+    }
+
+    TypeName parsed = TypeNameParse(r->m_arena, leaf);
+    return TypeNameIsDynamicArray(&parsed);
 }
 
 /* True when both names resolve to the same underlying type.
@@ -2711,6 +2774,36 @@ static bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
     return true;
 }
 
+/* Resolves `int.max` / `float.min` — a pseudo-property read on a BUILTIN
+   scalar type name (aliases and user types are excluded; only the builtin
+   spellings carry the C-limit constants). Returns true when the base names
+   a scalar pseudo type, meaning the member expression was fully handled:
+   a valid `max`/`min` marks the member as a constant; an invalid member is
+   diagnosed. Anything else (value bases, non-scalar bases) returns false. */
+static bool TryResolveScalarPseudoConst(Resolver* r, MemberExpr* m)
+{
+    if (m->base_node->kind != NodeIdent)
+    {
+        return false;
+    }
+
+    const char* baseName = ((IdentExpr*)m->base_node)->name;
+
+    if (!IsScalarPseudoType(baseName))
+    {
+        return false;
+    }
+
+    if (!ScalarPseudoConst(baseName, m->member, NULL, NULL, NULL))
+    {
+        DiagErrorFmt(r->m_diag, m->base.range, "type '%s' has no member '%s'", baseName, m->member);
+        return true;
+    }
+
+    m->isScalarConst = true;
+    return true;
+}
+
 static void VecPushFront(Vec* v, void* item)
 {
     VecPush(v, NULL);
@@ -3136,6 +3229,25 @@ static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, 
     {
         /* `EnumName.Member` — a scoped constant from an already-resolved enum. */
         MemberExpr* me = (MemberExpr*)n;
+
+        /* `int.max` — a builtin scalar pseudo-property folds to its value
+           (integral only; enums never have float underlyings). */
+        if (me->base_node->kind == NodeIdent)
+        {
+            uint64_t intVal = 0;
+            bool isFloat = false;
+
+            if (ScalarPseudoConst(((IdentExpr*)me->base_node)->name, me->member, &intVal, NULL, &isFloat))
+            {
+                if (isFloat)
+                {
+                    return EnumEvalNotConst;
+                }
+
+                *out = intVal;
+                return EnumEvalOk;
+            }
+        }
 
         if (me->base_node->kind != NodeIdent)
         {
@@ -3909,6 +4021,19 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return InternTypeName(r, m->enumTypeName);
         }
 
+        /* Builtin scalar pseudo-property: `int.max` / `float.min` has the
+           base scalar's own type. Resolution-order independent (like the
+           impl-property path below). */
+        if (m->base_node->kind == NodeIdent)
+        {
+            const char* baseName = ((IdentExpr*)m->base_node)->name;
+
+            if (IsScalarPseudoType(baseName) && ScalarPseudoConst(baseName, m->member, NULL, NULL, NULL))
+            {
+                return InternTypeName(r, baseName);
+            }
+        }
+
         const TypeName* baseType = InferType(r, m->base_node, scope);
 
         /* Impl properties: a member read on a handle with a matching
@@ -4538,6 +4663,15 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 return;
             }
 
+            // Scalar pseudo-properties (`int.max`) are read-only.
+            if (a->target->kind == NodeMember && ((MemberExpr*)a->target)->isScalarConst)
+            {
+                MemberExpr* sm = (MemberExpr*)a->target;
+                DiagErrorFmt(r->m_diag, a->base.range, "cannot assign to '%s.%s' (a constant)",
+                             ((IdentExpr*)sm->base_node)->name, sm->member);
+                return;
+            }
+
             // Whole fixed arrays assign by element, never as a unit.
             if (a->target->kind == NodeMember || a->target->kind == NodeIndex)
             {
@@ -4608,6 +4742,15 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
                          inc->isDec ? "decrement" : "increment", incType->name);
+        }
+
+        // Scalar pseudo-properties (`int.max`) are read-only.
+        if (inc->operand->kind == NodeMember && ((MemberExpr*)inc->operand)->isScalarConst)
+        {
+            MemberExpr* sm = (MemberExpr*)inc->operand;
+            DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s '%s.%s' (a constant)",
+                         inc->isDec ? "decrement" : "increment", ((IdentExpr*)sm->base_node)->name, sm->member);
+            return;
         }
 
         /* ++/-- invalidates index spellings of the operand. */
@@ -4693,6 +4836,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* Scoped enum constant: `EnumName.Member` reads a constant — the base
            is a type name, not a value, so skip the normal member path. */
         if (TryResolveEnumMember(r, m, scope))
+        {
+            return;
+        }
+
+        /* Builtin scalar pseudo-property: `int.max` / `float.min`. */
+        if (TryResolveScalarPseudoConst(r, m))
         {
             return;
         }
@@ -5961,13 +6110,24 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
 
-            if (sd->isExtern && TypeIsString(&r.m_registry, field->type.name))
+            if (sd->isExtern && (TypeIsString(&r.m_registry, field->type.name) ||
+                                 ResolvesToDynamicArray(&r, &field->type)))
             {
-                // Strings are fats; extern structs must match C layout.
-                DiagErrorFmt(diag, field->type.range,
-                             "extern struct field '%s' may not have type 'string' "
-                             "(use a '^byte' or integer-typed member for a raw char*)",
-                             field->name);
+                // Strings and dynamic arrays are fats; extern structs must match C layout.
+                if (TypeIsString(&r.m_registry, field->type.name))
+                {
+                    DiagErrorFmt(diag, field->type.range,
+                                 "extern struct field '%s' may not have type 'string' "
+                                 "(use a '^byte' or integer-typed member for a raw char*)",
+                                 field->name);
+                }
+                else
+                {
+                    DiagErrorFmt(diag, field->type.range,
+                                 "extern struct field '%s' may not have a dynamic array type ('%s'); "
+                                 "extern structs must match C layout - use a fixed-size array or a pointer member",
+                                 field->name, field->type.name);
+                }
             }
 
             if (IsIncompleteStruct(&r.m_registry, field->type.name))

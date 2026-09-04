@@ -956,8 +956,12 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     }
     else if (!value.typeDesc.isFloat && !target.isFloat && !target.isVoid)
     {
+        /* Widen per the SOURCE's signedness: an unsigned i8/i16/i32 (byte,
+           ushort, uint) must zero-extend, a signed one sign-extend. The
+           target's signedness only matters for truncation, where the flag
+           is irrelevant. */
         bool srcIsBool = value.typeDesc.type == I1Ty(b);
-        r = LLVMBuildIntCast2(b->m_builder, value.value, target.type, !target.isUnsigned && !srcIsBool, "c");
+        r = LLVMBuildIntCast2(b->m_builder, value.value, target.type, !value.typeDesc.isUnsigned && !srcIsBool, "c");
     }
     else
     {
@@ -2294,6 +2298,25 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         TypeDesc td = Resolve(b, &tn);
         LLVMValueRef v = LLVMConstInt(td.type, n->enumValue, td.isUnsigned);
         return ValueMake(v, td);
+    }
+
+    /* Builtin scalar pseudo-property: `int.max` / `float.min` — a compile
+       time constant of the base scalar's own type. */
+    if (n->isScalarConst)
+    {
+        TypeName tn = TypeNameLeaf((char*)((IdentExpr*)n->base_node)->name);
+        TypeDesc td = Resolve(b, &tn);
+
+        uint64_t intVal = 0;
+        double floatVal = 0.0;
+        bool isFloat = false;
+
+        if (ScalarPseudoConst(tn.name, n->member, &intVal, &floatVal, &isFloat))
+        {
+            LLVMValueRef v
+                = isFloat ? LLVMConstReal(td.type, floatVal) : LLVMConstInt(td.type, intVal, td.isUnsigned);
+            return ValueMake(v, td);
+        }
     }
 
     /* Impl property read: lower to the getter extern call. Checked first —
@@ -5538,13 +5561,30 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
            integer value (marked by sema). */
         MemberExpr* m = (MemberExpr*)n;
 
-        if (!m->isEnumConst)
+        if (m->isEnumConst)
         {
-            return false;
+            *out = (ConstInitVal){CIK_INT, .i = m->enumValue, .f = 0.0};
+            return true;
         }
 
-        *out = (ConstInitVal){CIK_INT, .i = m->enumValue, .f = 0.0};
-        return true;
+        /* Builtin scalar pseudo-property: `int.max` / `float.min` (marked by
+           sema) folds to the C-limit constant. */
+        if (m->isScalarConst)
+        {
+            uint64_t intVal = 0;
+            double floatVal = 0.0;
+            bool isFloat = false;
+
+            if (m->base_node->kind == NodeIdent
+                && ScalarPseudoConst(((IdentExpr*)m->base_node)->name, m->member, &intVal, &floatVal, &isFloat))
+            {
+                *out = isFloat ? (ConstInitVal){CIK_FLOAT, .i = 0, .f = floatVal}
+                               : (ConstInitVal){CIK_INT, .i = intVal, .f = 0.0};
+                return true;
+            }
+        }
+
+        return false;
     }
     default:
         return false;

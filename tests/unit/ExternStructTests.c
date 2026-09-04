@@ -144,6 +144,37 @@ STRATA_TEST(sema_fixed_array_element_restrictions)
     }
 }
 
+STRATA_TEST(sema_extern_struct_dynamic_array_field_rejected)
+{
+    struct { const char* src; const char* msg; } cases[] = {
+        /* Dynamic arrays are fats {ptr, len} — no C-layout mirror, like string. */
+        {"extern struct S { int[] xs; };", "dynamic array"},
+        {"extern struct S { uint[] xs; };", "dynamic array"},
+        /* An alias resolving to a dynamic array is rejected too. */
+        {"struct A = int[];\nextern struct S { A a; };", "dynamic array"},
+        /* A dynamic array whose elements are fixed arrays is still dynamic. */
+        {"extern struct S { int[][4] xs; };", "dynamic array"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        StrataResult r = CompileSource(cases[i].src);
+        STRATA_CHECK(!r.ok);
+        if (r.diagnostics)
+        {
+            STRATA_CHECK(strstr(r.diagnostics, cases[i].msg) != NULL);
+        }
+        strataResultFree(&r);
+    }
+
+    /* Fixed arrays and pointer members remain legal. */
+    StrataResult ok = CompileSource(
+        "extern struct S { byte[16] name; ^Counter c; };\n"
+        "struct Counter { long n; };\n");
+    STRATA_CHECK(ok.ok);
+    strataResultFree(&ok);
+}
+
 STRATA_TEST(sema_fieldoffset_overlap_rejected)
 {
     StrataResult r = CompileSource(

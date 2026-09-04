@@ -130,4 +130,23 @@ STRATA_TEST(llvm_overloaded_in_struct_param)
     STRATA_CHECK(res.ok);
 }
 
+/* Scalar pseudo-properties emit the exact C limit-macro bit patterns:
+   FLT_MAX/FLT_MIN and DBL_MAX/DBL_MIN (hex-float IR spelling). */
+STRATA_TEST(llvm_scalar_pseudo_constants_emit_correct_bits)
+{
+    CodegenResult res = GenLlvm("int f() {\n"
+                                "  float fmax = float.max;\n"
+                                "  float fmin = float.min;\n"
+                                "  double dmax = double.max;\n"
+                                "  double dmin = double.min;\n"
+                                "  int x = 0;\n"
+                                "  return x;\n"
+                                "}\n");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "store float 0x47EFFFFFE0000000"));  /* FLT_MAX */
+    STRATA_CHECK(Contains(res.output, "store float 0x3810000000000000"));  /* FLT_MIN */
+    STRATA_CHECK(Contains(res.output, "store double 0x7FEFFFFFFFFFFFFF")); /* DBL_MAX */
+    STRATA_CHECK(Contains(res.output, "store double 0x10000000000000"));   /* DBL_MIN */
+}
+
 

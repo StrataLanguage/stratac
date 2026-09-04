@@ -154,7 +154,8 @@ main) are the internal entry points.
   Globals: `string g;` is legal and defaults to the canonical empty fat —
   no init required, exactly like `T[]` globals (box-global rebind rules
   apply: it stays empty forever; only initialized globals hold values).
-  `extern struct` fields may not be `string` (no C-layout mirror for a fat).
+  `extern struct` fields may not be `string` or dynamic `T[]` (no C-layout
+  mirror for a fat; use a fixed-size array or a pointer member instead).
 - Type aliases: `struct Meter = int;` — a strong newtype over any type.
   Identity is by NAME: no implicit conversion in either direction (including
   literals), no overload matching across it, and distinct aliases of the same
@@ -353,6 +354,14 @@ main) are the internal entry points.
 
 ### Other
 
+- Scalar pseudo-properties: `int.max`, `float.min` — a la array `.length`,
+  but on the BUILTIN scalar TYPE NAMES (never aliases, enums, or value
+  bases; `Meter.max` for `struct Meter = int;` does not resolve).
+  Integers get `max` (`ulong.max` is UINT64_MAX, `byte.max` is 255, …);
+  `float`/`double` get `max` AND `min` (FLT_MAX/FLT_MIN, DBL_MAX/DBL_MIN).
+  The value has the base scalar's own type, is a compile-time constant
+  (usable in const-global initializers, enum member values, and any
+  constant fold), and is read-only (assignment/`++`/`--` error).
 - Global variables: `int g_count = 0;` at module scope (LLVM globals,
   literal constant initializers only)
 - Overloads: functions may share a name with different param types;

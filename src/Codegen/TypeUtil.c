@@ -153,6 +153,86 @@ bool IsFloatType(const char* t)
     return strcmp(t, "double") == 0 || strcmp(t, "float") == 0;
 }
 
+bool IsScalarPseudoType(const char* t)
+{
+    return IsScalarTypeName(t) && strcmp(t, "bool") != 0;
+}
+
+bool ScalarPseudoConst(const char* t, const char* member, uint64_t* outInt, double* outFloat, bool* outIsFloat)
+{
+    if (!IsScalarPseudoType(t))
+    {
+        return false;
+    }
+
+    bool isMax = strcmp(member, "max") == 0;
+    bool isMin = strcmp(member, "min") == 0;
+
+    if (!isMax && !isMin)
+    {
+        return false;
+    }
+
+    /* `min` is a float-only property (FLT_MIN/DBL_MIN); integers just get
+       `max` (mirroring the C limit macros). */
+    if (isMin && !IsFloatType(t))
+    {
+        return false;
+    }
+
+    static const struct {
+        const char* name;
+        uint64_t maxInt;
+    } kIntMax[] = {
+        {"int", 0x7FFFFFFFULL},   {"uint", 0xFFFFFFFFULL},
+        {"long", 0x7FFFFFFFFFFFFFFFULL}, {"ulong", 0xFFFFFFFFFFFFFFFFULL},
+        {"byte", 0xFFULL},        {"sbyte", 0x7FULL},
+        {"short", 0x7FFFULL},     {"ushort", 0xFFFFULL},
+    };
+
+    if (!IsFloatType(t))
+    {
+        for (size_t i = 0; i < sizeof(kIntMax) / sizeof(kIntMax[0]); i++)
+        {
+            if (strcmp(t, kIntMax[i].name) == 0)
+            {
+                if (outInt)
+                {
+                    *outInt = kIntMax[i].maxInt;
+                }
+                if (outIsFloat)
+                {
+                    *outIsFloat = false;
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /* float/double: FLT_MAX/FLT_MIN, DBL_MAX/DBL_MIN. */
+    double value;
+    if (strcmp(t, "double") == 0)
+    {
+        value = isMax ? 1.7976931348623157e+308 : 2.2250738585072014e-308;
+    }
+    else
+    {
+        value = isMax ? 3.4028234663852886e+38 : 1.1754943508222875e-38;
+    }
+
+    if (outFloat)
+    {
+        *outFloat = value;
+    }
+    if (outIsFloat)
+    {
+        *outIsFloat = true;
+    }
+    return true;
+}
+
 bool TypeIsString(const TypeRegistry* reg, const char* name)
 {
     if (!name)

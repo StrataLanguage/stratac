@@ -880,7 +880,16 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
         node->incomplete = true;
     }
 
-    ParserExpect(p, TokSemicolon, "';'");
+    if (node->incomplete)
+    {
+        /* Forward declaration: `struct Foo;` still needs the ';'. */
+        ParserExpect(p, TokSemicolon, "';'");
+    }
+    else
+    {
+        /* The ';' after a struct body is optional (`struct S { ... }`). */
+        ParserConsume(p, TokSemicolon);
+    }
 
     return node;
 }
@@ -978,7 +987,8 @@ static EnumDecl* ParseEnumDecl(Parser* p)
     Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
     node->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : p->m_cur);
 
-    ParserExpect(p, TokSemicolon, "';'");
+    /* The ';' after an enum body is optional (`enum Color { Red }`). */
+    ParserConsume(p, TokSemicolon);
 
     return node;
 }
@@ -2630,6 +2640,16 @@ static Node* ParsePrimary(Parser* p)
     case TokKwFloat2:
     case TokKwFloat3:
     case TokKwFloat4:
+    case TokKwInt:
+    case TokKwUint:
+    case TokKwLong:
+    case TokKwUlong:
+    case TokKwByte:
+    case TokKwSbyte:
+    case TokKwShort:
+    case TokKwUshort:
+    case TokKwFloat:
+    case TokKwDouble:
     case TokIdent:
     {
         Advance(p);

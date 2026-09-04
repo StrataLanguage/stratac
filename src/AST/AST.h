@@ -618,6 +618,7 @@ typedef struct MemberExpr {
     bool isEnumConst;    /* set by sema: `EnumName.Member` scoped constant read */
     uint64_t enumValue;  /* resolved bit pattern of the enum member (valid when isEnumConst) */
     const char* enumTypeName; /* the enum's name (valid when isEnumConst) */
+    bool isScalarConst;  /* set by sema: `int.max` / `float.min` builtin scalar type pseudo-property read */
 } MemberExpr;
 
 typedef struct {

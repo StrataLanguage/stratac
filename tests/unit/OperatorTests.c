@@ -2,6 +2,24 @@
 #include "Test.h"
 #include "strata/strata.h"
 
+static bool Contains(const char* h, const char* n)
+{
+    return strstr(h, n) != NULL;
+}
+
+static const char* ErrText(DiagnosticEngine* diag, Arena* arena)
+{
+    Sb sb;
+    SbInit(&sb);
+
+    for (size_t i = 0; i < diag->m_count; i++)
+    {
+        SbPrintf(&sb, "%s; ", diag->m_diagnostics[i].message);
+    }
+
+    return SbFinish(&sb, arena);
+}
+
 static StrataJit* CompileJit(const char* src)
 {
     StrataCompiler* c = strataCompilerCreate();
@@ -906,4 +924,250 @@ STRATA_TEST(jit_float_remainder)
         if (entry) STRATA_CHECK_EQ(entry(), 16);
         strataJitDestroy(jit);
     }
+}
+
+/* `int.max` etc. — the scalar pseudo-property. Integer scalars get `max`
+   (the C limit macros: INT_MAX, UINT_MAX, ...); values are typed as the
+   base scalar itself. */
+STRATA_TEST(jit_scalar_max_integer_constants)
+{
+    StrataJit* jit = CompileJit(
+        "int entry() {\n"
+        "  int a = int.max;\n"
+        "  uint b = uint.max;\n"
+        "  long c = long.max;\n"
+        "  ulong d = ulong.max;\n"
+        "  byte e = byte.max;\n"
+        "  sbyte f = sbyte.max;\n"
+        "  short g = short.max;\n"
+        "  ushort h = ushort.max;\n"
+        "  return (int)(a == 2147483647) + (int)(b == 4294967295u) + (int)(c == 9223372036854775807)\n"
+        "       + (int)(d == 18446744073709551615u) + (int)(e == 255) + (int)(f == 127)\n"
+        "       + (int)(g == 32767) + (int)(h == 65535);\n"
+        "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 8);
+        strataJitDestroy(jit);
+    }
+}
+
+/* Floats get `max` AND `min` (FLT_MAX/FLT_MIN, DBL_MAX/DBL_MIN). The
+   double values are verified by round-trip + magnitude against real
+   doubles built from int casts (float-derived doubles are limited to the
+   float range by the literal typing). */
+STRATA_TEST(jit_scalar_max_min_float_double)
+{
+    StrataJit* jit = CompileJit(
+        "int entry() {\n"
+        "  float fmax = float.max;\n"
+        "  float fmin = float.min;\n"
+        "  double dmax = double.max;\n"
+        "  double dmin = double.min;\n"
+        "  int r = 0;\n"
+        "  if (fmax > 3.0e38f) { r = r + 1; }\n"          /* FLT_MAX 3.40e38 */
+        "  if (fmin < 1.2e-38f) { r = r + 1; }\n"         /* FLT_MIN 1.17e-38 */
+        "  if (dmax == double.max) { r = r + 1; }\n"      /* DBL_MAX 1.79e308 */
+        "  if (dmin == double.min) { r = r + 1; }\n"      /* DBL_MIN 2.2e-308 */
+        "  if (dmax > (double)9000000000) { r = r + 1; }\n" /* far above the float range */
+        "  if (dmin < (double)1) { r = r + 1; }\n"          /* far below */
+        "  return r;\n"
+        "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 6);
+        strataJitDestroy(jit);
+    }
+}
+
+/* Pseudo-properties are real typed constants: they participate in
+   arithmetic (including 64-bit wraparound) like any literal. */
+STRATA_TEST(jit_scalar_max_in_arithmetic)
+{
+    StrataJit* jit = CompileJit(
+        "int entry() {\n"
+        "  int a = int.max - 2147483647;      /* 0 */\n"
+        "  int b = (int)(ulong.max + 1 == 0); /* wraps to 0 */\n"
+        "  return a + b;\n"
+        "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 1);
+        strataJitDestroy(jit);
+    }
+}
+
+/* `const` manifest globals fold the pseudo-property (sema + codegen). */
+STRATA_TEST(jit_scalar_max_in_const_global)
+{
+    StrataJit* jit = CompileJit(
+        "const ulong G = ulong.max;\n"
+        "const byte B = byte.max;\n"
+        "int entry() { return (int)(G == ulong.max) + (int)(B == 255); }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 2);
+        strataJitDestroy(jit);
+    }
+}
+
+/* Plain (non-const) global initializers fold too. */
+STRATA_TEST(jit_scalar_max_in_global_init)
+{
+    StrataJit* jit = CompileJit(
+        "ulong g = ulong.max;\n"
+        "int entry() { return (int)(g == ulong.max); }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 1);
+        strataJitDestroy(jit);
+    }
+}
+
+/* Enum member values may reference a scalar pseudo-property. */
+STRATA_TEST(jit_scalar_max_in_enum_value)
+{
+    StrataJit* jit = CompileJit(
+        "enum E : ulong { A = ulong.max };\n"
+        "int entry() { ulong v = (ulong)E.A; return (int)(v == ulong.max); }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry) STRATA_CHECK_EQ(entry(), 1);
+        strataJitDestroy(jit);
+    }
+}
+
+/* `min` is float-only: `int.min` is not a member. */
+STRATA_TEST(scalar_max_int_min_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int x = int.min;\n"
+                    "  return x;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "type 'int' has no member 'min'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* Unknown members on a scalar type name are diagnosed directly. */
+STRATA_TEST(scalar_max_unknown_member_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int x = float.foo;\n"
+                    "  return x;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "type 'float' has no member 'foo'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* Type aliases carry no pseudo-properties: `Meter.max` is left off. */
+STRATA_TEST(scalar_max_alias_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Meter = int;\n"
+                    "int entry() {\n"
+                    "  Meter m = Meter.max;\n"
+                    "  return (int)m;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* A value base is not a pseudo-property read: `x.max` has no member
+   (diagnosed by the backend like any other unknown member). */
+STRATA_TEST(scalar_max_value_base_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  int x = 5;\n"
+                                   "  int y = x.max;\n"
+                                   "  return y;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "cannot access member 'max'"));
+    if (err) strataFree((char*)err);
+}
+
+/* Pseudo-properties are read-only constants. */
+STRATA_TEST(scalar_max_assign_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int x = (int.max = 5);\n"
+                    "  return x;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "cannot assign to 'int.max' (a constant)"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(scalar_max_compound_assign_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int x = 0;\n"
+                    "  x = (int.max += 1);\n"
+                    "  return x;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "cannot assign to 'int.max' (a constant)"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(scalar_max_incdec_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int x = (int.max++);\n"
+                    "  return x;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "cannot increment 'int.max' (a constant)"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
 }

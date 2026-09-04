@@ -294,10 +294,14 @@ static bool ScalarSizeAlign(const char* name, SizeAlign* out)
         long size;
         long align;
     } kSizes[] = {
-        {"bool", 1, 1},   {"byte", 1, 1},   {"sbyte", 1, 1}, {"short", 2, 2},
-        {"ushort", 2, 2}, {"int", 4, 4},    {"uint", 4, 4},  {"float", 4, 4},
-        {"long", 8, 8},   {"ulong", 8, 8},  {"double", 8, 8}, {"float2", 8, 8},
-        {"float3", 16, 16}, {"float4", 16, 16},
+        {"bool", 1, 1},  
+        {"byte", 1, 1},   {"sbyte", 1, 1},
+        {"short", 2, 2}, {"ushort", 2, 2},
+        {"int", 4, 4},    {"uint", 4, 4}, 
+        {"float", 4, 4},
+        {"long", 8, 8},   {"ulong", 8, 8}, 
+        {"double", 8, 8},
+        {"float2", 8, 8}, {"float3", 16, 16}, {"float4", 16, 16},
     };
 
     for (size_t i = 0; i < sizeof(kSizes) / sizeof(kSizes[0]); i++)

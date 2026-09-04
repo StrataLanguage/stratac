@@ -80,6 +80,41 @@ STRATA_TEST(parser_inout_parameter)
     arena_free(&arena);
 }
 
+STRATA_TEST(parser_struct_body_semicolon_optional)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule(
+        "struct NoSemi { int x; }\n"
+        "struct WithSemi { int y; };\n"
+        "extern struct ExtNoSemi { byte[4] tag; }\n"
+        "enum NoSemiEnum : int { A, B }\n"
+        "enum WithSemiEnum { C, D };\n"
+        "int entry() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK_EQ((long)mod->structs.count, 3);
+    STRATA_CHECK(((StructDecl*)VecGet(&mod->structs, 0))->isExtern == false);
+    STRATA_CHECK(((StructDecl*)VecGet(&mod->structs, 2))->isExtern == true);
+    STRATA_CHECK_EQ((long)mod->enums.count, 2);
+    STRATA_CHECK_EQ((long)((EnumDecl*)VecGet(&mod->enums, 0))->members.count, 2);
+    STRATA_CHECK_EQ((long)((EnumDecl*)VecGet(&mod->enums, 1))->members.count, 2);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_forward_decl_still_needs_semicolon)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseModule("struct Foo\nstruct Bar { int x; };", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(parser_extern_return_param)
 {
     Arena arena; arena_init(&arena, 0);
