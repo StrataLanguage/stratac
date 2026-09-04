@@ -85,6 +85,19 @@ LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRe
     return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
 }
 
+LLVMValueRef LSimdVector2HAdd(struct Builder* b, LLVMValueRef v)
+{
+    /* Horizontal add on a 2-lane vector: x + y. The 4-lane shuffle trick
+       below cannot run on a <2 x float> — its mask lanes 2/3 would read the
+       second operand and the fadd operands would not type-match. */
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+    LLVMValueRef lo = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 0, 0), "lo");
+    LLVMValueRef hi = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 1, 0), "hi");
+
+    return LLVMBuildFAdd(b->m_builder, lo, hi, "hadd_scalar");
+}
+
 LLVMValueRef LSimdVector4HAdd(struct Builder* b, LLVMValueRef v)
 {
     // To do a horizontal add, we need to first add pairwise (x + y, x + y, z + w, z + w)
@@ -188,7 +201,18 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
     if (n->args.count == 1)
     {
         Value scalarValue = EmitExpr(b, (Node*)n->args.items[0]);
-        return LSimdVector4Broadcast(b, scalarValue.value);
+
+        LLVMValueRef vec = LSimdVector4Broadcast(b, scalarValue.value);
+
+        /* float3 stores only 3 lanes: the hidden 4th lane must be zero, not a
+           copy of the splat value (reduce/cross would read it). */
+        if (IsSimdVector(n->callee) == 3)
+        {
+            vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
+                                         "vecinit");
+        }
+
+        return vec;
     }
 
     else if (n->args.count == 2)
