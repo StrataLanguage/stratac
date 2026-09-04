@@ -6,9 +6,9 @@
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
-#include <assert.h>
 
 typedef struct
 {
@@ -31,7 +31,7 @@ typedef struct
 {
     ConstInitKind kind;
     unsigned long long i; // Int/bool payload.
-    double f; // Float payload.
+    double f;             // Float payload.
 } ConstInitVal;
 
 // A `const` scalar global: no LLVM global emitted, uses inline the value.
@@ -45,11 +45,11 @@ typedef struct
 typedef struct
 {
     bool valid;
-    bool vectorLane;     /* single-lane vector lvalue: ptr addresses the vector value */
-    LLVMValueRef ptr;    /* memory holding the vector (field slot, array elem, box cell) */
-    TypeDesc typeDesc;   /* lane scalar type when vectorLane (float) */
+    bool vectorLane;        /* single-lane vector lvalue: ptr addresses the vector value */
+    LLVMValueRef ptr;       /* memory holding the vector (field slot, array elem, box cell) */
+    TypeDesc typeDesc;      /* lane scalar type when vectorLane (float) */
     LLVMTypeRef vectorType; /* LLVM vector type when vectorLane */
-    unsigned lane;       /* lane index 0..3 when vectorLane */
+    unsigned lane;          /* lane index 0..3 when vectorLane */
 } LValue;
 
 /* A slot dropped (freed) on scope exit; carries its type so the drop can
@@ -175,8 +175,7 @@ static LLVMTypeRef VectorLlvmType(LLVMContextRef ctx, const MappedType* t)
     assert(t->isSimdVector);
     assert(t->lanes > 1);
 
-    LLVMTypeRef elem = strcmp(t->elemIr, "double") == 0 ? LLVMDoubleTypeInContext(ctx)
-                                                        : LLVMFloatTypeInContext(ctx);
+    LLVMTypeRef elem = strcmp(t->elemIr, "double") == 0 ? LLVMDoubleTypeInContext(ctx) : LLVMFloatTypeInContext(ctx);
 
     return LLVMVectorType(elem, (unsigned int)t->lanes);
 }
@@ -334,7 +333,6 @@ static LLVMValueRef ArrayLenPtr(Builder* b, LLVMValueRef slot)
     return LLVMBuildGEP2(b->m_builder, ArrayStructType(b), slot, idx, 2, "alen");
 }
 
-
 static LLVMBasicBlockRef NewBb(Builder* b, const char* name)
 {
     return LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, name);
@@ -441,7 +439,8 @@ static LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMVal
     b->m_terminated = true;
 
     PositionAtEnd(b, body);
-    LLVMValueRef srcByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcPtr, &i, 1, "sb"), "b");
+    LLVMValueRef srcByte
+        = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcPtr, &i, 1, "sb"), "b");
     LLVMBuildStore(b->m_builder, srcByte, LLVMBuildGEP2(b->m_builder, i8Ty, heap, &i, 1, "db"));
     LLVMValueRef next = LLVMBuildAdd(b->m_builder, i, one, "next");
     LLVMBuildStore(b->m_builder, next, iSlot);
@@ -537,7 +536,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f);
 static LLVMValueRef ZeroOf(TypeDesc typeDesc);
 static TypeDesc Resolve(Builder* b, const TypeName* t);
 
-typedef struct {
+typedef struct
+{
     PropertyDecl* decl;
     const FunctionDecl* getter; // NULL for write-only
     const FunctionDecl* setter; // NULL for read-only
@@ -1852,16 +1852,14 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
 
         const char* leafName = TypeRegistryResolveAlias(&b->m_registry, p->type.name);
-        bool structVal = TypeRegistryIsUserType(&b->m_registry, leafName)
-                         && !TypeRegistryIsOpaque(&b->m_registry, leafName);
+        bool structVal
+            = TypeRegistryIsUserType(&b->m_registry, leafName) && !TypeRegistryIsOpaque(&b->m_registry, leafName);
 
         bool byPtr = p->mod != ModNone || structVal || BuilderIsOwningType(b, &p->type);
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
-        bool optionalString = p->type.isOptional && p->type.inner
-                              && TypeIsString(&b->m_registry, p->type.inner->name);
-        bool externStringParam
-            = f->isExtern && (TypeIsString(&b->m_registry, p->type.name) || optionalString);
+        bool optionalString = p->type.isOptional && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
+        bool externStringParam = f->isExtern && (TypeIsString(&b->m_registry, p->type.name) || optionalString);
 
         if (byPtr && externStringParam)
         {
@@ -1880,8 +1878,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     }
 
     // A function with a `return` param == void ret + out-pointer
-    LLVMTypeRef abiRetType
-        = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : info->returnType.type;
+    LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : info->returnType.type;
 
     info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
@@ -1933,8 +1930,8 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         TypeDesc typeDesc = Resolve(b, &p->type);
 
         const char* leafName = TypeRegistryResolveAlias(&b->m_registry, p->type.name);
-        bool structVal = TypeRegistryIsUserType(&b->m_registry, leafName)
-                         && !TypeRegistryIsOpaque(&b->m_registry, leafName);
+        bool structVal
+            = TypeRegistryIsUserType(&b->m_registry, leafName) && !TypeRegistryIsOpaque(&b->m_registry, leafName);
         bool boxParam = BuilderIsOwningType(b, &p->type);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
@@ -2402,8 +2399,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
         if (ScalarPseudoConst(tn.name, n->member, &intVal, &floatVal, &isFloat))
         {
-            LLVMValueRef v
-                = isFloat ? LLVMConstReal(td.type, floatVal) : LLVMConstInt(td.type, intVal, td.isUnsigned);
+            LLVMValueRef v = isFloat ? LLVMConstReal(td.type, floatVal) : LLVMConstInt(td.type, intVal, td.isUnsigned);
             return ValueMake(v, td);
         }
     }
@@ -2426,8 +2422,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         {
             /* Single-lane vector read: load the vector, extract the lane. */
             LLVMValueRef vec = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "mvec");
-            LLVMValueRef v = LLVMBuildExtractElement(b->m_builder, vec,
-                                                     LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
+            LLVMValueRef v = LLVMBuildExtractElement(b->m_builder, vec, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
             return ValueMake(v, lvalue.typeDesc);
         }
 
@@ -2779,8 +2774,8 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
             LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
             LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
             LLVMValueRef eqArgs[2] = {la, ra};
-            LLVMValueRef eq = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2,
-                                             "eq");
+            LLVMValueRef eq
+                = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2, "eq");
 
             if (n->op == BinNotEq)
             {
@@ -3009,8 +3004,8 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
                 if (n->op != AssignSet)
                 {
-                    LLVMValueRef laneVal = LLVMBuildExtractElement(b->m_builder, cur,
-                                                                   LLVMConstInt(I32Ty(b), lvalue.lane, 0), "lanecur");
+                    LLVMValueRef laneVal
+                        = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "lanecur");
 
                     switch (n->op)
                     {
@@ -3035,7 +3030,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 }
 
                 LLVMValueRef newVec = LLVMBuildInsertElement(b->m_builder, cur, result.value,
-                                                            LLVMConstInt(I32Ty(b), lvalue.lane, 0), "laneins");
+                                                             LLVMConstInt(I32Ty(b), lvalue.lane, 0), "laneins");
                 LLVMBuildStore(b->m_builder, newVec, lvalue.ptr);
 
                 return result;
@@ -3306,25 +3301,25 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
         MemberExpr* mt = (MemberExpr*)n->target;
         LValue baseLv = EmitLValue(b, mt->base_node);
 
-        if (baseLv.valid && (baseLv.typeDesc.isSimdVector
-                             || (baseLv.typeDesc.isBox && baseLv.typeDesc.boxInner
-                                 && IsSimdVector(baseLv.typeDesc.boxInner->name))))
+        if (baseLv.valid
+            && (baseLv.typeDesc.isSimdVector
+                || (baseLv.typeDesc.isBox && baseLv.typeDesc.boxInner && IsSimdVector(baseLv.typeDesc.boxInner->name))))
         {
             if (b->m_diag)
             {
                 if (mt->member[0] && mt->member[1] == '\0')
                 {
-                    DiagErrorFmt(b->m_diag, n->base.range,
-                                 "lane '%s' is out of range for a vector with %d lane(s)",
+                    DiagErrorFmt(b->m_diag, n->base.range, "lane '%s' is out of range for a vector with %d lane(s)",
                                  mt->member,
-                                 baseLv.typeDesc.isSimdVector ? (int)LLVMGetVectorSize(baseLv.typeDesc.type)
-                                                              : (int)LLVMGetVectorSize(
-                                                                  Resolve(b, baseLv.typeDesc.boxInner).type));
+                                 baseLv.typeDesc.isSimdVector
+                                     ? (int)LLVMGetVectorSize(baseLv.typeDesc.type)
+                                     : (int)LLVMGetVectorSize(Resolve(b, baseLv.typeDesc.boxInner).type));
                 }
                 else
                 {
-                    DiagError(b->m_diag, n->base.range,
-                              "swizzle assignment is not supported; assign lanes individually or rebuild the whole vector");
+                    DiagError(
+                        b->m_diag, n->base.range,
+                        "swizzle assignment is not supported; assign lanes individually or rebuild the whole vector");
                 }
             }
 
@@ -3870,10 +3865,10 @@ static LLVMBasicBlockRef EmitEqBytes(Builder* b, LLVMValueRef fn, LLVMValueRef a
 
     LLVMPositionBuilderAtEnd(b->m_builder, body);
     LLVMValueRef idx[1] = {i};
-    LLVMValueRef aByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, aPtr, idx, 1, "eq.a"),
-                                        "eq.ab");
-    LLVMValueRef bByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, bPtr, idx, 1, "eq.b"),
-                                        "eq.bb");
+    LLVMValueRef aByte
+        = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, aPtr, idx, 1, "eq.a"), "eq.ab");
+    LLVMValueRef bByte
+        = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, bPtr, idx, 1, "eq.b"), "eq.bb");
     LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, aByte, bByte, "eq.beq"), cond, failBB);
 
     LLVMValueRef inVals[2] = {zero, iNext};
@@ -3898,8 +3893,7 @@ static LLVMBasicBlockRef EmitEqBytes(Builder* b, LLVMValueRef fn, LLVMValueRef a
 static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
                                        const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB)
 {
-    bool opaqueInner = innerTd->structTypeName
-                       && TypeRegistryIsOpaque(&b->m_registry, innerTd->structTypeName);
+    bool opaqueInner = innerTd->structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd->structTypeName);
 
     LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
     LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
@@ -3925,9 +3919,9 @@ static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef
         LLVMBuildCondBr(b->m_builder, nullA, eqNext, deep);
 
         LLVMPositionBuilderAtEnd(b->m_builder, deep);
-        eq = opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
-                         : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2,
-                                          "eq.cell");
+        eq = opaqueInner
+                 ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
+                 : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
         LLVMBuildCondBr(b->m_builder, eq, eqNext, failBB);
 
         LLVMPositionBuilderAtEnd(b->m_builder, eqNext);
@@ -4081,10 +4075,8 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
 
         if (TypeDescIsByteEq(b, &elemTd))
         {
-            LLVMBasicBlockRef bytesDone = EmitEqBytes(b, fn, aData, bData,
-                                                      LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTd.type), aLen,
-                                                                   "eq.bytes"),
-                                                      fail);
+            LLVMBasicBlockRef bytesDone = EmitEqBytes(
+                b, fn, aData, bData, LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTd.type), aLen, "eq.bytes"), fail);
             LLVMPositionBuilderAtEnd(b->m_builder, bytesDone);
             LLVMBuildBr(b->m_builder, done);
         }
@@ -4467,61 +4459,90 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
     return v;
 }
 
-static Value EmitVectorDotCross(Builder* b, CallExpr* n)
+static Value EmitVectorDot(Builder* b, CallExpr* n)
 {
-    bool isDot = strcmp(n->callee, "dot") == 0;
+    Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    Value vB = EmitExpr(b, (Node*)VecGet(&n->args, 1));
 
-    Value a = EmitExpr(b, (Node*)VecGet(&n->args, 0));
-    Value bb = EmitExpr(b, (Node*)VecGet(&n->args, 1));
+    return ValueMake(LSimdVectorDot(b, vA.value, vB.value), ResolveByName(b, "float"));
+}
 
-    LLVMValueRef value = isDot ? LSimdVectorDot(b, a.value, bb.value) : LSimdVectorCross(b, a.value, bb.value);
+static Value EmitVectorCross(Builder* b, CallExpr* n)
+{
+    Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    Value vB = EmitExpr(b, (Node*)VecGet(&n->args, 1));
+
+    LLVMValueRef value = LSimdVectorCross(b, vA.value, vB.value);
 
     TypeDesc resultTd;
 
-    /* dot always reduces to a scalar float; cross(float2) yields the scalar z. */
-    bool scalarResult = isDot || LLVMGetVectorSize(LLVMTypeOf(a.value)) == 2;
-
-    if (scalarResult)
+    /* The cross product of float2 yields a scalar value */
+    if (LLVMGetVectorSize(LLVMTypeOf(vA.value)) == 2)
     {
         resultTd = ResolveByName(b, "float");
     }
     else
     {
-        /* cross(float3/float4): same vector type as the operands. */
-        resultTd = a.typeDesc;
+        /* The cross product of float3 and float4 return the same vector type as the arguments */
+        resultTd = vA.typeDesc;
     }
 
     return ValueMake(value, resultTd);
 }
 
+typedef struct PseudoCallDefinition
+{
+    const char* name;
+    Value (*callDef)(Builder* b, CallExpr* n);
+} IntrinsicDefinition;
+
+static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
+{
+    static const IntrinsicDefinition intrinsics[] = {
+        /* Array calls */
+        {"array_push",   EmitArrayBuiltin   },
+        {"array_pop",    EmitArrayBuiltin   },
+        {"array_resize", EmitArrayBuiltin   },
+
+        /* Misc */
+        {"copy",         EmitCopyBuiltin    },
+        {"drop",         EmitDropBuiltin    },
+
+        /* Vectors */
+        {"float2",       EmitVectorConstruct},
+        {"float3",       EmitVectorConstruct},
+        {"float4",       EmitVectorConstruct},
+
+        {"dot",          EmitVectorDot      },
+        {"cross",        EmitVectorCross    },
+    };
+
+    for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
+    {
+        const IntrinsicDefinition* pcall = &intrinsics[i];
+
+        if (pcall != NULL && strcmp(pcall->name, n->callee) == 0)
+        {
+            (*isValid) = true;
+            return pcall->callDef(b, n);
+        }
+    }
+
+    Value value = {.value = NULL, .typeDesc = {0}};
+    return value;
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
-    // Inline array helpers (array_push / array_pop / array_resize)?
-    if (n->isPseudoCall
-        && (strcmp(n->callee, "array_push") == 0 || strcmp(n->callee, "array_pop") == 0
-            || strcmp(n->callee, "array_resize") == 0))
+    if (n->isPseudoCall)
     {
-        return EmitArrayBuiltin(b, n);
-    }
+        bool isValid = 0;
+        Value result = EmitIntrinsicCall(b, n, &isValid);
 
-    if (n->isPseudoCall && strcmp(n->callee, "copy") == 0)
-    {
-        return EmitCopyBuiltin(b, n);
-    }
-
-    if (n->isPseudoCall && strcmp(n->callee, "drop") == 0)
-    {
-        return EmitDropBuiltin(b, n);
-    }
-
-    if (n->isPseudoCall && (strcmp(n->callee, "dot") == 0 || strcmp(n->callee, "cross") == 0))
-    {
-        return EmitVectorDotCross(b, n);
-    }
-
-    if (n->isPseudoCall && IsSimdVector(n->callee))
-    {
-        return EmitVectorConstruct(b, n);
+        if (isValid)
+        {
+            return result;
+        }
     }
 
     // Is it a struct initializer call?
@@ -5349,7 +5370,8 @@ Value EmitExpr(Builder* b, Node* n)
         /* A literal is a borrowed fat {ptr, len}: no allocation, NUL at
            [len]. Owning consumers heap-copy via EmitOwnedValue. */
         TypeDesc td = StringFatDesc(b);
-        LLVMValueRef fat = LLVMConstNamedStruct(ArrayStructType(b), (LLVMValueRef[2]){gep, LLVMConstInt(I64Ty(b), (unsigned long long)len, 0)}, 2);
+        LLVMValueRef fat = LLVMConstNamedStruct(
+            ArrayStructType(b), (LLVMValueRef[2]){gep, LLVMConstInt(I64Ty(b), (unsigned long long)len, 0)}, 2);
 
         return ValueMake(fat, td);
     }
@@ -5428,13 +5450,13 @@ Value EmitExpr(Builder* b, Node* n)
         {
             /* SIMD lane ++/--: load the vector, adjust the lane, store back. */
             LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lv.vectorType, lv.ptr, "lanev");
-            LLVMValueRef laneVal = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lv.lane, 0),
-                                                           "lanecur");
+            LLVMValueRef laneVal
+                = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lv.lane, 0), "lanecur");
             LLVMValueRef one = LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 1.0);
             LLVMValueRef newVal = inc->isDec ? LLVMBuildFSub(b->m_builder, laneVal, one, "dec")
                                              : LLVMBuildFAdd(b->m_builder, laneVal, one, "inc");
-            LLVMValueRef newVec = LLVMBuildInsertElement(b->m_builder, cur, newVal,
-                                                         LLVMConstInt(I32Ty(b), lv.lane, 0), "laneins");
+            LLVMValueRef newVec
+                = LLVMBuildInsertElement(b->m_builder, cur, newVal, LLVMConstInt(I32Ty(b), lv.lane, 0), "laneins");
             LLVMBuildStore(b->m_builder, newVec, lv.ptr);
 
             return ValueMake(inc->isPrefix ? newVal : laneVal, lv.typeDesc);
@@ -5485,8 +5507,7 @@ Value EmitExpr(Builder* b, Node* n)
             return ValueMake(owned, target);
         }
 
-        if ((operand.typeDesc.isBox && target.isBox)
-            || (operand.typeDesc.isString && target.isString))
+        if ((operand.typeDesc.isBox && target.isBox) || (operand.typeDesc.isString && target.isString))
         {
             /* Retag with the destination type; Coerce would keep the source's. */
             return ValueMake(operand.value, target);
@@ -5813,10 +5834,10 @@ static void EmitStmt(Builder* b, Node* n)
             PositionAtEnd(b, elseBB);
             PushScope(b);
             EmitStmt(b, i->elseBranch);
-        if (!b->m_terminated)
-        {
-            RunDefers(b, TopScope(b));
-        }
+            if (!b->m_terminated)
+            {
+                RunDefers(b, TopScope(b));
+            }
             PopScope(b);
             Br(b, endBB);
         }
