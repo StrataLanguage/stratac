@@ -509,7 +509,11 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 static LLVMValueRef StrataStrdupFn(Builder* b);
 static LLVMValueRef StrataStrEqFn(Builder* b);
-static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td);
+static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td, bool externBoxCtx);
+static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
+                                       const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB);
+static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aPtr, LLVMValueRef bPtr,
+                                    const TypeDesc* td, LLVMBasicBlockRef failBB, bool externBoxCtx);
 static LLVMValueRef SpillEqOperand(Builder* b, Value v);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
@@ -2588,13 +2592,40 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     Value l = EmitExpr(b, n->lhs);
     Value r = EmitExpr(b, n->rhs);
 
-    /* Box/optional operands (^T, T?) compare by CELL IDENTITY: the loaded
-       value IS the heap pointer, so no deref and no deep structural compare
-       (a ^T is a unique, move-only owner; deep equality could not terminate
-       on cyclic T? graphs). */
+    /* Box/optional operands (^T, T?) AUTO-DEREF like everywhere else:
+       `==`/`!=` compare the pointed-to values structurally (member-wise for
+       structs, content for strings, element-wise for arrays). `T?` is
+       null-aware: empty == empty, empty != non-empty. Handles and opaque
+       inners hold the T* itself, so their deref is identity. (An explicit
+       identity intrinsic may come later; deep equality of cyclic T? graphs
+       does not terminate.) */
     if ((l.typeDesc.isBox && r.typeDesc.isBox) && (n->op == BinEqEq || n->op == BinNotEq))
     {
-        LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, LLVMIntEQ, l.value, r.value, "boxeq");
+        LLVMBasicBlockRef falseBB = NewBb(b, "boxeq.f");
+        LLVMBasicBlockRef trueBB = NewBb(b, "boxeq.t");
+        LLVMBasicBlockRef eqEnd;
+
+        if (l.typeDesc.boxInner)
+        {
+            TypeDesc innerTd = Resolve(b, l.typeDesc.boxInner);
+            eqEnd = EmitBoxCellEq(b, b->m_curFn, l.value, r.value, &innerTd, l.typeDesc.isOptional, falseBB);
+            LLVMBuildBr(b->m_builder, trueBB);
+        }
+        else
+        {
+            /* ^string (degenerate: the cell IS a char*): identity. */
+            LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, l.value, r.value, "boxeq"), trueBB,
+                            falseBB);
+            eqEnd = LLVMGetInsertBlock(b->m_builder);
+        }
+
+        LLVMPositionBuilderAtEnd(b->m_builder, falseBB);
+        LLVMBuildBr(b->m_builder, trueBB);
+        LLVMPositionBuilderAtEnd(b->m_builder, trueBB);
+        LLVMValueRef cmp = LLVMBuildPhi(b->m_builder, I1Ty(b), "boxeq");
+        LLVMValueRef inVals[2] = {LLVMConstInt(I1Ty(b), 1, 0), LLVMConstInt(I1Ty(b), 0, 0)};
+        LLVMBasicBlockRef inBlocks[2] = {eqEnd, falseBB};
+        LLVMAddIncoming(cmp, inVals, inBlocks, 2);
 
         if (n->op == BinNotEq)
         {
@@ -2657,7 +2688,8 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
             LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
             LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
             LLVMValueRef eqArgs[2] = {la, ra};
-            LLVMValueRef eq = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc), eqArgs, 2, "eq");
+            LLVMValueRef eq = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2,
+                                             "eq");
 
             if (n->op == BinNotEq)
             {
@@ -3521,13 +3553,15 @@ static LLVMValueRef StrataStrEqFn(Builder* b)
 
    `==` on aggregates is STRUCTURAL. Per compared type, one of two paths:
 
-   - Byte path (memcmp-like): scalars/handles/boxes, fixed arrays and
-     structs whose fields are all byte-comparable. Valid because every
-     Strata-created struct value is zero-initialized (padding included), so
-     equal values have equal bytes.
+   - Byte path (memcmp-like): scalars/handles, fixed arrays and structs
+     whose fields are all byte-comparable. Valid because every Strata-created
+     struct value is zero-initialized (padding included), so equal values
+     have equal bytes.
    - Structural path: floats/doubles use `fcmp oeq` (IEEE-754: -0.0 == 0.0,
      NaN != NaN — bytes would disagree on both), strings per-element content
-     (strata_str_eq), dynamic arrays element-wise, structs member-wise.
+     (strata_str_eq), dynamic arrays element-wise, structs member-wise, and
+     boxes AUTO-DEREF into a structural compare of the cell (null-aware for
+     `T?`; identity only for opaque inners, where the cell IS the value).
 
    The structural path is emitted into module-local per-type helpers
    (`strata_eq_<type>`: (ptr, ptr) -> i1, cached in m_eqHelpers), generated
@@ -3536,6 +3570,13 @@ static LLVMValueRef StrataStrEqFn(Builder* b)
 static bool TypeDescIsByteEq(Builder* b, const TypeDesc* td)
 {
     if (td->isString || td->isArray || td->isFloat)
+    {
+        return false;
+    }
+
+    /* Boxes auto-deref in equality (structural compare of the cell), so
+       their pointer bits never decide. */
+    if (td->isBox)
     {
         return false;
     }
@@ -3663,11 +3704,72 @@ static LLVMBasicBlockRef EmitEqBytes(Builder* b, LLVMValueRef fn, LLVMValueRef a
    pointers address. Cached in m_eqHelpers; creating it before emitting the
    body keeps recursive type graphs (struct in struct, nested arrays) safe. */
 
-/* Compares two values AT aPtr/bPtr, returning the i1 result. Aggregate
-   operands delegate to their (cached) per-type helper; strings use the
-   strata_str_eq content compare; everything else loads and compares. */
-static LLVMValueRef EmitEqLeaf(Builder* b, LLVMValueRef aPtr, LLVMValueRef bPtr, const TypeDesc* td)
+/* Deep-compares two box cells (aCell/bCell — heap pointers; NULL when empty
+   for optionals) of inner type `innerTd`, AUTO-DEREFING like every other
+   box use. Opaque inners (handles, incomplete structs) hold the T* ITSELF
+   (DerefBoxValue's identity unwrap), so their "deep" compare is the cell
+   values. `isOptional` adds null-awareness: empty == empty, empty !=
+   non-empty. Branches to failBB on inequality; positions the builder at the
+   end of (and returns) the equal-continuation block. */
+static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
+                                       const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB)
 {
+    bool opaqueInner = innerTd->structTypeName
+                       && TypeRegistryIsOpaque(&b->m_registry, innerTd->structTypeName);
+
+    LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
+    LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
+    LLVMValueRef eqArgs[2] = {aCell, bCell};
+    LLVMValueRef eq;
+
+    if (isOptional)
+    {
+        LLVMValueRef nullP = LLVMConstNull(b->m_ptrTy);
+        LLVMValueRef nullA = LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, nullP, "eq.na");
+        LLVMValueRef nullB = LLVMBuildICmp(b->m_builder, LLVMIntEQ, bCell, nullP, "eq.nb");
+
+        LLVMBasicBlockRef maybeDeep = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.nchk");
+        LLVMBasicBlockRef deep = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.deep");
+        LLVMBasicBlockRef eqNext = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.next");
+
+        /* One empty and one not: unequal. Both empty: equal. Both non-empty:
+           deref and compare the cells' values. */
+        LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, nullA, nullB, "eq.same"), maybeDeep,
+                        failBB);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, maybeDeep);
+        LLVMBuildCondBr(b->m_builder, nullA, eqNext, deep);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, deep);
+        eq = opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
+                         : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2,
+                                          "eq.cell");
+        LLVMBuildCondBr(b->m_builder, eq, eqNext, failBB);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, eqNext);
+        return eqNext;
+    }
+
+    eq = opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
+                     : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
+    LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.next");
+    LLVMBuildCondBr(b->m_builder, eq, next, failBB);
+    LLVMPositionBuilderAtEnd(b->m_builder, next);
+    return next;
+}
+
+/* Compares two values AT aPtr/bPtr of type `td`: branches to failBB on
+   inequality and returns (with the builder positioned at its end) the block
+   reached when equal. Strings use the strata_str_eq content compare,
+   aggregates delegate to their (cached) per-type helper, boxes deref (see
+   EmitBoxCellEq). `externBoxCtx` marks walks inside host-layout extern
+   structs, where ^T members are host-opaque pointers that compare by
+   identity. */
+static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aPtr, LLVMValueRef bPtr,
+                                    const TypeDesc* td, LLVMBasicBlockRef failBB, bool externBoxCtx)
+{
+    LLVMValueRef eq;
+
     if (td->isString)
     {
         LLVMValueRef aData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, aPtr), "eq.sa");
@@ -3677,29 +3779,53 @@ static LLVMValueRef EmitEqLeaf(Builder* b, LLVMValueRef aPtr, LLVMValueRef bPtr,
 
         LLVMValueRef args[4] = {aData, aLen, bData, bLen};
         StrataStrEqFn(b);
-        return LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.str");
+        eq = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.str");
     }
-
-    if (td->structTypeName || td->isArray || td->isFixedArray)
+    else if (td->structTypeName || td->isArray || td->isFixedArray)
     {
-        LLVMValueRef helper = EnsureEqHelper(b, td);
+        LLVMValueRef helper = EnsureEqHelper(b, td, externBoxCtx);
         LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
         LLVMTypeRef fnTy = LLVMFunctionType(I1Ty(b), params, 2, 0);
         LLVMValueRef args[2] = {aPtr, bPtr};
-        return LLVMBuildCall2(b->m_builder, fnTy, helper, args, 2, "eq.agg");
+        eq = LLVMBuildCall2(b->m_builder, fnTy, helper, args, 2, "eq.agg");
+    }
+    else if (td->isBox)
+    {
+        LLVMValueRef aCell = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, aPtr, "eq.ca");
+        LLVMValueRef bCell = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, bPtr, "eq.cb");
+
+        if (externBoxCtx || !td->boxInner)
+        {
+            /* Host-opaque ^T member, or the degenerate ^string whose cell
+               IS a char*: the cell itself decides. */
+            eq = LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box");
+        }
+        else
+        {
+            TypeDesc innerTd = Resolve(b, td->boxInner);
+            return EmitBoxCellEq(b, fn, aCell, bCell, &innerTd, td->isOptional, failBB);
+        }
+    }
+    else
+    {
+        /* Scalars, handles, enums: load both, compare the values (floats
+           with fcmp oeq — IEEE-754, matching C). */
+        LLVMValueRef av = LLVMBuildLoad2(b->m_builder, td->type, aPtr, "eq.av");
+        LLVMValueRef bv = LLVMBuildLoad2(b->m_builder, td->type, bPtr, "eq.bv");
+        eq = td->isFloat ? FcmpByName(b->m_builder, "oeq", av, bv)
+                         : LLVMBuildICmp(b->m_builder, LLVMIntEQ, av, bv, "eq");
     }
 
-    /* Scalars, handles, enums, boxes: load both, compare the values
-       (floats with fcmp oeq — IEEE-754, matching C). */
-    LLVMValueRef av = LLVMBuildLoad2(b->m_builder, td->type, aPtr, "eq.av");
-    LLVMValueRef bv = LLVMBuildLoad2(b->m_builder, td->type, bPtr, "eq.bv");
-
-    return td->isFloat ? FcmpByName(b->m_builder, "oeq", av, bv)
-                       : LLVMBuildICmp(b->m_builder, LLVMIntEQ, av, bv, "eq");
+    LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.next");
+    LLVMBuildCondBr(b->m_builder, eq, next, failBB);
+    LLVMPositionBuilderAtEnd(b->m_builder, next);
+    return next;
 }
 
-/* Emits the body of the (ptr, ptr) -> i1 equality helper for `td`. */
-static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
+/* Emits the body of the (ptr, ptr) -> i1 equality helper for `td`.
+   `externBoxCtx` is true when this walk started inside a host-layout extern
+   struct: ^T members there are host-opaque pointers and compare by identity. */
+static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bool externBoxCtx)
 {
     LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->m_builder);
 
@@ -3718,6 +3844,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
         /* Struct: member-wise. Each field's compare chains into the next;
            the first mismatch branches to fail. */
         const StructType* st = TypeRegistryFind(&b->m_registry, td->structTypeName);
+        bool fieldBoxCtx = externBoxCtx || (st && st->isExtern);
 
         for (size_t i = 0; st && i < st->fields.count; i++)
         {
@@ -3727,11 +3854,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
             LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)i))};
             LLVMValueRef fa = LLVMBuildGEP2(b->m_builder, td->type, a, idxs, 2, "eq.fa");
             LLVMValueRef fb = LLVMBuildGEP2(b->m_builder, td->type, bp, idxs, 2, "eq.fb");
-            LLVMValueRef eq = EmitEqLeaf(b, fa, fb, &fieldTd);
-
-            LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.field");
-            LLVMBuildCondBr(b->m_builder, eq, next, fail);
-            LLVMPositionBuilderAtEnd(b->m_builder, next);
+            EmitEqLeaf(b, fn, fa, fb, &fieldTd, fail, fieldBoxCtx);
         }
 
         LLVMBuildBr(b->m_builder, done);
@@ -3747,11 +3870,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
             LLVMValueRef idx[1] = {IdxConst(b, (unsigned)k)};
             LLVMValueRef ka = LLVMBuildGEP2(b->m_builder, elemTy, a, idx, 1, "eq.ka");
             LLVMValueRef kb = LLVMBuildGEP2(b->m_builder, elemTy, bp, idx, 1, "eq.kb");
-            LLVMValueRef eq = EmitEqLeaf(b, ka, kb, &elemTd);
-
-            LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.elem");
-            LLVMBuildCondBr(b->m_builder, eq, next, fail);
-            LLVMPositionBuilderAtEnd(b->m_builder, next);
+            EmitEqLeaf(b, fn, ka, kb, &elemTd, fail, externBoxCtx);
         }
 
         LLVMBuildBr(b->m_builder, done);
@@ -3804,19 +3923,21 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
             LLVMValueRef idx[1] = {i};
             LLVMValueRef ea = LLVMBuildGEP2(b->m_builder, elemTy, aData, idx, 1, "eq.ea");
             LLVMValueRef eb = LLVMBuildGEP2(b->m_builder, elemTy, bData, idx, 1, "eq.eb");
-            LLVMValueRef eq = EmitEqLeaf(b, ea, eb, &elemTd);
-            LLVMBuildCondBr(b->m_builder, eq, cond, fail);
+            LLVMBasicBlockRef eqEnd = EmitEqLeaf(b, fn, ea, eb, &elemTd, fail, externBoxCtx);
+            LLVMPositionBuilderAtEnd(b->m_builder, eqEnd);
+            LLVMBuildBr(b->m_builder, cond);
 
             LLVMValueRef inVals[2] = {zero, iNext};
-            LLVMBasicBlockRef inBlocks[2] = {from, body};
+            LLVMBasicBlockRef inBlocks[2] = {from, eqEnd};
             LLVMAddIncoming(i, inVals, inBlocks, 2);
         }
     }
     else
     {
         /* Non-aggregate reached directly (defensive): single leaf compare. */
-        LLVMValueRef eq = EmitEqLeaf(b, a, bp, td);
-        LLVMBuildCondBr(b->m_builder, eq, done, fail);
+        LLVMBasicBlockRef eqEnd = EmitEqLeaf(b, fn, a, bp, td, fail, externBoxCtx);
+        LLVMPositionBuilderAtEnd(b->m_builder, eqEnd);
+        LLVMBuildBr(b->m_builder, done);
     }
 
     LLVMPositionBuilderAtEnd(b->m_builder, done);
@@ -3831,9 +3952,10 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
     }
 }
 
-static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td)
+static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td, bool externBoxCtx)
 {
-    const char* key = EqHelperKey(b, td);
+    const char* baseKey = EqHelperKey(b, td);
+    const char* key = externBoxCtx ? arena_format(b->m_arena, "%s!x", baseKey) : baseKey;
 
     LLVMValueRef fn = (LLVMValueRef)StrMapGet(&b->m_eqHelpers, key);
 
@@ -3847,7 +3969,7 @@ static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td)
     fn = LLVMAddFunction(b->m_mod, EqHelperName(b, key), fnTy);
     StrMapPut(&b->m_eqHelpers, (char*)key, fn);
 
-    EmitEqHelperBody(b, fn, td);
+    EmitEqHelperBody(b, fn, td, externBoxCtx);
 
     return fn;
 }

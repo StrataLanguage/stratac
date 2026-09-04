@@ -253,9 +253,10 @@ main) are the internal entry points.
   appear in the struct literal (compile error otherwise). Dynamic `T[]`
   fields are the exemption: an omitted field zero-fills to the canonical
   empty `{null, 0}` array (there is no `T[]?` spelling — a box never
-  wraps an array). `^T == ^T` / `!=` is CELL IDENTITY (the heap pointer —
-  boxes are unique move-only owners, never aliased; deep equality would
-  not terminate on cyclic `T?` graphs).
+  wraps an array). `^T == ^T` / `!=` AUTO-DEREFS both operands and compares
+  the values structurally (member-wise, content-wise — an identity check
+  would be an explicit intrinsic later; deep equality of cyclic `T?`
+  graphs does not terminate).
 - Optionals: `T?` — the maybe-empty form of a box (`Weapon? w;`). Same
   runtime representation as `^T` (pointer slot; null = empty; identical
   ABI and drop glue), purely a sema-level distinction (`TypeName`
@@ -329,9 +330,15 @@ LLVMModuleBuilder):
   0.0`, `NaN != NaN` (C semantics). Anything containing a float can never
   be memcmp'd.
 - `string`: CONTENT equality via `strata_str_eq` (above).
-- `^T` / `T?`: CELL IDENTITY — the heap pointer (boxes are unique,
-  move-only owners; deep equality would not terminate on cyclic `T?`
-  graphs). An empty `T?` (null) equals only another empty.
+- `^T` / `T?`: AUTO-DEREF — compare the pointed-to values structurally
+  (member-wise for structs, content for strings, element-wise for arrays,
+  value for scalars; `^Rec[]` compares element-wise with each element
+  deref'd). `T?` is null-aware: empty == empty, empty != non-empty. An
+  opaque inner (handle/incomplete struct) holds the `T*` itself, so its
+  deref is identity (DerefBoxValue's unwrap); `^string` (cell IS a char*)
+  likewise. Only `^T` members inside `extern` structs compare by pointer
+  (host-opaque). Cell IDENTITY would be an explicit intrinsic later; deep
+  equality of cyclic `T?` graphs does not terminate.
 - Dynamic `T[]` (incl. `T[]?`): lengths must match (both-empty is equal),
   then a byte compare when the element type is byte-comparable, else an
   element-wise loop — never a raw fat/buffer compare. Array elements that
@@ -353,8 +360,8 @@ spelling for scalar leaves), self-contained like `strata_str_eq` (no host
 symbols; works identically in AOT and JIT). Operands are spilled to entry
 allocas so the helper can address them byte/field-wise. Owning structs
 (containing `string`/`T[]`/`^T` fields) must be boxed, so their whole-value
-equality is unreachable — field reads compare by content, the box itself by
-identity.
+equality goes through the box deref: `^Rec == ^Rec` compares the structs
+member-wise (strings by content), and `^Rec[]` element-wise derefs each.
 
 ### Parameters
 

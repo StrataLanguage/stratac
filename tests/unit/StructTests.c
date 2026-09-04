@@ -699,18 +699,86 @@ STRATA_TEST(jit_struct_equality_float_fields_are_ieee754)
 
 STRATA_TEST(jit_struct_string_field_equality_is_content)
 {
-    /* Structs with owning fields (string/T[]) must be boxed, so whole-value
-       equality of them is unreachable; a boxed struct's `==` is the box's
-       pointer identity, while FIELD reads compare by content (strings via
-       strata_str_eq — covered by the string tests). */
+    /* Boxes auto-deref: `^Rec == ^Rec` compares the structs MEMBER-WISE —
+       a string field compares by content (strata_str_eq), never by buffer
+       pointer. Distinct cells with equal contents are equal. */
     StrataJit* jit = CompileJit("struct Rec { string name; int id; };\n"
                                 "int entry() {\n"
                                 "  ^Rec a = Rec { .name = \"hi\", .id = 1 };\n"
                                 "  ^Rec b = Rec { .name = \"hi\", .id = 1 };\n"
+                                "  ^Rec c = Rec { .name = \"hi\", .id = 2 };\n"
                                 "  int r = 0;\n"
-                                "  if (a != b) { r += 1; }\n"      /* distinct cells: pointer identity */
-                                "  if (a.name == b.name) { r += 2; }\n"   /* content equal across cells */
-                                "  if (a.id == b.id) { r += 4; }\n"
+                                "  if (a == b) { r += 1; }\n"      /* deref: member-wise, content equal */
+                                "  if (a != c) { r += 2; }\n"      /* id differs */
+                                "  if (a.name == b.name) { r += 4; }\n"   /* field content equal across cells */
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 7);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* Host helper for the distinct-buffers proof: extern string params cross as
+   the fat's data pointer (char*), so this is a raw pointer equality on the
+   string buffers themselves. */
+static int SameStrDataPtr(const char* a, const char* b)
+{
+    return a == b;
+}
+
+STRATA_TEST(jit_struct_string_field_content_eq_distinct_buffers)
+{
+    /* Two struct instances with the same string VALUES but different
+       buffers: the constructor heap-copies the literal per box, so the
+       data pointers must differ — and the box `==` (which derefs and
+       compares member-wise) must still see CONTENT equality. */
+    StrataJit* jit = CompileJit("struct Rec { string name; int id; };\n"
+                                "extern int samestrptr(string a, string b);\n"
+                                "int entry() {\n"
+                                "  ^Rec a = Rec { .name = \"hi\", .id = 1 };\n"
+                                "  ^Rec b = Rec { .name = \"hi\", .id = 1 };\n"
+                                "  int r = 0;\n"
+                                "  if (samestrptr(a.name, b.name) == 0) { r += 1; }\n" /* buffers differ */
+                                "  if (a == b) { r += 2; }\n"                 /* deref: content equal */
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        STRATA_CHECK_EQ(strataJitAddSymbol(jit, "samestrptr", (void*)&SameStrDataPtr), 1);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_boxed_struct_array_equality_derefs_each)
+{
+    /* `^Rec[]` compares element-wise, DEREFING each box: same string
+       values in distinct cells compare equal. */
+    StrataJit* jit = CompileJit("struct Rec { string name; int id; };\n"
+                                "int entry() {\n"
+                                "  ^Rec[] a = { Rec { .name = \"hi\", .id = 1 }, Rec { .name = \"yo\", .id = 2 } };\n"
+                                "  ^Rec[] b = { Rec { .name = \"hi\", .id = 1 }, Rec { .name = \"yo\", .id = 2 } };\n"
+                                "  ^Rec[] c = { Rec { .name = \"hi\", .id = 1 }, Rec { .name = \"no\", .id = 2 } };\n"
+                                "  ^Rec[] d = { Rec { .name = \"hi\", .id = 1 } };\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"      /* each cell deref'd: content equal */
+                                "  if (a != c) { r += 2; }\n"      /* second element's string differs */
+                                "  if (a != d) { r += 4; }\n"      /* length fast-out */
                                 "  return r;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
