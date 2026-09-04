@@ -27,11 +27,14 @@ MappedType MapType(const TypeName* t);
 
 bool IsNumeric(const char* t);
 
-// 0 when not a vector, else the lane count.
+/**
+ * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
+ * Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the user.
+ * Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
+ */
 int IsSimdVector(const char* t);
 
-// Same as IsSimdVector; kept for call-site readability.
-int GetSimdVectorLanes(const char* t);
+#define GetSimdVectorLanes(t_) IsSimdVector(t_)
 
 bool IsScalarTypeName(const char* t);
 bool IsFloatType(const char* t);

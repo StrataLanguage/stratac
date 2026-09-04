@@ -16,20 +16,24 @@ static size_t GrowCap(size_t cap)
 // Canonical absolute spelling, so repeat imports dedup to one load.
 static const char* CanonicalizePath(Arena* arena, const char* path)
 {
-#if defined(_WIN32)
+#ifdef STRATA_PLATFORM_WINDOWS
     char buf[4096];
     char* rp = _fullpath(buf, path, sizeof(buf));
 #else
     char* rp = realpath(path, NULL);
 #endif
+
     if (rp)
     {
         const char* result = arena_strdup(arena, rp);
-#if !defined(_WIN32)
+
+#ifndef STRATA_PLATFORM_WINDOWS
         free(rp);
 #endif
+
         return result;
     }
+
     return arena_strdup(arena, path);
 }
 
@@ -40,7 +44,7 @@ static char* ResolveImportPath(Arena* arena, const char* importerPath, const cha
     bool hasExt = impLen >= 7 && strcmp(importPath + impLen - 7, ".strata") == 0;
     const char* ext = hasExt ? "" : ".strata";
 
-    size_t dirLen = DirLen(importerPath);
+    size_t dirLen = BasePathLength(importerPath);
     if (dirLen > 0)
     {
         return arena_format(arena, "%.*s/%s%s", (int)dirLen, importerPath, importPath, ext);
