@@ -378,9 +378,12 @@ typedef struct {
 typedef struct {
     Node base;
     char* name;
-    /* Explicit value (magnitude + sign) if the member wrote one; otherwise the
-       value is assigned sequentially from the previous member + 1 (starting 0)
-       by sema. `value` is the final bit pattern after resolution. */
+    /* Explicit value expression if the member wrote one (`A = expr`); NULL for
+       sequential members. Parsed as a constant expression (literals, unary
+       +/-/~/arithmetic/shifts/bitwise/casts, and references to earlier members
+       of the same enum or already-resolved enums). `value`/`isNegative` hold
+       the final resolved magnitude+sign after sema. */
+    Node* valueExpr;
     uint64_t value;
     bool isNegative;
     bool hasExplicitValue;

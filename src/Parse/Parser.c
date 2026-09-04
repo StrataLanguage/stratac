@@ -885,36 +885,14 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     return node;
 }
 
-/* Parses an optional `-` integer literal for an explicit enum member value.
-   Returns true with `outMag`/`outNegative` filled on success. */
-static bool ParseEnumMemberValue(Parser* p, uint64_t* outMag, bool* outNegative)
+static Node* ParseBinary(Parser* p, int minPrec);
+
+/* Parses the constant expression for an explicit enum member value (`A = expr`).
+   Expression parsing stops before the `,`/`}` that ends the member; sema folds
+   the result. */
+static Node* ParseEnumMemberValue(Parser* p)
 {
-    *outMag = 0;
-    *outNegative = false;
-
-    if (ParserConsume(p, TokMinus))
-    {
-        *outNegative = true;
-    }
-
-    if (p->m_cur.kind != TokIntLit)
-    {
-        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an integer literal for the enum member value");
-        return false;
-    }
-
-    Token litTok = p->m_cur;
-    Advance(p);
-
-    Str sv = ParserIdentText(p, litTok);
-    StripUnsignedSuffix(&sv);
-
-    char tmp[64];
-    CopyStrToBuf(sv, tmp);
-
-    *outMag = strtoull(tmp, NULL, 0);
-
-    return true;
+    return ParseBinary(p, 0);
 }
 
 static EnumDecl* ParseEnumDecl(Parser* p)
@@ -977,7 +955,9 @@ static EnumDecl* ParseEnumDecl(Parser* p)
 
         if (ParserConsume(p, TokAssign))
         {
-            if (!ParseEnumMemberValue(p, &member->value, &member->isNegative))
+            member->valueExpr = ParseEnumMemberValue(p);
+
+            if (!member->valueExpr)
             {
                 break;
             }

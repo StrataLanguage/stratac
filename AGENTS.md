@@ -175,10 +175,18 @@ main) are the internal entry points.
   scalar integral underlying type (default `int`; `enum Foo : ulong`, etc. —
   only the 8 integral scalars are legal, never float/bool/struct/string), plus
   scoped constants accessed as `Color.Red`. Members get sequential values
-  (starting 0, continuing from the last explicit `= N`), and EVERY member value
-  — explicit or implicit — must fit the underlying type's range (`enum E : byte
-  { A = 255, B }` errors: B would be 256). Negative literals (`A = -2`) are
-  allowed only for signed underlying types; unsigned underlying rejects them.
+  (starting 0, continuing from the last explicit value), or an explicit value
+  that is a CONSTANT EXPRESSION folded by sema: literals, unary `+`/`-`/`~`,
+  `+ - * / % & | ^ << >>`, casts, and references to EARLIER members of the same
+  enum (bare `AllPlatforms = Windows | Mac`) or scoped constants of an
+  already-resolved enum (`Derived = Base.X | 1`) — forward references error.
+  Expressions evaluate in 64-bit and the result is interpreted per the
+  underlying's signedness (a unary `-` is rejected for unsigned underlyings),
+  then EVERY member value — explicit or implicit — must fit the underlying
+  type's range (`enum E : byte { A = 255, B }` errors: B would be 256; `~0`
+  on a `uint` enum is the 64-bit pattern and doesn't fit, use `ulong`).
+  Negative literals (`A = -2`) are allowed only for signed underlying types;
+  unsigned underlying rejects them.
   The enum is its own strong type: `Color c = Color.Blue;` and same-enum
   `==` work, but there is NO implicit conversion to/from the underlying or
   other aliases — only an explicit cast (`(int)Color.Red`, `(Color)5`), and a

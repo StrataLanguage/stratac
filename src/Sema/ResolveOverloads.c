@@ -2979,9 +2979,249 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
 /* Validates impl targets and materializes property accessor externs (before
    the overload/mangling pass, so accessors flow through the normal pipeline). */
-/* Assigns enum member values (sequential from 0, or explicit) and validates
-   every value fits the underlying scalar integral type. Emits the enum's
-   underlying type in `registry` (registered as an alias earlier). */
+/* Result of folding an enum member value expression. */
+typedef enum {
+    EnumEvalOk = 0,
+    EnumEvalNotConst,      /* not a constant integer expression (incl. div-by-zero, bad shift) */
+    EnumEvalNegForUnsigned, /* a unary minus in an expression for an unsigned underlying */
+    EnumEvalForwardRef,    /* references a member that isn't resolved yet (self/forward) */
+} EnumEvalStatus;
+
+/* Finds `memberName` in enum `ed`; returns true with `*outIndex` set. */
+static bool FindEnumMemberIndex(EnumDecl* ed, const char* memberName, size_t* outIndex)
+{
+    for (size_t i = 0; i < ed->members.count; i++)
+    {
+        EnumMemberDecl* m = (EnumMemberDecl*)VecGet(&ed->members, i);
+
+        if (strcmp(m->name, memberName) == 0)
+        {
+            *outIndex = i;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* Folds an enum member value expression to a 64-bit value. `isUnsigned` picks
+   the interpretation (unsigned magnitude vs signed two's complement) so the
+   underlying type decides how a top-bit-set literal is read. Bare identifiers
+   are references to EARLIER members of `mod->enums[enumIndex]`; `Enum.Member`
+   references a scoped constant of an already-resolved enum. Evaluates in
+   uint64 bit patterns; the caller converts to magnitude+sign per the
+   underlying type. */
+static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
+                                        uint64_t* out)
+{
+    if (!n)
+    {
+        return EnumEvalNotConst;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        *out = ((IntLiteral*)n)->value;
+        return EnumEvalOk;
+    case NodeBoolLiteral:
+        *out = ((BoolLiteral*)n)->value ? 1 : 0;
+        return EnumEvalOk;
+    case NodeUnary:
+    {
+        UnaryExpr* u = (UnaryExpr*)n;
+        uint64_t inner = 0;
+        EnumEvalStatus st = EnumEvalConstExpr(u->operand, mod, enumIndex, memberIndex, isUnsigned, &inner);
+
+        if (st != EnumEvalOk)
+        {
+            return st;
+        }
+
+        switch (u->op)
+        {
+        case UnPos:
+            *out = inner;
+            return EnumEvalOk;
+        case UnNeg:
+            if (isUnsigned)
+            {
+                return EnumEvalNegForUnsigned;
+            }
+
+            *out = (uint64_t)(0 - inner);
+            return EnumEvalOk;
+        case UnBitNot:
+            *out = ~inner;
+            return EnumEvalOk;
+        default:
+            return EnumEvalNotConst;
+        }
+    }
+    case NodeBinary:
+    {
+        BinaryExpr* e = (BinaryExpr*)n;
+        uint64_t l = 0;
+        uint64_t r = 0;
+        EnumEvalStatus sl = EnumEvalConstExpr(e->lhs, mod, enumIndex, memberIndex, isUnsigned, &l);
+
+        if (sl != EnumEvalOk)
+        {
+            return sl;
+        }
+
+        EnumEvalStatus sr = EnumEvalConstExpr(e->rhs, mod, enumIndex, memberIndex, isUnsigned, &r);
+
+        if (sr != EnumEvalOk)
+        {
+            return sr;
+        }
+
+        switch (e->op)
+        {
+        case BinAdd:
+            *out = l + r;
+            return EnumEvalOk;
+        case BinSub:
+            *out = l - r;
+            return EnumEvalOk;
+        case BinMul:
+            *out = l * r;
+            return EnumEvalOk;
+        case BinDiv:
+            if (r == 0)
+            {
+                return EnumEvalNotConst;
+            }
+
+            *out = isUnsigned ? (l / r) : (uint64_t)((int64_t)l / (int64_t)r);
+            return EnumEvalOk;
+        case BinMod:
+            if (r == 0)
+            {
+                return EnumEvalNotConst;
+            }
+
+            *out = isUnsigned ? (l % r) : (uint64_t)((int64_t)l % (int64_t)r);
+            return EnumEvalOk;
+        case BinBitAnd:
+            *out = l & r;
+            return EnumEvalOk;
+        case BinBitOr:
+            *out = l | r;
+            return EnumEvalOk;
+        case BinBitXor:
+            *out = l ^ r;
+            return EnumEvalOk;
+        case BinShl:
+            if (r >= 64)
+            {
+                return EnumEvalNotConst;
+            }
+
+            *out = l << r;
+            return EnumEvalOk;
+        case BinShr:
+            if (r >= 64)
+            {
+                return EnumEvalNotConst;
+            }
+
+            *out = isUnsigned ? (l >> r) : (uint64_t)((int64_t)l >> (int64_t)r);
+            return EnumEvalOk;
+        default:
+            return EnumEvalNotConst; /* comparisons / && / || don't fold to an integer value */
+        }
+    }
+    case NodeCast:
+        return EnumEvalConstExpr(((CastExpr*)n)->operand, mod, enumIndex, memberIndex, isUnsigned, out);
+    case NodeIdent:
+    {
+        /* A bare name: a reference to an EARLIER member of this enum. */
+        IdentExpr* id = (IdentExpr*)n;
+        EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, enumIndex);
+        size_t refIndex = 0;
+
+        if (!FindEnumMemberIndex(ed, id->name, &refIndex))
+        {
+            return EnumEvalNotConst;
+        }
+
+        if (refIndex >= memberIndex)
+        {
+            return EnumEvalForwardRef;
+        }
+
+        *out = ((EnumMemberDecl*)VecGet(&ed->members, refIndex))->value;
+        return EnumEvalOk;
+    }
+    case NodeMember:
+    {
+        /* `EnumName.Member` — a scoped constant from an already-resolved enum. */
+        MemberExpr* me = (MemberExpr*)n;
+
+        if (me->base_node->kind != NodeIdent)
+        {
+            return EnumEvalNotConst;
+        }
+
+        const char* enumName = ((IdentExpr*)me->base_node)->name;
+
+        for (size_t i = 0; i < mod->enums.count; i++)
+        {
+            EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, i);
+
+            if (strcmp(ed->name, enumName) != 0)
+            {
+                continue;
+            }
+
+            size_t refIndex = 0;
+
+            if (!FindEnumMemberIndex(ed, me->member, &refIndex))
+            {
+                return EnumEvalNotConst;
+            }
+
+            if (i > enumIndex || (i == enumIndex && refIndex >= memberIndex))
+            {
+                return EnumEvalForwardRef;
+            }
+
+            *out = ((EnumMemberDecl*)VecGet(&ed->members, refIndex))->value;
+            return EnumEvalOk;
+        }
+
+        return EnumEvalNotConst;
+    }
+    default:
+        return EnumEvalNotConst;
+    }
+}
+
+/* Reports the error for a member whose value expression failed to fold. */
+static void ReportEnumValueError(DiagnosticEngine* diag, EnumMemberDecl* m, EnumEvalStatus st, const char* underlying)
+{
+    switch (st)
+    {
+    case EnumEvalNegForUnsigned:
+        DiagErrorFmt(diag, m->base.range, "enum member '%s' may not be negative for unsigned underlying type '%s'",
+                     m->name, underlying);
+        break;
+    case EnumEvalForwardRef:
+        DiagErrorFmt(diag, m->base.range, "enum member '%s' value forward-references a member that is not resolved yet",
+                     m->name);
+        break;
+    default:
+        DiagErrorFmt(diag, m->base.range, "enum member '%s' value must be a constant expression", m->name);
+        break;
+    }
+}
+
+/* Assigns enum member values (sequential from 0, or a folded constant
+   expression) and validates every value fits the underlying scalar integral
+   type. Emits the enum's underlying type in `registry` (registered as an alias
+   earlier). */
 static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* registry)
 {
     for (size_t i = 0; i < mod->enums.count; i++)
@@ -3028,6 +3268,23 @@ static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry
 
                 if (m->hasExplicitValue)
                 {
+                    uint64_t v = 0;
+                    EnumEvalStatus st = EnumEvalConstExpr(m->valueExpr, mod, i, j, true, &v);
+
+                    if (st != EnumEvalOk)
+                    {
+                        ReportEnumValueError(diag, m, st, underlying);
+                        m->hasExplicitValue = false;
+                    }
+                    else
+                    {
+                        m->value = v;
+                        m->isNegative = false;
+                    }
+                }
+
+                if (m->hasExplicitValue)
+                {
                     if (m->isNegative)
                     {
                         DiagErrorFmt(diag, m->base.range,
@@ -3067,6 +3324,24 @@ static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry
             {
                 EnumMemberDecl* m = (EnumMemberDecl*)VecGet(&ed->members, j);
                 int64_t sv = next;
+
+                if (m->hasExplicitValue)
+                {
+                    uint64_t v = 0;
+                    EnumEvalStatus st = EnumEvalConstExpr(m->valueExpr, mod, i, j, false, &v);
+
+                    if (st != EnumEvalOk)
+                    {
+                        ReportEnumValueError(diag, m, st, underlying);
+                        m->hasExplicitValue = false;
+                    }
+                    else
+                    {
+                        m->isNegative = (int64_t)v < 0;
+                        m->value = m->isNegative ? ((v == (uint64_t)0x8000000000000000ULL) ? v : (uint64_t)(-(int64_t)v))
+                                                 : v;
+                    }
+                }
 
                 if (m->hasExplicitValue)
                 {

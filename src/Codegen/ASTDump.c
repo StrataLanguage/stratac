@@ -221,7 +221,16 @@ static void Dump(Node* n, int indent, Sb* out)
         {
             EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&enum_decl->members, i);
             Pad(indent + 4, out);
-            SbPrintf(out, "%s%s\n", member->name, member->hasExplicitValue ? " = <value>" : "");
+
+            if (member->hasExplicitValue)
+            {
+                SbPrintf(out, "%s = ", member->name);
+                Dump(member->valueExpr, 0, out);
+            }
+            else
+            {
+                SbPrintf(out, "%s\n", member->name);
+            }
         }
         Pad(indent + 2, out);
         SbPuts(out, "}\n");

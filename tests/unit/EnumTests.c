@@ -97,6 +97,157 @@ STRATA_TEST(enum_parses_and_assigns_values)
     arena_free(&arena);
 }
 
+STRATA_TEST(enum_value_expression_folds)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+
+    /* Flag-style enums: member values are constant expressions (literals,
+       arithmetic, shifts, casts, and `|` over earlier members). */
+    Module* mod = ParseAndResolve("enum ShaderTarget : uint\n"
+                                  "{\n"
+                                  "  None = 0x00000000,\n"
+                                  "  Windows = 0x00000001,\n"
+                                  "  Mac = 0x00000002,\n"
+                                  "  Linux = 0x00000004,\n"
+                                  "  Android = 0x00000008,\n"
+                                  "  IOS = 0x00000010,\n"
+                                  "  AllPlatforms = Windows | Mac | Linux | Android | IOS\n"
+                                  "};\n"
+                                  "enum Arith : int { A = 1 + 2 * 3, B = (4 - 1) << 2, C = 100 / 3, D = 7 % 3 };\n"
+                                  "enum Shifts : int { S = 1 << 8, T = 512 >> 2 };\n"
+                                  "enum Casts : uint { V = (uint)5 | 2 };\n"
+                                  "enum Full : ulong { All = ~0 };\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    if (DiagHasErrors(&diag))
+    {
+        printf("  sema failed: %s\n", ErrText(&diag, &arena));
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+        return;
+    }
+
+    const EnumDecl* targets = FindEnum(mod, "ShaderTarget");
+    STRATA_CHECK_EQ(targets->members.count, 7);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&targets->members, 0))->value, 0);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&targets->members, 6))->value, 0x1F);
+
+    const EnumDecl* arith = FindEnum(mod, "Arith");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&arith->members, 0))->value, 7);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&arith->members, 1))->value, 12);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&arith->members, 2))->value, 33);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&arith->members, 3))->value, 1);
+
+    const EnumDecl* shifts = FindEnum(mod, "Shifts");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&shifts->members, 0))->value, 256);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&shifts->members, 1))->value, 128);
+
+    /* `~0` on a ulong underlying is the full 64-bit pattern ULLONG_MAX. */
+    const EnumDecl* casts = FindEnum(mod, "Casts");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&casts->members, 0))->value, 7);
+
+    const EnumDecl* full = FindEnum(mod, "Full");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&full->members, 0))->value, (uint64_t)0xFFFFFFFFFFFFFFFFULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(enum_value_expression_member_and_cross_enum_reference)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+
+    /* Earlier members of the same enum and scoped constants of already-resolved
+       enums are usable in value expressions. */
+    Module* mod = ParseAndResolve("enum Ref : int { A = 1, B = A | 2, C = B + 3 };\n"
+                                  "enum Base : int { X = 4 };\n"
+                                  "enum Derived : int { Y = Base.X | 1 };\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    if (DiagHasErrors(&diag))
+    {
+        printf("  sema failed: %s\n", ErrText(&diag, &arena));
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+        return;
+    }
+
+    const EnumDecl* ref = FindEnum(mod, "Ref");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&ref->members, 0))->value, 1);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&ref->members, 1))->value, 3);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&ref->members, 2))->value, 6);
+
+    const EnumDecl* derived = FindEnum(mod, "Derived");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&derived->members, 0))->value, 5);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(enum_value_expression_errors)
+{
+    /* Non-constant expression. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("extern int f();\nenum Foo { A = f() };\n", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "must be a constant expression"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    /* Division by zero folds to "not a constant". */
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("enum Foo { A = 1 / 0 };\n", &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "must be a constant expression"));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+
+    /* Forward reference to a later member. */
+    Arena arena3;
+    arena_init(&arena3, 0);
+    DiagnosticEngine diag3;
+    DiagnosticEngineInit(&diag3);
+    ParseAndResolve("enum Foo { A = B | 1, B = 2 };\n", &diag3, &arena3);
+    STRATA_CHECK(DiagHasErrors(&diag3));
+    STRATA_CHECK(Contains(ErrText(&diag3, &arena3), "forward-references"));
+    DiagnosticEngineFree(&diag3);
+    arena_free(&arena3);
+
+    /* Unary minus inside an expression is still rejected for unsigned. */
+    Arena arena4;
+    arena_init(&arena4, 0);
+    DiagnosticEngine diag4;
+    DiagnosticEngineInit(&diag4);
+    ParseAndResolve("enum Foo : uint { A = -1 | 0 };\n", &diag4, &arena4);
+    STRATA_CHECK(DiagHasErrors(&diag4));
+    STRATA_CHECK(Contains(ErrText(&diag4, &arena4), "may not be negative"));
+    DiagnosticEngineFree(&diag4);
+    arena_free(&arena4);
+
+    /* A folded result is still range-checked against the underlying type. */
+    Arena arena5;
+    arena_init(&arena5, 0);
+    DiagnosticEngine diag5;
+    DiagnosticEngineInit(&diag5);
+    ParseAndResolve("enum Foo : byte { A = 200 + 100 };\n", &diag5, &arena5);
+    STRATA_CHECK(DiagHasErrors(&diag5));
+    STRATA_CHECK(Contains(ErrText(&diag5, &arena5), "does not fit in 'byte'"));
+    DiagnosticEngineFree(&diag5);
+    arena_free(&arena5);
+}
+
 STRATA_TEST(enum_scoped_member_access)
 {
     Arena arena;
@@ -390,6 +541,33 @@ STRATA_TEST(enum_jit_enum_as_array_element)
                   "  return (int)dirs[1] * 10 + (int)dirs[3];\n" /* 10 + 3 */
                   "}\n",
                   NULL, 0, 13);
+}
+
+STRATA_TEST(enum_jit_flags_enum)
+{
+    /* A flag-style enum: member values are constant expressions OR'd over
+       earlier members, folded to 0x1F and usable at runtime. */
+    CheckEnumImpl("enum ShaderCompileTargetPlatform : uint\n"
+                  "{\n"
+                  "  None = 0x00000000,\n"
+                  "  Windows = 0x00000001,\n"
+                  "  Mac = 0x00000002,\n"
+                  "  Linux = 0x00000004,\n"
+                  "  Android = 0x00000008,\n"
+                  "  IOS = 0x00000010,\n"
+                  "  AllPlatforms = ((((Windows | Mac) | Linux) | Android) | IOS)\n"
+                  "};\n"
+                  "int entry()\n"
+                  "{\n"
+                  "  if ((int)ShaderCompileTargetPlatform.AllPlatforms != 31) { return 90; }\n"
+                  "  if ((int)ShaderCompileTargetPlatform.Windows != 1) { return 91; }\n"
+                  "  if ((int)ShaderCompileTargetPlatform.Mac != 2) { return 92; }\n"
+                  "  if ((int)ShaderCompileTargetPlatform.Linux != 4) { return 93; }\n"
+                  "  if ((int)ShaderCompileTargetPlatform.Android != 8) { return 94; }\n"
+                  "  if ((int)ShaderCompileTargetPlatform.IOS != 16) { return 95; }\n"
+                  "  return (int)ShaderCompileTargetPlatform.AllPlatforms;\n" /* 31 */
+                  "}\n",
+                  NULL, 0, 31);
 }
 
 #endif /* STRATA_TEST_HAS_LLVM */
