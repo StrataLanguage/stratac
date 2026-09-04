@@ -509,6 +509,8 @@ static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 static LLVMValueRef StrataStrdupFn(Builder* b);
 static LLVMValueRef StrataStrEqFn(Builder* b);
+static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td);
+static LLVMValueRef SpillEqOperand(Builder* b, Value v);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
@@ -2583,8 +2585,27 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         return ValueMake(phi, TypeDescMake(I1Ty(b), 0, NULL));
     }
 
-    Value l = DerefBoxValue(b, EmitExpr(b, n->lhs));
-    Value r = DerefBoxValue(b, EmitExpr(b, n->rhs));
+    Value l = EmitExpr(b, n->lhs);
+    Value r = EmitExpr(b, n->rhs);
+
+    /* Box/optional operands (^T, T?) compare by CELL IDENTITY: the loaded
+       value IS the heap pointer, so no deref and no deep structural compare
+       (a ^T is a unique, move-only owner; deep equality could not terminate
+       on cyclic T? graphs). */
+    if ((l.typeDesc.isBox && r.typeDesc.isBox) && (n->op == BinEqEq || n->op == BinNotEq))
+    {
+        LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, LLVMIntEQ, l.value, r.value, "boxeq");
+
+        if (n->op == BinNotEq)
+        {
+            cmp = LLVMBuildNot(b->m_builder, cmp, "boxne");
+        }
+
+        return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
+    }
+
+    l = DerefBoxValue(b, l);
+    r = DerefBoxValue(b, r);
 
     TypeDesc typeDesc = l.typeDesc;
 
@@ -2614,6 +2635,37 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         DiagError(b->m_diag, n->base.range, "strings only support '==' and '!=' comparisons");
 
         return ValueMake(LLVMConstNull(I1Ty(b)), TypeDescMake(I1Ty(b), 0, NULL));
+    }
+
+    /* Aggregate equality: structs and arrays compare structurally — a
+       whole-value byte compare where the layout allows (zero-initialized
+       padding, no floats), member-wise / element-wise recursion otherwise
+       (IEEE-754 floats, strcmp-style strings, nested arrays). The operands
+       were loaded as values above: spill each to a temp so the per-type
+       helper can compare through addresses. */
+    if (n->op == BinEqEq || n->op == BinNotEq)
+    {
+        bool lAgg = (l.typeDesc.structTypeName != NULL)
+                    || ((l.typeDesc.isArray || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
+        bool rAgg = (r.typeDesc.structTypeName != NULL)
+                    || ((r.typeDesc.isArray || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
+
+        if (lAgg && rAgg)
+        {
+            LLVMValueRef la = SpillEqOperand(b, l);
+            LLVMValueRef ra = SpillEqOperand(b, r);
+            LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
+            LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
+            LLVMValueRef eqArgs[2] = {la, ra};
+            LLVMValueRef eq = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc), eqArgs, 2, "eq");
+
+            if (n->op == BinNotEq)
+            {
+                eq = LLVMBuildNot(b->m_builder, eq, "eqne");
+            }
+
+            return ValueMake(eq, TypeDescMake(I1Ty(b), 0, NULL));
+        }
     }
 
     if (l.typeDesc.isFloat && !r.typeDesc.isFloat)
@@ -3463,6 +3515,350 @@ static LLVMValueRef StrataStrEqFn(Builder* b)
         EmitStrataStrEqBody(b);
     }
     return b->m_strEqFn;
+}
+
+/* Equality checking.
+
+   `==` on aggregates is STRUCTURAL. Per compared type, one of two paths:
+
+   - Byte path (memcmp-like): scalars/handles/boxes, fixed arrays and
+     structs whose fields are all byte-comparable. Valid because every
+     Strata-created struct value is zero-initialized (padding included), so
+     equal values have equal bytes.
+   - Structural path: floats/doubles use `fcmp oeq` (IEEE-754: -0.0 == 0.0,
+     NaN != NaN — bytes would disagree on both), strings per-element content
+     (strata_str_eq), dynamic arrays element-wise, structs member-wise.
+
+   The structural path is emitted into module-local per-type helpers
+   (`strata_eq_<type>`: (ptr, ptr) -> i1, cached in m_eqHelpers), generated
+   on demand and self-contained like strata_str_eq — no host symbols, so AOT
+   and JIT behave identically. */
+static bool TypeDescIsByteEq(Builder* b, const TypeDesc* td)
+{
+    if (td->isString || td->isArray || td->isFloat)
+    {
+        return false;
+    }
+
+    if (td->structTypeName)
+    {
+        const StructType* st = TypeRegistryFind(&b->m_registry, td->structTypeName);
+
+        if (!st || st->isExtern)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < st->fields.count; i++)
+        {
+            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
+            TypeDesc fieldTd = Resolve(b, &f->type);
+
+            if (!TypeDescIsByteEq(b, &fieldTd))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    if (td->isFixedArray)
+    {
+        TypeDesc elemTd = Resolve(b, td->arrayInner);
+        return TypeDescIsByteEq(b, &elemTd);
+    }
+
+    return true;
+}
+
+static const char* EqHelperKey(Builder* b, const TypeDesc* td)
+{
+    if (td->structTypeName)
+    {
+        return td->structTypeName;
+    }
+
+    if (td->isString)
+    {
+        return "string";
+    }
+
+    if (td->isFixedArray)
+    {
+        TypeDesc elemTd = Resolve(b, td->arrayInner);
+        return arena_format(b->m_arena, "%s[%ld]", EqHelperKey(b, &elemTd), td->fixedLength);
+    }
+
+    if (td->isArray)
+    {
+        TypeDesc elemTd = Resolve(b, td->arrayInner);
+        return arena_format(b->m_arena, "%s[]", EqHelperKey(b, &elemTd));
+    }
+
+    char* printed = LLVMPrintTypeToString(td->type);
+    char* key = arena_strdup(b->m_arena, printed);
+    LLVMDisposeMessage(printed);
+    return key;
+}
+
+/* Sanitizes a cache key into a valid LLVM identifier suffix. Collisions
+   can't mis-link: helpers are always resolved through the m_eqHelpers cache,
+   never by name. */
+static const char* EqHelperName(Builder* b, const char* key)
+{
+    size_t n = strlen(key);
+    char* out = (char*)arena_alloc(b->m_arena, n + 1);
+
+    for (size_t i = 0; i < n; i++)
+    {
+        char c = key[i];
+        bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        out[i] = ok ? c : '_';
+    }
+
+    out[n] = '\0';
+    return arena_format(b->m_arena, "strata_eq_%s", out);
+}
+
+/* Compares `byteLen` bytes at aPtr/bPtr (memcmp semantics); branches to
+   failBB on the first difference, to the returned block on equality. */
+static LLVMBasicBlockRef EmitEqBytes(Builder* b, LLVMValueRef fn, LLVMValueRef aPtr, LLVMValueRef bPtr,
+                                     LLVMValueRef byteLen, LLVMBasicBlockRef failBB)
+{
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+    LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
+    LLVMValueRef one = LLVMConstInt(I64Ty(b), 1, 0);
+
+    LLVMBasicBlockRef from = LLVMGetInsertBlock(b->m_builder);
+    LLVMBasicBlockRef cond = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.cmp.cond");
+    LLVMBasicBlockRef body = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.cmp.body");
+    LLVMBasicBlockRef done = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.cmp.done");
+
+    LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntUGT, byteLen, zero, "eq.has"), cond, done);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, cond);
+    LLVMValueRef i = LLVMBuildPhi(b->m_builder, I64Ty(b), "eq.i");
+    LLVMValueRef iNext = LLVMBuildAdd(b->m_builder, i, one, "eq.i1");
+    LLVMValueRef inRange = LLVMBuildICmp(b->m_builder, LLVMIntULT, i, byteLen, "eq.ilt");
+    LLVMBuildCondBr(b->m_builder, inRange, body, done);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, body);
+    LLVMValueRef idx[1] = {i};
+    LLVMValueRef aByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, aPtr, idx, 1, "eq.a"),
+                                        "eq.ab");
+    LLVMValueRef bByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, bPtr, idx, 1, "eq.b"),
+                                        "eq.bb");
+    LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, aByte, bByte, "eq.beq"), cond, failBB);
+
+    LLVMValueRef inVals[2] = {zero, iNext};
+    LLVMBasicBlockRef inBlocks[2] = {from, body};
+    LLVMAddIncoming(i, inVals, inBlocks, 2);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, done);
+    return done;
+}
+
+/* Per-type equality helper: (ptr a, ptr b) -> i1, comparing the values the
+   pointers address. Cached in m_eqHelpers; creating it before emitting the
+   body keeps recursive type graphs (struct in struct, nested arrays) safe. */
+
+/* Compares two values AT aPtr/bPtr, returning the i1 result. Aggregate
+   operands delegate to their (cached) per-type helper; strings use the
+   strata_str_eq content compare; everything else loads and compares. */
+static LLVMValueRef EmitEqLeaf(Builder* b, LLVMValueRef aPtr, LLVMValueRef bPtr, const TypeDesc* td)
+{
+    if (td->isString)
+    {
+        LLVMValueRef aData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, aPtr), "eq.sa");
+        LLVMValueRef aLen = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, aPtr), "eq.sla");
+        LLVMValueRef bData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, bPtr), "eq.sb");
+        LLVMValueRef bLen = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, bPtr), "eq.slb");
+
+        LLVMValueRef args[4] = {aData, aLen, bData, bLen};
+        StrataStrEqFn(b);
+        return LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.str");
+    }
+
+    if (td->structTypeName || td->isArray || td->isFixedArray)
+    {
+        LLVMValueRef helper = EnsureEqHelper(b, td);
+        LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
+        LLVMTypeRef fnTy = LLVMFunctionType(I1Ty(b), params, 2, 0);
+        LLVMValueRef args[2] = {aPtr, bPtr};
+        return LLVMBuildCall2(b->m_builder, fnTy, helper, args, 2, "eq.agg");
+    }
+
+    /* Scalars, handles, enums, boxes: load both, compare the values
+       (floats with fcmp oeq — IEEE-754, matching C). */
+    LLVMValueRef av = LLVMBuildLoad2(b->m_builder, td->type, aPtr, "eq.av");
+    LLVMValueRef bv = LLVMBuildLoad2(b->m_builder, td->type, bPtr, "eq.bv");
+
+    return td->isFloat ? FcmpByName(b->m_builder, "oeq", av, bv)
+                       : LLVMBuildICmp(b->m_builder, LLVMIntEQ, av, bv, "eq");
+}
+
+/* Emits the body of the (ptr, ptr) -> i1 equality helper for `td`. */
+static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td)
+{
+    LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->m_builder);
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "entry");
+    LLVMBasicBlockRef fail = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "fail");
+    LLVMBasicBlockRef done = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "done");
+
+    LLVMValueRef a = LLVMGetParam(fn, 0);
+    LLVMValueRef bp = LLVMGetParam(fn, 1);
+    LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, entry);
+
+    if (td->structTypeName)
+    {
+        /* Struct: member-wise. Each field's compare chains into the next;
+           the first mismatch branches to fail. */
+        const StructType* st = TypeRegistryFind(&b->m_registry, td->structTypeName);
+
+        for (size_t i = 0; st && i < st->fields.count; i++)
+        {
+            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
+            TypeDesc fieldTd = Resolve(b, &f->type);
+
+            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)i))};
+            LLVMValueRef fa = LLVMBuildGEP2(b->m_builder, td->type, a, idxs, 2, "eq.fa");
+            LLVMValueRef fb = LLVMBuildGEP2(b->m_builder, td->type, bp, idxs, 2, "eq.fb");
+            LLVMValueRef eq = EmitEqLeaf(b, fa, fb, &fieldTd);
+
+            LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.field");
+            LLVMBuildCondBr(b->m_builder, eq, next, fail);
+            LLVMPositionBuilderAtEnd(b->m_builder, next);
+        }
+
+        LLVMBuildBr(b->m_builder, done);
+    }
+    else if (td->isFixedArray)
+    {
+        /* Fixed array: unrolled element-wise compare. */
+        TypeDesc elemTd = Resolve(b, td->arrayInner);
+        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+
+        for (long k = 0; k < td->fixedLength; k++)
+        {
+            LLVMValueRef idx[1] = {IdxConst(b, (unsigned)k)};
+            LLVMValueRef ka = LLVMBuildGEP2(b->m_builder, elemTy, a, idx, 1, "eq.ka");
+            LLVMValueRef kb = LLVMBuildGEP2(b->m_builder, elemTy, bp, idx, 1, "eq.kb");
+            LLVMValueRef eq = EmitEqLeaf(b, ka, kb, &elemTd);
+
+            LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.elem");
+            LLVMBuildCondBr(b->m_builder, eq, next, fail);
+            LLVMPositionBuilderAtEnd(b->m_builder, next);
+        }
+
+        LLVMBuildBr(b->m_builder, done);
+    }
+    else if (td->isArray)
+    {
+        /* Dynamic array: lengths must match (both-empty is equal), then a
+           byte compare for byte-comparable elements or an element-wise
+           loop otherwise (never a raw buffer/fat compare). */
+        LLVMValueRef aLen = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, a), "eq.ala");
+        LLVMValueRef bLen = LLVMBuildLoad2(b->m_builder, I64Ty(b), ArrayLenPtr(b, bp), "eq.alb");
+        LLVMValueRef aData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, a), "eq.ada");
+        LLVMValueRef bData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, bp), "eq.adb");
+
+        LLVMBasicBlockRef lenOk = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.len");
+        LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, aLen, bLen, "eq.leneq"), lenOk, fail);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, lenOk);
+        LLVMBasicBlockRef notEmpty = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.nempty");
+        LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, aLen, zero, "eq.zero"), done, notEmpty);
+
+        LLVMPositionBuilderAtEnd(b->m_builder, notEmpty);
+        TypeDesc elemTd = Resolve(b, td->arrayInner);
+
+        if (TypeDescIsByteEq(b, &elemTd))
+        {
+            LLVMBasicBlockRef bytesDone = EmitEqBytes(b, fn, aData, bData,
+                                                      LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTd.type), aLen,
+                                                                   "eq.bytes"),
+                                                      fail);
+            LLVMPositionBuilderAtEnd(b->m_builder, bytesDone);
+            LLVMBuildBr(b->m_builder, done);
+        }
+        else
+        {
+            LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+
+            LLVMBasicBlockRef from = LLVMGetInsertBlock(b->m_builder);
+            LLVMBasicBlockRef cond = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.elem.cond");
+            LLVMBasicBlockRef body = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.elem.body");
+
+            LLVMBuildBr(b->m_builder, cond);
+
+            LLVMPositionBuilderAtEnd(b->m_builder, cond);
+            LLVMValueRef i = LLVMBuildPhi(b->m_builder, I64Ty(b), "eq.i");
+            LLVMValueRef iNext = LLVMBuildAdd(b->m_builder, i, LLVMConstInt(I64Ty(b), 1, 0), "eq.i1");
+            LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntULT, i, aLen, "eq.elt"), body, done);
+
+            LLVMPositionBuilderAtEnd(b->m_builder, body);
+            LLVMValueRef idx[1] = {i};
+            LLVMValueRef ea = LLVMBuildGEP2(b->m_builder, elemTy, aData, idx, 1, "eq.ea");
+            LLVMValueRef eb = LLVMBuildGEP2(b->m_builder, elemTy, bData, idx, 1, "eq.eb");
+            LLVMValueRef eq = EmitEqLeaf(b, ea, eb, &elemTd);
+            LLVMBuildCondBr(b->m_builder, eq, cond, fail);
+
+            LLVMValueRef inVals[2] = {zero, iNext};
+            LLVMBasicBlockRef inBlocks[2] = {from, body};
+            LLVMAddIncoming(i, inVals, inBlocks, 2);
+        }
+    }
+    else
+    {
+        /* Non-aggregate reached directly (defensive): single leaf compare. */
+        LLVMValueRef eq = EmitEqLeaf(b, a, bp, td);
+        LLVMBuildCondBr(b->m_builder, eq, done, fail);
+    }
+
+    LLVMPositionBuilderAtEnd(b->m_builder, done);
+    LLVMBuildRet(b->m_builder, LLVMConstInt(I1Ty(b), 1, 0));
+
+    LLVMPositionBuilderAtEnd(b->m_builder, fail);
+    LLVMBuildRet(b->m_builder, LLVMConstInt(I1Ty(b), 0, 0));
+
+    if (savedBlock)
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, savedBlock);
+    }
+}
+
+static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td)
+{
+    const char* key = EqHelperKey(b, td);
+
+    LLVMValueRef fn = (LLVMValueRef)StrMapGet(&b->m_eqHelpers, key);
+
+    if (fn)
+    {
+        return fn;
+    }
+
+    LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
+    LLVMTypeRef fnTy = LLVMFunctionType(I1Ty(b), params, 2, 0);
+    fn = LLVMAddFunction(b->m_mod, EqHelperName(b, key), fnTy);
+    StrMapPut(&b->m_eqHelpers, (char*)key, fn);
+
+    EmitEqHelperBody(b, fn, td);
+
+    return fn;
+}
+
+/* Parks an already-evaluated aggregate operand in a fresh entry alloca so
+   the structural-equality helper can address it byte/field-wise. */
+static LLVMValueRef SpillEqOperand(Builder* b, Value v)
+{
+    LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "eqtmp");
+    LLVMBuildStore(b->m_builder, v.value, slot);
+    return slot;
 }
 
 /* Deep-copies the CELL behind a non-null box pointer `src` into a fresh
@@ -6082,6 +6478,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_externSlots);
     StrMapInit(&b.m_implProps);
     StrMapInit(&b.m_dropFns);
+    StrMapInit(&b.m_eqHelpers);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
     VecInit(&b.m_owningLocals);
@@ -6111,6 +6508,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_externSlots);
     StrMapFree(&b.m_implProps);
     StrMapFree(&b.m_dropFns);
+    StrMapFree(&b.m_eqHelpers);
     free(b.m_loops.items);
     free(b.m_owningLocals.items);
     TypeRegistryFree(&b.m_registry);

@@ -85,6 +85,7 @@ typedef struct Builder
     LLVMTypeRef m_strdupFnType;
     LLVMValueRef m_strEqFn; /* strata_str_eq: content equality for string ==/!= */
     LLVMTypeRef m_strEqFnType;
+    StrMap m_eqHelpers;
     Arena* m_arena;
     int m_strLitCount;
 } Builder;

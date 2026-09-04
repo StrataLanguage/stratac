@@ -1585,20 +1585,19 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
     arena_free(&arena);
 }
 
-STRATA_TEST(dynamic_array_equality_is_rejected)
+STRATA_TEST(dynamic_array_ordering_is_rejected)
 {
-    /* No element-wise equality for T[] yet: `==`/`!=` on arrays is a
-       compile error (sema TypeIsTriviallyComparable defaults arrays to
-       false). Ordering comparisons are rejected the same way. */
+    /* `==`/`!=` on arrays is element-wise structural equality, but ORDERING
+       comparisons remain meaningless for aggregates and are compile errors
+       (sema rejects them alongside the mixed-type cases). */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "int entry() {\n"
         "  int[] a = {1, 2};\n"
         "  int[] b = {1, 2};\n"
-        "  if (a == b) { return 1; }\n"
-        "  if (a != b) { return 2; }\n"
         "  if (a < b) { return 3; }\n"
+        "  if (a >= b) { return 4; }\n"
         "  return 0;\n"
         "}\n",
         &diag, &arena);
@@ -1607,6 +1606,182 @@ STRATA_TEST(dynamic_array_equality_is_rejected)
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int[]')") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(dynamic_array_equality_is_elementwise)
+{
+    /* `==`/`!=` on arrays compares CONTENT element-wise (per-type
+       strata_eq_* helper: length fast-out, both-empty equal, then a byte
+       compare for simple elements) — never the fat {ptr, len} identity. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[] a = {1, 2, 3};\n"
+        "  int[] b = {1, 2, 3};\n"       /* same content, different buffer */
+        "  int[] c = {1, 2, 4};\n"
+        "  int[] d = {1, 2};\n"          /* length mismatch */
+        "  int[] e = {};\n"
+        "  int[] f = {};\n"
+        "  int r = 0;\n"
+        "  if (a == b) { r += 1; }\n"
+        "  if (a != c) { r += 2; }\n"
+        "  if (a != d) { r += 4; }\n"
+        "  if (e == f) { r += 8; }\n"    /* both canonical-empty */
+        "  if (a != e) { r += 16; }\n"
+        "  if (a == a) { r += 32; }\n"   /* self */
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 63);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(float_array_equality_is_ieee754)
+{
+    /* Float ELEMENTS compare with IEEE-754 semantics (fcmp oeq), never by
+       bytes: -0.0 == 0.0 though their bit patterns differ. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  float[] a = {0.0, 1.5};\n"
+        "  float[] b = {-0.0, 1.5};\n"   /* bytes differ, values equal */
+        "  int r = 0;\n"
+        "  if (a == b) { r += 1; }\n"
+        "  float[] c = {0.0, 1.5};\n"
+        "  float[] d = {0.0, 2.5};\n"
+        "  if (c != d) { r += 2; }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(string_array_equality_is_contentwise)
+{
+    /* string ELEMENTS compare by content (strata_str_eq per element), not
+       by buffer pointer or fat identity. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  string[] a = {\"hi\", \"yo\"};\n"
+        "  string[] b = {\"hi\", \"yo\"};\n"   /* same content, fresh buffers */
+        "  string[] c = {\"hi\", \"no\"};\n"
+        "  string[] d = {\"hi\"};\n"
+        "  int r = 0;\n"
+        "  if (a == b) { r += 1; }\n"
+        "  if (a != c) { r += 2; }\n"
+        "  if (a != d) { r += 4; }\n"          /* length fast-out */
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(nested_array_equality_is_elementwise)
+{
+    /* Arrays of arrays compare element-wise recursively: each inner fat is
+       compared by content, never by pointer. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[][] g = {{1, 2}, {3, 4}};\n"
+        "  int[][] h = {{1, 2}, {3, 4}};\n"
+        "  int[][] k = {{1, 2}, {3, 5}};\n"
+        "  int[][] m = {{1, 2}};\n"
+        "  int r = 0;\n"
+        "  if (g == h) { r += 1; }\n"    /* inner rows are distinct buffers */
+        "  if (g != k) { r += 2; }\n"
+        "  if (g != m) { r += 4; }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(array_equality_mixed_element_types_rejected)
+{
+    /* Same-shape but different element types never compare. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  int[] a = {1, 2};\n"
+        "  uint[] b = {1, 2};\n"
+        "  if (a == b) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'uint[]')") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

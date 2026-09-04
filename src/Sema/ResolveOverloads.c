@@ -4358,6 +4358,25 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 break;
             }
 
+            /* Aggregates (structs, dynamic/fixed arrays, `T[]?`): `==`/`!=`
+               compare structurally — same resolved type only, never across
+               distinct struct/array types or against scalars. Ordering is
+               meaningless for aggregates and rejected. */
+            if (lt && rt
+                && (TypeIsComparableAggregate(&r->m_registry, lt) || TypeIsComparableAggregate(&r->m_registry, rt)))
+            {
+                bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
+
+                if (!eqOp || !TypeIsComparableAggregate(&r->m_registry, lt)
+                    || !TypeIsComparableAggregate(&r->m_registry, rt) || !SameResolvedType(r, ln, rn))
+                {
+                    DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln,
+                                 rn);
+                }
+
+                break;
+            }
+
             if (lt && rt && (!TypeIsTriviallyComparable(&r->m_registry, lt)
                              || !TypeIsTriviallyComparable(&r->m_registry, rt)))
             {

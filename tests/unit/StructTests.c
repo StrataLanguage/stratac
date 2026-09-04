@@ -634,3 +634,257 @@ STRATA_TEST(jit_in_struct_param_passed_by_ref)
     }
 }
 
+STRATA_TEST(jit_struct_equality_is_memberwise)
+{
+    /* Struct `==` is member-wise: a whole-value byte compare where the
+       layout allows (zero-initialized padding included — the Pad struct has
+       7 padding bytes after `a`), recursion otherwise. */
+    StrataJit* jit = CompileJit("struct Plain { int x; long y; bool f; };\n"
+                                "struct Pad { byte a; long b; };\n"
+                                "int entry() {\n"
+                                "  Plain p1 = { .x = 1, .y = 2, .f = true };\n"
+                                "  Plain p2 = { .x = 1, .y = 2, .f = true };\n"
+                                "  Plain p3 = { .x = 1, .y = 3, .f = true };\n"
+                                "  Pad d1 = { .a = 1, .b = 2 };\n"
+                                "  Pad d2 = { .a = 1, .b = 2 };\n"
+                                "  Pad d3 = { .a = 2, .b = 2 };\n"
+                                "  int r = 0;\n"
+                                "  if (p1 == p2) { r += 1; }\n"
+                                "  if (p1 != p3) { r += 2; }\n"
+                                "  if (d1 == d2) { r += 4; }\n"   /* equal only if padding is zeroed */
+                                "  if (d1 != d3) { r += 8; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 15);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_struct_equality_float_fields_are_ieee754)
+{
+    /* Structs with float fields can NEVER memcmp: IEEE-754 says -0.0 == 0.0
+       (bytes differ) and NaN != NaN (bit-identical NaNs differ). */
+    StrataJit* jit = CompileJit("struct V { float x; float y; };\n"
+                                "int entry() {\n"
+                                "  V a = { .x = 0.0, .y = 1.0 };\n"
+                                "  V b = { .x = -0.0, .y = 1.0 };\n"   /* bytes differ, values equal */
+                                "  float z = 0.0;\n"
+                                "  V n1 = { .x = z / z, .y = 1.0 };\n" /* NaN, bit-identical below */
+                                "  V n2 = { .x = z / z, .y = 1.0 };\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  if (n1 != n2) { r += 2; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_struct_string_field_equality_is_content)
+{
+    /* Structs with owning fields (string/T[]) must be boxed, so whole-value
+       equality of them is unreachable; a boxed struct's `==` is the box's
+       pointer identity, while FIELD reads compare by content (strings via
+       strata_str_eq — covered by the string tests). */
+    StrataJit* jit = CompileJit("struct Rec { string name; int id; };\n"
+                                "int entry() {\n"
+                                "  ^Rec a = Rec { .name = \"hi\", .id = 1 };\n"
+                                "  ^Rec b = Rec { .name = \"hi\", .id = 1 };\n"
+                                "  int r = 0;\n"
+                                "  if (a != b) { r += 1; }\n"      /* distinct cells: pointer identity */
+                                "  if (a.name == b.name) { r += 2; }\n"   /* content equal across cells */
+                                "  if (a.id == b.id) { r += 4; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 7);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_struct_fixed_array_of_floats_equality)
+{
+    /* A fixed-array field with float elements forces the structural path:
+       element-wise fcmp, where memcmp would disagree (-0.0 vs 0.0). */
+    StrataJit* jit = CompileJit("struct F { float[3] vs; };\n"
+                                "int entry() {\n"
+                                "  F a = { .vs = {0.0, 1.0, 2.0} };\n"
+                                "  F b = { .vs = {-0.0, 1.0, 2.0} };\n"   /* bytes differ, values equal */
+                                "  F c = { .vs = {0.0, 1.0, 3.0} };\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  if (a != c) { r += 2; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_struct_field_fixed_array_equality)
+{
+    /* Fixed-array FIELDS are equality-comparable expressions too: whole
+       struct and the field itself compare element-wise/byte-wise. */
+    StrataJit* jit = CompileJit("struct Buf { int[4] cells; };\n"
+                                "int entry() {\n"
+                                "  Buf a = { .cells = {1, 2, 3, 4} };\n"
+                                "  Buf b = { .cells = {1, 2, 3, 4} };\n"
+                                "  Buf c = { .cells = {1, 2, 4, 4} };\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  if (a != c) { r += 2; }\n"
+                                "  if (a.cells == b.cells) { r += 4; }\n"
+                                "  if (a.cells != c.cells) { r += 8; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 15);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_nested_struct_equality)
+{
+    /* Nested structs recurse member-wise; a float at any depth forces the
+       structural path for the whole chain. */
+    StrataJit* jit = CompileJit("struct Inner { int v; float w; };\n"
+                                "struct Outer { Inner i; long tag; };\n"
+                                "int entry() {\n"
+                                "  Outer a = { .i = Inner { .v = 1, .w = -0.0 }, .tag = 7 };\n"
+                                "  Outer b = { .i = Inner { .v = 1, .w = 0.0 }, .tag = 7 };\n"
+                                "  Outer c = { .i = Inner { .v = 2, .w = 0.0 }, .tag = 7 };\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"   /* -0.0 == 0.0 deep inside */
+                                "  if (a != c) { r += 2; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_extern_struct_equality_is_memberwise)
+{
+    /* Extern (host-layout) structs never memcmp — the host may leave padding
+       untouched — but they still compare member-wise. */
+    StrataJit* jit = CompileJit("extern struct Point { int x; int y; };\n"
+                                "int entry() {\n"
+                                "  Point a = { .x = 1, .y = 2 };\n"
+                                "  Point b = { .x = 1, .y = 2 };\n"
+                                "  Point c = { .x = 1, .y = 3 };\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  if (a != c) { r += 2; }\n"
+                                "  return r;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(struct_equality_mixed_types_rejected)
+{
+    /* Distinct struct types, and structs against scalars, never compare. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct A { int x; };\n"
+        "struct B { int x; };\n"
+        "int entry() {\n"
+        "  A a = { .x = 1 };\n"
+        "  B b = { .x = 1 };\n"
+        "  if (a == b) { return 1; }\n"
+        "  if (a == 1) { return 2; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'B')") != NULL);
+    STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'int')") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(struct_equality_ordering_rejected)
+{
+    /* Only ==/!= exist for structs; ordering is a compile error. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct A { int x; };\n"
+        "int entry() {\n"
+        "  A a = { .x = 1 };\n"
+        "  A b = { .x = 2 };\n"
+        "  if (a < b) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'A')") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+

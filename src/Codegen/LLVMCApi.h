@@ -89,6 +89,7 @@ LLVMModuleRef LLVMModuleCreateWithNameInContext(const char* moduleId, LLVMContex
 void LLVMDisposeModule(LLVMModuleRef m);
 void LLVMDumpModule(LLVMModuleRef m);
 char* LLVMPrintModuleToString(LLVMModuleRef m);
+char* LLVMPrintTypeToString(LLVMTypeRef ty);
 void LLVMDisposeMessage(char* message);
 
 LLVMTypeRef LLVMInt1TypeInContext(LLVMContextRef c);

@@ -244,6 +244,32 @@ bool TypeIsString(const TypeRegistry* reg, const char* name)
     return leaf && strcmp(leaf, "string") == 0;
 }
 
+bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    /* `T[]?` compares like the array it wraps (the fat {ptr, len}; null ptr
+       with len 0 is the canonical empty). */
+    if (t->isOptional && t->inner && TypeNameIsArray(t->inner))
+    {
+        return true;
+    }
+
+    if (TypeNameIsArray(t))
+    {
+        return true;
+    }
+
+    /* Defined structs (plain or extern). Handles/forward decls are opaque,
+       aliases/enums are scalar-like — all excluded. */
+    const StructType* st = reg ? TypeRegistryFind(reg, t->name) : NULL;
+
+    return st && !st->isTypeAlias && !st->isEnum && !st->opaque && !st->incomplete;
+}
+
 bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t)
 {
     if (!t || !t->name)
@@ -251,10 +277,9 @@ bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t)
         return false;
     }
 
-    /* Arrays (T[] / T[N]) are aggregates: no element-wise comparison exists
-       yet, so they are never trivially comparable. Default false — the
-       element-wise path can be built on this later. */
-    if (TypeNameIsArray(t))
+    /* Arrays and structs are aggregates: they take the structural-equality
+       path (TypeIsComparableAggregate), never this value-compare fallback. */
+    if (TypeIsComparableAggregate(reg, t))
     {
         return false;
     }

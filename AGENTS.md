@@ -146,8 +146,7 @@ main) are the internal entry points.
   invariant the extern pun relies on — so `.length` is O(1) (like arrays;
   sema types it `ulong`) and `s[i]` is a bounds-checked `byte` read.
   Move-on-assign (source fat zeroed), drop frees the buffer. `==`/`!=` is
-  CONTENT equality (sema `TypeIsTriviallyComparable` marks strings
-  non-trivial; codegen emits a module-local `strata_str_eq(ptr, len, ptr,
+  CONTENT equality (codegen emits a module-local `strata_str_eq(ptr, len, ptr,
   len)` that fast-outs on length mismatch, fast-ins on pointer identity —
   same buffer/alias/move or both-empty `{null, 0}` — then compares bytes;
   the raw fat pointers are never compared directly). Ordering comparisons
@@ -254,7 +253,9 @@ main) are the internal entry points.
   appear in the struct literal (compile error otherwise). Dynamic `T[]`
   fields are the exemption: an omitted field zero-fills to the canonical
   empty `{null, 0}` array (there is no `T[]?` spelling — a box never
-  wraps an array).
+  wraps an array). `^T == ^T` / `!=` is CELL IDENTITY (the heap pointer —
+  boxes are unique move-only owners, never aliased; deep equality would
+  not terminate on cyclic `T?` graphs).
 - Optionals: `T?` — the maybe-empty form of a box (`Weapon? w;`). Same
   runtime representation as `^T` (pointer slot; null = empty; identical
   ABI and drop glue), purely a sema-level distinction (`TypeName`
@@ -311,9 +312,49 @@ main) are the internal entry points.
   length, and `.length` is a compile-time constant. Whole fixed-array assignment
   (`s.a = s.b`) is rejected — assign elements. No auto-conversion to the
   fat `T[]` pointer yet.
-- Dynamic arrays (`T[]`): no `==`/`!=` or ordering comparisons — there is no
-  element-wise equality yet (sema `TypeIsTriviallyComparable` defaults these
-  to false; comparing is a compile error, to be built on later).
+- Dynamic arrays (`T[]`): `==`/`!=` is ELEMENT-WISE structural equality
+  (sema `TypeIsComparableAggregate` allows same-type aggregate comparisons;
+  ordering `<` etc. is still a compile error). See "Equality system" below.
+
+### Equality system (`==`/`!=`)
+
+Only `==`/`!=` exist (ordering on aggregates/strings is rejected). Both
+sides must resolve to the SAME type (distinct struct/array types and
+aggregate-vs-scalar never compare). Dispatch (sema
+`TypeIsComparableAggregate` in TypeUtil + codegen `EnsureEqHelper` in
+LLVMModuleBuilder):
+
+- Scalars/bool/handles/enums/aliases: value compare (icmp / `fcmp oeq`).
+- Floats (and float fields/elements): IEEE-754 via `fcmp oeq` — `-0.0 ==
+  0.0`, `NaN != NaN` (C semantics). Anything containing a float can never
+  be memcmp'd.
+- `string`: CONTENT equality via `strata_str_eq` (above).
+- `^T` / `T?`: CELL IDENTITY — the heap pointer (boxes are unique,
+  move-only owners; deep equality would not terminate on cyclic `T?`
+  graphs). An empty `T?` (null) equals only another empty.
+- Dynamic `T[]` (incl. `T[]?`): lengths must match (both-empty is equal),
+  then a byte compare when the element type is byte-comparable, else an
+  element-wise loop — never a raw fat/buffer compare. Array elements that
+  are floats/strings/nested arrays recurse into the structural rules.
+- Fixed `T[N]` (fields; also comparable as an expression,
+  `s.f == t.f`): byte compare, or unrolled element-wise compare for
+  float elements.
+- Structs (defined, incl. `extern`): member-wise. FAST PATH — a whole-value
+  byte compare (memcmp semantics) when every field is byte-comparable
+  (scalars/handles/boxes/fixed arrays/nested byte-comparable structs):
+  sound because Strata-created struct values are zero-initialized INCLUDING
+  padding. `extern` structs never take the fast path (host-written values:
+  padding not zero-guaranteed) — always member-wise.
+
+Implementation: codegen generates one module-local helper per compared type
+shape — `strata_eq_<key>`: `(ptr, ptr) -> i1`, cached in `m_eqHelpers`
+(shape-based keys: struct name / recursive element spelling / LLVM type
+spelling for scalar leaves), self-contained like `strata_str_eq` (no host
+symbols; works identically in AOT and JIT). Operands are spilled to entry
+allocas so the helper can address them byte/field-wise. Owning structs
+(containing `string`/`T[]`/`^T` fields) must be boxed, so their whole-value
+equality is unreachable — field reads compare by content, the box itself by
+identity.
 
 ### Parameters
 

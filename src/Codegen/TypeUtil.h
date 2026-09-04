@@ -56,11 +56,19 @@ bool TypeIsString(const TypeRegistry* reg, const char* name);
 
 /* True when `==`/`!=` (and ordering) compares the value directly — scalars,
    handles, enums, and aliases of those compare by value / pointer identity.
-   Dynamic arrays are NOT trivially comparable (fat `{ptr, len}` structs;
-   equality would need an element-wise compare, which isn't implemented —
-   default false, built upon later). Strings are NOT either: `==` is CONTENT
-   equality (codegen `strata_str_eq`), never a raw fat-pointer compare. */
+   NOT true for strings (CONTENT equality via codegen `strata_str_eq`) or for
+   aggregates — arrays and structs take the structural-equality path instead
+   (see TypeIsComparableAggregate); this is the sema fallback for everything
+   that still compares as a single value. */
 bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t);
+
+/* True for equality-comparable AGGREGATE types: dynamic and fixed arrays
+   (`T[]`, `T[N]`, and optional `T[]?`), and DEFINED structs (plain or
+   extern — never opaque/handle/alias/enum, which stay value/pointer
+   compares). `==`/`!=` on these is structural (codegen emits per-type
+   `strata_eq_*` helpers: memcmp where the layout allows, member-wise /
+   element-wise recursion otherwise); ordering comparisons are rejected. */
+bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t);
 
 // True when the type owns (box/array/string, or alias of one).
 bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);
