@@ -2739,7 +2739,9 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
             LLVMValueRef rl = LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl");
             LLVMValueRef args[4] = {lp, ll, rp, rl};
             StrataStrEqFn(b);
-            LLVMValueRef cmp = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
+            LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
+            LLVMValueRef cmp
+                = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
 
             if (n->op == BinNotEq)
             {
@@ -3653,7 +3655,10 @@ static LLVMValueRef StrataStrdupFn(Builder* b)
    lengths mismatch first (fast out), then pointer identity (fast in —
    covers the same literal/alias, moves, and both-empty {null, 0}), then a
    byte-wise loop over the shared length. Self-contained: no alloc, no free,
-   no host symbols — works identically in AOT and JIT. */
+   no host symbols — works identically in AOT and JIT. The ABI return type is
+   widened to i32 like every user function returning a sub-32-bit scalar (see
+   WidenRetType): the full register always holds 0/1, so the helper is
+   callable from C hosts and from JIT'd code under the one convention. */
 static void EmitStrataStrEqBody(Builder* b)
 {
     LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->m_builder);
@@ -3705,10 +3710,10 @@ static void EmitStrataStrEqBody(Builder* b)
     LLVMBuildCondBr(b->m_builder, bytesEq, loopCond, falseBB);
 
     LLVMPositionBuilderAtEnd(b->m_builder, trueBB);
-    LLVMBuildRet(b->m_builder, LLVMConstInt(I1Ty(b), 1, 0));
+    LLVMBuildRet(b->m_builder, LLVMConstInt(I32Ty(b), 1, 0));
 
     LLVMPositionBuilderAtEnd(b->m_builder, falseBB);
-    LLVMBuildRet(b->m_builder, LLVMConstInt(I1Ty(b), 0, 0));
+    LLVMBuildRet(b->m_builder, LLVMConstInt(I32Ty(b), 0, 0));
 
     if (savedBlock)
     {
@@ -3720,8 +3725,11 @@ static LLVMValueRef StrataStrEqFn(Builder* b)
 {
     if (!b->m_strEqFn)
     {
+        /* Widened i32 ABI return (WidenRetWidth convention), not i1: the
+           full register holds 0/1. Callers narrow back to i1 with an
+           `icmp ne` so branches/PHIs stay i1. */
         LLVMTypeRef params[4] = {b->m_ptrTy, I64Ty(b), b->m_ptrTy, I64Ty(b)};
-        b->m_strEqFnType = LLVMFunctionType(I1Ty(b), params, 4, 0);
+        b->m_strEqFnType = LLVMFunctionType(I32Ty(b), params, 4, 0);
         b->m_strEqFn = LLVMAddFunction(b->m_mod, "strata_str_eq", b->m_strEqFnType);
         EmitStrataStrEqBody(b);
     }
@@ -3957,7 +3965,8 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
 
         LLVMValueRef args[4] = {aData, aLen, bData, bLen};
         StrataStrEqFn(b);
-        eq = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.str");
+        LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.str");
+        eq = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "eq.str.b");
     }
     else if (td->structTypeName || td->isArray || td->isFixedArray)
     {
