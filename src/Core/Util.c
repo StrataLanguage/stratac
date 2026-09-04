@@ -537,7 +537,7 @@ size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
     return lo;
 }
 
-const char* GenerateId(char* buffer, int size)
+const char* GenerateUniqueID(char* buffer, int size)
 {
     const char charset[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     if (!size)
@@ -603,18 +603,25 @@ char* ReadWholeFile(const char* path, size_t* outLen)
     }
 
     long long size;
-#if defined(_WIN32)
+
+#ifdef STRATA_PLATFORM_WINDOWS
     size = _ftelli64(in);
 #else
-    size = ftell(in);
+    size = ftello(in);
 #endif
+
     if (size < 0)
     {
         fclose(in);
         return NULL;
     }
 
-    rewind(in);
+    if (fseek(in, 0L, SEEK_SET) != 0)
+    {
+        // Issue rewinding back to the beginning of the file
+        fclose(in);
+        return NULL;
+    }
 
     char* buf = (char*)malloc((size_t)size + 1);
     if (!buf)
@@ -636,13 +643,19 @@ char* ReadWholeFile(const char* path, size_t* outLen)
     return buf;
 }
 
-size_t DirLen(const char* path)
+size_t BasePathLength(const char* fullPath)
 {
-    size_t len = strlen(path);
+    size_t len = strlen(fullPath);
     size_t i = len;
 
-    while (i > 0 && path[i - 1] != '/' && path[i - 1] != '\\')
+    while (i > 0)
     {
+        char ch = fullPath[i - 1];
+        if (ch == '/' || ch == '\\')
+        {
+            break;
+        }
+
         --i;
     }
 

@@ -35,6 +35,16 @@
 #error "Unknown architecture"
 #endif
 
+#if defined(__APPLE__)
+#define STRATA_PLATFORM_MACOS 1
+#elif __linux__
+#define STRATA_PLATFORM_LINUX 1
+#elif defined(_WIN64) || defined(_WIN32)
+#define STRATA_PLATFORM_WINDOWS 1
+#else
+#error "Unsupported platform"
+#endif
+
 // -- Arena
 
 typedef struct ArenaChunk {
@@ -182,11 +192,19 @@ uint64_t HashStr64(const char* s);
 
 size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);
 
-const char* GenerateId(char* buffer, int size);
+const char* GenerateUniqueID(char* buffer, int size);
 
 // -- Files
 
 /* Returns a malloc'd buffer holding the file contents (NUL-terminated).
    Caller must free() it. Named ReadWholeFile to avoid the WinAPI ReadFile. */
 char* ReadWholeFile(const char* path, size_t* outLen);
-size_t DirLen(const char* path);
+
+/**
+ * @brief Returns the length of a base path give a full path.
+ *
+ * Example:
+ * `/foo/bar/hello.txt` would return the length of `/foo/bar`, 8.
+ * A path that is only a filename will return 0.
+ */
+size_t BasePathLength(const char* fullPath);

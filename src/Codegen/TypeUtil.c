@@ -170,24 +170,6 @@ int IsSimdVector(const char* t)
     return 0;
 }
 
-int GetSimdVectorLanes(const char* t)
-{
-    if (strcmp(t, "float2") == 0)
-    {
-        return 2;
-    }
-    if (strcmp(t, "float3") == 0)
-    {
-        return 3;
-    }
-    if (strcmp(t, "float4") == 0)
-    {
-        return 4;
-    }
-
-    return 0;
-}
-
 bool IsScalarTypeName(const char* t)
 {
     return IsNumeric(t) || strcmp(t, "bool") == 0;
