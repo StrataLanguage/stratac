@@ -1527,7 +1527,7 @@ STRATA_TEST(type_alias_string_extern_return_is_rejected)
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "extern function cannot return 'Name' by value") != NULL);
-    STRATA_CHECK(strstr(d, "return string out") != NULL);
+    STRATA_CHECK(strstr(d, "use return-param") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
