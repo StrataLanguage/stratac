@@ -1963,7 +1963,7 @@ static bool SimdVector4ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
 }
 
 /* Resolves SIMD vector constructors (`float3(x)`, `float4(w,x,y,z)`); returns true if this was one. */
-static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
+static bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // The function name is the same as the type name, so we can use TypeUtil functions on it.
     int numLanes = GetSimdVectorLanes(c->callee);
@@ -1993,7 +1993,7 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
         return false;
     }
 
-    c->isPseudoCall = true;
+    c->isIntrinsicCall = true;
 
     return true;
 }
@@ -2015,6 +2015,8 @@ static bool ModuleHasFunctionNamed(Resolver* r, const char* name)
 }
 
 //-- SIMD vector intrinsics.
+
+static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope);
 
 /* Validates vector intrinsic calls (e.g. `dot` and `cross`) */
 static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
@@ -2065,7 +2067,84 @@ static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    c->isPseudoCall = true;
+    c->isIntrinsicCall = true;
+
+    return true;
+}
+
+static bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    // User defined functions take precedence
+    if (ModuleHasFunctionNamed(r, c->callee))
+    {
+        return false;
+    }
+
+    if (c->args.count != 2)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects 2 arguments, got %zu", c->callee, c->args.count);
+        return true;
+    }
+
+    Node* a0 = (Node*)VecGet(&c->args, 0);
+    Node* a1 = (Node*)VecGet(&c->args, 1);
+
+    const TypeName* t0 = InferType(r, a0, scope);
+    const TypeName* t1 = InferType(r, a1, scope);
+
+    const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
+    const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
+
+    int lanes0 = IsSimdVector(resolved0);
+    int lanes1 = IsSimdVector(resolved1);
+
+    if (lanes0 == 0 || lanes1 == 0)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
+                     c->callee, t0 ? t0->name : "?");
+
+        return true;
+    }
+
+    if (lanes0 != lanes1)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' requires both vectors to have the same lane count ('%s' vs '%s')",
+                     c->callee, t0->name, t1->name);
+
+        return true;
+    }
+
+    return true;
+}
+
+static bool ResolveVector1Arg(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    // User defined functions take precedence
+    if (ModuleHasFunctionNamed(r, c->callee))
+    {
+        return false;
+    }
+
+    if (c->args.count != 1)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects 1 argument, got %zu", c->callee, c->args.count);
+        return true;
+    }
+
+    Node* vA = (Node*)VecGet(&c->args, 0);
+    const TypeName* vAType = InferType(r, vA, scope);
+
+    const char* resolved0 = vAType ? TypeRegistryResolveAlias(&r->m_registry, vAType->name) : "";
+
+    int lanes = IsSimdVector(resolved0);
+
+    if (lanes == 0)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
+                     c->callee, vAType ? vAType->name : "?");
+
+        return true;
+    }
 
     return true;
 }
@@ -2110,7 +2189,7 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    c->isPseudoCall = true;
+    c->isIntrinsicCall = true;
     return true;
 }
 
@@ -2146,7 +2225,7 @@ static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    c->isPseudoCall = true;
+    c->isIntrinsicCall = true;
 
     /* Move the source — the box is invalidated after drop(). An optional
        source is left definitely EMPTY (legal to test later), never poisoned,
@@ -2350,7 +2429,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    c->isPseudoCall = true;
+    c->isIntrinsicCall = true;
 
     return true;
 }
@@ -2878,7 +2957,7 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     c->calleeBase = NULL;
-    c->isPseudoCall = false;
+    c->isIntrinsicCall = false;
     c->callee = method->name; /* qualified extern symbol, e.g. Camera_GetFOV */
 
     return false;
@@ -3583,35 +3662,41 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
+    const bool isValidIntrinsic = ResolveIntrinsicCall(r, c, scope);
+    if (isValidIntrinsic)
+    {
+        return;
+    }
+
     // If the function call is to `float3()` or `float4()`, resolve internally
-    if (c->callee != NULL && ResolveSimdVectorConstruct(r, c, scope))
-    {
-        return;
-    }
+    // if (c->callee != NULL && ResolveVectorConstruct(r, c, scope))
+    // {
+    //     return;
+    // }
 
-    // SIMD vector intrinsics: dot(a, b) and cross(a, b).
-    if (c->callee != NULL && ResolveVectorIntrinsics(r, c, scope))
-    {
-        return;
-    }
+    // // SIMD vector intrinsics: dot(a, b) and cross(a, b).
+    // if (c->callee != NULL && ResolveVectorIntrinsics(r, c, scope))
+    // {
+    //     return;
+    // }
 
-    // Inline array helpers: array_push / array_pop / array_resize.
-    if (c->callee != NULL && ResolveArrayBuiltin(r, c, scope))
-    {
-        return;
-    }
+    // // Inline array helpers: array_push / array_pop / array_resize.
+    // if (c->callee != NULL && ResolveArrayBuiltin(r, c, scope))
+    // {
+    //     return;
+    // }
 
-    // copy(string/^T/T[]): deep-copy an owning value.
-    if (c->callee != NULL && ResolveCopyBuiltin(r, c, scope))
-    {
-        return;
-    }
+    // // copy(string/^T/T[]): deep-copy an owning value.
+    // if (c->callee != NULL && ResolveCopyBuiltin(r, c, scope))
+    // {
+    //     return;
+    // }
 
-    // drop(string/^T/T[]): invalidate an owning value.
-    if (c->callee != NULL && ResolveDropBuiltin(r, c, scope))
-    {
-        return;
-    }
+    // // drop(string/^T/T[]): invalidate an owning value.
+    // if (c->callee != NULL && ResolveDropBuiltin(r, c, scope))
+    // {
+    //     return;
+    // }
 
     /* Call already resolved (e.g. warmup); reuse cached decl and rerun move tracking. */
     if (c->resolvedDecl)
@@ -3905,6 +3990,118 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     TrackCallArgMoves(r, best, c);
 }
 
+static const TypeName* VectorConstructBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (IsSimdVector(c->callee) != 0)
+    {
+        return InternTypeName(r, c->callee);
+    }
+
+    return NULL;
+}
+
+static const TypeName* VectorDotBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    return InternTypeName(r, "float");
+}
+
+static const TypeName* VectorCrossBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    Node* a0 = (Node*)VecGet(&c->args, 0);
+    const TypeName* a0Type = InferType(r, a0, scope);
+
+    const char* resolved = TypeRegistryResolveAlias(&r->m_registry, a0Type ? a0Type->name : "");
+    if (GetSimdVectorLanes(resolved) == 2)
+    {
+        return InternTypeName(r, "float");
+    }
+
+    return a0Type;
+}
+
+static const TypeName* VectorReduceBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    return InternTypeName(r, "float");
+}
+
+// -- Instrinsics
+
+typedef struct IntrinsicTypeDefinition
+{
+    const char* name;
+    const TypeName* (*typeFunc)(Resolver*, CallExpr*, StrMap*);
+    bool (*resolveFunc)(Resolver*, CallExpr*, StrMap*);
+} IntrinsicTypeDefinition;
+
+// NOTE: Make sure there are matching definitions for any new intrinsics added at `EmitIntrinsicCall()` in
+// LLVMModuleBuilder.c.
+static const IntrinsicTypeDefinition intrinsics[] = {
+    /* Array calls */
+    {"array_push",   ArrayBuiltinType,           ResolveArrayBuiltin   },
+    {"array_pop",    ArrayBuiltinType,           ResolveArrayBuiltin   },
+    {"array_resize", ArrayBuiltinType,           ResolveArrayBuiltin   },
+
+    /* Memory */
+    {"copy",         CopyBuiltinType,            ResolveCopyBuiltin    },
+    {"drop",         DropBuiltinType,            ResolveDropBuiltin    },
+
+    /* Vectors */
+    {"float2",       VectorConstructBuiltinType, ResolveVectorConstruct},
+    {"float3",       VectorConstructBuiltinType, ResolveVectorConstruct},
+    {"float4",       VectorConstructBuiltinType, ResolveVectorConstruct},
+
+    {"dot",          VectorDotBuiltinType,       ResolveVector2Arg     },
+    {"cross",        VectorCrossBuiltinType,     ResolveVector2Arg     },
+    {"reduce",       VectorReduceBuiltinType,    ResolveVector1Arg     },
+};
+
+static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->callee == NULL)
+    {
+        return false;
+    }
+
+    for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
+    {
+        const IntrinsicTypeDefinition* intrinsic = &intrinsics[i];
+
+        if (strcmp(intrinsic->name, c->callee) == 0)
+        {
+            bool result = intrinsic->resolveFunc(r, c, scope);
+
+            // This call expr was resolved as a call to an intrinsic, mark and return true
+            if (result)
+            {
+                // Mark this call expression as an intrinsic call
+                c->isIntrinsicCall = true;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static const TypeName* InferIntrinsicType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
+    {
+        const IntrinsicTypeDefinition* intrinsic = &intrinsics[i];
+
+        if (strcmp(intrinsic->name, c->callee) == 0)
+        {
+            const TypeName* result = intrinsic->typeFunc(r, c, scope);
+            if (result != NULL)
+            {
+                return result;
+            }
+        }
+    }
+
+    return NULL;
+}
+
 static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
 {
     if (!n)
@@ -4106,46 +4303,11 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return &c->resolvedDecl->returnType;
         }
 
-        if (c->isPseudoCall && IsSimdVector(c->callee) != 0)
+        // Infer the type for intrinsic calls
+        const TypeName* intrinsicType = InferIntrinsicType(r, c, scope);
+        if (intrinsicType != NULL)
         {
-            return InternTypeName(r, c->callee);
-        }
-
-        /* SIMD intrinsics: dot() reduces to scalar float; cross() keeps the arg vector type
-           (cross(float2) reduces to the scalar z-component). */
-        if (c->isPseudoCall && (strcmp(c->callee, "dot") == 0 || strcmp(c->callee, "cross") == 0))
-        {
-            Node* a0 = (Node*)VecGet(&c->args, 0);
-            const TypeName* a0Type = InferType(r, a0, scope);
-
-            const char* resolved0 = TypeRegistryResolveAlias(&r->m_registry, a0Type ? a0Type->name : "");
-            if (strcmp(c->callee, "dot") == 0 || GetSimdVectorLanes(resolved0) == 2)
-            {
-                return InternTypeName(r, "float");
-            }
-
-            return a0Type;
-        }
-
-        const TypeName* builtinType = ArrayBuiltinType(r, c, scope);
-
-        if (builtinType)
-        {
-            return builtinType;
-        }
-
-        builtinType = CopyBuiltinType(r, c, scope);
-
-        if (builtinType)
-        {
-            return builtinType;
-        }
-
-        builtinType = DropBuiltinType(r, c, scope);
-
-        if (builtinType)
-        {
-            return builtinType;
+            return intrinsicType;
         }
 
         if (TypeRegistryIsUserType(&r->m_registry, c->callee))
