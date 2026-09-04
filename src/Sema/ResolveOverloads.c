@@ -2890,36 +2890,6 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
-    // If the function call is to `float3()` or `float4()`, resolve internally
-    // if (c->callee != NULL && ResolveVectorConstruct(r, c, scope))
-    // {
-    //     return;
-    // }
-
-    // // SIMD vector intrinsics: dot(a, b) and cross(a, b).
-    // if (c->callee != NULL && ResolveVectorIntrinsics(r, c, scope))
-    // {
-    //     return;
-    // }
-
-    // // Inline array helpers: array_push / array_pop / array_resize.
-    // if (c->callee != NULL && ResolveArrayBuiltin(r, c, scope))
-    // {
-    //     return;
-    // }
-
-    // // copy(string/^T/T[]): deep-copy an owning value.
-    // if (c->callee != NULL && ResolveCopyBuiltin(r, c, scope))
-    // {
-    //     return;
-    // }
-
-    // // drop(string/^T/T[]): invalidate an owning value.
-    // if (c->callee != NULL && ResolveDropBuiltin(r, c, scope))
-    // {
-    //     return;
-    // }
-
     /* Call already resolved (e.g. warmup); reuse cached decl and rerun move tracking. */
     if (c->resolvedDecl)
     {
