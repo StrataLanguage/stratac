@@ -2310,4 +2310,112 @@ STRATA_TEST(drop_optional_empty_frees_nothing_and_drop_leaves_it_empty)
     strataCompilerDestroy(c);
 }
 
+STRATA_TEST(box_array_equality_after_element_move_is_rejected)
+{
+    /* Moving an element out of a ^Foo[] (via a ^Foo param, drop, or an
+       optional-slot move) poisons the WHOLE array: a later `a == b` — which
+       derefs each element — is a compile error, never a null deref. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Foo { int v; };\n"
+        "void take(^Foo f) { int x = f.v; }\n"
+        "int entry() {\n"
+        "  ^Foo[] a = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  ^Foo[] b = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  take(a[0]);\n"
+        "  if (a == b) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'a' is poisoned"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_array_equality_after_element_drop_is_rejected)
+{
+    /* Same protection for drop(): the dropped slot is nulled, and the whole
+       array is poisoned so element-derefing comparisons can't reach it. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Foo { int v; };\n"
+        "int entry() {\n"
+        "  ^Foo[] a = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  ^Foo[] b = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  drop(a[0]);\n"
+        "  if (a == b) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'a' is poisoned"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_array_equality_after_optional_element_move_is_rejected)
+{
+    /* Optional ELEMENTS (^Foo?) poison the array like any other owning
+       element — the array is still unusable after an element moves out. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Foo { int v; };\n"
+        "int entry() {\n"
+        "  ^Foo?[] a = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  ^Foo?[] b = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  ^Foo? f = a[0];\n"
+        "  if (a == b) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'a' is poisoned"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_array_element_move_through_ref_param_is_rejected)
+{
+    /* A ref-bound array's elements can't be moved out at all, so poisoning
+       can't be laundered through an aliased parameter name. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Foo { int v; };\n"
+        "void take(^Foo f) { int x = f.v; }\n"
+        "void poke(ref ^Foo[] xs) { take(xs[0]); }\n"
+        "int entry() {\n"
+        "  ^Foo[] a = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  ^Foo[] b = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  poke(a);\n"
+        "  if (a == b) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is bound as a ref"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 
