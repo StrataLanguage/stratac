@@ -2958,13 +2958,28 @@ static bool FindEnumMemberIndex(EnumDecl* ed, const char* memberName, size_t* ou
     return false;
 }
 
-/* Folds an enum member value expression to a 64-bit value. `isUnsigned` picks
-   the interpretation (unsigned magnitude vs signed two's complement) so the
-   underlying type decides how a top-bit-set literal is read. Bare identifiers
-   are references to EARLIER members of `mod->enums[enumIndex]`; `Enum.Member`
-   references a scoped constant of an already-resolved enum. Evaluates in
-   uint64 bit patterns; the caller converts to magnitude+sign per the
-   underlying type. */
+/* Width of a constant expression: 32-bit if it bottoms out in a 32-bit literal. */
+static unsigned ConstBitWidth(const Node* n)
+{
+    while (n && n->kind == NodeCast)
+    {
+        n = ((const CastExpr*)n)->operand;
+    }
+
+    if (n && n->kind == NodeIntLiteral)
+    {
+        const IntLiteral* lit = (const IntLiteral*)n;
+
+        if (lit->isUnsigned && lit->value <= 0x7FFFFFFFULL)
+        {
+            return 32;
+        }
+    }
+
+    return 64;
+}
+
+/* Folds an enum member value expression to a 64-bit value */
 static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
                                         uint64_t* out)
 {
@@ -3000,13 +3015,21 @@ static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, 
         case UnNeg:
             if (isUnsigned)
             {
+                /* `-1u` on an unsigned underlying wraps C-style to 0xFFFFFFFF
+                   (a plain `-1` stays rejected). */
+                if (ConstBitWidth(u->operand) == 32)
+                {
+                    *out = (0 - inner) & 0xFFFFFFFFULL;
+                    return EnumEvalOk;
+                }
+
                 return EnumEvalNegForUnsigned;
             }
 
             *out = (uint64_t)(0 - inner);
             return EnumEvalOk;
         case UnBitNot:
-            *out = ~inner;
+            *out = ConstBitWidth(u->operand) == 32 ? (~inner & 0xFFFFFFFFULL) : ~inner;
             return EnumEvalOk;
         default:
             return EnumEvalNotConst;
@@ -3073,7 +3096,7 @@ static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, 
                 return EnumEvalNotConst;
             }
 
-            *out = l << r;
+            *out = (isUnsigned && ConstBitWidth(e->lhs) == 32) ? ((l << r) & 0xFFFFFFFFULL) : (l << r);
             return EnumEvalOk;
         case BinShr:
             if (r >= 64)

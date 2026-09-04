@@ -119,7 +119,9 @@ STRATA_TEST(enum_value_expression_folds)
                                   "enum Arith : int { A = 1 + 2 * 3, B = (4 - 1) << 2, C = 100 / 3, D = 7 % 3 };\n"
                                   "enum Shifts : int { S = 1 << 8, T = 512 >> 2 };\n"
                                   "enum Casts : uint { V = (uint)5 | 2 };\n"
-                                  "enum Full : ulong { All = ~0 };\n",
+                                  "enum Full : ulong { All = ~0 };\n"
+                                  "enum CWidth : uint { INVALID = ~0u, NEG = -1u, FLAG = 1u << 31 };\n"
+                                  "enum Wide : ulong { WIDE = 1 << 40 };\n",
                                   &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     if (DiagHasErrors(&diag))
@@ -151,6 +153,18 @@ STRATA_TEST(enum_value_expression_folds)
 
     const EnumDecl* full = FindEnum(mod, "Full");
     STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&full->members, 0))->value, (uint64_t)0xFFFFFFFFFFFFFFFFULL);
+
+    /* C-style width: `~`, unary `-`, and `<<` wrap at 32 bits for a
+       `u`-suffixed operand (C `unsigned int`), so `~0u`/`-1u` are 0xFFFFFFFF
+       on a uint underlying and `1u << 31` is 0x80000000. */
+    const EnumDecl* cwidth = FindEnum(mod, "CWidth");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&cwidth->members, 0))->value, 0xFFFFFFFFULL);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&cwidth->members, 1))->value, 0xFFFFFFFFULL);
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&cwidth->members, 2))->value, 0x80000000ULL);
+
+    /* A plain (unsuffixed) `<<` keeps folding in 64 bits for ulong. */
+    const EnumDecl* wide = FindEnum(mod, "Wide");
+    STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&wide->members, 0))->value, (uint64_t)1 << 40);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -246,6 +260,18 @@ STRATA_TEST(enum_value_expression_errors)
     STRATA_CHECK(Contains(ErrText(&diag5, &arena5), "does not fit in 'byte'"));
     DiagnosticEngineFree(&diag5);
     arena_free(&arena5);
+
+    /* A plain `~0` folds to the 64-bit pattern; a uint underlying wants the
+       suffixed form `~0u`. */
+    Arena arena6;
+    arena_init(&arena6, 0);
+    DiagnosticEngine diag6;
+    DiagnosticEngineInit(&diag6);
+    ParseAndResolve("enum Foo : uint { A = ~0 };\n", &diag6, &arena6);
+    STRATA_CHECK(DiagHasErrors(&diag6));
+    STRATA_CHECK(Contains(ErrText(&diag6, &arena6), "does not fit in 'uint'"));
+    DiagnosticEngineFree(&diag6);
+    arena_free(&arena6);
 }
 
 STRATA_TEST(enum_scoped_member_access)

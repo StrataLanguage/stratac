@@ -180,11 +180,16 @@ main) are the internal entry points.
   `+ - * / % & | ^ << >>`, casts, and references to EARLIER members of the same
   enum (bare `AllPlatforms = Windows | Mac`) or scoped constants of an
   already-resolved enum (`Derived = Base.X | 1`) — forward references error.
-  Expressions evaluate in 64-bit and the result is interpreted per the
-  underlying's signedness (a unary `-` is rejected for unsigned underlyings),
-  then EVERY member value — explicit or implicit — must fit the underlying
-  type's range (`enum E : byte { A = 255, B }` errors: B would be 256; `~0`
-  on a `uint` enum is the 64-bit pattern and doesn't fit, use `ulong`).
+  Expressions fold in 64-bit with C-style width for unsigned-suffixed
+  literals: `~`, unary `-`, and `<<` wrap at 32 bits when their operand is a
+  `u`-suffixed literal (an `u` literal ≤ INT32_MAX is `uint`, else `ulong` —
+  mirroring literal typing everywhere else). So `INVALID = ~0u` is legal on a
+  `uint` enum (0xFFFFFFFF), `Flag = 1u << 31` is 0x80000000, and `-1u` wraps
+  C-style instead of being rejected; a plain `~0` still folds to the 64-bit
+  pattern (fits `ulong` underlyings only), and a plain unary `-` is rejected
+  for unsigned underlyings. Otherwise EVERY member value — explicit or
+  implicit — must fit the underlying type's range (`enum E : byte
+  { A = 255, B }` errors: B would be 256).
   Negative literals (`A = -2`) are allowed only for signed underlying types;
   unsigned underlying rejects them.
   The enum is its own strong type: `Color c = Color.Blue;` and same-enum
