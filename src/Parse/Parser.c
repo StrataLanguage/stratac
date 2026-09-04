@@ -2201,7 +2201,7 @@ static Node* ParsePostfix(Parser* p)
             call->base.range = node->base.range;
             call->callee = node->member;
             call->calleeBase = node->base_node;
-            call->isPseudoCall = false;
+            call->isIntrinsicCall = false;
             VecInit(&call->args);
 
             ParseCallArgs(p, call);
@@ -2528,7 +2528,7 @@ static Node* ParsePrimary(Parser* p)
             call->base.kind = NodeCall;
             call->base.range = token.range;
             call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
-            call->isPseudoCall = false;
+            call->isIntrinsicCall = false;
             VecInit(&call->args);
 
             ParseCallArgs(p, call);

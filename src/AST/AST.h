@@ -591,7 +591,7 @@ typedef struct CallExpr {
     char* callee;
     const FunctionDecl* resolvedDecl;
     Vec args;
-    bool isPseudoCall;
+    bool isIntrinsicCall;
     /* `expr.Member(args)` — non-NULL until sema resolves the member against
        impl blocks (then the base moves into `args` as the self argument). */
     Node* calleeBase;

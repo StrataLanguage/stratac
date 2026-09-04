@@ -3689,6 +3689,12 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
     return v;
 }
 
+static Value EmitVectorReduce(Builder* b, CallExpr* n)
+{
+    Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    return ValueMake(LSimdVector4HAdd(b, vA.value), ResolveByName(b, "float"));
+}
+
 static Value EmitVectorDot(Builder* b, CallExpr* n)
 {
     Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
@@ -3745,6 +3751,8 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
 
         {"dot",          EmitVectorDot      },
         {"cross",        EmitVectorCross    },
+
+        {"reduce",       EmitVectorReduce   },
     };
 
     for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
@@ -3764,7 +3772,7 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
 
 static Value EmitCall(Builder* b, CallExpr* n)
 {
-    if (n->isPseudoCall)
+    if (n->isIntrinsicCall)
     {
         bool isValid = 0;
         Value result = EmitIntrinsicCall(b, n, &isValid);

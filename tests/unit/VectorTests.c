@@ -254,6 +254,17 @@ STRATA_TEST(vector_dot3)
             32);
 }
 
+STRATA_TEST(vector_reduce)
+{
+    /* reduce(floatN) reduces to a scalar float; X + Y + Z + W. */
+    run_int("int entry() {\n"
+            "  float3 a = float3(1.0, 2.0, 3.0);\n"
+            "  float d = reduce(a);\n"
+            "  return (int)d;\n" /* 6 */
+            "}\n",
+            6);
+}
+
 STRATA_TEST(vector_cross3)
 {
     /* cross(float3, float3) = (ay*bz-az*by, az*bx-ax*bz, ax*by-ay*bx)
