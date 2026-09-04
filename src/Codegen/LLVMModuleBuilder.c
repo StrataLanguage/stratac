@@ -508,6 +508,7 @@ static LValue EmitLValue(Builder* b, Node* n);
 static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 static LLVMValueRef StrataStrdupFn(Builder* b);
+static LLVMValueRef StrataStrEqFn(Builder* b);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
@@ -2587,16 +2588,25 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
     TypeDesc typeDesc = l.typeDesc;
 
-    /* String equality/inequality compares the data pointers (identity,
-       matching the previous representation's semantics). Other comparisons
-       on strings are meaningless. */
+    /* String equality/inequality is CONTENT comparison (strata_str_eq with a
+       length fast-out and pointer-identity fast-in) — never a raw compare of
+       the fat pointers. Other comparisons on strings are meaningless. */
     if (l.typeDesc.isString || r.typeDesc.isString)
     {
         if (n->op == BinEqEq || n->op == BinNotEq)
         {
             LLVMValueRef lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
+            LLVMValueRef ll = LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll");
             LLVMValueRef rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
-            LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, n->op == BinEqEq ? LLVMIntEQ : LLVMIntNE, lp, rp, "seq");
+            LLVMValueRef rl = LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl");
+            LLVMValueRef args[4] = {lp, ll, rp, rl};
+            StrataStrEqFn(b);
+            LLVMValueRef cmp = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
+
+            if (n->op == BinNotEq)
+            {
+                cmp = LLVMBuildNot(b->m_builder, cmp, "sne");
+            }
 
             return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
         }
@@ -3373,6 +3383,86 @@ static LLVMValueRef StrataStrdupFn(Builder* b)
         EmitStrataStrdupBody(b);
     }
     return b->m_strdupFn;
+}
+
+/* Emits the body of strata_str_eq(a, alen, b, blen) -> bool: CONTENT
+   equality for string `==`/`!=`. Never compares the fat pointers directly:
+   lengths mismatch first (fast out), then pointer identity (fast in —
+   covers the same literal/alias, moves, and both-empty {null, 0}), then a
+   byte-wise loop over the shared length. Self-contained: no alloc, no free,
+   no host symbols — works identically in AOT and JIT. */
+static void EmitStrataStrEqBody(Builder* b)
+{
+    LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->m_builder);
+
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+    LLVMTypeRef i64Ty = I64Ty(b);
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "entry");
+    LLVMBasicBlockRef lenEq = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "len.eq");
+    LLVMBasicBlockRef ptrEq = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "ptr.eq");
+    LLVMBasicBlockRef loopCond = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "cmp.cond");
+    LLVMBasicBlockRef loopBody = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "cmp.body");
+    LLVMBasicBlockRef falseBB = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "neq");
+    LLVMBasicBlockRef trueBB = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_strEqFn, "eq");
+
+    LLVMValueRef a = LLVMGetParam(b->m_strEqFn, 0);
+    LLVMValueRef alen = LLVMGetParam(b->m_strEqFn, 1);
+    LLVMValueRef bb = LLVMGetParam(b->m_strEqFn, 2);
+    LLVMValueRef blen = LLVMGetParam(b->m_strEqFn, 3);
+
+    LLVMValueRef zero = LLVMConstInt(i64Ty, 0, 0);
+    LLVMValueRef one = LLVMConstInt(i64Ty, 1, 0);
+
+    /* Length fast-out: unequal lengths can never be equal. */
+    LLVMPositionBuilderAtEnd(b->m_builder, entry);
+    LLVMValueRef lenMatch = LLVMBuildICmp(b->m_builder, LLVMIntEQ, alen, blen, "lenm");
+    LLVMBuildCondBr(b->m_builder, lenMatch, lenEq, falseBB);
+
+    /* Pointer identity fast-in: the same buffer is trivially equal. */
+    LLVMPositionBuilderAtEnd(b->m_builder, lenEq);
+    LLVMValueRef sameBuf = LLVMBuildICmp(b->m_builder, LLVMIntEQ, a, bb, "sambuf");
+    LLVMBuildCondBr(b->m_builder, sameBuf, trueBB, loopCond);
+
+    /* Byte-wise compare over [0, alen). */
+    LLVMPositionBuilderAtEnd(b->m_builder, loopCond);
+    LLVMValueRef iPhi = LLVMBuildPhi(b->m_builder, i64Ty, "i");
+    LLVMValueRef iNext = LLVMBuildAdd(b->m_builder, iPhi, one, "i1");
+    LLVMValueRef inVals[2] = {zero, iNext};
+    LLVMBasicBlockRef inBlocks[2] = {lenEq, loopBody};
+    LLVMAddIncoming(iPhi, inVals, inBlocks, 2);
+    LLVMValueRef iLt = LLVMBuildICmp(b->m_builder, LLVMIntULT, iPhi, alen, "ilt");
+    LLVMBuildCondBr(b->m_builder, iLt, loopBody, trueBB);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, loopBody);
+    LLVMValueRef idx[1] = {iPhi};
+    LLVMValueRef aByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, a, idx, 1, "ai"), "ab");
+    LLVMValueRef bByte = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, bb, idx, 1, "bi"), "bb");
+    LLVMValueRef bytesEq = LLVMBuildICmp(b->m_builder, LLVMIntEQ, aByte, bByte, "beq");
+    LLVMBuildCondBr(b->m_builder, bytesEq, loopCond, falseBB);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, trueBB);
+    LLVMBuildRet(b->m_builder, LLVMConstInt(I1Ty(b), 1, 0));
+
+    LLVMPositionBuilderAtEnd(b->m_builder, falseBB);
+    LLVMBuildRet(b->m_builder, LLVMConstInt(I1Ty(b), 0, 0));
+
+    if (savedBlock)
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, savedBlock);
+    }
+}
+
+static LLVMValueRef StrataStrEqFn(Builder* b)
+{
+    if (!b->m_strEqFn)
+    {
+        LLVMTypeRef params[4] = {b->m_ptrTy, I64Ty(b), b->m_ptrTy, I64Ty(b)};
+        b->m_strEqFnType = LLVMFunctionType(I1Ty(b), params, 4, 0);
+        b->m_strEqFn = LLVMAddFunction(b->m_mod, "strata_str_eq", b->m_strEqFnType);
+        EmitStrataStrEqBody(b);
+    }
+    return b->m_strEqFn;
 }
 
 /* Deep-copies the CELL behind a non-null box pointer `src` into a fresh
@@ -6006,6 +6096,8 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     b.m_oobFnType = NULL;
     b.m_strdupFn = NULL;
     b.m_strdupFnType = NULL;
+    b.m_strEqFn = NULL;
+    b.m_strEqFnType = NULL;
     b.m_arrayType = NULL;
 
     TypeRegistryInit(&b.m_registry);

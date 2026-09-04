@@ -4332,6 +4332,40 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             break;
         }
+        case BinEqEq:
+        case BinNotEq:
+        case BinLt:
+        case BinLtEq:
+        case BinGt:
+        case BinGtEq:
+        {
+            const TypeName* lt = InferType(r, b->lhs, scope);
+            const TypeName* rt = InferType(r, b->rhs, scope);
+            const char* ln = lt ? lt->name : "";
+            const char* rn = rt ? rt->name : "";
+
+            bool lString = lt && TypeIsString(&r->m_registry, ln);
+            bool rString = rt && TypeIsString(&r->m_registry, rn);
+
+            if (lString != rString)
+            {
+                DiagErrorFmt(r->m_diag, b->base.range, "cannot compare 'string' with '%s'", lString ? rn : ln);
+                break;
+            }
+
+            if (lString)
+            {
+                break;
+            }
+
+            if (lt && rt && (!TypeIsTriviallyComparable(&r->m_registry, lt)
+                             || !TypeIsTriviallyComparable(&r->m_registry, rt)))
+            {
+                DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+            }
+
+            break;
+        }
         default:
             break;
         }

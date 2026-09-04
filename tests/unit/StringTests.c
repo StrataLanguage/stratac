@@ -254,3 +254,67 @@ STRATA_TEST(global_string_array_element_copy_is_allowed)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
+
+STRATA_TEST(string_equality_is_content_not_pointer)
+{
+    /* `==`/`!=` compares CONTENT (module-local strata_str_eq: length
+       fast-out, pointer-identity fast-in, then bytes) — never the raw fat
+       pointers. An owning local is a heap copy, so its pointer differs
+       from the literal's constant fat even when the content matches. */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr(
+        "int entry() {\n"
+        "  string s = \"hello\";\n"     /* owning local: heap copy, ptr != literal's fat */
+        "  int r = 0;\n"
+        "  if (s == \"hello\") { r += 1; }\n"     /* content equal, different pointers */
+        "  if (s != \"world\") { r += 2; }\n"     /* same length, different content */
+        "  if (s == \"world!\") { r += 4; } else { r += 4; }\n" /* length fast-out */
+        "  if (s == \"\") { r += 8; } else { r += 8; }\n"       /* empty vs non-empty */
+        "  if (\"\" == \"\") { r += 16; }\n"                    /* both empty {null, 0} */
+        "  if (s != \"hello\") { r += 32; }\n"    /* != on equal content */
+        "  string t = copy(s);\n"                /* deep copy: same content, fresh buffer */
+        "  if (t == s) { r += 64; }\n"           /* byte compare across buffers */
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 95);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(string_vs_non_string_comparison_is_rejected)
+{
+    /* string ==/!= is content equality; comparing a string with a scalar
+       is a compile error (never a fat-pointer compare). */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  string s = \"hi\";\n"
+        "  if (s == 1) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "cannot compare 'string' with 'int'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}

@@ -244,6 +244,31 @@ bool TypeIsString(const TypeRegistry* reg, const char* name)
     return leaf && strcmp(leaf, "string") == 0;
 }
 
+bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    /* Arrays (T[] / T[N]) are aggregates: no element-wise comparison exists
+       yet, so they are never trivially comparable. Default false — the
+       element-wise path can be built on this later. */
+    if (TypeNameIsArray(t))
+    {
+        return false;
+    }
+
+    /* Strings compare by CONTENT (codegen strata_str_eq with a length
+       fast-out), never by raw fat-pointer comparison. */
+    if (TypeIsString(reg, t->name))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t)
 {
     if (!t || !t->name || TypeNameIsOwning(t))

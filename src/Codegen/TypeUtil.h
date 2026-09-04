@@ -54,5 +54,13 @@ bool IsScalarLikeType(const TypeRegistry* reg, const char* t);
 // True when the (alias-resolved) name is "string".
 bool TypeIsString(const TypeRegistry* reg, const char* name);
 
+/* True when `==`/`!=` (and ordering) compares the value directly — scalars,
+   handles, enums, and aliases of those compare by value / pointer identity.
+   Dynamic arrays are NOT trivially comparable (fat `{ptr, len}` structs;
+   equality would need an element-wise compare, which isn't implemented —
+   default false, built upon later). Strings are NOT either: `==` is CONTENT
+   equality (codegen `strata_str_eq`), never a raw fat-pointer compare. */
+bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t);
+
 // True when the type owns (box/array/string, or alias of one).
 bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);

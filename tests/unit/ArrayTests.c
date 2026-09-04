@@ -1584,4 +1584,77 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+STRATA_TEST(dynamic_array_equality_is_rejected)
+{
+    /* No element-wise equality for T[] yet: `==`/`!=` on arrays is a
+       compile error (sema TypeIsTriviallyComparable defaults arrays to
+       false). Ordering comparisons are rejected the same way. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  int[] a = {1, 2};\n"
+        "  int[] b = {1, 2};\n"
+        "  if (a == b) { return 1; }\n"
+        "  if (a != b) { return 2; }\n"
+        "  if (a < b) { return 3; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int[]')") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(dynamic_array_vs_scalar_comparison_is_rejected)
+{
+    /* A mixed array/scalar comparison is rejected too. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  int[] a = {1, 2};\n"
+        "  if (a == 0) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int')") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(string_vs_array_comparison_is_rejected)
+{
+    /* String equality is CONTENT equality; comparing a string against a
+       dynamic array is a type mismatch, not a fat-pointer poke. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  string s = \"hi\";\n"
+        "  int[] a = {1, 2};\n"
+        "  if (s == a) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "cannot compare 'string' with 'int[]'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
 #endif

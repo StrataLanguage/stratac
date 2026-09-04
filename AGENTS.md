@@ -145,8 +145,14 @@ main) are the internal entry points.
   never allocated). Every constructed buffer keeps a NUL at `[len]` — the
   invariant the extern pun relies on — so `.length` is O(1) (like arrays;
   sema types it `ulong`) and `s[i]` is a bounds-checked `byte` read.
-  Move-on-assign (source fat zeroed), drop frees the buffer. Equality is
-  POINTER identity (`==`/`!=` only). Extern: puns to `char*` — the fat's
+  Move-on-assign (source fat zeroed), drop frees the buffer. `==`/`!=` is
+  CONTENT equality (sema `TypeIsTriviallyComparable` marks strings
+  non-trivial; codegen emits a module-local `strata_str_eq(ptr, len, ptr,
+  len)` that fast-outs on length mismatch, fast-ins on pointer identity —
+  same buffer/alias/move or both-empty `{null, 0}` — then compares bytes;
+  the raw fat pointers are never compared directly). Ordering comparisons
+  (`<` etc.) are rejected, and comparing a `string` with a non-string type
+  is a compile error. Extern: puns to `char*` — the fat's
   first member — with a static empty buffer substituted for `{null, 0}` so
   C never sees NULL; `string?` passes the RAW pointer (NULL = empty); an
   extern string RETURN is `char*` and the caller wraps it via an inline
@@ -305,6 +311,9 @@ main) are the internal entry points.
   length, and `.length` is a compile-time constant. Whole fixed-array assignment
   (`s.a = s.b`) is rejected — assign elements. No auto-conversion to the
   fat `T[]` pointer yet.
+- Dynamic arrays (`T[]`): no `==`/`!=` or ordering comparisons — there is no
+  element-wise equality yet (sema `TypeIsTriviallyComparable` defaults these
+  to false; comparing is a compile error, to be built on later).
 
 ### Parameters
 
