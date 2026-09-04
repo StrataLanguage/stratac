@@ -295,6 +295,50 @@ STRATA_TEST(jit_cast_double_to_float_to_int)
     }
 }
 
+static int HostIsPiHalf(double x)
+{
+    return x > 1.57079 && x < 1.57080;
+}
+
+/* The full double story end-to-end: a float literal initializing a double
+   local, a float literal passed to a double extern param, and mixed
+   float/double arithmetic (90.0 * double_global / 180.0) all used to land
+   at zero / garbage because float values were stored/passed at float width
+   into double slots without widening. */
+STRATA_TEST(jit_double_values_are_not_zero)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "extern int host_is_pi_half(double x);\n"
+        "double g_pi = 3.141592653589793;\n"
+        "int entry() {\n"
+        "  double a = 90.0 * g_pi / 180.0;\n"
+        "  double d = 2.5;\n"
+        "  if (host_is_pi_half(a) && host_is_pi_half(1.5707963) && d == 2.5) { return 1; }\n"
+        "  return 0;\n"
+        "}\n",
+        "dbl", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        STRATA_CHECK_EQ(strataJitAddSymbol(jit, "host_is_pi_half", (void*)&HostIsPiHalf), 1);
+
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+    else
+    {
+        strataFree((char*)err);
+    }
+    strataCompilerDestroy(c);
+}
+
 STRATA_TEST(jit_cast_uint_to_int)
 {
     StrataJit* jit = CompileJit("uint entry() {\n"

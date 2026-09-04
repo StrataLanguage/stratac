@@ -149,4 +149,37 @@ STRATA_TEST(llvm_scalar_pseudo_constants_emit_correct_bits)
     STRATA_CHECK(Contains(res.output, "store double 0x10000000000000"));   /* DBL_MIN */
 }
 
+/* A float literal assigned to a double local must be fpext'd, not stored as
+   a 4-byte float into the 8-byte slot (that left the upper half as garbage
+   and every double read as junk). */
+STRATA_TEST(llvm_double_local_init_widens_float_literal)
+{
+    CodegenResult res = GenLlvm("double f() { double d = 2.5; return d; }");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "store double 2.500000e+00")); /* 2.5, full-width */
+    STRATA_CHECK(!Contains(res.output, "store float"));
+}
+
+/* Mixing a float literal with a double operand must compute in the wider
+   type (fpext the float side) - not emit a mismatched `fmul float X, double
+   Y`, which corrupted the result. */
+STRATA_TEST(llvm_mixed_float_double_arithmetic_widens)
+{
+    CodegenResult res = GenLlvm("double g = 3.0;\n"
+                                "double f() { return g * 2.0; }\n");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "fmul double"));
+    STRATA_CHECK(!Contains(res.output, "fmul float"));
+}
+
+/* A float literal passed to a double extern param must be fpext'd at the
+   call site - not handed across at float width (a mismatched ABI). */
+STRATA_TEST(llvm_float_literal_to_double_param_fpext)
+{
+    CodegenResult res = GenLlvm("extern double cos(double x);\n"
+                                "double f() { return cos(1.5); }\n");
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(Contains(res.output, "call double @cos(double 1.500000e+00"));
+}
+
 

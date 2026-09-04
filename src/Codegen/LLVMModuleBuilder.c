@@ -970,6 +970,27 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
         bool srcIsBool = value.typeDesc.type == I1Ty(b);
         r = LLVMBuildIntCast2(b->m_builder, value.value, target.type, !value.typeDesc.isUnsigned && !srcIsBool, "c");
     }
+    else if (value.typeDesc.isFloat && target.isFloat)
+    {
+        /* float <-> double: widen (fpext) or narrow (fptrunc). SIMD vectors
+           are float-typed but never convert element-wise here - they fall
+           through to `return value` unchanged. */
+        LLVMTypeRef f = LLVMFloatTypeInContext(b->m_ctx);
+        LLVMTypeRef d = LLVMDoubleTypeInContext(b->m_ctx);
+
+        if (value.typeDesc.type == f && target.type == d)
+        {
+            r = LLVMBuildFPExt(b->m_builder, value.value, d, "c");
+        }
+        else if (value.typeDesc.type == d && target.type == f)
+        {
+            r = LLVMBuildFPTrunc(b->m_builder, value.value, f, "c");
+        }
+        else
+        {
+            return value;
+        }
+    }
     else
     {
         return value;
@@ -2709,6 +2730,24 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         l = Coerce(b, l, r.typeDesc);
 
         typeDesc = r.typeDesc;
+    }
+    else if (l.typeDesc.isFloat && r.typeDesc.isFloat && l.typeDesc.type != r.typeDesc.type)
+    {
+        /* float mixed with double: compute in the wider type (fpext the float
+           side) - the old code left the operands at mismatched widths, which
+           emitted invalid IR like `fmul float X, double Y`. */
+        LLVMTypeRef d = LLVMDoubleTypeInContext(b->m_ctx);
+
+        if (l.typeDesc.type == d)
+        {
+            r = Coerce(b, r, l.typeDesc);
+            typeDesc = l.typeDesc;
+        }
+        else
+        {
+            l = Coerce(b, l, r.typeDesc);
+            typeDesc = r.typeDesc;
+        }
     }
     else if (!l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type != r.typeDesc.type && l.typeDesc.type
              && r.typeDesc.type)
@@ -4621,7 +4660,25 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
             else
             {
-                args[k] = shouldPassByPtr ? ArgAddress(b, argNode) : DerefBoxValue(b, v).value;
+                if (shouldPassByPtr)
+                {
+                    args[k] = ArgAddress(b, argNode);
+                }
+                else
+                {
+                    v = DerefBoxValue(b, v);
+
+                    /* Implicit scalar widening/narrowing to the declared param
+                       type (e.g. a float literal to a double param) - without
+                       this the arg crosses at its own width and the call gets
+                       a mismatched ABI (garbage). */
+                    if (fd && k < fd->params.count)
+                    {
+                        v = Coerce(b, v, Resolve(b, &((ParamDecl*)VecGet(&fd->params, k))->type));
+                    }
+
+                    args[k] = v.value;
+                }
             }
         }
     }

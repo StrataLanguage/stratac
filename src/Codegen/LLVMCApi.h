@@ -197,6 +197,7 @@ LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef des
 LLVMValueRef LLVMBuildSExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildZExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildFPExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+LLVMValueRef LLVMBuildFPTrunc(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 
 LLVMValueRef LLVMBuildInsertValue(LLVMBuilderRef b, LLVMValueRef agg, LLVMValueRef val, unsigned index, const char* name);
 
