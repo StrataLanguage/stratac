@@ -317,6 +317,28 @@ STRATA_TEST(vector_dot2)
             11);
 }
 
+STRATA_TEST(vector_float3_lane_assign)
+{
+    run_int("int entry() {\n"
+            "  float3 a = float3(1.0);\n"
+            "  a.x = 3.0;\n"
+            "  a.y = 4.0;\n"
+            "  return (int)reduce(a);\n" /* 8 */
+            "}\n",
+            8);
+}
+
+STRATA_TEST(vector_float2_lane_assign)
+{
+    run_int("int entry() {\n"
+            "  float2 a = float2(1.0, 2.0);\n"
+            "  a.x = 3.0;\n"
+            "  a.y = 4.0;\n"
+            "  return (int)reduce(a);\n" /* 7 */
+            "}\n",
+            7);
+}
+
 STRATA_TEST(vector_cross2_is_scalar_z)
 {
     /* cross(float2, float2) returns the scalar z: 1*4 - 2*3 = -2. */
