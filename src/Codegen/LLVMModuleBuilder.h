@@ -27,7 +27,7 @@ typedef struct
     bool isOptional; /* T?: same repr as ^T, but may be empty (sema-gated) */
     const TypeName* boxInner; /* inner T of ^T / T? (NULL for string) */
     bool isArray;
-    bool isString;              /* string / alias-of-string: fat {ptr, len} with a NUL at [len] */
+    bool isString;              /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
     bool isSimdVector;
     const TypeName* arrayInner; /* element type of T[] / T[N] */
     bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */
@@ -71,7 +71,7 @@ typedef struct Builder
     Vec m_loops;
     Vec m_owningLocals;
     Vec m_scopes;        /* active block scopes for `defer` (BlockScope*) */
-    LLVMTypeRef m_arrayType; /* cached {ptr, i64} fat struct for T[] */
+    LLVMTypeRef m_arrayType; /* cached {ptr, u32 len, u32 cap} fat struct for T[] */
     LLVMValueRef m_emptyNul; /* cached static "" (single NUL byte) for extern string puns */
     LLVMValueRef m_allocFn;
     LLVMTypeRef m_allocFnType;

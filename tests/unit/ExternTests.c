@@ -34,12 +34,13 @@
 
 /* ---- Host ABI types ---- */
 
-/* Layout-identical to the compiler's `strata__arr` (and the LLVM array
-   struct type): { data pointer, u64 length }. */
+/* Layout-identical to the compiler's array/string fat (and the LLVM array
+   struct type): { data pointer, u32 length, u32 capacity }. */
 typedef struct
 {
     void* data;
-    unsigned long long len;
+    uint32_t len;
+    uint32_t cap;
 } HostArr;
 
 /* Layout-identical to a strata `struct Foo { int v; };`. */
@@ -95,12 +96,14 @@ static int HostStrShout(char* s)
 }
 
 /* Returns an OWNED buffer through the `return string` out-param: the host
-   writes the {ptr, len} fat and the caller owns it. */
+   writes the {ptr, len, cap} fat and the caller owns it (cap counts the
+   NUL slot, matching every compiler-built string). */
 static void HostStrMake(HostArr* out)
 {
     char* buf = HostDup("fromhost");
     out->data = buf;
     out->len = 8;
+    out->cap = 9;
 }
 
 /* Params are by-value const char*; the result fat goes through the out slot. */
@@ -115,7 +118,8 @@ static void HostStrConcat(const char* a, const char* b, HostArr* out)
         memcpy(buf + na, b, nb + 1);
     }
     out->data = buf;
-    out->len = na + nb;
+    out->len = (uint32_t)(na + nb);
+    out->cap = (uint32_t)(na + nb + 1);
 }
 
 /* ---- Array hosts ---- */
@@ -133,7 +137,7 @@ static int HostArrSum(const int* a, int n)
 static void HostArrBump(HostArr* a)
 {
     int* p = (int*)a->data;
-    for (unsigned long long i = 0; i < a->len; i++)
+    for (uint32_t i = 0; i < a->len; i++)
     {
         p[i] += 1;
     }
@@ -148,7 +152,8 @@ static void HostArrFill(HostArr* a, int n)
         p[i] = i * 10;
     }
     a->data = p;
-    a->len = (unsigned long long)n;
+    a->len = (uint32_t)n;
+    a->cap = (uint32_t)n;
 }
 
 /* Returns an OWNED array buffer the caller will free. */
@@ -161,7 +166,8 @@ static HostArr HostArrMake(int n)
         p[i] = i * 10;
     }
     r.data = p;
-    r.len = (unsigned long long)n;
+    r.len = (uint32_t)n;
+    r.cap = (uint32_t)n;
     return r;
 }
 

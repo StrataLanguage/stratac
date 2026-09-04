@@ -140,11 +140,14 @@ main) are the internal entry points.
 ### Types
 
 - Scalars: `void bool int uint long ulong byte sbyte short ushort float double`
-- Strings: `string` — an owning fat `{ptr, len}` pair, the SAME representation
-  as `T[]` (codegen `TypeDesc.isString`; empty = canonical `{null, 0}`,
+- Strings: `string` — an owning fat `{ptr, len, cap}` triple (`u32` fields),
+  the SAME representation
+  as `T[]` (codegen `TypeDesc.isString`; empty = canonical `{null, 0, 0}`,
   never allocated). Every constructed buffer keeps a NUL at `[len]` — the
   invariant the extern pun relies on — so `.length` is O(1) (like arrays;
-  sema types it `ulong`) and `s[i]` is a bounds-checked `byte` read.
+  sema types it `uint`) and `s[i]` is a bounds-checked `byte` read.
+  `.length`/`.cap` are read-only `uint` views of the fat's fields (a
+  string's cap counts the NUL slot: `len + 1`).
   Move-on-assign (source fat zeroed), drop frees the buffer. `==`/`!=` is
   CONTENT equality (codegen emits a module-local `strata_str_eq(ptr, len, ptr,
   len)` that fast-outs on length mismatch, fast-ins on pointer identity —
@@ -156,7 +159,8 @@ main) are the internal entry points.
   C never sees NULL; `string?` passes the RAW pointer (NULL = empty); an
   extern string RETURN is BANNED (the caller would own a buffer the host
   may not have allocated — use a `return string` out-param: the host
-  writes the fat `{ptr, len}` and the caller owns it). Literals are borrowed constant fats; owning consumers heap-copy.
+  writes the fat `{ptr, len, cap}` and the caller owns it; the host C
+  mirror is `{const char* ptr; uint32_t len; uint32_t cap;}`). Literals are borrowed constant fats; owning consumers heap-copy.
   Globals: `string g;` is legal and defaults to the canonical empty fat —
   no init required, exactly like `T[]` globals (box-global rebind rules
   apply: it stays empty forever; only initialized globals hold values).
@@ -314,10 +318,20 @@ main) are the internal entry points.
   may be short and missing rows/elements zero), flat leaf lists for
   single-dimension fields (`S { .m = {1,2,3} }`); the wrong shape is a
   compile error. Indexing is bounds-checked against the compile-time
-  length, and `.length` is a compile-time constant. Whole fixed-array assignment
+  length, and `.length` is a compile-time constant typed `uint` (a fixed
+  array has NO `.cap` — inline storage has no capacity). Whole fixed-array assignment
   (`s.a = s.b`) is rejected — assign elements. No auto-conversion to the
   fat `T[]` pointer yet.
-- Dynamic arrays (`T[]`): `==`/`!=` is ELEMENT-WISE structural equality
+- Dynamic arrays (`T[]`): a fat `{ptr, u32 len, u32 cap}` (16 bytes; the
+  same triple `string` uses). `.length`/`.cap` are read-only `uint` views
+  (assignment/`++`/`--` are compile errors). Growth is amortized:
+  `array_push` writes in place while `len < cap` and otherwise reallocates
+  at DOUBLE the capacity (seeding 4 off cap 0), moving elements bitwise;
+  `array_resize` mutates in place within cap (zero-filling a grown tail,
+  dropping owning elements of a shrunken tail) and reallocates to
+  `max(n, cap*2, 4)` beyond it. Literals and `copy()` produce exact-size
+  buffers (`cap == len`); host-written fats should set `cap` to the real
+  element count. `==`/`!=` is ELEMENT-WISE structural equality
   (sema `TypeIsComparableAggregate` allows same-type aggregate comparisons;
   ordering `<` etc. is still a compile error). See "Equality system" below.
 
@@ -375,7 +389,7 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
 - `const ref int x` — by reference, read-only
 - Structs: always by reference; `const` makes them read-only
 - `int... rest` — typed rest param (only allowed last): trailing call args are
-  collected into a **stack-allocated** `{ptr, len}` and exposed as a real
+  collected into a **stack-allocated** `{ptr, len, cap}` and exposed as a real
   `int[]` (use `.length`, `[i]`, loops as usual). `ref`/`const` are allowed:
   `ref int... rest` borrows the stack array (mutable, non-owning, elements not
   moved); `const int... rest` is a read-only view. Default (no mod) is owned:
@@ -395,9 +409,9 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   one out-pointer (`void GetName(Name*)`), and the type comes back through the
   pointer in either direction (the sema "extern cannot return a struct by value"
   check is skipped for these). Works for any type: structs, scalars, `string`
-  (host writes the fat `{ptr, len}` — caller owns), `T[]`, `^T`/`T?` (host
+  (host writes the fat `{ptr, len, cap}` — caller owns), `T[]`, `^T`/`T?` (host
   writes the pointer; NULL = empty for `T?`), and handles.
-  Like structs, the `string` and `{data, len}` fat returns (`T[]`, `T[]?`,
+  Like structs, the `string` and `{data, len, cap}` fat returns (`T[]`, `T[]?`,
   `string?` — or an alias of them) CANNOT be extern returns. A `string`
   return would cross as a `char*` the caller owns and frees — an ownership
   footgun if the host returns a static/borrowed buffer — and the fat is a
@@ -465,10 +479,12 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
 - Array-decay at `extern`: a **by-value** (`mod == ModNone`),
   **non-owning-element** dynamic array param (`int[]`, `uint[]`, `handle[]`,
   `Foo[]`, …) decays to a pointer to its first element — the inner buffer
-  pointer of the fat `{ptr,len}` struct — matching a C `T*` parameter. The
+  pointer of the fat `{ptr, len, cap}` struct — matching a C `T*` parameter. The
   caller passes the element count separately as `arr.length`. `ref`/`const`
   array params and owning-element arrays (`^T[]`, `string[]`) keep crossing as
-  the fat `{ptr,len}` struct so the host can read `ptr`/`len` or replace the
+  the fat `{ptr, len, cap}` struct (host C mirror
+  `{const T* ptr; uint32_t len; uint32_t cap;}`) so the host can read
+  `ptr`/`len`/`cap` or replace the
   array. This is what lets Strata call C APIs that take `T*` + a length (e.g.
   LLVM-C's array-taking functions).
 

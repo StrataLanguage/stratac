@@ -1,10 +1,15 @@
-/* Arrays: a fat {ptr, u64} owning type. Length is queried via .length.
+/* Arrays: a fat {ptr, uint len, uint cap} owning type. Length/capacity are
+ * queried via .length / .cap.
  *
  * Inline array helpers (compiler intrinsics, polymorphic over the element
  * type at each call site):
- *   array_push(arr, value) -> ulong  grow by one element; returns new length
+ *   array_push(arr, value) -> uint   grow by one element; returns new length
  *   array_pop(arr)         -> T      remove and return the last element
  *   array_resize(arr, n)   -> void   grow (zero-init) or shrink (drop) to n
+ *
+ * Growth is amortized O(1): when out of room the buffer is reallocated at
+ * double the capacity (seeding 4 off an empty array); push otherwise writes
+ * in place.
  *
  * A struct holding any owning field (string/^T/T[]) is itself "owning" and
  * must be boxed - so an array of FooBars is written ^FooBar[]. Dropping a

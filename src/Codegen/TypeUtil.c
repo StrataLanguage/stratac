@@ -246,7 +246,7 @@ bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t)
         return false;
     }
 
-    /* `T[]?` compares like the array it wraps (the fat {ptr, len}; null ptr
+    /* `T[]?` compares like the array it wraps (the fat {ptr, len, cap}; null ptr
        with len 0 is the canonical empty). */
     if (t->isOptional && t->inner && TypeNameIsArray(t->inner))
     {

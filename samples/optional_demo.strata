@@ -173,7 +173,7 @@ int DemoArrays()
     array_push(rack, MakeWeapon(55, 4000));  // boxes a fresh literal
     array_push(rack, MakeWeapon(5, 90));
 
-    printf("rack holds %llu weapon(s)\n", rack.length);
+    printf("rack holds %u weapon(s)\n", rack.length);
 
     int total = 0;
 

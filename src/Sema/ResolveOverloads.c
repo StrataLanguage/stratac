@@ -851,6 +851,31 @@ static const TypeName* UnwrapBoxPtr(const TypeName* t)
     return t;
 }
 
+/* True when `member` on `base` is one of the fat pseudo-properties: dynamic
+   arrays and strings carry `.length` and `.cap`; fixed arrays expose only a
+   compile-time `.length`. All are read-only views of runtime state. */
+static bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* member)
+{
+    if (strcmp(member, "length") != 0 && strcmp(member, "cap") != 0)
+    {
+        return false;
+    }
+
+    base = UnwrapBoxPtr(base);
+
+    if (!base)
+    {
+        return false;
+    }
+
+    if (base->isArray && base->length >= 0)
+    {
+        return strcmp(member, "length") == 0;
+    }
+
+    return TypeNameIsDynamicArray(base) || TypeIsString(&r->m_registry, base->name);
+}
+
 // Fill `flat` with fixed-array init leaves in row-major order.
 static bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExpr* ai)
 {
@@ -2279,7 +2304,7 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
         return elem;
     }
 
-    return InternTypeName(r, isPush ? "ulong" : "void");
+    return InternTypeName(r, isPush ? "uint" : "void");
 }
 
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
@@ -4242,10 +4267,12 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return NULL;
         }
 
-        // `string.length` is the fat length, like arrays.
-        if (strcmp(m->member, "length") == 0 && TypeIsString(&r->m_registry, baseType->name))
+        /* Array/string pseudo-properties: `.length` and `.cap` read the fat's
+           u32 fields (uint). Fixed arrays expose a compile-time `.length`
+           only — they have no capacity (inline storage). */
+        if (IsFatPseudoProperty(r, baseType, m->member))
         {
-            return InternTypeName(r, "ulong");
+            return InternTypeName(r, "uint");
         }
 
         const StructType* structType = TypeRegistryFind(&r->m_registry, baseType->name);
@@ -4569,6 +4596,20 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
 
         CheckConstAssign(r, a->target, a->base.range);
+
+        /* `.length` / `.cap` on arrays and strings are read-only views of
+           the fat (fixed `.length` is a compile-time constant). */
+        if (a->target->kind == NodeMember)
+        {
+            MemberExpr* fatM = (MemberExpr*)a->target;
+
+            if (IsFatPseudoProperty(r, InferType(r, fatM->base_node, scope), fatM->member))
+            {
+                DiagErrorFmt(r->m_diag, a->base.range,
+                             "cannot assign to '.%s' (read-only; arrays grow via array_push/array_resize)", fatM->member);
+                return;
+            }
+        }
 
         /* Property write (`cam.FOV = v`): lowered to the setter extern call.
            Compound assignment is rejected, read-only properties error, and
@@ -4946,6 +4987,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             if (PropertyOnHandle(r, InferType(r, tm->base_node, scope), tm->member))
             {
                 DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s property '%s'; assign it explicitly instead",
+                             inc->isDec ? "decrement" : "increment", tm->member);
+                return;
+            }
+
+            if (IsFatPseudoProperty(r, InferType(r, tm->base_node, scope), tm->member))
+            {
+                DiagErrorFmt(r->m_diag, inc->base.range,
+                             "cannot %s '.%s' (read-only; arrays grow via array_push/array_resize)",
                              inc->isDec ? "decrement" : "increment", tm->member);
                 return;
             }

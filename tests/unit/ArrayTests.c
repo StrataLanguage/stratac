@@ -1832,4 +1832,215 @@ STRATA_TEST(string_vs_array_comparison_is_rejected)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+/* `.length` and `.cap` are uint views of the fat's u32 fields; array_push
+   returns the new length as uint too. */
+STRATA_TEST(array_length_and_cap_are_uint)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[] e = {1, 2, 3};\n"
+        "  uint n = e.length;            /* no cast: it IS a uint */\n"
+        "  ulong w = e.length;           /* widens freely */\n"
+        "  int[] f = {};\n"
+        "  uint p = array_push(f, 7);    /* push returns uint */\n"
+        "  return (int)(n + (uint)w) * 10 + (int)p + (int)f.length;   /* 62 */\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 62);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* Growth is amortized: push writes in place while len < cap and doubles
+   the capacity when out of room (seeding 4 off an empty array). */
+STRATA_TEST(array_cap_doubles_on_push)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[] a = {};\n"
+        "  int c1; int c4; int c8;\n"
+        "  array_push(a, 1); c1 = (int)a.cap;   /* 4: seeded */\n"
+        "  array_push(a, 2);\n"
+        "  array_push(a, 3);\n"
+        "  array_push(a, 4); c4 = (int)a.cap;   /* 4: still in place */\n"
+        "  array_push(a, 5); c8 = (int)a.cap;   /* 8: doubled */\n"
+        "  return c1 * 1000 + c4 * 100 + c8;    /* 4408 */\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 4408);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* A literal's buffer is exact: cap == length with no slack. */
+STRATA_TEST(array_literal_cap_is_exact)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[] b = {1, 2, 3};\n"
+        "  return (int)b.cap * 10 + (int)b.length;   /* 33 */\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 33);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* resize mutates in place while the requested size fits the capacity
+   (shrinking drops owning tails, re-growing zero-fills), and reallocates
+   to max(n, cap*2, 4) when it does not. */
+STRATA_TEST(array_resize_uses_capacity)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int shrink_and_regrow() {\n"
+        "  int[] c = {1, 2, 3};\n"
+        "  array_resize(c, 2);              /* shrink in place */\n"
+        "  int capAfter = (int)c.cap;       /* 3: unchanged */\n"
+        "  array_resize(c, 3);              /* grow within cap: zero tail */\n"
+        "  return capAfter * 10 + c[0] + c[1] + c[2];   /* 30 + 1 + 2 + 0 = 33 */\n"
+        "}\n"
+        "int grow_past_cap() {\n"
+        "  int[] d = {1};\n"
+        "  array_resize(d, 9);\n"
+        "  return (int)d.cap * 10 + (int)d.length;     /* cap = 9 -> 99 */\n"
+        "}\n"
+        "int entry() { return shrink_and_regrow() + grow_past_cap(); }\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 132);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* A string's cap counts the NUL slot: every constructed buffer keeps a
+   terminator at [len], so cap == len + 1 for literals and owned copies. */
+STRATA_TEST(string_cap_counts_nul_slot)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  string s = \"hello\";\n"
+        "  string t = s;                    /* moves: same buffer */\n"
+        "  return (int)t.cap * 10 + (int)t.length;   /* 65 */\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 65);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* `.length` / `.cap` are read-only views: assignment and ++/-- are
+   compile errors (they would corrupt the fat). */
+STRATA_TEST(array_length_and_cap_are_read_only)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  int[] a = {1, 2};\n"
+        "  a.length = 5;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "cannot assign to '.length'") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    DiagnosticEngine diag2; DiagnosticEngineInit(&diag2);
+    Arena arena2; arena_init(&arena2, 0);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  int[] a = {1, 2};\n"
+        "  a.cap++;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+
+    SourceManager sm2; SourceManagerInit(&sm2);
+    char* d2 = DiagFormat(&diag2, &sm2, 1, &arena2);
+    STRATA_CHECK(strstr(d2, "cannot increment '.cap'") != NULL);
+
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+}
 #endif

@@ -196,6 +196,7 @@ LLVMValueRef LLVMBuildFPToUI(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destT
 LLVMValueRef LLVMBuildIntCast2(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, LLVMBool isSigned, const char* name);
 LLVMValueRef LLVMBuildSExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildZExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
+LLVMValueRef LLVMBuildTrunc(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildFPExt(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMBuildFPTrunc(LLVMBuilderRef b, LLVMValueRef v, LLVMTypeRef destTy, const char* name);
 

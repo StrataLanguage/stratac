@@ -331,7 +331,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
     {
         if (t->length < 0)
         {
-            /* Dynamic array is fat pointer: {ptr, i64}. */
+            /* Dynamic array is fat pointer: {ptr, u32 len, u32 cap}. */
             out->size = 16;
             out->align = 8;
             return true;

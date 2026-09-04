@@ -1370,7 +1370,7 @@ STRATA_TEST(type_alias_string_global_no_init_defaults_empty)
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
     /* Like arrays: the global is the canonical empty {null, 0} fat. */
-    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i64 } zeroinitializer") != NULL);
+    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i32, i32 } zeroinitializer") != NULL);
 
     free((void*)res.output);
     DiagnosticEngineFree(&diag);
@@ -1442,11 +1442,11 @@ STRATA_TEST(string_global_owns_and_tears_down)
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
     /* String globals use the same owning representation as every other
-       owning global: a zeroed fat {ptr, len} slot, runtime init fills it,
-       teardown drops it. No static constant-pool pointer, no name-keyed
+       owning global: a zeroed fat {ptr, len, cap} slot, runtime init fills
+       it, teardown drops it. No static constant-pool pointer, no name-keyed
        skips. */
-    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i64 } zeroinitializer") != NULL);
-    STRATA_CHECK(strstr(res.output, "store { ptr, i64 } %sfat.l, ptr @g") != NULL);
+    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i32, i32 } zeroinitializer") != NULL);
+    STRATA_CHECK(strstr(res.output, "store { ptr, i32, i32 } %sfat.c, ptr @g") != NULL);
     STRATA_CHECK(strstr(res.output, "__strata_module_teardown") != NULL);
 
     free((void*)res.output);
