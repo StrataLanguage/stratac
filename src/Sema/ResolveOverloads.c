@@ -24,7 +24,7 @@ typedef struct
     StrMap m_indexDeps;
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
-    StrMap m_typeCache; /* canonical spelling -> interned TypeName tree */
+    StrMap m_typeCache;    /* canonical spelling -> interned TypeName tree */
     StrMap m_constGlobals; /* const scalar global name -> ConstGlobalVal* (manifest constants) */
     const TypeName* m_currentReturnType;
     Vec* m_liveLog; /* when set, MarkBoxLive records keys here (loop warmup) */
@@ -223,13 +223,13 @@ static bool SemaFoldConstIntArith(BinaryOp op, unsigned long long a, unsigned lo
     switch (op)
     {
     case BinAdd:
-        *out = (long long)((unsigned long long)0 + a + b);
+        *out = (long long)(a + b);
         return true;
     case BinSub:
-        *out = (long long)((unsigned long long)0 + a - b);
+        *out = (long long)(a - b);
         return true;
     case BinMul:
-        *out = (long long)((unsigned long long)0 + a * b);
+        *out = (long long)(a * b);
         return true;
     case BinDiv:
         if (b == 0)
@@ -262,7 +262,7 @@ static bool SemaFoldConstIntArith(BinaryOp op, unsigned long long a, unsigned lo
             return false;
         }
 
-        *out = (long long)((unsigned long long)0 + a << b);
+        *out = (long long)(a << b);
         return true;
     case BinShr:
         if (b >= 64)
@@ -270,7 +270,7 @@ static bool SemaFoldConstIntArith(BinaryOp op, unsigned long long a, unsigned lo
             return false;
         }
 
-        *out = (long long)a >> (long long)b;
+        *out = (long long)(a >> b);
         return true;
     default:
         return false;
@@ -699,8 +699,7 @@ static bool SemaResolveConstDims(Resolver* r, TypeName* t)
 
         if (t->length < 1)
         {
-            DiagErrorFmt(r->m_diag, t->range,
-                         "array dimension '%s' must be at least 1 (got %ld)",
+            DiagErrorFmt(r->m_diag, t->range, "array dimension '%s' must be at least 1 (got %ld)",
                          dimName ? dimName : "?", t->length);
             return false;
         }
@@ -714,8 +713,7 @@ static bool SemaResolveConstDims(Resolver* r, TypeName* t)
 
             if (close)
             {
-                t->name = arena_format(r->m_arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length,
-                                       close + 1);
+                t->name = arena_format(r->m_arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length, close + 1);
             }
         }
     }
@@ -1053,9 +1051,6 @@ static void ClearBoxSubtree(Resolver* r, const char* key)
     ClearSubtreeByPath(&r->m_movedBoxes, key);
 }
 
-/* Nullable (`T?`) narrowing facts - defined below, used by move tracking. */
-static void MarkPathNonEmpty(Resolver* r, const char* key);
-static void ClearNonEmptySubtree(Resolver* r, const char* key);
 static void ClearEmptySubtree(Resolver* r, const char* key);
 static void ClearNullableFacts(Resolver* r, const char* key);
 
@@ -1091,20 +1086,20 @@ static void RevalidateOwningField(Resolver* r, const char* key)
             continue;
         }
 
-        size_t plen = strlen(prefix);
+        size_t prefixLen = strlen(prefix);
         bool hasMovedDescendant = false;
 
         for (size_t i = 0; i < m->cap; i++)
         {
-            const char* k = m->keys[i];
+            const char* key = m->keys[i];
 
-            if (!k || m->values[i] == NULL)
+            if (!key || m->values[i] == NULL)
             {
                 continue;
             }
 
-            if ((m->values[i] == (void*)1 || m->values[i] == (void*)3) && strncmp(k, prefix, plen) == 0
-                && k[plen] == '.')
+            if ((m->values[i] == (void*)1 || m->values[i] == (void*)3) && strncmp(key, prefix, prefixLen) == 0
+                && key[prefixLen] == '.')
             {
                 hasMovedDescendant = true;
                 break;
@@ -1164,7 +1159,6 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
     }
 }
 
-// Non-empty (`T?`) facts: a path maps to 1 while proven non-empty.
 static bool IsPathNonEmpty(const Resolver* r, const char* key);
 static void MarkPathNonEmpty(Resolver* r, const char* key);
 static void ClearNonEmptySubtree(Resolver* r, const char* key);
@@ -1291,10 +1285,6 @@ static void ClearAllNonEmptyFacts(Resolver* r)
     }
 }
 
-/* ---- Definitely-EMPTY facts ---------------------------------------------
-   The else branch of `if (path?)` proves the path empty. Never leaves its block; dropped by any rebind. Sharper
-   diagnostics than a merely-unproven path. */
-
 static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
 {
     return key && StrMapGet(&r->m_emptyPaths, key) == (void*)1;
@@ -1377,7 +1367,6 @@ static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueTy
     DiagOptionalReadError(r, range, key, valueType->name);
 }
 
-// Operand of `path?`/`!path?`; sets *negated for the `!` form.
 static Node* CondNullTestOperand(Node* cond, bool* negated)
 {
     bool neg = false;
@@ -1452,12 +1441,11 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 
     ClearNullableFacts(r, name);
 
-    /* The source is now definitely empty: later `path?` tests resolve to the
-       "definitely empty" fact rather than an unproven read. */
+    /* The source is now definitely empty. later `path?` tests resolve to
+       "definitely empty" rather than an unproven read. */
     MarkPathEmpty(r, name);
 }
 
-/* True if `name` is a module global - untracked as a precise index spelling. */
 static bool IsModuleGlobalName(const Resolver* r, const char* name)
 {
     for (size_t i = 0; i < r->m_mod->globals.count; i++)
@@ -2010,8 +1998,6 @@ static bool ResolveSimdVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-//-- SIMD vector dot / cross intrinsics.
-
 /* Returns true if the module declares any user-defined function with `name`.
    `dot`/`cross` are only intrinsic fallbacks when no user overload exists, so a
    user's `dot(Vec3, Vec3)` is never hijacked by the SIMD resolver. */
@@ -2028,8 +2014,9 @@ static bool ModuleHasFunctionNamed(Resolver* r, const char* name)
     return false;
 }
 
-/* Validates a `dot(a, b)` / `cross(a, b)` intrinsic call and marks it pseudo.
-   Returns true if `c` was one (valid, or a misused dot/cross that was reported). */
+//-- SIMD vector intrinsics.
+
+/* Validates vector intrinsic calls (e.g. `dot` and `cross`) */
 static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
 {
     bool isDot = strcmp(c->callee, "dot") == 0;
@@ -2127,10 +2114,12 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* Result type of `drop(arg)` — always void (NULL TypeName). */
+/* Result type of `drop(arg)` - always void (NULL TypeName). */
 static const TypeName* DropBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    (void)r; (void)c; (void)scope;
+    (void)r;
+    (void)c;
+    (void)scope;
     return NULL;
 }
 
@@ -2882,8 +2871,7 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
 
         if (TypeRegistryIsImplTarget(&r->m_registry, p0->type.name)
-            && (strcmp(p0->type.name, handleName) == 0
-                || HandleExtendsFrom(&r->m_registry, handleName, p0->type.name)))
+            && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->m_registry, handleName, p0->type.name)))
         {
             VecPushFront(&c->args, c->calleeBase);
         }
@@ -2942,8 +2930,7 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
         if (NamedParamCount(match) != wantParams)
         {
-            DiagErrorFmt(diag, range,
-                         "property %s '%s' must take (%s self%s); found %zu parameter(s)",
+            DiagErrorFmt(diag, range, "property %s '%s' must take (%s self%s); found %zu parameter(s)",
                          isSetter ? "setter" : "getter", symbol, handleName, isSetter ? ", value" : "",
                          match->params.count);
             return;
@@ -3466,8 +3453,7 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
 
         if (!TypeRegistryIsImplTarget(registry, impl->handleName))
         {
-            DiagErrorFmt(diag, impl->base.range, "impl type '%s' is not a declared struct or handle",
-                         impl->handleName);
+            DiagErrorFmt(diag, impl->base.range, "impl type '%s' is not a declared struct or handle", impl->handleName);
             continue;
         }
 
@@ -3494,8 +3480,7 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
 
             if (TypeNameIsDynamicArray(&prop->returnType))
             {
-                DiagErrorFmt(diag, prop->range,
-                             "property '%s' may not have a dynamic array type ('%s')", prop->name,
+                DiagErrorFmt(diag, prop->range, "property '%s' may not have a dynamic array type ('%s')", prop->name,
                              prop->returnType.name);
                 continue;
             }
@@ -4201,6 +4186,52 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     }
 }
 
+/**
+ * @brief Checks to see if a vector is assignable to another vector type.
+ */
+static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType,
+                                   const char* resolvedTarget, const char* resolvedValue)
+{
+    // Ethan's SIMD vector rules:
+    //
+    // - Identical vector types are of course valid.
+    //
+    // - Differing vector sizes cannot be implicitly converted. That would need to be explicitly cast or be build as the
+    // destination vector type (e.g. `float2 y = value.xy`), to prevent unintended logic errors.
+    //
+    // - Source values that are numeric (but not vectors!) CAN be assigned to a vector type. They will be automatically
+    // broadcasted to a vector of the destination's type.
+
+    const int destLanes = IsSimdVector(resolvedTarget);
+    const int srcLanes = IsSimdVector(resolvedValue);
+
+    // Check identical vector types
+    if (destLanes && srcLanes && srcLanes == destLanes)
+    {
+        if (strcmp(targetType->name, valueType->name) != 0)
+        {
+            // They are differing types (e.g. int4 x = float4(1.0)).
+            return false;
+        }
+
+        return true;
+    }
+
+    // Check vector dest and scalar numeric src
+    if (destLanes && (srcLanes == 0 && IsNumeric(resolvedValue)))
+    {
+        // If the dest type is an alias, it is not assignable this way.
+        if (TypeRegistryIsTypeAlias(&r->m_registry, targetType->name))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {
     if (targetType && TypeNameIsOwning(targetType))
@@ -4230,28 +4261,13 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
         return true;
     }
 
-    // Vectors: same lane count assigns; scalars splat-broadcast.
     const char* resolvedTarget = TypeRegistryResolveAlias(&r->m_registry, targetType->name);
     const char* resolvedValue = TypeRegistryResolveAlias(&r->m_registry, valueType->name);
-    const int isTargetVector = IsSimdVector(resolvedTarget);
-    const int isValueVector = IsSimdVector(resolvedValue);
 
-    if (isTargetVector && isValueVector && isTargetVector == isValueVector)
+    // Check SIMD vectors for assignability
+    if (IsVectorAssignableType(r, targetType, valueType, resolvedTarget, resolvedValue))
     {
-        // Same-lane vectors need the same spelling (aliases don't mix).
-        if (strcmp(targetType->name, valueType->name) == 0)
-        {
-            return true;
-        }
-    }
-
-    if (isTargetVector && isValueVector == 0 && IsNumeric(resolvedValue))
-    {
-        /* vector = scalar splat — only when the target is a raw SIMD type, not an alias. */
-        if (!TypeRegistryIsTypeAlias(&r->m_registry, targetType->name))
-        {
-            return true;
-        }
+        return true;
     }
 
     const TypeName* valueInner = TypeNameBoxInner(valueType);
@@ -4342,8 +4358,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
 
             bool numericPair = IsNumeric(ln2) && IsNumeric(rn2);
-            bool vectorPair = SameResolvedType(r, ln2, rn2)
-                              && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
+            bool vectorPair
+                = SameResolvedType(r, ln2, rn2) && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
 
             if (lt && rt && !numericPair && !vectorPair)
             {
@@ -4476,8 +4492,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 if (vt && !IsAssignableType(r, &prop->returnType, vt))
                 {
-                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to property '%s' of type '%s'",
-                                 vt->name, tm->member, prop->returnType.name);
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to property '%s' of type '%s'", vt->name,
+                                 tm->member, prop->returnType.name);
                 }
 
                 return;
@@ -4622,8 +4638,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 // Rebinding drops the fact; `=` restores it for provably non-empty values.
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
-                bool valueProvesNonEmpty = !optionalTarget || (vt && !vt->isOptional)
-                                           || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
+                bool valueProvesNonEmpty
+                    = !optionalTarget || (vt && !vt->isOptional) || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
 
                 MarkBoxLive(r, targetName);
 
@@ -4797,9 +4813,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (PropertyOnHandle(r, InferType(r, tm->base_node, scope), tm->member))
             {
-                DiagErrorFmt(r->m_diag, inc->base.range,
-                             "cannot %s property '%s'; assign it explicitly instead", inc->isDec ? "decrement" : "increment",
-                             tm->member);
+                DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s property '%s'; assign it explicitly instead",
+                             inc->isDec ? "decrement" : "increment", tm->member);
                 return;
             }
         }
@@ -4859,7 +4874,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         const char* resolvedSrc = TypeRegistryResolveAlias(&r->m_registry, srcName);
         const char* resolvedDst = TypeRegistryResolveAlias(&r->m_registry, dstName);
 
-        bool scalarPair = src && (IsScalarLikeType(&r->m_registry, srcName) && IsScalarLikeType(&r->m_registry, dstName));
+        bool scalarPair
+            = src && (IsScalarLikeType(&r->m_registry, srcName) && IsScalarLikeType(&r->m_registry, dstName));
         bool handlePair = src && IsHandleType(&r->m_registry, srcName) && IsHandleType(&r->m_registry, dstName)
                           && (HandleExtendsFrom(&r->m_registry, dstName, srcName)
                               || HandleExtendsFrom(&r->m_registry, srcName, dstName));
@@ -4877,9 +4893,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* Alias <-> underlying (or alias <-> alias) of the SAME resolved type:
            the explicit escape hatch for strong typedefs (`(Name)s`, `(string)n`).
            Distinct aliases still never convert implicitly. */
-        bool aliasPair = src && SameResolvedType(r, srcName, dstName)
-                         && (TypeRegistryIsTypeAlias(&r->m_registry, srcName)
-                             || TypeRegistryIsTypeAlias(&r->m_registry, dstName));
+        bool aliasPair
+            = src && SameResolvedType(r, srcName, dstName)
+              && (TypeRegistryIsTypeAlias(&r->m_registry, srcName) || TypeRegistryIsTypeAlias(&r->m_registry, dstName));
 
         if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair)
         {
@@ -5493,8 +5509,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             {
                 t = (t->isBox || t->isOptional) ? t->inner : t->elem;
             }
-            if (t && t->name && strcmp(t->name, "string") != 0 && !IsScalarTypeName(t->name)
-                && !IsSimdVector(t->name) && !TypeRegistryIsUserType(&r->m_registry, t->name))
+            if (t && t->name && strcmp(t->name, "string") != 0 && !IsScalarTypeName(t->name) && !IsSimdVector(t->name)
+                && !TypeRegistryIsUserType(&r->m_registry, t->name))
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "unknown type '%s'", t->name);
                 return;
@@ -5569,8 +5585,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             // A `T?` init proves non-empty only when itself proven.
             if (vd->type.isOptional)
             {
-                initProvesNonEmpty = (initType && !initType->isOptional)
-                                     || (movedInitKey && IsPathNonEmpty(r, movedInitKey));
+                initProvesNonEmpty
+                    = (initType && !initType->isOptional) || (movedInitKey && IsPathNonEmpty(r, movedInitKey));
             }
 
             if (movedInitKey)
@@ -6406,8 +6422,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
            pointer) is exempt: its type comes back through the parameter,
            never in the return register. */
         if (functionDecl->isExtern && !functionDecl->hasReturnParam
-            && IsDefinedStruct(&r.m_registry,
-                               TypeRegistryResolveAlias(&r.m_registry, functionDecl->returnType.name)))
+            && IsDefinedStruct(&r.m_registry, TypeRegistryResolveAlias(&r.m_registry, functionDecl->returnType.name)))
         {
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }

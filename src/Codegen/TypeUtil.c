@@ -120,7 +120,7 @@ bool IsNumeric(const char* t)
            || strcmp(t, "float") == 0 || strcmp(t, "double") == 0 || strcmp(t, "bool") == 0;
 }
 
-int GetSimdVectorLanes(const char* t)
+int IsSimdVector(const char* t)
 {
     if (strcmp(t, "float2") == 0)
     {
@@ -136,11 +136,6 @@ int GetSimdVectorLanes(const char* t)
     }
 
     return 0;
-}
-
-int IsSimdVector(const char* t)
-{
-    return GetSimdVectorLanes(t);
 }
 
 bool IsScalarTypeName(const char* t)
