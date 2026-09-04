@@ -2,6 +2,10 @@
 #include "Test.h"
 #include "strata/strata.h"
 
+#if STRATA_TEST_HAS_LLVM
+#include "Codegen/LLVMModuleBuilder.h"
+#endif
+
 #include <stdio.h>
 
 static StrataJit* CompileVec(const char* src, const char** err)
@@ -367,4 +371,111 @@ STRATA_TEST(vector_dot_cross_lane_mismatch_is_error)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+STRATA_TEST(vector_lane_writes_on_struct_field)
+{
+    /* Single-lane writes through a struct field: plain, compound, ++/--.
+       (The exact repro from the GL demo issue: `s.pos.x = s.pos.x + ...`.) */
+    run_int(
+        "struct Sprite { float2 pos; float2 vel; };\n"
+        "void update(ref Sprite s, float dt)\n"
+        "{\n"
+        "  s.pos.x = s.pos.x + s.vel.x * dt;\n"
+        "  s.pos.y += 1.0;\n"
+        "  s.vel.y -= 0.5;\n"
+        "  s.pos.x++;\n"
+        "  --s.pos.y;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  Sprite s = { .pos = float2(1.0, 2.0), .vel = float2(3.0, 4.0) };\n"
+        "  update(s, 2.0);\n"
+        "  return (int)(s.pos.x * 100.0 + s.pos.y * 10.0 + s.vel.y * 10.0);\n"
+        "}\n",
+        855);
+}
+
+STRATA_TEST(vector_lane_writes_on_local)
+{
+    run_int(
+        "int entry() {\n"
+        "  float3 v = float3(1.0, 2.0, 3.0);\n"
+        "  v.x = 10.0;\n"
+        "  v.z += 30.0;\n"
+        "  v.y /= 2.0;\n"
+        "  v.x *= 2.0;\n"
+        "  v.z -= 3.0;\n"
+        "  v.y++;\n"
+        "  return (int)(v.x + v.y + v.z);\n"    /* 20 + 2 + 30 = 52 */
+        "}\n",
+        52);
+}
+
+STRATA_TEST(vector_lane_writes_on_boxed_vector)
+{
+    run_int(
+        "int entry() {\n"
+        "  ^float3 v = float3(1.0, 2.0, 3.0);\n"
+        "  v.x = 10.0;\n"
+        "  v.z += 30.0;\n"
+        "  float3 w = v;\n"
+        "  return (int)(w.x + w.y + w.z);\n"    /* 45 */
+        "}\n",
+        45);
+}
+
+#if STRATA_TEST_HAS_LLVM
+STRATA_TEST(vector_swizzle_write_is_error)
+{
+    /* Multi-component swizzle writes are rejected with a clear message. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Sprite { float2 pos; };\n"
+        "int entry() {\n"
+        "  Sprite s;\n"
+        "  s.pos.xy = s.pos;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, false, NULL);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "swizzle assignment is not supported") != NULL);
+
+    BuiltModuleDispose(&llvmModule);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(vector_lane_out_of_range_write_is_error)
+{
+    /* `v.z` on a float2 has no lane 2. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "int entry() {\n"
+        "  float2 v = float2(1.0, 2.0);\n"
+        "  v.z = 3.0;\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, false, NULL);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "lane 'z' is out of range") != NULL);
+
+    BuiltModuleDispose(&llvmModule);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+#endif
 

@@ -6412,6 +6412,31 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
 
+        /* The {data, len} fat (`T[]`, `T[]?`, `string?` — and aliases of
+           them) has no safe extern ABI either: C compilers disagree on how
+           to return a 16-byte aggregate (hidden sret pointer on MS x64 vs
+           register return elsewhere), so a direct return reads garbage at
+           the call site. `string` is fine (it crosses as a plain char* the
+           caller owns); the fat must come back through a `return` out-param
+           the host fills in, exactly like a struct. */
+        if (functionDecl->isExtern && !functionDecl->hasReturnParam)
+        {
+            const char* leaf = TypeRegistryResolveAlias(&r.m_registry, functionDecl->returnType.name);
+            TypeName parsed = TypeNameParse(r.m_arena, leaf);
+
+            const TypeName* unwrapped = parsed.isOptional ? parsed.inner : &parsed;
+            bool isFat = (unwrapped && TypeNameIsDynamicArray(unwrapped))
+                         || (parsed.isOptional && TypeIsString(&r.m_registry, unwrapped ? unwrapped->name : NULL));
+
+            if (isFat)
+            {
+                DiagErrorFmt(diag, functionDecl->base.range,
+                             "extern function cannot return '%s' by value; the {data, len} fat has no safe C "
+                             "return ABI - declare a `return` out-param instead: 'extern void %s(return %s out)'",
+                             functionDecl->returnType.name, functionDecl->name, functionDecl->returnType.name);
+            }
+        }
+
         /* A `return` param (out pointer) is exempt: its type comes back
            through the pointer, which needs no size - exactly like a `ref Foo`
            parameter. The CALLER still needs a defined type to allocate the

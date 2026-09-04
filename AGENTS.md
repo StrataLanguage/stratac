@@ -393,6 +393,12 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   check is skipped for these). Works for any type: structs, scalars, `string`
   (host writes the fat `{ptr, len}` — caller owns), `T[]`, `^T`/`T?` (host
   writes the pointer; NULL = empty for `T?`), and handles.
+  Like structs, the `{data, len}` fat (`T[]`, `T[]?`, `string?` — or an alias
+  of them) CANNOT be an extern return: C compilers disagree on the ABI for a
+  16-byte aggregate (hidden sret pointer on MS x64 vs register return
+  elsewhere), so a direct return would read garbage at the call site. Sema
+  rejects it with a hint to use a `return` out-param. Plain `string` returns
+  are unaffected (they cross as a `char*` the caller owns and frees).
   The return type may be a **forward-declared** struct at the declaration
   (`struct Name;` + `extern void GetName(return Name n);` compiles standalone
   — the ABI is just a `Name*`, like any `ref` param) — but every **call**

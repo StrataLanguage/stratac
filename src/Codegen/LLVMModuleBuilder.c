@@ -46,8 +46,11 @@ typedef struct
 typedef struct
 {
     bool valid;
-    LLVMValueRef ptr;
-    TypeDesc typeDesc;
+    bool vectorLane;     /* single-lane vector lvalue: ptr addresses the vector value */
+    LLVMValueRef ptr;    /* memory holding the vector (field slot, array elem, box cell) */
+    TypeDesc typeDesc;   /* lane scalar type when vectorLane (float) */
+    LLVMTypeRef vectorType; /* LLVM vector type when vectorLane */
+    unsigned lane;       /* lane index 0..3 when vectorLane */
 } LValue;
 
 /* A slot dropped (freed) on scope exit; carries its type so the drop can
@@ -2094,7 +2097,7 @@ static void NullMovedSource(Builder* b, Node* n)
 
     LValue src = EmitLValueForNullStore(b, moved);
 
-    if (src.valid)
+    if (src.valid && !src.vectorLane)
     {
         if (src.typeDesc.isArray)
         {
@@ -2145,6 +2148,55 @@ static LLVMValueRef EmitBoxCell(Builder* b, const TypeName* innerTn, Value src, 
     LLVMValueRef inner = EmitOwnedValue(b, src, srcNode, innerTn);
     LLVMBuildStore(b->m_builder, inner, heap);
     return heap;
+}
+
+/* A single-lane vector member lvalue (`v.x`): not memory-addressable — the
+   vector value lives at `ptr` (a slot, array element, or box cell) and every
+   write is load-vector / insert-lane / store-vector. Multi-component swizzle
+   members return invalid: reads still work through the destructure path, but
+   writes need a whole-vector rebuild. */
+static LValue MakeVectorLaneLValue(Builder* b, LValue none, const MemberExpr* m, LLVMValueRef vecAddr,
+                                   TypeDesc vectorTd)
+{
+    const char* member = m->member;
+    unsigned lane;
+
+    if (strcmp(member, "x") == 0)
+    {
+        lane = 0;
+    }
+    else if (strcmp(member, "y") == 0)
+    {
+        lane = 1;
+    }
+    else if (strcmp(member, "z") == 0)
+    {
+        lane = 2;
+    }
+    else if (strcmp(member, "w") == 0)
+    {
+        lane = 3;
+    }
+    else
+    {
+        return none;
+    }
+
+    /* float2's LLVM vector has 2 lanes (float3/float4 share a 4-lane
+       vector); an out-of-range lane would emit an invalid insert. */
+    if (lane >= LLVMGetVectorSize(vectorTd.type))
+    {
+        return none;
+    }
+
+    none.valid = true;
+    none.vectorLane = true;
+    none.ptr = vecAddr;
+    none.typeDesc = TypeDescMake(LLVMFloatTypeInContext(b->m_ctx), TD_FLOAT, NULL);
+    none.vectorType = vectorTd.type;
+    none.lane = lane;
+
+    return none;
 }
 
 static LValue EmitLValue(Builder* b, Node* n)
@@ -2212,6 +2264,16 @@ static LValue EmitLValue(Builder* b, Node* n)
             {
                 return none;
             }
+
+            /* A boxed SIMD vector: the cell holds the vector value itself, so
+               a lane lvalue points at the cell (load vector, insert, store
+               back through it). */
+            if (IsSimdVector(base.typeDesc.boxInner->name))
+            {
+                return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box"),
+                                            Resolve(b, base.typeDesc.boxInner));
+            }
+
             structPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box");
             structName = base.typeDesc.boxInner->name;
             structTy = Resolve(b, base.typeDesc.boxInner).type;
@@ -2221,6 +2283,10 @@ static LValue EmitLValue(Builder* b, Node* n)
             structPtr = base.ptr;
             structName = base.typeDesc.structTypeName;
             structTy = base.typeDesc.type;
+        }
+        else if (base.typeDesc.isSimdVector)
+        {
+            return MakeVectorLaneLValue(b, none, m, base.ptr, base.typeDesc);
         }
         else
         {
@@ -2361,6 +2427,15 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
     if (lvalue.valid)
     {
+        if (lvalue.vectorLane)
+        {
+            /* Single-lane vector read: load the vector, extract the lane. */
+            LLVMValueRef vec = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "mvec");
+            LLVMValueRef v = LLVMBuildExtractElement(b->m_builder, vec,
+                                                     LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
+            return ValueMake(v, lvalue.typeDesc);
+        }
+
         LLVMValueRef v = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "m");
 
         return ValueMake(v, lvalue.typeDesc);
@@ -2930,6 +3005,47 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (lvalue.valid)
         {
+            /* SIMD lane write: `v.x = f` (or `+=` etc.) — load the vector,
+               insert the lane, store it back through the same slot/cell. */
+            if (lvalue.vectorLane)
+            {
+                LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "lanev");
+                Value result = Coerce(b, rhs, lvalue.typeDesc);
+
+                if (n->op != AssignSet)
+                {
+                    LLVMValueRef laneVal = LLVMBuildExtractElement(b->m_builder, cur,
+                                                                   LLVMConstInt(I32Ty(b), lvalue.lane, 0), "lanecur");
+
+                    switch (n->op)
+                    {
+                    case AssignAdd:
+                        result = ValueMake(LLVMBuildFAdd(b->m_builder, laneVal, result.value, "add"), lvalue.typeDesc);
+                        break;
+                    case AssignSub:
+                        result = ValueMake(LLVMBuildFSub(b->m_builder, laneVal, result.value, "sub"), lvalue.typeDesc);
+                        break;
+                    case AssignMul:
+                        result = ValueMake(LLVMBuildFMul(b->m_builder, laneVal, result.value, "mul"), lvalue.typeDesc);
+                        break;
+                    case AssignDiv:
+                        result = ValueMake(LLVMBuildFDiv(b->m_builder, laneVal, result.value, "div"), lvalue.typeDesc);
+                        break;
+                    case AssignMod:
+                        result = ValueMake(LLVMBuildFRem(b->m_builder, laneVal, result.value, "mod"), lvalue.typeDesc);
+                        break;
+                    default:
+                        break;
+                    }
+                }
+
+                LLVMValueRef newVec = LLVMBuildInsertElement(b->m_builder, cur, result.value,
+                                                            LLVMConstInt(I32Ty(b), lvalue.lane, 0), "laneins");
+                LLVMBuildStore(b->m_builder, newVec, lvalue.ptr);
+
+                return result;
+            }
+
             /* Whole-array / string rebind: free the old buffer, take the new
                {ptr,len} struct, and null a moved source. A string literal RHS
                is a borrowed constant, so it is heap-copied first. */
@@ -3187,6 +3303,40 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
         }
     }
 
+    if (n->target->kind == NodeMember)
+    {
+        /* A vector member write that made it here is either a multi-component
+           swizzle (`v.xy = w`) or an out-of-range single lane (`v.z` on a
+           float2) — single lanes in range are handled above. */
+        MemberExpr* mt = (MemberExpr*)n->target;
+        LValue baseLv = EmitLValue(b, mt->base_node);
+
+        if (baseLv.valid && (baseLv.typeDesc.isSimdVector
+                             || (baseLv.typeDesc.isBox && baseLv.typeDesc.boxInner
+                                 && IsSimdVector(baseLv.typeDesc.boxInner->name))))
+        {
+            if (b->m_diag)
+            {
+                if (mt->member[0] && mt->member[1] == '\0')
+                {
+                    DiagErrorFmt(b->m_diag, n->base.range,
+                                 "lane '%s' is out of range for a vector with %d lane(s)",
+                                 mt->member,
+                                 baseLv.typeDesc.isSimdVector ? (int)LLVMGetVectorSize(baseLv.typeDesc.type)
+                                                              : (int)LLVMGetVectorSize(
+                                                                  Resolve(b, baseLv.typeDesc.boxInner).type));
+                }
+                else
+                {
+                    DiagError(b->m_diag, n->base.range,
+                              "swizzle assignment is not supported; assign lanes individually or rebuild the whole vector");
+                }
+            }
+
+            return rhs;
+        }
+    }
+
     if (b->m_diag)
     {
         DiagError(b->m_diag, n->base.range, "assignment to unsupported lvalue");
@@ -3199,7 +3349,7 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
 {
     LValue lvalue = EmitLValue(b, arg);
 
-    if (lvalue.valid)
+    if (lvalue.valid && !lvalue.vectorLane)
     {
         return lvalue.ptr;
     }
@@ -5312,6 +5462,22 @@ Value EmitExpr(Builder* b, Node* n)
             }
 
             return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+        }
+
+        if (lv.vectorLane)
+        {
+            /* SIMD lane ++/--: load the vector, adjust the lane, store back. */
+            LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lv.vectorType, lv.ptr, "lanev");
+            LLVMValueRef laneVal = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lv.lane, 0),
+                                                           "lanecur");
+            LLVMValueRef one = LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 1.0);
+            LLVMValueRef newVal = inc->isDec ? LLVMBuildFSub(b->m_builder, laneVal, one, "dec")
+                                             : LLVMBuildFAdd(b->m_builder, laneVal, one, "inc");
+            LLVMValueRef newVec = LLVMBuildInsertElement(b->m_builder, cur, newVal,
+                                                         LLVMConstInt(I32Ty(b), lv.lane, 0), "laneins");
+            LLVMBuildStore(b->m_builder, newVec, lv.ptr);
+
+            return ValueMake(inc->isPrefix ? newVal : laneVal, lv.typeDesc);
         }
 
         LLVMValueRef valPtr = lv.ptr;

@@ -13,9 +13,9 @@
  *   - extern array params cross as a pointer to the {data, len} fat struct;
  *     a `ref int[]` host can rewrite the whole array (out-param).
  *   - extern array returns are OWNED: the caller frees `.data`, so hosts
- *     must malloc the buffer. Returning the 16-byte struct across the host
- *     boundary is ABI-host-dependent (sret vs register return), so this is
- *     not exercised here.
+ *     must malloc the buffer. Returning the 16-byte {data, len} fat across
+ *     the host boundary is ABI-host-dependent (sret vs register return), so
+ *     externs must use a `return` out-param instead (see below).
  *   - extern ^T / T? params cross as ONE pointer by value (the box cell;
  *     NULL = empty for T?). ^T returns are OWNED.
  *   - extern owned params never move the caller's value (borrowed).
@@ -669,10 +669,33 @@ STRATA_TEST(extern_hat_fixed_and_dyn_arrays_together)
 
 /* ================= Array returns ================= */
 
-/* NOTE: an extern `int[]` RETURN is not exercised here. Returning the
-   16-byte {data, len} struct across the host boundary is ABI-host-dependent
-   (hidden sret pointer vs register return), and the only backend that
-   matched this build's MinGW host was TinyCC, which has been removed. */
+STRATA_TEST(extern_fat_return_is_rejected)
+{
+    /* Externs cannot return the 16-byte {data, len} fat: the C struct-return
+       ABI for it is host-dependent (hidden sret pointer on MS x64 vs register
+       return elsewhere), so the call site would read garbage. The `return`
+       out-param is the supported crossing. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "extern byte[] bad_bytes();\n"
+        "extern byte[]? bad_maybe_bytes();\n"
+        "extern string? bad_maybe_str();\n"
+        "extern void good_bytes(return byte[] out);\n"
+        "extern void good_maybe_str(return string? out);\n"
+        "int entry() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(strstr(d, "extern function cannot return") != NULL);
+    STRATA_CHECK(strstr(d, "byte[]") != NULL);
+    STRATA_CHECK(strstr(d, "return") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
 
 /* ================= Box params ================= */
 
