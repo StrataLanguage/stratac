@@ -560,17 +560,17 @@ const char* GenerateId(char* buffer, int size)
 
 char* ReplaceExt(const char* path, const char* ext)
 {
-    char* slash = strrchr(path, '/');
-    char* bslash = strrchr(path, '\\');
-    char* lastSep = bslash > slash ? bslash : slash;
+    const char* slash = strrchr(path, '/');
+    const char* bslash = strrchr(path, '\\');
+    const char* lastSep = bslash > slash ? bslash : slash;
 
-    char* dot = strrchr(path, '.');
+    const char* dot = strrchr(path, '.');
 
     if (dot && (!lastSep || dot > lastSep))
     {
-        size_t baseLen = dot - path;
+        size_t baseLen = (size_t)(dot - path);
         size_t extLen = strlen(ext);
-        char* result = malloc(baseLen + extLen + 1);
+        char* result = (char*)malloc(baseLen + extLen + 1);
         memcpy(result, path, baseLen);
         memcpy(result + baseLen, ext, extLen + 1);
 
@@ -579,14 +579,14 @@ char* ReplaceExt(const char* path, const char* ext)
 
     size_t len = strlen(path);
     size_t extLen = strlen(ext);
-    char* result = malloc(len + extLen + 1);
+    char* result = (char*)malloc(len + extLen + 1);
     memcpy(result, path, len);
     memcpy(result + len, ext, extLen + 1);
 
     return result;
 }
 
-//-- Files
+// -- Files
 
 char* ReadWholeFile(const char* path, size_t* outLen)
 {

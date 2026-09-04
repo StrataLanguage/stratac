@@ -13,9 +13,7 @@ static size_t GrowCap(size_t cap)
     return cap ? cap * 2 : 8;
 }
 
-/* Resolves `path` to a canonical, absolute spelling so that the same file
-   reached via different relative paths / extensions / "." or ".." segments is
-   recognized as already visited and not loaded twice. */
+// Canonical absolute spelling, so repeat imports dedup to one load.
 static const char* CanonicalizePath(Arena* arena, const char* path)
 {
 #if defined(_WIN32)

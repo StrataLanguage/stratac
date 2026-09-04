@@ -12,36 +12,35 @@ typedef struct {
     bool isSimdVector;
     int bits;
 
-    /// Lanes for a SIMD vector (2/4/8).
+    // SIMD lane count (2/4), 0 when not a vector.
     int lanes;
 
     char elemIr[16];
     char ir[32];
 } MappedType;
 
-/* Forward declaration — full definition lives in TypeRegistry.h. */
+/* Full definition lives in TypeRegistry.h. */
 typedef struct TypeRegistry TypeRegistry;
+typedef struct Arena Arena;
 
 MappedType MapType(const TypeName* t);
 
-/* Resolve a type alias name through the registry, returning the final
-   non-alias name. If `name` is not a type alias, returns `name` unchanged.
-   Requires the registry; if reg is NULL the name is returned as-is. */
-const char* ResolveAliasName(const TypeRegistry* reg, const char* name);
-
 bool IsNumeric(const char* t);
 
-/**
- * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
- */
+// 0 when not a vector, else the lane count.
 int IsSimdVector(const char* t);
 
-// Returns the number of vector components held by the type.
+// Same as IsSimdVector; kept for call-site readability.
 int GetSimdVectorLanes(const char* t);
 
 bool IsScalarTypeName(const char* t);
 bool IsFloatType(const char* t);
 
-/* True if `t` is a scalar type or a type alias whose underlying type is scalar.
-   Requires the registry to resolve aliases; if reg is NULL, only built-in scalars match. */
+// Alias-aware scalar check; NULL registry means builtins only.
 bool IsScalarLikeType(const TypeRegistry* reg, const char* t);
+
+// True when the (alias-resolved) name is "string".
+bool TypeIsString(const TypeRegistry* reg, const char* name);
+
+// True when the type owns (box/array/string, or alias of one).
+bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);

@@ -66,6 +66,9 @@ void   scratch_reset(void);
 
 char* DupString(const char* s);
 
+// New path = old path with its extension swapped for ext (malloc'd).
+char* ReplaceExt(const char* path, const char* ext);
+
 // -- Str
 
 typedef struct {
@@ -186,7 +189,6 @@ const char* GenerateId(char* buffer, int size);
 
 // -- Files
 
-/* Returns a malloc'd buffer holding the file contents (NUL-terminated).
-   Caller must free() it. Named ReadWholeFile to avoid the WinAPI ReadFile. */
+// File contents as a malloc'd NUL-terminated buffer; caller frees.
 char* ReadWholeFile(const char* path, size_t* outLen);
 size_t DirLen(const char* path);

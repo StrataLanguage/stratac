@@ -17,12 +17,10 @@ typedef struct
     TypeDesc returnType;
     bool* paramByPtr;
     size_t paramByPtrCount;
-    bool externStringReturn; /* extern fn returning string: ABI is char*, caller wraps to fat */
+    bool externStringReturn; // Extern string return: C ABI is char*.
 } FuncInfo;
 
-/* A folded compile-time constant initializer value. Kept as a tagged C value
- * (not an LLVMValueRef) so conversions happen host-side; the shipped LLVM-C
- * build does not export the LLVMConst*Cast family. */
+// Folded constant init (host-side values; LLVM-C lacks Const*Cast).
 typedef enum
 {
     CIK_INT,
@@ -33,12 +31,11 @@ typedef enum
 typedef struct
 {
     ConstInitKind kind;
-    unsigned long long i; /* CIK_INT / CIK_BOOL (0 or 1) */
-    double f;             /* CIK_FLOAT */
+    unsigned long long i; // Int/bool payload.
+    double f; // Float payload.
 } ConstInitVal;
 
-/* A manifest constant: a `const` scalar global with a compile-time constant
-   initializer. No LLVM global is emitted — uses inline the value. */
+// A `const` scalar global: no LLVM global emitted, uses inline the value.
 typedef struct
 {
     ConstInitVal civ;
@@ -749,32 +746,10 @@ static Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* 
     return result;
 }
 
-/* Owning-ness with alias resolution — codegen counterpart of sema's
-   AliasIsOwning: a `struct Name = string;` binding moves and drops exactly
-   like its underlying type. Plain leaves are non-owning; a leaf alias is
-   owning when its fully resolved underlying type is. */
+// Owning when the type itself owns, or its alias resolves to one.
 static bool BuilderIsOwningType(Builder* b, const TypeName* t)
 {
-    if (!t || !t->name || TypeNameIsOwning(t))
-    {
-        return TypeNameIsOwning(t);
-    }
-
-    const char* leaf = TypeRegistryResolveAlias(&b->m_registry, t->name);
-
-    if (!leaf || strcmp(leaf, t->name) == 0)
-    {
-        return false;
-    }
-
-    if (strcmp(leaf, "string") == 0)
-    {
-        return true;
-    }
-
-    TypeName parsed = TypeNameParse(b->m_arena, leaf);
-
-    return TypeNameIsOwning(&parsed);
+    return TypeIsOwningResolved(&b->m_registry, b->m_arena, t);
 }
 
 static TypeDesc Resolve(Builder* b, const TypeName* t)
@@ -847,9 +822,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 
     if (t->isArray)
     {
-        /* T[]: a fat {ptr, u64} struct (data pointer + length). The slot is
-            always addressable (alloca / by-ref), so Resolve yields the struct
-            type with the element type tagged on the side. */
+        // T[] is a fat {ptr, len} struct.
         TypeDesc td = {0};
         td.type = ArrayStructType(b);
         td.isArray = true;
@@ -858,10 +831,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return td;
     }
 
-    /* T[]?: an optional dynamic array. It shares the fat {ptr, u64}
-        representation with T[] (empty = the canonical {null, 0}); the
-        optional flag only drives sema-level narrowing, so the unwrap
-        T[]? -> T[] is representation-identity. */
+    // T[]? shares the T[] representation; the flag is sema-only.
     if (t->isOptional && t->inner && t->inner->isArray && t->inner->length < 0)
     {
         TypeDesc td = Resolve(b, t->inner);
@@ -869,21 +839,16 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return td;
     }
 
-    /* `string?` / `AliasOfString?`: same fat representation as string
-       itself; empty = the canonical {null, 0}. */
-    if (t->isOptional && t->inner
-        && strcmp(TypeRegistryResolveAlias(&b->m_registry, t->inner->name), "string") == 0)
+    // Optional string: same fat as string, empty is {null, 0}.
+    if (t->isOptional && t->inner && TypeIsString(&b->m_registry, t->inner->name))
     {
         TypeDesc td = StringFatDesc(b);
         td.isOptional = true;
         return td;
     }
 
-    /* `string` / alias-of-string: a fat {ptr, len} pair, exactly like T[].
-       Empty = {null, 0} (nothing allocated); every constructed buffer
-       carries a NUL terminator at [len], which the extern-boundary pun
-       (fat -> char*) relies on. */
-    if (strcmp(TypeRegistryResolveAlias(&b->m_registry, t->name), "string") == 0)
+    // String (or alias): fat {ptr, len}, empty is {null, 0}.
+    if (TypeIsString(&b->m_registry, t->name))
     {
         return StringFatDesc(b);
     }
@@ -894,9 +859,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         const TypeName* boxInner = TypeNameBoxInner(t);
 
         td.isBox = true;
-        /* `T?` shares the box representation; the flag only selects the
-           whole-slot rebind path for assignments (contents may not exist). */
-        td.isOptional = t->isOptional;
+        td.isOptional = t->isOptional; // `T?` rebinds whole slots on assign.
 
         if (boxInner)
         {
@@ -924,8 +887,7 @@ static Value ZeroInt(Builder* b)
     return ValueMake(LLVMConstNull(I32Ty(b)), TypeDescMake(I32Ty(b), 0, NULL));
 }
 
-/* Reads a box value's inner value through the pointer, leaving the box
-   itself alone (not moved, not freed). */
+// Read through a box pointer without moving or freeing it.
 static Value DerefBoxValue(Builder* b, Value value)
 {
     if (!value.typeDesc.isBox)
@@ -1861,24 +1823,18 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         bool byPtr = p->mod != ModNone || structVal || BuilderIsOwningType(b, &p->type);
 
-        /* Extern string params pun to char*: a plain string (or alias) passes
-           its data pointer (NUL-terminated); an optional `string?` passes the
-           raw pointer (NULL = empty). The host reads without taking
-           ownership. */
+        // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
         bool optionalString = p->type.isOptional && p->type.inner
-                              && strcmp(TypeRegistryResolveAlias(&b->m_registry, p->type.inner->name), "string") == 0;
+                              && TypeIsString(&b->m_registry, p->type.inner->name);
         bool externStringParam
-            = f->isExtern
-              && (strcmp(TypeRegistryResolveAlias(&b->m_registry, p->type.name), "string") == 0 || optionalString);
+            = f->isExtern && (TypeIsString(&b->m_registry, p->type.name) || optionalString);
 
         if (byPtr && externStringParam)
         {
             byPtr = false;
         }
 
-        /* For extern functions, ^T / T? params cross as the pointer ITSELF
-           by value (one `ptr`), not as a pointer to the caller's slot -
-           matching the ABI hosts see for `T*` / `T?` parameters. */
+        // Extern box/optional params cross as the pointer itself.
         if (byPtr && f->isExtern && (p->type.isBox || p->type.isOptional))
         {
             byPtr = false;
@@ -1886,20 +1842,14 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         info->paramByPtr[i] = byPtr;
 
-        /* Extern string params pun to char* (the fat's first member). */
         params[i] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
     }
 
-    /* An extern function returning string: the C ABI is char* (one ptr).
-       The caller wraps it back into a fat via an inline strlen. Internal
-       (defined) functions return the fat struct itself. A `return` param
-       (out pointer) never uses this: its type comes back through the
-       pointer, so the ABI return stays void. */
+    // Extern string return: C ABI is char*, caller wraps to a fat.
     info->externStringReturn = f->isExtern && !hasReturnParam
-                               && strcmp(TypeRegistryResolveAlias(&b->m_registry, f->returnType.name), "string") == 0;
+                               && TypeIsString(&b->m_registry, f->returnType.name);
 
-    /* A `return` param means the C function is void ret + out-pointer:
-       the Strata-level return type never reaches the return register. */
+    // A `return` param lowers to void ret + out-pointer.
     LLVMTypeRef abiRetType
         = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
 
@@ -5387,13 +5337,7 @@ static bool FoldConstCompareFloat(BinaryOp op, double a, double b, bool* res)
     }
 }
 
-/* Constant-fold a global initializer expression (literals, unary/binary
- * operators with C constant-expression semantics, scalar casts, and
- * references to other manifest constants). Values are folded at their
- * NATURAL kind (raw int/float) — conversion to the declared global type
- * happens once at the init site (and inside explicit NodeCasts), so a
- * `bool` target must never collapse operands before an operator applies.
- * Returns false when the expression is not a compile-time constant. */
+// Fold a global initializer; false when not a compile-time constant.
 static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
     switch (n->kind)

@@ -90,7 +90,7 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     return t;
 }
 
-// `T?` wraps `inner` into a maybe-empty box; shares `^T`'s runtime representation, difference enforced by sema.
+// `T?` wraps `inner`; same representation as `^T`, sema tells them apart.
 static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
 {
     TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
@@ -267,7 +267,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
         return TypeNameLeaf(arena_strndup(arena, base, baseLen));
     }
 
-    // The first bracket group is the outermost dimension (`int[2][6]` is 2 x int[6]); wrap inner groups first.
+    // First bracket group is the outermost dim; wrap inner groups first.
     const char* close = (const char*)memchr(groups, ']', groupsLen);
     size_t groupLen = close ? (size_t)(close - groups) + 1 : groupsLen;
 
@@ -378,11 +378,7 @@ typedef struct {
 typedef struct {
     Node base;
     char* name;
-    /* Explicit value expression if the member wrote one (`A = expr`); NULL for
-       sequential members. Parsed as a constant expression (literals, unary
-       +/-/~/arithmetic/shifts/bitwise/casts, and references to earlier members
-       of the same enum or already-resolved enums). `value`/`isNegative` hold
-       the final resolved magnitude+sign after sema. */
+    // Explicit `A = expr` value; NULL for sequential members. Sema folds it.
     Node* valueExpr;
     uint64_t value;
     bool isNegative;
@@ -392,7 +388,7 @@ typedef struct {
 typedef struct {
     Node base;
     char* name;
-    /* Underlying scalar integral type name (NULL = `int`). */
+    // Underlying integral type (NULL = `int`).
     char* underlyingType;
     Vec members; // Vec<EnumMemberDecl*>
 } EnumDecl;
@@ -406,15 +402,12 @@ typedef struct {
     bool isExtern;
     bool hasReturnStmt;
     char* mangledName;
-    // isVariadic + isCVararg: extern with bare `...` (host provides the body); otherwise the last param is a typed rest collecting trailing args into a T[].
+    // Variadic tails: bare `...` is extern-only; else the last param collects into T[].
     bool isVariadic;
     bool isCVararg;
-    // A `return T x` last param (extern only): the declared `void` return is
-    // replaced by T, and the C ABI is void ret + `x` passed by pointer.
+    // `return T x` last param (extern only): Strata-level return is T, C ABI is void + out-pointer.
     bool hasReturnParam;
-    // impl-block members: `methodName` is the unqualified name inside
-    // `impl H { extern R M(...); }` while `name`/`mangledName` carry the
-    // extern symbol `H_M`. NULL/false for regular functions.
+    // Impl members: `methodName` is the short name, `name` carries the `H_M` symbol.
     char* methodName;
     bool fromImpl;
 } FunctionDecl;
@@ -436,10 +429,7 @@ static inline bool FunctionHasReturnParam(const FunctionDecl* f)
     return FunctionReturnParam(f) != NULL;
 }
 
-/* A single property inside an impl block:
-   `property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }`
-   Getter/setter symbols name extern functions (synthesized as extern
-   declarations in sema when not user-declared). Either side may be absent. */
+// One property in an `impl` block. Either side may be absent.
 typedef struct {
     TypeName returnType;
     char* name;
@@ -448,9 +438,7 @@ typedef struct {
     SourceRange range;
 } PropertyDecl;
 
-/* `impl HandleName { ... }` — associates extern methods and properties with a
-   handle type. Methods are hoisted into Module::functions as extern decls
-   named `HandleName_MethodName` (shared pointers, disposed with the module). */
+// `impl H { ... }`: methods hoist as `H_M` externs sharing module pointers.
 typedef struct {
     Node base;
     char* handleName;
@@ -670,14 +658,14 @@ typedef struct {
     Node* index;
 } IndexExpr;
 
-// { e0, ... } array literal. elementType is NULL when untyped (inferred by sema); elements holds initializers.
+// { e0, ... } array literal; elementType NULL until sema infers it.
 typedef struct {
     Node base;
     const TypeName* elementType;
     Vec elements;
 } ArrayInitExpr;
 
-// expr? — null test on a `T?` path; yields bool and lets sema establish "definitely non-empty" facts (move-poisoning machinery).
+// `expr?` — null test on a `T?` path; also proves non-empty in sema.
 typedef struct {
     Node base;
     Node* operand;

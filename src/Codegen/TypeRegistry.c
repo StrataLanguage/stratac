@@ -275,8 +275,6 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
     ComputeAllLayouts(reg);
 }
 
-//--
-
 typedef struct
 {
     long size;
@@ -290,47 +288,26 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
 
 static bool ScalarSizeAlign(const char* name, SizeAlign* out)
 {
-    if (strcmp(name, "bool") == 0 || strcmp(name, "byte") == 0 || strcmp(name, "sbyte") == 0)
-    {
-        out->size = 1;
-        out->align = 1;
-        return true;
-    }
+    // (name, size, align).
+    static const struct {
+        const char* name;
+        long size;
+        long align;
+    } kSizes[] = {
+        {"bool", 1, 1},   {"byte", 1, 1},   {"sbyte", 1, 1}, {"short", 2, 2},
+        {"ushort", 2, 2}, {"int", 4, 4},    {"uint", 4, 4},  {"float", 4, 4},
+        {"long", 8, 8},   {"ulong", 8, 8},  {"double", 8, 8}, {"float2", 8, 8},
+        {"float3", 16, 16}, {"float4", 16, 16},
+    };
 
-    if (strcmp(name, "short") == 0 || strcmp(name, "ushort") == 0)
+    for (size_t i = 0; i < sizeof(kSizes) / sizeof(kSizes[0]); i++)
     {
-        out->size = 2;
-        out->align = 2;
-        return true;
-    }
-
-    if (strcmp(name, "int") == 0 || strcmp(name, "uint") == 0 || strcmp(name, "float") == 0)
-    {
-        out->size = 4;
-        out->align = 4;
-        return true;
-    }
-
-    if (strcmp(name, "long") == 0 || strcmp(name, "ulong") == 0 || strcmp(name, "double") == 0)
-    {
-        out->size = 8;
-        out->align = 8;
-        return true;
-    }
-
-    if (strcmp(name, "float2") == 0)
-    {
-        out->size = 8;
-        out->align = 8;
-        return true;
-    }
-
-    /* float3, float4 are 16 byte aligned */
-    if (strcmp(name, "float3") == 0 || strcmp(name, "float4") == 0)
-    {
-        out->size = 16;
-        out->align = 16;
-        return true;
+        if (strcmp(name, kSizes[i].name) == 0)
+        {
+            out->size = kSizes[i].size;
+            out->align = kSizes[i].align;
+            return true;
+        }
     }
 
     return false;
@@ -562,8 +539,6 @@ void ComputeAllLayouts(TypeRegistry* reg)
 
     free(state);
 }
-
-//--
 
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
 {

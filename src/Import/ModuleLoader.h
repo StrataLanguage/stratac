@@ -14,7 +14,7 @@ typedef struct {
     Arena* arena;
     DiagnosticEngine* diag;
 
-    // Optional host-provided import resolver. When set, every `import X;` is resolved through it instead of the filesystem. NULL = filesystem mode.
+    // Host import resolver (NULL = load from disk).
     StrataImportResolverFn resolver;
     void* resolverUserData;
 
@@ -39,8 +39,8 @@ void ModuleLoaderDispose(ModuleLoader* l);
 // Install (or clear with fn=NULL) a custom import resolver.
 void ModuleLoaderSetResolver(ModuleLoader* l, StrataImportResolverFn fn, void* userData);
 
-// Load a module graph from a filesystem path. Imports go through the resolver if set, else relative to disk.
+// Load from disk; imports use the resolver when set.
 Module* ModuleLoaderLoad(ModuleLoader* l, const char* mainPath);
 
-// Load a module graph from an in-memory source string. `text` is borrowed (must outlive the loader); `name` is the display name. Imports go through the resolver (a resolver MUST be set: no filesystem context).
+// Load from memory; `text` is borrowed. Needs a resolver for imports.
 Module* ModuleLoaderLoadSource(ModuleLoader* l, const char* name, const char* text, size_t textLen);

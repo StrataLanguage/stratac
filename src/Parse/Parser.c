@@ -1029,8 +1029,7 @@ static ParamDecl* ParseParam(Parser* p)
     {
         isVarargRest = true;
 
-        // `ref int... rest` borrows the collected stack array (non-owning); `const int... rest` makes the view
-        // read-only. Both are allowed.
+        // `ref`/`const` rest params borrow the stack array.
         type = TypeNameArrayWrap(p->m_arena, type);
     }
 
@@ -1806,7 +1805,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
                 }
                 else
                 {
-                    // `^T x = {...}` / `T? x = {}` infer the inner T, not the box (a `T?{}` is a non-empty boxed T).
+                    // Box inits infer the inner T.
                     const char* initTypeName = (type.isBox || type.isOptional) && type.inner
                                                    ? type.inner->name
                                                    : (strcmp(type.name, "string") == 0 ? NULL : type.name);
@@ -2025,8 +2024,7 @@ static Node* ParseAssign(Parser* p)
         Token opToken = p->m_cur;
         Advance(p);
 
-        // A bare braced RHS is an array literal (element type inferred in sema); a designator form (`{ .field = ... }`)
-        // is a struct literal.
+        // Bare braces are array literals; `{ .f = ... }` is a struct literal.
         Node* rhs;
 
         if (p->m_cur.kind == TokLBrace)

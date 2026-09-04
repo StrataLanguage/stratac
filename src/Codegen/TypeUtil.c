@@ -1,5 +1,6 @@
 #include "Codegen/TypeUtil.h"
 #include "Codegen/TypeRegistry.h"
+#include "Core/Util.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -17,7 +18,6 @@ static inline void BuildLLVMIrType(MappedType* mappedType, int numLanes, const c
     }
     else
     {
-        // <numLanes x type>
         snprintf(mappedType->ir, sizeof(mappedType->ir), "<%d x %s>", numLanes, elemIr);
     }
 }
@@ -50,7 +50,6 @@ static MappedType MakeSimdVector(bool isFloat, int bits, int lanes, const char* 
     m.bits = bits;
     m.lanes = lanes;
 
-    // Emit as <numLanes x type> for the backend.
     BuildLLVMIrType(&m, m.lanes, elemIr);
 
     return m;
@@ -77,59 +76,28 @@ MappedType MapType(const TypeName* t)
         return m;
     }
 
-    if (strcmp(base, "bool") == 0)
-    {
-        return MakePrimitive(false, false, 1, "i1");
-    }
+    // (name, isFloat, isUnsigned, bits, IR)
+    static const struct {
+        const char* name;
+        bool isFloat;
+        bool isUnsigned;
+        int bits;
+        const char* ir;
+    } kPrims[] = {
+        {"bool", false, false, 1, "i1"},   {"int", false, false, 32, "i32"},
+        {"uint", false, true, 32, "i32"},  {"long", false, false, 64, "i64"},
+        {"ulong", false, true, 64, "i64"}, {"sbyte", false, false, 8, "i8"},
+        {"byte", false, true, 8, "i8"},    {"short", false, false, 16, "i16"},
+        {"ushort", false, true, 16, "i16"}, {"float", true, false, 32, "float"},
+        {"double", true, false, 64, "double"},
+    };
 
-    if (strcmp(base, "int") == 0)
+    for (size_t i = 0; i < sizeof(kPrims) / sizeof(kPrims[0]); i++)
     {
-        return MakePrimitive(false, false, 32, "i32");
-    }
-
-    if (strcmp(base, "uint") == 0)
-    {
-        return MakePrimitive(false, true, 32, "i32");
-    }
-
-    if (strcmp(base, "long") == 0)
-    {
-        return MakePrimitive(false, false, 64, "i64");
-    }
-
-    if (strcmp(base, "ulong") == 0)
-    {
-        return MakePrimitive(false, true, 64, "i64");
-    }
-
-    if (strcmp(base, "sbyte") == 0)
-    {
-        return MakePrimitive(false, false, 8, "i8");
-    }
-
-    if (strcmp(base, "byte") == 0)
-    {
-        return MakePrimitive(false, true, 8, "i8");
-    }
-
-    if (strcmp(base, "short") == 0)
-    {
-        return MakePrimitive(false, false, 16, "i16");
-    }
-
-    if (strcmp(base, "ushort") == 0)
-    {
-        return MakePrimitive(false, true, 16, "i16");
-    }
-
-    if (strcmp(base, "float") == 0)
-    {
-        return MakePrimitive(true, false, 32, "float");
-    }
-
-    if (strcmp(base, "double") == 0)
-    {
-        return MakePrimitive(true, false, 64, "double");
+        if (strcmp(base, kPrims[i].name) == 0)
+        {
+            return MakePrimitive(kPrims[i].isFloat, kPrims[i].isUnsigned, kPrims[i].bits, kPrims[i].ir);
+        }
     }
 
     if (strcmp(base, "float2") == 0)
@@ -152,24 +120,6 @@ bool IsNumeric(const char* t)
            || strcmp(t, "float") == 0 || strcmp(t, "double") == 0 || strcmp(t, "bool") == 0;
 }
 
-int IsSimdVector(const char* t)
-{
-    if (strcmp(t, "float2") == 0)
-    {
-        return 2;
-    }
-    if (strcmp(t, "float3") == 0)
-    {
-        return 3;
-    }
-    if (strcmp(t, "float4") == 0)
-    {
-        return 4;
-    }
-
-    return 0;
-}
-
 int GetSimdVectorLanes(const char* t)
 {
     if (strcmp(t, "float2") == 0)
@@ -188,9 +138,14 @@ int GetSimdVectorLanes(const char* t)
     return 0;
 }
 
+int IsSimdVector(const char* t)
+{
+    return GetSimdVectorLanes(t);
+}
+
 bool IsScalarTypeName(const char* t)
 {
-    return IsNumeric(t) || strcmp(t, "bool") == 0;
+    return IsNumeric(t);
 }
 
 bool IsFloatType(const char* t)
@@ -198,14 +153,43 @@ bool IsFloatType(const char* t)
     return strcmp(t, "double") == 0 || strcmp(t, "float") == 0;
 }
 
-const char* ResolveAliasName(const TypeRegistry* reg, const char* name)
+bool TypeIsString(const TypeRegistry* reg, const char* name)
 {
-    if (!reg || !name)
+    if (!name)
     {
-        return name;
+        return false;
     }
 
-    return TypeRegistryResolveAlias(reg, name);
+    const char* leaf = reg ? TypeRegistryResolveAlias(reg, name) : name;
+    return leaf && strcmp(leaf, "string") == 0;
+}
+
+bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t)
+{
+    if (!t || !t->name || TypeNameIsOwning(t))
+    {
+        return TypeNameIsOwning(t);
+    }
+
+    if (!reg)
+    {
+        return false;
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(reg, t->name);
+
+    if (!leaf || strcmp(leaf, t->name) == 0)
+    {
+        return false;
+    }
+
+    if (strcmp(leaf, "string") == 0)
+    {
+        return true;
+    }
+
+    TypeName parsed = TypeNameParse(arena, leaf);
+    return TypeNameIsOwning(&parsed);
 }
 
 bool IsScalarLikeType(const TypeRegistry* reg, const char* t)

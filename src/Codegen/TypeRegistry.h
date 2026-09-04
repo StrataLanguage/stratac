@@ -5,9 +5,7 @@
 
 #include "Codegen/TypeUtil.h"
 
-/* A pad inserted into the physical member list where explicit `fieldoffset`
-   markers (or the gaps they create) require it. A trailing pad (struct
-   rounding) uses beforeField == fields.count. */
+/* A pad filling a `fieldoffset` gap; a trailing pad rounds out the struct. */
 typedef struct {
     size_t beforeField;
     long bytes;
@@ -15,19 +13,18 @@ typedef struct {
 
 typedef struct {
     const char* name;
-    bool opaque;                 /* `struct Foo;`  (struct with no body) OR a `handle Foo;`. */
-    bool incomplete;             /* `struct Foo;` forward declaration */
-    bool owning;                 /* transitively contains a ^T, T?, T[], string, etc. field */
-    const char* extendsFrom;     /* base handle name for `handle X extends Y` */
-    Vec fields;               
-    bool isExtern;               /* `extern struct`. It is a C ABI struct type, allowing custom fieldoffset(X) on fields */
-    bool isTypeAlias;            /* A strongly typed alias. */
+    bool opaque;                 // `struct Foo;` or `handle Foo`.
+    bool incomplete;             // Forward-declared struct.
+    bool owning;                 // Holds an owning field, transitively.
+    const char* extendsFrom;     // Base handle for `handle X extends Y`.
+    Vec fields;
+    bool isExtern;               // `extern struct`: mirrors a C layout.
+    bool isTypeAlias;
     bool isEnum;                 /* `enum Foo` — a strong alias with scoped constants. */
     const char* underlyingType;  /* underlying type name for aliases */
 
-    /* Computed layout (complete, non-opaque structs). hasLayout is only set
-       when the layout is valid; on failure layoutError holds a malloc'd
-       message that sema reports. */
+    /* Computed layout; hasLayout is set only on success,
+       layoutError holds the failure message. */
     bool hasLayout;
     bool packedLayout;  /* any explicit fieldoffset — backends emit packed */
     long sizeBytes;
@@ -49,37 +46,31 @@ typedef struct TypeRegistry {
 void TypeRegistryInit(TypeRegistry* reg);
 void TypeRegistryFree(TypeRegistry* reg);
 
-/* Registers only the module's type aliases (idempotent). Sema calls this
-   before full registration so alias resolution works while manifest-constant
-   array dimensions resolve, ahead of layout computation. */
+// Registers aliases first so dims resolve before layout.
 void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m);
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m);
 void ComputeAllLayouts(TypeRegistry* reg);
 const StructType* TypeRegistryFind(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
-/* An `impl` target: any registered type — handles, defined structs,
-   forward-declared (incomplete) structs, type aliases, and enums alike. */
+// Any registered type works as an `impl` target.
 bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
-/* Type shape queries (arrays, boxes, owning-ness) are structural — see the
-   TypeNameIs* accessors in AST/AST.h. The canonical `name` spelling is
-   display/mangling data only. */
+// Shape queries are structural (see TypeNameIs* in AST.h).
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 
 /* Type alias queries. */
 bool TypeRegistryIsTypeAlias(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsEnum(const TypeRegistry* reg, const char* name);
 const char* TypeRegistryGetUnderlyingType(const TypeRegistry* reg, const char* name);
-/* Recursively resolves type aliases to their final non-alias underlying type. */
+// Resolve aliases to the final underlying type.
 const char* TypeRegistryResolveAlias(const TypeRegistry* reg, const char* name);
 
-/* Returns the lvalue actually being moved (identifier, member chain, or array
-   element), unwrapping casts */
+// The moved lvalue (identifier, member chain, or element), casts unwrapped.
 const Node* MovableBoxSourceNode(const Node* n);
 
-/* is this an assignable lvalue expression? */
+// True for assignable lvalues.
 bool IsLValueNode(const Node* n);
 
 // -- Helpers
