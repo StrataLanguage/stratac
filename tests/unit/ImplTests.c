@@ -92,21 +92,38 @@ STRATA_TEST(impl_parses_methods_and_properties)
     arena_free(&arena);
 }
 
-STRATA_TEST(impl_rejects_body_and_duplicates)
+STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
 {
+    /* An impl method may be DEFINED inline (non-extern, with a body) - it
+       hoists to the qualified symbol like any other method. */
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
-    ParseModule("handle Camera;\n"
-                "impl Camera {\n"
-                "    float GetFOV(Camera self) { return 0.0; }\n"
-                "}\n",
-                &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    Module* mod = ParseModule("handle Camera;\n"
+                              "impl Camera {\n"
+                              "    float GetFOV(Camera self) { return 0.0; }\n"
+                              "}\n",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod != NULL);
+    if (mod)
+    {
+        STRATA_CHECK_EQ(mod->impls.count, 1);
+        ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, 0);
+        STRATA_CHECK_EQ(impl->methods.count, 1);
+        FunctionDecl* m0 = (FunctionDecl*)VecGet(&impl->methods, 0);
+        STRATA_CHECK(!m0->isExtern);
+        STRATA_CHECK(m0->fromImpl);
+        STRATA_CHECK(m0->body != NULL);
+        STRATA_CHECK(strcmp(m0->methodName, "GetFOV") == 0);
+        STRATA_CHECK(strcmp(m0->name, "Camera_GetFOV") == 0);
+        STRATA_CHECK(FindFunction(mod, "Camera_GetFOV") != NULL);
+    }
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 
+    /* Duplicate methods (extern or inline) are still rejected. */
     Arena arena2;
     arena_init(&arena2, 0);
     DiagnosticEngine diag2;
@@ -120,6 +137,20 @@ STRATA_TEST(impl_rejects_body_and_duplicates)
     STRATA_CHECK(DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
     arena_free(&arena2);
+
+    Arena arena3;
+    arena_init(&arena3, 0);
+    DiagnosticEngine diag3;
+    DiagnosticEngineInit(&diag3);
+    ParseModule("handle Camera;\n"
+                "impl Camera {\n"
+                "    float GetFOV(Camera self) { return 0.0; }\n"
+                "    float GetFOV(Camera self) { return 1.0; }\n"
+                "}\n",
+                &diag3, &arena3);
+    STRATA_CHECK(DiagHasErrors(&diag3));
+    DiagnosticEngineFree(&diag3);
+    arena_free(&arena3);
 }
 
 STRATA_TEST(impl_requires_handle_or_struct_target)
@@ -856,7 +887,60 @@ STRATA_TEST(impl_on_opaque_struct_jit)
     strataCompilerDestroy(c);
 }
 
-/* Host side of the property-return-param tests. */
+STRATA_TEST(impl_inline_methods_jit)
+{
+    /* Impl methods defined INLINE (non-extern, with a body) are emitted as
+       real Strata functions under their qualified symbol and called through
+       the same `expr.Method(...)` / `Type.Method(...)` rewrite as extern
+       methods. Covers: struct receivers, `ref self` mutation, static-style
+       factories, receiver passing between methods, and recursion. */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "struct Vec3 { float x; float y; float z; };\n"
+        "impl Vec3 {\n"
+        "    Vec3 Make(float x, float y, float z) { return { .x = x, .y = y, .z = z }; }\n"
+        "    float LengthSq(Vec3 self) { return self.x * self.x + self.y * self.y + self.z * self.z; }\n"
+        "    void Scale(ref Vec3 self, float s) { self.x = self.x * s; self.y = self.y * s; self.z = self.z * s; }\n"
+        "    float Dot(Vec3 self, Vec3 other) { return self.x * other.x + self.y * other.y + self.z * other.z; }\n"
+        "}\n"
+        "struct Num { int v; };\n"
+        "impl Num {\n"
+        "    int Fact(Num self, int n) { if (n <= 1) { return 1; } return self.v * self.Fact(n - 1); }\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  Vec3 v = Vec3.Make(3.0, 4.0, 0.0);\n"
+        "  float l = v.LengthSq();\n"
+        "  v.Scale(2.0);\n"
+        "  Vec3 w = Vec3.Make(1.0, 1.0, 1.0);\n"
+        "  if (l != 25.0) { return 1; }\n"              /* 3^2 + 4^2 */
+        "  if (v.LengthSq() != 100.0) { return 2; }\n" /* scaled: 6^2 + 8^2 */
+        "  if (v.Dot(w) != 14.0) { return 3; }\n"      /* 6 + 8 + 0 */
+        "  Num n = { .v = 2 };\n"
+        "  if (n.Fact(5) != 16) { return 4; }\n"      /* recursive inline method: 2^4 */
+        "  return 0;\n"
+        "}\n",
+        "inline_impl", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
 typedef struct
 {
     int count;

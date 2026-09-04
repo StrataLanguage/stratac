@@ -167,6 +167,71 @@ static int HostStrArrCount(const HostArr* a)
     return (int)a->len;
 }
 
+/* ---- Array-decay-to-^T hosts ----
+   An extern `^T` param accepts a T[] / T[N] argument by decaying it to a
+   pointer to its first element, so the host sees a plain `T*` (the same ABI
+   as C's `T arr[N]` / `T*` params). */
+static int HostFloatSum(const float* a, int n)
+{
+    float s = 0;
+    for (int i = 0; i < n; i++)
+    {
+        s += a[i];
+    }
+    return (int)s;
+}
+
+static int HostDoubleSum(const double* a, int n)
+{
+    double s = 0;
+    for (int i = 0; i < n; i++)
+    {
+        s += a[i];
+    }
+    return (int)s;
+}
+
+static int HostIntSum(const int* a, int n)
+{
+    int s = 0;
+    for (int i = 0; i < n; i++)
+    {
+        s += a[i];
+    }
+    return s;
+}
+
+static void HostIntBump(int* a, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        a[i] += 1;
+    }
+}
+
+static void HostIntFill(int* a, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        a[i] = i * 2;
+    }
+}
+
+static int HostByteSum(const unsigned char* a, int n)
+{
+    int s = 0;
+    for (int i = 0; i < n; i++)
+    {
+        s += a[i];
+    }
+    return s;
+}
+
+static int HostFloatIntMix(const float* f, int fn, const int* i, int in)
+{
+    return (int)f[0] + i[0] + fn + in;
+}
+
 /* ---- Box hosts ----
    Extern ^T / T? params cross as the pointer ITSELF (the box cell), so a
    host reads and mutates the boxed value through one deref. NULL is only
@@ -446,6 +511,160 @@ STRATA_TEST(extern_string_array_param_count)
                 "  return host_str_arr_count(a);\n"  /* 3 */
                 "}\n",
                 hosts, 1, 3);
+}
+
+/* ================= Array decay to ^T params =================
+
+   An extern `^T` param (host sees a plain `T*`) accepts a dynamic `T[]` or a
+   fixed `T[N]` struct field by decaying to a pointer to its FIRST element.
+   The host reads/mutates the caller's actual buffer/field storage. */
+
+STRATA_TEST(extern_hat_dyn_float_array_decays_to_ptr)
+{
+    /* float[] -> ^float: the data buffer pointer crosses, length as the
+       caller-supplied arg. */
+    HostSymbol hosts[] = { { "host_float_sum", (void*)&HostFloatSum } };
+    CheckExtern("extern int host_float_sum(^float a, int n);\n"
+                "int entry()\n"
+                "{\n"
+                "  float[] a = {1.0, 2.0, 3.0, 4.0};\n"
+                "  return host_float_sum(a, (int)a.length);\n"   /* 10 */
+                "}\n",
+                hosts, 1, 10);
+}
+
+STRATA_TEST(extern_hat_fixed_float16_field_decays_to_ptr)
+{
+    /* float[16] struct field -> ^float: GEP to element 0 of the inline
+       storage (short rows zero-fill, so 1..5 = 15). */
+    HostSymbol hosts[] = { { "host_float_sum", (void*)&HostFloatSum } };
+    CheckExtern("extern int host_float_sum(^float a, int n);\n"
+                "struct Buf { float[16] data; };\n"
+                "int entry()\n"
+                "{\n"
+                "  Buf b = { .data = {1.0, 2.0, 3.0, 4.0, 5.0} };\n"
+                "  return host_float_sum(b.data, (int)b.data.length);\n"   /* 15 */
+                "}\n",
+                hosts, 1, 15);
+}
+
+STRATA_TEST(extern_hat_dyn_int_array_host_mutates_in_place)
+{
+    /* The decay passes the caller's live buffer, so a host can mutate it and
+       Strata reads the changes back (externs borrow - nothing is moved). */
+    HostSymbol hosts[] = { { "host_int_bump", (void*)&HostIntBump } };
+    CheckExtern("extern void host_int_bump(^int a, int n);\n"
+                "int entry()\n"
+                "{\n"
+                "  int[] a = {1, 2, 3};\n"
+                "  host_int_bump(a, (int)a.length);\n"   /* {2,3,4} */
+                "  return a[0] + a[1] + a[2];\n"         /* 9 */
+                "}\n",
+                hosts, 1, 9);
+}
+
+STRATA_TEST(extern_hat_fixed_int8_field_host_mutates_in_place)
+{
+    /* Fixed array field -> ^int: the pointer hits the struct's inline
+       storage, so the host mutates the actual field, not a copy. */
+    HostSymbol hosts[] = { { "host_int_bump", (void*)&HostIntBump } };
+    CheckExtern("extern void host_int_bump(^int a, int n);\n"
+                "struct Buf { int[8] data; };\n"
+                "int entry()\n"
+                "{\n"
+                "  Buf b = { .data = {1, 2, 3} };\n"
+                "  host_int_bump(b.data, 8);\n"          /* {2,3,4,1,1,1,1,1} */
+                "  return b.data[0] + b.data[1] + b.data[2];\n"   /* 9 */
+                "}\n",
+                hosts, 1, 9);
+}
+
+STRATA_TEST(extern_hat_dyn_array_borrowed_not_moved)
+{
+    /* After the decayed call the array is still live and readable - the
+       extern never consumes it. */
+    HostSymbol hosts[] = { { "host_int_sum", (void*)&HostIntSum } };
+    CheckExtern("extern int host_int_sum(^int a, int n);\n"
+                "int entry()\n"
+                "{\n"
+                "  int[] a = {5, 6, 7};\n"
+                "  int s = host_int_sum(a, (int)a.length);\n"   /* 18 */
+                "  return s + (int)a.length + a[0];\n"          /* 18 + 3 + 5 = 26 */
+                "}\n",
+                hosts, 1, 26);
+}
+
+STRATA_TEST(extern_hat_double_array_decays_to_ptr)
+{
+    /* double[] -> ^double: doubles cross exactly (the element pointer is a
+       double*, matching C). */
+    HostSymbol hosts[] = { { "host_double_sum", (void*)&HostDoubleSum } };
+    CheckExtern("extern int host_double_sum(^double a, int n);\n"
+                "int entry()\n"
+                "{\n"
+                "  double[] a = {1.5, 2.5, 3.0};\n"
+                "  return host_double_sum(a, (int)a.length);\n"   /* 7 */
+                "}\n",
+                hosts, 1, 7);
+}
+
+STRATA_TEST(extern_hat_byte_fixed_field_decays_to_ptr)
+{
+    /* byte[4] field -> ^byte: sums the unsigned bytes. */
+    HostSymbol hosts[] = { { "host_byte_sum", (void*)&HostByteSum } };
+    CheckExtern("extern int host_byte_sum(^byte a, int n);\n"
+                "struct Buf { byte[4] data; };\n"
+                "int entry()\n"
+                "{\n"
+                "  Buf b = { .data = {10, 20, 30, 40} };\n"
+                "  return host_byte_sum(b.data, 4);\n"   /* 100 */
+                "}\n",
+                hosts, 1, 100);
+}
+
+STRATA_TEST(extern_hat_two_array_params_in_one_call)
+{
+    /* Two decayed array params (^float and ^int) in one extern call - each
+       arg decays independently. */
+    HostSymbol hosts[] = { { "host_float_int_mix", (void*)&HostFloatIntMix } };
+    CheckExtern("extern int host_float_int_mix(^float f, int fn, ^int i, int in);\n"
+                "int entry()\n"
+                "{\n"
+                "  float[] f = {3.0, 4.0};\n"
+                "  int[] i = {7, 8};\n"
+                "  return host_float_int_mix(f, (int)f.length, i, (int)i.length);\n"   /* 3 + 7 + 2 + 2 = 14 */
+                "}\n",
+                hosts, 1, 14);
+}
+
+STRATA_TEST(extern_hat_host_fills_dyn_buffer)
+{
+    /* The host writes through the decayed pointer into the caller's buffer;
+       Strata reads the filled values back. */
+    HostSymbol hosts[] = { { "host_int_fill", (void*)&HostIntFill } };
+    CheckExtern("extern void host_int_fill(^int a, int n);\n"
+                "int entry()\n"
+                "{\n"
+                "  int[] a = {0, 0, 0, 0};\n"
+                "  host_int_fill(a, (int)a.length);\n"   /* {0,2,4,6} */
+                "  return a[0] + a[1] + a[2] + a[3];\n"  /* 12 */
+                "}\n",
+                hosts, 1, 12);
+}
+
+STRATA_TEST(extern_hat_fixed_and_dyn_arrays_together)
+{
+    /* Fixed field and dynamic array both decay in the same function. */
+    HostSymbol hosts[] = { { "host_float_sum", (void*)&HostFloatSum } };
+    CheckExtern("extern int host_float_sum(^float a, int n);\n"
+                "struct Buf { float[4] data; };\n"
+                "int entry()\n"
+                "{\n"
+                "  Buf b = { .data = {1.0, 2.0, 3.0, 4.0} };\n"
+                "  float[] a = {10.0, 20.0};\n"
+                "  return host_float_sum(b.data, 4) + host_float_sum(a, (int)a.length);\n"   /* 10 + 30 = 40 */
+                "}\n",
+                hosts, 1, 40);
 }
 
 /* ================= Array returns ================= */

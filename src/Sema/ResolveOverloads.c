@@ -3786,6 +3786,26 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                     break;
                 }
             }
+            else if (functionDecl->isExtern && TypeNameIsOwning(paramType)
+                     && (TypeNameIsDynamicArray(argType) || TypeNameIsFixedArray(argType)))
+            {
+                /* Array decay at the extern boundary: a T[] / T[N] argument
+                   satisfies a ^T param by passing a pointer to its first
+                   element (the host sees T*). Checked before the generic
+                   owning-arg rule: dynamic arrays are owning too. */
+                const TypeName* paramInner = TypeNameBoxInner(paramType);
+                const TypeName* argElem = TypeNameArrayElem(argType);
+
+                if (paramInner && argElem && strcmp(paramInner->name, argElem->name) == 0)
+                {
+                    score += 1;
+                }
+                else
+                {
+                    viable = false;
+                    break;
+                }
+            }
             else if (TypeNameIsOwning(argType))
             {
                 /* ^T coerces to T (implicit deref). */

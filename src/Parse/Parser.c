@@ -1414,38 +1414,6 @@ static ImplDecl* ParseImplDecl(Parser* p)
 
     while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
     {
-        if (p->m_cur.kind == TokKwExtern)
-        {
-            Node* fnNode = ParseFunction(p);
-            FunctionDecl* fn = (fnNode && fnNode->kind == NodeFunction) ? (FunctionDecl*)fnNode : NULL;
-
-            if (!fn)
-            {
-                Synchronize(p);
-                continue;
-            }
-
-            if (!fn->isExtern)
-            {
-                DiagError(p->m_diag, fn->base.range, "impl methods must be extern declarations");
-            }
-            else if (ImplHasMethod(impl, fn->name))
-            {
-                DiagErrorFmt(p->m_diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
-                             impl->handleName);
-            }
-            else
-            {
-                fn->methodName = fn->name;
-                fn->name = arena_format(p->m_arena, "%s_%s", impl->handleName, fn->methodName);
-                fn->mangledName = arena_strdup(p->m_arena, fn->name);
-                fn->fromImpl = true;
-                VecPush(&impl->methods, fn);
-            }
-
-            continue;
-        }
-
         if (p->m_cur.kind == TokKwProperty)
         {
             PropertyDecl* prop = ParsePropertyDecl(p);
@@ -1462,8 +1430,40 @@ static ImplDecl* ParseImplDecl(Parser* p)
             continue;
         }
 
-        DiagError(p->m_diag, p->m_cur.range, "expected 'extern' or 'property' inside impl block");
-        Synchronize(p);
+        /* Methods may be extern declarations (host-provided) or defined
+           inline with a body (Strata-implemented). ParseFunction consumes an
+           optional `extern` and returns a GlobalDecl when there is no `(`. */
+        Node* fnNode = ParseFunction(p);
+
+        if (fnNode && fnNode->kind == NodeGlobal)
+        {
+            DiagError(p->m_diag, fnNode->range,
+                      "impl blocks may only contain methods or properties, not global variables");
+            Synchronize(p);
+            continue;
+        }
+
+        FunctionDecl* fn = (fnNode && fnNode->kind == NodeFunction) ? (FunctionDecl*)fnNode : NULL;
+
+        if (!fn)
+        {
+            /* ParseFunction already diagnosed the malformed declaration. */
+            Synchronize(p);
+            continue;
+        }
+
+        if (ImplHasMethod(impl, fn->name))
+        {
+            DiagErrorFmt(p->m_diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
+                         impl->handleName);
+            continue;
+        }
+
+        fn->methodName = fn->name;
+        fn->name = arena_format(p->m_arena, "%s_%s", impl->handleName, fn->methodName);
+        fn->mangledName = arena_strdup(p->m_arena, fn->name);
+        fn->fromImpl = true;
+        VecPush(&impl->methods, fn);
     }
 
     Token closeBrace = ParserExpect(p, TokRBrace, "'}'");

@@ -4599,7 +4599,32 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
             Value av = EmitExpr(b, argNode);
 
-            /* deref */
+            /* Extern ^T param + array arg: array decay - the T[] / T[N]
+               argument is passed as a pointer to its first element (the box
+               IS that pointer). Dynamic arrays hand over their data buffer;
+               fixed arrays GEP to element 0. */
+            if (extTy->isBox && (av.typeDesc.isArray || av.typeDesc.isFixedArray))
+            {
+                const TypeName* boxInner = TypeNameBoxInner(extTy);
+                const TypeName* argElem = av.typeDesc.arrayInner;
+
+                if (boxInner && argElem && strcmp(boxInner->name, argElem->name) == 0)
+                {
+                    if (av.typeDesc.isArray)
+                    {
+                        args[k] = LLVMBuildExtractValue(b->m_builder, av.value, 0, "arrptr");
+                    }
+                    else
+                    {
+                        LLVMValueRef slot = ArgAddress(b, argNode);
+                        LLVMValueRef zero[1] = {LLVMConstInt(I64Ty(b), 0, 0)};
+                        args[k] = LLVMBuildGEP2(b->m_builder, av.typeDesc.type, slot, zero, 1, "farr");
+                    }
+
+                    continue;
+                }
+            }
+
             bool paramIsRealBox = extTy->isBox || extTy->isOptional;
 
             if (av.typeDesc.isString)
