@@ -1022,6 +1022,45 @@ STRATA_TEST(optional_loop_reassign_from_unprovable_kills_fact)
     arena_free(&arena);
 }
 
+STRATA_TEST(optional_return_braced_init_boxes_inner_struct)
+{
+    /* `return {};` and `return E { .v = n };` from an `E?` function name the
+       INNER struct (never "E?"): the value boxes at the return, exactly
+       like the matching `E? d = {};` declaration. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int opt_non_null(E? w);\n"
+        "struct E { int v; };\n"
+        "E? MakeEmpty() { return {}; }\n"
+        "E? MakeFull(int n) { return E { .v = n }; }\n"
+        "int entry() {\n"
+        "  E? a = MakeEmpty();\n"
+        "  E? b = MakeFull(7);\n"
+        "  int r = opt_non_null(a);          // boxed zeroed struct -> 1\n"
+        "  r = r * 10 + opt_non_null(b);     // boxed {7}          -> 1\n"
+        "  if (b?) { r = r * 10 + b.v; }     // ...7\n"
+        "  return r;                         // 117\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 117);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(optional_negated_while_body_sees_empty)
 {
     Arena arena; arena_init(&arena, 0);

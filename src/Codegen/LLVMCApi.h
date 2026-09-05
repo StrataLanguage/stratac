@@ -107,6 +107,7 @@ LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef c, const char* name);
 LLVMBool LLVMStructSetBody(LLVMTypeRef structTy, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
 
 LLVMTypeRef LLVMFunctionType(LLVMTypeRef returnType, LLVMTypeRef* paramTypes, unsigned paramCount, LLVMBool isVarArg);
+LLVMTypeRef LLVMGetReturnType(LLVMTypeRef functionTy);
 
 LLVMValueRef LLVMConstInt(LLVMTypeRef intTy, unsigned long long n, LLVMBool signExtend);
 LLVMValueRef LLVMConstReal(LLVMTypeRef ty, double v);

@@ -15,6 +15,11 @@ typedef struct
     LLVMValueRef function;
     LLVMTypeRef type;
     TypeDesc returnType;
+    /* Pre-widening return type when WidenRetType applied: C hosts only
+       define the low part of the register, so extern call results must be
+       narrowed back before use. */
+    LLVMTypeRef retSemanticTy;
+    bool retSemanticUnsigned;
     bool* paramByPtr;
     size_t paramByPtrCount;
 } FuncInfo;
@@ -1862,6 +1867,11 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     bool hasReturnParam = FunctionHasReturnParam(f);
 
     info->returnType = Resolve(b, &f->returnType);
+
+    /* Remember the semantic return type before widening so extern call
+       sites can narrow the (partially-defined) register back down. */
+    info->retSemanticTy = info->returnType.type;
+    info->retSemanticUnsigned = info->returnType.isUnsigned;
     info->returnType.type = WidenRetType(b, info->returnType.type);
 
     size_t pcount = f->params.count;
@@ -5070,6 +5080,28 @@ static Value EmitCall(Builder* b, CallExpr* n)
     else
     {
         call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+    }
+
+    /* Sub-32-bit integer extern returns (bool/byte/sbyte/short/ushort): the
+       C host only defines the low part of the widened register (AL/AX), so
+       narrow the raw result back to the semantic type - truncating away the
+       undefined upper bits, then re-extending per the semantic signedness.
+       Strata-emitted callees always extend the full register themselves. */
+    if (fd && fd->isExtern && info->retSemanticTy && call
+        && LLVMGetTypeKind(info->retSemanticTy) == LLVMIntegerTypeKind)
+    {
+        LLVMTypeRef abiRet = LLVMGetReturnType(info->type);
+
+        if (abiRet && LLVMGetTypeKind(abiRet) == LLVMIntegerTypeKind
+            && LLVMGetIntTypeWidth(abiRet) > LLVMGetIntTypeWidth(info->retSemanticTy))
+        {
+            LLVMValueRef narrow = LLVMBuildTrunc(b->m_builder, call, info->retSemanticTy, "ret.narrow");
+
+            bool zeroExtend = info->retSemanticUnsigned || info->retSemanticTy == I1Ty(b);
+
+            call = zeroExtend ? LLVMBuildZExt(b->m_builder, narrow, abiRet, "ret.zext")
+                              : LLVMBuildSExt(b->m_builder, narrow, abiRet, "ret.sext");
+        }
     }
 
     /* Return-param call: the C function wrote the result into our temp slot;

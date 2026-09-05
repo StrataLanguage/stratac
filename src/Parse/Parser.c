@@ -1882,11 +1882,11 @@ static Node* ParseReturn(Parser* p)
             }
             else
             {
-                /* `return {};` through a plain or box/optional return type
-                   initializes the inner struct. */
-                const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : p->m_returnType;
+                /* `return {};` through a plain, box, or optional return type
+                   initializes the INNER struct (E, never "E?" / "^E"). */
+                const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : rtArr;
 
-                node->value = ParseStructInitBody(p, p->m_cur, rtStruct ? rtStruct->name : p->m_returnType->name);
+                node->value = ParseStructInitBody(p, p->m_cur, rtStruct ? rtStruct->name : rtArr->name);
             }
         }
         else
