@@ -99,6 +99,60 @@ static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
     return true;
 }
 
+/* Creates an execution TargetMachine for the host CPU: every feature the
+   processor supports enabled, aggressive codegen level, PIC. The module's
+   triple/data layout should be pinned to this machine before IR passes run.
+   Returns NULL and sets *errorMessage (malloc-owned) on failure. */
+static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
+{
+    char* triple = LLVMGetDefaultTargetTriple();
+    LLVMTargetRef target = NULL;
+    char* targetErr = NULL;
+
+    if (LLVMGetTargetFromTriple(triple, &target, &targetErr))
+    {
+        int needed = snprintf(NULL, 0, "could not resolve target '%s': %s",
+                              triple ? triple : "(null)",
+                              targetErr ? targetErr : "(no message)");
+        char* buf = (char*)malloc((size_t)needed + 1);
+        snprintf(buf, (size_t)needed + 1, "could not resolve target '%s': %s",
+                 triple ? triple : "(null)",
+                 targetErr ? targetErr : "(no message)");
+        *errorMessage = buf;
+
+        if (targetErr)
+        {
+            LLVMDisposeErrorMessage(targetErr);
+        }
+
+        if (triple)
+        {
+            LLVMDisposeMessage(triple);
+        }
+
+        return NULL;
+    }
+
+    char* cpu = LLVMGetHostCPUName();
+    char* features = LLVMGetHostCPUFeatures();
+
+    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, cpu, features,
+                                                      LLVMCodeGenLevelAggressive,
+                                                      LLVMRelocPIC,
+                                                      LLVMCodeModelJITDefault);
+
+    LLVMDisposeMessage(features);
+    LLVMDisposeMessage(cpu);
+    LLVMDisposeMessage(triple);
+
+    if (!tm)
+    {
+        *errorMessage = DupString("could not create target machine for host");
+    }
+
+    return tm;
+}
+
 void LLVMJitInit(LLVMJit* jit)
 {
     jit->m_jit = NULL;
@@ -164,23 +218,73 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         VecPush(&jit->m_externs, DupString(sym));
     }
 
-    LLVMOrcJITTargetMachineBuilderRef jtmb = NULL;
-    LLVMErrorRef err = LLVMOrcJITTargetMachineBuilderDetectHost(&jtmb);
+    /* Build an execution TargetMachine for the host CPU (all features,
+       aggressive codegen level), pin the module's triple/data layout to it,
+       and run the full IR optimization pipeline before handing the module to
+       ORC. Without this the JIT materialized codegen output directly: no
+       mem2reg/SROA, no inliner, no GVN, no vectorization. */
+    char* tmError = NULL;
+    LLVMTargetMachineRef tm = CreateHostTargetMachine(&tmError);
 
-    if (err)
+    if (!tm)
     {
-        SetOrcError(errorMessage, err, "could not create execution engine: %s");
+        *errorMessage = tmError ? tmError : DupString("could not create execution engine");
 
         DisposeBuiltModuleOnError(bm);
 
         return false;
     }
 
+    {
+        char* triple = LLVMGetDefaultTargetTriple();
+
+        LLVMSetTarget(bm->mod, triple);
+        LLVMDisposeMessage(triple);
+
+        LLVMTargetDataRef td = LLVMCreateTargetDataLayout(tm);
+
+        LLVMSetModuleDataLayout(bm->mod, td);
+        LLVMDisposeTargetData(td);
+    }
+
+    {
+        /* STRATA_OPT_PIPELINE overrides the pass pipeline (e.g. "default<O2>")
+           for experimentation; "default<O3>" is the shipped default. */
+        const char* pipeline = getenv("STRATA_OPT_PIPELINE");
+        if (!pipeline || !pipeline[0])
+        {
+            pipeline = "default<O3>";
+        }
+
+        LLVMPassBuilderOptionsRef pbOptions = LLVMCreatePassBuilderOptions();
+
+        LLVMPassBuilderOptionsSetLoopVectorization(pbOptions, 1);
+        LLVMPassBuilderOptionsSetSLPVectorization(pbOptions, 1);
+
+        LLVMErrorRef passErr = LLVMRunPasses(bm->mod, pipeline, tm, pbOptions);
+
+        LLVMDisposePassBuilderOptions(pbOptions);
+
+        if (passErr)
+        {
+            SetOrcError(errorMessage, passErr, "could not optimize module: %s");
+
+            LLVMDisposeTargetMachine(tm);
+
+            DisposeBuiltModuleOnError(bm);
+
+            return false;
+        }
+    }
+
+    /* Transfers ownership of tm to the builder. */
+    LLVMOrcJITTargetMachineBuilderRef jtmb = LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(tm);
+
     LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
     LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(builder, jtmb);
 
     LLVMOrcLLJITRef llj = NULL;
-    err = LLVMOrcCreateLLJIT(&llj, builder);
+    LLVMErrorRef err = LLVMOrcCreateLLJIT(&llj, builder);
 
     if (err)
     {

@@ -168,6 +168,10 @@ target_compile_definitions(jit_demo PRIVATE
     STRATA_SAMPLE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples")
 strata_stage_dll(jit_demo)
 
+add_executable(opt_bench samples/hosts/opt_bench_host.c)
+target_link_libraries(opt_bench PRIVATE strata)
+strata_stage_dll(opt_bench)
+
 add_executable(engine_demo samples/hosts/engine_demo_host.c)
 target_link_libraries(engine_demo PRIVATE strata)
 target_compile_definitions(engine_demo PRIVATE

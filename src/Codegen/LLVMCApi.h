@@ -249,6 +249,7 @@ typedef enum {
 LLVMBool LLVMGetTargetFromTriple(const char* triple, LLVMTargetRef* target, char** errorMessage);
 char* LLVMGetDefaultTargetTriple(void);
 char* LLVMGetHostCPUName(void);
+char* LLVMGetHostCPUFeatures(void);
 LLVMTargetMachineRef LLVMCreateTargetMachine(LLVMTargetRef t, const char* triple, const char* cpu,
                                              const char* features, LLVMCodeGenOptLevel level,
                                              LLVMRelocMode reloc, LLVMCodeModel codeModel);
@@ -257,12 +258,21 @@ LLVMTargetDataRef LLVMCreateTargetDataLayout(LLVMTargetMachineRef t);
 char* LLVMCopyStringRepOfTargetData(LLVMTargetDataRef td);
 void LLVMDisposeTargetData(LLVMTargetDataRef td);
 void LLVMSetDataLayout(LLVMModuleRef m, const char* dataLayout);
+void LLVMSetModuleDataLayout(LLVMModuleRef m, LLVMTargetDataRef dl);
 void LLVMSetTarget(LLVMModuleRef m, const char* triple);
 LLVMBool LLVMTargetMachineEmitToFile(LLVMTargetMachineRef t, LLVMModuleRef m, const char* filename,
                                      LLVMCodeGenFileType codegen, char** errorMessage);
 LLVMBool LLVMTargetMachineEmitToMemoryBuffer(LLVMTargetMachineRef t, LLVMModuleRef m, LLVMCodeGenFileType codegen,
                                              char** errorMessage, LLVMMemoryBufferRef* outMemBuf);
 void LLVMDisposeMemoryBuffer(LLVMMemoryBufferRef memBuf);
+
+/* --- llvm-c/Transforms/PassBuilder.h --- */
+typedef struct LLVMOpaquePassBuilderOptions* LLVMPassBuilderOptionsRef;
+LLVMPassBuilderOptionsRef LLVMCreatePassBuilderOptions(void);
+void LLVMDisposePassBuilderOptions(LLVMPassBuilderOptionsRef Options);
+void LLVMPassBuilderOptionsSetLoopVectorization(LLVMPassBuilderOptionsRef Options, LLVMBool LoopVectorization);
+void LLVMPassBuilderOptionsSetSLPVectorization(LLVMPassBuilderOptionsRef Options, LLVMBool SLPVectorization);
+LLVMErrorRef LLVMRunPasses(LLVMModuleRef M, const char* Passes, LLVMTargetMachineRef TM, LLVMPassBuilderOptionsRef Options);
 
 LLVMValueRef LLVMGetNamedFunction(LLVMModuleRef m, const char* name);
 
@@ -308,6 +318,7 @@ void LLVMOrcDisposeThreadSafeModule(LLVMOrcThreadSafeModuleRef tsm);
 
 LLVMErrorRef LLVMOrcJITTargetMachineBuilderDetectHost(LLVMOrcJITTargetMachineBuilderRef* outResult);
 void LLVMOrcDisposeJITTargetMachineBuilder(LLVMOrcJITTargetMachineBuilderRef jtmb);
+LLVMOrcJITTargetMachineBuilderRef LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(LLVMTargetMachineRef TM);
 
 LLVMErrorRef LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
     LLVMOrcDefinitionGeneratorRef* outResult, char globalPrefix,
