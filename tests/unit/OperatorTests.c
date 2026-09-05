@@ -936,7 +936,7 @@ STRATA_TEST(array_length_incdec_is_an_error)
                                    "}\n",
                                    &err);
     STRATA_CHECK(jit == NULL);
-    STRATA_CHECK(err && Contains(err, "cannot assign to 'length'"));
+    STRATA_CHECK(err && Contains(err, "cannot increment '.length' (read-only"));
     if (err) strataFree((char*)err);
 }
 
