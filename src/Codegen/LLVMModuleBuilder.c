@@ -2621,7 +2621,8 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
     case UnNot:
     {
-        LLVMValueRef ref = LLVMBuildXor(b->m_builder, e.value, LLVMConstInt(I1Ty(b), 1, 0), "not");
+        LLVMValueRef v = ToI1(b, e);
+        LLVMValueRef ref = LLVMBuildXor(b->m_builder, v, LLVMConstInt(I1Ty(b), 1, 0), "not");
 
         return ValueMake(ref, TypeDescMake(I1Ty(b), 0, NULL));
     }
