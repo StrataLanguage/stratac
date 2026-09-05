@@ -671,6 +671,16 @@ static bool IsManifestConstType(const TypeRegistry* reg, const char* name)
     return IsNumeric(TypeRegistryResolveAlias(reg, name));
 }
 
+static bool IsBoolType(const TypeRegistry* reg, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    return strcmp(TypeRegistryResolveAlias(reg, t->name), "bool") == 0;
+}
+
 /* Resolves `[constName]` fixed-array dimensions on a type tree against the
    manifest-constant table. */
 static bool SemaResolveConstDims(Resolver* r, TypeName* t)
@@ -1751,13 +1761,47 @@ static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
 static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey, bool condFactNegated);
 static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope);
 
-static void CheckConstAssign(Resolver* r, Node* target, SourceRange range)
+static bool IsLengthPseudoMemberBase(const TypeRegistry* reg, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    if (t->isArray)
+    {
+        return true;
+    }
+
+    return TypeIsString(reg, TypeRegistryResolveAlias(reg, t->name));
+}
+
+static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMap* scope)
 {
     Node* base = target;
 
     if (!base)
     {
         return;
+    }
+
+    /* String and array's `.length` is readonly */
+    if (target->kind == NodeMember)
+    {
+        MemberExpr* tm = (MemberExpr*)target;
+
+        if (strcmp(tm->member, "length") == 0)
+        {
+            const TypeName* bt = InferType(r, tm->base_node, scope);
+
+            if (bt && IsLengthPseudoMemberBase(&r->m_registry, bt))
+            {
+                DiagErrorFmt(r->m_diag, range,
+                             "cannot assign to '%s' (a read-only pseudo-member; use 'array_resize' instead)",
+                             tm->member);
+                return;
+            }
+        }
     }
 
     while (base->kind == NodeMember || base->kind == NodeIndex)
@@ -3118,11 +3162,12 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 /* Validates impl targets and materializes property accessor externs (before
    the overload/mangling pass, so accessors flow through the normal pipeline). */
 /* Result of folding an enum member value expression. */
-typedef enum {
+typedef enum
+{
     EnumEvalOk = 0,
-    EnumEvalNotConst,      /* not a constant integer expression (incl. div-by-zero, bad shift) */
+    EnumEvalNotConst,       /* not a constant integer expression (incl. div-by-zero, bad shift) */
     EnumEvalNegForUnsigned, /* a unary minus in an expression for an unsigned underlying */
-    EnumEvalForwardRef,    /* references a member that isn't resolved yet (self/forward) */
+    EnumEvalForwardRef,     /* references a member that isn't resolved yet (self/forward) */
 } EnumEvalStatus;
 
 /* Finds `memberName` in enum `ed`; returns true with `*outIndex` set. */
@@ -3468,15 +3513,15 @@ static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry
                     if (m->isNegative)
                     {
                         DiagErrorFmt(diag, m->base.range,
-                                     "enum member '%s' may not be negative for unsigned underlying type '%s'",
-                                     m->name, underlying);
+                                     "enum member '%s' may not be negative for unsigned underlying type '%s'", m->name,
+                                     underlying);
                         continue;
                     }
 
                     if (m->value > maxVal)
                     {
-                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'",
-                                     m->name, (unsigned long long)m->value, underlying);
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'", m->name,
+                                     (unsigned long long)m->value, underlying);
                         continue;
                     }
 
@@ -3486,8 +3531,8 @@ static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry
                 {
                     if (next > maxVal)
                     {
-                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'",
-                                     m->name, (unsigned long long)next, underlying);
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'", m->name,
+                                     (unsigned long long)next, underlying);
                         continue;
                     }
 
@@ -3518,8 +3563,9 @@ static void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry
                     else
                     {
                         m->isNegative = (int64_t)v < 0;
-                        m->value = m->isNegative ? ((v == (uint64_t)0x8000000000000000ULL) ? v : (uint64_t)(-(int64_t)v))
-                                                 : v;
+                        m->value = m->isNegative
+                                       ? ((v == (uint64_t)0x8000000000000000ULL) ? v : (uint64_t)(-(int64_t)v))
+                                       : v;
                     }
                 }
 
@@ -4484,8 +4530,25 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         return;
     }
     case NodeUnary:
-        ResolveExpr(r, ((UnaryExpr*)n)->operand, scope);
+    {
+        UnaryExpr* u = (UnaryExpr*)n;
+
+        ResolveExpr(r, u->operand, scope);
+
+        /* `-bool` and `~bool` compute i1 garbage (signed 1-bit neg/not).
+           Only `!` is defined for bools. */
+        if (u->op == UnNeg || u->op == UnBitNot)
+        {
+            const TypeName* ot = InferType(r, u->operand, scope);
+
+            if (ot && IsBoolType(&r->m_registry, ot))
+            {
+                DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
+            }
+        }
+
         return;
+    }
     case NodeBinary:
     {
         BinaryExpr* b = (BinaryExpr*)n;
@@ -4520,7 +4583,11 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             bool vectorPair
                 = SameResolvedType(r, ln2, rn2) && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
 
-            if (lt && rt && !numericPair && !vectorPair)
+            /* Bool is not numeric: `true + true` must not compute i1
+               wrap-around (1+1 = 0). */
+            bool boolOperand = (lt && IsBoolType(&r->m_registry, lt)) || (rt && IsBoolType(&r->m_registry, rt));
+
+            if (lt && rt && (!numericPair || boolOperand) && !vectorPair)
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
             }
@@ -4541,6 +4608,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             bool lString = lt && TypeIsString(&r->m_registry, ln);
             bool rString = rt && TypeIsString(&r->m_registry, rn);
+
+            /* Ordering a bool is meaningless (i1 compares with signed 1-bit
+               semantics: `true < false` computes garbage). Only `==`/`!=`
+               are defined for bools. */
+            bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
+            bool boolOperand = (lt && IsBoolType(&r->m_registry, lt)) || (rt && IsBoolType(&r->m_registry, rt));
+
+            if (boolOperand && !eqOp)
+            {
+                DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+                break;
+            }
 
             if (lString != rString)
             {
@@ -4572,8 +4651,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 break;
             }
 
-            if (lt && rt && (!TypeIsTriviallyComparable(&r->m_registry, lt)
-                             || !TypeIsTriviallyComparable(&r->m_registry, rt)))
+            if (lt && rt
+                && (!TypeIsTriviallyComparable(&r->m_registry, lt) || !TypeIsTriviallyComparable(&r->m_registry, rt)))
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
             }
@@ -4595,7 +4674,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             return;
         }
 
-        CheckConstAssign(r, a->target, a->base.range);
+        CheckConstAssign(r, a->target, a->base.range, scope);
 
         /* `.length` / `.cap` on arrays and strings are read-only views of
            the fat (fixed `.length` is a compile-time constant). */
@@ -4888,8 +4967,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
                 // Rebind drops stale facts; `=` restores them for proven values.
-                bool valueProvesNonEmpty = !vt || !vt->isOptional
-                                           || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
+                bool valueProvesNonEmpty
+                    = !vt || !vt->isOptional || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
 
                 ClearNullableFacts(r, fieldKey);
 
@@ -5000,14 +5079,15 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        CheckConstAssign(r, inc->operand, inc->base.range);
+        CheckConstAssign(r, inc->operand, inc->base.range, scope);
         ResolveExpr(r, inc->operand, scope);
 
         /* ++/-- only makes sense on numeric storage; anything else would
-           fall through to pointer arithmetic. */
+           fall through to pointer arithmetic. Bool is not numeric: `b++`
+           wraps the i1 (true -> false). */
         const TypeName* incType = InferType(r, inc->operand, scope);
 
-        if (incType && !IsNumeric(incType->name))
+        if (incType && (!IsNumeric(incType->name) || IsBoolType(&r->m_registry, incType)))
         {
             DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
                          inc->isDec ? "decrement" : "increment", incType->name);
@@ -5162,8 +5242,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
             else
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "handle '%s' has no member '%s'", baseType->name,
-                             m->member);
+                DiagErrorFmt(r->m_diag, m->base.range, "handle '%s' has no member '%s'", baseType->name, m->member);
             }
         }
 
@@ -6380,8 +6459,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
 
-            if (sd->isExtern && (TypeIsString(&r.m_registry, field->type.name) ||
-                                 ResolvesToDynamicArray(&r, &field->type)))
+            if (sd->isExtern
+                && (TypeIsString(&r.m_registry, field->type.name) || ResolvesToDynamicArray(&r, &field->type)))
             {
                 // Strings and dynamic arrays are fats; extern structs must match C layout.
                 if (TypeIsString(&r.m_registry, field->type.name))
@@ -6527,9 +6606,9 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             }
 
             // String globals default to empty, like arrays.
-            bool stringLike = TypeIsString(&r.m_registry, gd->type.name)
-                              || (gd->type.isOptional && gd->type.inner
-                                  && TypeIsString(&r.m_registry, gd->type.inner->name));
+            bool stringLike
+                = TypeIsString(&r.m_registry, gd->type.name)
+                  || (gd->type.isOptional && gd->type.inner && TypeIsString(&r.m_registry, gd->type.inner->name));
 
             if (!gd->init)
             {
@@ -6622,7 +6701,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             if (isStringReturn)
             {
                 DiagErrorFmt(diag, functionDecl->base.range,
-                             "extern function cannot return '%s' by value. use return-param (e.g, `return %s paramName`) instead, writing out the return value as a pointer from the host",
+                             "extern function cannot return '%s' by value. use return-param (e.g, `return %s "
+                             "paramName`) instead, writing out the return value as a pointer from the host",
                              functionDecl->returnType.name, functionDecl->returnType.name);
             }
             else if (isFat)

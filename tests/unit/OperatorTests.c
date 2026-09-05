@@ -2,6 +2,8 @@
 #include "Test.h"
 #include "strata/strata.h"
 
+#include <stdarg.h>
+
 static bool Contains(const char* h, const char* n)
 {
     return strstr(h, n) != NULL;
@@ -236,6 +238,85 @@ STRATA_TEST(jit_short_circuit_and_evaluates_both_when_lhs_true)
     }
 }
 
+STRATA_TEST(jit_short_circuit_or_evaluates_both_when_lhs_false)
+{
+    g_sideEffectCount = 0;
+    StrataJit* jit = CompileJit("extern int se_true();\n"
+                                "extern int se_false();\n"
+                                "int entry() {\n"
+                                "  if (se_false() || se_true()) { return 1; }\n"
+                                "  return 0;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "se_true", (void*)&SideEffectTrue);
+        strataJitAddSymbol(jit, "se_false", (void*)&SideEffectFalse);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 1);
+            STRATA_CHECK_EQ(g_sideEffectCount, 2);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* `||` yields a real bool value usable in arithmetic, not just an if
+   condition: the RHS is evaluated and normalized to 0/1. */
+STRATA_TEST(jit_or_result_value)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int a = 0;\n"
+                                "  int b = 5;\n"
+                                "  int c = 0 || 0;\n"
+                                "  int d = 0 || b;\n"
+                                "  int e = a || (b > 3);\n"
+                                "  return c + d + e;\n"   // 0 + 1 + 1 = 2
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 2);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* Chained `||` short-circuits across all operands: a true LHS skips the
+   entire chain. */
+STRATA_TEST(jit_short_circuit_or_chain)
+{
+    g_sideEffectCount = 0;
+    StrataJit* jit = CompileJit("extern int se_true();\n"
+                                "extern int se_false();\n"
+                                "int entry() {\n"
+                                "  if (se_true() || se_false() || se_false()) { return 1; }\n"
+                                "  return 0;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "se_true", (void*)&SideEffectTrue);
+        strataJitAddSymbol(jit, "se_false", (void*)&SideEffectFalse);
+
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 1);
+            STRATA_CHECK_EQ(g_sideEffectCount, 1);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
 STRATA_TEST(jit_cast_int_to_float)
 {
     StrataJit* jit = CompileJit("int entry() {\n"
@@ -378,6 +459,521 @@ STRATA_TEST(jit_cast_to_bool_compares_to_zero)
         if (f)
         {
             STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* `!` negates bool literals and comparison results. */
+STRATA_TEST(jit_not_bool_literal)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  bool a = !true;\n"
+                                "  bool b = !false;\n"
+                                "  bool c = !!true;\n"
+                                "  int x = 5;\n"
+                                "  bool d = !(x == 5);\n"
+                                "  bool e = !(x > 10);\n"
+                                "  return (int)a + (int)b + (int)c + (int)d + (int)e;\n"  // 0+1+1+0+1 = 3
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 3);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* (int)bool widens correctly: true -> 1, false -> 0. */
+STRATA_TEST(jit_bool_to_int_cast)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  bool t = true;\n"
+                                "  bool f = false;\n"
+                                "  return (int)t * 10 + (int)f;\n"   // 10 + 0 = 10
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 10);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* bool ==/!= are proper boolean results (usable directly in arithmetic via
+   cast, and combinable with logic ops). */
+STRATA_TEST(jit_bool_equality)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  bool a = true == true;\n"
+                                "  bool b = true == false;\n"
+                                "  bool c = true != false;\n"
+                                "  bool d = false != false;\n"
+                                "  return (int)a + (int)b + (int)c + (int)d;\n"  // 1+0+1+0 = 2
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 2);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* bool locals round-trip through function params and returns. */
+STRATA_TEST(jit_bool_function_params_and_returns)
+{
+    StrataJit* jit = CompileJit("bool flip(bool x) { return !x; }\n"
+                                "int both(bool a, bool b) { return (int)a + (int)b; }\n"
+                                "int entry() {\n"
+                                "  bool x = flip(false);\n"
+                                "  bool y = flip(true);\n"
+                                "  return (int)x * 100 + (int)y * 10 + both(true, false);\n"  // 100 + 0 + 1 = 101
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 101);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* A bool stored in a struct field reads back intact. */
+STRATA_TEST(jit_bool_struct_field)
+{
+    StrataJit* jit = CompileJit("struct Flag { bool on; int val; };\n"
+                                "int entry() {\n"
+                                "  Flag f = Flag { .on = true, .val = 7 };\n"
+                                "  int a = (int)f.on;\n"
+                                "  f.on = false;\n"
+                                "  int b = (int)f.on;\n"
+                                "  return a * 10 + b + f.val;\n"   // 10 + 0 + 7 = 17
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 17);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* bool array elements survive push + read. */
+STRATA_TEST(jit_bool_array)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  bool[] arr;\n"
+                                "  array_push(arr, true);\n"
+                                "  array_push(arr, false);\n"
+                                "  array_push(arr, true);\n"
+                                "  int s = 0;\n"
+                                "  for (int i = 0; i < 3; i++) { s = s + (int)arr[i]; }\n"
+                                "  return s;\n"   // 1 + 0 + 1 = 2
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 2);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* bool globals: initialized and mutable. */
+STRATA_TEST(jit_bool_global)
+{
+    StrataJit* jit = CompileJit("bool g_flag = true;\n"
+                                "int entry() {\n"
+                                "  int a = (int)g_flag;\n"
+                                "  g_flag = false;\n"
+                                "  int b = (int)g_flag;\n"
+                                "  return a * 10 + b;\n"   // 10 + 0 = 10
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 10);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* Comparisons combine with &&/|| into bools used as conditions. */
+STRATA_TEST(jit_bool_logic_of_comparisons)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int x = 7;\n"
+                                "  bool inRange = (x > 0) && (x < 10);\n"
+                                "  bool out = (x < 0) || (x > 100) || (x == 7);\n"
+                                "  if (inRange && out) { return 1; }\n"
+                                "  return 0;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* (bool)double is a nonzero test, and negative ints are truthy. */
+STRATA_TEST(jit_bool_cast_from_float_and_negative)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  double d = 0.5;\n"
+                                "  bool a = (bool)d;\n"
+                                "  bool b = (bool)0.0;\n"
+                                "  int n = -3;\n"
+                                "  bool c = (bool)n;\n"
+                                "  return (int)a + (int)b + (int)c;\n"   // 1 + 0 + 1 = 2
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 2);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_bool_from_comparison_in_loop_condition)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int sum = 0;\n"
+                                "  bool keepGoing = true;\n"
+                                "  int i = 0;\n"
+                                "  while (keepGoing) {\n"
+                                "    sum += i;\n"
+                                "    i++;\n"
+                                "    keepGoing = (i < 5) || false;\n"
+                                "  }\n"
+                                "  return sum;\n"   // 0+1+2+3+4 = 10
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 10);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+static int HostBoolAnd(bool a, bool b) { return a && b ? 1 : 0; }
+static bool HostBoolNot(bool x) { return !x; }
+
+static int HostVarargSum(int count, ...)
+{
+    va_list ap;
+    va_start(ap, count);
+    int total = 0;
+    for (int i = 0; i < count; i++)
+    {
+        total += va_arg(ap, int);
+    }
+    va_end(ap);
+
+    return total;
+}
+
+/* bools cross the extern boundary in both directions. */
+STRATA_TEST(jit_bool_extern_boundary)
+{
+    StrataJit* jit = CompileJit("extern int host_and(bool a, bool b);\n"
+                                "extern bool host_not(bool x);\n"
+                                "int entry() {\n"
+                                "  int a = host_and(true, true);\n"
+                                "  int b = host_and(true, false);\n"
+                                "  bool c = host_not(true);\n"
+                                "  return a * 100 + b * 10 + (int)c;\n"   // 100 + 0 + 0 = 100
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "host_and", (void*)&HostBoolAnd);
+        strataJitAddSymbol(jit, "host_not", (void*)&HostBoolNot);
+
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 100);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* A bool passed through a bare extern vararg (printf-style) slot is promoted
+   to int (C default argument promotion). */
+STRATA_TEST(jit_bool_vararg_promotion)
+{
+    StrataJit* jit = CompileJit("extern int host_sum(int count, ...);\n"
+                                "int entry() {\n"
+                                "  return host_sum(2, true, false);\n"   // 1 + 0 = 1
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "host_sum", (void*)&HostVarargSum);
+
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(bool_arithmetic_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  bool a = true;\n"
+                                   "  bool b = false;\n"
+                                   "  bool c = a + b;\n"
+                                   "  return (int)c;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
+    if (err) strataFree((char*)err);
+}
+
+/* Every arithmetic/bitwise operator is rejected on bools. */
+STRATA_TEST(bool_bitwise_and_shift_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  bool a = true;\n"
+                                   "  bool b = false;\n"
+                                   "  bool c = a & b;\n"
+                                   "  bool d = a | b;\n"
+                                   "  bool e = a ^ b;\n"
+                                   "  bool f = a << 1;\n"
+                                   "  return (int)(c + d + e + f);\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
+    if (err) strataFree((char*)err);
+}
+
+/* `true + false` computes i1 wrap-around in codegen; `a < b` compares with
+   signed 1-bit semantics (`true < false` is garbage). Both are rejected. */
+STRATA_TEST(bool_ordering_comparison_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  bool a = true;\n"
+                                   "  bool b = false;\n"
+                                   "  bool c = a < b;\n"
+                                   "  return (int)c;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
+    if (err) strataFree((char*)err);
+}
+
+STRATA_TEST(bool_unary_minus_and_bitnot_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  bool a = true;\n"
+                                   "  bool b = -a;\n"
+                                   "  bool c = ~a;\n"
+                                   "  return (int)(b + c);\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "invalid operand to unary operator"));
+    if (err) strataFree((char*)err);
+}
+
+STRATA_TEST(bool_incdec_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  bool a = true;\n"
+                                   "  a++;\n"
+                                   "  return (int)a;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "cannot increment a value of type 'bool'"));
+    if (err) strataFree((char*)err);
+}
+
+/* An alias of bool (`struct Flag = bool;`) is caught too, now that the
+   checks resolve aliases. */
+STRATA_TEST(bool_alias_arithmetic_and_ordering_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("struct Flag = bool;\n"
+                                   "int entry() {\n"
+                                   "  Flag a = (Flag)true;\n"
+                                   "  Flag b = (Flag)false;\n"
+                                   "  Flag c = a + b;\n"
+                                   "  bool d = a < b;\n"
+                                   "  return (int)c + (int)d;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
+    if (err) strataFree((char*)err);
+}
+
+/* bool `==`/`!=` stays legal — covered by jit_bool_equality above; this
+   locks in the contrast against the ordering rejection. */
+STRATA_TEST(bool_equality_still_compiles)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  bool a = true;\n"
+                                "  bool b = false;\n"
+                                "  if (a != b && a == true && b == false) { return 1; }\n"
+                                "  return 0;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 1);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* `.length` on a dynamic array is a read-only pseudo-member: assigning it
+   would corrupt the {ptr,len} fat (a fresh array has a null buffer, so
+   growing the length without allocating segfaults on the next element
+   write). Use `array_resize`. */
+STRATA_TEST(array_length_assign_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  int[] arr;\n"
+                                   "  arr.length = 3;\n"
+                                   "  arr[0] = 1;\n"
+                                   "  return arr[0];\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "cannot assign to 'length' (a read-only pseudo-member"));
+    if (err) strataFree((char*)err);
+}
+
+/* Compound assignment into `.length` is rejected too. */
+STRATA_TEST(array_length_compound_assign_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  int[] arr;\n"
+                                   "  arr.length += 1;\n"
+                                   "  return 0;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "cannot assign to 'length'"));
+    if (err) strataFree((char*)err);
+}
+
+/* `++`/`--` on `.length` is rejected too. */
+STRATA_TEST(array_length_incdec_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  int[] arr;\n"
+                                   "  arr.length++;\n"
+                                   "  return 0;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "cannot assign to 'length'"));
+    if (err) strataFree((char*)err);
+}
+
+/* `string.length` is the same read-only fat slot. */
+STRATA_TEST(string_length_assign_is_an_error)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr("int entry() {\n"
+                                   "  string s = \"abc\";\n"
+                                   "  s.length = 5;\n"
+                                   "  return (int)s.length;\n"
+                                   "}\n",
+                                   &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, "cannot assign to 'length'"));
+    if (err) strataFree((char*)err);
+}
+
+/* `array_resize` remains the sanctioned way to grow/shrink, and reading
+   `.length` still works. */
+STRATA_TEST(array_resize_still_works)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int[] arr;\n"
+                                "  array_resize(arr, 3);\n"
+                                "  arr[0] = 5;\n"
+                                "  arr[2] = 7;\n"
+                                "  return (int)arr.length + arr[0] + arr[2];\n"   // 3 + 5 + 7 = 15
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL);
+        if (fn)
+        {
+            STRATA_CHECK_EQ(fn(), 15);
         }
         strataJitDestroy(jit);
     }
