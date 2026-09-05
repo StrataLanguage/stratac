@@ -417,7 +417,8 @@ static LLVMValueRef MakeStringFatValue(Builder* b, LLVMValueRef dataPtr, LLVMVal
     LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
     fat = LLVMBuildInsertValue(b->m_builder, fat, dataPtr, 0, "sfat.p");
     fat = LLVMBuildInsertValue(b->m_builder, fat, LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "sfat.l32"), 1, "sfat.l");
-    return LLVMBuildInsertValue(b->m_builder, fat, LLVMBuildTrunc(b->m_builder, cap, I32Ty(b), "sfat.c32"), 2, "sfat.c");
+    return LLVMBuildInsertValue(b->m_builder, fat, LLVMBuildTrunc(b->m_builder, cap, I32Ty(b), "sfat.c32"), 2,
+                                "sfat.c");
 }
 
 static LLVMValueRef IdxConst(Builder* b, unsigned i)
@@ -2621,7 +2622,8 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
     case UnNot:
     {
-        LLVMValueRef ref = LLVMBuildXor(b->m_builder, e.value, LLVMConstInt(I1Ty(b), 1, 0), "not");
+        LLVMValueRef v = ToI1(b, e);
+        LLVMValueRef ref = LLVMBuildXor(b->m_builder, v, LLVMConstInt(I1Ty(b), 1, 0), "not");
 
         return ValueMake(ref, TypeDescMake(I1Ty(b), 0, NULL));
     }
@@ -2769,8 +2771,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
             LLVMValueRef args[4] = {lp, ll, rp, rl};
             StrataStrEqFn(b);
             LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
-            LLVMValueRef cmp
-                = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
+            LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
 
             if (n->op == BinNotEq)
             {
@@ -5511,11 +5512,11 @@ Value EmitExpr(Builder* b, Node* n)
            [len]. cap is len+1 (the constant carries the terminator byte).
            Owning consumers heap-copy via EmitOwnedValue. */
         TypeDesc td = StringFatDesc(b);
-        LLVMValueRef fat = LLVMConstNamedStruct(
-            ArrayStructType(b),
-            (LLVMValueRef[3]){gep, LLVMConstInt(I32Ty(b), (unsigned long long)len, 0),
-                              LLVMConstInt(I32Ty(b), (unsigned long long)len + 1, 0)},
-            3);
+        LLVMValueRef fat
+            = LLVMConstNamedStruct(ArrayStructType(b),
+                                   (LLVMValueRef[3]){gep, LLVMConstInt(I32Ty(b), (unsigned long long)len, 0),
+                                                     LLVMConstInt(I32Ty(b), (unsigned long long)len + 1, 0)},
+                                   3);
 
         return ValueMake(fat, td);
     }
