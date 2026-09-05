@@ -845,6 +845,183 @@ STRATA_TEST(optional_negated_implicit_else_lazy_init)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(optional_negated_test_return_blesses_at_join)
+{
+    /* `if (!s?) { return 1; }` - the then arm terminates, so only the
+       non-empty path reaches the join: reading through `s` is legal. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOptBound(
+        "extern int str_len(string s);\n"
+        "int entry() {\n"
+        "  string? s = \"abcd\";\n"
+        "  if (!s?) { return 1; }\n"
+        "  return str_len(s);\n"              /* 4 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 4);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(optional_else_return_keeps_then_fact_at_join)
+{
+    /* The else arm terminates: only the (blessed) then path reaches the
+       join, so the fact survives without intersecting with the dead else. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "extern int puts(string s);\n"
+        "int entry() {\n"
+        "  string? s = \"x\";\n"
+        "  if (s?) { puts(s); }\n"
+        "  else { return 1; }\n"
+        "  puts(s);\n"                        /* still blessed on the only path */
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* ---- Facts across loops and `ref` borrows ---------------------------------
+   A `ref T` param borrows the UNWRAPPED pointee of a `T?` argument - the
+   callee cannot rebind (or empty) the caller's slot, so the fact survives.
+   Only a `ref T?` param crosses the slot itself and kills the fact. A
+   pre-loop fact survives the loop when the body never invalidates it (the
+   zero-iteration path holds it); a positive `while (e?)` exits with `e`
+   empty, so its fact never survives. */
+
+static int g_optTouchCount = 0;
+
+static void HostOptTouch(int* self)
+{
+    g_optTouchCount++;
+    *self = *self + 1;
+}
+
+STRATA_TEST(optional_fact_survives_ref_method_calls_and_loops)
+{
+    /* The engine-main idiom: bless via early return, then read through the
+       optional inside and after a loop whose body only ref-borrows it. */
+    const char* err = NULL;
+    StrataCompiler* c = strataCompilerCreate();
+    StrataJit* jit = strataJitCompileString(
+        c,
+        "struct E { int v; };\n"
+        "impl E { extern void Touch(ref E self); }\n"
+        "int entry() {\n"
+        "  E? e = E { .v = 5 };\n"
+        "  if (!e?) { return -1; }\n"
+        "  int i = 0;\n"
+        "  while (i < 3) {\n"
+        "    e.Touch();\n"                    /* ref borrow: fact survives */
+        "    i = i + 1;\n"
+        "  }\n"
+        "  e.Touch();\n"
+        "  return e.v;\n"                     /* 5 + 4 touches = 9 */
+        "}\n",
+        "opt",
+        &err);
+
+    if (jit)
+    {
+        strataJitAddSymbol(jit, "E_Touch", (void*)&HostOptTouch);
+    }
+
+    strataCompilerDestroy(c);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 9);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(optional_ref_slot_param_still_kills_fact)
+{
+    /* A `ref T?` param crosses the slot itself: the callee may rebind it,
+       so the blessing dies at the call. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct E { int v; };\n"
+        "extern void Rebind(ref E? slot);\n"
+        "int entry() {\n"
+        "  E? e = E { .v = 1 };\n"
+        "  Rebind(e);\n"
+        "  return e.v;\n"
+        "}\n",
+        "'e' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_positive_while_cond_is_empty_after_loop)
+{
+    /* `while (e?)` exits when e is empty: reading through it afterwards
+       must still be rejected. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct E { int v; };\n"
+        "int entry() {\n"
+        "  E? e = E { .v = 1 };\n"
+        "  while (e?) { e.v = e.v + 1; }\n"
+        "  return e.v;\n"
+        "}\n",
+        "'e'", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_loop_reassign_from_unprovable_kills_fact)
+{
+    /* Reassigning the slot inside the loop (maybe-empty result) invalidates
+       the pre-loop blessing at the exit. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct E { int v; };\n"
+        "E? Make() { E? r = E { .v = 1 }; return r; }\n"
+        "int entry() {\n"
+        "  E? e = Make();\n"
+        "  if (!e?) { return 1; }\n"
+        "  int i = 0;\n"
+        "  while (i < 3) { e = Make(); i = i + 1; }\n"
+        "  return e.v;\n"
+        "}\n",
+        "'e' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
 STRATA_TEST(optional_negated_while_body_sees_empty)
 {
     Arena arena; arena_init(&arena, 0);

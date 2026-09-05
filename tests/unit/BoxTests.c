@@ -1301,6 +1301,114 @@ STRATA_TEST(box_moved_in_one_if_branch_used_unconditionally_after_is_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(box_return_in_if_branch_does_not_poison_fall_through)
+{
+    /* `return e;` moves only on the branch that returns it; code after the
+       if runs only on paths where the box was never moved (the engine-init
+       idiom: early-error returns, then more field writes and a final return). */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct V { int x; int y; };\n"
+        "^V build(bool fail) {\n"
+        "  ^V e = V { .x = 1, .y = 2 };\n"
+        "  if (fail) { return e; }\n"
+        "  e.x = e.x + 10;\n"
+        "  if (e.y == 0) { return e; }\n"
+        "  e.y = e.y + 20;\n"
+        "  return e;\n"
+        "}\n"
+        "int entry() {\n"
+        "  ^V v = build(false);\n"
+        "  return v.x * 100 + v.y;\n"         /* 11*100 + 22 = 1122 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 1122);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_return_in_else_branch_does_not_poison_fall_through)
+{
+    /* Mirror: the ELSE arm returns, so the join is reached only via the then
+       path and the box must stay live after the if. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct V { int x; };\n"
+        "^V pick(bool keep) {\n"
+        "  ^V e = V { .x = 5 };\n"
+        "  if (keep) {\n"
+        "    e.x = e.x + 1;\n"
+        "  } else {\n"
+        "    return e;\n"
+        "  }\n"
+        "  return e;\n"
+        "}\n"
+        "int entry() {\n"
+        "  ^V v = pick(true);\n"
+        "  return v.x;\n"                     /* 6 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 6);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_move_in_falling_through_else_is_still_an_error)
+{
+    /* A branch that moves AND falls through still poisons the join - only
+       branches that definitely return are exempt from the merge. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct V { int x; };\n"
+        "int take(^V v) { return v.x; }\n"
+        "int entry() {\n"
+        "  ^V a = V { .x = 1 };\n"
+        "  bool cond = false;\n"
+        "  if (cond) {\n"
+        "    a.x = 2;\n"
+        "  } else {\n"
+        "    take(a);\n"                      /* moves, then falls through */
+        "  }\n"
+        "  return a.x;\n"                     /* error: maybe moved via else */
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'a' used after move"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(box_owned_param_use_after_call_is_error)
 {
     Arena arena; arena_init(&arena, 0);

@@ -1303,21 +1303,19 @@ static void ClearNonEmptySubtree(Resolver* r, const char* key)
     ClearSubtreeByPath(&r->m_nonEmptyPaths, key);
 }
 
-static void ClearAllNonEmptyFacts(Resolver* r)
+/* Keep only facts proven on both branches. */
+static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other);
+
+static void FinishLoopFacts(Resolver* r, StrMap* preFacts, const char* condKey, bool condNegated)
 {
-    StrMap* m = &r->m_nonEmptyPaths;
-
-    for (size_t i = 0; i < m->cap; i++)
+    if (condKey && !condNegated)
     {
-        m->values[i] = NULL;
+        ClearSubtreeByPath(preFacts, condKey);
+        ClearSubtreeByPath(&r->m_nonEmptyPaths, condKey);
     }
 
-    StrMap* e = &r->m_emptyPaths;
-
-    for (size_t i = 0; i < e->cap; i++)
-    {
-        e->values[i] = NULL;
-    }
+    /* Keep only facts present on BOTH exit paths. */
+    MergeNonEmptyFacts(&r->m_nonEmptyPaths, preFacts);
 }
 
 static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
@@ -1732,6 +1730,36 @@ static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
         {
             StrMapPut(dst, other->keys[i], (void*)2);
         }
+    }
+}
+
+static bool StmtAlwaysReturns(const Node* n)
+{
+    if (!n)
+    {
+        return false;
+    }
+
+    switch (n->kind)
+    {
+        case NodeReturn:
+            return true;
+
+        case NodeBlock:
+        {
+            const Block* b = (const Block*)n;
+            return b->statements.count > 0
+                   && StmtAlwaysReturns((const Node*)VecGet(&b->statements, b->statements.count - 1));
+        }
+
+        case NodeIf:
+        {
+            const IfStmt* i = (const IfStmt*)n;
+            return StmtAlwaysReturns(i->thenBranch) && StmtAlwaysReturns(i->elseBranch);
+        }
+
+        default:
+            return false;
     }
 }
 
@@ -2587,7 +2615,16 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
                 {
                     // The callee may write through the ref: drop nested facts.
                     InvalidateIndexVar(r, KeyRoot(r->m_arena, refKey));
-                    ClearNullableFacts(r, refKey);
+
+                    // A `T?` source unwrapped into a plain `ref T` param only
+                    // borrows the pointee - the callee cannot rebind (or
+                    // empty) the caller's slot, so the non-empty fact
+                    // survives. A `ref T?` param crosses the SLOT itself,
+                    // which the callee may rebind: its fact dies.
+                    if (rp->type.isOptional)
+                    {
+                        ClearNullableFacts(r, refKey);
+                    }
                 }
             }
         }
@@ -6025,10 +6062,28 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
         }
 
-        MergeMovedBoxes(&r->m_movedBoxes, &afterThen);
+        /* A branch that always RETURNS never reaches the join, so its
+         * post-state must not poison the fall-through path. Break/continue
+         * do not qualify: their jump target carries this state outward. An
+         * else-less if always falls through on its false edge. Both arms
+         * returning leaves the join unreachable - any state is sound; the
+         * then-side is adopted. */
+        bool elseTerminates = StmtAlwaysReturns(i->elseBranch);
+        bool thenTerminates = StmtAlwaysReturns(i->thenBranch);
 
-        /* Keep only paths proven non-empty on BOTH branches. */
-        MergeNonEmptyFacts(&r->m_nonEmptyPaths, &factsThen);
+        if (elseTerminates)
+        {
+            /* Only the then-path reaches the join: adopt its state. */
+            ReplaceStrMapContents(&r->m_movedBoxes, &afterThen);
+            ReplaceStrMapContents(&r->m_nonEmptyPaths, &factsThen);
+        }
+        else if (!thenTerminates)
+        {
+            MergeMovedBoxes(&r->m_movedBoxes, &afterThen);
+
+            /* Keep only paths proven non-empty on BOTH branches. */
+            MergeNonEmptyFacts(&r->m_nonEmptyPaths, &factsThen);
+        }
 
         StrMapFree(&beforeBranches);
         StrMapFree(&afterThen);
@@ -6047,10 +6102,15 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         Node* whileFactOperand = CondNullTestOperand(w->condition, &whileFactNegated);
         const char* factKey = whileFactOperand ? MovableBoxSourceKey(r, whileFactOperand) : NULL;
 
+        /* The zero-iteration exit path carries the pre-loop state. */
+        StrMap preFacts;
+        CopyStrMap(&r->m_nonEmptyPaths, &preFacts);
+
         WalkLoopBody(r, w->body, scope, factKey, whileFactNegated);
 
-        /* Nothing survives a loop: facts never hold after it. */
-        ClearAllNonEmptyFacts(r);
+        FinishLoopFacts(r, &preFacts, factKey, whileFactNegated);
+
+        StrMapFree(&preFacts);
 
         return;
     }
@@ -6079,6 +6139,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         Node* forFactOperand = CondNullTestOperand(fs->condition, &forFactNegated);
         const char* forFactKey = forFactOperand ? MovableBoxSourceKey(r, forFactOperand) : NULL;
 
+        /* The zero-iteration exit path runs init + condition, never the
+           update, so snapshot after the condition but before the update. */
+        StrMap preFacts;
+        CopyStrMap(&r->m_nonEmptyPaths, &preFacts);
+
         if (fs->update)
         {
             ResolveExpr(r, fs->update, scope);
@@ -6086,8 +6151,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         WalkLoopBody(r, fs->body, scope, forFactKey, forFactNegated);
 
-        /* Same rule as while: facts never survive a loop. */
-        ClearAllNonEmptyFacts(r);
+        FinishLoopFacts(r, &preFacts, forFactKey, forFactNegated);
+
+        StrMapFree(&preFacts);
 
         return;
     }
