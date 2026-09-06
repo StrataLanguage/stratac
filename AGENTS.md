@@ -448,6 +448,11 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   literal constant initializers only)
 - Overloads: functions may share a name with different param types;
   mangled as `name$type$type` (non-overloaded keep the base name)
+- Visibility: `@private` on its own line(s) before a function definition
+  limits calls to the defining file (`@private` stacks with future `@name`
+  attributes; unknown attributes error). Cross-file callers behave as if the
+  function doesn't exist (hidden from overload lookup, per-overload). Not
+  allowed on globals, structs, or `impl` methods.
 - Inferred struct init: `return { .x = 1, .y = 2 };` infers the return type
 - `const` on any param or local triggers const-checking in the sema
 

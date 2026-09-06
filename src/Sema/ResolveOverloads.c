@@ -1742,24 +1742,24 @@ static bool StmtAlwaysReturns(const Node* n)
 
     switch (n->kind)
     {
-        case NodeReturn:
-            return true;
+    case NodeReturn:
+        return true;
 
-        case NodeBlock:
-        {
-            const Block* b = (const Block*)n;
-            return b->statements.count > 0
-                   && StmtAlwaysReturns((const Node*)VecGet(&b->statements, b->statements.count - 1));
-        }
+    case NodeBlock:
+    {
+        const Block* b = (const Block*)n;
+        return b->statements.count > 0
+               && StmtAlwaysReturns((const Node*)VecGet(&b->statements, b->statements.count - 1));
+    }
 
-        case NodeIf:
-        {
-            const IfStmt* i = (const IfStmt*)n;
-            return StmtAlwaysReturns(i->thenBranch) && StmtAlwaysReturns(i->elseBranch);
-        }
+    case NodeIf:
+    {
+        const IfStmt* i = (const IfStmt*)n;
+        return StmtAlwaysReturns(i->thenBranch) && StmtAlwaysReturns(i->elseBranch);
+    }
 
-        default:
-            return false;
+    default:
+        return false;
     }
 }
 
@@ -2095,15 +2095,22 @@ static bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* Returns true if the module declares any user-defined function with `name`.
+/* Private functions are visible only in the file that defines them */
+static bool FunctionVisibleTo(const FunctionDecl* fd, uint16_t callerFile)
+{
+    return !fd->isPrivate || fd->base.range.fileId == callerFile;
+}
+
+/* Returns true if the module declares any user-defined function with `name`
+   that is visible to `callerFile`.
    `dot`/`cross` are only intrinsic fallbacks when no user overload exists, so a
    user's `dot(Vec3, Vec3)` is never hijacked by the SIMD resolver. */
-static bool ModuleHasFunctionNamed(Resolver* r, const char* name)
+static bool ModuleHasFunctionNamed(Resolver* r, const char* name, uint16_t callerFile)
 {
     for (size_t i = 0; i < r->m_mod->functions.count; i++)
     {
         FunctionDecl* fd = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
-        if (strcmp(fd->name, name) == 0)
+        if (strcmp(fd->name, name) == 0 && FunctionVisibleTo(fd, callerFile))
         {
             return true;
         }
@@ -2127,7 +2134,7 @@ static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     /* A user-defined overload takes precedence over the SIMD intrinsic. */
-    if (ModuleHasFunctionNamed(r, c->callee))
+    if (ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId))
     {
         return false;
     }
@@ -2172,7 +2179,7 @@ static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
 static bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // User defined functions take precedence
-    if (ModuleHasFunctionNamed(r, c->callee))
+    if (ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId))
     {
         return false;
     }
@@ -2217,7 +2224,7 @@ static bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
 static bool ResolveVector1Arg(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // User defined functions take precedence
-    if (ModuleHasFunctionNamed(r, c->callee))
+    if (ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId))
     {
         return false;
     }
@@ -3781,11 +3788,19 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         const FunctionDecl* best = c->resolvedDecl;
 
-        /* Facts before moves. */
-        CheckCallArgOptionalDerefs(r, c, scope);
-        TrackCallArgMoves(r, best, c);
+        /* A cached `@private` decl must not leak across files. */
+        if (!FunctionVisibleTo(best, c->base.range.fileId))
+        {
+            c->resolvedDecl = NULL;
+        }
+        else
+        {
+            /* Facts before moves. */
+            CheckCallArgOptionalDerefs(r, c, scope);
+            TrackCallArgMoves(r, best, c);
 
-        return;
+            return;
+        }
     }
 
     bool found = false;
@@ -3794,7 +3809,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
 
-        if (strcmp(functionDecl->name, c->callee) == 0)
+        if (strcmp(functionDecl->name, c->callee) == 0 && FunctionVisibleTo(functionDecl, c->base.range.fileId))
         {
             found = true;
             break;
@@ -3816,7 +3831,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
 
-        if (strcmp(functionDecl->name, c->callee) != 0)
+        if (strcmp(functionDecl->name, c->callee) != 0 || !FunctionVisibleTo(functionDecl, c->base.range.fileId))
         {
             continue;
         }
@@ -4722,7 +4737,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             if (IsFatPseudoProperty(r, InferType(r, fatM->base_node, scope), fatM->member))
             {
                 DiagErrorFmt(r->m_diag, a->base.range,
-                             "cannot assign to '.%s' (read-only; arrays grow via array_push/array_resize)", fatM->member);
+                             "cannot assign to '.%s' (read-only; arrays grow via array_push/array_resize)",
+                             fatM->member);
                 return;
             }
         }

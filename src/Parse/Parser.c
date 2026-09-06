@@ -1086,9 +1086,73 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
 static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType);
 static void ParseCallArgs(Parser* p, CallExpr* call);
 
+/* Attributes for functions. e.g. @private */
+static bool ParseFunctionAttributes(Parser* p, bool* outIsPrivate, Token* outFirstAt)
+{
+    bool any = false;
+    bool isPrivate = false;
+    Token firstAt = {TokEof, SRC_INVALID};
+
+    while (p->m_cur.kind == TokAt)
+    {
+        Token atTok = p->m_cur;
+        Advance(p);
+
+        if (!any)
+        {
+            firstAt = atTok;
+        }
+
+        any = true;
+
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected an attribute name after '@'");
+            continue;
+        }
+
+        Str attrName = ParserIdentText(p, p->m_cur);
+
+        if (StrEqC(attrName, "private"))
+        {
+            isPrivate = true;
+        }
+        else
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "unknown attribute '@%.*s'", (int)attrName.len, attrName.data);
+        }
+
+        Advance(p);
+    }
+
+    if (outIsPrivate)
+    {
+        *outIsPrivate = isPrivate;
+    }
+
+    if (outFirstAt)
+    {
+        *outFirstAt = firstAt;
+    }
+
+    return any;
+}
+
 static Node* ParseFunction(Parser* p)
 {
+    bool isPrivate = false;
+    Token firstAt = {TokEof, SRC_INVALID};
+    bool hasAttrs = ParseFunctionAttributes(p, &isPrivate, &firstAt);
+
     bool isExtern = ParserConsume(p, TokKwExtern);
+
+    if (hasAttrs
+        && (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwHandle || p->m_cur.kind == TokKwEnum
+            || p->m_cur.kind == TokKwImport || p->m_cur.kind == TokKwImpl))
+    {
+        DiagError(p->m_diag, firstAt.range, "attributes are only allowed on function definitions");
+        return NULL;
+    }
 
     TypeName returnType = {0};
     if (!ParserTryParseType(p, &returnType))
@@ -1128,6 +1192,11 @@ static Node* ParseFunction(Parser* p)
         gd->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
         gd->init = NULL;
 
+        if (hasAttrs)
+        {
+            DiagError(p->m_diag, firstAt.range, "attributes are only allowed on function definitions");
+        }
+
         if (ParserConsume(p, TokAssign))
         {
             if (p->m_cur.kind == TokLBrace && returnType.isArray)
@@ -1158,8 +1227,14 @@ static Node* ParseFunction(Parser* p)
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     node->mangledName = arena_strdup(p->m_arena, node->name);
     node->isExtern = isExtern;
+    node->isPrivate = isPrivate;
     node->hasReturnStmt = false;
     VecInit(&node->params);
+
+    if (hasAttrs)
+    {
+        node->base.range = SpanFrom(firstAt, nameTok);
+    }
 
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
     {
@@ -1465,6 +1540,12 @@ static ImplDecl* ParseImplDecl(Parser* p)
             DiagErrorFmt(p->m_diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
                          impl->handleName);
             continue;
+        }
+
+        if (fn->isPrivate)
+        {
+            DiagError(p->m_diag, fn->base.range, "attributes are not supported on impl methods");
+            fn->isPrivate = false;
         }
 
         fn->methodName = fn->name;

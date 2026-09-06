@@ -97,6 +97,7 @@ typedef enum {
     TokInc,
     TokDec,
     TokQuestion,
+    TokAt,
 } TokKind;
 
 const char* TokSpelling(TokKind kind);

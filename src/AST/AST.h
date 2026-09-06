@@ -400,6 +400,7 @@ typedef struct {
     Vec params;
     Node* body;
     bool isExtern;
+    bool isPrivate;
     bool hasReturnStmt;
     char* mangledName;
     // Variadic tails: bare `...` is extern-only; else the last param collects into T[].

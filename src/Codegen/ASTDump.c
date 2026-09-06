@@ -272,13 +272,18 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeFunction:
     {
         FunctionDecl* function_decl = AsNode(FunctionDecl, n);
+        if (function_decl->isPrivate)
+        {
+            SbPuts(out, "@private\n");
+            Pad(indent, out);
+        }
         SbPuts(out, "fn ");
-        
+
         if (function_decl->isExtern)
         {
             SbPuts(out, "extern ");
         }
-        
+
         SbPrintf(out, "%s %s(", function_decl->returnType.name,
                  function_decl->methodName ? function_decl->methodName : function_decl->name);
 
@@ -288,7 +293,7 @@ static void Dump(Node* n, int indent, Sb* out)
             {
                 SbPuts(out, ", ");
             }
-            
+
             ParamDecl* param = (ParamDecl*)VecGet(&function_decl->params, i);
 
             if (param->isVarargRest)
@@ -345,7 +350,7 @@ static void Dump(Node* n, int indent, Sb* out)
 
         SbPutc(out, '\n');
         Dump(function_decl->body, indent + 2, out);
-        
+
         return;
     }
 
@@ -362,7 +367,7 @@ static void Dump(Node* n, int indent, Sb* out)
 
         Pad(indent, out);
         SbPuts(out, "}\n");
-        
+
         return;
     }
 
@@ -388,7 +393,7 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeIf:
     {
         IfStmt* i = AsNode(IfStmt, n);
-        
+
         SbPuts(out, "if ");
         Dump(i->condition, 0, out);
         SbPutc(out, '\n');
@@ -435,15 +440,15 @@ static void Dump(Node* n, int indent, Sb* out)
         }
 
         SbPuts(out, "; ");
-        
+
         if (for_stmt->update)
         {
             Dump(for_stmt->update, 0, out);
         }
-        
+
         SbPuts(out, ")\n");
         Dump(for_stmt->body, indent + 2, out);
-        
+
         return;
     }
 
@@ -492,12 +497,12 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         IntLiteral* lit = AsNode(IntLiteral, n);
         SbPrintf(out, "%llu", (unsigned long long)lit->value);
-        
+
         if (lit->isUnsigned)
         {
             SbPutc(out, 'u');
         }
-        
+
         SbPutc(out, '\n');
 
         return;
@@ -611,10 +616,7 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeIncDec:
     {
         IncDecExpr* inc = AsNode(IncDecExpr, n);
-        SbPrintf(out, "(%c%c%s ",
-            inc->isDec ? '-' : '+',
-            inc->isDec ? '-' : '+',
-            inc->isPrefix ? "" : "p");
+        SbPrintf(out, "(%c%c%s ", inc->isDec ? '-' : '+', inc->isDec ? '-' : '+', inc->isPrefix ? "" : "p");
         Dump(inc->operand, 0, out);
         SbPutc(out, ')');
 
@@ -634,7 +636,7 @@ static void Dump(Node* n, int indent, Sb* out)
     {
         GlobalDecl* gd = AsNode(GlobalDecl, n);
         SbPrintf(out, "global %s %s", gd->type.name, gd->name);
-        
+
         if (gd->init)
         {
             SbPuts(out, " = ");
@@ -642,7 +644,7 @@ static void Dump(Node* n, int indent, Sb* out)
         }
 
         SbPuts(out, " ;\n");
-        
+
         return;
     }
 
