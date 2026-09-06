@@ -428,9 +428,11 @@ static LLVMValueRef MakeStringFatValue(Builder* b, LLVMValueRef dataPtr, LLVMVal
 
 static LLVMValueRef IdxConst(Builder* b, unsigned i)
 {
-    /* All GEP indices must share one integer width; use i64 to stay consistent
-       with the runtime (i64) indices produced by AsI64Index. */
-    return LLVMConstInt(I64Ty(b), i, 0);
+    /* LLVM requires i32 for struct-field GEP indices (LLVMBuildGEP2 does not
+       validate this; an i64 field index produces malformed IR that crashes
+       InstCombine once the JIT runs an optimization pipeline). Sequential
+       (pointer/array) indices accept any width, so i32 works everywhere. */
+    return LLVMConstInt(I32Ty(b), i, 0);
 }
 
 /* The TypeDesc of a `string` value: fat {ptr, len, cap}, like T[]. */

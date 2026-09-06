@@ -143,10 +143,20 @@ STRATA_TEST(llvm_scalar_pseudo_constants_emit_correct_bits)
                                 "  return x;\n"
                                 "}\n");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "store float f0x7F7FFFFF"));             /* FLT_MAX */
-    STRATA_CHECK(Contains(res.output, "store float f0x00800000"));             /* FLT_MIN */
-    STRATA_CHECK(Contains(res.output, "store double f0x7FEFFFFFFFFFFFFF"));    /* DBL_MAX */
-    STRATA_CHECK(Contains(res.output, "store double f0x0010000000000000"));    /* DBL_MIN */
+    /* The exact IR spelling of hex float constants varies across LLVM
+       versions: newer LLVM prints the IEEE form ("f0x7F7FFFFF"), older
+       builds print the double-widened encoding ("0x47EFFFFFE0000000") and
+       may omit leading zeros (0x10000000000000). Accept any spelling of the
+       limit-macro bit patterns. */
+    STRATA_CHECK(Contains(res.output, "store float f0x7F7FFFFF") ||             /* FLT_MAX */
+                 Contains(res.output, "store float 0x47EFFFFFE0000000"));
+    STRATA_CHECK(Contains(res.output, "store float f0x00800000") ||             /* FLT_MIN */
+                 Contains(res.output, "store float 0x3810000000000000"));
+    STRATA_CHECK(Contains(res.output, "store double f0x7FEFFFFFFFFFFFFF") ||    /* DBL_MAX */
+                 Contains(res.output, "store double 0x7FEFFFFFFFFFFFFF"));
+    STRATA_CHECK(Contains(res.output, "store double f0x0010000000000000") ||    /* DBL_MIN */
+                 Contains(res.output, "store double 0x0010000000000000") ||
+                 Contains(res.output, "store double 0x10000000000000"));
 }
 
 /* A float literal assigned to a double local must be fpext'd, not stored as

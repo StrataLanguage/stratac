@@ -1,3 +1,5 @@
+#include <string.h>
+
 #define STRATA_TEST_MAIN
 #include "Test.h"
 
@@ -32,9 +34,11 @@ void TestFailEq(const char* ea, const char* eb, long a, long b, const char* file
 
 int TestRunAll(void)
 {
+    const char* filter = getenv("STRATA_TEST_FILTER");
     int total = 0;
     for (size_t i = 0; i < g_testCount; i++)
     {
+        if (filter && !strstr(g_tests[i].name, filter)) continue;
         int before = g_failures;
         printf("[ RUN      ] %s\n", g_tests[i].name);
         fflush(stdout);
