@@ -190,55 +190,86 @@ LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
 #define IS_ALL_SCALAR3(x_, y_, z_) (IS_SCALAR(x_) && IS_SCALAR(y_) && IS_SCALAR(z_))
 #define IS_ALL_SCALAR4(x_, y_, z_, w_) (IS_SCALAR(x_) && IS_SCALAR(y_) && IS_SCALAR(z_) && IS_SCALAR(w_))
 
-LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
+static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
 {
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
     LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
-
     LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
 
-    /* Splat scalar to all lanes */
-    if (n->args.count == 1)
+    Value x = EmitExpr(b, (Node*)n->args.items[0]);
+    Value y = EmitExpr(b, (Node*)n->args.items[1]);
+
+    LLVMValueRef vec = LLVMGetPoison(vecType);
+    int destLanes = IsSimdVector(n->callee);
+
+    /* float3(float2, float) */
+    if (destLanes == 3 && IS_VECTOR(x) && IS_SCALAR(y))
     {
-        Value scalarValue = EmitExpr(b, (Node*)n->args.items[0]);
-
-        LLVMValueRef vec = LSimdVector4Broadcast(b, scalarValue.value);
-
-        /* float3 stores only 3 lanes: the hidden 4th lane must be zero, not a
-           copy of the splat value (reduce/cross would read it). */
-        if (IsSimdVector(n->callee) == 3)
-        {
-            vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
-                                         "vecinit");
-        }
-
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            LLVMConstInt(intType, 1, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
+                                     "vecinit");
         return vec;
     }
 
-    else if (n->args.count == 2)
+    /* float4(float3, float) */
+    if (destLanes == 4 && IS_VECTOR(x) && IS_SCALAR(y))
     {
-        Value x = EmitExpr(b, (Node*)n->args.items[0]);
-        Value y = EmitExpr(b, (Node*)n->args.items[1]);
-
-        LLVMValueRef vec = LLVMGetPoison(vecType);
-
-        /* float4(float2(1.0, 2.0), float2(3.0, 4.0)) */
-        /* float3(float2(1.0, 2.0), 3.0) */
-
-        vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
+        for (unsigned i = 0; i < 3; i++)
+        {
+            vec = LLVMBuildInsertElement(
+                b->m_builder, vec,
+                LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, i, 0), "vecext"),
+                LLVMConstInt(intType, i, 0), "vecinit");
+        }
+        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 3, 0), "vecinit");
+        return vec;
     }
 
-    else if (n->args.count == 3)
+    /* float4(float2, float2) */
+    if (destLanes == 4 && IS_VECTOR(x) && IS_VECTOR(y))
     {
-        Value x = EmitExpr(b, (Node*)n->args.items[0]);
-        Value y = EmitExpr(b, (Node*)n->args.items[1]);
-        Value z = EmitExpr(b, (Node*)n->args.items[2]);
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            LLVMConstInt(intType, 1, 0), "vecinit");
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, y.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, y.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            LLVMConstInt(intType, 3, 0), "vecinit");
+        return vec;
+    }
 
-        LLVMValueRef vec = LLVMGetPoison(vecType);
+    DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector construct");
+    return NULL;
+}
 
-        /* float3(1.0, 2.0, 3.0) */
+/* Helper to construct a float4/float3 from 3 arguments */
+static LLVMValueRef Vector4Construct3Args(struct Builder* b, CallExpr* n)
+{
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
 
+    Value x = EmitExpr(b, (Node*)n->args.items[0]);
+    Value y = EmitExpr(b, (Node*)n->args.items[1]);
+    Value z = EmitExpr(b, (Node*)n->args.items[2]);
+
+    LLVMValueRef vec = LLVMGetPoison(vecType);
+    int destLanes = IsSimdVector(n->callee);
+
+    /* float3(1.0, 2.0, 3.0) all scalars, implicit w = 0. */
+    if (destLanes == 3 && IS_SCALAR(x) && IS_SCALAR(y) && IS_SCALAR(z))
+    {
         vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
         vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
         vec = LLVMBuildInsertElement(b->m_builder, vec, z.value, LLVMConstInt(intType, 2, 0), "vecinit");
@@ -249,8 +280,72 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         return vec;
     }
 
+    /* float4(float2(1.0, 2.0), 3.0, 4.0) */
+    if (destLanes == 4 && IS_VECTOR(x) && IS_SCALAR(y) && IS_SCALAR(z))
+    {
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(
+            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            LLVMConstInt(intType, 1, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->m_builder, vec, z.value, LLVMConstInt(intType, 3, 0), "vecinit");
+
+        return vec;
+    }
+
+    DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector construct");
+    return NULL;
+}
+
+LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
+{
+
+    /* Splat scalar to all lanes */
+    if (n->args.count == 1)
+    {
+
+        Value x = EmitExpr(b, (Node*)n->args.items[0]);
+
+        /* Already a vector, pass through (something like `float4(float4(...))`) */
+        if (IS_VECTOR(x))
+        {
+            return x.value;
+        }
+
+        /* Broadcast the scalar value to all lanes */
+        LLVMValueRef vec = LSimdVector4Broadcast(b, x.value);
+
+        /* The output vector is going to be 3 lanes. Zero out the W component. */
+        if (IsSimdVector(n->callee) == 3)
+        {
+            LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
+            LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+            vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
+                                         "vecinit");
+        }
+
+        return vec;
+    }
+
+    else if (n->args.count == 2)
+    {
+        return Vector4Construct2Args(b, n);
+    }
+
+    else if (n->args.count == 3)
+    {
+        return Vector4Construct3Args(b, n);
+    }
+
     else if (n->args.count == 4)
     {
+        LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
+        LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+        LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
+
         Value x = EmitExpr(b, (Node*)n->args.items[0]);
         Value y = EmitExpr(b, (Node*)n->args.items[1]);
         Value z = EmitExpr(b, (Node*)n->args.items[2]);

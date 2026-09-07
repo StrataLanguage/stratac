@@ -133,6 +133,16 @@ STRATA_TEST(vector_binary_expr_as_call_arg)
             60);
 }
 
+STRATA_TEST(vector_float4_from_float3)
+{
+    run_int("int entry() {\n"
+            "  float3 a = float3(1.0, 2.0, 3.0);\n"
+            "  float4 b = float4(a, 1.0);\n"
+            "  return (int)(reduce(b));\n" /* 7 */
+            "}\n",
+            7);
+}
+
 STRATA_TEST(vector_divide_lanes)
 {
     run_int("int entry() {\n"
