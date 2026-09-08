@@ -795,6 +795,14 @@ static bool BuilderIsOwningType(Builder* b, const TypeName* t)
     return TypeIsOwningResolved(&b->m_registry, b->m_arena, t);
 }
 
+// Owning VALUE: BuilderIsOwningType plus owning structs (and aliases) — a
+// `Rec` value owns its fields. Drives drop/copy/move glue wherever an
+// owning-struct value can appear, notably as an inline `Rec[]` element.
+static bool BuilderIsOwningValue(Builder* b, const TypeName* t)
+{
+    return TypeIsOwningValueResolved(&b->m_registry, b->m_arena, t);
+}
+
 static TypeDesc Resolve(Builder* b, const TypeName* t)
 {
     if (!t)
@@ -945,10 +953,13 @@ static Value DerefBoxValue(Builder* b, Value value)
 
     TypeDesc innerTd = Resolve(b, value.typeDesc.boxInner);
 
-    /* ^T where T is opaque (an incomplete struct or handle): the box cell
-       holds the T* ITSELF, so unwrapping to T is identity - dereferencing
-       again would read whatever the pointer points at as a pointer. */
-    if (innerTd.structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd.structTypeName))
+    /* ^T where T is an INCOMPLETE struct (a forward declaration): the box
+       cell holds the T* ITSELF, so unwrapping to T is identity -
+       dereferencing again would read whatever the pointer points at as a
+       pointer. Handles are NOT identity: the cell holds the handle VALUE
+       (a box of a handle allocates like any other), so unwrap loads. */
+    if (innerTd.structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd.structTypeName)
+        && !IsHandleType(&b->m_registry, innerTd.structTypeName))
     {
         return ValueMake(value.value, innerTd);
     }
@@ -1561,15 +1572,17 @@ static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
 
 /* Drops the owning value in `slot`, typed `td`: ^T/string free the pointer
    (and a boxed owning struct's fields first); T[] frees the backing buffer and
-   drops owning elements via a loop. freeArrayBuffer=false (vararg rest) drops
-   elements but not the caller's stack buffer. */
+   drops owning elements via a loop (owning-struct elements included); an
+   owning-struct slot drops its fields in place (no load, no free of the slot
+   itself). freeArrayBuffer=false (vararg rest) drops elements but not the
+   caller's stack buffer. */
 static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool freeArrayBuffer)
 {
     if (td.isArray)
     {
         LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, slot), "adrop");
 
-        if (td.arrayInner && BuilderIsOwningType(b, td.arrayInner))
+        if (td.arrayInner && BuilderIsOwningValue(b, td.arrayInner))
         {
             LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, slot), "adlen"));
             TypeDesc elemTd = Resolve(b, td.arrayInner);
@@ -1609,6 +1622,21 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
             LLVMBuildStore(b->m_builder, LLVMConstInt(I32Ty(b), 0, 0), ArrayLenPtr(b, slot));
             LLVMBuildStore(b->m_builder, LLVMConstInt(I32Ty(b), 0, 0), ArrayCapPtr(b, slot));
         }
+
+        return;
+    }
+
+    /* An owning struct held BY VALUE (an inline `Rec[]` element, a `Rec`
+        field): drop its fields in place through the type's drop fn. The slot
+        itself is inline storage — never loaded, never freed — and is zeroed
+        so a later re-drop (element write, resize shrink) is a no-op. */
+    if (td.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, td.structTypeName))
+    {
+        LLVMValueRef dropFn = GetOrCreateStructDropFn(b, td.structTypeName);
+        LLVMTypeRef dropFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), &b->m_ptrTy, 1, 0);
+        LLVMValueRef dropArgs[1] = {slot};
+        LLVMBuildCall2(b->m_builder, dropFnTy, dropFn, dropArgs, 1, "");
+        LLVMBuildStore(b->m_builder, LLVMConstNull(td.type), slot);
 
         return;
     }
@@ -2116,8 +2144,32 @@ static LValue EmitLValueForNullStore(Builder* b, Node* n)
     return src;
 }
 
-/* Nulls the owning binding (box/string/array ident or member chain) behind a
-   moved value, so the source is no longer responsible for freeing it. */
+/* Nulls a moved-from owning slot after its value was transferred: array fats
+   zero wholesale, owning-struct slots zero wholesale (canonical empty
+   strings/fats/null boxes in every owning field), box/string slots zero the
+   pointer. */
+static void NullOwningSlot(Builder* b, LValue src)
+{
+    if (!src.valid || src.vectorLane)
+    {
+        return;
+    }
+
+    if (src.typeDesc.isArray)
+    {
+        /* Array / string slots rebind wholesale: zero the whole fat. */
+        LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
+    }
+    else if (src.typeDesc.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, src.typeDesc.structTypeName))
+    {
+        LLVMBuildStore(b->m_builder, LLVMConstNull(src.typeDesc.type), src.ptr);
+    }
+    else
+    {
+        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+    }
+}
+
 static void NullMovedSource(Builder* b, Node* n)
 {
     Node* moved = (Node*)MovableBoxSourceNode(n);
@@ -2129,27 +2181,17 @@ static void NullMovedSource(Builder* b, Node* n)
 
     LValue src = EmitLValueForNullStore(b, moved);
 
-    if (src.valid && !src.vectorLane)
-    {
-        if (src.typeDesc.isArray)
-        {
-            /* Array / string slots rebind wholesale: zero the whole fat. */
-            LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
-        }
-        else
-        {
-            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
-        }
-    }
+    NullOwningSlot(b, src);
 }
 
 /* Produces an owned value of `innerType` from an evaluated expr - the single
    point encapsulating ownership construction. Non-owning inner returned as-is;
    owning literal heap-copied, movable source taken + nulled, non-movable taken
-   as-is. Used for vars, ^T inners, fields, returns. */
+   as-is. Used for vars, ^T inners, fields, returns. An owning-struct inner
+   (a `Rec` value boxed into `^Rec` or moved into a cell) moves too. */
 static LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeName* innerType)
 {
-    if (!BuilderIsOwningType(b, innerType))
+    if (!BuilderIsOwningValue(b, innerType))
     {
         return evaluated.value;
     }
@@ -2722,12 +2764,13 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     Value r = EmitExpr(b, n->rhs);
 
     /* Box/optional operands (^T, T?) AUTO-DEREF like everywhere else:
-       `==`/`!=` compare the pointed-to values structurally (member-wise for
-       structs, content for strings, element-wise for arrays). `T?` is
-       null-aware: empty == empty, empty != non-empty. Handles and opaque
-       inners hold the T* itself, so their deref is identity. (An explicit
-       identity intrinsic may come later; deep equality of cyclic T? graphs
-       does not terminate.) */
+        `==`/`!=` compare the pointed-to values structurally (member-wise for
+        structs, content for strings, element-wise for arrays). `T?` is
+        null-aware: empty == empty, empty != non-empty. Incomplete-struct
+        inners hold the T* itself, so their deref is identity; handle inners
+        hold the handle value, so they load. (An explicit identity intrinsic
+        may come later; deep equality of cyclic T? graphs does not
+        terminate.) */
     if ((l.typeDesc.isBox && r.typeDesc.isBox) && (n->op == BinEqEq || n->op == BinNotEq))
     {
         LLVMBasicBlockRef falseBB = NewBb(b, "boxeq.f");
@@ -3232,12 +3275,13 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
                 TypeDesc innerTd = Resolve(b, innerTn);
 
-                if (BuilderIsOwningType(b, innerTn))
+                if (BuilderIsOwningValue(b, innerTn))
                 {
-                    /* Content-assigning an OWNING inner (^string = "x"): drop
-                       only the old inner value (free it in place, NOT the box
-                       allocation), then construct a fresh owned inner into the
-                       existing box: heap-copy a literal, move a movable source. */
+                    /* Content-assigning an OWNING inner (^string = "x",
+                       ^Rec = arr[i]): drop only the old inner value (free it
+                        in place, NOT the box allocation), then construct a
+                        fresh owned inner into the existing box: heap-copy a
+                        literal, move a movable source. */
                     EmitDropOne(b, boxPtr, innerTd);
                     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
                     LLVMBuildStore(b->m_builder, owned, boxPtr);
@@ -3286,6 +3330,27 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 LLVMBuildStore(b->m_builder, result.value, boxPtr);
 
                 return result;
+            }
+
+            /* Element write into an owning-element array (`Rec[]`, `string[]`):
+               drop the old element in place, then construct the owned value
+               into the slot (heap-copy a string literal, move a movable
+               source, take a temporary bitwise). */
+            bool elemOwningSlot = n->op == AssignSet
+                                  && (lvalue.typeDesc.isString
+                                      || (lvalue.typeDesc.structTypeName
+                                          && TypeRegistryIsOwningStruct(&b->m_registry, lvalue.typeDesc.structTypeName)));
+
+            if (elemOwningSlot)
+            {
+                EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+
+                TypeName elemTn = lvalue.typeDesc.isString ? *StringTypeName(b)
+                                                           : TypeNameLeaf((char*)lvalue.typeDesc.structTypeName);
+                LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, &elemTn);
+                LLVMBuildStore(b->m_builder, owned, lvalue.ptr);
+
+                return ValueMake(owned, lvalue.typeDesc);
             }
 
             Value result = Coerce(b, rhs, lvalue.typeDesc);
@@ -3603,6 +3668,16 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
             LLVMValueRef owned = EmitOwnedValue(b, v, valNode, StringTypeName(b));
             LLVMBuildStore(b->m_builder, owned, elAddr);
         }
+        else if (elemTd.structTypeName && v.typeDesc.structTypeName
+                 && strcmp(elemTd.structTypeName, v.typeDesc.structTypeName) == 0
+                 && TypeRegistryIsOwningStruct(&b->m_registry, elemTd.structTypeName))
+        {
+            /* Owning-struct element (`Rec[]`): bitwise store = ownership
+               transfer; a movable source is zeroed (a struct literal is a
+               fresh temporary whose fields the array now owns). */
+            LLVMBuildStore(b->m_builder, v.value, elAddr);
+            NullMovedSource(b, valNode);
+        }
         else
         {
             LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elAddr);
@@ -3647,7 +3722,7 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 
         PositionAtEnd(b, dropBb);
 
-        if (arr.typeDesc.arrayInner && BuilderIsOwningType(b, arr.typeDesc.arrayInner))
+        if (arr.typeDesc.arrayInner && BuilderIsOwningValue(b, arr.typeDesc.arrayInner))
         {
             EmitArrayDropRange(b, oldData, newLen, oldLen64, elemTd, elemTy);
         }
@@ -4015,17 +4090,29 @@ static LLVMBasicBlockRef EmitEqBytes(Builder* b, LLVMValueRef fn, LLVMValueRef a
    pointers address. Cached in m_eqHelpers; creating it before emitting the
    body keeps recursive type graphs (struct in struct, nested arrays) safe. */
 
+/* Compares the HANDLE VALUES held in two ^Handle cells: loads both and
+   icmps (a handle is a pointer-sized value, the cell is its storage). */
+static LLVMValueRef BuildHandleCellEq(Builder* b, LLVMValueRef aCell, LLVMValueRef bCell)
+{
+    LLVMValueRef a = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, aCell, "eq.ha");
+    LLVMValueRef bv = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, bCell, "eq.hb");
+
+    return LLVMBuildICmp(b->m_builder, LLVMIntEQ, a, bv, "eq.hdl");
+}
+
 /* Deep-compares two box cells (aCell/bCell — heap pointers; NULL when empty
    for optionals) of inner type `innerTd`, AUTO-DEREFING like every other
-   box use. Opaque inners (handles, incomplete structs) hold the T* ITSELF
-   (DerefBoxValue's identity unwrap), so their "deep" compare is the cell
-   values. `isOptional` adds null-awareness: empty == empty, empty !=
+   box use. Incomplete-struct inners hold the T* ITSELF (DerefBoxValue's
+   identity unwrap), so their "deep" compare is the cell values; handle
+   inners hold the handle VALUE, so both cells are loaded and the handles
+   compared. `isOptional` adds null-awareness: empty == empty, empty !=
    non-empty. Branches to failBB on inequality; positions the builder at the
    end of (and returns) the equal-continuation block. */
 static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
                                        const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB)
 {
     bool opaqueInner = innerTd->structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd->structTypeName);
+    bool handleInner = opaqueInner && IsHandleType(&b->m_registry, innerTd->structTypeName);
 
     LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
     LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
@@ -4051,17 +4138,18 @@ static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef
         LLVMBuildCondBr(b->m_builder, nullA, eqNext, deep);
 
         LLVMPositionBuilderAtEnd(b->m_builder, deep);
-        eq = opaqueInner
-                 ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
-                 : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
+        eq = handleInner   ? BuildHandleCellEq(b, aCell, bCell)
+             : opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
+                           : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
         LLVMBuildCondBr(b->m_builder, eq, eqNext, failBB);
 
         LLVMPositionBuilderAtEnd(b->m_builder, eqNext);
         return eqNext;
     }
 
-    eq = opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
-                     : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
+    eq = handleInner   ? BuildHandleCellEq(b, aCell, bCell)
+         : opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
+                       : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
     LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.next");
     LLVMBuildCondBr(b->m_builder, eq, next, failBB);
     LLVMPositionBuilderAtEnd(b->m_builder, next);
@@ -4308,7 +4396,7 @@ static Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc ele
     StrataAllocFn(b);
     LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "cpya");
 
-    if (BuilderIsOwningType(b, td.arrayInner))
+    if (BuilderIsOwningValue(b, td.arrayInner))
     {
         LLVMBasicBlockRef cond = NewBb(b, "ccp.cond");
         LLVMBasicBlockRef body = NewBb(b, "ccp.body");
@@ -4369,7 +4457,7 @@ static LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
             LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
             LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
 
-            if (BuilderIsOwningType(b, &f->type))
+            if (BuilderIsOwningValue(b, &f->type))
             {
                 Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
                 Value copied = EmitCopyValue(b, fv, fieldTd);
@@ -4395,6 +4483,46 @@ static LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
     return heap;
 }
 
+/* Deep-copies an owning-struct VALUE field-by-field: owning fields recurse
+   through EmitCopyValue, plain fields bitwise. */
+static Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
+{
+    const StructType* st = TypeRegistryFind(&b->m_registry, td.structTypeName);
+    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, td.structTypeName) : NULL;
+
+    if (!st || !structTy)
+    {
+        return src;
+    }
+
+    LLVMValueRef srcSlot = EntryAlloca(b, td.type, "cpss");
+    LLVMBuildStore(b->m_builder, src.value, srcSlot);
+    LLVMValueRef dstSlot = EntryAlloca(b, td.type, "cpsd");
+
+    for (size_t j = 0; j < st->fields.count; j++)
+    {
+        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
+        TypeDesc fieldTd = Resolve(b, &f->type);
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
+        LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, srcSlot, idxs, 2, "csf");
+        LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, dstSlot, idxs, 2, "cdf");
+
+        if (BuilderIsOwningValue(b, &f->type))
+        {
+            Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
+            Value copied = EmitCopyValue(b, fv, fieldTd);
+            LLVMBuildStore(b->m_builder, copied.value, dstField);
+        }
+        else
+        {
+            LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
+            LLVMBuildStore(b->m_builder, loaded, dstField);
+        }
+    }
+
+    return ValueMake(LLVMBuildLoad2(b->m_builder, td.type, dstSlot, "cpS"), td);
+}
+
 static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 {
     if (td.isString)
@@ -4404,6 +4532,11 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, src.value, 1, "cp.l");
 
         return ValueMake(BuildOwnedStringFat(b, sp, sl), td);
+    }
+
+    if (td.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, td.structTypeName))
+    {
+        return EmitStructValueCopy(b, src, td);
     }
 
     if (td.isBox && !td.boxInner)
@@ -4877,7 +5010,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 const TypeName* pty = &pd->type;
                 const TypeName* elem = TypeNameArrayElem(pty);
 
-                if (TypeNameIsDynamicArray(pty) && !(elem && BuilderIsOwningType(b, elem)))
+                if (TypeNameIsDynamicArray(pty) && !(elem && BuilderIsOwningValue(b, elem)))
                 {
                     LLVMValueRef arrAddr = ArgAddress(b, argNode);
                     LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
@@ -5270,6 +5403,21 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                     LLVMBuildStore(b->m_builder, owned, elemAddr);
                 }
             }
+            else if (elemTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, elemTd.structTypeName))
+            {
+                /* Owning-struct element (`Rec[]` literal): temporaries (struct
+                    literals, call results) transfer bitwise; movable sources
+                    move and are zeroed. */
+                if (borrow)
+                {
+                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                }
+                else
+                {
+                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
+                    NullMovedSource(b, eNode);
+                }
+            }
             else
             {
                 LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
@@ -5460,10 +5608,13 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, PhysicalFieldIndex(st, (int)idx), "ins");
 
         /* If an owning field was moved from an owning lvalue source (string,
-           ^T, or a dynamic array), null the source so its scope-exit drop
-           is a no-op. */
+            ^T, dynamic array, or an owning struct like a `Rec` element),
+            null the source so its scope-exit drop is a no-op. */
         if (((fieldTd.isBox && (rawField.typeDesc.isBox || rawField.typeDesc.isString))
-             || (fieldTd.isArray && rawField.typeDesc.isArray))
+             || (fieldTd.isArray && rawField.typeDesc.isArray)
+             || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, fieldTd.structTypeName)
+                 && rawField.typeDesc.structTypeName
+                 && strcmp(fieldTd.structTypeName, rawField.typeDesc.structTypeName) == 0))
             && field->value->kind != NodeStrLiteral && field->value->kind != NodeArrayInit)
         {
             NullMovedSource(b, field->value);
@@ -5747,23 +5898,15 @@ static void EmitStmt(Builder* b, Node* n)
                 }
 
                 Node* movedReturnNode
-                    = (v.typeDesc.isBox || v.typeDesc.isArray) ? (Node*)MovableBoxSourceNode(r->value) : NULL;
+                    = (v.typeDesc.isBox || v.typeDesc.isArray
+                       || (v.typeDesc.structTypeName
+                           && TypeRegistryIsOwningStruct(&b->m_registry, v.typeDesc.structTypeName)))
+                          ? (Node*)MovableBoxSourceNode(r->value)
+                          : NULL;
 
                 if (movedReturnNode)
                 {
-                    LValue src = EmitLValueForNullStore(b, movedReturnNode);
-
-                    if (src.valid)
-                    {
-                        if (src.typeDesc.isArray)
-                        {
-                            LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
-                        }
-                        else
-                        {
-                            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
-                        }
-                    }
+                    NullMovedSource(b, r->value);
                 }
             }
         }

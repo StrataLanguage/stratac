@@ -317,6 +317,23 @@ bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName*
     return TypeNameIsOwning(&parsed);
 }
 
+bool TypeIsOwningValueResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    if (TypeIsOwningResolved(reg, arena, t))
+    {
+        return true;
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(reg, t->name);
+
+    return leaf && TypeRegistryIsOwningStruct(reg, leaf);
+}
+
 bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
 {
     if (IsScalarTypeName(t))

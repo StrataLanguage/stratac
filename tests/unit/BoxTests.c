@@ -2545,4 +2545,171 @@ STRATA_TEST(box_array_element_move_through_ref_param_is_rejected)
     arena_free(&arena);
 }
 
+static int g_handleSentinel;
+
+static void* HostMakeEntity(void)
+{
+    return &g_handleSentinel;
+}
+
+static int HostCheckHandle(void* h)
+{
+    return h == (void*)&g_handleSentinel ? 42 : 0;
+}
+
+STRATA_TEST(box_of_handle_unwraps_to_the_handle_value)
+{
+    /* ^Handle cells hold the handle VALUE (boxing allocates like for any
+       other type), so unwrapping must LOAD - an extern taking the plain
+       handle must receive the handle itself, never the box cell. (Handles
+       once shared the incomplete-struct "cell IS the T*" identity unwrap,
+       which handed hosts the heap cell instead of the handle: garbage.) */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "handle Entity;\n"
+        "extern Entity make_entity();\n"
+        "extern int check_handle(Entity e);\n"
+        "int entry() {\n"
+        "  Entity e = make_entity();\n"
+        "  ^Entity box = e;\n"
+        "  ^Entity again = make_entity();\n"  /* same handle, distinct cell */
+        "  int r = check_handle(box);\n"
+        "  if (box == again) { r = r + 100; }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "make_entity", (void*)&HostMakeEntity), 1);
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "check_handle", (void*)&HostCheckHandle), 1);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        /* 42 = the host saw the real handle; +100 = same-handle box compare. */
+        STRATA_CHECK_EQ(entry(), 142);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(box_array_push_empty_literal_missing_owning_field_is_rejected)
+{
+    /* `array_push(arr, { })` types the bare literal from the ELEMENT type;
+       without that, no field check runs, codegen zero-fills the owning
+       field, and the first deref of the null `^T` crashes at runtime. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "struct Owned { ^Vec3 owned_value; };\n"
+        "int entry() {\n"
+        "  ^Owned[] a;\n"
+        "  array_push(a, { });\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "owning field 'owned_value' of struct 'Owned' must be initialized"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_call_arg_empty_literal_missing_owning_field_is_rejected)
+{
+    /* Same gap on plain calls: a braced arg typed from its parameter must
+       still report uninitialized owning fields. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "struct Owned { ^Vec3 owned_value; };\n"
+        "void take(Owned o) {}\n"
+        "int entry() {\n"
+        "  take({ });\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "owning field 'owned_value' of struct 'Owned' must be initialized"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_array_push_braced_literal_initializes_owning_field)
+{
+    /* The valid spellings push a REAL boxed field: `{ {} }` (boxed zero
+       Vec3) and `{ .owned_value = Vec3 { ... } }`. An empty `{}` for a
+       `T?` FIELD stays the canonical empty optional (no false error). */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "struct Owned { ^Vec3 owned_value; };\n"
+        "struct Link { string name; int[] ints; Link? next; };\n"
+        "float entry() {\n"
+        "  ^Owned[] a;\n"
+        "  array_push(a, { {} });\n"
+        "  array_push(a, { .owned_value = Vec3 { .x = 1.5, .y = 2.0, .z = 0.5 } });\n"
+        "  float sum = 0.0;\n"
+        "  for (uint i = 0; i < a.length; i++) { sum = sum + a[i].owned_value.x + a[i].owned_value.y; }\n"
+        "  return sum + a[0].owned_value.z;\n"  /* (0+0) + (1.5+2.0) + 0 = 3.5 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        float r = entry();
+        STRATA_CHECK(r > 3.4f && r < 3.6f);
+    }
+
+    strataJitDestroy(jit);
+
+    /* Empty `{}` into a `T?` field of a nested literal is legal (empty
+       optional), even though `Link` has an owning `string` field. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Vec3 { float x; float y; float z; };\n"
+        "struct Owned { ^Vec3 owned_value; };\n"
+        "struct Link { string name; int[] ints; Link? next; };\n"
+        "int entry() {\n"
+        "  ^Link l = { \"head\", {}, {} };\n"
+        "  array_push(l.ints, 7);\n"
+        "  return (int)l.ints[0];\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+
+
 

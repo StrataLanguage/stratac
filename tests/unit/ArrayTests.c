@@ -413,22 +413,40 @@ STRATA_TEST(array_push_owning_value_from_index_is_error)
     strataFree((char*)err);
 }
 
-STRATA_TEST(array_of_owning_struct_must_be_boxed)
+STRATA_TEST(array_of_owning_struct_inline_elements)
 {
-    /* A struct holding an owning field is itself owning; holding it by value
-       as an array element would leak its fields, so it must be boxed. */
+    /* A struct holding an owning field is itself owning; `S[]` stores the
+        structs INLINE and the fat drops each element recursively (same as
+        `string[]`), so inline owning elements are legal — and `^S[]` (boxed
+        elements) remains the other spelling. */
     const char* err = NULL;
     StrataJit* jit = CompileArr(
-        "struct S { string s; };\n"
+        "struct S { string s; int n; };\n"
         "int entry() {\n"
-        "  S[] arr = { S{.s = \"a\"} };\n"   /* illegal: use ^S[] */
-        "  return (int)arr.length;\n"
+        "  S[] arr = { S{.s = \"a\", .n = 1}, S{.s = \"bb\", .n = 2} };\n"
+        "  int r = (int)arr.length * 10 + arr[0].n;\n"
+        "  drop(copy(arr[1]));\n"
+        "  drop(arr);\n"
+        "  return r;\n"
         "}\n",
         &err);
 
-    STRATA_CHECK(jit == NULL);
-    STRATA_CHECK(err != NULL);
-    strataFree((char*)err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 21);
+    }
+
+    strataJitDestroy(jit);
 }
 
 STRATA_TEST(array_uninitialized_decl_allowed_empty)

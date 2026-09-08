@@ -75,3 +75,11 @@ bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t);
 
 // True when the type owns (box/array/string, or alias of one).
 bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);
+
+/* True when a VALUE of the type owns heap data: everything
+   TypeIsOwningResolved covers, plus owning structs (defined structs with a
+   transitive owning field — `Rec` when `struct Rec { string s; };`), their
+   aliases included. This is the predicate that decides move/drop/copy
+   treatment wherever an owning-struct value can appear (notably as a `T[]`
+   element, where `Rec[]` is legal inline storage). */
+bool TypeIsOwningValueResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);

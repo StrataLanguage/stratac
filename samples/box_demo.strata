@@ -134,6 +134,11 @@ void say_hi_to_person(ref Person person)
 string[] globalStringArrayBox = { "hi" };
 string[] globalStringArray = { "hi" };
 
+struct Owned
+{
+    ^Vec3 owned_value;
+};
+
 // Entrypoint
 float entry()
 {
@@ -143,6 +148,17 @@ float entry()
 
     string sCopy = copy(globalStringArrayBox[0]);
     printf("sCopy = %s\n", sCopy);
+
+    
+    ^Owned[] test_owned;
+    array_push(test_owned, { { .x = 9, .y = 10, .z = 11 } });  // owning field 'owned_value' must be initialized
+    array_push(test_owned, { {} });
+
+    printf("test_owned[0].owned_value = %f,%f,%f\n",
+        test_owned[0].owned_value.x,
+        test_owned[0].owned_value.y,
+        test_owned[0].owned_value.z);
+
 
 
     // test read OOB

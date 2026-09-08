@@ -974,6 +974,14 @@ static bool AliasIsOwning(const Resolver* r, const TypeName* t)
     return TypeIsOwningResolved(&r->m_registry, r->m_arena, t);
 }
 
+/* Owning VALUE: AliasIsOwning plus owning structs (and their aliases) — a
+   `Rec` value owns its fields, so it moves like a box when consumed and
+   legalizes `Rec[]` as inline owning storage. */
+static bool AliasIsOwningValue(const Resolver* r, const TypeName* t)
+{
+    return TypeIsOwningValueResolved(&r->m_registry, r->m_arena, t);
+}
+
 /* True when the type is a dynamic array, or its alias resolves to one. */
 static bool ResolvesToDynamicArray(const Resolver* r, const TypeName* t)
 {
@@ -2286,7 +2294,7 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     Node* arg0 = (Node*)VecGet(&c->args, 0);
     const TypeName* argType = InferType(r, arg0, scope);
 
-    if (!argType || !AliasIsOwning(r, argType))
+    if (!argType || !AliasIsOwningValue(r, argType))
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'copy' expects an owning type (string, ^T, T[]) — not '%s'",
                      argType ? argType->name : "");
@@ -2322,7 +2330,7 @@ static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     Node* arg0 = (Node*)VecGet(&c->args, 0);
     const TypeName* argType = InferType(r, arg0, scope);
 
-    if (!argType || !AliasIsOwning(r, argType))
+    if (!argType || !AliasIsOwningValue(r, argType))
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'drop' expects an owning type (string, ^T, T[]) — not '%s'",
                      argType ? argType->name : "");
@@ -2387,6 +2395,24 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 }
 
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
+
+static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target);
+
+/* An EMPTY braced value for a `T?` target is the canonical empty optional
+   (zero-fill), not a T value missing its owning fields. */
+static bool IsEmptyBracedForOptional(const Node* n, const TypeName* target)
+{
+    bool empty = (n->kind == NodeArrayInit && ((const ArrayInitExpr*)n)->elements.count == 0)
+        || (n->kind == NodeStructInit && ((const StructInitExpr*)n)->fields.count == 0);
+
+    return empty && target && target->isOptional;
+}
+
+/* Types nested bare-braced field values from their field's declared type,
+   then requires every OWNING field to be covered. For literals whose type
+   arrives only AFTER the context-free pre-resolution pass (call/ctor/
+   `array_push` args), whose full checks would otherwise never run. */
+static void CheckStructInitFields(Resolver* r, Node* n);
 
 // True for `arr[i]` reads (casts unwrapped); the array keeps ownership.
 static bool IsArrayElementBorrow(Node* n)
@@ -2482,8 +2508,28 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
 
-        const TypeName* valueType = InferType(r, arg1, scope);
         const TypeName* elemType = TypeNameArrayElem(unwrapped);
+
+        /* A bare `{...}` value takes the element's shape here — the literal
+           would otherwise never be typed: no field checks run, and codegen
+           zero-fills it (a null `^T` owning field crashes at first deref). */
+        bool bracedValue = (arg1->kind == NodeArrayInit && !((ArrayInitExpr*)arg1)->elementType)
+            || (arg1->kind == NodeStructInit && !((StructInitExpr*)arg1)->typeName);
+
+        Node* typedArg = ApplyBracedStructTarget(r, arg1, elemType);
+
+        if (typedArg != arg1)
+        {
+            VecSet(&c->args, 1, typedArg);
+        }
+
+        if (bracedValue && typedArg->kind == NodeStructInit && ((StructInitExpr*)typedArg)->typeName
+            && !IsEmptyBracedForOptional(typedArg, elemType))
+        {
+            CheckStructInitFields(r, typedArg);
+        }
+
+        const TypeName* valueType = InferType(r, typedArg, scope);
 
         if (valueType && elemType && !IsAssignableType(r, elemType, valueType))
         {
@@ -2503,7 +2549,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
 
         /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
-        if (valueType && AliasIsOwning(r, valueType) && IsArrayElementBorrow(arg1))
+        if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
         {
             DiagErrorFmt(r->m_diag, arg1->range,
                          "cannot push '%s' read from an array element - it would be owned by two arrays; "
@@ -2514,8 +2560,10 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         /* Deref check before the move tracking below clears the pushed optional's fact. */
         CheckCallArgOptionalDerefs(r, c, scope);
 
-        // Push moves owning values in; optional sources end up empty.
-        if (valueType && AliasIsOwning(r, valueType))
+        // Push moves owning values in (boxes/strings/arrays AND owning
+        // structs — a `Rec` value pushed into `Rec[]` transfers ownership);
+        // optional sources end up empty.
+        if (valueType && AliasIsOwningValue(r, valueType))
         {
             const char* movedKey = MovableBoxSourceKey(r, arg1);
 
@@ -2800,6 +2848,101 @@ static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* ta
     }
 
     return node;
+}
+
+static void CheckStructInitFields(Resolver* r, Node* n)
+{
+    StructInitExpr* init = (StructInitExpr*)n;
+
+    const StructType* structType = TypeRegistryFind(&r->m_registry, init->typeName);
+
+    if (!structType || structType->fields.count == 0 || TypeRegistryIsOpaque(&r->m_registry, init->typeName))
+    {
+        return;
+    }
+
+    size_t fieldCount = structType->fields.count;
+    bool* covered = (bool*)arena_alloc(r->m_arena, fieldCount * sizeof(bool));
+    size_t positionalSeen = 0;
+
+    for (size_t i = 0; i < init->fields.count; i++)
+    {
+        StructInitField* field = (StructInitField*)VecGet(&init->fields, i);
+
+        size_t idx = (size_t)-1;
+        FieldDecl* fd = NULL;
+
+        if (field->name && field->name[0] != '\0')
+        {
+            int named = TypeRegistryFieldIndex(&r->m_registry, init->typeName, field->name);
+
+            if (named >= 0)
+            {
+                idx = (size_t)named;
+                fd = (FieldDecl*)VecGet((Vec*)&structType->fields, idx);
+            }
+        }
+        else if (positionalSeen < fieldCount)
+        {
+            idx = positionalSeen++;
+            fd = (FieldDecl*)VecGet((Vec*)&structType->fields, idx);
+        }
+        else
+        {
+            positionalSeen++; /* too many initializers: reported elsewhere */
+        }
+
+        if (field->value)
+        {
+            /* Type a nested bare-braced value from the field's declared type
+               (`{ {} }`); already-typed values pass through unchanged. */
+            if (fd && (field->value->kind == NodeArrayInit || field->value->kind == NodeStructInit))
+            {
+                field->value = ApplyBracedStructTarget(r, field->value, &fd->type);
+            }
+
+            if (field->value->kind == NodeStructInit && ((StructInitExpr*)field->value)->typeName)
+            {
+                bool emptyOptional = fd && fd->type.isOptional && ((StructInitExpr*)field->value)->fields.count == 0;
+
+                if (!emptyOptional)
+                {
+                    CheckStructInitFields(r, field->value);
+                }
+            }
+        }
+
+        if (idx < fieldCount)
+        {
+            covered[idx] = true;
+        }
+    }
+
+    for (size_t f = 0; f < fieldCount; f++)
+    {
+        FieldDecl* fd = (FieldDecl*)VecGet((Vec*)&structType->fields, f);
+
+        /* Every OWNING field (`^T`, owning struct, `string`) must be
+           initialized; optionals and dynamic arrays may stay empty (a T? is
+           null, a zero-filled T[] is the canonical empty {null, 0} fat
+           struct). */
+        bool mustInit
+            = !fd->type.isOptional && !TypeNameIsDynamicArray(&fd->type)
+              && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
+
+        if (mustInit && !covered[f])
+        {
+            /* Suggest the optional spelling of the inner type. A `^string`
+               field's optional is spelled `string?`. */
+            const TypeName* inner = TypeNameBoxInner(&fd->type);
+            const char* optSpelling = inner ? inner->name : fd->type.name;
+
+            DiagErrorFmt(r->m_diag, init->base.range,
+                         "owning field '%s' of struct '%s' must be initialized "
+                         "(declare it '%s?' if it may be empty)",
+                         fd->name, init->typeName, optSpelling);
+        }
+    }
 }
 
 // -- Impl blocks.
@@ -3718,12 +3861,21 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
 
+            bool bracedArg = (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
+                || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
+
             // A braced arg takes the field's struct/array shape.
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &fd->type);
 
             if (resolvedArg != arg)
             {
                 VecSet(&c->args, j, resolvedArg);
+            }
+
+            if (bracedArg && resolvedArg->kind == NodeStructInit && ((StructInitExpr*)resolvedArg)->typeName
+                && !IsEmptyBracedForOptional(resolvedArg, &fd->type))
+            {
+                CheckStructInitFields(r, resolvedArg);
             }
             else if (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
             {
@@ -3738,7 +3890,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
                     ai->elementType = elem;
 
-                    if (elem && AliasIsOwning(r, elem))
+                    if (elem && AliasIsOwningValue(r, elem))
                     {
                         for (size_t k = 0; k < ai->elements.count; k++)
                         {
@@ -3763,7 +3915,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             FieldDecl* fd = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
 
-            if (AliasIsOwning(r, &fd->type))
+            if (AliasIsOwningValue(r, &fd->type))
             {
                 const char* movedKey = MovableBoxSourceKey(r, arg);
 
@@ -4069,12 +4221,21 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 continue;
             }
 
+            bool bracedArg = (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
+                || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
+
             const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &param->type);
 
             if (resolvedArg != arg)
             {
                 VecSet(&c->args, j, resolvedArg);
+            }
+
+            if (bracedArg && resolvedArg->kind == NodeStructInit && ((StructInitExpr*)resolvedArg)->typeName
+                && !IsEmptyBracedForOptional(resolvedArg, &param->type))
+            {
+                CheckStructInitFields(r, resolvedArg);
             }
         }
     }
@@ -4984,6 +5145,21 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 // Contents-assign reads through the optional.
                 CheckOptionalDeref(r, a->value, vt, inner ? inner : tt, a->base.range);
+
+                /* An owning-struct inner (`^Rec b; b = arr[i];`) REPLACES the
+                   cell contents, so the RHS value moves in: the source is
+                   consumed (codegen drops the old contents, then constructs
+                   the new value into the cell). */
+                if (a->op == AssignSet && inner && vt && TypeRegistryIsOwningStruct(&r->m_registry, inner->name)
+                    && AliasIsOwningValue(r, vt))
+                {
+                    const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+
+                    if (movedValueKey)
+                    {
+                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                    }
+                }
             }
         }
         else if (targetIsOwningField)
@@ -5092,6 +5268,42 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 /* Assigning a `T?` into a plain `T` unwraps the optional. */
                 CheckOptionalDeref(r, a->value, vt, tt, a->base.range);
+            }
+            else if (a->target->kind == NodeIndex && a->op == AssignSet)
+            {
+                /* Element write into an owning-element array (`Rec[]`,
+                   `string[]`): the old element is dropped and the RHS moves
+                   in. A borrow out of another array element would leave the
+                   value owned by two arrays — same rule as push. */
+                const TypeName* et = InferType(r, a->target, scope);
+                const TypeName* vt = InferType(r, a->value, scope);
+
+                if (et && AliasIsOwningValue(r, et) && !et->isBox)
+                {
+                    if (vt && AliasIsOwningValue(r, vt) && IsArrayElementBorrow(a->value))
+                    {
+                        DiagErrorFmt(r->m_diag, a->value->range,
+                                     "cannot assign '%s' read from an array element - it would be owned by two "
+                                     "arrays; move it into a variable first",
+                                     vt->name);
+                    }
+
+                    CheckOptionalDeref(r, a->value, vt, et, a->base.range);
+
+                    const char* movedValueKey = vt && AliasIsOwningValue(r, vt) ? MovableBoxSourceKey(r, a->value) : NULL;
+
+                    if (movedValueKey)
+                    {
+                        if (vt->isOptional)
+                        {
+                            MoveOptionalSource(r, movedValueKey, a->base.range);
+                        }
+                        else
+                        {
+                            MoveBoxIdent(r, movedValueKey, a->base.range);
+                        }
+                    }
+                }
             }
             else if (a->target->kind == NodeMember)
             {
@@ -5559,78 +5771,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
-        /* Non-optional `^T` fields must be initialized (NULL would trip every use); `T?` may stay empty. */
-        if (structType && !TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
-        {
-            size_t positionalIndex = 0;
-
-            for (size_t i = 0; i < structInitExpr->fields.count; i++)
-            {
-                StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
-
-                if (!field->name || field->name[0] == '\0')
-                {
-                    positionalIndex++;
-                }
-            }
-
-            /* Re-walk to map literal entries onto struct fields the same way
-               the checking loop above does. */
-            size_t positionalSeen = 0;
-            size_t fieldCount = structType->fields.count;
-            bool* covered = (bool*)arena_alloc(r->m_arena, fieldCount * sizeof(bool));
-
-            for (size_t i = 0; i < structInitExpr->fields.count; i++)
-            {
-                StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
-                size_t idx = (size_t)-1;
-
-                if (!field->name || field->name[0] == '\0')
-                {
-                    idx = positionalSeen++;
-                }
-                else
-                {
-                    int named = TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name);
-
-                    if (named >= 0)
-                    {
-                        idx = (size_t)named;
-                    }
-                }
-
-                if (idx < fieldCount)
-                {
-                    covered[idx] = true;
-                }
-            }
-
-            for (size_t f = 0; f < fieldCount; f++)
-            {
-                FieldDecl* fd = (FieldDecl*)VecGet(&structType->fields, f);
-
-                /* Every OWNING field (`^T`, owning struct, `string`) must be
-                   initialized; optionals and dynamic arrays may stay empty
-                   (a T? is null, a zero-filled T[] is the canonical empty
-                   {null, 0} fat struct). */
-                bool mustInit
-                    = !fd->type.isOptional && !TypeNameIsDynamicArray(&fd->type)
-                      && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
-
-                if (mustInit && !covered[f])
-                {
-                    /* Suggest the optional spelling of the inner type. A
-                       `^string` field's optional is spelled `string?`. */
-                    const TypeName* inner = TypeNameBoxInner(&fd->type);
-                    const char* optSpelling = inner ? inner->name : fd->type.name;
-
-                    DiagErrorFmt(r->m_diag, structInitExpr->base.range,
-                                 "owning field '%s' of struct '%s' must be initialized "
-                                 "(declare it '%s?' if it may be empty)",
-                                 fd->name, structInitExpr->typeName, optSpelling);
-                }
-            }
-        }
+        /* Non-optional `^T` fields must be initialized (NULL would trip every use); `T?` may stay empty.
+           Also types any nested bare-braced field values. */
+        CheckStructInitFields(r, n);
 
         return;
     }
@@ -5732,8 +5875,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             ResolveExpr(r, elem, scope);
 
-            // Owning elements move out of their sources.
-            if (ai->elementType && AliasIsOwning(r, ai->elementType))
+            // Owning elements move out of their sources (owning-struct
+            // elements included: `{ Rec{...}, arr2[0] }` takes arr2[0]).
+            if (ai->elementType && AliasIsOwningValue(r, ai->elementType))
             {
                 const char* movedKey = MovableBoxSourceKey(r, elem);
 
@@ -5843,9 +5987,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                          vd->name, vd->type.name);
         }
 
-        // Owning locals need an init (arrays/optionals exempt).
+        // Owning locals need an init (arrays/optionals exempt; a bare owning
+        // struct local is rejected below with a sharper message).
         if (AliasIsOwning(r, &vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
-            && !vd->init)
+            && !TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name) && !vd->init)
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
         }
@@ -5857,20 +6002,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         if (TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range, "owning struct '%s' must be stored in a box; use '^%s'",
+            DiagErrorFmt(r->m_diag, vd->base.range, "instances of '%s' must be boxed (i.e, '^%s').",
                          vd->type.name, vd->type.name);
         }
 
-        // Owning structs must live in a box.
-        {
-            const TypeName* arrElem = TypeNameArrayElem(&vd->type);
-
-            if (arrElem && TypeRegistryIsOwningStruct(&r->m_registry, arrElem->name))
-            {
-                DiagErrorFmt(r->m_diag, vd->base.range, "owning struct '%s' must be stored in a box; use '^%s[]'",
-                             arrElem->name, arrElem->name);
-            }
-        }
+        // Dynamic arrays of owning structs (`Rec[]`) are legal: the fat owns
+        // the buffer and drops each inline element recursively, just like
+        // `string[]`. Fixed arrays of owning structs cannot occur here
+        // (locals may not have fixed-size array types, checked above).
 
         bool initProvesNonEmpty = true;
 
@@ -5890,8 +6029,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             // Plain `T` from `T?` unwraps.
             CheckOptionalDeref(r, vd->init, initType, &vd->type, vd->base.range);
 
-            // Box init from a box source moves it.
-            const char* movedInitKey = initType && AliasIsOwning(r, &vd->type) && AliasIsOwning(r, initType)
+            // Box init from a box source moves it; a `Rec` source (owning
+            // struct value, e.g. an element of a `Rec[]`) moves too.
+            const char* movedInitKey = initType && AliasIsOwning(r, &vd->type) && AliasIsOwningValue(r, initType)
                                            ? MovableBoxSourceKey(r, vd->init)
                                            : NULL;
 
@@ -5971,9 +6111,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             // Returning `T?` from `T` unwraps.
             CheckOptionalDeref(r, rs->value, typeName, r->m_currentReturnType, rs->base.range);
 
-            // Moves only when the function returns an owning type.
+            // Moves only when the function returns an owning type (boxes,
+            // strings, arrays, and owning structs — `return arr[i];` from a
+            // `Rec`-returning function empties the element).
             const char* movedReturnKey
-                = typeName && AliasIsOwning(r, typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
+                = typeName && AliasIsOwningValue(r, typeName) ? MovableBoxSourceKey(r, rs->value) : NULL;
 
             if (movedReturnKey)
             {

@@ -113,7 +113,7 @@ STRATA_TEST(optional_plain_owning_struct_local_is_illegal)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "owning struct 'Weapon' must be stored in a box"));
+    STRATA_CHECK(Contains(d, "instances of 'Weapon' must be boxed (i.e, '^Weapon')."));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
