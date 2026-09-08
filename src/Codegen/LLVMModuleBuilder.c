@@ -4667,6 +4667,98 @@ static Value EmitDropBuiltin(Builder* b, CallExpr* n)
     return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
 }
 
+/* Emits substring(s, start, len) — a NEW owned string copying s[start ..
+   start+len). The source is borrowed, so literals, locals, and array
+   elements all work, and the source stays live. Out-of-range slices panic
+   under AOT; under the JIT they report through strata_oob and yield an
+   empty string, mirroring element indexing. Indices cross as i64, so
+   negative values fail the unsigned range check below. */
+static Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
+{
+    Node* arg0 = (Node*)VecGet(&n->args, 0);
+    Value v = EmitExpr(b, arg0);
+
+    if (!v.typeDesc.isString)
+    {
+        if (b->m_diag)
+        {
+            DiagErrorFmt(b->m_diag, n->base.range, "substring on a non-string value");
+        }
+
+        return ZeroInt(b);
+    }
+
+    LLVMValueRef start = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+    LLVMValueRef len = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 2)));
+    LLVMValueRef slen = WidenLen(b, LLVMBuildExtractValue(b->m_builder, v.value, 1, "sub.len"));
+    LLVMValueRef dataPtr = LLVMBuildExtractValue(b->m_builder, v.value, 0, "sub.ptr");
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+
+    if (!b->m_boundsCheck)
+    {
+        LLVMValueRef directPtr = LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &start, 1, "sub.src");
+
+        return ValueMake(BuildOwnedStringFat(b, directPtr, len), StringFatDesc(b));
+    }
+
+    /* Unsigned range check: start > slen, or len > slen - start (the
+       subtraction wraps when start > slen, but badStart is already set). */
+    LLVMValueRef badStart = LLVMBuildICmp(b->m_builder, LLVMIntUGT, start, slen, "sub.oob1");
+    LLVMValueRef remain = LLVMBuildSub(b->m_builder, slen, start, "sub.rem");
+    LLVMValueRef badLen = LLVMBuildICmp(b->m_builder, LLVMIntUGT, len, remain, "sub.oob2");
+    LLVMValueRef oob = LLVMBuildOr(b->m_builder, badStart, badLen, "sub.oob");
+
+    if (!b->m_jitMode)
+    {
+        LLVMBasicBlockRef oobBB = NewBb(b, "sub.oob");
+        LLVMBasicBlockRef okBB = NewBb(b, "sub.ok");
+        LLVMBuildCondBr(b->m_builder, oob, oobBB, okBB);
+        b->m_terminated = true;
+
+        PositionAtEnd(b, oobBB);
+        EmitPanic(b, "substring out of bounds");
+        b->m_terminated = true;
+
+        PositionAtEnd(b, okBB);
+        LLVMValueRef srcPtr = LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &start, 1, "sub.src");
+
+        return ValueMake(BuildOwnedStringFat(b, srcPtr, len), StringFatDesc(b));
+    }
+
+    LLVMBasicBlockRef oobBB = NewBb(b, "sub.oob");
+    LLVMBasicBlockRef okBB = NewBb(b, "sub.ok");
+    LLVMBasicBlockRef mergeBB = NewBb(b, "sub.merge");
+    LLVMBuildCondBr(b->m_builder, oob, oobBB, okBB);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, oobBB);
+
+    /* A bookkeeping re-resolution of the same expression (null-the-source
+       after a move) is not a new access: the access itself already reported. */
+    if (!b->m_nullStoreLValue)
+    {
+        EmitOobReport(b);
+    }
+
+    LLVMValueRef emptyFat = BuildOwnedStringFat(b, EmptyStrConstant(b), LLVMConstInt(I64Ty(b), 0, 0));
+    Br(b, mergeBB);
+    LLVMBasicBlockRef oobEnd = LLVMGetInsertBlock(b->m_builder);
+
+    PositionAtEnd(b, okBB);
+    LLVMValueRef srcPtr = LLVMBuildGEP2(b->m_builder, i8Ty, dataPtr, &start, 1, "sub.src");
+    LLVMValueRef fat = BuildOwnedStringFat(b, srcPtr, len);
+    Br(b, mergeBB);
+    LLVMBasicBlockRef okEnd = LLVMGetInsertBlock(b->m_builder);
+
+    PositionAtEnd(b, mergeBB);
+    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, ArrayStructType(b), "sub");
+    LLVMValueRef incomingVals[2] = {emptyFat, fat};
+    LLVMBasicBlockRef incomingBlocks[2] = {oobEnd, okEnd};
+    LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
+
+    return ValueMake(phi, StringFatDesc(b));
+}
+
 /* Applies C default argument promotions to a value passed through a bare
    extern varargs */
 static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
@@ -4789,6 +4881,9 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
         /* Misc */
         {"copy",         EmitCopyBuiltin    },
         {"drop",         EmitDropBuiltin    },
+
+        /* Strings */
+        {"substring",    EmitSubstringBuiltin},
 
         /* Vectors */
         {"float2",       EmitVectorConstruct},

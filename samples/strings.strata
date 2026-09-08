@@ -4,6 +4,9 @@
 //   s = "world";              // frees old buffer, copies new
 //   return s;                 // moves ownership to caller
 //   puts(s);                  // extern string params receive const char*
+//   substring(s, 1, 3);       // NEW owned copy of s[1..4); the source is
+//                             // borrowed; out-of-range panics under AOT,
+//                             // reports + yields "" under the JIT
 
 extern int puts(string s);
 

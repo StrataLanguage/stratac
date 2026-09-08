@@ -318,3 +318,225 @@ STRATA_TEST(string_vs_non_string_comparison_is_rejected)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
+
+STRATA_TEST(substring_slices_are_owned_copies)
+{
+    /* substring(s, start, len) copies s[start .. start+len) into a NEW
+       owned string: literals, locals, and computed bounds all work, and
+       the result is independent of later rebinds of the source. */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr(
+        "int entry() {\n"
+        "  string s = \"hello\";\n"
+        "  int r = 0;\n"
+        "  if (substring(s, 1, 3) == \"ell\") { r = r + 1; }\n"
+        "  if (substring(s, 0, 5) == s) { r = r + 2; }\n"
+        "  if (substring(s, 0, 0) == \"\") { r = r + 4; }\n"
+        "  if (substring(s, 5, 0) == \"\") { r = r + 8; }\n"
+        "  if (substring(\"abcdef\", 2, 2) == \"cd\") { r = r + 16; }\n"
+        "  if (substring(s, 1u, 3u) == \"ell\") { r = r + 32; }\n"
+        "  string t = substring(s, 1, 3);\n"
+        "  s = \"world\";\n"
+        "  if (t == \"ell\") { r = r + 64; }\n"
+        "  return r;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 127);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(substring_suffix_from_computed_index)
+{
+    /* The CLI use: slice a borrowed array element at a computed offset
+       (the char past '='), with a computed length. The source is borrowed,
+       never moved. */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr(
+        "int entry() {\n"
+        "  string[] args = {\"--output=out.txt\"};\n"
+        "  int eq = 8;\n"
+        "  string v = substring(args[0], eq + 1, (int)args[0].length - eq - 1);\n"
+        "  if (v == \"out.txt\") { return 7; }\n"
+        "  return 0;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(substring_blessed_optional_source)
+{
+    /* A narrowed `string?` unwraps like any other optional read: the
+       blessed fact satisfies CheckOptionalDeref and codegen sees the live
+       fat. */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr(
+        "int entry() {\n"
+        "  string? s = \"hello\";\n"
+        "  if (s?)\n"
+        "  {\n"
+        "    if (substring(s, 1, 2) == \"el\") { return 3; }\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(substring_out_of_range_yields_empty_in_jit)
+{
+    /* Mirrors element indexing: under the JIT an out-of-range slice reports
+       through strata_oob and continues with an empty string (AOT panics). */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr(
+        "int entry() {\n"
+        "  if (substring(\"abc\", 0, 9) == \"\") { return 5; }\n"
+        "  return 0;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 5);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(substring_wrong_arg_count_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  string s = substring(\"ab\", 1);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'substring' expects 3 arguments"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(substring_non_string_source_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  string s = substring(42, 0, 1);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'substring' expects a string argument"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(substring_float_index_is_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry() {\n"
+        "  string s = substring(\"ab\", 1.5, 1);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'substring' start must be an integer"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(substring_unblessed_optional_is_error)
+{
+    /* An unproven `string?` (here, a parameter with no narrowing fact)
+       reads through substring like any other optional read. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int entry(string? s) {\n"
+        "  string t = substring(s, 0, 1);\n"
+        "  return 0;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "has not been blessed"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}

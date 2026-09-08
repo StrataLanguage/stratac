@@ -27,7 +27,7 @@ typedef enum ResultCode
 typedef uint64_t ModeFlag;
 
 // Modes run after argument parsing.
-typedef enum MOde : uint64_t
+typedef enum Mode
 {
     MF_NONE,
     MF_PRINT_AST,

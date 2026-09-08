@@ -2305,6 +2305,94 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+/* Result type of `substring(s, start, len)` — always string, or NULL if not
+   a substring call. An optional `string?` source unwraps here; the resolve
+   half still demands the narrowing fact via CheckOptionalDeref. */
+static const TypeName* SubstringBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || strcmp(c->callee, "substring") != 0)
+    {
+        return NULL;
+    }
+    if (c->args.count != 3)
+    {
+        return NULL;
+    }
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    const TypeName* argType = InferType(r, arg0, scope);
+
+    if (argType && argType->isOptional)
+    {
+        argType = argType->inner;
+    }
+
+    if (!argType || !TypeIsString(&r->m_registry, argType->name))
+    {
+        return NULL;
+    }
+    return InternTypeName(r, "string");
+}
+
+static bool SubstringIndexTypeOk(Resolver* r, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        return false;
+    }
+
+    const char* resolved = TypeRegistryResolveAlias(&r->m_registry, t->name);
+
+    return IsNumeric(resolved) && !IsFloatType(resolved) && !IsBoolType(&r->m_registry, t);
+}
+
+static bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || strcmp(c->callee, "substring") != 0)
+    {
+        return false;
+    }
+
+    if (c->args.count != 3)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'substring' expects 3 arguments (string, start, len), got %zu",
+                     c->args.count);
+        return true;
+    }
+
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    const TypeName* argType = InferType(r, arg0, scope);
+    const TypeName* unwrapped = argType && argType->isOptional ? argType->inner : argType;
+
+    if (!unwrapped || !TypeIsString(&r->m_registry, unwrapped->name))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "'substring' expects a string argument, not '%s'",
+                     argType ? argType->name : "");
+        return true;
+    }
+
+    /* Reading through a `string?` needs the narrowing fact, like any
+       other optional read. */
+    CheckOptionalDeref(r, arg0, argType, InternTypeName(r, "string"), arg0->range);
+
+    const char* indexNames[2] = {"start", "len"};
+
+    for (int i = 1; i <= 2; i++)
+    {
+        Node* arg = (Node*)VecGet(&c->args, (size_t)i);
+        const TypeName* indexType = InferType(r, arg, scope);
+
+        if (!SubstringIndexTypeOk(r, indexType))
+        {
+            DiagErrorFmt(r->m_diag, arg->range, "'substring' %s must be an integer, not '%s'", indexNames[i - 1],
+                         indexType ? indexType->name : "");
+            return true;
+        }
+    }
+
+    c->isIntrinsicCall = true;
+    return true;
+}
+
 /* Result type of `drop(arg)` - always void (NULL TypeName). */
 static const TypeName* DropBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
@@ -4298,6 +4386,9 @@ static const IntrinsicTypeDefinition intrinsics[] = {
     /* Memory */
     {"copy",         CopyBuiltinType,            ResolveCopyBuiltin    },
     {"drop",         DropBuiltinType,            ResolveDropBuiltin    },
+
+    /* Strings */
+    {"substring",    SubstringBuiltinType,       ResolveSubstringBuiltin},
 
     /* Vectors */
     {"float2",       VectorConstructBuiltinType, ResolveVectorConstruct},
