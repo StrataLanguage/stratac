@@ -201,9 +201,14 @@ bool IsFloatType(const PrimitiveType prim)
     return (prim == PrimFloat || prim == PrimDouble);
 }
 
-bool IsScalarPseudoType(const char* t)
+bool IsNameScalarPseudoType(const char* t)
 {
     return IsNameScalarType(t) && strcmp(t, "bool") != 0;
+}
+
+bool IsScalarPseudoType(PrimitiveType prim)
+{
+    return IsScalarType(prim) && !(prim == PrimBool);
 }
 
 bool IsStringType(PrimitiveType prim)
@@ -211,9 +216,10 @@ bool IsStringType(PrimitiveType prim)
     return (prim == PrimString);
 }
 
-bool ScalarPseudoConst(const char* t, const char* member, uint64_t* outInt, double* outFloat, bool* outIsFloat)
+bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* outInt, double* outFloat,
+                       bool* outIsFloat)
 {
-    if (!IsScalarPseudoType(t))
+    if (!IsScalarPseudoType(primitive))
     {
         return false;
     }
@@ -228,31 +234,32 @@ bool ScalarPseudoConst(const char* t, const char* member, uint64_t* outInt, doub
 
     /* `min` is a float-only property (FLT_MIN/DBL_MIN); integers just get
        `max` (mirroring the C limit macros). */
-    if (isMin && !IsNameFloatType(t))
+    if (isMin && !IsFloatType(primitive))
     {
         return false;
     }
 
     static const struct
     {
-        const char* name;
+        PrimitiveType primitive;
+        // const char* name;
         uint64_t maxInt;
     } kIntMax[] = {
-        {"int",    0x7FFFFFFFULL        },
-        {"uint",   0xFFFFFFFFULL        },
-        {"long",   0x7FFFFFFFFFFFFFFFULL},
-        {"ulong",  0xFFFFFFFFFFFFFFFFULL},
-        {"byte",   0xFFULL              },
-        {"sbyte",  0x7FULL              },
-        {"short",  0x7FFFULL            },
-        {"ushort", 0xFFFFULL            },
+        {PrimInt,    0x7FFFFFFFULL        },
+        {PrimUInt,   0xFFFFFFFFULL        },
+        {PrimLong,   0x7FFFFFFFFFFFFFFFULL},
+        {PrimULong,  0xFFFFFFFFFFFFFFFFULL},
+        {PrimByte,   0xFFULL              },
+        {PrimSByte,  0x7FULL              },
+        {PrimShort,  0x7FFFULL            },
+        {PrimUShort, 0xFFFFULL            },
     };
 
-    if (!IsNameFloatType(t))
+    if (!IsFloatType(primitive))
     {
         for (size_t i = 0; i < sizeof(kIntMax) / sizeof(kIntMax[0]); i++)
         {
-            if (strcmp(t, kIntMax[i].name) == 0)
+            if (primitive == kIntMax[i].primitive)
             {
                 if (outInt)
                 {
@@ -271,7 +278,7 @@ bool ScalarPseudoConst(const char* t, const char* member, uint64_t* outInt, doub
 
     /* float/double: FLT_MAX/FLT_MIN, DBL_MAX/DBL_MIN. */
     double value;
-    if (strcmp(t, "double") == 0)
+    if (primitive == PrimDouble)
     {
         value = isMax ? 1.7976931348623157e+308 : 2.2250738585072014e-308;
     }

@@ -163,7 +163,8 @@ static bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative)
         bool isFloat = false;
 
         if (m->base_node->kind == NodeIdent
-            && ScalarPseudoConst(((IdentExpr*)m->base_node)->name, m->member, &intVal, NULL, &isFloat) && !isFloat)
+            && ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, NULL, &isFloat)
+            && !isFloat)
         {
             *mag = intVal;
             return true;
@@ -604,7 +605,8 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
         double floatVal = 0.0;
         bool isFloat = false;
 
-        if (ScalarPseudoConst(((IdentExpr*)m->base_node)->name, m->member, &intVal, &floatVal, &isFloat))
+        if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal,
+                              &isFloat))
         {
             bool wasInt = out->isInt;
             out->i = (long long)intVal;
@@ -3231,13 +3233,14 @@ static bool TryResolveScalarPseudoConst(Resolver* r, MemberExpr* m)
     }
 
     const char* baseName = ((IdentExpr*)m->base_node)->name;
+    const PrimitiveType primitive = GetPrimitiveType(baseName);
 
-    if (!IsScalarPseudoType(baseName))
+    if (!IsScalarPseudoType(primitive))
     {
         return false;
     }
 
-    if (!ScalarPseudoConst(baseName, m->member, NULL, NULL, NULL))
+    if (!ScalarPseudoConst(primitive, m->member, NULL, NULL, NULL))
     {
         DiagErrorFmt(r->m_diag, m->base.range, "type '%s' has no member '%s'", baseName, m->member);
         return true;
@@ -3679,7 +3682,8 @@ static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, 
             uint64_t intVal = 0;
             bool isFloat = false;
 
-            if (ScalarPseudoConst(((IdentExpr*)me->base_node)->name, me->member, &intVal, NULL, &isFloat))
+            if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)me->base_node)->name), me->member, &intVal, NULL,
+                                  &isFloat))
             {
                 if (isFloat)
                 {
@@ -4289,11 +4293,11 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             if (strcmp(argType->name, paramType->name) == 0)
             {
             }
-            else if (IsNameNumeric(argType->name) && IsNameNumeric(paramType->name))
+            else if (IsNumeric(argType->primitiveType) && IsNumeric(paramType->primitiveType))
             {
                 score += 1;
             }
-            else if (IsNameSimdVector(argType->name) && IsNameSimdVector(paramType->name))
+            else if (IsSimdVector(argType->primitiveType) && IsSimdVector(paramType->primitiveType))
             {
                 score += 1;
             }
@@ -4758,8 +4762,9 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         if (m->base_node->kind == NodeIdent)
         {
             const char* baseName = ((IdentExpr*)m->base_node)->name;
+            PrimitiveType primitive = GetPrimitiveType(baseName);
 
-            if (IsScalarPseudoType(baseName) && ScalarPseudoConst(baseName, m->member, NULL, NULL, NULL))
+            if (IsScalarPseudoType(primitive) && ScalarPseudoConst(primitive, m->member, NULL, NULL, NULL))
             {
                 return InternTypeName(r, baseName);
             }

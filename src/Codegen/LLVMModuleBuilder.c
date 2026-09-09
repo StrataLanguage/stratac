@@ -2521,7 +2521,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         double floatVal = 0.0;
         bool isFloat = false;
 
-        if (ScalarPseudoConst(tn.name, n->member, &intVal, &floatVal, &isFloat))
+        if (ScalarPseudoConst(tn.primitiveType, n->member, &intVal, &floatVal, &isFloat))
         {
             LLVMValueRef v = isFloat ? LLVMConstReal(td.type, floatVal) : LLVMConstInt(td.type, intVal, td.isUnsigned);
             return ValueMake(v, td);
@@ -7047,7 +7047,8 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             bool isFloat = false;
 
             if (m->base_node->kind == NodeIdent
-                && ScalarPseudoConst(((IdentExpr*)m->base_node)->name, m->member, &intVal, &floatVal, &isFloat))
+                && ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal,
+                                     &isFloat))
             {
                 *out = isFloat ? (ConstInitVal){CIK_FLOAT, .i = 0, .f = floatVal}
                                : (ConstInitVal){CIK_INT, .i = intVal, .f = 0.0};
