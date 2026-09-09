@@ -1086,8 +1086,14 @@ STRATA_TEST(fixed_local_array_init_rules)
         {"int entry() { int[3] v = {1, 2, 3}; int[3] w = {4, 5, 6}; v = w; return 0; }",
          "whole fixed-size array"},
         {"int entry() { int[3] v = {1, 2, 3}; v = {4, 5, 6}; return 0; }", "whole fixed-size array"},
-        /* Passing a whole local to a function. */
+        /* Passing a whole local to a function with no `ref T[]` view param. */
         {"int take(int x) { return x; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* By-value T[] param implies ownership transfer — a stack view can't be owned. */
+        {"int take(int[] x) { return (int)x.length; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Element type mismatch against the ref view. */
+        {"int take(ref long[] x) { return 0; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
          "cannot pass fixed-size array"},
         /* Element type mismatch. */
         {"int entry() { int[2] v = {1, \"x\"}; return 0; }", "cannot initialize"},
@@ -1107,6 +1113,168 @@ STRATA_TEST(fixed_local_array_init_rules)
         DiagnosticEngineFree(&diag);
         arena_free(&arena);
     }
+}
+
+/* ---- Fixed array → `ref T[]` slice/view -----------------------------------
+   A whole fixed array local (or struct field) passed to a `ref T[]` param
+   borrows its inline storage as a stack fat {&v[0], N, N}: no allocation,
+   no copy. The callee reads/writes elements through the data pointer and
+   never drops or frees the binding (ref params are exempt from teardown). */
+
+STRATA_TEST(fixed_array_ref_view_read)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int sum(ref int[] a)\n"
+        "{\n"
+        "  int s = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+        "  return s;\n"
+        "}\n"
+        "int entry() { int[3] v = {1, 2, 3}; return sum(v); }\n",   /* 6 */
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 6);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_array_ref_view_length)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "uint n(ref int[] a) { return a.length; }\n"
+        "int entry() { int[7] v = {1, 2, 3, 4, 5, 6, 7}; return (int)n(v); }\n",   /* 7 */
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_array_ref_view_mutates_caller_storage)
+{
+    /* Writes through the view land in the caller's fixed array — no copy. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "void bump(ref int[] a)\n"
+        "{\n"
+        "  a[0] = 40;\n"
+        "  a[1] = a[1] + 1;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  int[3] v = {1, 2, 3};\n"
+        "  bump(v);\n"
+        "  return v[0] * 100 + v[1] * 10 + v[2];\n"   /* 40*100 + 3*10 + 3 = 4033 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 4033);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_array_const_ref_view_read)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int first(const ref int[] a) { return a[0]; }\n"
+        "int entry() { int[2] v = {9, 8}; return first(v); }\n",   /* 9 */
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 9);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_array_struct_field_ref_view)
+{
+    /* A fixed array FIELD borrows as a view too (`b.data` is an lvalue). */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Buf { int[4] data; };\n"
+        "int sum(ref int[] a)\n"
+        "{\n"
+        "  int s = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+        "  return s;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  Buf b = Buf { .data = {5, 6, 7, 8} };\n"
+        "  return sum(b.data);\n"   /* 26 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 26);
+    }
+
+    strataJitDestroy(jit);
 }
 
 /* ---- Multidimensional fixed arrays of STRUCTS -----------------------------

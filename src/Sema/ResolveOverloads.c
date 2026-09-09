@@ -3942,6 +3942,48 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
     }
 }
 
+/* True when some visible overload of `name` takes a `ref T[]` param whose
+   element matches the fixed array's — the arg can cross as a borrowed
+   stack-fat view instead of being rejected wholesale. */
+static bool OverloadTakesFixedView(Resolver* r, const char* name, const TypeName* fixedType, int fileId)
+{
+    const TypeName* argElem = TypeNameArrayElem(fixedType);
+
+    if (!argElem)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    {
+        const FunctionDecl* f = (const FunctionDecl*)VecGet(&r->m_mod->functions, i);
+
+        if (strcmp(f->name, name) != 0 || !FunctionVisibleTo(f, fileId))
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < f->params.count; j++)
+        {
+            const ParamDecl* p = (const ParamDecl*)VecGet(&f->params, j);
+
+            if (p->isVarargRest || p->mod != ModRef || !TypeNameIsDynamicArray(&p->type))
+            {
+                continue;
+            }
+
+            const TypeName* paramElem = TypeNameArrayElem(&p->type);
+
+            if (paramElem && strcmp(paramElem->name, argElem->name) == 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     /* `expr.Member(args)` / `Type.Static(args)` — resolve against impl blocks.
@@ -3956,11 +3998,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    /* v1: a whole fixed-size array *local* cannot be passed as a call
-       argument — only its elements (`values[i]`, `values.length`). Locals are
-       named by a bare identifier, so an Ident arg with a fixed type is always
-       a local; field-sourced fixed arrays (`b.data`) keep the extern `^T`
-       decay below. */
+    /* A whole fixed-size array *local* cannot be passed as a call argument —
+       only its elements (`values[i]`, `values.length`) — UNLESS some overload
+       borrows it as a `ref T[]` slice/view (a stack fat is built at the call
+       site; the callee never drops the binding). Locals are named by a bare
+       identifier, so an Ident arg with a fixed type is always a local;
+       field-sourced fixed arrays (`b.data`) keep the extern `^T` decay below. */
     {
         bool fixedArgError = false;
 
@@ -3975,7 +4018,8 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
             const TypeName* argType = InferType(r, arg, scope);
 
-            if (argType && TypeNameIsFixedArray(argType))
+            if (argType && TypeNameIsFixedArray(argType)
+                && !OverloadTakesFixedView(r, c->callee, argType, c->base.range.fileId))
             {
                 DiagErrorFmt(r->m_diag, arg->range,
                              "cannot pass fixed-size array '%s' of type '%s' as an argument; "
@@ -4267,6 +4311,26 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 const TypeName* argInner = TypeNameBoxInner(argType);
 
                 if (argInner && strcmp(argInner->name, paramType->name) == 0)
+                {
+                    score += 1;
+                }
+                else
+                {
+                    viable = false;
+                    break;
+                }
+            }
+            else if (!isTail && param->mod == ModRef && TypeNameIsDynamicArray(paramType)
+                     && TypeNameIsFixedArray(argType))
+            {
+                /* Fixed → `ref T[]` slice/view: the fixed inline storage is
+                   borrowed as a stack fat {&fixed[0], N, N} — no copy, no
+                   allocation; a ref callee mutates elements, never drops or
+                   frees the binding (ref params are exempt from teardown). */
+                const TypeName* argElem = TypeNameArrayElem(argType);
+                const TypeName* paramElem = TypeNameArrayElem(paramType);
+
+                if (argElem && paramElem && strcmp(argElem->name, paramElem->name) == 0)
                 {
                     score += 1;
                 }
@@ -6005,6 +6069,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         for (size_t i = 0; i < ai->elements.count; i++)
         {
             Node* elem = (Node*)VecGet(&ai->elements, i);
+
+            // A flattened multidim fixed-array init carries NULL holes
+            // (short rows / missing rows zero-fill); nothing to resolve.
+            if (!elem)
+            {
+                continue;
+            }
 
             // Nested rows inherit the inner element type.
             if (ai->elementType && ai->elementType->isArray && elem->kind == NodeArrayInit

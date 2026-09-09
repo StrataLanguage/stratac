@@ -321,11 +321,16 @@ main) are the internal entry points.
   single-dimension fields (`S { .m = {1,2,3} }`); the wrong shape is a
   compile error. Local inits follow the same shape rules. Indexing is bounds-checked against the compile-time
   length, and `.length` is a compile-time constant typed `uint` (a fixed
-  array has NO `.cap` — inline storage has no capacity). Whole fixed-array assignment
-  (`s.a = s.b`, `v = w`) is rejected — assign elements. Passing a whole
-  fixed-array local as a call argument is rejected — pass elements
-  (`v[i]`). No auto-conversion to the
-  fat `T[]` pointer yet.
+   array has NO `.cap` — inline storage has no capacity). Whole fixed-array assignment
+   (`s.a = s.b`, `v = w`) is rejected — assign elements. Passing a whole
+   fixed-array local (or field, `b.data`) to a `ref T[]` param constructs a
+   stack fat VIEW `{&v[0], N, N}` — a slice/borrow of the inline storage,
+   no allocation, no copy; the callee reads/writes elements and never drops
+   or frees the binding (`ref` params are exempt from the owning-local
+   teardown). Element type must match exactly; a by-value `int[]` param is
+   still rejected (ownership transfer — a stack view can't be owned). Any
+   other param is rejected too — pass elements (`v[i]`). No auto-conversion
+   to the fat `T[]` pointer otherwise.
 - Dynamic arrays (`T[]`): a fat `{ptr, u32 len, u32 cap}` (16 bytes; the
   same triple `string` uses). `.length`/`.cap` are read-only `uint` views
   (assignment/`++`/`--` are compile errors). Growth is amortized:

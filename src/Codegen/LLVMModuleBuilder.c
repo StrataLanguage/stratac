@@ -5117,6 +5117,40 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
         }
 
+        /* Fixed array → `ref T[]` param: borrow the inline storage as a
+           stack fat {&fixed[0], N, N} — a slice/view with no allocation and
+           no copy (same stack-fat trick as the typed rest slot). The callee
+           reads/writes elements through the data pointer; a `ref` binding is
+           never dropped or freed (ref params are exempt from the
+           owning-local teardown), so the borrowed stack storage is safe. */
+        if (shouldPassByPtr && fd && k < fd->params.count
+            && (argNode->kind == NodeIdent || argNode->kind == NodeMember))
+        {
+            const ParamDecl* viewParam = (ParamDecl*)VecGet(&fd->params, k);
+
+            if (viewParam->mod == ModRef && TypeNameIsDynamicArray(&viewParam->type))
+            {
+                LValue lv = EmitLValue(b, argNode);
+
+                if (lv.valid && lv.typeDesc.isFixedArray)
+                {
+                    LLVMValueRef zero[2] = {LLVMConstInt(I64Ty(b), 0, 0), LLVMConstInt(I64Ty(b), 0, 0)};
+                    LLVMValueRef data = LLVMBuildGEP2(b->m_builder, lv.typeDesc.type, lv.ptr, zero, 2, "fixview");
+                    LLVMValueRef len
+                        = LLVMConstInt(I32Ty(b), (unsigned long long)lv.typeDesc.fixedLength, 0);
+                    LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
+                    fat = LLVMBuildInsertValue(b->m_builder, fat, data, 0, "fixview.p");
+                    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 1, "fixview.l");
+                    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 2, "fixview.c");
+
+                    LLVMValueRef viewSlot = EntryAlloca(b, ArrayStructType(b), "fixview");
+                    LLVMBuildStore(b->m_builder, fat, viewSlot);
+                    args[k] = viewSlot;
+                    continue;
+                }
+            }
+        }
+
         if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
         {
             /* Internal string param (by slot address): the callee owns and
