@@ -2384,7 +2384,7 @@ static LValue EmitLValue(Builder* b, Node* n)
             /* A boxed SIMD vector: the cell holds the vector value itself, so
                a lane lvalue points at the cell (load vector, insert, store
                back through it). */
-            if (IsSimdVector(base.typeDesc.boxInner->name))
+            if (IsNameSimdVector(base.typeDesc.boxInner->name))
             {
                 return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box"),
                                             Resolve(b, base.typeDesc.boxInner));
@@ -2594,7 +2594,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         }
     }
 
-    if (base.typeDesc.isBox && base.typeDesc.boxInner && IsSimdVector(base.typeDesc.boxInner->name))
+    if (base.typeDesc.isBox && base.typeDesc.boxInner && IsNameSimdVector(base.typeDesc.boxInner->name))
     {
         /* Resolve a box (surrounding a vector) down to the vector type. */
         TypeDesc innerType = Resolve(b, base.typeDesc.boxInner);
@@ -3454,7 +3454,8 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (baseLv.valid
             && (baseLv.typeDesc.isSimdVector
-                || (baseLv.typeDesc.isBox && baseLv.typeDesc.boxInner && IsSimdVector(baseLv.typeDesc.boxInner->name))))
+                || (baseLv.typeDesc.isBox && baseLv.typeDesc.boxInner
+                    && IsNameSimdVector(baseLv.typeDesc.boxInner->name))))
         {
             if (b->m_diag)
             {
@@ -4838,7 +4839,7 @@ static Value EmitVectorConstruct(Builder* b, CallExpr* n)
     TypeName tn = MakeTypeName(b, n->callee);
     TypeDesc typeDesc = Resolve(b, &tn);
 
-    int numVectorLanes = IsSimdVector(n->callee);
+    int numVectorLanes = IsNameSimdVector(n->callee);
 
     Value v;
 
@@ -4956,7 +4957,8 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
 
 /* A caller-owned array-literal temp lent to a `ref T[]` param: the callee
    borrows it; the caller drops it right after the call returns. */
-typedef struct {
+typedef struct
+{
     LLVMValueRef slot;
     TypeDesc td;
     bool stackOnly; /* stack-constructed view: drop owning ELEMENTS, never free the buffer */
@@ -5233,8 +5235,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 {
                     LLVMValueRef zero[2] = {LLVMConstInt(I64Ty(b), 0, 0), LLVMConstInt(I64Ty(b), 0, 0)};
                     LLVMValueRef data = LLVMBuildGEP2(b->m_builder, lv.typeDesc.type, lv.ptr, zero, 2, "fixview");
-                    LLVMValueRef len
-                        = LLVMConstInt(I32Ty(b), (unsigned long long)lv.typeDesc.fixedLength, 0);
+                    LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)lv.typeDesc.fixedLength, 0);
                     LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
                     fat = LLVMBuildInsertValue(b->m_builder, fat, data, 0, "fixview.p");
                     fat = LLVMBuildInsertValue(b->m_builder, fat, len, 1, "fixview.l");

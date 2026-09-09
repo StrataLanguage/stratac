@@ -200,7 +200,7 @@ static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
     Value y = EmitExpr(b, (Node*)n->args.items[1]);
 
     LLVMValueRef vec = LLVMGetPoison(vecType);
-    int destLanes = IsSimdVector(n->callee);
+    int destLanes = IsNameSimdVector(n->callee);
 
     /* float3(float2, float) */
     if (destLanes == 3 && IS_VECTOR(x) && IS_SCALAR(y))
@@ -265,7 +265,7 @@ static LLVMValueRef Vector4Construct3Args(struct Builder* b, CallExpr* n)
     Value z = EmitExpr(b, (Node*)n->args.items[2]);
 
     LLVMValueRef vec = LLVMGetPoison(vecType);
-    int destLanes = IsSimdVector(n->callee);
+    int destLanes = IsNameSimdVector(n->callee);
 
     /* float3(1.0, 2.0, 3.0) all scalars, implicit w = 0. */
     if (destLanes == 3 && IS_SCALAR(x) && IS_SCALAR(y) && IS_SCALAR(z))
@@ -318,7 +318,7 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         LLVMValueRef vec = LSimdVector4Broadcast(b, x.value);
 
         /* The output vector is going to be 3 lanes. Zero out the W component. */
-        if (IsSimdVector(n->callee) == 3)
+        if (IsNameSimdVector(n->callee) == 3)
         {
             LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
             LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);

@@ -9,6 +9,8 @@ typedef enum PrimitiveType
     /* Non-primitive value */
     PrimNone = 0,
 
+    PrimVoid,
+
     PrimBool,
     PrimInt,
     PrimUInt,
@@ -22,7 +24,6 @@ typedef enum PrimitiveType
     PrimDouble,
     PrimString,
 
-    /* */
     PrimFloat2,
     PrimFloat3,
     PrimFloat4,
@@ -32,6 +33,7 @@ typedef enum PrimitiveType
 /* NOTE: These are prebaked to be guaranteed to match `HashStr64` and ONLY `HashStr64`.
    Do not mix with another FNV1-A algorithm. */
 
+#define PRIM_NAME_VOID 0xd6af875602fd05dd
 #define PRIM_NAME_BOOL 0x26f69aafbc840517
 #define PRIM_NAME_INT 0x268b425134d641ac
 #define PRIM_NAME_UINT 0x9c36416143ba191b
@@ -54,6 +56,9 @@ static inline PrimitiveType GetPrimitiveType(const char* name)
 
     switch (nameHash)
     {
+	case PRIM_NAME_VOID:
+        return PrimVoid;
+
     case PRIM_NAME_BOOL:
         return PrimBool;
 

@@ -672,7 +672,7 @@ static bool IsConstDimType(const TypeRegistry* reg, const char* name)
    (floats/bools inline at uses too — they just cannot size arrays). */
 static bool IsManifestConstType(const TypeRegistry* reg, const char* name)
 {
-    return IsNumeric(TypeRegistryResolveAlias(reg, name));
+    return IsNameNumeric(TypeRegistryResolveAlias(reg, name));
 }
 
 static bool IsBoolType(const TypeRegistry* reg, const TypeName* t)
@@ -2092,7 +2092,7 @@ static bool SimdVector4ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
 static bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // The function name is the same as the type name, so we can use TypeUtil functions on it.
-    int numLanes = GetSimdVectorLanes(c->callee);
+    int numLanes = IsNameSimdVector(c->callee);
     if (numLanes == 0)
     {
         return false;
@@ -2183,8 +2183,8 @@ static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
     /* Resolve type aliases to check for SIMD vector compatibility. */
     const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
     const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
-    int lanes0 = GetSimdVectorLanes(resolved0);
-    int lanes1 = GetSimdVectorLanes(resolved1);
+    int lanes0 = GetNameSimdVectorLanes(resolved0);
+    int lanes1 = GetNameSimdVectorLanes(resolved1);
 
     if (lanes0 == 0 || lanes1 == 0)
     {
@@ -2228,8 +2228,8 @@ static bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
     const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
     const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
 
-    int lanes0 = IsSimdVector(resolved0);
-    int lanes1 = IsSimdVector(resolved1);
+    int lanes0 = IsNameSimdVector(resolved0);
+    int lanes1 = IsNameSimdVector(resolved1);
 
     if (lanes0 == 0 || lanes1 == 0)
     {
@@ -2269,7 +2269,7 @@ static bool ResolveVector1Arg(Resolver* r, CallExpr* c, StrMap* scope)
 
     const char* resolved0 = vAType ? TypeRegistryResolveAlias(&r->m_registry, vAType->name) : "";
 
-    int lanes = IsSimdVector(resolved0);
+    int lanes = IsNameSimdVector(resolved0);
 
     if (lanes == 0)
     {
@@ -2363,7 +2363,7 @@ static bool SubstringIndexTypeOk(Resolver* r, const TypeName* t)
 
     const char* resolved = TypeRegistryResolveAlias(&r->m_registry, t->name);
 
-    return IsNumeric(resolved) && !IsFloatType(resolved) && !IsBoolType(&r->m_registry, t);
+    return IsNameNumeric(resolved) && !IsNameFloatType(resolved) && !IsBoolType(&r->m_registry, t);
 }
 
 static bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
@@ -2619,7 +2619,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* sizeType = InferType(r, arg1, scope);
 
-        if (sizeType && !IsNumeric(sizeType->name))
+        if (sizeType && !IsNameNumeric(sizeType->name))
         {
             DiagErrorFmt(r->m_diag, arg1->range, "'array_resize' size must be an integer, not '%s'", sizeType->name);
         }
@@ -2714,12 +2714,12 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
         return false;
     }
 
-    if (IsNumeric(type->name) || TypeIsString(&r->m_registry, type->name))
+    if (IsNumeric(type->primitiveType) || TypeIsString(&r->m_registry, type->name))
     {
         return true;
     }
 
-    if (type->isArray || IsSimdVector(type->name))
+    if (type->isArray || IsSimdVector(type->primitiveType))
     {
         return false;
     }
@@ -4289,11 +4289,11 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             if (strcmp(argType->name, paramType->name) == 0)
             {
             }
-            else if (IsNumeric(argType->name) && IsNumeric(paramType->name))
+            else if (IsNameNumeric(argType->name) && IsNameNumeric(paramType->name))
             {
                 score += 1;
             }
-            else if (IsSimdVector(argType->name) && IsSimdVector(paramType->name))
+            else if (IsNameSimdVector(argType->name) && IsNameSimdVector(paramType->name))
             {
                 score += 1;
             }
@@ -4518,7 +4518,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
 static const TypeName* VectorConstructBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    if (IsSimdVector(c->callee) != 0)
+    if (IsNameSimdVector(c->callee) != 0)
     {
         return InternTypeName(r, c->callee);
     }
@@ -4537,7 +4537,7 @@ static const TypeName* VectorCrossBuiltinType(Resolver* r, CallExpr* c, StrMap* 
     const TypeName* a0Type = InferType(r, a0, scope);
 
     const char* resolved = TypeRegistryResolveAlias(&r->m_registry, a0Type ? a0Type->name : "");
-    if (GetSimdVectorLanes(resolved) == 2)
+    if (GetNameSimdVectorLanes(resolved) == 2)
     {
         return InternTypeName(r, "float");
     }
@@ -4700,7 +4700,7 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : ln;
             const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
 
-            if (SameResolvedType(r, ln2, rn2) && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
+            if (SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
             {
                 return InternTypeName(r, TypeRegistryResolveAlias(&r->m_registry, ln2));
             }
@@ -4895,8 +4895,8 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
     // - Source values that are numeric (but not vectors!) CAN be assigned to a vector type. They will be automatically
     // broadcasted to a vector of the destination's type.
 
-    const int destLanes = IsSimdVector(resolvedTarget);
-    const int srcLanes = IsSimdVector(resolvedValue);
+    const int destLanes = IsNameSimdVector(resolvedTarget);
+    const int srcLanes = IsNameSimdVector(resolvedValue);
 
     // Check identical vector types
     if (destLanes && srcLanes && srcLanes == destLanes)
@@ -4911,7 +4911,7 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
     }
 
     // Check vector dest and scalar numeric src
-    if (destLanes && (srcLanes == 0 && IsNumeric(resolvedValue)))
+    if (destLanes && (srcLanes == 0 && IsNameNumeric(resolvedValue)))
     {
         // If the dest type is an alias, it is not assignable this way.
         if (TypeRegistryIsTypeAlias(&r->m_registry, targetType->name))
@@ -4949,7 +4949,7 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
     }
 
     // Numerics convert freely (TODO: require casts for lossy narrowing).
-    if (IsNumeric(valueType->name) && IsNumeric(targetType->name))
+    if (IsNameNumeric(valueType->name) && IsNameNumeric(targetType->name))
     {
         return true;
     }
@@ -5067,9 +5067,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : ln;
             const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
 
-            bool numericPair = IsNumeric(ln2) && IsNumeric(rn2);
+            bool numericPair = IsNameNumeric(ln2) && IsNameNumeric(rn2);
             bool vectorPair
-                = SameResolvedType(r, ln2, rn2) && IsSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
+                = SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
 
             /* Bool is not numeric: `true + true` must not compute i1
                wrap-around (1+1 = 0). */
@@ -5643,7 +5643,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
            wraps the i1 (true -> false). */
         const TypeName* incType = InferType(r, inc->operand, scope);
 
-        if (incType && (!IsNumeric(incType->name) || IsBoolType(&r->m_registry, incType)))
+        if (incType && (!IsNameNumeric(incType->name) || IsBoolType(&r->m_registry, incType)))
         {
             DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
                          inc->isDec ? "decrement" : "increment", incType->name);
@@ -5698,8 +5698,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                               || HandleExtendsFrom(&r->m_registry, srcName, dstName));
 
         /* SIMD vector pair: same lane count (including through type aliases). */
-        const int srcLanes = IsSimdVector(resolvedSrc);
-        const int dstLanes = IsSimdVector(resolvedDst);
+        const int srcLanes = IsNameSimdVector(resolvedSrc);
+        const int dstLanes = IsNameSimdVector(resolvedDst);
         bool simdPair = src && srcLanes != 0 && dstLanes != 0 && srcLanes == dstLanes;
 
         /* ^T -> ^U only when T or U is opaque (erase/cast-back). */
@@ -6317,8 +6317,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             {
                 t = (t->isBox || t->isOptional) ? t->inner : t->elem;
             }
-            if (t && t->name && strcmp(t->name, "string") != 0 && !IsScalarTypeName(t->name) && !IsSimdVector(t->name)
-                && !TypeRegistryIsUserType(&r->m_registry, t->name))
+            if (t && t->name && !IsStringType(t->primitiveType) && !IsScalarType(t->primitiveType)
+                && !IsSimdVector(t->primitiveType) && !TypeRegistryIsUserType(&r->m_registry, t->name))
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "unknown type '%s'", t->name);
                 return;
@@ -6654,7 +6654,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                         = boxInnerName
                           && (r->m_currentReturnType
                               && (strcmp(r->m_currentReturnType->name, boxInnerName) == 0
-                                  || (IsNumeric(boxInnerName) && IsNumeric(r->m_currentReturnType->name))));
+                                  || (IsNameNumeric(boxInnerName) && IsNameNumeric(r->m_currentReturnType->name))));
 
                     if (innerIsOwning || !innerMatchesReturn)
                     {
