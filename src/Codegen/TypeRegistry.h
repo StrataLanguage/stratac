@@ -4,6 +4,7 @@
 #include "Core/Util.h"
 
 #include "Codegen/TypeUtil.h"
+#include "PrimitiveTypes.h"
 
 /* A pad filling a `fieldoffset` gap; a trailing pad rounds out the struct. */
 typedef struct {
@@ -22,6 +23,7 @@ typedef struct {
     bool isTypeAlias;
     bool isEnum;                 /* `enum Foo` — a strong alias with scoped constants. */
     const char* underlyingType;  /* underlying type name for aliases */
+    PrimitiveType underlyingPrimitiveType; /* underlying type value for the alias */
 
     /* Computed layout; hasLayout is set only on success,
        layoutError holds the failure message. */

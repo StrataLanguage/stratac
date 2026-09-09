@@ -42,6 +42,12 @@ int main()
 
         /* */
         "string",
+
+        /* */
+        "float2",
+        "float3",
+        "float4",
+
     };
 
     char buffer[256];
