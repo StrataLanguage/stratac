@@ -1,6 +1,6 @@
-#include "Util.h"
-#include "Test.h"
 #include "AST/AST.h"
+#include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 
 #include <stdio.h>
@@ -29,14 +29,14 @@ STRATA_TEST(type_name_parse_round_trips)
         const char* elemName;
         bool elemIsBox;
     } cases[] = {
-        {"int", false, false, -1, NULL, false},
-        {"Foo", false, false, -1, NULL, false},
-        {"int[]", true, false, -1, "int", false},
-        {"int[4]", false, true, 4, "int", false},
-        {"int[2][6]", false, true, 2, "int[6]", false},
-        {"^Foo", false, false, -1, NULL, false},
-        {"^Foo[]", true, false, -1, "^Foo", true},
-        {"^Foo[2]", false, true, 2, "^Foo", true},
+        {"int",       false, false, -1, NULL,     false},
+        {"Foo",       false, false, -1, NULL,     false},
+        {"int[]",     true,  false, -1, "int",    false},
+        {"int[4]",    false, true,  4,  "int",    false},
+        {"int[2][6]", false, true,  2,  "int[6]", false},
+        {"^Foo",      false, false, -1, NULL,     false},
+        {"^Foo[]",    true,  false, -1, "^Foo",   true },
+        {"^Foo[2]",   false, true,  2,  "^Foo",   true },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -65,9 +65,10 @@ STRATA_TEST(type_name_parse_round_trips)
     }
 
     /* Owning-ness is structural: string, ^T and dynamic T[] own; T[N] does not. */
-    STRATA_CHECK(TypeNameIsOwning(&(TypeName){.name = (char*)"string"}));
+    STRATA_CHECK(TypeNameIsOwning(&(TypeName){.name = "string", .primitiveType = PrimString}));
     TypeName fixed = TypeNameParse(&arena, "int[4]");
-    STRATA_CHECK(!TypeNameIsOwning(&fixed));    TypeName dyn = TypeNameParse(&arena, "int[]");
+    STRATA_CHECK(!TypeNameIsOwning(&fixed));
+    TypeName dyn = TypeNameParse(&arena, "int[]");
     STRATA_CHECK(TypeNameIsOwning(&dyn));
     TypeName box = TypeNameParse(&arena, "^Foo");
     STRATA_CHECK(TypeNameIsOwning(&box));
@@ -102,12 +103,11 @@ static StrataJit* CompileArr(const char* src, const char** err)
 STRATA_TEST(array_literal_and_index)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {1, 2, 3, 4};\n"
-        "  return a[0] + a[1] + a[2] + a[3];\n"   /* 1+2+3+4 = 10 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {1, 2, 3, 4};\n"
+                                "  return a[0] + a[1] + a[2] + a[3];\n" /* 1+2+3+4 = 10 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -130,16 +130,15 @@ STRATA_TEST(array_literal_and_index)
 STRATA_TEST(array_of_strings_iterates_and_drops)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  string[] names = {\"alpha\", \"beta\", \"gamma\"};\n"
-        "  int n = 0;\n"
-        "  for (ulong i = 0; i < names.length; i = i + 1) {\n"
-        "    n = n + 1;\n"
-        "  }\n"
-        "  return n;\n"                          /* 3; freeing 3 strings must not crash */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  string[] names = {\"alpha\", \"beta\", \"gamma\"};\n"
+                                "  int n = 0;\n"
+                                "  for (ulong i = 0; i < names.length; i = i + 1) {\n"
+                                "    n = n + 1;\n"
+                                "  }\n"
+                                "  return n;\n" /* 3; freeing 3 strings must not crash */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -162,16 +161,15 @@ STRATA_TEST(array_of_strings_iterates_and_drops)
 STRATA_TEST(array_ref_param_borrows)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int first(ref int[] a) {\n"
-        "  return a[0];\n"
-        "}\n"
-        "int entry() {\n"
-        "  int[] a = {42, 7};\n"
-        "  int f = first(a);\n"                  /* borrow: a still usable */
-        "  return f + (int)a.length;\n"          /* 42 + 2 = 44 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int first(ref int[] a) {\n"
+                                "  return a[0];\n"
+                                "}\n"
+                                "int entry() {\n"
+                                "  int[] a = {42, 7};\n"
+                                "  int f = first(a);\n"         /* borrow: a still usable */
+                                "  return f + (int)a.length;\n" /* 42 + 2 = 44 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -194,13 +192,12 @@ STRATA_TEST(array_ref_param_borrows)
 STRATA_TEST(array_rebind_replaces_contents)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {1, 2, 3};\n"
-        "  a = {10, 20};\n"                      /* rebind: free old, take new */
-        "  return a[0] + a[1] + (int)a.length;\n" /* 10 + 20 + 2 = 32 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {1, 2, 3};\n"
+                                "  a = {10, 20};\n"                       /* rebind: free old, take new */
+                                "  return a[0] + a[1] + (int)a.length;\n" /* 10 + 20 + 2 = 32 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -223,13 +220,12 @@ STRATA_TEST(array_rebind_replaces_contents)
 STRATA_TEST(array_move_value_is_owned_by_dest)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {5, 6, 7};\n"
-        "  int[] b = a;\n"                       /* move: b owns the buffer now */
-        "  return b[2];\n"                       /* 7 (reading a after this is a sema error) */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {5, 6, 7};\n"
+                                "  int[] b = a;\n" /* move: b owns the buffer now */
+                                "  return b[2];\n" /* 7 (reading a after this is a sema error) */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -253,16 +249,15 @@ STRATA_TEST(array_in_loop_does_not_crash)
 {
     /* A fresh array per iteration is freed each time (block scope). */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int sum = 0;\n"
-        "  for (int i = 0; i < 50; i = i + 1) {\n"
-        "    int[] a = {i, i, i};\n"
-        "    sum = sum + a[0] + a[1] + a[2];\n"
-        "  }\n"
-        "  return sum;\n"                        /* 3 * (0+1+..+49) = 3*1225 = 3675 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int sum = 0;\n"
+                                "  for (int i = 0; i < 50; i = i + 1) {\n"
+                                "    int[] a = {i, i, i};\n"
+                                "    sum = sum + a[0] + a[1] + a[2];\n"
+                                "  }\n"
+                                "  return sum;\n" /* 3 * (0+1+..+49) = 3*1225 = 3675 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -285,15 +280,14 @@ STRATA_TEST(array_in_loop_does_not_crash)
 STRATA_TEST(array_returned_from_function)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] three() {\n"
-        "  return {10, 20, 30};\n"
-        "}\n"
-        "int entry() {\n"
-        "  int[] a = three();\n"
-        "  return a[0] + a[1] + a[2];\n"         /* 60 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] three() {\n"
+                                "  return {10, 20, 30};\n"
+                                "}\n"
+                                "int entry() {\n"
+                                "  int[] a = three();\n"
+                                "  return a[0] + a[1] + a[2];\n" /* 60 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -316,17 +310,16 @@ STRATA_TEST(array_returned_from_function)
 STRATA_TEST(array_of_structs_sums_field)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Pt { int x; int y; };\n"
-        "int entry() {\n"
-        "  Pt[] pts = { Pt{ .x = 1, .y = 2 }, Pt{ .x = 3, .y = 4 } };\n"
-        "  int total = 0;\n"
-        "  for (ulong i = 0; i < pts.length; i = i + 1) {\n"
-        "    total = total + pts[i].x + pts[i].y;\n"
-        "  }\n"
-        "  return total;\n"                       /* (1+2) + (3+4) = 10 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Pt { int x; int y; };\n"
+                                "int entry() {\n"
+                                "  Pt[] pts = { Pt{ .x = 1, .y = 2 }, Pt{ .x = 3, .y = 4 } };\n"
+                                "  int total = 0;\n"
+                                "  for (ulong i = 0; i < pts.length; i = i + 1) {\n"
+                                "    total = total + pts[i].x + pts[i].y;\n"
+                                "  }\n"
+                                "  return total;\n" /* (1+2) + (3+4) = 10 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -349,14 +342,13 @@ STRATA_TEST(array_of_structs_sums_field)
 STRATA_TEST(array_use_after_move_is_error)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "void take(int[] a) {}\n"
-        "int entry() {\n"
-        "  int[] a = {1,2,3};\n"
-        "  take(a);\n"
-        "  return (int)a.length;\n"              /* used after move into take() */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("void take(int[] a) {}\n"
+                                "int entry() {\n"
+                                "  int[] a = {1,2,3};\n"
+                                "  take(a);\n"
+                                "  return (int)a.length;\n" /* used after move into take() */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err != NULL);
@@ -366,13 +358,12 @@ STRATA_TEST(array_use_after_move_is_error)
 STRATA_TEST(array_push_rejects_non_array_argument)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int x = 5;\n"
-        "  array_push(x, 1);\n"              /* x is not an array */
-        "  return x;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int x = 5;\n"
+                                "  array_push(x, 1);\n" /* x is not an array */
+                                "  return x;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err != NULL);
@@ -382,13 +373,12 @@ STRATA_TEST(array_push_rejects_non_array_argument)
 STRATA_TEST(array_push_rejects_wrong_arg_count)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {1, 2, 3};\n"
-        "  array_push(a);\n"                 /* missing value */
-        "  return (int)a.length;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {1, 2, 3};\n"
+                                "  array_push(a);\n" /* missing value */
+                                "  return (int)a.length;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err != NULL);
@@ -400,13 +390,12 @@ STRATA_TEST(array_push_owning_value_from_index_is_error)
     /* Pushing an owning value read out of an array element would duplicate
        ownership (double-free); it must be rejected. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  string[] s = {\"a\", \"b\"};\n"
-        "  array_push(s, s[0]);\n"           /* borrowed owning value */
-        "  return (int)s.length;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  string[] s = {\"a\", \"b\"};\n"
+                                "  array_push(s, s[0]);\n" /* borrowed owning value */
+                                "  return (int)s.length;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err != NULL);
@@ -420,16 +409,15 @@ STRATA_TEST(array_of_owning_struct_inline_elements)
         `string[]`), so inline owning elements are legal — and `^S[]` (boxed
         elements) remains the other spelling. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct S { string s; int n; };\n"
-        "int entry() {\n"
-        "  S[] arr = { S{.s = \"a\", .n = 1}, S{.s = \"bb\", .n = 2} };\n"
-        "  int r = (int)arr.length * 10 + arr[0].n;\n"
-        "  drop(copy(arr[1]));\n"
-        "  drop(arr);\n"
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct S { string s; int n; };\n"
+                                "int entry() {\n"
+                                "  S[] arr = { S{.s = \"a\", .n = 1}, S{.s = \"bb\", .n = 2} };\n"
+                                "  int r = (int)arr.length * 10 + arr[0].n;\n"
+                                "  drop(copy(arr[1]));\n"
+                                "  drop(arr);\n"
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -452,12 +440,11 @@ STRATA_TEST(array_of_owning_struct_inline_elements)
 STRATA_TEST(array_uninitialized_decl_allowed_empty)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a;\n"
-        "  return (int)a.length;\n"              /* 0 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a;\n"
+                                "  return (int)a.length;\n" /* 0 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -484,17 +471,16 @@ STRATA_TEST(array_uninitialized_decl_allowed_empty)
 STRATA_TEST(array_field_omitted_starts_empty)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct S { int[] ints; int other; };\n"
-        "int entry() {\n"
-        "  ^S s = S { .other = 1 };\n"
-        "  int before = (int)s.ints.length;     /* 0 */\n"
-        "  array_push(s.ints, 7);\n"
-        "  array_push(s.ints, 8);\n"
-        "  int sum = s.ints[0] + s.ints[1];     /* 15 */\n"
-        "  return before * 1000 + sum + s.other * 10;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct S { int[] ints; int other; };\n"
+                                "int entry() {\n"
+                                "  ^S s = S { .other = 1 };\n"
+                                "  int before = (int)s.ints.length;     /* 0 */\n"
+                                "  array_push(s.ints, 7);\n"
+                                "  array_push(s.ints, 8);\n"
+                                "  int sum = s.ints[0] + s.ints[1];     /* 15 */\n"
+                                "  return before * 1000 + sum + s.other * 10;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -519,16 +505,15 @@ STRATA_TEST(array_field_omitted_starts_empty)
 STRATA_TEST(string_array_field_omitted_starts_empty)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct S { string[] words; };\n"
-        "int entry() {\n"
-        "  ^S s = S { };\n"
-        "  int before = (int)s.words.length;    /* 0 */\n"
-        "  array_push(s.words, \"abc\");\n"
-        "  array_push(s.words, \"de\");\n"
-        "  return before * 100 + (int)s.words.length * 10;\n"   /* 20 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct S { string[] words; };\n"
+                                "int entry() {\n"
+                                "  ^S s = S { };\n"
+                                "  int before = (int)s.words.length;    /* 0 */\n"
+                                "  array_push(s.words, \"abc\");\n"
+                                "  array_push(s.words, \"de\");\n"
+                                "  return before * 100 + (int)s.words.length * 10;\n" /* 20 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -552,16 +537,18 @@ STRATA_TEST(string_array_field_omitted_starts_empty)
    is spelled for real optional types now that arrays are exempt. */
 STRATA_TEST(box_field_omitted_still_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Inner { int x; };\n"
-        "struct S { ^Inner inner; };\n"
-        "int entry() { ^S s = S { }; return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Inner { int x; };\n"
+                    "struct S { ^Inner inner; };\n"
+                    "int entry() { ^S s = S { }; return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "must be initialized") != NULL);
     STRATA_CHECK(strstr(d, "'Inner?'") != NULL);
@@ -576,16 +563,15 @@ STRATA_TEST(box_field_omitted_still_an_error)
 STRATA_TEST(braced_literal_as_constructor_argument)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct FooBar { string str; int[] ints; };\n"
-        "int entry() {\n"
-        "  ^FooBar a = FooBar(\"x\", {});\n"
-        "  ^FooBar b = FooBar(\"y\", {1, 2, 3});\n"
-        "  int sum = 0;\n"
-        "  for (uint i = 0; i < b.ints.length; i++) { sum += b.ints[i]; }\n"
-        "  return sum * 10 + (int)a.ints.length;\n"     /* 60 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct FooBar { string str; int[] ints; };\n"
+                                "int entry() {\n"
+                                "  ^FooBar a = FooBar(\"x\", {});\n"
+                                "  ^FooBar b = FooBar(\"y\", {1, 2, 3});\n"
+                                "  int sum = 0;\n"
+                                "  for (uint i = 0; i < b.ints.length; i++) { sum += b.ints[i]; }\n"
+                                "  return sum * 10 + (int)a.ints.length;\n" /* 60 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -608,27 +594,27 @@ STRATA_TEST(braced_literal_as_constructor_argument)
 /* Braced STRUCT literals in expression position: `{}` and `{ .f = ... }`
    against struct-shaped targets - call args, assignments, nested fields,
    returns through plain/box types. Sema fills the type from context. */
-STRATA_TEST(braced_struct_literals_in_expression_position){
+STRATA_TEST(braced_struct_literals_in_expression_position)
+{
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Vec3 { float x; float y; float z; };\n"
-        "struct Inner { int a; };\n"
-        "struct Outer { Inner in; int tag; };\n"
-        "int take_vec(Vec3 v) { return (int)(v.x + v.y + v.z); }\n"
-        "Vec3 zero() { return {}; }\n"
-        "^Inner boxed_empty() { return {}; }\n"
-        "int entry() {\n"
-        "  Vec3 v = {};\n"
-        "  ^Outer o = {};\n"
-        "  o = {};\n"                                /* re-assign braces into the box */
-        "  int a = take_vec({});\n"                  /* 0 */
-        "  int b = take_vec({1, 2, 3});\n"           /* 6: positional struct */
-        "  ^Outer p = Outer({ .a = 7 }, 1);\n"       /* designator braced ctor arg */
-        "  Vec3 z = zero();\n"
-        "  ^Inner be = boxed_empty();\n"
-        "  return a + b + p.in.a + (int)z.x + be.a + o.tag;\n"   /* 6 + 7 = 13 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Vec3 { float x; float y; float z; };\n"
+                                "struct Inner { int a; };\n"
+                                "struct Outer { Inner in; int tag; };\n"
+                                "int take_vec(Vec3 v) { return (int)(v.x + v.y + v.z); }\n"
+                                "Vec3 zero() { return {}; }\n"
+                                "^Inner boxed_empty() { return {}; }\n"
+                                "int entry() {\n"
+                                "  Vec3 v = {};\n"
+                                "  ^Outer o = {};\n"
+                                "  o = {};\n"                          /* re-assign braces into the box */
+                                "  int a = take_vec({});\n"            /* 0 */
+                                "  int b = take_vec({1, 2, 3});\n"     /* 6: positional struct */
+                                "  ^Outer p = Outer({ .a = 7 }, 1);\n" /* designator braced ctor arg */
+                                "  Vec3 z = zero();\n"
+                                "  ^Inner be = boxed_empty();\n"
+                                "  return a + b + p.in.a + (int)z.x + be.a + o.tag;\n" /* 6 + 7 = 13 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -653,17 +639,16 @@ STRATA_TEST(braced_struct_literals_in_expression_position){
 STRATA_TEST(braced_empty_against_optional_field_constructs)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Node { int v; Node? next; };\n"
-        "int entry() {\n"
-        "  ^Node a = Node(1, {});\n"              /* next = boxed default Node */
-        "  if (a.next?)\n"
-        "  {\n"
-        "    return 10 + a.next.v;\n"              /* 10 */
-        "  }\n"
-        "  return 1;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Node { int v; Node? next; };\n"
+                                "int entry() {\n"
+                                "  ^Node a = Node(1, {});\n" /* next = boxed default Node */
+                                "  if (a.next?)\n"
+                                "  {\n"
+                                "    return 10 + a.next.v;\n" /* 10 */
+                                "  }\n"
+                                "  return 1;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -690,26 +675,25 @@ STRATA_TEST(braced_empty_against_optional_field_constructs)
 STRATA_TEST(push_narrowed_optional_into_box_array)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Node { int v; Node? next; };\n"
-        "int entry() {\n"
-        "  ^Node[] arr;\n"
-        "  ^Node a = Node(1, {});\n"                /* next constructed, non-empty */
-        "  if (a.next?)\n"
-        "  {\n"
-        "    array_push(arr, a.next);\n"             /* the move */
-        "  }\n"
-        "  int r = (int)arr.length * 10;\n"          /* 10 */
-        "  if (a.next?) { r += 5; } else { r += 1; }\n"   /* emptied -> +1 -> 11 */
-        "  ^Node[] more;\n"
-        "  array_push(more, a);\n"                   /* parent NOT poisoned */
-        "  r += (int)more.length * 100;\n"           /* +100 -> 111 */
-        "  ^Node b = Node(7, {});\n"
-        "  if (b.next?) { array_push(arr, b.next); }\n"   /* narrowed T? moves into the slot */
-        "  r += (int)arr.length;\n"                  /* 2 -> 113 */
-        "  return r + arr[1].v;\n"                   /* +0 -> 113 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Node { int v; Node? next; };\n"
+                                "int entry() {\n"
+                                "  ^Node[] arr;\n"
+                                "  ^Node a = Node(1, {});\n" /* next constructed, non-empty */
+                                "  if (a.next?)\n"
+                                "  {\n"
+                                "    array_push(arr, a.next);\n" /* the move */
+                                "  }\n"
+                                "  int r = (int)arr.length * 10;\n"             /* 10 */
+                                "  if (a.next?) { r += 5; } else { r += 1; }\n" /* emptied -> +1 -> 11 */
+                                "  ^Node[] more;\n"
+                                "  array_push(more, a);\n"         /* parent NOT poisoned */
+                                "  r += (int)more.length * 100;\n" /* +100 -> 111 */
+                                "  ^Node b = Node(7, {});\n"
+                                "  if (b.next?) { array_push(arr, b.next); }\n" /* narrowed T? moves into the slot */
+                                "  r += (int)arr.length;\n"                     /* 2 -> 113 */
+                                "  return r + arr[1].v;\n"                      /* +0 -> 113 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -731,20 +715,22 @@ STRATA_TEST(push_narrowed_optional_into_box_array)
 
 STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Node { int v; Node? next; };\n"
-        "int entry() {\n"
-        "  ^Node[] arr;\n"
-        "  ^Node a = Node(1, {});\n"
-        "  array_push(arr, a.next);\n"      /* no `if (a.next?)` guard */
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Node { int v; Node? next; };\n"
+                    "int entry() {\n"
+                    "  ^Node[] arr;\n"
+                    "  ^Node a = Node(1, {});\n"
+                    "  array_push(arr, a.next);\n" /* no `if (a.next?)` guard */
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "cannot push a value of type 'Node?'") != NULL);
 
@@ -760,21 +746,21 @@ STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
 STRATA_TEST(two_d_dynamic_array_literal_runs)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[][] grid = { {1, 2}, {3, 4} };\n"
-        "  int sum = 0;\n"
-        "  for (uint i = 0; i < grid.length; i++)\n"
-        "  {\n"
-        "    for (uint j = 0; j < grid[i].length; j++)\n"
-        "    {\n"
-        "      sum += grid[i][j];\n"
-        "    }\n"
-        "  }\n"
-        "  grid[1][0] = 30;\n"                    /* mutate a cell */
-        "  return sum * 100 + grid[1][0] + (int)grid.length + (int)grid[0].length;\n"   /* 1000+30+2+2 */
-        "}\n",
-        &err);
+    StrataJit* jit
+        = CompileArr("int entry() {\n"
+                     "  int[][] grid = { {1, 2}, {3, 4} };\n"
+                     "  int sum = 0;\n"
+                     "  for (uint i = 0; i < grid.length; i++)\n"
+                     "  {\n"
+                     "    for (uint j = 0; j < grid[i].length; j++)\n"
+                     "    {\n"
+                     "      sum += grid[i][j];\n"
+                     "    }\n"
+                     "  }\n"
+                     "  grid[1][0] = 30;\n"                                                        /* mutate a cell */
+                     "  return sum * 100 + grid[1][0] + (int)grid.length + (int)grid[0].length;\n" /* 1000+30+2+2 */
+                     "}\n",
+                     &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -799,15 +785,15 @@ STRATA_TEST(two_d_fixed_array_nested_rows_required_and_run)
     /* Multidimensional fixed fields take nested rows - one brace level per
        dimension, rows may be short (missing elements zero). */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Grid { int[2][3] cells; };\n"
-        "int entry() {\n"
-        "  Grid a = Grid { .cells = { {10, 20, 30}, {40, 50, 60} } };\n"
-        "  Grid b = Grid { .cells = { {1, 2} } };\n"          /* short row + missing row */
-        "  int sum = a.cells[0][0] + a.cells[1][2] + b.cells[0][1] + b.cells[0][2] + b.cells[1][0];\n"
-        "  return sum + (int)a.cells.length;\n"      /* 10+60+2+0+0 + 2 */
-        "}\n",
-        &err);
+    StrataJit* jit
+        = CompileArr("struct Grid { int[2][3] cells; };\n"
+                     "int entry() {\n"
+                     "  Grid a = Grid { .cells = { {10, 20, 30}, {40, 50, 60} } };\n"
+                     "  Grid b = Grid { .cells = { {1, 2} } };\n" /* short row + missing row */
+                     "  int sum = a.cells[0][0] + a.cells[1][2] + b.cells[0][1] + b.cells[0][2] + b.cells[1][0];\n"
+                     "  return sum + (int)a.cells.length;\n" /* 10+60+2+0+0 + 2 */
+                     "}\n",
+                     &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -831,18 +817,20 @@ STRATA_TEST(two_d_fixed_array_flat_list_for_multidim_is_error)
 {
     /* A flat list for a multidimensional field is a shape violation - the
        initializer must mirror the dimensions. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Grid { int[2][3] cells; };\n"
-        "int entry() {\n"
-        "  Grid g = Grid { .cells = {10, 20, 30, 40, 50, 60} };\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Grid { int[2][3] cells; };\n"
+                    "int entry() {\n"
+                    "  Grid g = Grid { .cells = {10, 20, 30, 40, 50, 60} };\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "requires nested rows") != NULL);
 
@@ -853,18 +841,20 @@ STRATA_TEST(two_d_fixed_array_flat_list_for_multidim_is_error)
 STRATA_TEST(one_d_fixed_array_nested_row_is_error)
 {
     /* The mirror rule: a single-dimension field takes a flat list only. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Buf { byte[4] data; };\n"
-        "int entry() {\n"
-        "  Buf b = Buf { .data = { {1, 2}, {3, 4} } };\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Buf { byte[4] data; };\n"
+                    "int entry() {\n"
+                    "  Buf b = Buf { .data = { {1, 2}, {3, 4} } };\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "single dimension - write its elements as a flat list") != NULL);
 
@@ -880,13 +870,12 @@ STRATA_TEST(one_d_fixed_array_nested_row_is_error)
 STRATA_TEST(fixed_local_array_basic_run)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  float[3] values = {1.0, 2.0, 3.0};\n"
-        "  values[2] = 10.0;\n"
-        "  return (int)(values[0] + values[1] + values[2]) + (int)values.length;\n" /* 13 + 3 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  float[3] values = {1.0, 2.0, 3.0};\n"
+                                "  values[2] = 10.0;\n"
+                                "  return (int)(values[0] + values[1] + values[2]) + (int)values.length;\n" /* 13 + 3 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -911,12 +900,11 @@ STRATA_TEST(fixed_local_array_multidim_run)
     /* Nested rows mirror the dimensions; short rows and missing rows
        zero-fill, exactly like struct fields. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[2][3] g = { {10, 20, 30}, {40, 50} };\n"
-        "  return g[0][0] + g[1][2] + g[1][1] + (int)g.length;\n" /* 10+0+50+2 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[2][3] g = { {10, 20, 30}, {40, 50} };\n"
+                                "  return g[0][0] + g[1][2] + g[1][1] + (int)g.length;\n" /* 10+0+50+2 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -940,13 +928,12 @@ STRATA_TEST(fixed_local_array_struct_elements_run)
 {
     /* Typed literals and bare braces both construct struct leaves. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Pt { int x; int y; };\n"
-        "int entry() {\n"
-        "  Pt[2] ps = { Pt { .x = 1, .y = 2 }, { .x = 3, .y = 4 } };\n"
-        "  return ps[0].x + ps[0].y + ps[1].x + ps[1].y + (int)ps.length;\n" /* 10 + 2 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Pt { int x; int y; };\n"
+                                "int entry() {\n"
+                                "  Pt[2] ps = { Pt { .x = 1, .y = 2 }, { .x = 3, .y = 4 } };\n"
+                                "  return ps[0].x + ps[0].y + ps[1].x + ps[1].y + (int)ps.length;\n" /* 10 + 2 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -969,13 +956,12 @@ STRATA_TEST(fixed_local_array_struct_elements_run)
 STRATA_TEST(fixed_local_array_const_dim_run)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "const int N = 3;\n"
-        "int entry() {\n"
-        "  int[N] v = {7, 8, 9};\n"
-        "  return v[0] + v[1] + v[2];\n" /* 24 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("const int N = 3;\n"
+                                "int entry() {\n"
+                                "  int[N] v = {7, 8, 9};\n"
+                                "  return v[0] + v[1] + v[2];\n" /* 24 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1000,18 +986,17 @@ STRATA_TEST(fixed_local_array_in_loop_run)
     /* Loop bodies walk twice in sema (muted warmup + real); the flattened
        init must survive the second pass. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int s = 0;\n"
-        "  int i = 0;\n"
-        "  while (i < 2) {\n"
-        "    int[2][2] g = { {1, 2}, {3, 4} };\n"
-        "    s = s + g[0][0] + g[1][1];\n" /* (1+4) * 2 */
-        "    i = i + 1;\n"
-        "  }\n"
-        "  return s;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int s = 0;\n"
+                                "  int i = 0;\n"
+                                "  while (i < 2) {\n"
+                                "    int[2][2] g = { {1, 2}, {3, 4} };\n"
+                                "    s = s + g[0][0] + g[1][1];\n" /* (1+4) * 2 */
+                                "    i = i + 1;\n"
+                                "  }\n"
+                                "  return s;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1034,17 +1019,16 @@ STRATA_TEST(fixed_local_array_in_loop_run)
 STRATA_TEST(fixed_local_array_equality_run)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[2] a = {1, 2};\n"
-        "  int[2] b = {1, 2};\n"
-        "  int[2] c = {1, 3};\n"
-        "  int r = 0;\n"
-        "  if (a == b) { r = r + 1; }\n"
-        "  if (a != c) { r = r + 10; }\n"
-        "  return r;\n" /* 11 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[2] a = {1, 2};\n"
+                                "  int[2] b = {1, 2};\n"
+                                "  int[2] c = {1, 3};\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r = r + 1; }\n"
+                                "  if (a != c) { r = r + 10; }\n"
+                                "  return r;\n" /* 11 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1066,41 +1050,47 @@ STRATA_TEST(fixed_local_array_equality_run)
 
 STRATA_TEST(fixed_local_array_init_rules)
 {
-    struct { const char* src; const char* msg; } cases[] = {
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
         /* Braced initialization only: no bare declaration ... */
-        {"int entry() { int[4] xs; return 0; }", "braced"},
+        {"int entry() { int[4] xs; return 0; }",                                                               "braced"                  },
         /* ... and no non-braced initializer. */
-        {"int entry() { int x = 1; int[2] v = x; return 0; }", "braced"},
+        {"int entry() { int x = 1; int[2] v = x; return 0; }",                                                 "braced"                  },
         /* Too many initializers. */
-        {"int entry() { int[2] v = {1, 2, 3}; return 0; }", "too many initializers"},
+        {"int entry() { int[2] v = {1, 2, 3}; return 0; }",                                                    "too many initializers"   },
         /* Zero length. */
-        {"int entry() { int[0] v = {}; return 0; }", "at least 1"},
+        {"int entry() { int[0] v = {}; return 0; }",                                                           "at least 1"              },
         /* Owning elements have no drop glue. */
-        {"int entry() { string[2] v = {\"a\", \"b\"}; return 0; }", "may not own its elements"},
+        {"int entry() { string[2] v = {\"a\", \"b\"}; return 0; }",                                            "may not own its elements"},
         /* Whole-array assignment (including braced reassignment). */
-        {"int entry() { int[3] v = {1, 2, 3}; int[3] w = {4, 5, 6}; v = w; return 0; }",
-         "whole fixed-size array"},
-        {"int entry() { int[3] v = {1, 2, 3}; v = {4, 5, 6}; return 0; }", "whole fixed-size array"},
+        {"int entry() { int[3] v = {1, 2, 3}; int[3] w = {4, 5, 6}; v = w; return 0; }",                       "whole fixed-size array"  },
+        {"int entry() { int[3] v = {1, 2, 3}; v = {4, 5, 6}; return 0; }",                                     "whole fixed-size array"  },
         /* Passing a whole local to a function with no `ref T[]` view param. */
         {"int take(int x) { return x; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "cannot pass fixed-size array"                                                                                                  },
         /* By-value T[] param implies ownership transfer — a stack view can't be owned. */
         {"int take(int[] x) { return (int)x.length; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "cannot pass fixed-size array"                                                                                                  },
         /* Element type mismatch against the ref view. */
         {"int take(ref long[] x) { return 0; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "cannot pass fixed-size array"                                                                                                  },
         /* Element type mismatch. */
-        {"int entry() { int[2] v = {1, \"x\"}; return 0; }", "cannot initialize"},
+        {"int entry() { int[2] v = {1, \"x\"}; return 0; }",                                                   "cannot initialize"       },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
-        Arena arena; arena_init(&arena, 0);
-        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Arena arena;
+        arena_init(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
         STRATA_CHECK(DiagHasErrors(&diag));
 
-        SourceManager sm; SourceManagerInit(&sm);
+        SourceManager sm;
+        SourceManagerInit(&sm);
         char* d = DiagFormat(&diag, &sm, 1, &arena);
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
@@ -1118,15 +1108,14 @@ STRATA_TEST(fixed_local_array_init_rules)
 STRATA_TEST(fixed_array_ref_view_read)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int sum(ref int[] a)\n"
-        "{\n"
-        "  int s = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
-        "  return s;\n"
-        "}\n"
-        "int entry() { int[3] v = {1, 2, 3}; return sum(v); }\n",   /* 6 */
-        &err);
+    StrataJit* jit = CompileArr("int sum(ref int[] a)\n"
+                                "{\n"
+                                "  int s = 0;\n"
+                                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+                                "  return s;\n"
+                                "}\n"
+                                "int entry() { int[3] v = {1, 2, 3}; return sum(v); }\n", /* 6 */
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1149,10 +1138,9 @@ STRATA_TEST(fixed_array_ref_view_read)
 STRATA_TEST(fixed_array_ref_view_length)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "uint n(ref int[] a) { return a.length; }\n"
-        "int entry() { int[7] v = {1, 2, 3, 4, 5, 6, 7}; return (int)n(v); }\n",   /* 7 */
-        &err);
+    StrataJit* jit = CompileArr("uint n(ref int[] a) { return a.length; }\n"
+                                "int entry() { int[7] v = {1, 2, 3, 4, 5, 6, 7}; return (int)n(v); }\n", /* 7 */
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1176,19 +1164,18 @@ STRATA_TEST(fixed_array_ref_view_mutates_caller_storage)
 {
     /* Writes through the view land in the caller's fixed array — no copy. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "void bump(ref int[] a)\n"
-        "{\n"
-        "  a[0] = 40;\n"
-        "  a[1] = a[1] + 1;\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  int[3] v = {1, 2, 3};\n"
-        "  bump(v);\n"
-        "  return v[0] * 100 + v[1] * 10 + v[2];\n"   /* 40*100 + 3*10 + 3 = 4033 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("void bump(ref int[] a)\n"
+                                "{\n"
+                                "  a[0] = 40;\n"
+                                "  a[1] = a[1] + 1;\n"
+                                "}\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  int[3] v = {1, 2, 3};\n"
+                                "  bump(v);\n"
+                                "  return v[0] * 100 + v[1] * 10 + v[2];\n" /* 40*100 + 3*10 + 3 = 4033 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1211,10 +1198,9 @@ STRATA_TEST(fixed_array_ref_view_mutates_caller_storage)
 STRATA_TEST(fixed_array_const_ref_view_read)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int first(const ref int[] a) { return a[0]; }\n"
-        "int entry() { int[2] v = {9, 8}; return first(v); }\n",   /* 9 */
-        &err);
+    StrataJit* jit = CompileArr("int first(const ref int[] a) { return a[0]; }\n"
+                                "int entry() { int[2] v = {9, 8}; return first(v); }\n", /* 9 */
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1238,20 +1224,19 @@ STRATA_TEST(fixed_array_struct_field_ref_view)
 {
     /* A fixed array FIELD borrows as a view too (`b.data` is an lvalue). */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Buf { int[4] data; };\n"
-        "int sum(ref int[] a)\n"
-        "{\n"
-        "  int s = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
-        "  return s;\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  Buf b = Buf { .data = {5, 6, 7, 8} };\n"
-        "  return sum(b.data);\n"   /* 26 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Buf { int[4] data; };\n"
+                                "int sum(ref int[] a)\n"
+                                "{\n"
+                                "  int s = 0;\n"
+                                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+                                "  return s;\n"
+                                "}\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  Buf b = Buf { .data = {5, 6, 7, 8} };\n"
+                                "  return sum(b.data);\n" /* 26 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1275,22 +1260,21 @@ STRATA_TEST(fixed_array_box_member_ref_view)
 {
     /* A fixed field of a BOXED struct borrows as a view too. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Buf { int[3] data; };\n"
-        "int sum(ref int[] a)\n"
-        "{\n"
-        "  int s = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
-        "  return s;\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  ^Buf b = Buf { .data = {4, 5, 6} };\n"
-        "  int r = sum(b.data);\n"   /* 15 */
-        "  b.data[0] = 40;\n"        /* box stays usable after the borrowed call */
-        "  return r + b.data[0];\n"  /* 55 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Buf { int[3] data; };\n"
+                                "int sum(ref int[] a)\n"
+                                "{\n"
+                                "  int s = 0;\n"
+                                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+                                "  return s;\n"
+                                "}\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  ^Buf b = Buf { .data = {4, 5, 6} };\n"
+                                "  int r = sum(b.data);\n"  /* 15 */
+                                "  b.data[0] = 40;\n"       /* box stays usable after the borrowed call */
+                                "  return r + b.data[0];\n" /* 55 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1314,20 +1298,19 @@ STRATA_TEST(fixed_array_element_member_ref_view)
 {
     /* A fixed field of a dynamic-array ELEMENT borrows as a view. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Row { int[2] data; };\n"
-        "int sum(ref int[] a)\n"
-        "{\n"
-        "  int s = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
-        "  return s;\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  Row[] rows = { Row { .data = {1, 2} }, Row { .data = {3, 4} } };\n"
-        "  return sum(rows[0].data) + sum(rows[1].data);\n"   /* 3 + 7 = 10 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Row { int[2] data; };\n"
+                                "int sum(ref int[] a)\n"
+                                "{\n"
+                                "  int s = 0;\n"
+                                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+                                "  return s;\n"
+                                "}\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  Row[] rows = { Row { .data = {1, 2} }, Row { .data = {3, 4} } };\n"
+                                "  return sum(rows[0].data) + sum(rows[1].data);\n" /* 3 + 7 = 10 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1354,30 +1337,33 @@ STRATA_TEST(fixed_array_element_member_ref_view)
 
 STRATA_TEST(ref_array_param_growth_rejected)
 {
-    struct { const char* src; const char* msg; } cases[] = {
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
         {"int f(ref int[] a) { array_push(a, 4); return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }",
-         "cannot grow"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "cannot grow"         },
         {"int f(ref int[] a) { array_resize(a, 8); return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }",
-         "cannot grow"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "cannot grow"         },
         {"int f(ref int[] a) { int[] b = {9}; a = b; return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }",
-         "cannot be reassigned"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "cannot be reassigned"},
         /* A ref rest is the same borrowed binding. */
         {"int f(ref int... rest) { array_push(rest, 4); return 0; }\n"
-         "int entry() { return f(1, 2, 3); }",
-         "cannot grow"},
+         "int entry() { return f(1, 2, 3); }",                 "cannot grow"         },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
-        Arena arena; arena_init(&arena, 0);
-        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Arena arena;
+        arena_init(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
         STRATA_CHECK(DiagHasErrors(&diag));
 
-        SourceManager sm; SourceManagerInit(&sm);
+        SourceManager sm;
+        SourceManagerInit(&sm);
         char* d = DiagFormat(&diag, &sm, 1, &arena);
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
@@ -1393,56 +1379,54 @@ STRATA_TEST(ref_array_param_growth_rejected)
 
 STRATA_TEST(fixed_array_to_non_ref_array_param_rejected)
 {
-    struct { const char* src; const char* msg; } cases[] = {
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
         /* By-value `T[]` param implies ownership transfer — a stack view
            can't be owned. */
         {"int take(int[] x) { return (int)x.length; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* `const` by value is still not a ref — same ownership transfer. */
         {"int take(const int[] x) { return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* Owning-element array param (`^T[]` owns its buffer + elements). */
         {"struct Foo { int v; };\n"
          "int take(^Foo[] x) { return 0; }\n"
-         "int entry() { Foo[2] v = { Foo{.v = 1}, Foo{.v = 2} }; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { Foo[2] v = { Foo{.v = 1}, Foo{.v = 2} }; return take(v); }", "cannot pass fixed-size array"},
         /* Optional array param (`ref T[]?` crosses the SLOT — a view can't). */
         {"int take(ref int[]? x) { return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* Typed rest collects ELEMENTS — a whole array is not an element. */
         {"int take(int... rest) { return (int)rest.length; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* Extern by-value array param (decays to T*): still no whole-array. */
         {"extern int take(int[] x);\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* Element type mismatch against the ref view. */
         {"int take(ref long[] x) { return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* Shape mismatch: `int[2][3]`'s rows are `int[3]`, not `int[]`. */
         {"int take(ref int[][] x) { return 0; }\n"
-         "int entry() { int[2][3] v = {{1, 2, 3}, {4, 5, 6}}; return take(v); }",
-         "cannot pass fixed-size array"},
+         "int entry() { int[2][3] v = {{1, 2, 3}, {4, 5, 6}}; return take(v); }",    "cannot pass fixed-size array"},
         /* Field-sourced fixed arrays are held to the same rule. */
         {"struct Buf { int[3] data; };\n"
          "int take(int[] x) { return 0; }\n"
-         "int entry() { Buf b = Buf { .data = {1, 2, 3} }; return take(b.data); }",
-         "no matching overload"},
+         "int entry() { Buf b = Buf { .data = {1, 2, 3} }; return take(b.data); }",  "no matching overload"        },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
-        Arena arena; arena_init(&arena, 0);
-        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Arena arena;
+        arena_init(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
         STRATA_CHECK(DiagHasErrors(&diag));
 
-        SourceManager sm; SourceManagerInit(&sm);
+        SourceManager sm;
+        SourceManagerInit(&sm);
         char* d = DiagFormat(&diag, &sm, 1, &arena);
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
@@ -1458,11 +1442,10 @@ STRATA_TEST(fixed_array_view_wins_over_by_value_overload)
        isn't viable for a stack view. (Distinct element types: param mods are
        not part of the mangling, so `int[]`/`ref int[]` can't coexist.) */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int take(long[] x) { return 1; }\n"
-        "int take(ref int[] x) { return (int)x.length; }\n"
-        "int entry() { int[3] v = {1, 2, 3}; return take(v); }\n",   /* 3, not 1 */
-        &err);
+    StrataJit* jit = CompileArr("int take(long[] x) { return 1; }\n"
+                                "int take(ref int[] x) { return (int)x.length; }\n"
+                                "int entry() { int[3] v = {1, 2, 3}; return take(v); }\n", /* 3, not 1 */
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1492,20 +1475,19 @@ STRATA_TEST(fixed_array_view_wins_over_by_value_overload)
 STRATA_TEST(ref_array_literal_arg_borrowed_temp)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int read(ref int[] a)\n"
-        "{\n"
-        "  int s = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
-        "  return s;\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  int r = read({1, 2, 3});\n"          /* 6 */
-        "  r = r * 10 + read({4, 5});\n"        /* 60+9 -> 69 */
-        "  return r * 10 + read({9});\n"        /* 690+9 -> 699 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int read(ref int[] a)\n"
+                                "{\n"
+                                "  int s = 0;\n"
+                                "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+                                "  return s;\n"
+                                "}\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  int r = read({1, 2, 3});\n"   /* 6 */
+                                "  r = r * 10 + read({4, 5});\n" /* 60+9 -> 69 */
+                                "  return r * 10 + read({9});\n" /* 690+9 -> 699 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1530,10 +1512,9 @@ STRATA_TEST(ref_array_literal_arg_callee_writes_are_lost)
     /* The literal temp is caller-owned; callee element writes hit it and
        vanish with the call. No crash from the post-call drop. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int scribble(ref int[] a) { a[0] = 99; return (int)a.length; }\n"
-        "int entry() { return scribble({1, 2, 3}) * 10 + 1; }\n",   /* 31 */
-        &err);
+    StrataJit* jit = CompileArr("int scribble(ref int[] a) { a[0] = 99; return (int)a.length; }\n"
+                                "int entry() { return scribble({1, 2, 3}) * 10 + 1; }\n", /* 31 */
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1558,16 +1539,16 @@ STRATA_TEST(ref_array_literal_arg_owning_elements_dropped)
     /* `^Foo[]` literal (owning boxes with strings): constructed per call,
        dropped by the caller after the call — churn without crashing. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Foo { string s; };\n"
-        "int count(ref ^Foo[] a) { return (int)a.length; }\n"
-        "int entry()\n"
-        "{\n"
-        "  int t = 0;\n"
-        "  for (ulong i = 0; i < 200; i = i + 1) { t = t + count({ Foo(\"x\"), Foo(\"y\") }); }\n"
-        "  return t;\n"   /* 400 */
-        "}\n",
-        &err);
+    StrataJit* jit
+        = CompileArr("struct Foo { string s; };\n"
+                     "int count(ref ^Foo[] a) { return (int)a.length; }\n"
+                     "int entry()\n"
+                     "{\n"
+                     "  int t = 0;\n"
+                     "  for (ulong i = 0; i < 200; i = i + 1) { t = t + count({ Foo(\"x\"), Foo(\"y\") }); }\n"
+                     "  return t;\n" /* 400 */
+                     "}\n",
+                     &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1589,26 +1570,31 @@ STRATA_TEST(ref_array_literal_arg_owning_elements_dropped)
 
 STRATA_TEST(ref_array_literal_arg_rejections)
 {
-    struct { const char* src; const char* msg; } cases[] = {
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
         /* Growth is still rejected — the binding is borrowed. */
         {"int f(ref int[] a) { array_push(a, 9); return 0; }\n"
-         "int entry() { return f({1, 2, 3}); }",
-         "cannot grow"},
+         "int entry() { return f({1, 2, 3}); }",    "cannot grow"                                                    },
         /* Extern by-value arrays decay to T*: the host could never free a
            Strata temp buffer, so literals are rejected there. */
         {"extern int take(int[] x);\n"
-         "int entry() { return take({1, 2, 3}); }",
-         "cannot pass an array literal to by-value extern array parameter"},
+         "int entry() { return take({1, 2, 3}); }", "cannot pass an array literal to by-value extern array parameter"},
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
-        Arena arena; arena_init(&arena, 0);
-        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Arena arena;
+        arena_init(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
         STRATA_CHECK(DiagHasErrors(&diag));
 
-        SourceManager sm; SourceManagerInit(&sm);
+        SourceManager sm;
+        SourceManagerInit(&sm);
         char* d = DiagFormat(&diag, &sm, 1, &arena);
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
@@ -1624,18 +1610,17 @@ STRATA_TEST(ref_array_literal_arg_rejections)
 STRATA_TEST(by_value_array_literal_arg_owned_temp)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int take(int[] x)\n"
-        "{\n"
-        "  array_push(x, 9);\n"      /* the temp is ours: grow it */
-        "  return (int)x.length;\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  int r = take({1, 2, 3});\n"   /* 4 */
-        "  return r * 10 + take({5});\n" /* 40 + 2 -> 42 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int take(int[] x)\n"
+                                "{\n"
+                                "  array_push(x, 9);\n" /* the temp is ours: grow it */
+                                "  return (int)x.length;\n"
+                                "}\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  int r = take({1, 2, 3});\n"   /* 4 */
+                                "  return r * 10 + take({5});\n" /* 40 + 2 -> 42 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1660,16 +1645,16 @@ STRATA_TEST(by_value_array_literal_arg_owning_elements_dropped)
     /* `^Foo[]` literal → by-value param: the callee owns boxes + buffer and
        drops them at exit — churn without crashing. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Foo { string s; };\n"
-        "int count(^Foo[] a) { return (int)a.length; }\n"
-        "int entry()\n"
-        "{\n"
-        "  int t = 0;\n"
-        "  for (ulong i = 0; i < 200; i = i + 1) { t = t + count({ Foo(\"x\"), Foo(\"y\") }); }\n"
-        "  return t;\n"   /* 400 */
-        "}\n",
-        &err);
+    StrataJit* jit
+        = CompileArr("struct Foo { string s; };\n"
+                     "int count(^Foo[] a) { return (int)a.length; }\n"
+                     "int entry()\n"
+                     "{\n"
+                     "  int t = 0;\n"
+                     "  for (ulong i = 0; i < 200; i = i + 1) { t = t + count({ Foo(\"x\"), Foo(\"y\") }); }\n"
+                     "  return t;\n" /* 400 */
+                     "}\n",
+                     &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1693,15 +1678,14 @@ STRATA_TEST(ref_array_param_reads_and_element_writes_ok)
 {
     /* Borrowed does not mean read-only: reads and ELEMENT writes work. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "void bump_last(ref int[] a) { a[a.length - 1] = a[a.length - 1] + 1; }\n"
-        "int entry()\n"
-        "{\n"
-        "  int[3] v = {1, 2, 3};\n"
-        "  bump_last(v);\n"
-        "  return v[2] * 10 + v[0];\n"   /* 41 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("void bump_last(ref int[] a) { a[a.length - 1] = a[a.length - 1] + 1; }\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  int[3] v = {1, 2, 3};\n"
+                                "  bump_last(v);\n"
+                                "  return v[2] * 10 + v[0];\n" /* 41 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1729,17 +1713,18 @@ STRATA_TEST(ref_array_param_reads_and_element_writes_ok)
 STRATA_TEST(multidim_fixed_array_struct_elements_typed_literals)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Cell { int v; int w; };\n"
-        "struct Grid { Cell[2][3] cells; };\n"
-        "int entry() {\n"
-        "  Grid g = Grid { .cells = { { Cell { .v = 1, .w = 10 }, Cell { .v = 2, .w = 20 }, Cell { .v = 3, .w = 30 } },\n"
-        "                          { Cell { .v = 4, .w = 40 }, Cell { .v = 5, .w = 50 }, Cell { .v = 6, .w = 60 } } } };\n"
-        "  int sum = g.cells[0][0].v + g.cells[0][2].v + g.cells[1][1].v;\n"     /* 1+3+5 */
-        "  int wsum = g.cells[0][1].w + g.cells[1][2].w;\n"                     /* 20+60 */
-        "  return sum * 100 + wsum + (int)g.cells.length;\n"                    /* 900+80+2 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Cell { int v; int w; };\n"
+                                "struct Grid { Cell[2][3] cells; };\n"
+                                "int entry() {\n"
+                                "  Grid g = Grid { .cells = { { Cell { .v = 1, .w = 10 }, Cell { .v = 2, .w = 20 }, "
+                                "Cell { .v = 3, .w = 30 } },\n"
+                                "                          { Cell { .v = 4, .w = 40 }, Cell { .v = 5, .w = 50 }, Cell "
+                                "{ .v = 6, .w = 60 } } } };\n"
+                                "  int sum = g.cells[0][0].v + g.cells[0][2].v + g.cells[1][1].v;\n" /* 1+3+5 */
+                                "  int wsum = g.cells[0][1].w + g.cells[1][2].w;\n"                  /* 20+60 */
+                                "  return sum * 100 + wsum + (int)g.cells.length;\n"                 /* 900+80+2 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1766,19 +1751,18 @@ STRATA_TEST(multidim_fixed_array_struct_elements_bare_braces)
        rows leave holes: `{4}` belongs to cells[1][0], NOT cells[0][2]
        (row-major placement, C semantics). */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Cell { int v; };\n"
-        "struct Grid { Cell[2][3] cells; };\n"
-        "int entry() {\n"
-        "  Grid g = Grid { .cells = { { { .v = 1 }, { .v = 2 } },\n"
-        "                          { { .v = 4 } } } };\n"
-        "  int a = g.cells[0][0].v;\n"      /* 1 */
-        "  int b = g.cells[0][1].v;\n"      /* 2 */
-        "  int hole = g.cells[0][2].v;\n"   /* short row left a hole -> 0 */
-        "  int c = g.cells[1][0].v;\n"      /* 4: next row starts at ITS offset */
-        "  return a * 1000 + b * 100 + hole * 10 + c;\n"   /* 1204 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Cell { int v; };\n"
+                                "struct Grid { Cell[2][3] cells; };\n"
+                                "int entry() {\n"
+                                "  Grid g = Grid { .cells = { { { .v = 1 }, { .v = 2 } },\n"
+                                "                          { { .v = 4 } } } };\n"
+                                "  int a = g.cells[0][0].v;\n"                   /* 1 */
+                                "  int b = g.cells[0][1].v;\n"                   /* 2 */
+                                "  int hole = g.cells[0][2].v;\n"                /* short row left a hole -> 0 */
+                                "  int c = g.cells[1][0].v;\n"                   /* 4: next row starts at ITS offset */
+                                "  return a * 1000 + b * 100 + hole * 10 + c;\n" /* 1204 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1803,15 +1787,15 @@ STRATA_TEST(multidim_fixed_array_struct_elements_mixed_forms)
     /* Typed literals, bare braces, and positional ctor calls mix freely
        within the same initializer. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Cell { int v; };\n"
-        "struct Grid { Cell[2][2] cells; };\n"
-        "int entry() {\n"
-        "  Grid g = Grid { .cells = { { Cell { .v = 1 }, { .v = 2 } },\n"
-        "                          { Cell(3), { .v = 4 } } } };\n"
-        "  return g.cells[0][0].v + g.cells[0][1].v + g.cells[1][0].v + g.cells[1][1].v;\n"   /* 10 */
-        "}\n",
-        &err);
+    StrataJit* jit
+        = CompileArr("struct Cell { int v; };\n"
+                     "struct Grid { Cell[2][2] cells; };\n"
+                     "int entry() {\n"
+                     "  Grid g = Grid { .cells = { { Cell { .v = 1 }, { .v = 2 } },\n"
+                     "                          { Cell(3), { .v = 4 } } } };\n"
+                     "  return g.cells[0][0].v + g.cells[0][1].v + g.cells[1][0].v + g.cells[1][1].v;\n" /* 10 */
+                     "}\n",
+                     &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1839,23 +1823,22 @@ STRATA_TEST(multidim_fixed_array_struct_elements_mixed_forms)
 STRATA_TEST(optional_array_field_narrows_and_runs)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Bag { int[]? items; string label; };\n"
-        "int entry() {\n"
-        "  ^Bag b = Bag { .label = \"empty\" };\n"
-        "  int unset = 0;\n"
-        "  if (b.items?) { } else { unset = 1; }\n"
-        "  ^Bag o = Bag { .label = \"full\" };\n"
-        "  o.items = {1, 2, 3};\n"                    /* rebind the optional array */
-        "  int sum = 0;\n"
-        "  if (o.items?)\n"
-        "  {\n"
-        "    array_push(o.items, 4);\n"
-        "    for (uint i = 0; i < o.items.length; i++) { sum += o.items[i]; }\n"
-        "  }\n"
-        "  return unset * 1000 + sum;\n"              /* 1010 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Bag { int[]? items; string label; };\n"
+                                "int entry() {\n"
+                                "  ^Bag b = Bag { .label = \"empty\" };\n"
+                                "  int unset = 0;\n"
+                                "  if (b.items?) { } else { unset = 1; }\n"
+                                "  ^Bag o = Bag { .label = \"full\" };\n"
+                                "  o.items = {1, 2, 3};\n" /* rebind the optional array */
+                                "  int sum = 0;\n"
+                                "  if (o.items?)\n"
+                                "  {\n"
+                                "    array_push(o.items, 4);\n"
+                                "    for (uint i = 0; i < o.items.length; i++) { sum += o.items[i]; }\n"
+                                "  }\n"
+                                "  return unset * 1000 + sum;\n" /* 1010 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1877,21 +1860,23 @@ STRATA_TEST(optional_array_field_narrows_and_runs)
 
 STRATA_TEST(optional_array_use_without_narrowing_is_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Bag { int[]? items; };\n"
-        "int entry() {\n"
-        "  ^Bag b = Bag { };\n"
-        "  int x = b.items[0];\n"
-        "  array_push(b.items, 1);\n"
-        "  int n = (int)b.items.length;\n"
-        "  return x + n;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Bag { int[]? items; };\n"
+                    "int entry() {\n"
+                    "  ^Bag b = Bag { };\n"
+                    "  int x = b.items[0];\n"
+                    "  array_push(b.items, 1);\n"
+                    "  int n = (int)b.items.length;\n"
+                    "  return x + n;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "'b.items' has not been blessed") != NULL);
 
@@ -1901,25 +1886,27 @@ STRATA_TEST(optional_array_use_without_narrowing_is_error)
 
 STRATA_TEST(fixed_array_cannot_be_optional)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct S { int[2] ints; };\n"
-        "int entry() { return 0; }\n",
-        &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));   /* sanity: plain fixed array still fine */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct S { int[2] ints; };\n"
+                    "int entry() { return 0; }\n",
+                    &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag)); /* sanity: plain fixed array still fine */
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 
-    DiagnosticEngine diag2; DiagnosticEngineInit(&diag2);
-    ParseAndResolve(
-        "struct S { int[2]? ints; };\n"
-        "int entry() { return 0; }\n",
-        &diag2, &arena);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("struct S { int[2]? ints; };\n"
+                    "int entry() { return 0; }\n",
+                    &diag2, &arena);
     STRATA_CHECK(DiagHasErrors(&diag2));
 
-    SourceManager sm2; SourceManagerInit(&sm2);
+    SourceManager sm2;
+    SourceManagerInit(&sm2);
     char* d2 = DiagFormat(&diag2, &sm2, 1, &arena);
     STRATA_CHECK(strstr(d2, "cannot be optional") != NULL);
 
@@ -1930,12 +1917,11 @@ STRATA_TEST(fixed_array_cannot_be_optional)
 STRATA_TEST(global_array_uninitialized_is_empty)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] g;\n"
-        "int entry() {\n"
-        "  return (int)g.length;\n"            /* 0 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] g;\n"
+                                "int entry() {\n"
+                                "  return (int)g.length;\n" /* 0 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1958,12 +1944,11 @@ STRATA_TEST(global_array_uninitialized_is_empty)
 STRATA_TEST(global_array_initializer_can_be_read)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] g = {1, 2, 3};\n"
-        "int entry() {\n"
-        "  return g[0] + g[1] + g[2] + (int)g.length;\n"   /* 1+2+3 + 3 = 9 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] g = {1, 2, 3};\n"
+                                "int entry() {\n"
+                                "  return g[0] + g[1] + g[2] + (int)g.length;\n" /* 1+2+3 + 3 = 9 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -1988,18 +1973,17 @@ STRATA_TEST(global_array_mutations_persist_across_calls)
     /* A global outlives each function call: pushes from one call are visible
        to the next. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] g = {1, 2};\n"
-        "int add_one() {\n"
-        "  array_push(g, 9);\n"
-        "  return (int)g.length;\n"
-        "}\n"
-        "int entry() {\n"
-        "  int a = add_one();\n"               /* {1,2,9} -> 3 */
-        "  int b = add_one();\n"               /* {1,2,9,9} -> 4 */
-        "  return a + b + g[3];\n"             /* 3 + 4 + 9 = 16 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] g = {1, 2};\n"
+                                "int add_one() {\n"
+                                "  array_push(g, 9);\n"
+                                "  return (int)g.length;\n"
+                                "}\n"
+                                "int entry() {\n"
+                                "  int a = add_one();\n"   /* {1,2,9} -> 3 */
+                                "  int b = add_one();\n"   /* {1,2,9,9} -> 4 */
+                                "  return a + b + g[3];\n" /* 3 + 4 + 9 = 16 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2022,16 +2006,15 @@ STRATA_TEST(global_array_mutations_persist_across_calls)
 STRATA_TEST(global_array_is_mutable_from_functions)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] g = {1, 2, 3};\n"
-        "void setit() {\n"
-        "  g[0] = 99;\n"
-        "}\n"
-        "int entry() {\n"
-        "  setit();\n"
-        "  return g[0] + g[1] + g[2];\n"        /* 99 + 2 + 3 = 104 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] g = {1, 2, 3};\n"
+                                "void setit() {\n"
+                                "  g[0] = 99;\n"
+                                "}\n"
+                                "int entry() {\n"
+                                "  setit();\n"
+                                "  return g[0] + g[1] + g[2];\n" /* 99 + 2 + 3 = 104 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2054,13 +2037,12 @@ STRATA_TEST(global_array_is_mutable_from_functions)
 STRATA_TEST(global_array_resize)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] g = {1, 2, 3, 4, 5};\n"
-        "int entry() {\n"
-        "  array_resize(g, 3);\n"
-        "  return g[0] + g[1] + g[2] + (int)g.length;\n"   /* 1+2+3 + 3 = 9 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] g = {1, 2, 3, 4, 5};\n"
+                                "int entry() {\n"
+                                "  array_resize(g, 3);\n"
+                                "  return g[0] + g[1] + g[2] + (int)g.length;\n" /* 1+2+3 + 3 = 9 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2085,12 +2067,11 @@ STRATA_TEST(global_array_of_strings_drops_cleanly)
     /* The module teardown frees every string in the global array; this must
        not crash or double-free. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "string[] g = {\"alpha\", \"beta\", \"gamma\"};\n"
-        "int entry() {\n"
-        "  return (int)g.length;\n"            /* 3 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("string[] g = {\"alpha\", \"beta\", \"gamma\"};\n"
+                                "int entry() {\n"
+                                "  return (int)g.length;\n" /* 3 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2113,12 +2094,11 @@ STRATA_TEST(global_array_of_strings_drops_cleanly)
 STRATA_TEST(global_array_wrong_initializer_type_is_error)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int[] g = 5;\n"                       /* not an array initializer */
-        "int entry() {\n"
-        "  return (int)g.length;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int[] g = 5;\n" /* not an array initializer */
+                                "int entry() {\n"
+                                "  return (int)g.length;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err != NULL);
@@ -2128,12 +2108,11 @@ STRATA_TEST(global_array_wrong_initializer_type_is_error)
 STRATA_TEST(array_length_is_count)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "ulong entry() {\n"
-        "  int[] a = {10, 20, 30, 40, 50};\n"
-        "  return a.length;\n"                    /* 5 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("ulong entry() {\n"
+                                "  int[] a = {10, 20, 30, 40, 50};\n"
+                                "  return a.length;\n" /* 5 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2143,8 +2122,7 @@ STRATA_TEST(array_length_is_count)
         return;
     }
 
-    unsigned long long (*entry)(void) =
-        (unsigned long long (*)(void))strataJitGetFunction(jit, "entry");
+    unsigned long long (*entry)(void) = (unsigned long long (*)(void))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
@@ -2157,13 +2135,12 @@ STRATA_TEST(array_length_is_count)
 STRATA_TEST(array_index_is_mutable)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {1, 2, 3};\n"
-        "  a[1] = 20;\n"
-        "  return a[1];\n"                        /* 20 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {1, 2, 3};\n"
+                                "  a[1] = 20;\n"
+                                "  return a[1];\n" /* 20 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2186,16 +2163,15 @@ STRATA_TEST(array_index_is_mutable)
 STRATA_TEST(array_iterate_and_sum)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {1, 2, 3, 4};\n"
-        "  int sum = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) {\n"
-        "    sum = sum + a[i];\n"
-        "  }\n"
-        "  return sum;\n"                         /* 10 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {1, 2, 3, 4};\n"
+                                "  int sum = 0;\n"
+                                "  for (ulong i = 0; i < a.length; i = i + 1) {\n"
+                                "    sum = sum + a[i];\n"
+                                "  }\n"
+                                "  return sum;\n" /* 10 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2251,26 +2227,26 @@ STRATA_TEST(array_return_cleans_up_memory)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int[] build(int n) {\n"
-        "  int[] a = {1, 2, 3};\n"
-        "  array_push(a, n);\n"              /* reallocates: alloc + free */
-        "  return a;\n"                      /* moves a out */
-        "}\n"
-        "int[] relay(int n) {\n"
-        "  int[] a = build(n);\n"            /* owns build's array */
-        "  return a;\n"                      /* moves it out again */
-        "}\n"
-        "int sum(ref int[] a) {\n"
-        "  int total = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { total = total + a[i]; }\n"
-        "  return total;\n"
-        "}\n"
-        "int entry() {\n"
-        "  int[] a = relay(4);\n"            /* {1, 2, 3, 4} */
-        "  int s = sum(a);\n"                /* 10; a borrowed, still live */
-        "  return s + a[0] + a[3];\n"        /* 10 + 1 + 4 = 15 */
-        "}\n",
-        "arrclean", &err);
+                                            "int[] build(int n) {\n"
+                                            "  int[] a = {1, 2, 3};\n"
+                                            "  array_push(a, n);\n" /* reallocates: alloc + free */
+                                            "  return a;\n"         /* moves a out */
+                                            "}\n"
+                                            "int[] relay(int n) {\n"
+                                            "  int[] a = build(n);\n" /* owns build's array */
+                                            "  return a;\n"           /* moves it out again */
+                                            "}\n"
+                                            "int sum(ref int[] a) {\n"
+                                            "  int total = 0;\n"
+                                            "  for (ulong i = 0; i < a.length; i = i + 1) { total = total + a[i]; }\n"
+                                            "  return total;\n"
+                                            "}\n"
+                                            "int entry() {\n"
+                                            "  int[] a = relay(4);\n"     /* {1, 2, 3, 4} */
+                                            "  int s = sum(a);\n"         /* 10; a borrowed, still live */
+                                            "  return s + a[0] + a[3];\n" /* 10 + 1 + 4 = 15 */
+                                            "}\n",
+                                            "arrclean", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -2300,28 +2276,27 @@ STRATA_TEST(array_return_cleans_up_memory)
 STRATA_TEST(optional_braced_empty_constructs_in_all_positions)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct Node { int v; Node? next; };\n"
-        "int entry() {\n"
-        "  /* named-literal field */\n"
-        "  ^Node a = Node { .v = 1, .next = {} };\n"
-        "  int r = 0;\n"
-        "  if (a.next?) { r += 1; }\n"
-        "  /* assignment into an optional field */\n"
-        "  ^Node b = Node { .v = 2 };\n"
-        "  b.next = {};\n"
-        "  if (b.next?) { r += 10; }\n"
-        "  /* plain optional local initialized from braces */\n"
-        "  Node? n = {};\n"
-        "  if (n?) { r += 100; }\n"
-        "  /* omitted trailing ctor arg leaves the optional EMPTY */\n"
-        "  ^Node c = Node(3);\n"
-        "  if (c.next?) { r += 5000; } else { r += 1000; }\n"
-        "  /* reading the constructed default through the narrow */\n"
-        "  if (a.next?) { r += a.next.v; }\n"       /* +0 */
-        "  return r;\n"                              /* 1111 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct Node { int v; Node? next; };\n"
+                                "int entry() {\n"
+                                "  /* named-literal field */\n"
+                                "  ^Node a = Node { .v = 1, .next = {} };\n"
+                                "  int r = 0;\n"
+                                "  if (a.next?) { r += 1; }\n"
+                                "  /* assignment into an optional field */\n"
+                                "  ^Node b = Node { .v = 2 };\n"
+                                "  b.next = {};\n"
+                                "  if (b.next?) { r += 10; }\n"
+                                "  /* plain optional local initialized from braces */\n"
+                                "  Node? n = {};\n"
+                                "  if (n?) { r += 100; }\n"
+                                "  /* omitted trailing ctor arg leaves the optional EMPTY */\n"
+                                "  ^Node c = Node(3);\n"
+                                "  if (c.next?) { r += 5000; } else { r += 1000; }\n"
+                                "  /* reading the constructed default through the narrow */\n"
+                                "  if (a.next?) { r += a.next.v; }\n" /* +0 */
+                                "  return r;\n"                       /* 1111 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2348,20 +2323,19 @@ STRATA_TEST(optional_braced_empty_constructs_in_all_positions)
 STRATA_TEST(recursive_struct_braced_ctor_sample_shape)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "struct FooBar { string str; int[] ints; FooBar? next; };\n"
-        "int take(^FooBar f) { return (int)f.ints.length; }\n"
-        "int entry() {\n"
-        "  ^FooBar[] elems;\n"
-        "  array_push(elems, FooBar(\"hello\", {}, {}));\n"
-        "  array_push(elems, FooBar(\"world\", {}, {}));\n"
-        "  array_push(elems, FooBar(\"again\"));\n"   /* next omitted -> empty */
-        "  int r = (int)elems.length * 100;\n"        /* 300 */
-        "  if (elems[0].next?) { r += 10; }\n"        /* constructed, non-empty */
-        "  if (elems[2].next?) { r += 5000; } else { r += 1; }\n"   /* omitted */
-        "  return r + take(elems[0]);\n"              /* 311 */
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("struct FooBar { string str; int[] ints; FooBar? next; };\n"
+                                "int take(^FooBar f) { return (int)f.ints.length; }\n"
+                                "int entry() {\n"
+                                "  ^FooBar[] elems;\n"
+                                "  array_push(elems, FooBar(\"hello\", {}, {}));\n"
+                                "  array_push(elems, FooBar(\"world\", {}, {}));\n"
+                                "  array_push(elems, FooBar(\"again\"));\n"               /* next omitted -> empty */
+                                "  int r = (int)elems.length * 100;\n"                    /* 300 */
+                                "  if (elems[0].next?) { r += 10; }\n"                    /* constructed, non-empty */
+                                "  if (elems[2].next?) { r += 5000; } else { r += 1; }\n" /* omitted */
+                                "  return r + take(elems[0]);\n"                          /* 311 */
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2391,27 +2365,26 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "int[] build(int n) {\n"
-        "  int[] a = {1, 2, 3};\n"
-        "  array_push(a, n);\n"
-        "  return a;\n"
-        "}\n"
-        "int[] relay(int n) {\n"
-        "  int[] a = build(n);\n"
-        "  return a;\n"
-        "}\n"
-        "int sum(ref int[] a) {\n"
-        "  int total = 0;\n"
-        "  for (ulong i = 0; i < a.length; i = i + 1) { total = total + a[i]; }\n"
-        "  return total;\n"
-        "}\n"
-        "int entry() {\n"
-        "  int[] a = relay(4);\n"
-        "  int s = sum(a);\n"
-        "  return s + a[0] + a[3];\n"
-        "}\n",
-        &diag, &arena);
+    Module* mod = ParseAndResolve("int[] build(int n) {\n"
+                                  "  int[] a = {1, 2, 3};\n"
+                                  "  array_push(a, n);\n"
+                                  "  return a;\n"
+                                  "}\n"
+                                  "int[] relay(int n) {\n"
+                                  "  int[] a = build(n);\n"
+                                  "  return a;\n"
+                                  "}\n"
+                                  "int sum(ref int[] a) {\n"
+                                  "  int total = 0;\n"
+                                  "  for (ulong i = 0; i < a.length; i = i + 1) { total = total + a[i]; }\n"
+                                  "  return total;\n"
+                                  "}\n"
+                                  "int entry() {\n"
+                                  "  int[] a = relay(4);\n"
+                                  "  int s = sum(a);\n"
+                                  "  return s + a[0] + a[3];\n"
+                                  "}\n",
+                                  &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, true, NULL);
     LLVMJit jit;
@@ -2452,20 +2425,22 @@ STRATA_TEST(dynamic_array_ordering_is_rejected)
     /* `==`/`!=` on arrays is element-wise structural equality, but ORDERING
        comparisons remain meaningless for aggregates and are compile errors
        (sema rejects them alongside the mixed-type cases). */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  int[] a = {1, 2};\n"
-        "  int[] b = {1, 2};\n"
-        "  if (a < b) { return 3; }\n"
-        "  if (a >= b) { return 4; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int[] a = {1, 2};\n"
+                    "  int[] b = {1, 2};\n"
+                    "  if (a < b) { return 3; }\n"
+                    "  if (a >= b) { return 4; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int[]')") != NULL);
 
@@ -2479,24 +2454,23 @@ STRATA_TEST(dynamic_array_equality_is_elementwise)
        strata_eq_* helper: length fast-out, both-empty equal, then a byte
        compare for simple elements) — never the fat {ptr, len} identity. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {1, 2, 3};\n"
-        "  int[] b = {1, 2, 3};\n"       /* same content, different buffer */
-        "  int[] c = {1, 2, 4};\n"
-        "  int[] d = {1, 2};\n"          /* length mismatch */
-        "  int[] e = {};\n"
-        "  int[] f = {};\n"
-        "  int r = 0;\n"
-        "  if (a == b) { r += 1; }\n"
-        "  if (a != c) { r += 2; }\n"
-        "  if (a != d) { r += 4; }\n"
-        "  if (e == f) { r += 8; }\n"    /* both canonical-empty */
-        "  if (a != e) { r += 16; }\n"
-        "  if (a == a) { r += 32; }\n"   /* self */
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {1, 2, 3};\n"
+                                "  int[] b = {1, 2, 3};\n" /* same content, different buffer */
+                                "  int[] c = {1, 2, 4};\n"
+                                "  int[] d = {1, 2};\n" /* length mismatch */
+                                "  int[] e = {};\n"
+                                "  int[] f = {};\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  if (a != c) { r += 2; }\n"
+                                "  if (a != d) { r += 4; }\n"
+                                "  if (e == f) { r += 8; }\n" /* both canonical-empty */
+                                "  if (a != e) { r += 16; }\n"
+                                "  if (a == a) { r += 32; }\n" /* self */
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2521,18 +2495,17 @@ STRATA_TEST(float_array_equality_is_ieee754)
     /* Float ELEMENTS compare with IEEE-754 semantics (fcmp oeq), never by
        bytes: -0.0 == 0.0 though their bit patterns differ. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  float[] a = {0.0, 1.5};\n"
-        "  float[] b = {-0.0, 1.5};\n"   /* bytes differ, values equal */
-        "  int r = 0;\n"
-        "  if (a == b) { r += 1; }\n"
-        "  float[] c = {0.0, 1.5};\n"
-        "  float[] d = {0.0, 2.5};\n"
-        "  if (c != d) { r += 2; }\n"
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  float[] a = {0.0, 1.5};\n"
+                                "  float[] b = {-0.0, 1.5};\n" /* bytes differ, values equal */
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  float[] c = {0.0, 1.5};\n"
+                                "  float[] d = {0.0, 2.5};\n"
+                                "  if (c != d) { r += 2; }\n"
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2557,19 +2530,18 @@ STRATA_TEST(string_array_equality_is_contentwise)
     /* string ELEMENTS compare by content (strata_str_eq per element), not
        by buffer pointer or fat identity. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  string[] a = {\"hi\", \"yo\"};\n"
-        "  string[] b = {\"hi\", \"yo\"};\n"   /* same content, fresh buffers */
-        "  string[] c = {\"hi\", \"no\"};\n"
-        "  string[] d = {\"hi\"};\n"
-        "  int r = 0;\n"
-        "  if (a == b) { r += 1; }\n"
-        "  if (a != c) { r += 2; }\n"
-        "  if (a != d) { r += 4; }\n"          /* length fast-out */
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  string[] a = {\"hi\", \"yo\"};\n"
+                                "  string[] b = {\"hi\", \"yo\"};\n" /* same content, fresh buffers */
+                                "  string[] c = {\"hi\", \"no\"};\n"
+                                "  string[] d = {\"hi\"};\n"
+                                "  int r = 0;\n"
+                                "  if (a == b) { r += 1; }\n"
+                                "  if (a != c) { r += 2; }\n"
+                                "  if (a != d) { r += 4; }\n" /* length fast-out */
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2594,19 +2566,18 @@ STRATA_TEST(nested_array_equality_is_elementwise)
     /* Arrays of arrays compare element-wise recursively: each inner fat is
        compared by content, never by pointer. */
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[][] g = {{1, 2}, {3, 4}};\n"
-        "  int[][] h = {{1, 2}, {3, 4}};\n"
-        "  int[][] k = {{1, 2}, {3, 5}};\n"
-        "  int[][] m = {{1, 2}};\n"
-        "  int r = 0;\n"
-        "  if (g == h) { r += 1; }\n"    /* inner rows are distinct buffers */
-        "  if (g != k) { r += 2; }\n"
-        "  if (g != m) { r += 4; }\n"
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[][] g = {{1, 2}, {3, 4}};\n"
+                                "  int[][] h = {{1, 2}, {3, 4}};\n"
+                                "  int[][] k = {{1, 2}, {3, 5}};\n"
+                                "  int[][] m = {{1, 2}};\n"
+                                "  int r = 0;\n"
+                                "  if (g == h) { r += 1; }\n" /* inner rows are distinct buffers */
+                                "  if (g != k) { r += 2; }\n"
+                                "  if (g != m) { r += 4; }\n"
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2629,19 +2600,21 @@ STRATA_TEST(nested_array_equality_is_elementwise)
 STRATA_TEST(array_equality_mixed_element_types_rejected)
 {
     /* Same-shape but different element types never compare. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  int[] a = {1, 2};\n"
-        "  uint[] b = {1, 2};\n"
-        "  if (a == b) { return 1; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int[] a = {1, 2};\n"
+                    "  uint[] b = {1, 2};\n"
+                    "  if (a == b) { return 1; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'uint[]')") != NULL);
 
@@ -2652,18 +2625,20 @@ STRATA_TEST(array_equality_mixed_element_types_rejected)
 STRATA_TEST(dynamic_array_vs_scalar_comparison_is_rejected)
 {
     /* A mixed array/scalar comparison is rejected too. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  int[] a = {1, 2};\n"
-        "  if (a == 0) { return 1; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int[] a = {1, 2};\n"
+                    "  if (a == 0) { return 1; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int')") != NULL);
 
@@ -2675,19 +2650,21 @@ STRATA_TEST(string_vs_array_comparison_is_rejected)
 {
     /* String equality is CONTENT equality; comparing a string against a
        dynamic array is a type mismatch, not a fat-pointer poke. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  string s = \"hi\";\n"
-        "  int[] a = {1, 2};\n"
-        "  if (s == a) { return 1; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  string s = \"hi\";\n"
+                    "  int[] a = {1, 2};\n"
+                    "  if (s == a) { return 1; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "cannot compare 'string' with 'int[]'") != NULL);
 
@@ -2700,16 +2677,15 @@ STRATA_TEST(string_vs_array_comparison_is_rejected)
 STRATA_TEST(array_length_and_cap_are_uint)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] e = {1, 2, 3};\n"
-        "  uint n = e.length;            /* no cast: it IS a uint */\n"
-        "  ulong w = e.length;           /* widens freely */\n"
-        "  int[] f = {};\n"
-        "  uint p = array_push(f, 7);    /* push returns uint */\n"
-        "  return (int)(n + (uint)w) * 10 + (int)p + (int)f.length;   /* 62 */\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] e = {1, 2, 3};\n"
+                                "  uint n = e.length;            /* no cast: it IS a uint */\n"
+                                "  ulong w = e.length;           /* widens freely */\n"
+                                "  int[] f = {};\n"
+                                "  uint p = array_push(f, 7);    /* push returns uint */\n"
+                                "  return (int)(n + (uint)w) * 10 + (int)p + (int)f.length;   /* 62 */\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2734,18 +2710,17 @@ STRATA_TEST(array_length_and_cap_are_uint)
 STRATA_TEST(array_cap_doubles_on_push)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] a = {};\n"
-        "  int c1; int c4; int c8;\n"
-        "  array_push(a, 1); c1 = (int)a.cap;   /* 4: seeded */\n"
-        "  array_push(a, 2);\n"
-        "  array_push(a, 3);\n"
-        "  array_push(a, 4); c4 = (int)a.cap;   /* 4: still in place */\n"
-        "  array_push(a, 5); c8 = (int)a.cap;   /* 8: doubled */\n"
-        "  return c1 * 1000 + c4 * 100 + c8;    /* 4408 */\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] a = {};\n"
+                                "  int c1; int c4; int c8;\n"
+                                "  array_push(a, 1); c1 = (int)a.cap;   /* 4: seeded */\n"
+                                "  array_push(a, 2);\n"
+                                "  array_push(a, 3);\n"
+                                "  array_push(a, 4); c4 = (int)a.cap;   /* 4: still in place */\n"
+                                "  array_push(a, 5); c8 = (int)a.cap;   /* 8: doubled */\n"
+                                "  return c1 * 1000 + c4 * 100 + c8;    /* 4408 */\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2769,12 +2744,11 @@ STRATA_TEST(array_cap_doubles_on_push)
 STRATA_TEST(array_literal_cap_is_exact)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  int[] b = {1, 2, 3};\n"
-        "  return (int)b.cap * 10 + (int)b.length;   /* 33 */\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  int[] b = {1, 2, 3};\n"
+                                "  return (int)b.cap * 10 + (int)b.length;   /* 33 */\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2800,21 +2774,20 @@ STRATA_TEST(array_literal_cap_is_exact)
 STRATA_TEST(array_resize_uses_capacity)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int shrink_and_regrow() {\n"
-        "  int[] c = {1, 2, 3};\n"
-        "  array_resize(c, 2);              /* shrink in place */\n"
-        "  int capAfter = (int)c.cap;       /* 3: unchanged */\n"
-        "  array_resize(c, 3);              /* grow within cap: zero tail */\n"
-        "  return capAfter * 10 + c[0] + c[1] + c[2];   /* 30 + 1 + 2 + 0 = 33 */\n"
-        "}\n"
-        "int grow_past_cap() {\n"
-        "  int[] d = {1};\n"
-        "  array_resize(d, 9);\n"
-        "  return (int)d.cap * 10 + (int)d.length;     /* cap = 9 -> 99 */\n"
-        "}\n"
-        "int entry() { return shrink_and_regrow() + grow_past_cap(); }\n",
-        &err);
+    StrataJit* jit = CompileArr("int shrink_and_regrow() {\n"
+                                "  int[] c = {1, 2, 3};\n"
+                                "  array_resize(c, 2);              /* shrink in place */\n"
+                                "  int capAfter = (int)c.cap;       /* 3: unchanged */\n"
+                                "  array_resize(c, 3);              /* grow within cap: zero tail */\n"
+                                "  return capAfter * 10 + c[0] + c[1] + c[2];   /* 30 + 1 + 2 + 0 = 33 */\n"
+                                "}\n"
+                                "int grow_past_cap() {\n"
+                                "  int[] d = {1};\n"
+                                "  array_resize(d, 9);\n"
+                                "  return (int)d.cap * 10 + (int)d.length;     /* cap = 9 -> 99 */\n"
+                                "}\n"
+                                "int entry() { return shrink_and_regrow() + grow_past_cap(); }\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2839,13 +2812,12 @@ STRATA_TEST(array_resize_uses_capacity)
 STRATA_TEST(string_cap_counts_nul_slot)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr(
-        "int entry() {\n"
-        "  string s = \"hello\";\n"
-        "  string t = s;                    /* moves: same buffer */\n"
-        "  return (int)t.cap * 10 + (int)t.length;   /* 65 */\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileArr("int entry() {\n"
+                                "  string s = \"hello\";\n"
+                                "  string t = s;                    /* moves: same buffer */\n"
+                                "  return (int)t.cap * 10 + (int)t.length;   /* 65 */\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -2869,36 +2841,40 @@ STRATA_TEST(string_cap_counts_nul_slot)
    compile errors (they would corrupt the fat). */
 STRATA_TEST(array_length_and_cap_are_read_only)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  int[] a = {1, 2};\n"
-        "  a.length = 5;\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  int[] a = {1, 2};\n"
+                    "  a.length = 5;\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "cannot assign to '.length'") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 
-    DiagnosticEngine diag2; DiagnosticEngineInit(&diag2);
-    Arena arena2; arena_init(&arena2, 0);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  int[] a = {1, 2};\n"
-        "  a.cap++;\n"
-        "  return 0;\n"
-        "}\n",
-        &diag2, &arena2);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    Arena arena2;
+    arena_init(&arena2, 0);
+    ParseAndResolve("int entry() {\n"
+                    "  int[] a = {1, 2};\n"
+                    "  a.cap++;\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
 
-    SourceManager sm2; SourceManagerInit(&sm2);
+    SourceManager sm2;
+    SourceManagerInit(&sm2);
     char* d2 = DiagFormat(&diag2, &sm2, 1, &arena2);
     STRATA_CHECK(strstr(d2, "cannot increment '.cap'") != NULL);
 

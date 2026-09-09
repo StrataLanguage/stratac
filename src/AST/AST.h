@@ -207,11 +207,6 @@ static inline bool TypeNameIsOwning(const TypeName* t)
         return true;
     }
 
-    // if (strcmp(t->name, "string") == 0)
-    // {
-    //     return true;
-    // }
-
     return t->isBox || t->isOptional || TypeNameIsDynamicArray(t);
 }
 

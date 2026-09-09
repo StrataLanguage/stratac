@@ -1,11 +1,10 @@
 #include "Codegen/TypeRegistry.h"
 
+#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-void ComputeAllLayouts(TypeRegistry* reg);
 
 void TypeRegistryInit(TypeRegistry* reg)
 {
@@ -44,7 +43,10 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     if (reg->count >= reg->cap)
     {
         reg->cap = reg->cap ? reg->cap * 2 : 8;
-        reg->types = (StructType*)realloc(reg->types, reg->cap * sizeof(StructType));
+
+        StructType* resizedBuffer = (StructType*)realloc(reg->types, reg->cap * sizeof(StructType));
+        assert(resizedBuffer != NULL && "could not resize type registry buffer");
+        reg->types = resizedBuffer;
     }
 
     StructType* t = &reg->types[reg->count++];
@@ -58,6 +60,7 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     t->isTypeAlias = false;
     t->isEnum = false;
     t->underlyingType = NULL;
+    t->underlyingPrimitiveType = PrimNone;
     t->hasLayout = false;
     t->packedLayout = false;
     t->sizeBytes = 0;
@@ -129,6 +132,7 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
         StructType* t = TypeRegistryAdd(reg, sd->name);
         t->isTypeAlias = true;
         t->underlyingType = sd->underlyingType;
+        t->underlyingPrimitiveType = GetPrimitiveType(sd->underlyingType);
         t->opaque = false;
         t->incomplete = false;
     }
@@ -147,6 +151,7 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
         t->isTypeAlias = true;
         t->isEnum = true;
         t->underlyingType = ed->underlyingType ? ed->underlyingType : "int";
+        t->underlyingPrimitiveType = GetPrimitiveType(t->underlyingType);
         t->opaque = false;
         t->incomplete = false;
     }
@@ -286,27 +291,34 @@ typedef struct
 
 static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t idx);
 
-static bool ScalarSizeAlign(const char* name, SizeAlign* out)
+static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
 {
     // (name, size, align).
-    static const struct {
-        const char* name;
+    static const struct
+    {
+        PrimitiveType primitive;
         long size;
         long align;
     } kSizes[] = {
-        {"bool", 1, 1},  
-        {"byte", 1, 1},   {"sbyte", 1, 1},
-        {"short", 2, 2}, {"ushort", 2, 2},
-        {"int", 4, 4},    {"uint", 4, 4}, 
-        {"float", 4, 4},
-        {"long", 8, 8},   {"ulong", 8, 8}, 
-        {"double", 8, 8},
-        {"float2", 8, 8}, {"float3", 16, 16}, {"float4", 16, 16},
+        {PrimBool,   1,  1 },
+        {PrimByte,   1,  1 },
+        {PrimSByte,  1,  1 },
+        {PrimShort,  2,  2 },
+        {PrimUShort, 2,  2 },
+        {PrimInt,    4,  4 },
+        {PrimUInt,   4,  4 },
+        {PrimFloat,  4,  4 },
+        {PrimDouble, 8,  8 },
+        {PrimLong,   8,  8 },
+        {PrimULong,  8,  8 },
+        {PrimFloat2, 8,  8 },
+        {PrimFloat3, 16, 16},
+        {PrimFloat4, 16, 16},
     };
 
     for (size_t i = 0; i < sizeof(kSizes) / sizeof(kSizes[0]); i++)
     {
-        if (strcmp(name, kSizes[i].name) == 0)
+        if (type == kSizes[i].primitive)
         {
             out->size = kSizes[i].size;
             out->align = kSizes[i].align;
@@ -356,7 +368,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
         return true;
     }
 
-    if (ScalarSizeAlign(t->name, out))
+    if (ScalarSizeAlign(t->primitiveType, out))
     {
         return true;
     }
