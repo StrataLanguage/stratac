@@ -7172,6 +7172,12 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         for (size_t j = 0; j < functionDecl->params.count; j++)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
+
+            if (StrMapGet(&scope, p->name))
+            {
+                DiagErrorFmt(diag, p->base.range, "redefinition of '%s'", p->name);
+            }
+
             StrMapPut(&scope, p->name, (void*)&p->type);
 
             if (p->type.isConst)

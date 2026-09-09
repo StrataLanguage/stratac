@@ -255,3 +255,28 @@ STRATA_TEST(scope_sibling_reuse_runs_correctly)
 
     strataCompilerDestroy(c);
 }
+
+STRATA_TEST(scope_param_shadowing_global_is_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int g = 1;\n"
+        "int f(int g) { return g; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(scope_duplicate_params_are_an_error)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "int h(int x, int x) { return x; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}

@@ -651,6 +651,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     Advance(p);
 
     out->name = (char*)name;
+    out->primitiveType = GetPrimitiveType(name);
     out->range = SpanToCur(p, constRange);
 
     /* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,

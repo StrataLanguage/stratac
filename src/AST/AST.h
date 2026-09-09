@@ -3,6 +3,8 @@
 #include "Core/SourceLocation.h"
 #include "Core/Util.h"
 
+#include "../PrimitiveTypes.h"
+
 #include <stdint.h>
 #include <string.h>
 
@@ -59,6 +61,7 @@ typedef struct {
    A dynamic array has length < 0; a fixed `T[N]` (inline storage) >= 1. */
 typedef struct TypeName {
     char* name;
+    PrimitiveType primitiveType;
     SourceRange range;
     bool isConst;
     bool isVector;
@@ -199,19 +202,28 @@ static inline bool TypeNameIsOwning(const TypeName* t)
         return false;
     }
 
-    if (strcmp(t->name, "string") == 0)
+    if (t->primitiveType == PrimString)
     {
         return true;
     }
 
+    // if (strcmp(t->name, "string") == 0)
+    // {
+    //     return true;
+    // }
+
     return t->isBox || t->isOptional || TypeNameIsDynamicArray(t);
 }
+
 
 // A leaf TypeName for a spelling without structure ("int", "Foo").
 static inline TypeName TypeNameLeaf(char* name)
 {
     TypeName t = {0};
+
     t.name = name;
+    t.primitiveType = GetPrimitiveType(name);
+
     return t;
 }
 
@@ -290,7 +302,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
 
         for (size_t i = 1; i + 1 < groupLen; i++)
         {
-            v = v * 10 + (groups[i] - '0');
+            v = (v * 10) + (groups[i] - '0');
         }
 
         t.length = v;
