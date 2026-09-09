@@ -64,9 +64,7 @@ MappedType MapType(const TypeName* t)
         return m;
     }
 
-    const char* base = t->name;
-
-    if (strcmp(base, "void") == 0)
+    if (t->primitiveType == PrimVoid)
     {
         m.valid = true;
         m.isVoid = true;
@@ -77,35 +75,42 @@ MappedType MapType(const TypeName* t)
     }
 
     // (name, isFloat, isUnsigned, bits, IR)
-    static const struct {
-        const char* name;
+    static const struct
+    {
+        PrimitiveType primitive;
+        // const char* name;
         bool isFloat;
         bool isUnsigned;
         int bits;
         const char* ir;
     } kPrims[] = {
-        {"bool", false, false, 1, "i1"},   {"int", false, false, 32, "i32"},
-        {"uint", false, true, 32, "i32"},  {"long", false, false, 64, "i64"},
-        {"ulong", false, true, 64, "i64"}, {"sbyte", false, false, 8, "i8"},
-        {"byte", false, true, 8, "i8"},    {"short", false, false, 16, "i16"},
-        {"ushort", false, true, 16, "i16"}, {"float", true, false, 32, "float"},
-        {"double", true, false, 64, "double"},
+        {PrimBool,   false, false, 1,  "i1"    },
+        {PrimInt,    false, false, 32, "i32"   },
+        {PrimUInt,   false, true,  32, "i32"   },
+        {PrimLong,   false, false, 64, "i64"   },
+        {PrimULong,  false, true,  64, "i64"   },
+        {PrimSByte,  false, false, 8,  "i8"    },
+        {PrimByte,   false, true,  8,  "i8"    },
+        {PrimShort,  false, false, 16, "i16"   },
+        {PrimUShort, false, true,  16, "i16"   },
+        {PrimFloat,  true,  false, 32, "float" },
+        {PrimDouble, true,  false, 64, "double"},
     };
 
     for (size_t i = 0; i < sizeof(kPrims) / sizeof(kPrims[0]); i++)
     {
-        if (strcmp(base, kPrims[i].name) == 0)
+        if (t->primitiveType == kPrims[i].primitive)
         {
             return MakePrimitive(kPrims[i].isFloat, kPrims[i].isUnsigned, kPrims[i].bits, kPrims[i].ir);
         }
     }
 
-    if (strcmp(base, "float2") == 0)
+    if (t->primitiveType == PrimFloat2)
     {
         return MakeSimdVector(true, 32, 2, "float");
     }
 
-    if (strcmp(base, "float3") == 0 || strcmp(base, "float4") == 0)
+    if (t->primitiveType == PrimFloat3 || t->primitiveType == PrimFloat4)
     {
         return MakeSimdVector(true, 32, 4, "float");
     }
@@ -113,14 +118,52 @@ MappedType MapType(const TypeName* t)
     return m;
 }
 
-bool IsNumeric(const char* t)
+bool IsNumeric(PrimitiveType primType)
+{
+    switch (primType)
+    {
+    case PrimInt:
+    case PrimUInt:
+    case PrimLong:
+    case PrimULong:
+    case PrimSByte:
+    case PrimByte:
+    case PrimShort:
+    case PrimUShort:
+    case PrimFloat:
+    case PrimDouble:
+    case PrimBool:
+        return true;
+    default:;
+    }
+
+    return false;
+}
+
+bool IsNameNumeric(const char* t)
 {
     return strcmp(t, "int") == 0 || strcmp(t, "uint") == 0 || strcmp(t, "long") == 0 || strcmp(t, "ulong") == 0
            || strcmp(t, "byte") == 0 || strcmp(t, "sbyte") == 0 || strcmp(t, "short") == 0 || strcmp(t, "ushort") == 0
            || strcmp(t, "float") == 0 || strcmp(t, "double") == 0 || strcmp(t, "bool") == 0;
 }
 
-int IsSimdVector(const char* t)
+int IsSimdVector(const PrimitiveType prim)
+{
+    switch (prim)
+    {
+    case PrimFloat2:
+        return 2;
+    case PrimFloat3:
+        return 3;
+    case PrimFloat4:
+        return 4;
+    default:;
+    }
+
+    return 0;
+}
+
+int IsNameSimdVector(const char* t)
 {
     if (strcmp(t, "float2") == 0)
     {
@@ -138,19 +181,34 @@ int IsSimdVector(const char* t)
     return 0;
 }
 
-bool IsScalarTypeName(const char* t)
+bool IsScalarType(const PrimitiveType prim)
 {
-    return IsNumeric(t);
+    return IsNumeric(prim);
 }
 
-bool IsFloatType(const char* t)
+bool IsNameScalarType(const char* t)
+{
+    return IsNameNumeric(t);
+}
+
+bool IsNameFloatType(const char* t)
 {
     return strcmp(t, "double") == 0 || strcmp(t, "float") == 0;
 }
 
+bool IsFloatType(const PrimitiveType prim)
+{
+    return (prim == PrimFloat || prim == PrimDouble);
+}
+
 bool IsScalarPseudoType(const char* t)
 {
-    return IsScalarTypeName(t) && strcmp(t, "bool") != 0;
+    return IsNameScalarType(t) && strcmp(t, "bool") != 0;
+}
+
+bool IsStringType(PrimitiveType prim)
+{
+    return (prim == PrimString);
 }
 
 bool ScalarPseudoConst(const char* t, const char* member, uint64_t* outInt, double* outFloat, bool* outIsFloat)
@@ -170,22 +228,27 @@ bool ScalarPseudoConst(const char* t, const char* member, uint64_t* outInt, doub
 
     /* `min` is a float-only property (FLT_MIN/DBL_MIN); integers just get
        `max` (mirroring the C limit macros). */
-    if (isMin && !IsFloatType(t))
+    if (isMin && !IsNameFloatType(t))
     {
         return false;
     }
 
-    static const struct {
+    static const struct
+    {
         const char* name;
         uint64_t maxInt;
     } kIntMax[] = {
-        {"int", 0x7FFFFFFFULL},   {"uint", 0xFFFFFFFFULL},
-        {"long", 0x7FFFFFFFFFFFFFFFULL}, {"ulong", 0xFFFFFFFFFFFFFFFFULL},
-        {"byte", 0xFFULL},        {"sbyte", 0x7FULL},
-        {"short", 0x7FFFULL},     {"ushort", 0xFFFFULL},
+        {"int",    0x7FFFFFFFULL        },
+        {"uint",   0xFFFFFFFFULL        },
+        {"long",   0x7FFFFFFFFFFFFFFFULL},
+        {"ulong",  0xFFFFFFFFFFFFFFFFULL},
+        {"byte",   0xFFULL              },
+        {"sbyte",  0x7FULL              },
+        {"short",  0x7FFFULL            },
+        {"ushort", 0xFFFFULL            },
     };
 
-    if (!IsFloatType(t))
+    if (!IsNameFloatType(t))
     {
         for (size_t i = 0; i < sizeof(kIntMax) / sizeof(kIntMax[0]); i++)
         {
@@ -336,7 +399,7 @@ bool TypeIsOwningValueResolved(const TypeRegistry* reg, Arena* arena, const Type
 
 bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
 {
-    if (IsScalarTypeName(t))
+    if (IsNameScalarType(t))
     {
         return true;
     }
@@ -344,7 +407,7 @@ bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
     if (reg && TypeRegistryIsTypeAlias(reg, t))
     {
         const char* underlying = TypeRegistryResolveAlias(reg, t);
-        return IsScalarTypeName(underlying);
+        return IsNameScalarType(underlying);
     }
 
     return false;

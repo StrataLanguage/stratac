@@ -25,19 +25,31 @@ typedef struct Arena Arena;
 
 MappedType MapType(const TypeName* t);
 
-bool IsNumeric(const char* t);
+bool IsNumeric(PrimitiveType primType);
+bool IsNameNumeric(const char* t);
+
+
+int IsSimdVector(PrimitiveType prim);
+
+
 
 /**
  * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
  * Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the user.
  * Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
  */
-int IsSimdVector(const char* t);
+int IsNameSimdVector(const char* t);
 
 #define GetSimdVectorLanes(t_) IsSimdVector(t_)
+#define GetNameSimdVectorLanes(t_) IsNameSimdVector(t_)
 
-bool IsScalarTypeName(const char* t);
-bool IsFloatType(const char* t);
+bool IsScalarType(PrimitiveType prim);
+bool IsNameScalarType(const char* t);
+
+bool IsStringType(PrimitiveType prim);
+
+bool IsFloatType(PrimitiveType prim);
+bool IsNameFloatType(const char* t);
 
 /* Builtin numeric scalars eligible for `max`/`min` pseudo-properties:
    int/uint/long/ulong/byte/sbyte/short/ushort/float/double (NOT bool).

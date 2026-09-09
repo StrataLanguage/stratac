@@ -18,6 +18,7 @@ uint64_t HashStr64(const char* s)
 int main()
 {
     const char* primNames[] = {
+        "void",
         "bool",
 
         /* */
