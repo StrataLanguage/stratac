@@ -338,11 +338,16 @@ main) are the internal entry points.
   at DOUBLE the capacity (seeding 4 off cap 0), moving elements bitwise;
   `array_resize` mutates in place within cap (zero-filling a grown tail,
   dropping owning elements of a shrunken tail) and reallocates to
-  `max(n, cap*2, 4)` beyond it. Literals and `copy()` produce exact-size
-  buffers (`cap == len`); host-written fats should set `cap` to the real
-  element count. `==`/`!=` is ELEMENT-WISE structural equality
-  (sema `TypeIsComparableAggregate` allows same-type aggregate comparisons;
-  ordering `<` etc. is still a compile error). See "Equality system" below.
+   `max(n, cap*2, 4)` beyond it. Literals and `copy()` produce exact-size
+   buffers (`cap == len`); host-written fats should set `cap` to the real
+   element count. `==`/`!=` is ELEMENT-WISE structural equality
+   (sema `TypeIsComparableAggregate` allows same-type aggregate comparisons;
+   ordering `<` etc. is still a compile error). See "Equality system" below.
+   A `ref T[]` param (including `ref T... rest`) is a BORROWED binding — it
+   may be a caller's stack view — so `array_push`/`array_resize` on it and
+   whole-binding reassignment (`a = b`) are COMPILE ERRORS ("may borrow the
+   caller's stack storage"); `array_pop` and element writes are fine. Grow a
+   `copy()` into a local array instead, or take the array by value.
 
 ### Equality system (`==`/`!=`)
 

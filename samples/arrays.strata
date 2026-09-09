@@ -73,7 +73,10 @@ void maybe_mutate(ref int i)
 ++i;
 }
 
-void PrintAll(ref ^FooBar[] elems) {
+/* Takes the array BY VALUE (moved from the caller): a `ref T[]` param may
+   borrow the caller's stack storage (a fixed-array view), so a ref binding
+   can never be grown — push/resize belong on an owned array. */
+void PrintAll(^FooBar[] elems) {
     string foo1 = "hi";
     ^FooBar fb1 = {foo1};
     array_push(elems, fb1);

@@ -692,11 +692,6 @@ STRATA_TEST(push_narrowed_optional_into_box_array)
     const char* err = NULL;
     StrataJit* jit = CompileArr(
         "struct Node { int v; Node? next; };\n"
-        "int drain(ref ^Node[] sink, ^Node src)\n"
-        "{\n"
-        "  if (src.next?) { array_push(sink, src.next); }\n"   /* through a ref */
-        "  return 0;\n"
-        "}\n"
         "int entry() {\n"
         "  ^Node[] arr;\n"
         "  ^Node a = Node(1, {});\n"                /* next constructed, non-empty */
@@ -708,9 +703,9 @@ STRATA_TEST(push_narrowed_optional_into_box_array)
         "  if (a.next?) { r += 5; } else { r += 1; }\n"   /* emptied -> +1 -> 11 */
         "  ^Node[] more;\n"
         "  array_push(more, a);\n"                   /* parent NOT poisoned */
-        "  r += (int)more.length * 100;\n"           /* +100 -> 111 */ 
+        "  r += (int)more.length * 100;\n"           /* +100 -> 111 */
         "  ^Node b = Node(7, {});\n"
-        "  drain(arr, b);\n"                         /* pushes b's nested next (v == 0) */
+        "  if (b.next?) { array_push(arr, b.next); }\n"   /* narrowed T? moves into the slot */
         "  r += (int)arr.length;\n"                  /* 2 -> 113 */
         "  return r + arr[1].v;\n"                   /* +0 -> 113 */
         "}\n",
@@ -1098,7 +1093,6 @@ STRATA_TEST(fixed_local_array_init_rules)
         /* Element type mismatch. */
         {"int entry() { int[2] v = {1, \"x\"}; return 0; }", "cannot initialize"},
     };
-
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena; arena_init(&arena, 0);
@@ -1272,6 +1266,153 @@ STRATA_TEST(fixed_array_struct_field_ref_view)
     if (entry)
     {
         STRATA_CHECK_EQ(entry(), 26);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_array_box_member_ref_view)
+{
+    /* A fixed field of a BOXED struct borrows as a view too. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Buf { int[3] data; };\n"
+        "int sum(ref int[] a)\n"
+        "{\n"
+        "  int s = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+        "  return s;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  ^Buf b = Buf { .data = {4, 5, 6} };\n"
+        "  int r = sum(b.data);\n"   /* 15 */
+        "  b.data[0] = 40;\n"        /* box stays usable after the borrowed call */
+        "  return r + b.data[0];\n"  /* 55 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 55);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_array_element_member_ref_view)
+{
+    /* A fixed field of a dynamic-array ELEMENT borrows as a view. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Row { int[2] data; };\n"
+        "int sum(ref int[] a)\n"
+        "{\n"
+        "  int s = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+        "  return s;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  Row[] rows = { Row { .data = {1, 2} }, Row { .data = {3, 4} } };\n"
+        "  return sum(rows[0].data) + sum(rows[1].data);\n"   /* 3 + 7 = 10 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 10);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- `ref T[]` params are borrowed bindings -------------------------------
+   A ref array param may be a stack view (fixed-array slice), so the binding
+   itself can never be grown or reassigned — that would free the caller's
+   storage. Mutate elements instead, or copy into an owned local array. */
+
+STRATA_TEST(ref_array_param_growth_rejected)
+{
+    struct { const char* src; const char* msg; } cases[] = {
+        {"int f(ref int[] a) { array_push(a, 4); return 0; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }",
+         "cannot grow"},
+        {"int f(ref int[] a) { array_resize(a, 8); return 0; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }",
+         "cannot grow"},
+        {"int f(ref int[] a) { int[] b = {9}; a = b; return 0; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }",
+         "cannot be reassigned"},
+        /* A ref rest is the same borrowed binding. */
+        {"int f(ref int... rest) { array_push(rest, 4); return 0; }\n"
+         "int entry() { return f(1, 2, 3); }",
+         "cannot grow"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        ParseAndResolve(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+
+        SourceManager sm; SourceManagerInit(&sm);
+        char* d = DiagFormat(&diag, &sm, 1, &arena);
+        STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+STRATA_TEST(ref_array_param_reads_and_element_writes_ok)
+{
+    /* Borrowed does not mean read-only: reads and ELEMENT writes work. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "void bump_last(ref int[] a) { a[a.length - 1] = a[a.length - 1] + 1; }\n"
+        "int entry()\n"
+        "{\n"
+        "  int[3] v = {1, 2, 3};\n"
+        "  bump_last(v);\n"
+        "  return v[2] * 10 + v[0];\n"   /* 41 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 41);
     }
 
     strataJitDestroy(jit);

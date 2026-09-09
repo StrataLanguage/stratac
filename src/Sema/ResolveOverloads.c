@@ -24,6 +24,7 @@ typedef struct
     StrMap m_indexDeps;
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
+    StrMap m_refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
     StrMap m_typeCache;    /* canonical spelling -> interned TypeName tree */
     StrMap m_constGlobals; /* const scalar global name -> ConstGlobalVal* (manifest constants) */
     const TypeName* m_currentReturnType;
@@ -2574,6 +2575,18 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     if (arg0->kind != NodeIdent && arg0->kind != NodeMember && arg0->kind != NodeIndex)
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'%s' array argument must be an lvalue", c->callee);
+        return true;
+    }
+
+    // A `ref T[]` param may be a borrowed stack view (fixed-array slice):
+    // growing/shrinking can reallocate, which would free the caller's storage.
+    if ((isPush || isResize) && arg0->kind == NodeIdent
+        && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)arg0)->name))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range,
+                     "'%s' cannot grow '%s' (a ref array param may borrow the caller's stack storage); "
+                     "copy it into a local array first",
+                     c->callee, ((IdentExpr*)arg0)->name);
         return true;
     }
 
@@ -5192,6 +5205,19 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
         bool targetIsBox = tt && AliasIsOwning(r, tt);
 
+        /* A `ref T[]` param may be a borrowed stack view (fixed-array slice):
+           rebinding drops/frees the old buffer — the caller's storage. */
+        if (tt && a->target->kind == NodeIdent && TypeNameIsDynamicArray(tt)
+            && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)a->target)->name))
+        {
+            DiagErrorFmt(r->m_diag, a->base.range,
+                         "'%s' cannot be reassigned as it is not owned because it is bound as a ref array param; "
+                         "mutate its elements instead",
+                         ((IdentExpr*)a->target)->name);
+
+            return;
+        }
+
         /* An owning field target is reassigned, not read - re-life it instead of tripping use-after-move. */
         const char* fieldKey = NULL;
         bool targetIsOwningField = false;
@@ -6943,6 +6969,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_indexDeps);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
+    StrMapInit(&r.m_refArrayParams);
     StrMapInit(&r.m_typeCache);
 
     for (size_t i = 0; i < mod->globals.count; i++)
@@ -7001,6 +7028,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         ResetStrMap(&r.m_constVars);
         ResetStrMap(&r.m_movedBoxes);
         ResetStrMap(&r.m_refBoxParams);
+        ResetStrMap(&r.m_refArrayParams);
 
         for (size_t j = 0; j < mod->globals.count; j++)
         {
@@ -7025,6 +7053,13 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             if (AliasIsOwning(&r, &p->type) && p->mod == ModRef)
             {
                 StrMapPut(&r.m_refBoxParams, p->name, (void*)1);
+            }
+
+            /* A `ref T[]` binding may be a borrowed stack view (fixed-array
+               slice): rebinds and growing writes would free caller storage. */
+            if (p->mod == ModRef && TypeNameIsDynamicArray(&p->type))
+            {
+                StrMapPut(&r.m_refArrayParams, p->name, (void*)1);
             }
         }
 
@@ -7338,6 +7373,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_indexDeps);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
+    StrMapFree(&r.m_refArrayParams);
     StrMapFree(&r.m_typeCache);
     StrMapFree(&byMangled);
     TypeRegistryFree(&r.m_registry);
