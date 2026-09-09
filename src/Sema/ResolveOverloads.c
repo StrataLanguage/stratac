@@ -924,9 +924,9 @@ static bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, Array
 }
 
 /* Verifies a fixed-array initializer's SHAPE: nested rows for multidimensional fields, a flat list for
- * single-dimension. Returns false (with a diagnostic) on mismatch. */
+ * single-dimension. Returns false (with a diagnostic) on mismatch. `kind` is "field" or "local" for messages. */
 static bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai, const TypeName* leaf,
-                                     const char* fieldName)
+                                     const char* name, const char* kind)
 {
     bool multidim = t->elem && t->elem->isArray && t->elem->length >= 0;
     bool leafIsStruct = leaf && TypeRegistryIsUserType(&r->m_registry, leaf->name)
@@ -939,27 +939,44 @@ static bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitEx
         if (multidim && elem->kind != NodeArrayInit)
         {
             DiagErrorFmt(r->m_diag, elem->range,
-                         "multidimensional fixed-size array field '%s' requires nested rows "
+                         "multidimensional fixed-size array %s '%s' requires nested rows "
                          "('{ { ... }, { ... } }'), not a flat element list",
-                         fieldName);
+                         kind, name);
             return false;
         }
 
         if (!multidim && elem->kind == NodeArrayInit && !leafIsStruct)
         {
             DiagErrorFmt(r->m_diag, elem->range,
-                         "fixed-size array field '%s' has a single dimension - write its elements as a flat list",
-                         fieldName);
+                         "fixed-size array %s '%s' has a single dimension - write its elements as a flat list", kind,
+                         name);
             return false;
         }
 
-        if (multidim && !CheckFixedArrayInitShape(r, t->elem, (ArrayInitExpr*)elem, leaf, fieldName))
+        if (multidim && !CheckFixedArrayInitShape(r, t->elem, (ArrayInitExpr*)elem, leaf, name, kind))
         {
             return false;
         }
     }
 
     return true;
+}
+
+/* True when any element of a fixed-array initializer is itself a braced
+   row (`NodeArrayInit`); NULL holes are skipped. */
+static bool HasNestedArrayInit(const ArrayInitExpr* ai)
+{
+    for (size_t k = 0; k < ai->elements.count; k++)
+    {
+        Node* elem = (Node*)VecGet(&ai->elements, k);
+
+        if (elem && elem->kind == NodeArrayInit)
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 /* Move-state values: 1 = fully moved, 2 = re-live, 3 = partially moved. */
@@ -3939,6 +3956,41 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
+    /* v1: a whole fixed-size array *local* cannot be passed as a call
+       argument — only its elements (`values[i]`, `values.length`). Locals are
+       named by a bare identifier, so an Ident arg with a fixed type is always
+       a local; field-sourced fixed arrays (`b.data`) keep the extern `^T`
+       decay below. */
+    {
+        bool fixedArgError = false;
+
+        for (size_t i = 0; i < c->args.count; i++)
+        {
+            Node* arg = (Node*)VecGet(&c->args, i);
+
+            if (arg->kind != NodeIdent)
+            {
+                continue;
+            }
+
+            const TypeName* argType = InferType(r, arg, scope);
+
+            if (argType && TypeNameIsFixedArray(argType))
+            {
+                DiagErrorFmt(r->m_diag, arg->range,
+                             "cannot pass fixed-size array '%s' of type '%s' as an argument; "
+                             "pass its elements instead (e.g. '%s[0]')",
+                             ((IdentExpr*)arg)->name, argType->name, ((IdentExpr*)arg)->name);
+                fixedArgError = true;
+            }
+        }
+
+        if (fixedArgError)
+        {
+            return;
+        }
+    }
+
     if (TypeRegistryIsUserType(&r->m_registry, c->callee))
     {
         // Struct ctor: owning field from owning source is a move.
@@ -5333,8 +5385,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 return;
             }
 
-            // Whole fixed arrays assign by element, never as a unit.
-            if (a->target->kind == NodeMember || a->target->kind == NodeIndex)
+            // Whole fixed arrays assign by element, never as a unit (locals,
+            // fields and elements alike — braced initialization at the
+            // declaration is the only whole-array form).
+            if (a->target->kind == NodeMember || a->target->kind == NodeIndex || a->target->kind == NodeIdent)
             {
                 const TypeName* mt = InferType(r, a->target, scope);
 
@@ -5738,7 +5792,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                             ai->elementType = leaf;
                         }
 
-                        if (!CheckFixedArrayInitShape(r, &fieldDecl->type, ai, leaf, fieldDecl->name))
+                        if (!CheckFixedArrayInitShape(r, &fieldDecl->type, ai, leaf, fieldDecl->name, "field"))
                         {
                             ai->elements.count = 0;
                             continue;
@@ -6070,12 +6124,178 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
         }
 
+        /* Resolve `[constName]` dimensions before the fixed-array checks below
+           (idempotent: lengthName is cleared once resolved, so loop warmups
+           re-resolving the same declaration are harmless). */
+        SemaResolveConstDims(r, &vd->type);
+
+        /* Stack-allocated fixed-size array locals (`float v[10] = { ... };`):
+           inline `[N x T]` storage, braced initialization only. Params,
+           returns and globals keep their bans (checked after all functions). */
         if (TypeTreeHasFixedArray(&vd->type))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range,
-                         "local variable '%s' may not have a fixed-size array type ('%s'); "
-                         "fixed-size arrays are only allowed as struct fields",
-                         vd->name, vd->type.name);
+            if (!(vd->type.isArray && vd->type.length >= 0))
+            {
+                /* e.g. `int[][4] x;` — a dynamic array of fixed arrays. */
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "local variable '%s' has invalid fixed-size array type ('%s'); "
+                             "fixed-size arrays may only be declared as 'T[N]' locals",
+                             vd->name, vd->type.name);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            if (vd->type.length < 1)
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "fixed-size array local '%s' must have a length of at least 1", vd->name);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            long total = 0;
+            const TypeName* leaf = FixedArrayLeaf(&vd->type, &total);
+
+            if (leaf->isArray)
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "fixed-size array local '%s' may not contain a dynamic array", vd->name);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            if (leaf->isBox || AliasIsOwning(r, leaf))
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "fixed-size array local '%s' may not own its elements ('%s' is owning); "
+                             "fixed-size arrays have no drop glue",
+                             vd->name, leaf->name);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            if (TypeRegistryIsOwningStruct(&r->m_registry, leaf->name))
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "fixed-size array local '%s' may not contain an owning struct ('%s'); "
+                             "fixed-size arrays have no drop glue",
+                             vd->name, leaf->name);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            if (IsIncompleteStruct(&r->m_registry, leaf->name))
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name,
+                             leaf->name);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            if (!vd->init || vd->init->kind != NodeArrayInit)
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "fixed-size array local '%s' must be initialized with a braced list "
+                             "('{ ... }'), e.g. 'float %s[%ld] = { ... }'",
+                             vd->name, vd->name, vd->type.length);
+                StrMapPut(scope, vd->name, (void*)&vd->type);
+                return;
+            }
+
+            ArrayInitExpr* fixedInit = (ArrayInitExpr*)vd->init;
+
+            /* Loop bodies walk twice (muted warmup + real); a multidim init
+               flattened by the first pass must not fail the shape check on
+               the second. An already-flat init is the output of this very
+               processing — detect it BEFORE stamping elementType below (a
+               user-written flat multidim init still carries the parser's
+               intermediate element type, so it is correctly NOT skipped and
+               fails the shape check). Error paths never mutate the init, so
+               re-walks reproduce their diagnostics loudly instead of
+               converging silent. */
+            bool alreadyFlat = fixedInit->elementType == leaf
+                               && fixedInit->elements.count == (size_t)total
+                               && !HasNestedArrayInit(fixedInit);
+
+            if (!alreadyFlat)
+            {
+                if (!CheckFixedArrayInitShape(r, &vd->type, fixedInit, leaf, vd->name, "local"))
+                {
+                    StrMapPut(scope, vd->name, (void*)&vd->type);
+                    return;
+                }
+
+                /* The parser pre-fills elementType with the immediate element
+                   (`int[2]` for `int[2][2]`); codegen needs the LEAF (`int`),
+                   like struct-field inits (which parse with NULL and get the
+                   leaf here). */
+                fixedInit->elementType = leaf;
+
+                /* Short rows leave holes that zero-fill. */
+                Vec flat;
+                VecInit(&flat);
+
+                for (long z = 0; z < total; z++)
+                {
+                    VecPush(&flat, NULL);
+                }
+
+                if (!PlaceFixedArrayInit(&flat, 0, &vd->type, fixedInit))
+                {
+                    DiagErrorFmt(r->m_diag, vd->init->range,
+                                 "too many initializers for fixed-size array local '%s' (%ld max)", vd->name,
+                                 total);
+                    StrMapPut(scope, vd->name, (void*)&vd->type);
+                    return;
+                }
+
+                void** oldItems = fixedInit->elements.items;
+                fixedInit->elements = flat;
+                free(oldItems);
+            }
+
+            /* Bare-brace leaves are struct inits of the leaf type. */
+            for (size_t k = 0; k < fixedInit->elements.count; k++)
+            {
+                Node* elem = (Node*)VecGet(&fixedInit->elements, k);
+
+                if (!elem)
+                {
+                    continue;
+                }
+
+                if (elem->kind == NodeArrayInit || elem->kind == NodeStructInit)
+                {
+                    VecSet(&fixedInit->elements, k, ApplyBracedStructTarget(r, elem, leaf));
+                }
+            }
+
+            ResolveExpr(r, vd->init, scope);
+
+            for (size_t k = 0; k < fixedInit->elements.count; k++)
+            {
+                Node* elem = (Node*)VecGet(&fixedInit->elements, k);
+
+                if (!elem)
+                {
+                    continue; // Hole: stays zero.
+                }
+
+                const TypeName* elemType = InferType(r, elem, scope);
+
+                if (elemType && !IsAssignableType(r, leaf, elemType))
+                {
+                    DiagErrorFmt(r->m_diag, elem->range,
+                                 "element of type '%s' cannot initialize '%s' element of local '%s'",
+                                 elemType->name, leaf->name, vd->name);
+                }
+            }
+
+            ClearBoxSubtree(r, vd->name);
+            ClearNullableFacts(r, vd->name);
+            InvalidateIndexVar(r, vd->name);
+            StrMapPut(scope, vd->name, (void*)&vd->type);
+            return;
         }
 
         // Owning locals need an init (arrays/optionals exempt; a bare owning
@@ -6099,8 +6319,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         // Dynamic arrays of owning structs (`Rec[]`) are legal: the fat owns
         // the buffer and drops each inline element recursively, just like
-        // `string[]`. Fixed arrays of owning structs cannot occur here
-        // (locals may not have fixed-size array types, checked above).
+        // `string[]`. Fixed-array locals return early above (they are
+        // non-owning by construction), so nothing here sees one.
 
         bool initProvesNonEmpty = true;
 
@@ -6870,7 +7090,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             {
                 DiagErrorFmt(diag, gd->base.range,
                              "global '%s' may not have a fixed-size array type ('%s'); "
-                             "fixed-size arrays are only allowed as struct fields",
+                             "fixed-size arrays are only allowed as struct fields and locals",
                              gd->name, gd->type.name);
             }
 
@@ -6979,7 +7199,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             {
                 DiagErrorFmt(diag, p->base.range,
                              "parameter '%s' may not have a fixed-size array type ('%s'); "
-                             "fixed-size arrays are only allowed as struct fields",
+                             "fixed-size arrays are only allowed as struct fields and locals",
                              p->name, p->type.name);
             }
         }
@@ -6988,7 +7208,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             DiagErrorFmt(diag, functionDecl->base.range,
                          "function '%s' may not return a fixed-size array type ('%s'); "
-                         "fixed-size arrays are only allowed as struct fields",
+                         "fixed-size arrays are only allowed as struct fields and locals",
                          functionDecl->name, functionDecl->returnType.name);
         }
 

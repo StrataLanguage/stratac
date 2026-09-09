@@ -307,8 +307,10 @@ main) are the internal entry points.
   assignment into optionals is rejected. Recursive owning structs use
   optionals for self-references (`struct Node { int v; Node? next; };`).
 - Fixed-size arrays: `byte[16] name;` — C-ABI inline storage (`[16 x i8]`
-  in LLVM, `unsigned char name[16]` in C). **Struct fields only** (not
-  locals, params, returns, globals, or dynamic-array elements); elements
+  in LLVM, `unsigned char name[16]` in C). **Struct fields and
+  stack-allocated locals** (`int[3] v = {1, 2, 3};` — an entry-block
+  `alloca`, braced initialization is MANDATORY, one init form only; not
+  params, returns, globals, or dynamic-array elements); elements
   must be non-owning scalars/handles/structs (no `^T`/`string`/`T[]`
   elements — fixed arrays have no drop glue). Dimensions read like C,
   outermost first (`int[2][6]` is 2×`int[6]`, mirroring `int x[2][6]`;
@@ -317,10 +319,12 @@ main) are the internal entry points.
   fields (`S { .m = {{1,2},{3,4}} }`, one brace level per dimension; rows
   may be short and missing rows/elements zero), flat leaf lists for
   single-dimension fields (`S { .m = {1,2,3} }`); the wrong shape is a
-  compile error. Indexing is bounds-checked against the compile-time
+  compile error. Local inits follow the same shape rules. Indexing is bounds-checked against the compile-time
   length, and `.length` is a compile-time constant typed `uint` (a fixed
   array has NO `.cap` — inline storage has no capacity). Whole fixed-array assignment
-  (`s.a = s.b`) is rejected — assign elements. No auto-conversion to the
+  (`s.a = s.b`, `v = w`) is rejected — assign elements. Passing a whole
+  fixed-array local as a call argument is rejected — pass elements
+  (`v[i]`). No auto-conversion to the
   fat `T[]` pointer yet.
 - Dynamic arrays (`T[]`): a fat `{ptr, u32 len, u32 cap}` (16 bytes; the
   same triple `string` uses). `.length`/`.cap` are read-only `uint` views
