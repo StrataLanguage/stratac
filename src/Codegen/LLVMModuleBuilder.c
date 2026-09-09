@@ -857,7 +857,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(found, 0, t->name);
     }
 
-    /* T[N]: fixed-size inline [N x T] (C ABI, struct fields only). */
+    /* T[N]: fixed-size inline [N x T] (C ABI) — struct fields and stack-allocated locals. */
     if (t->isArray && t->length >= 0)
     {
         TypeDesc elemTd = Resolve(b, t->elem);
@@ -3336,10 +3336,11 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                drop the old element in place, then construct the owned value
                into the slot (heap-copy a string literal, move a movable
                source, take a temporary bitwise). */
-            bool elemOwningSlot = n->op == AssignSet
-                                  && (lvalue.typeDesc.isString
-                                      || (lvalue.typeDesc.structTypeName
-                                          && TypeRegistryIsOwningStruct(&b->m_registry, lvalue.typeDesc.structTypeName)));
+            bool elemOwningSlot
+                = n->op == AssignSet
+                  && (lvalue.typeDesc.isString
+                      || (lvalue.typeDesc.structTypeName
+                          && TypeRegistryIsOwningStruct(&b->m_registry, lvalue.typeDesc.structTypeName)));
 
             if (elemOwningSlot)
             {
@@ -4138,9 +4139,10 @@ static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef
         LLVMBuildCondBr(b->m_builder, nullA, eqNext, deep);
 
         LLVMPositionBuilderAtEnd(b->m_builder, deep);
-        eq = handleInner   ? BuildHandleCellEq(b, aCell, bCell)
-             : opaqueInner ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
-                           : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
+        eq = handleInner ? BuildHandleCellEq(b, aCell, bCell)
+             : opaqueInner
+                 ? LLVMBuildICmp(b->m_builder, LLVMIntEQ, aCell, bCell, "eq.box")
+                 : LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, innerTd, false), eqArgs, 2, "eq.cell");
         LLVMBuildCondBr(b->m_builder, eq, eqNext, failBB);
 
         LLVMPositionBuilderAtEnd(b->m_builder, eqNext);
@@ -4874,26 +4876,26 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
 {
     static const IntrinsicDefinition intrinsics[] = {
         /* Array calls */
-        {"array_push",   EmitArrayBuiltin   },
-        {"array_pop",    EmitArrayBuiltin   },
-        {"array_resize", EmitArrayBuiltin   },
+        {"array_push",   EmitArrayBuiltin    },
+        {"array_pop",    EmitArrayBuiltin    },
+        {"array_resize", EmitArrayBuiltin    },
 
         /* Misc */
-        {"copy",         EmitCopyBuiltin    },
-        {"drop",         EmitDropBuiltin    },
+        {"copy",         EmitCopyBuiltin     },
+        {"drop",         EmitDropBuiltin     },
 
         /* Strings */
         {"substring",    EmitSubstringBuiltin},
 
         /* Vectors */
-        {"float2",       EmitVectorConstruct},
-        {"float3",       EmitVectorConstruct},
-        {"float4",       EmitVectorConstruct},
+        {"float2",       EmitVectorConstruct },
+        {"float3",       EmitVectorConstruct },
+        {"float4",       EmitVectorConstruct },
 
-        {"dot",          EmitVectorDot      },
-        {"cross",        EmitVectorCross    },
+        {"dot",          EmitVectorDot       },
+        {"cross",        EmitVectorCross     },
 
-        {"reduce",       EmitVectorReduce   },
+        {"reduce",       EmitVectorReduce    },
     };
 
     for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
@@ -5992,12 +5994,11 @@ static void EmitStmt(Builder* b, Node* n)
                     v = ValueMake(owned, b->m_curRet);
                 }
 
-                Node* movedReturnNode
-                    = (v.typeDesc.isBox || v.typeDesc.isArray
-                       || (v.typeDesc.structTypeName
-                           && TypeRegistryIsOwningStruct(&b->m_registry, v.typeDesc.structTypeName)))
-                          ? (Node*)MovableBoxSourceNode(r->value)
-                          : NULL;
+                Node* movedReturnNode = (v.typeDesc.isBox || v.typeDesc.isArray
+                                         || (v.typeDesc.structTypeName
+                                             && TypeRegistryIsOwningStruct(&b->m_registry, v.typeDesc.structTypeName)))
+                                            ? (Node*)MovableBoxSourceNode(r->value)
+                                            : NULL;
 
                 if (movedReturnNode)
                 {
@@ -6039,6 +6040,59 @@ static void EmitStmt(Builder* b, Node* n)
     {
         VarDeclStmt* varDecl = (VarDeclStmt*)n;
         TypeDesc typeDesc = Resolve(b, &varDecl->type);
+
+        if (typeDesc.isFixedArray)
+        {
+            /* Stack-allocated fixed-size array local */
+            LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "fixarr");
+            LLVMValueRef arr = LLVMConstNull(typeDesc.type);
+
+            if (varDecl->init && varDecl->init->kind == NodeArrayInit)
+            {
+                ArrayInitExpr* ai = AsNode(ArrayInitExpr, varDecl->init);
+
+                /* Sema guarantees the leaf element type; fall back to a
+                   leaf-walk of the declared type if it is missing or not a
+                   leaf (a non-leaf would miscompile inserts as int<->array
+                   casts). */
+                const TypeName* leafTn = ai->elementType;
+
+                if (!leafTn || (leafTn->isArray && leafTn->length >= 0))
+                {
+                    leafTn = &varDecl->type;
+
+                    while (leafTn && leafTn->isArray && leafTn->length >= 0)
+                    {
+                        leafTn = leafTn->elem;
+                    }
+                }
+
+                TypeDesc elemTd = leafTn ? Resolve(b, leafTn) : Resolve(b, typeDesc.arrayInner);
+
+                for (size_t k = 0; k < ai->elements.count; k++)
+                {
+                    Node* elem = (Node*)VecGet(&ai->elements, k);
+
+                    if (!elem)
+                    {
+                        continue;
+                    }
+
+                    Value ev = Coerce(b, EmitExpr(b, elem), elemTd);
+                    arr = InsertFixedElem(b, arr, ev.value, &varDecl->type, (long)k);
+                }
+            }
+
+            LLVMBuildStore(b->m_builder, arr, slot);
+
+            Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+            sym->value = slot;
+            sym->typeDesc = typeDesc;
+
+            StrMapPut(&b->m_symbols, varDecl->name, sym);
+
+            return;
+        }
 
         if (typeDesc.isArray)
         {

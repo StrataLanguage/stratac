@@ -877,6 +877,238 @@ STRATA_TEST(one_d_fixed_array_nested_row_is_error)
     arena_free(&arena);
 }
 
+/* ---- Stack-allocated local fixed arrays (`float[10] values = {...}`) -----
+   Inline `[N x T]` entry allocas, braced initialization only. Whole-array
+   assignment and passing as a call argument are errors; elements behave
+   like struct-field elements (bounds-checked index, `.length`, `==`). */
+
+STRATA_TEST(fixed_local_array_basic_run)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  float[3] values = {1.0, 2.0, 3.0};\n"
+        "  values[2] = 10.0;\n"
+        "  return (int)(values[0] + values[1] + values[2]) + (int)values.length;\n" /* 13 + 3 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 16);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_local_array_multidim_run)
+{
+    /* Nested rows mirror the dimensions; short rows and missing rows
+       zero-fill, exactly like struct fields. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[2][3] g = { {10, 20, 30}, {40, 50} };\n"
+        "  return g[0][0] + g[1][2] + g[1][1] + (int)g.length;\n" /* 10+0+50+2 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 62);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_local_array_struct_elements_run)
+{
+    /* Typed literals and bare braces both construct struct leaves. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Pt { int x; int y; };\n"
+        "int entry() {\n"
+        "  Pt[2] ps = { Pt { .x = 1, .y = 2 }, { .x = 3, .y = 4 } };\n"
+        "  return ps[0].x + ps[0].y + ps[1].x + ps[1].y + (int)ps.length;\n" /* 10 + 2 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 12);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_local_array_const_dim_run)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "const int N = 3;\n"
+        "int entry() {\n"
+        "  int[N] v = {7, 8, 9};\n"
+        "  return v[0] + v[1] + v[2];\n" /* 24 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 24);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_local_array_in_loop_run)
+{
+    /* Loop bodies walk twice in sema (muted warmup + real); the flattened
+       init must survive the second pass. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int s = 0;\n"
+        "  int i = 0;\n"
+        "  while (i < 2) {\n"
+        "    int[2][2] g = { {1, 2}, {3, 4} };\n"
+        "    s = s + g[0][0] + g[1][1];\n" /* (1+4) * 2 */
+        "    i = i + 1;\n"
+        "  }\n"
+        "  return s;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 10);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_local_array_equality_run)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int entry() {\n"
+        "  int[2] a = {1, 2};\n"
+        "  int[2] b = {1, 2};\n"
+        "  int[2] c = {1, 3};\n"
+        "  int r = 0;\n"
+        "  if (a == b) { r = r + 1; }\n"
+        "  if (a != c) { r = r + 10; }\n"
+        "  return r;\n" /* 11 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 11);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(fixed_local_array_init_rules)
+{
+    struct { const char* src; const char* msg; } cases[] = {
+        /* Braced initialization only: no bare declaration ... */
+        {"int entry() { int[4] xs; return 0; }", "braced"},
+        /* ... and no non-braced initializer. */
+        {"int entry() { int x = 1; int[2] v = x; return 0; }", "braced"},
+        /* Too many initializers. */
+        {"int entry() { int[2] v = {1, 2, 3}; return 0; }", "too many initializers"},
+        /* Zero length. */
+        {"int entry() { int[0] v = {}; return 0; }", "at least 1"},
+        /* Owning elements have no drop glue. */
+        {"int entry() { string[2] v = {\"a\", \"b\"}; return 0; }", "may not own its elements"},
+        /* Whole-array assignment (including braced reassignment). */
+        {"int entry() { int[3] v = {1, 2, 3}; int[3] w = {4, 5, 6}; v = w; return 0; }",
+         "whole fixed-size array"},
+        {"int entry() { int[3] v = {1, 2, 3}; v = {4, 5, 6}; return 0; }", "whole fixed-size array"},
+        /* Passing a whole local to a function. */
+        {"int take(int x) { return x; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Element type mismatch. */
+        {"int entry() { int[2] v = {1, \"x\"}; return 0; }", "cannot initialize"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        ParseAndResolve(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+
+        SourceManager sm; SourceManagerInit(&sm);
+        char* d = DiagFormat(&diag, &sm, 1, &arena);
+        STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
 /* ---- Multidimensional fixed arrays of STRUCTS -----------------------------
    Brace-init struct elements in nested rows - typed literals, bare braces,
    and positional calls - must survive the row placement without confusing

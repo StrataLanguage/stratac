@@ -151,7 +151,7 @@ static inline bool TypeNameIsDynamicArray(const TypeName* t)
     return t && t->isArray && t->length < 0;
 }
 
-// `T[N]` — C-ABI inline storage (struct fields only).
+// `T[N]` — C-ABI inline storage (struct fields and stack-allocated locals).
 static inline bool TypeNameIsFixedArray(const TypeName* t)
 {
     return t && t->isArray && t->length >= 0;

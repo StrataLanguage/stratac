@@ -31,7 +31,7 @@ typedef struct
     bool isSimdVector;
     const TypeName* arrayInner; /* element type of T[] / T[N] */
     bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */
-    bool isFixedArray;          /* T[N]: inline [N x T] (C ABI), struct fields only */
+    bool isFixedArray;          /* T[N]: inline [N x T] (C ABI) — struct fields and stack-allocated locals */
     long fixedLength;           /* N when isFixedArray */
 } TypeDesc;
 

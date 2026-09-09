@@ -101,8 +101,10 @@ static StrataResult CompileSource(const char* src)
 
 STRATA_TEST(sema_fixed_arrays_only_in_struct_fields)
 {
+    /* Locals take stack-allocated `T[N]` with braced init (see ArrayTests);
+       params, returns and globals still ban fixed types. */
     struct { const char* src; const char* msg; } cases[] = {
-        {"int entry() { int[4] xs; return 0; }", "fixed-size array"},
+        {"int entry() { int[4] xs; return 0; }", "braced"},
         {"int f(int[4] xs) { return 0; }", "parameter"},
         {"int[4] f() { return 0; }", "return"},
         {"int[4] g = {1,2,3,4};", "global"},
