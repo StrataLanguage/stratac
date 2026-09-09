@@ -25,10 +25,13 @@ typedef struct
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
-    StrMap m_typeCache;    /* canonical spelling -> interned TypeName tree */
-    StrMap m_constGlobals; /* const scalar global name -> ConstGlobalVal* (manifest constants) */
+    StrMap m_typeCache;      /* canonical spelling -> interned TypeName tree */
+    StrMap m_constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
     const TypeName* m_currentReturnType;
     Vec* m_liveLog; /* when set, MarkBoxLive records keys here (loop warmup) */
+
+    /* Vec of Vec*'s, a list of scopes and their respective symbols. */
+    Vec m_scopeDecls;
 } Resolver;
 
 /* A folded manifest constant: a `const` scalar global whose initializer is a
@@ -2509,7 +2512,7 @@ static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* ta
 static bool IsEmptyBracedForOptional(const Node* n, const TypeName* target)
 {
     bool empty = (n->kind == NodeArrayInit && ((const ArrayInitExpr*)n)->elements.count == 0)
-        || (n->kind == NodeStructInit && ((const StructInitExpr*)n)->fields.count == 0);
+                 || (n->kind == NodeStructInit && ((const StructInitExpr*)n)->fields.count == 0);
 
     return empty && target && target->isOptional;
 }
@@ -2580,8 +2583,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     // A `ref T[]` param may be a borrowed stack view (fixed-array slice):
     // growing/shrinking can reallocate, which would free the caller's storage.
-    if ((isPush || isResize) && arg0->kind == NodeIdent
-        && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)arg0)->name))
+    if ((isPush || isResize) && arg0->kind == NodeIdent && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)arg0)->name))
     {
         DiagErrorFmt(r->m_diag, arg0->range,
                      "'%s' cannot grow '%s' (a ref array param may borrow the caller's stack storage); "
@@ -2632,7 +2634,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
            would otherwise never be typed: no field checks run, and codegen
            zero-fills it (a null `^T` owning field crashes at first deref). */
         bool bracedValue = (arg1->kind == NodeArrayInit && !((ArrayInitExpr*)arg1)->elementType)
-            || (arg1->kind == NodeStructInit && !((StructInitExpr*)arg1)->typeName);
+                           || (arg1->kind == NodeStructInit && !((StructInitExpr*)arg1)->typeName);
 
         Node* typedArg = ApplyBracedStructTarget(r, arg1, elemType);
 
@@ -3044,9 +3046,8 @@ static void CheckStructInitFields(Resolver* r, Node* n)
            initialized; optionals and dynamic arrays may stay empty (a T? is
            null, a zero-filled T[] is the canonical empty {null, 0} fat
            struct). */
-        bool mustInit
-            = !fd->type.isOptional && !TypeNameIsDynamicArray(&fd->type)
-              && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
+        bool mustInit = !fd->type.isOptional && !TypeNameIsDynamicArray(&fd->type)
+                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
 
         if (mustInit && !covered[f])
         {
@@ -4059,7 +4060,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             Node* arg = (Node*)VecGet(&c->args, j);
 
             bool bracedArg = (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
-                || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
+                             || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
 
             // A braced arg takes the field's struct/array shape.
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &fd->type);
@@ -4439,7 +4440,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             }
 
             bool bracedArg = (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
-                || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
+                             || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
 
             const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &param->type);
@@ -4508,25 +4509,25 @@ typedef struct IntrinsicTypeDefinition
 // LLVMModuleBuilder.c.
 static const IntrinsicTypeDefinition intrinsics[] = {
     /* Array calls */
-    {"array_push",   ArrayBuiltinType,           ResolveArrayBuiltin   },
-    {"array_pop",    ArrayBuiltinType,           ResolveArrayBuiltin   },
-    {"array_resize", ArrayBuiltinType,           ResolveArrayBuiltin   },
+    {"array_push",   ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_pop",    ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_resize", ArrayBuiltinType,           ResolveArrayBuiltin    },
 
     /* Memory */
-    {"copy",         CopyBuiltinType,            ResolveCopyBuiltin    },
-    {"drop",         DropBuiltinType,            ResolveDropBuiltin    },
+    {"copy",         CopyBuiltinType,            ResolveCopyBuiltin     },
+    {"drop",         DropBuiltinType,            ResolveDropBuiltin     },
 
     /* Strings */
     {"substring",    SubstringBuiltinType,       ResolveSubstringBuiltin},
 
     /* Vectors */
-    {"float2",       VectorConstructBuiltinType, ResolveVectorConstruct},
-    {"float3",       VectorConstructBuiltinType, ResolveVectorConstruct},
-    {"float4",       VectorConstructBuiltinType, ResolveVectorConstruct},
+    {"float2",       VectorConstructBuiltinType, ResolveVectorConstruct },
+    {"float3",       VectorConstructBuiltinType, ResolveVectorConstruct },
+    {"float4",       VectorConstructBuiltinType, ResolveVectorConstruct },
 
-    {"dot",          VectorDotBuiltinType,       ResolveVector2Arg     },
-    {"cross",        VectorCrossBuiltinType,     ResolveVector2Arg     },
-    {"reduce",       VectorReduceBuiltinType,    ResolveVector1Arg     },
+    {"dot",          VectorDotBuiltinType,       ResolveVector2Arg      },
+    {"cross",        VectorCrossBuiltinType,     ResolveVector2Arg      },
+    {"reduce",       VectorReduceBuiltinType,    ResolveVector1Arg      },
 };
 
 static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)
@@ -5525,7 +5526,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                     CheckOptionalDeref(r, a->value, vt, et, a->base.range);
 
-                    const char* movedValueKey = vt && AliasIsOwningValue(r, vt) ? MovableBoxSourceKey(r, a->value) : NULL;
+                    const char* movedValueKey
+                        = vt && AliasIsOwningValue(r, vt) ? MovableBoxSourceKey(r, a->value) : NULL;
 
                     if (movedValueKey)
                     {
@@ -6184,6 +6186,59 @@ static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* con
     WalkStmt(r, body, scope);
 }
 
+/**
+ * @brief Pushes a new scope to the scopeDecls stack.
+ */
+static void ScopePush(Resolver* r)
+{
+    Vec* frame = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
+    VecInit(frame);
+    VecPush(&r->m_scopeDecls, frame);
+}
+
+/**
+ * @brief Invalidates all symbols in a scope.
+ */
+static void ScopePop(Resolver* r, StrMap* scope)
+{
+    if (r->m_scopeDecls.count == 0)
+    {
+        return;
+    }
+
+    Vec* frame = (Vec*)VecPop(&r->m_scopeDecls);
+
+    for (size_t i = 0; i < frame->count; i++)
+    {
+        const char* name = (const char*)VecGet(frame, i);
+        StrMapPut(scope, name, NULL);
+        ClearBoxSubtree(r, name);
+        ClearNullableFacts(r, name);
+        InvalidateIndexVar(r, name);
+    }
+}
+
+/**
+ * @brief Declares a new symbol `name` in the scope `scope`.
+ */
+static void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range)
+{
+    void* existing = StrMapGet(scope, name);
+
+    if (existing && existing != typePtr)
+    {
+        DiagErrorFmt(r->m_diag, range, "redefinition of '%s'", name);
+    }
+
+    StrMapPut(scope, name, typePtr);
+
+    if (r->m_scopeDecls.count > 0)
+    {
+        Vec* top = (Vec*)VecGet(&r->m_scopeDecls, r->m_scopeDecls.count - 1);
+        VecPush(top, (void*)name);
+    }
+}
+
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 {
     if (!n)
@@ -6238,15 +6293,15 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              "local variable '%s' has invalid fixed-size array type ('%s'); "
                              "fixed-size arrays may only be declared as 'T[N]' locals",
                              vd->name, vd->type.name);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
             if (vd->type.length < 1)
             {
-                DiagErrorFmt(r->m_diag, vd->base.range,
-                             "fixed-size array local '%s' must have a length of at least 1", vd->name);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                DiagErrorFmt(r->m_diag, vd->base.range, "fixed-size array local '%s' must have a length of at least 1",
+                             vd->name);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
@@ -6255,9 +6310,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             if (leaf->isArray)
             {
-                DiagErrorFmt(r->m_diag, vd->base.range,
-                             "fixed-size array local '%s' may not contain a dynamic array", vd->name);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                DiagErrorFmt(r->m_diag, vd->base.range, "fixed-size array local '%s' may not contain a dynamic array",
+                             vd->name);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
@@ -6267,7 +6322,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              "fixed-size array local '%s' may not own its elements ('%s' is owning); "
                              "fixed-size arrays have no drop glue",
                              vd->name, leaf->name);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
@@ -6277,15 +6332,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              "fixed-size array local '%s' may not contain an owning struct ('%s'); "
                              "fixed-size arrays have no drop glue",
                              vd->name, leaf->name);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
             if (IsIncompleteStruct(&r->m_registry, leaf->name))
             {
-                DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name,
-                             leaf->name);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, leaf->name);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
@@ -6295,7 +6349,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                              "fixed-size array local '%s' must be initialized with a braced list "
                              "('{ ... }'), e.g. 'float %s[%ld] = { ... }'",
                              vd->name, vd->name, vd->type.length);
-                StrMapPut(scope, vd->name, (void*)&vd->type);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
 
@@ -6310,15 +6364,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                fails the shape check). Error paths never mutate the init, so
                re-walks reproduce their diagnostics loudly instead of
                converging silent. */
-            bool alreadyFlat = fixedInit->elementType == leaf
-                               && fixedInit->elements.count == (size_t)total
+            bool alreadyFlat = fixedInit->elementType == leaf && fixedInit->elements.count == (size_t)total
                                && !HasNestedArrayInit(fixedInit);
 
             if (!alreadyFlat)
             {
                 if (!CheckFixedArrayInitShape(r, &vd->type, fixedInit, leaf, vd->name, "local"))
                 {
-                    StrMapPut(scope, vd->name, (void*)&vd->type);
+                    ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                     return;
                 }
 
@@ -6340,9 +6393,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 if (!PlaceFixedArrayInit(&flat, 0, &vd->type, fixedInit))
                 {
                     DiagErrorFmt(r->m_diag, vd->init->range,
-                                 "too many initializers for fixed-size array local '%s' (%ld max)", vd->name,
-                                 total);
-                    StrMapPut(scope, vd->name, (void*)&vd->type);
+                                 "too many initializers for fixed-size array local '%s' (%ld max)", vd->name, total);
+                    ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                     return;
                 }
 
@@ -6383,15 +6435,15 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 if (elemType && !IsAssignableType(r, leaf, elemType))
                 {
                     DiagErrorFmt(r->m_diag, elem->range,
-                                 "element of type '%s' cannot initialize '%s' element of local '%s'",
-                                 elemType->name, leaf->name, vd->name);
+                                 "element of type '%s' cannot initialize '%s' element of local '%s'", elemType->name,
+                                 leaf->name, vd->name);
                 }
             }
 
             ClearBoxSubtree(r, vd->name);
             ClearNullableFacts(r, vd->name);
             InvalidateIndexVar(r, vd->name);
-            StrMapPut(scope, vd->name, (void*)&vd->type);
+            ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
             return;
         }
 
@@ -6410,8 +6462,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         if (TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range, "instances of '%s' must be boxed (i.e, '^%s').",
-                         vd->type.name, vd->type.name);
+            DiagErrorFmt(r->m_diag, vd->base.range, "instances of '%s' must be boxed (i.e, '^%s').", vd->type.name,
+                         vd->type.name);
         }
 
         // Dynamic arrays of owning structs (`Rec[]`) are legal: the fat owns
@@ -6463,7 +6515,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
-        // Fresh binding: drop stale state from any shadowed same-named var.
+        // Fresh binding: drop stale flow state for this name.
         ClearBoxSubtree(r, vd->name);
         ClearNullableFacts(r, vd->name);
         InvalidateIndexVar(r, vd->name);
@@ -6474,7 +6526,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             MarkPathNonEmpty(r, vd->name);
         }
 
-        StrMapPut(scope, vd->name, (void*)&vd->type);
+        ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
 
         return;
     }
@@ -6597,7 +6649,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
+        /* Each branch is its own lexical scope: locals declared in one
+           branch are invisible in the other and after the join. */
+        ScopePush(r);
         WalkStmt(r, i->thenBranch, scope);
+        ScopePop(r, scope);
 
         StrMap afterThen;
         CopyStrMap(&r->m_movedBoxes, &afterThen);
@@ -6623,7 +6679,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 MarkPathEmpty(r, factKey);
             }
 
+            ScopePush(r);
             WalkStmt(r, i->elseBranch, scope);
+            ScopePop(r, scope);
 
             ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
         }
@@ -6672,7 +6730,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         StrMap preFacts;
         CopyStrMap(&r->m_nonEmptyPaths, &preFacts);
 
+        /* The loop body is its own scope (covers non-block bodies too;
+           block bodies nest a second scope harmlessly). */
+        ScopePush(r);
         WalkLoopBody(r, w->body, scope, factKey, whileFactNegated);
+        ScopePop(r, scope);
 
         FinishLoopFacts(r, &preFacts, factKey, whileFactNegated);
 
@@ -6683,6 +6745,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     case NodeFor:
     {
         ForStmt* fs = (ForStmt*)n;
+
+        /* The whole loop (init, condition, update, body) is one scope so a
+           `for (int i ...)` header variable is visible in the body but does
+           not leak after the loop. */
+        ScopePush(r);
 
         if (fs->init)
         {
@@ -6721,6 +6788,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         StrMapFree(&preFacts);
 
+        ScopePop(r, scope);
+
         return;
     }
     default:
@@ -6730,10 +6799,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
 static void WalkBlock(Resolver* r, Block* b, StrMap* scope)
 {
+    ScopePush(r);
+
     for (size_t i = 0; i < b->statements.count; i++)
     {
         WalkStmt(r, (Node*)VecGet(&b->statements, i), scope);
     }
+
+    ScopePop(r, scope);
 }
 
 /* ---- Missing-return flow analysis ---- */
@@ -6971,6 +7044,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_refArrayParams);
     StrMapInit(&r.m_typeCache);
+    VecInit(&r.m_scopeDecls);
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {
@@ -7029,6 +7103,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         ResetStrMap(&r.m_movedBoxes);
         ResetStrMap(&r.m_refBoxParams);
         ResetStrMap(&r.m_refArrayParams);
+        r.m_scopeDecls.count = 0;
 
         for (size_t j = 0; j < mod->globals.count; j++)
         {

@@ -71,6 +71,7 @@ typedef struct Builder
     Vec m_loops;
     Vec m_owningLocals;
     Vec m_scopes;        /* active block scopes for `defer` (BlockScope*) */
+    Vec m_symDecls;      /* stack of Vec*: locals declared in each active lexical block */
     LLVMTypeRef m_arrayType; /* cached {ptr, u32 len, u32 cap} fat struct for T[] */
     LLVMValueRef m_emptyNul; /* cached static "" (single NUL byte) for extern string puns */
     LLVMValueRef m_allocFn;

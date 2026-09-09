@@ -1861,6 +1861,44 @@ static BlockScope* TopScope(Builder* b)
     return (BlockScope*)VecGet(&b->m_scopes, b->m_scopes.count - 1);
 }
 
+/* ---- Lexical symbol scopes ----
+   `m_symbols` is flat, so each lexical block records the locals it declares;
+   SymPop removes exactly those again. Sema already rejects redefinitions, so
+   codegen silently overwrites (invalid programs never reach emission with
+   diagnostics clean, and valid ones never collide). */
+static void SymPush(Builder* b)
+{
+    Vec* frame = (Vec*)arena_alloc(b->m_arena, sizeof(Vec));
+    VecInit(frame);
+    VecPush(&b->m_symDecls, frame);
+}
+
+static void SymPop(Builder* b)
+{
+    if (b->m_symDecls.count == 0)
+    {
+        return;
+    }
+
+    Vec* frame = (Vec*)VecPop(&b->m_symDecls);
+
+    for (size_t i = 0; i < frame->count; i++)
+    {
+        StrMapPut(&b->m_symbols, (const char*)VecGet(frame, i), NULL);
+    }
+}
+
+static void SymDeclare(Builder* b, const char* name, Value* sym)
+{
+    StrMapPut(&b->m_symbols, name, sym);
+
+    if (b->m_symDecls.count > 0)
+    {
+        Vec* top = (Vec*)VecGet(&b->m_symDecls, b->m_symDecls.count - 1);
+        VecPush(top, (void*)name);
+    }
+}
+
 /* Run one scope's deferred statements, LIFO (last `defer` first), Zig-style. */
 static void RunDefers(Builder* b, BlockScope* scope)
 {
@@ -1983,6 +2021,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_loops.count = 0;
     b->m_owningLocals.count = 0;
     b->m_scopes.count = 0;
+    b->m_symDecls.count = 0;
 
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
     b->m_curFn = info ? info->function : NULL;
@@ -2048,6 +2087,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     Block* blk = (Block*)f->body;
 
     PushScope(b);
+    SymPush(b);
 
     for (size_t i = 0; i < blk->statements.count; i++)
     {
@@ -2065,6 +2105,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         RunDefers(b, TopScope(b));
     }
 
+    SymPop(b);
     PopScope(b);
 
     if (!b->m_terminated)
@@ -6123,7 +6164,7 @@ static void EmitStmt(Builder* b, Node* n)
             sym->value = slot;
             sym->typeDesc = typeDesc;
 
-            StrMapPut(&b->m_symbols, varDecl->name, sym);
+            SymDeclare(b, varDecl->name, sym);
 
             return;
         }
@@ -6175,7 +6216,7 @@ static void EmitStmt(Builder* b, Node* n)
             sym->value = slot;
             sym->typeDesc = typeDesc;
 
-            StrMapPut(&b->m_symbols, varDecl->name, sym);
+            SymDeclare(b, varDecl->name, sym);
 
             OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
             ol->slot = slot;
@@ -6233,7 +6274,7 @@ static void EmitStmt(Builder* b, Node* n)
             sym->value = slot;
             sym->typeDesc = typeDesc;
 
-            StrMapPut(&b->m_symbols, varDecl->name, sym);
+            SymDeclare(b, varDecl->name, sym);
 
             OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
             ol->slot = slot;
@@ -6259,7 +6300,7 @@ static void EmitStmt(Builder* b, Node* n)
         sym->value = slot;
         sym->typeDesc = typeDesc;
 
-        StrMapPut(&b->m_symbols, varDecl->name, sym);
+        SymDeclare(b, varDecl->name, sym);
 
         return;
     }
@@ -6283,6 +6324,7 @@ static void EmitStmt(Builder* b, Node* n)
         size_t mark = b->m_owningLocals.count;
 
         PushScope(b);
+        SymPush(b);
 
         for (size_t i = 0; i < blk->statements.count; i++)
         {
@@ -6299,6 +6341,7 @@ static void EmitStmt(Builder* b, Node* n)
             RunDefers(b, TopScope(b));
         }
 
+        SymPop(b);
         PopScope(b);
 
         if (!b->m_terminated)
@@ -6326,11 +6369,13 @@ static void EmitStmt(Builder* b, Node* n)
 
         PositionAtEnd(b, thenBB);
         PushScope(b);
+        SymPush(b);
         EmitStmt(b, i->thenBranch);
         if (!b->m_terminated)
         {
             RunDefers(b, TopScope(b));
         }
+        SymPop(b);
         PopScope(b);
         Br(b, endBB);
 
@@ -6338,11 +6383,13 @@ static void EmitStmt(Builder* b, Node* n)
         {
             PositionAtEnd(b, elseBB);
             PushScope(b);
+            SymPush(b);
             EmitStmt(b, i->elseBranch);
             if (!b->m_terminated)
             {
                 RunDefers(b, TopScope(b));
             }
+            SymPop(b);
             PopScope(b);
             Br(b, endBB);
         }
@@ -6383,12 +6430,14 @@ static void EmitStmt(Builder* b, Node* n)
         VecPush(&b->m_loops, loop);
 
         PushScope(b);
+        SymPush(b);
         EmitStmt(b, w->body);
         bool term = b->m_terminated;
         if (!term)
         {
             RunDefers(b, TopScope(b));
         }
+        SymPop(b);
         PopScope(b);
         VecPop(&b->m_loops);
 
@@ -6407,6 +6456,8 @@ static void EmitStmt(Builder* b, Node* n)
         ForStmt* fs = (ForStmt*)n;
 
         size_t headerMark = b->m_owningLocals.count;
+
+        SymPush(b);
 
         if (fs->init)
         {
@@ -6444,12 +6495,14 @@ static void EmitStmt(Builder* b, Node* n)
         VecPush(&b->m_loops, loop);
 
         PushScope(b);
+        SymPush(b);
         EmitStmt(b, fs->body);
         bool term = b->m_terminated;
         if (!term)
         {
             RunDefers(b, TopScope(b));
         }
+        SymPop(b);
         PopScope(b);
         VecPop(&b->m_loops);
 
@@ -6471,6 +6524,8 @@ static void EmitStmt(Builder* b, Node* n)
         }
 
         PositionAtEnd(b, endBB);
+
+        SymPop(b);
 
         return;
     }
@@ -7339,6 +7394,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     VecInit(&b.m_loops);
     VecInit(&b.m_owningLocals);
     VecInit(&b.m_scopes);
+    VecInit(&b.m_symDecls);
     b.m_allocFn = NULL;
     b.m_allocFnType = NULL;
     b.m_freeFn = NULL;

@@ -1002,22 +1002,16 @@ STRATA_TEST(manifest_const_expr_and_boundary_index)
 
 STRATA_TEST(manifest_const_shadowed_by_local)
 {
+    // No shadowing: a local reusing a visible global name is a redefinition
+    // error, even for manifest constants.
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
+    ParseAndResolve(
         "const int v = 4;\n"
         "int test() { const int v = 9; return v; }\n",
         &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(DiagHasErrors(&diag));
 
-    CodegenResult res = GenerateLlvmIr(mod);
-    STRATA_CHECK(res.ok);
-    /* The local const shadows the manifest global: it's a real alloca holding
-       9, and the global symbol is not emitted. */
-    STRATA_CHECK(strstr(res.output, "@v") == NULL);
-    STRATA_CHECK(strstr(res.output, "store i32 9, ptr %v") != NULL);
-
-    free((void*)res.output);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
