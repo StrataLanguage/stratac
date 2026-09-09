@@ -73,6 +73,16 @@ void maybe_mutate(ref int i)
 ++i;
 }
 
+extern int printf(string fmt, ...);
+
+void take_ref_array(ref int[] ints)
+{
+  for (int i = 0; i < ints.length; i++)
+  {
+    printf("ints[%d] = %d\n", i, ints[i]);
+  }
+}
+
 /* Takes the array BY VALUE (moved from the caller): a `ref T[]` param may
    borrow the caller's stack storage (a fixed-array view), so a ref binding
    can never be grown — push/resize belong on an owned array. */
@@ -105,6 +115,8 @@ void PrintAll(^FooBar[] elems) {
 
 int entry() {
     PrintAll(testGlobalArray);
+
+    take_ref_array({ 1,2,3});
 
     ^FooBar[] fooBars = { FooBar("hello", {}, { "ANOTHER ONE!" }), FooBar("world", {}, {}) };
     PrintAll(fooBars);

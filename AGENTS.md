@@ -348,6 +348,16 @@ main) are the internal entry points.
    whole-binding reassignment (`a = b`) are COMPILE ERRORS ("may borrow the
    caller's stack storage"); `array_pop` and element writes are fine. Grow a
    `copy()` into a local array instead, or take the array by value.
+   A braced literal arg against a `ref T[]` param is STACK-constructed (a
+   la the typed rest slot): the callee borrows it (element writes hit the
+   temp and are lost; growth is rejected) and the caller drops owning
+   elements right after the call — the stack buffer is never freed. A
+   braced literal against a BY-VALUE array param constructs a NORMAL
+   heap-backed dynamic array: ownership transfers to the callee (its
+   owning-param teardown drops buffer + elements at exit — it may even
+   `array_push` it). Extern by-value array params reject literals (the
+   decayed `T*` could never be freed by the host) — pass a variable or
+   take `ref`.
 
 ### Equality system (`==`/`!=`)
 

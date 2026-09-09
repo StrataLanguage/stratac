@@ -4954,6 +4954,14 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
     return value;
 }
 
+/* A caller-owned array-literal temp lent to a `ref T[]` param: the callee
+   borrows it; the caller drops it right after the call returns. */
+typedef struct {
+    LLVMValueRef slot;
+    TypeDesc td;
+    bool stackOnly; /* stack-constructed view: drop owning ELEMENTS, never free the buffer */
+} OwnedArgTemp;
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
     if (n->isIntrinsicCall)
@@ -5066,6 +5074,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
     LLVMValueRef returnParamSlot = NULL;
     TypeDesc returnParamTd = {0};
 
+    /* Array literals lent to `ref T[]` params: caller-owned temps, dropped
+       after the call. */
+    Vec ownedArgTemps;
+    VecInit(&ownedArgTemps);
+
     for (size_t k = 0; k < nargs; k++)
     {
         /* Return-param slot: a fresh temp the callee writes its result into;
@@ -5158,12 +5171,55 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
         }
 
+        /* Array literal against a dynamic-array param: the param's shape
+           stamps the element types (sema), so the literal can construct. */
+        if (shouldPassByPtr && fd && k < fd->params.count && argNode->kind == NodeArrayInit)
+        {
+            const ParamDecl* litParam = (ParamDecl*)VecGet(&fd->params, k);
+
+            if (TypeNameIsDynamicArray(&litParam->type))
+            {
+                ArrayInitExpr* ai = AsNode(ArrayInitExpr, argNode);
+                Value arr;
+
+                if (litParam->mod == ModRef)
+                {
+                    /* `ref T[]` borrows: construct the literal on the STACK
+                       (a la the typed rest slot). The caller drops owning
+                       elements after the call; the stack buffer is never
+                       freed. */
+                    arr = EmitArrayFromNodes(b, ai->elementType, &ai->elements, true, false);
+                }
+                else
+                {
+                    /* By value: a normal heap-backed dynamic array — the
+                       callee owns it and drops it at exit. */
+                    arr = EmitArrayInit(b, ai);
+                }
+
+                LLVMValueRef litSlot = EntryAlloca(b, ArrayStructType(b), "litarr");
+                LLVMBuildStore(b->m_builder, arr.value, litSlot);
+                args[k] = litSlot;
+
+                if (litParam->mod == ModRef)
+                {
+                    OwnedArgTemp* temp = (OwnedArgTemp*)arena_alloc(b->m_arena, sizeof(OwnedArgTemp));
+                    temp->slot = litSlot;
+                    temp->td = arr.typeDesc;
+                    temp->stackOnly = true;
+                    VecPush(&ownedArgTemps, temp);
+                }
+
+                continue;
+            }
+        }
+
         /* Fixed array → `ref T[]` param: borrow the inline storage as a
            stack fat {&fixed[0], N, N} — a slice/view with no allocation and
            no copy (same stack-fat trick as the typed rest slot). The callee
            reads/writes elements through the data pointer; a `ref` binding is
            never dropped or freed (ref params are exempt from the
-           owning-local teardown), so the borrowed stack storage is safe. */
+           owning-local teardown). */
         if (shouldPassByPtr && fd && k < fd->params.count
             && (argNode->kind == NodeIdent || argNode->kind == NodeMember))
         {
@@ -5387,6 +5443,23 @@ static Value EmitCall(Builder* b, CallExpr* n)
     else
     {
         call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+    }
+
+    /* Array-literal args: `ref T[]` temps are stack views (drop owning
+       elements, never the buffer); by-value temps transferred ownership to
+       the callee and are not touched here. */
+    for (size_t t = 0; t < ownedArgTemps.count; t++)
+    {
+        OwnedArgTemp* at = (OwnedArgTemp*)VecGet(&ownedArgTemps, t);
+
+        if (at->stackOnly)
+        {
+            EmitDropOneStack(b, at->slot, at->td);
+        }
+        else
+        {
+            EmitDropOne(b, at->slot, at->td);
+        }
     }
 
     /* Sub-32-bit integer extern returns (bool/byte/sbyte/short/ushort): the

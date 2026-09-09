@@ -1386,6 +1386,309 @@ STRATA_TEST(ref_array_param_growth_rejected)
     }
 }
 
+/* ---- Fixed array → NON-ref array params are rejected ----------------------
+   A stack view can only be BORROWED (`ref T[]`). By-value array params
+   (ownership transfer), owning/optional/rest/extern-array params and
+   element mismatches all reject the whole-array argument. */
+
+STRATA_TEST(fixed_array_to_non_ref_array_param_rejected)
+{
+    struct { const char* src; const char* msg; } cases[] = {
+        /* By-value `T[]` param implies ownership transfer — a stack view
+           can't be owned. */
+        {"int take(int[] x) { return (int)x.length; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* `const` by value is still not a ref — same ownership transfer. */
+        {"int take(const int[] x) { return 0; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Owning-element array param (`^T[]` owns its buffer + elements). */
+        {"struct Foo { int v; };\n"
+         "int take(^Foo[] x) { return 0; }\n"
+         "int entry() { Foo[2] v = { Foo{.v = 1}, Foo{.v = 2} }; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Optional array param (`ref T[]?` crosses the SLOT — a view can't). */
+        {"int take(ref int[]? x) { return 0; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Typed rest collects ELEMENTS — a whole array is not an element. */
+        {"int take(int... rest) { return (int)rest.length; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Extern by-value array param (decays to T*): still no whole-array. */
+        {"extern int take(int[] x);\n"
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Element type mismatch against the ref view. */
+        {"int take(ref long[] x) { return 0; }\n"
+         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Shape mismatch: `int[2][3]`'s rows are `int[3]`, not `int[]`. */
+        {"int take(ref int[][] x) { return 0; }\n"
+         "int entry() { int[2][3] v = {{1, 2, 3}, {4, 5, 6}}; return take(v); }",
+         "cannot pass fixed-size array"},
+        /* Field-sourced fixed arrays are held to the same rule. */
+        {"struct Buf { int[3] data; };\n"
+         "int take(int[] x) { return 0; }\n"
+         "int entry() { Buf b = Buf { .data = {1, 2, 3} }; return take(b.data); }",
+         "no matching overload"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        ParseAndResolve(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+
+        SourceManager sm; SourceManagerInit(&sm);
+        char* d = DiagFormat(&diag, &sm, 1, &arena);
+        STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+STRATA_TEST(fixed_array_view_wins_over_by_value_overload)
+{
+    /* With a by-value overload ALSO visible, the fixed arg skips the blanket
+       error and resolves to the `ref T[]` view — the by-value overload just
+       isn't viable for a stack view. (Distinct element types: param mods are
+       not part of the mangling, so `int[]`/`ref int[]` can't coexist.) */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int take(long[] x) { return 1; }\n"
+        "int take(ref int[] x) { return (int)x.length; }\n"
+        "int entry() { int[3] v = {1, 2, 3}; return take(v); }\n",   /* 3, not 1 */
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 3);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Array literal → `ref T[]` param --------------------------------------
+   A braced literal arg against a `ref T[]` param is STACK-constructed (a la
+   the typed rest slot): the callee borrows it (element writes hit the temp
+   and are lost, growth is rejected by the borrowed-binding rule); the
+   caller drops owning elements right after the call — no leak, no double
+   free, and the stack buffer is never freed. */
+
+STRATA_TEST(ref_array_literal_arg_borrowed_temp)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int read(ref int[] a)\n"
+        "{\n"
+        "  int s = 0;\n"
+        "  for (ulong i = 0; i < a.length; i = i + 1) { s = s + a[i]; }\n"
+        "  return s;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  int r = read({1, 2, 3});\n"          /* 6 */
+        "  r = r * 10 + read({4, 5});\n"        /* 60+9 -> 69 */
+        "  return r * 10 + read({9});\n"        /* 690+9 -> 699 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 699);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(ref_array_literal_arg_callee_writes_are_lost)
+{
+    /* The literal temp is caller-owned; callee element writes hit it and
+       vanish with the call. No crash from the post-call drop. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int scribble(ref int[] a) { a[0] = 99; return (int)a.length; }\n"
+        "int entry() { return scribble({1, 2, 3}) * 10 + 1; }\n",   /* 31 */
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 31);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(ref_array_literal_arg_owning_elements_dropped)
+{
+    /* `^Foo[]` literal (owning boxes with strings): constructed per call,
+       dropped by the caller after the call — churn without crashing. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Foo { string s; };\n"
+        "int count(ref ^Foo[] a) { return (int)a.length; }\n"
+        "int entry()\n"
+        "{\n"
+        "  int t = 0;\n"
+        "  for (ulong i = 0; i < 200; i = i + 1) { t = t + count({ Foo(\"x\"), Foo(\"y\") }); }\n"
+        "  return t;\n"   /* 400 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 400);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(ref_array_literal_arg_rejections)
+{
+    struct { const char* src; const char* msg; } cases[] = {
+        /* Growth is still rejected — the binding is borrowed. */
+        {"int f(ref int[] a) { array_push(a, 9); return 0; }\n"
+         "int entry() { return f({1, 2, 3}); }",
+         "cannot grow"},
+        /* Extern by-value arrays decay to T*: the host could never free a
+           Strata temp buffer, so literals are rejected there. */
+        {"extern int take(int[] x);\n"
+         "int entry() { return take({1, 2, 3}); }",
+         "cannot pass an array literal to by-value extern array parameter"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        ParseAndResolve(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+
+        SourceManager sm; SourceManagerInit(&sm);
+        char* d = DiagFormat(&diag, &sm, 1, &arena);
+        STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+/* ---- Array literal → by-value `T[]` param ---------------------------------
+   The literal constructs a NORMAL heap-backed dynamic array; ownership
+   transfers to the callee (dropped at exit) — it may even grow it. */
+
+STRATA_TEST(by_value_array_literal_arg_owned_temp)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "int take(int[] x)\n"
+        "{\n"
+        "  array_push(x, 9);\n"      /* the temp is ours: grow it */
+        "  return (int)x.length;\n"
+        "}\n"
+        "int entry()\n"
+        "{\n"
+        "  int r = take({1, 2, 3});\n"   /* 4 */
+        "  return r * 10 + take({5});\n" /* 40 + 2 -> 42 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 42);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(by_value_array_literal_arg_owning_elements_dropped)
+{
+    /* `^Foo[]` literal → by-value param: the callee owns boxes + buffer and
+       drops them at exit — churn without crashing. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr(
+        "struct Foo { string s; };\n"
+        "int count(^Foo[] a) { return (int)a.length; }\n"
+        "int entry()\n"
+        "{\n"
+        "  int t = 0;\n"
+        "  for (ulong i = 0; i < 200; i = i + 1) { t = t + count({ Foo(\"x\"), Foo(\"y\") }); }\n"
+        "  return t;\n"   /* 400 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 400);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(ref_array_param_reads_and_element_writes_ok)
 {
     /* Borrowed does not mean read-only: reads and ELEMENT writes work. */

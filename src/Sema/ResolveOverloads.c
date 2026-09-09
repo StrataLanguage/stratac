@@ -3998,6 +3998,37 @@ static bool OverloadTakesFixedView(Resolver* r, const char* name, const TypeName
     return false;
 }
 
+/* Stamps a braced literal and its nested rows with element types, top-down.
+   Call args are resolved BEFORE the overload is known (so the generic
+   inheritance walk saw a NULL elementType); the chosen param supplies the
+   types here. */
+static void StampArrayInitElemTypes(ArrayInitExpr* ai, const TypeName* elem)
+{
+    if (!elem || ai->elementType)
+    {
+        return;
+    }
+
+    ai->elementType = elem;
+
+    if (!TypeNameIsArray(elem))
+    {
+        return;
+    }
+
+    const TypeName* inner = TypeNameArrayElem(elem);
+
+    for (size_t i = 0; i < ai->elements.count; i++)
+    {
+        Node* child = (Node*)VecGet(&ai->elements, i);
+
+        if (child && child->kind == NodeArrayInit && !((ArrayInitExpr*)child)->elementType)
+        {
+            StampArrayInitElemTypes((ArrayInitExpr*)child, inner);
+        }
+    }
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     /* `expr.Member(args)` / `Type.Static(args)` — resolve against impl blocks.
@@ -4443,6 +4474,29 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                              || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
 
             const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
+
+            /* Braced array literal against a dynamic-array param: stamp the
+               element types (the assign path does the same) so the literal
+               constructs. A `ref T[]` binding BORROWS a stack-constructed
+               temp; a by-value param takes ownership of a normal heap array
+               the callee drops. Extern by-value arrays decay to T* — the
+               host could never free a Strata temp, so literals are
+               rejected there. */
+            if (arg->kind == NodeArrayInit && TypeNameIsDynamicArray(&param->type)
+                && !((ArrayInitExpr*)arg)->elementType)
+            {
+                if (best->isExtern && param->mod != ModRef)
+                {
+                    DiagErrorFmt(r->m_diag, arg->range,
+                                 "cannot pass an array literal to by-value extern array parameter '%s' of '%s'; "
+                                 "pass an array variable or declare the parameter as 'ref %s'",
+                                 param->name ? param->name : "", best->name, param->type.name);
+                    continue;
+                }
+
+                StampArrayInitElemTypes((ArrayInitExpr*)arg, TypeNameArrayElem(&param->type));
+            }
+
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &param->type);
 
             if (resolvedArg != arg)
