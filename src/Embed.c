@@ -502,7 +502,7 @@ extern "C"
 
             LlvmJitExport* exp = (LlvmJitExport*)malloc(sizeof(LlvmJitExport));
             exp->name = DupString(fn->mangledName);
-            exp->isIntVoid = strcmp(fn->returnType.name, "int") == 0 && fn->params.count == 0;
+            exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0;
             VecPush(&handle->llvmExports, exp);
         }
 
