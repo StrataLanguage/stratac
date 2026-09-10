@@ -142,9 +142,7 @@ bool IsNumeric(PrimitiveType primType)
 
 bool IsNameNumeric(const char* t)
 {
-    return strcmp(t, "int") == 0 || strcmp(t, "uint") == 0 || strcmp(t, "long") == 0 || strcmp(t, "ulong") == 0
-           || strcmp(t, "byte") == 0 || strcmp(t, "sbyte") == 0 || strcmp(t, "short") == 0 || strcmp(t, "ushort") == 0
-           || strcmp(t, "float") == 0 || strcmp(t, "double") == 0 || strcmp(t, "bool") == 0;
+    return t && IsNumeric(GetPrimitiveType(t));
 }
 
 int IsSimdVector(const PrimitiveType prim)
@@ -165,20 +163,7 @@ int IsSimdVector(const PrimitiveType prim)
 
 int IsNameSimdVector(const char* t)
 {
-    if (strcmp(t, "float2") == 0)
-    {
-        return 2;
-    }
-    if (strcmp(t, "float3") == 0)
-    {
-        return 3;
-    }
-    if (strcmp(t, "float4") == 0)
-    {
-        return 4;
-    }
-
-    return 0;
+    return t ? IsSimdVector(GetPrimitiveType(t)) : 0;
 }
 
 bool IsScalarType(const PrimitiveType prim)
@@ -188,12 +173,12 @@ bool IsScalarType(const PrimitiveType prim)
 
 bool IsNameScalarType(const char* t)
 {
-    return IsNameNumeric(t);
+    return t && IsScalarType(GetPrimitiveType(t));
 }
 
 bool IsNameFloatType(const char* t)
 {
-    return strcmp(t, "double") == 0 || strcmp(t, "float") == 0;
+    return t && IsFloatType(GetPrimitiveType(t));
 }
 
 bool IsFloatType(const PrimitiveType prim)
@@ -203,7 +188,7 @@ bool IsFloatType(const PrimitiveType prim)
 
 bool IsNameScalarPseudoType(const char* t)
 {
-    return IsNameScalarType(t) && strcmp(t, "bool") != 0;
+    return t && IsScalarPseudoType(GetPrimitiveType(t));
 }
 
 bool IsScalarPseudoType(PrimitiveType prim)
@@ -306,7 +291,7 @@ bool TypeIsString(const TypeRegistry* reg, const char* name)
     }
 
     const char* leaf = reg ? TypeRegistryResolveAlias(reg, name) : name;
-    return leaf && strcmp(leaf, "string") == 0;
+    return leaf && GetPrimitiveType(leaf) == PrimString;
 }
 
 bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t)
@@ -378,7 +363,7 @@ bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName*
         return false;
     }
 
-    if (strcmp(leaf, "string") == 0)
+    if (leaf && GetPrimitiveType(leaf) == PrimString)
     {
         return true;
     }

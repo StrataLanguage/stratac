@@ -48,61 +48,75 @@ typedef struct
 /* The scalar integral types an enum may be based on. */
 static bool IsEnumUnderlyingType(const char* t)
 {
-    return strcmp(t, "int") == 0 || strcmp(t, "uint") == 0 || strcmp(t, "long") == 0 || strcmp(t, "ulong") == 0
-           || strcmp(t, "byte") == 0 || strcmp(t, "sbyte") == 0 || strcmp(t, "short") == 0 || strcmp(t, "ushort") == 0;
+    if (!t)
+    {
+        return false;
+    }
+
+    switch (GetPrimitiveType(t))
+    {
+    case PrimInt:
+    case PrimUInt:
+    case PrimLong:
+    case PrimULong:
+    case PrimByte:
+    case PrimSByte:
+    case PrimShort:
+    case PrimUShort:
+        return true;
+    default:;
+    }
+
+    return false;
 }
 
 /* Signed bounds for the enum underlying types. */
 static void EnumSignedRange(const char* underlying, bool* isUnsigned, int64_t* minVal, uint64_t* maxVal)
 {
-    if (strcmp(underlying, "byte") == 0)
+    switch (GetPrimitiveType(underlying))
     {
+    case PrimByte:
         *isUnsigned = true;
         *minVal = 0;
         *maxVal = UCHAR_MAX;
-    }
-    else if (strcmp(underlying, "ushort") == 0)
-    {
+        return;
+    case PrimUShort:
         *isUnsigned = true;
         *minVal = 0;
         *maxVal = USHRT_MAX;
-    }
-    else if (strcmp(underlying, "uint") == 0)
-    {
+        return;
+    case PrimUInt:
         *isUnsigned = true;
         *minVal = 0;
         *maxVal = UINT_MAX;
-    }
-    else if (strcmp(underlying, "ulong") == 0)
-    {
+        return;
+    case PrimULong:
         *isUnsigned = true;
         *minVal = 0;
         *maxVal = ULLONG_MAX;
-    }
-    else if (strcmp(underlying, "sbyte") == 0)
-    {
+        return;
+    case PrimSByte:
         *isUnsigned = false;
         *minVal = SCHAR_MIN;
         *maxVal = (uint64_t)SCHAR_MAX;
-    }
-    else if (strcmp(underlying, "short") == 0)
-    {
+        return;
+    case PrimShort:
         *isUnsigned = false;
         *minVal = SHRT_MIN;
         *maxVal = (uint64_t)SHRT_MAX;
-    }
-    else if (strcmp(underlying, "int") == 0)
-    {
+        return;
+    case PrimInt:
         *isUnsigned = false;
         *minVal = INT_MIN;
         *maxVal = (uint64_t)INT_MAX;
+        return;
+    default:;
     }
-    else /* "long" */
-    {
-        *isUnsigned = false;
-        *minVal = LLONG_MIN;
-        *maxVal = (uint64_t)LLONG_MAX;
-    }
+
+    /* "long" (and any fallback) */
+    *isUnsigned = false;
+    *minVal = LLONG_MIN;
+    *maxVal = (uint64_t)LLONG_MAX;
 }
 
 /* Interprets `mag` (with sign) as a signed value; false when the magnitude
@@ -665,9 +679,26 @@ static bool IsConstDimType(const TypeRegistry* reg, const char* name)
 {
     const char* leaf = TypeRegistryResolveAlias(reg, name);
 
-    return strcmp(leaf, "int") == 0 || strcmp(leaf, "uint") == 0 || strcmp(leaf, "long") == 0
-           || strcmp(leaf, "ulong") == 0 || strcmp(leaf, "byte") == 0 || strcmp(leaf, "sbyte") == 0
-           || strcmp(leaf, "short") == 0 || strcmp(leaf, "ushort") == 0;
+    if (!leaf)
+    {
+        return false;
+    }
+
+    switch (GetPrimitiveType(leaf))
+    {
+    case PrimInt:
+    case PrimUInt:
+    case PrimLong:
+    case PrimULong:
+    case PrimByte:
+    case PrimSByte:
+    case PrimShort:
+    case PrimUShort:
+        return true;
+    default:;
+    }
+
+    return false;
 }
 
 /* A `const` scalar global of any numeric type folds into the manifest table
@@ -684,7 +715,7 @@ static bool IsBoolType(const TypeRegistry* reg, const TypeName* t)
         return false;
     }
 
-    return strcmp(TypeRegistryResolveAlias(reg, t->name), "bool") == 0;
+    return GetPrimitiveType(TypeRegistryResolveAlias(reg, t->name)) == PrimBool;
 }
 
 /* Resolves `[constName]` fixed-array dimensions on a type tree against the
@@ -2621,7 +2652,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* sizeType = InferType(r, arg1, scope);
 
-        if (sizeType && !IsNameNumeric(sizeType->name))
+        if (sizeType && !IsNumeric(sizeType->primitiveType))
         {
             DiagErrorFmt(r->m_diag, arg1->range, "'array_resize' size must be an integer, not '%s'", sizeType->name);
         }
@@ -2737,7 +2768,7 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
 // Bare `...` also accepts `^T` when T is scalar/string/handle.
 static bool IsCVarargCompatible(Resolver* r, const TypeName* type)
 {
-    if (!type || strcmp(type->name, "void") == 0)
+    if (!type || type->primitiveType == PrimVoid)
     {
         return false;
     }
@@ -3404,7 +3435,7 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
         if (isSetter)
         {
-            if (strcmp(match->returnType.name, "void") != 0)
+            if (match->returnType.primitiveType != PrimVoid)
             {
                 DiagErrorFmt(diag, range, "property setter '%s' must return void; found '%s'", symbol,
                              match->returnType.name);
@@ -3932,7 +3963,7 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
                as a fat {ptr,len} struct no C thunk can sanely implement for a
                single accessor. Fixed `T[N]` is rejected later by the
                function-level fixed-array rules (synthesized getter/setter). */
-            if (strcmp(prop->returnType.name, "void") == 0)
+            if (prop->returnType.primitiveType == PrimVoid)
             {
                 DiagErrorFmt(diag, prop->range, "property '%s' may not have type 'void'", prop->name);
                 continue;
@@ -4693,43 +4724,43 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         {
             const TypeName* lt = InferType(r, b->lhs, scope);
             const TypeName* rt = InferType(r, b->rhs, scope);
-            const char* ln = lt ? lt->name : "";
-            const char* rn = rt ? rt->name : "";
+            PrimitiveType lp = lt ? lt->primitiveType : PrimNone;
+            PrimitiveType rp = rt ? rt->primitiveType : PrimNone;
 
             /* Box/optional operands deref to their inner for arithmetic
                (mirrors the ResolveExpr operand check). Same-shape SIMD
                vectors keep the vector type: the scalar ladder below would
                report a bogus `int` and break overload matching for valid
                vector arguments. */
-            const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : ln;
-            const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
+            const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : lt ? lt->name : "";
+            const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rt ? rt->name : "";
 
             if (SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
             {
                 return InternTypeName(r, TypeRegistryResolveAlias(&r->m_registry, ln2));
             }
 
-            if (strcmp(ln, "double") == 0 || strcmp(rn, "double") == 0)
+            if (lp == PrimDouble || rp == PrimDouble)
             {
                 return InternTypeName(r, "double");
             }
 
-            if (strcmp(ln, "float") == 0 || strcmp(rn, "float") == 0)
+            if (lp == PrimFloat || rp == PrimFloat)
             {
                 return InternTypeName(r, "float");
             }
 
-            if (strcmp(ln, "ulong") == 0 || strcmp(rn, "ulong") == 0)
+            if (lp == PrimULong || rp == PrimULong)
             {
                 return InternTypeName(r, "ulong");
             }
 
-            if (strcmp(ln, "long") == 0 || strcmp(rn, "long") == 0)
+            if (lp == PrimLong || rp == PrimLong)
             {
                 return InternTypeName(r, "long");
             }
 
-            if (strcmp(ln, "uint") == 0 || strcmp(rn, "uint") == 0)
+            if (lp == PrimUInt || rp == PrimUInt)
             {
                 return InternTypeName(r, "uint");
             }
@@ -4954,7 +4985,7 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
     }
 
     // Numerics convert freely (TODO: require casts for lossy narrowing).
-    if (IsNameNumeric(valueType->name) && IsNameNumeric(targetType->name))
+    if (IsNumeric(valueType->primitiveType) && IsNumeric(targetType->primitiveType))
     {
         return true;
     }
@@ -5069,10 +5100,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             const char* rn = rt ? rt->name : "";
 
             // Unknown types and box/optional operands unwrap before checking.
-            const char* ln2 = lt && lt->isBox && lt->inner ? lt->inner->name : ln;
-            const char* rn2 = rt && rt->isBox && rt->inner ? rt->inner->name : rn;
+            const TypeName* li = lt && lt->isBox && lt->inner ? lt->inner : lt;
+            const TypeName* ri = rt && rt->isBox && rt->inner ? rt->inner : rt;
+            const char* ln2 = li ? li->name : ln;
+            const char* rn2 = ri ? ri->name : rn;
 
-            bool numericPair = IsNameNumeric(ln2) && IsNameNumeric(rn2);
+            bool numericPair = li && ri && IsNumeric(li->primitiveType) && IsNumeric(ri->primitiveType);
             bool vectorPair
                 = SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
 
@@ -5648,7 +5681,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
            wraps the i1 (true -> false). */
         const TypeName* incType = InferType(r, inc->operand, scope);
 
-        if (incType && (!IsNameNumeric(incType->name) || IsBoolType(&r->m_registry, incType)))
+        if (incType && (!IsNumeric(incType->primitiveType) || IsBoolType(&r->m_registry, incType)))
         {
             DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
                          inc->isDec ? "decrement" : "increment", incType->name);
@@ -6604,7 +6637,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ReturnStmt* rs = (ReturnStmt*)n;
         if (rs->value)
         {
-            if (r->m_currentReturnType && strcmp(r->m_currentReturnType->name, "void") == 0)
+            if (r->m_currentReturnType && r->m_currentReturnType->primitiveType == PrimVoid)
             {
                 DiagErrorFmt(r->m_diag, rs->base.range, "void function cannot return a value");
             }
@@ -6613,13 +6646,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             const TypeName* typeName = InferType(r, rs->value, scope);
 
-            if (typeName && strcmp(typeName->name, "void") == 0)
+            if (typeName && typeName->primitiveType == PrimVoid)
             {
                 DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
             }
 
             // Check the returned value against the declared return type.
-            if (r->m_currentReturnType && strcmp(r->m_currentReturnType->name, "void") != 0 && typeName
+            if (r->m_currentReturnType && r->m_currentReturnType->primitiveType != PrimVoid && typeName
                 && !IsAssignableType(r, r->m_currentReturnType, typeName))
             {
                 DiagErrorFmt(r->m_diag, rs->base.range,
@@ -6668,7 +6701,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
             }
         }
-        else if (r->m_currentReturnType && strcmp(r->m_currentReturnType->name, "void") != 0)
+        else if (r->m_currentReturnType && r->m_currentReturnType->primitiveType != PrimVoid)
         {
             DiagErrorFmt(r->m_diag, rs->base.range, "non-void function must return a value");
         }
@@ -7210,7 +7243,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         /* A non-void function must return on every path; if control can fall
            off the end of the body, at least one path is missing a return. */
-        if (strcmp(functionDecl->returnType.name, "void") != 0 && StmtFallsThrough(functionDecl->body, 0))
+        if (functionDecl->returnType.primitiveType != PrimVoid && StmtFallsThrough(functionDecl->body, 0))
         {
             DiagErrorFmt(diag, functionDecl->base.range, "missing return statement in function '%s' returning '%s'",
                          functionDecl->name, functionDecl->returnType.name);

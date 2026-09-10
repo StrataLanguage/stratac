@@ -493,7 +493,7 @@ bool ParserTryParseType(Parser* p, TypeName* out)
         /* `^string` is redundant: `string?` is already the maybe-empty
            string, so a box that can never be empty but holds a string has
            no distinct meaning. */
-        if (base.name && strcmp(base.name, "string") == 0)
+        if (base.primitiveType == PrimString)
         {
             DiagError(p->m_diag, caretRange, "redundant boxing of type 'string'");
         }
@@ -1308,7 +1308,7 @@ static Node* ParseFunction(Parser* p)
                 continue;
             }
 
-            if (strcmp(node->returnType.name, "void") != 0)
+            if (node->returnType.primitiveType != PrimVoid)
             {
                 DiagErrorFmt(p->m_diag, node->base.range,
                              "extern function with a 'return' parameter must declare 'void' return; found '%s'",
@@ -1365,7 +1365,7 @@ static Node* ParseFunction(Parser* p)
         = node->returnType.isArray
               ? &node->returnType
               : (node->returnType.isBox ? node->returnType.inner
-                                        : (strcmp(node->returnType.name, "string") == 0 ? NULL : &node->returnType));
+                                        : (node->returnType.primitiveType == PrimString ? NULL : &node->returnType));
 
     node->body = ParseBlock(p);
 
@@ -1906,9 +1906,21 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
                 else
                 {
                     // Box inits infer the inner T.
-                    const char* initTypeName = (type.isBox || type.isOptional) && type.inner
-                                                   ? type.inner->name
-                                                   : (strcmp(type.name, "string") == 0 ? NULL : type.name);
+                    const char* initTypeName = NULL;
+
+                    if ((type.isBox || type.isOptional) && type.inner)
+                    {
+                        initTypeName = type.inner->name;
+                    }
+                    else
+                    {
+                        initTypeName = type.name;
+
+                        if (type.primitiveType == PrimString)
+                        {
+                            initTypeName = NULL;
+                        }
+                    }
 
                     node->init = ParseStructInitBody(p, start, initTypeName);
                 }
