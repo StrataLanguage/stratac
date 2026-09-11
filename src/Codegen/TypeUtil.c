@@ -201,6 +201,11 @@ bool IsStringType(PrimitiveType prim)
     return (prim == PrimString);
 }
 
+bool IsCStringType(PrimitiveType prim)
+{
+    return (prim == PrimCString);
+}
+
 bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* outInt, double* outFloat,
                        bool* outIsFloat)
 {
@@ -294,6 +299,17 @@ bool TypeIsString(const TypeRegistry* reg, const char* name)
     return leaf && GetPrimitiveType(leaf) == PrimString;
 }
 
+bool TypeIsCString(const TypeRegistry* reg, const char* name)
+{
+    if (!name)
+    {
+        return false;
+    }
+
+    const char* leaf = reg ? TypeRegistryResolveAlias(reg, name) : name;
+    return leaf && GetPrimitiveType(leaf) == PrimCString;
+}
+
 bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t)
 {
     if (!t || !t->name)
@@ -335,8 +351,9 @@ bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t)
     }
 
     /* Strings compare by CONTENT (codegen strata_str_eq with a length
-       fast-out), never by raw fat-pointer comparison. */
-    if (TypeIsString(reg, t->name))
+       fast-out), never by raw fat-pointer comparison. `cstring` likewise
+       compares by content (NUL-terminated, lengths via strlen). */
+    if (TypeIsString(reg, t->name) || TypeIsCString(reg, t->name))
     {
         return false;
     }

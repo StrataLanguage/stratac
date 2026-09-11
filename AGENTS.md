@@ -174,7 +174,28 @@ main) are the internal entry points.
   no init required, exactly like `T[]` globals (box-global rebind rules
   apply: it stays empty forever; only initialized globals hold values).
   `extern struct` fields may not be `string` or dynamic `T[]` (no C-layout
-  mirror for a fat; use a fixed-size array or a pointer member instead).
+  mirror for a fat; use `cstring` for a raw `const char*`, a fixed-size
+  array, or a pointer member instead).
+- Constant strings: `cstring` — a borrowed, NUL-terminated `const char*`
+  whose bytes live in read-only data (`.rodata`; the LLVM constant carries
+  its terminator, exactly like a C string literal). Non-owning: no
+  alloc/free/drop/move/init requirement (codegen `TypeDesc.isCString`,
+  `Resolve` maps it to a single `ptr`). A string literal contextually
+  coerces to `cstring` (no new syntax); a `string` value does NOT convert
+  to `cstring` (the copy is one-way: `string s = cs;` / `(string)cs`
+  heap-copies the bytes via `BuildOwnedStringFromCStr`). `==`/`!=` are
+  CONTENT equality (both sides cstring, or one side a string literal),
+  computed with `strlen` + the shared `strata_str_eq`; ordering is
+  rejected and `cstring` never compares with `string`. `.length` is a
+  runtime `strlen` (`uint`, no `.cap`); `cs[i]` is a bounds-checked `byte`
+  read and writing into a `cstring` (element store or `++`) is a compile
+  error. Not allowed: `cstring?`, `^cstring` (a constant pointer has no
+  empty/ownership state). Extern: crosses as `const char*` by value —
+  params and returns alike (an extern `cstring` return is allowed since
+  it is a plain pointer, unlike the fat `string`). Uninitialized `cstring`
+  locals/globals default to the static empty buffer, never NULL. A
+  `cstring[]` works (`array_push`/pop/literals included) since the element
+  is a non-owning word; `extern struct` fields may be `cstring`.
 - Type aliases: `struct Meter = int;` — a strong newtype over any type.
   Identity is by NAME: no implicit conversion in either direction (including
   literals), no overload matching across it, and distinct aliases of the same

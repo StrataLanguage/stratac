@@ -1,5 +1,5 @@
-#include "Util.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 
 #include <stdio.h>
@@ -21,12 +21,11 @@ static bool Contains(const char* h, const char* n)
 STRATA_TEST(string_var_decl_and_use)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  string s = \"hello\";\n"
-        "  return 42;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  string s = \"hello\";\n"
+                                "  return 42;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -54,12 +53,11 @@ STRATA_TEST(string_lex_and_parse_basics)
     Arena arena;
     arena_init(&arena, 0);
 
-    Module* mod = ParseAndResolve(
-        "string greeting(string name) {\n"
-        "  string s = \"Hello, \";\n"
-        "  return s;\n"
-        "}\n",
-        &diag, &arena);
+    Module* mod = ParseAndResolve("string greeting(string name) {\n"
+                                  "  string s = \"Hello, \";\n"
+                                  "  return s;\n"
+                                  "}\n",
+                                  &diag, &arena);
 
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
@@ -87,16 +85,15 @@ STRATA_TEST(string_lexer_tokens)
 STRATA_TEST(string_type_is_owning)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "string make_string() {\n"
-        "  string s = \"created\";\n"
-        "  return s;\n"
-        "}\n"
-        "int entry() {\n"
-        "  string s = make_string();\n"
-        "  return 7;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("string make_string() {\n"
+                                "  string s = \"created\";\n"
+                                "  return s;\n"
+                                "}\n"
+                                "int entry() {\n"
+                                "  string s = make_string();\n"
+                                "  return 7;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -120,13 +117,41 @@ STRATA_TEST(string_type_is_owning)
 STRATA_TEST(string_reassign_literal)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  string s = \"first\";\n"
-        "  s = \"second\";\n"
-        "  return 1;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  string s = \"first\";\n"
+                                "  s = \"second\";\n"
+                                "  return 1;\n"
+                                "}\n",
+                                &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        int r = entry();
+        STRATA_CHECK_EQ(r, 1);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(string_assign_cstring)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  cstring cs = \"Hello\";\n"
+                                "  string s = cs;\n"
+                                "  return 1;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -154,12 +179,11 @@ STRATA_TEST(string_type_check_rejects_int_init)
     Arena arena;
     arena_init(&arena, 0);
 
-    ParseAndResolve(
-        "int f() {\n"
-        "  string s = 42;\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    ParseAndResolve("int f() {\n"
+                    "  string s = 42;\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
 
     STRATA_CHECK(DiagHasErrors(&diag));
 
@@ -173,18 +197,20 @@ STRATA_TEST(global_string_array_element_move_is_an_error)
        leaving the slot dangling for the next reader (and double-freeing on
        teardown). Reject it with the same transitive global-move error as a
        whole-global move. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "string[] g = {\"hi\"};\n"
-        "int entry() {\n"
-        "  string s = g[0];\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("string[] g = {\"hi\"};\n"
+                    "int entry() {\n"
+                    "  string s = g[0];\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     /* Element keys are spelled precisely ("g[0]"); the root check still
        reduces them to the global "g". */
@@ -198,19 +224,21 @@ STRATA_TEST(global_owning_field_move_is_an_error)
 {
     /* Transitive through a struct field: moving an owning field out of a
        global struct is rejected with the same error. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Cell { string name; };\n"
-        "^Cell g = Cell { .name = \"hi\" };\n"
-        "int entry() {\n"
-        "  string s = g.name;\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Cell { string name; };\n"
+                    "^Cell g = Cell { .name = \"hi\" };\n"
+                    "int entry() {\n"
+                    "  string s = g.name;\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is global"));
 
@@ -225,13 +253,13 @@ STRATA_TEST(global_string_array_element_copy_is_allowed)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "extern ulong strlen(string s);\n"
-        "string[] g = {\"hi\"};\n"
-        "int entry() {\n"
-        "  string s = copy(g[0]);\n"
-        "  return (int)strlen(s);\n"            /* "hi" -> 2 */
-        "}\n",
-        "str", &err);
+                                            "extern ulong strlen(string s);\n"
+                                            "string[] g = {\"hi\"};\n"
+                                            "int entry() {\n"
+                                            "  string s = copy(g[0]);\n"
+                                            "  return (int)strlen(s);\n" /* "hi" -> 2 */
+                                            "}\n",
+                                            "str", &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -262,21 +290,20 @@ STRATA_TEST(string_equality_is_content_not_pointer)
        pointers. An owning local is a heap copy, so its pointer differs
        from the literal's constant fat even when the content matches. */
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  string s = \"hello\";\n"     /* owning local: heap copy, ptr != literal's fat */
-        "  int r = 0;\n"
-        "  if (s == \"hello\") { r += 1; }\n"     /* content equal, different pointers */
-        "  if (s != \"world\") { r += 2; }\n"     /* same length, different content */
-        "  if (s == \"world!\") { r += 4; } else { r += 4; }\n" /* length fast-out */
-        "  if (s == \"\") { r += 8; } else { r += 8; }\n"       /* empty vs non-empty */
-        "  if (\"\" == \"\") { r += 16; }\n"                    /* both empty {null, 0} */
-        "  if (s != \"hello\") { r += 32; }\n"    /* != on equal content */
-        "  string t = copy(s);\n"                /* deep copy: same content, fresh buffer */
-        "  if (t == s) { r += 64; }\n"           /* byte compare across buffers */
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  string s = \"hello\";\n" /* owning local: heap copy, ptr != literal's fat */
+                                "  int r = 0;\n"
+                                "  if (s == \"hello\") { r += 1; }\n" /* content equal, different pointers */
+                                "  if (s != \"world\") { r += 2; }\n" /* same length, different content */
+                                "  if (s == \"world!\") { r += 4; } else { r += 4; }\n" /* length fast-out */
+                                "  if (s == \"\") { r += 8; } else { r += 8; }\n"       /* empty vs non-empty */
+                                "  if (\"\" == \"\") { r += 16; }\n"                    /* both empty {null, 0} */
+                                "  if (s != \"hello\") { r += 32; }\n"                  /* != on equal content */
+                                "  string t = copy(s);\n"      /* deep copy: same content, fresh buffer */
+                                "  if (t == s) { r += 64; }\n" /* byte compare across buffers */
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -300,18 +327,20 @@ STRATA_TEST(string_vs_non_string_comparison_is_rejected)
 {
     /* string ==/!= is content equality; comparing a string with a scalar
        is a compile error (never a fat-pointer compare). */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  string s = \"hi\";\n"
-        "  if (s == 1) { return 1; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  string s = \"hi\";\n"
+                    "  if (s == 1) { return 1; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "cannot compare 'string' with 'int'") != NULL);
 
@@ -325,22 +354,21 @@ STRATA_TEST(substring_slices_are_owned_copies)
        owned string: literals, locals, and computed bounds all work, and
        the result is independent of later rebinds of the source. */
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  string s = \"hello\";\n"
-        "  int r = 0;\n"
-        "  if (substring(s, 1, 3) == \"ell\") { r = r + 1; }\n"
-        "  if (substring(s, 0, 5) == s) { r = r + 2; }\n"
-        "  if (substring(s, 0, 0) == \"\") { r = r + 4; }\n"
-        "  if (substring(s, 5, 0) == \"\") { r = r + 8; }\n"
-        "  if (substring(\"abcdef\", 2, 2) == \"cd\") { r = r + 16; }\n"
-        "  if (substring(s, 1u, 3u) == \"ell\") { r = r + 32; }\n"
-        "  string t = substring(s, 1, 3);\n"
-        "  s = \"world\";\n"
-        "  if (t == \"ell\") { r = r + 64; }\n"
-        "  return r;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  string s = \"hello\";\n"
+                                "  int r = 0;\n"
+                                "  if (substring(s, 1, 3) == \"ell\") { r = r + 1; }\n"
+                                "  if (substring(s, 0, 5) == s) { r = r + 2; }\n"
+                                "  if (substring(s, 0, 0) == \"\") { r = r + 4; }\n"
+                                "  if (substring(s, 5, 0) == \"\") { r = r + 8; }\n"
+                                "  if (substring(\"abcdef\", 2, 2) == \"cd\") { r = r + 16; }\n"
+                                "  if (substring(s, 1u, 3u) == \"ell\") { r = r + 32; }\n"
+                                "  string t = substring(s, 1, 3);\n"
+                                "  s = \"world\";\n"
+                                "  if (t == \"ell\") { r = r + 64; }\n"
+                                "  return r;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -366,15 +394,14 @@ STRATA_TEST(substring_suffix_from_computed_index)
        (the char past '='), with a computed length. The source is borrowed,
        never moved. */
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  string[] args = {\"--output=out.txt\"};\n"
-        "  int eq = 8;\n"
-        "  string v = substring(args[0], eq + 1, (int)args[0].length - eq - 1);\n"
-        "  if (v == \"out.txt\") { return 7; }\n"
-        "  return 0;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  string[] args = {\"--output=out.txt\"};\n"
+                                "  int eq = 8;\n"
+                                "  string v = substring(args[0], eq + 1, (int)args[0].length - eq - 1);\n"
+                                "  if (v == \"out.txt\") { return 7; }\n"
+                                "  return 0;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -400,16 +427,15 @@ STRATA_TEST(substring_blessed_optional_source)
        blessed fact satisfies CheckOptionalDeref and codegen sees the live
        fat. */
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  string? s = \"hello\";\n"
-        "  if (s?)\n"
-        "  {\n"
-        "    if (substring(s, 1, 2) == \"el\") { return 3; }\n"
-        "  }\n"
-        "  return 0;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  string? s = \"hello\";\n"
+                                "  if (s?)\n"
+                                "  {\n"
+                                "    if (substring(s, 1, 2) == \"el\") { return 3; }\n"
+                                "  }\n"
+                                "  return 0;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -434,12 +460,11 @@ STRATA_TEST(substring_out_of_range_yields_empty_in_jit)
     /* Mirrors element indexing: under the JIT an out-of-range slice reports
        through strata_oob and continues with an empty string (AOT panics). */
     const char* err = NULL;
-    StrataJit* jit = CompileStr(
-        "int entry() {\n"
-        "  if (substring(\"abc\", 0, 9) == \"\") { return 5; }\n"
-        "  return 0;\n"
-        "}\n",
-        &err);
+    StrataJit* jit = CompileStr("int entry() {\n"
+                                "  if (substring(\"abc\", 0, 9) == \"\") { return 5; }\n"
+                                "  return 0;\n"
+                                "}\n",
+                                &err);
 
     STRATA_CHECK(jit != NULL);
     if (!jit)
@@ -461,17 +486,19 @@ STRATA_TEST(substring_out_of_range_yields_empty_in_jit)
 
 STRATA_TEST(substring_wrong_arg_count_is_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  string s = substring(\"ab\", 1);\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  string s = substring(\"ab\", 1);\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'substring' expects 3 arguments"));
 
@@ -481,17 +508,19 @@ STRATA_TEST(substring_wrong_arg_count_is_error)
 
 STRATA_TEST(substring_non_string_source_is_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  string s = substring(42, 0, 1);\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  string s = substring(42, 0, 1);\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'substring' expects a string argument"));
 
@@ -501,17 +530,19 @@ STRATA_TEST(substring_non_string_source_is_error)
 
 STRATA_TEST(substring_float_index_is_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  string s = substring(\"ab\", 1.5, 1);\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  string s = substring(\"ab\", 1.5, 1);\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'substring' start must be an integer"));
 
@@ -523,17 +554,19 @@ STRATA_TEST(substring_unblessed_optional_is_error)
 {
     /* An unproven `string?` (here, a parameter with no narrowing fact)
        reads through substring like any other optional read. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry(string? s) {\n"
-        "  string t = substring(s, 0, 1);\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry(string? s) {\n"
+                    "  string t = substring(s, 0, 1);\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "has not been blessed"));
 
