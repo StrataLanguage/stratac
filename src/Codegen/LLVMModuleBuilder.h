@@ -65,6 +65,7 @@ typedef struct Builder
     bool m_boundsCheck;     /* emit array bounds checks (StrataProfile) */
     bool m_nullExternCheck; /* panic on calling a null extern slot (StrataProfile) */
     bool m_nullStoreLValue; /* re-resolving an lvalue only to NULL it: skip OOB dummy re-init */
+    bool m_discardCallResult; /* the expression statement's direct call result is unused */
     LLVMValueRef m_curFn;
     LLVMBasicBlockRef m_entryBlock;
     LLVMValueRef m_entryAllocaPt;

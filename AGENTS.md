@@ -160,9 +160,14 @@ main) are the internal entry points.
   extern `string` RETURN is allowed and crosses as a NUL-terminated `char*`
   (assumed host-owned, never freed): the caller copies it into a fresh
   owned buffer (codegen `BuildOwnedStringFromCStr`; a NULL return becomes
-  the canonical empty `{null, 0}`). A `return string` out-param is still
-  available when the host needs to write the fat `{ptr, len, cap}` directly
-  (the host C mirror is `{const char* ptr; uint32_t len; uint32_t cap;}`).
+  the canonical empty `{null, 0}`). The copy is made at the point of use —
+  a *discarded* call (`sdl_get_error();` as a statement) allocates nothing.
+  Any owning value discarded as a statement is dropped (codegen
+  `NodeExprStmt`: direct `NodeCall` results are spilled and `EmitDropOne`d),
+  so discarded user-function returns / boxes don't leak either. A `return
+  string` out-param is still available when the host needs to write the fat
+  `{ptr, len, cap}` directly (the host C mirror is `{const char* ptr;
+  uint32_t len; uint32_t cap;}`).
   `string?` returns remain banned (the maybe-empty fat has no safe C return
   ABI). Literals are borrowed constant fats; owning consumers heap-copy.
   Globals: `string g;` is legal and defaults to the canonical empty fat —

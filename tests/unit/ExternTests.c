@@ -464,6 +464,114 @@ STRATA_TEST(extern_string_return_null_is_empty)
                 hosts, 2, 0);
 }
 
+/* ---- Discarding the returned string must not leak ---- */
+
+static int g_extRetAllocs = 0;
+static int g_extRetFrees = 0;
+
+static void* ExtRetCountAlloc(unsigned long long n)
+{
+    g_extRetAllocs++;
+    return malloc((size_t)n);
+}
+
+static void ExtRetCountFree(void* p)
+{
+    if (p)
+    {
+        g_extRetFrees++;
+    }
+    free(p);
+}
+
+STRATA_TEST(extern_string_return_discard_does_not_allocate)
+{
+    /* A discarded `sdl_get_error();` statement allocates NOTHING (the copy
+       is deferred to the point of use); an assigned result allocates exactly
+       once and is freed at scope exit. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&ExtRetCountAlloc, (void*)&ExtRetCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "extern string sdl_get_error();\n"
+        "int entry()\n"
+        "{\n"
+        "  sdl_get_error();\n"               /* discarded: no copy */
+        "  string err = sdl_get_error();\n"  /* one copy, freed at scope exit */
+        "  return 0;\n"
+        "}\n",
+        "discardret", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    strataJitAddSymbol(jit, "sdl_get_error", (void*)&HostStrError);
+
+    g_extRetAllocs = 0;
+    g_extRetFrees = 0;
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(g_extRetAllocs, 1); /* only the assigned copy */
+        STRATA_CHECK_EQ(g_extRetFrees, 1);  /* freed at scope exit */
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(discarded_owning_call_result_is_dropped)
+{
+    /* The same discard-drop covers ANY owning call result (user functions,
+       boxes) — a leaked temporary there was a pre-existing hole. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)&ExtRetCountAlloc, (void*)&ExtRetCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "string make() { return \"hello\"; }\n"
+        "^int boxit() { return 42; }\n"
+        "int entry()\n"
+        "{\n"
+        "  make();\n"    /* discarded string: callee copies, caller frees */
+        "  boxit();\n"   /* discarded box cell: caller frees */
+        "  return 0;\n"
+        "}\n",
+        "discardown", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    g_extRetAllocs = 0;
+    g_extRetFrees = 0;
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(g_extRetAllocs, 2); /* one string copy + one box cell */
+        STRATA_CHECK_EQ(g_extRetFrees, 2);  /* both freed by the discard-drop */
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
 STRATA_TEST(extern_string_return_out_param_is_owned)
 {
     /* The caller owns the returned buffer and frees it at scope exit

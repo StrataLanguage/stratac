@@ -865,6 +865,19 @@ static bool BuilderIsOwningValue(Builder* b, const TypeName* t)
     return TypeIsOwningValueResolved(&b->m_registry, b->m_arena, t);
 }
 
+/* A TypeDesc that owns heap memory and must be dropped: string / box (a heap
+   pointer), a dynamic array (its buffer, plus owning elements), or an owning
+   struct held by value. Fixed arrays / scalars are non-owning. */
+static bool TypeDescIsOwning(Builder* b, const TypeDesc* td)
+{
+    if (td->isString || td->isBox || td->isArray)
+    {
+        return true;
+    }
+
+    return td->structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, td->structTypeName);
+}
+
 static TypeDesc Resolve(Builder* b, const TypeName* t)
 {
     if (!t)
@@ -5036,6 +5049,11 @@ typedef struct
 
 static Value EmitCall(Builder* b, CallExpr* n)
 {
+    /* A direct expression-statement call has an unused result. Consumed here
+       (cleared before any nested call) so only the outermost call sees it. */
+    bool discarded = b->m_discardCallResult;
+    b->m_discardCallResult = false;
+
     if (n->isIntrinsicCall)
     {
         bool isValid = 0;
@@ -5565,9 +5583,15 @@ static Value EmitCall(Builder* b, CallExpr* n)
     }
 
     /* Extern `string` return: the host handed back a NUL-terminated char*;
-       copy it into a fresh owned buffer (the semantic type stays the fat). */
+       copy it into a fresh owned buffer (the semantic type stays the fat).
+       A DISCARDED result is skipped entirely — no allocation, no leak. */
     if (info->externStringReturn)
     {
+        if (discarded)
+        {
+            return ValueMake(LLVMConstNull(ArrayStructType(b)), info->returnType);
+        }
+
         return ValueMake(BuildOwnedStringFromCStr(b, call), info->returnType);
     }
 
@@ -6179,6 +6203,30 @@ Value EmitExpr(Builder* b, Node* n)
     }
 }
 
+/* Emits an expression whose result is discarded (expression statement, `for`
+   update). A direct call's OWNING result is spilled and dropped so the
+   temporary doesn't leak; an extern `string` return is flagged (m_discardCallResult)
+   so its char* copy is skipped entirely. */
+static void EmitDiscardExpr(Builder* b, Node* expr)
+{
+    if (!expr)
+    {
+        return;
+    }
+
+    bool directCall = expr->kind == NodeCall;
+    b->m_discardCallResult = directCall;
+    Value v = EmitExpr(b, expr);
+    b->m_discardCallResult = false;
+
+    if (directCall && TypeDescIsOwning(b, &v.typeDesc))
+    {
+        LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "discard");
+        LLVMBuildStore(b->m_builder, v.value, slot);
+        EmitDropOne(b, slot, v.typeDesc);
+    }
+}
+
 static void EmitStmt(Builder* b, Node* n)
 {
     if (!n)
@@ -6253,12 +6301,7 @@ static void EmitStmt(Builder* b, Node* n)
     case NodeExprStmt:
     {
         ExprStmt* e = (ExprStmt*)n;
-
-        if (e->expr)
-        {
-            (void)EmitExpr(b, e->expr);
-        }
-
+        EmitDiscardExpr(b, e->expr);
         return;
     }
 
@@ -6666,7 +6709,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (fs->update)
         {
-            (void)EmitExpr(b, fs->update);
+            EmitDiscardExpr(b, fs->update);
         }
 
         if (!term)
