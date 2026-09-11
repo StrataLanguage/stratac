@@ -8,7 +8,8 @@
  * ABI notes locked in here:
  *   - extern `string` params cross by value as `const char*`, even when
  *     spelled `ref string` / `const ref string` (the host reads content).
- *   - extern `string` RETURNS are banned: use a return-param instead
+ *   - extern `string` RETURNS cross as a NUL-terminated char*; the caller
+ *     copies it into a fresh owned buffer (the host's buffer is never freed)
  *   - extern array params cross as a pointer to the {data, len} fat struct;
  *     a `ref int[]` host can rewrite the whole array (out-param).
  *   - extern array returns are OWNED: the caller frees `.data`, so hosts
@@ -120,6 +121,19 @@ static void HostStrConcat(const char* a, const char* b, HostArr* out)
     out->data = buf;
     out->len = (uint32_t)(na + nb);
     out->cap = (uint32_t)(na + nb + 1);
+}
+
+/* Returns a NUL-terminated char* the caller copies; the buffer is static so
+   a Strata caller that tries to free it would crash. */
+static const char* HostStrError(void)
+{
+    return "sdl error";
+}
+
+/* Returns NULL: the caller must materialize the canonical empty string. */
+static const char* HostStrNull(void)
+{
+    return NULL;
 }
 
 /* ---- Array hosts ---- */
@@ -420,28 +434,34 @@ STRATA_TEST(extern_ref_string_host_mutates_in_place)
 
 /* ================= String returns ================= */
 
-STRATA_TEST(extern_string_return_is_rejected)
+STRATA_TEST(extern_string_return_copies_char_star)
 {
-    /* A bare `string` return crosses as a char* the caller would own and
-       free — but the host may hand back a static or borrowed buffer, an
-       ownership footgun. Sema requires the `return` out-param instead. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "extern string bad_make();\n"
-        "extern void good_make(return string s);\n"
-        "extern string bad_echo(string a);\n"
-        "int entry() { return 0; }\n",
-        &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    /* A bare `string` return crosses as a NUL-terminated char*; the caller
+       copies it into a fresh owned buffer it frees at scope exit (the host's
+       static buffer is never freed). */
+    HostSymbol hosts[] = { { "sdl_get_error", (void*)&HostStrError }, { "host_str_len", (void*)&HostStrLen } };
+    CheckExtern("extern string sdl_get_error();\n"
+                "extern int host_str_len(string s);\n"
+                "int entry()\n"
+                "{\n"
+                "  string err = sdl_get_error();\n"    /* owns a copy of \"sdl error\" */
+                "  return host_str_len(err);\n"        /* 9 */
+                "}\n",
+                hosts, 2, 9);
+}
 
-    SourceManager sm; SourceManagerInit(&sm);
-    char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(strstr(d, "extern function cannot return 'string' by value") != NULL);
-    STRATA_CHECK(strstr(d, "use return-param") != NULL);
-
-    DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+STRATA_TEST(extern_string_return_null_is_empty)
+{
+    /* A NULL char* return materializes the canonical empty string. */
+    HostSymbol hosts[] = { { "host_str_null", (void*)&HostStrNull }, { "host_str_len", (void*)&HostStrLen } };
+    CheckExtern("extern string host_str_null();\n"
+                "extern int host_str_len(string s);\n"
+                "int entry()\n"
+                "{\n"
+                "  string err = host_str_null();\n"    /* empty */
+                "  return host_str_len(err);\n"        /* 0 */
+                "}\n",
+                hosts, 2, 0);
 }
 
 STRATA_TEST(extern_string_return_out_param_is_owned)

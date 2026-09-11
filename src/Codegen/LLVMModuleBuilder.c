@@ -20,6 +20,7 @@ typedef struct
        narrowed back before use. */
     LLVMTypeRef retSemanticTy;
     bool retSemanticUnsigned;
+    bool externStringReturn; /* extern `string` (or alias) return: ABI is char*, copied into an owned fat */
     bool* paramByPtr;
     size_t paramByPtrCount;
 } FuncInfo;
@@ -486,6 +487,67 @@ static LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMVal
     LLVMBuildStore(b->m_builder, LLVMConstNull(i8Ty), LLVMBuildGEP2(b->m_builder, i8Ty, heap, termIdx, 1, "sterm"));
 
     return MakeStringFatValue(b, heap, lenVal);
+}
+
+/* Computes the NUL-terminated length of `s` (an i64 byte loop). */
+static LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)
+{
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+    LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
+    LLVMValueRef one = LLVMConstInt(I64Ty(b), 1, 0);
+
+    LLVMValueRef iSlot = EntryAlloca(b, I64Ty(b), "cstrlen.i");
+    LLVMBuildStore(b->m_builder, zero, iSlot);
+
+    LLVMBasicBlockRef cond = NewBb(b, "cstrlen.cond");
+    LLVMBasicBlockRef body = NewBb(b, "cstrlen.body");
+    LLVMBasicBlockRef done = NewBb(b, "cstrlen.done");
+    Br(b, cond);
+
+    PositionAtEnd(b, cond);
+    LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "cstrlen.i");
+    LLVMValueRef c = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, s, &i, 1, "cstrlen.p"),
+                                    "cstrlen.c");
+    LLVMValueRef isNul = LLVMBuildICmp(b->m_builder, LLVMIntEQ, c, LLVMConstNull(i8Ty), "cstrlen.nul");
+    LLVMBuildCondBr(b->m_builder, isNul, done, body);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, body);
+    LLVMBuildStore(b->m_builder, LLVMBuildAdd(b->m_builder, i, one, "cstrlen.n"), iSlot);
+    Br(b, cond);
+
+    PositionAtEnd(b, done);
+    return LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "cstrlen.len");
+}
+
+/* Converts a host-owned NUL-terminated char* (an extern `string` return) into
+   an OWNED fat string: allocates len+1 bytes, copies, NUL-terminates. A NULL
+   pointer yields the canonical empty {null, 0, 0}. */
+static LLVMValueRef BuildOwnedStringFromCStr(Builder* b, LLVMValueRef cstr)
+{
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, cstr, LLVMConstNull(b->m_ptrTy), "cstr.null");
+
+    LLVMBasicBlockRef nullBB = NewBb(b, "cstr.null");
+    LLVMBasicBlockRef copyBB = NewBb(b, "cstr.copy");
+    LLVMBasicBlockRef mergeBB = NewBb(b, "cstr.merge");
+    LLVMBuildCondBr(b->m_builder, isNull, nullBB, copyBB);
+
+    PositionAtEnd(b, nullBB);
+    LLVMValueRef emptyFat = LLVMConstNull(ArrayStructType(b));
+    Br(b, mergeBB);
+
+    PositionAtEnd(b, copyBB);
+    LLVMValueRef len = BuildStrLen(b, cstr);
+    LLVMValueRef owned = BuildOwnedStringFat(b, cstr, len);
+    LLVMBasicBlockRef doneBB = LLVMGetInsertBlock(b->m_builder);
+    Br(b, mergeBB);
+
+    PositionAtEnd(b, mergeBB);
+    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, ArrayStructType(b), "cstr.fat");
+    LLVMValueRef incoming[2] = {emptyFat, owned};
+    LLVMBasicBlockRef blocks[2] = {nullBB, doneBB};
+    LLVMAddIncoming(phi, incoming, blocks, 2);
+    return phi;
 }
 
 /* Cached static NUL byte: a valid empty C string for the extern pun. */
@@ -1942,6 +2004,12 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     info->retSemanticUnsigned = info->returnType.isUnsigned;
     info->returnType.type = WidenRetType(b, info->returnType.type);
 
+    /* An extern `string` (or alias-of-string) return crosses the host
+       boundary as a NUL-terminated char*: the caller copies it into a fresh
+       owned buffer. `string?` (the maybe-empty fat) stays banned in sema. */
+    info->externStringReturn = f->isExtern && !hasReturnParam && !f->returnType.isOptional
+                               && TypeIsString(&b->m_registry, f->returnType.name);
+
     size_t pcount = f->params.count;
     info->paramByPtr = (bool*)arena_alloc(b->m_arena, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
@@ -1983,8 +2051,10 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         params[i] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
     }
 
-    // A function with a `return` param == void ret + out-pointer
-    LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx) : info->returnType.type;
+    // A function with a `return` param == void ret + out-pointer. An extern
+    // `string` return crosses as char* (caller copies it into an owned fat).
+    LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx)
+                                            : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
 
     info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
 
@@ -5492,6 +5562,13 @@ static Value EmitCall(Builder* b, CallExpr* n)
         LLVMValueRef retVal = LLVMBuildLoad2(b->m_builder, returnParamTd.type, returnParamSlot, "retparam.val");
 
         return ValueMake(retVal, returnParamTd);
+    }
+
+    /* Extern `string` return: the host handed back a NUL-terminated char*;
+       copy it into a fresh owned buffer (the semantic type stays the fat). */
+    if (info->externStringReturn)
+    {
+        return ValueMake(BuildOwnedStringFromCStr(b, call), info->returnType);
     }
 
     return ValueMake(call, info->returnType);

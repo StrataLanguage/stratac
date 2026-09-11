@@ -157,10 +157,14 @@ main) are the internal entry points.
   is a compile error. Extern: puns to `char*` — the fat's
   first member — with a static empty buffer substituted for `{null, 0}` so
   C never sees NULL; `string?` passes the RAW pointer (NULL = empty); an
-  extern string RETURN is BANNED (the caller would own a buffer the host
-  may not have allocated — use a `return string` out-param: the host
-  writes the fat `{ptr, len, cap}` and the caller owns it; the host C
-  mirror is `{const char* ptr; uint32_t len; uint32_t cap;}`). Literals are borrowed constant fats; owning consumers heap-copy.
+  extern `string` RETURN is allowed and crosses as a NUL-terminated `char*`
+  (assumed host-owned, never freed): the caller copies it into a fresh
+  owned buffer (codegen `BuildOwnedStringFromCStr`; a NULL return becomes
+  the canonical empty `{null, 0}`). A `return string` out-param is still
+  available when the host needs to write the fat `{ptr, len, cap}` directly
+  (the host C mirror is `{const char* ptr; uint32_t len; uint32_t cap;}`).
+  `string?` returns remain banned (the maybe-empty fat has no safe C return
+  ABI). Literals are borrowed constant fats; owning consumers heap-copy.
   Globals: `string g;` is legal and defaults to the canonical empty fat —
   no init required, exactly like `T[]` globals (box-global rebind rules
   apply: it stays empty forever; only initialized globals hold values).
@@ -435,13 +439,14 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   check is skipped for these). Works for any type: structs, scalars, `string`
   (host writes the fat `{ptr, len, cap}` — caller owns), `T[]`, `^T`/`T?` (host
   writes the pointer; NULL = empty for `T?`), and handles.
-  Like structs, the `string` and `{data, len, cap}` fat returns (`T[]`, `T[]?`,
-  `string?` — or an alias of them) CANNOT be extern returns. A `string`
-  return would cross as a `char*` the caller owns and frees — an ownership
-  footgun if the host returns a static/borrowed buffer — and the fat is a
+  Like structs, the `{data, len, cap}` fat returns (`T[]`, `T[]?`, `string?` —
+  or an alias of them) CANNOT be extern returns. A `string` return (or an
+  alias of it) is ALLOWED and crosses as a NUL-terminated `char*` the caller
+  copies into a fresh owned buffer (never frees the host's buffer; a NULL
+  return becomes the canonical empty string). The fat, by contrast, is a
   16-byte aggregate C compilers disagree on (hidden sret pointer on MS x64
-  vs register return elsewhere), so a direct return would read garbage at
-  the call site. Sema rejects both with a hint to use a `return` out-param.
+  vs register return elsewhere), so a direct fat return would read garbage at
+  the call site. Sema rejects the fat with a hint to use a `return` out-param.
   The return type may be a **forward-declared** struct at the declaration
   (`struct Name;` + `extern void GetName(return Name n);` compiles standalone
   — the ABI is just a `Name*`, like any `ref` param) — but every **call**

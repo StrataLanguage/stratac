@@ -7501,25 +7501,19 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
 
-        /* fat-pointer type returns are disallowed for externs */
+        /* Fat-pointer type returns are disallowed for externs. A bare `string`
+           return IS allowed: it crosses as a NUL-terminated char* that the
+           caller copies into a fresh owned buffer (codegen BuildOwnedStringFromCStr). */
         if (functionDecl->isExtern && !functionDecl->hasReturnParam)
         {
             const char* leaf = TypeRegistryResolveAlias(&r.m_registry, functionDecl->returnType.name);
             TypeName parsed = TypeNameParse(r.m_arena, leaf);
 
             const TypeName* unwrapped = parsed.isOptional ? parsed.inner : &parsed;
-            bool isStringReturn = TypeIsString(&r.m_registry, parsed.name);
             bool isFat = (unwrapped && TypeNameIsDynamicArray(unwrapped))
                          || (parsed.isOptional && TypeIsString(&r.m_registry, unwrapped ? unwrapped->name : NULL));
 
-            if (isStringReturn)
-            {
-                DiagErrorFmt(diag, functionDecl->base.range,
-                             "extern function cannot return '%s' by value. use return-param (e.g, `return %s "
-                             "paramName`) instead, writing out the return value as a pointer from the host",
-                             functionDecl->returnType.name, functionDecl->returnType.name);
-            }
-            else if (isFat)
+            if (isFat)
             {
                 DiagErrorFmt(diag, functionDecl->base.range,
                              "extern function cannot return '%s' by value; the {data, len} fat has no safe C "

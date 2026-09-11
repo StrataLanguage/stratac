@@ -1579,27 +1579,24 @@ STRATA_TEST(type_alias_string_pass_moves_source)
     arena_free(&arena);
 }
 
-STRATA_TEST(type_alias_string_extern_return_is_rejected)
+STRATA_TEST(type_alias_string_extern_return_crosses_as_char_star)
 {
-    /* Extern string returns are banned (the caller would own a buffer the
-       host may not have allocated); an alias of string is banned the same
-       way — use a `return` out-param instead. */
-    Arena arena;
-    arena_init(&arena, 0);
-    DiagnosticEngine diag;
-    DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct Name = string;\n"
-                    "extern Name host_make();\n"
-                    "Name test() { return host_make(); }\n",
-                    &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
+    /* An alias of `string` returns exactly like `string`: a NUL-terminated
+       char* the caller copies into an owned buffer. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(
+        "struct Name = string;\n"
+        "extern Name host_make();\n"
+        "Name test() { return host_make(); }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
 
-    SourceManager sm;
-    SourceManagerInit(&sm);
-    char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(strstr(d, "extern function cannot return 'Name' by value") != NULL);
-    STRATA_CHECK(strstr(d, "use return-param") != NULL);
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "declare ptr @host_make()") != NULL);
 
+    free((void*)res.output);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
