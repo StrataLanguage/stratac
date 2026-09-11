@@ -23,6 +23,7 @@ typedef enum PrimitiveType
     PrimFloat,
     PrimDouble,
     PrimString,
+    PrimCString,
 
     PrimFloat2,
     PrimFloat3,
@@ -46,6 +47,7 @@ typedef enum PrimitiveType
 #define PRIM_NAME_FLOAT 0x747ea7c3224ac467
 #define PRIM_NAME_DOUBLE 0xa83b61858211676e
 #define PRIM_NAME_STRING 0x3850125edc81f186
+#define PRIM_NAME_CSTRING 0xb697cce8c7f08f69
 #define PRIM_NAME_FLOAT2 0x3dfb6593450b9c6f
 #define PRIM_NAME_FLOAT3 0x3dfb6493450b9abc
 #define PRIM_NAME_FLOAT4 0x3dfb6393450b9909
@@ -95,6 +97,9 @@ static inline PrimitiveType GetPrimitiveType(const char* name)
 
     case PRIM_NAME_STRING:
         return PrimString;
+
+    case PRIM_NAME_CSTRING:
+        return PrimCString;
 
         /* */
 
