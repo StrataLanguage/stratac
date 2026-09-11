@@ -46,9 +46,12 @@ int main()
         cur = cur.next;           // advance; old binding becomes empty again
     }
 
-    // `defer` schedules a statement to run at the end of the enclosing block
+    // `defer` schedules code to run at the end of the enclosing block —
+    // a statement, or a whole `{ ... }` block (LIFO order at scope exit)
     defer printf("[defer] acc = %f %f %f %f\n", acc.x, acc.y, acc.z, acc.w);
-    defer printf("[defer] cleaning up\n");
+    defer {
+        printf("[defer] cleaning up\n");
+    }
 
     return (int)(acc.x + acc.y);  // 11 + 22 = 33
 }

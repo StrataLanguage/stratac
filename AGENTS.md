@@ -489,6 +489,15 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   allowed on globals, structs, or `impl` methods.
 - Inferred struct init: `return { .x = 1, .y = 2 };` infers the return type
 - `const` on any param or local triggers const-checking in the sema
+- Defer: `defer <stmt>` or `defer { ... }` (a block is one deferred unit)
+  queues code to run at the end of the ENCLOSING BLOCK, LIFO (Zig-style),
+  also on `return`/`break`/`continue` unwinding (return value is snapshotted
+  first). The deferred code is analyzed (sema) at its textual position — it
+  may only reference names declared before the `defer` — but emitted
+  (codegen) at scope exit, so enclosing locals stay readable there. Codegen
+  queues the AST node in the active `BlockScope` (`m_scopes`); a deferred
+  block pushes its own scope when it runs, so its own nested defers run at
+  the block's exit. Locals declared inside the deferred block drop there.
 
 ## extern and the host boundary
 
