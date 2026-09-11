@@ -1,0 +1,48 @@
+// cstring — constant strings stored in read-only data and passed to C as a
+// `const char*`.
+//
+//   cstring s = "hello";   // contextual literal -> .rodata char*
+//   puts(s);               // extern params/returns cross as const char*
+//   s.length / s[i]        // runtime strlen / bounds-checked byte read
+//   s == "hello"           // content equality
+//   string owned = s;      // one-way copy: cstring -> owning string
+//
+// `cstring` is non-owning: no alloc, no free, no move. Uninitialized locals
+// and globals default to the static empty buffer (never NULL).
+
+extern int puts(cstring s);
+
+struct Label
+{
+    cstring text;
+    int weight;
+};
+
+cstring motto()
+{
+    return "constant strings live in .rodata";
+}
+
+int measure()
+{
+    cstring m = motto();
+    Label l = Label { .text = "tagged", .weight = 3 };
+    string owned = m; // copy the constant bytes into an owning string
+    int tail = 0;
+
+    if (m == "constant strings live in .rodata")
+    {
+        tail = 100;
+    }
+
+    puts(m);
+    puts(l.text);
+
+    // 32 (m) + 6 (label) + 32 (owned copy) + 3 (weight) + 100 (equal) = 173
+    return (int)m.length + (int)l.text.length + (int)owned.length + l.weight + tail;
+}
+
+int entry()
+{
+    return measure();
+}

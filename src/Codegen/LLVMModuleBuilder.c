@@ -134,6 +134,29 @@ static const TypeName* StringTypeName(Builder* b)
     return t;
 }
 
+static LLVMTypeRef I32Ty(Builder* b);
+
+/* Emits a string literal as a `.rodata` constant and returns the `i8*`
+   pointer to its first byte (with NUL terminator). Shared by every
+   `cstring` literal use site. */
+static LLVMValueRef EmitCStringLiteralPtr(Builder* b, const StrLiteral* literal)
+{
+    size_t len = strlen(literal->value);
+    LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
+    LLVMTypeRef strType = LLVMTypeOf(strConst);
+
+    char* gName = arena_format(b->m_arena, ".cstr.%d", b->m_strLitCount++);
+    LLVMValueRef global = LLVMAddGlobal(b->m_mod, strType, gName);
+    LLVMSetInitializer(global, strConst);
+    LLVMSetLinkage(global, LLVMPrivateLinkage);
+    LLVMSetUnnamedAddr(global, 1);
+    LLVMSetGlobalConstant(global, 1);
+
+    LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+    LLVMValueRef idx[2] = {zero, zero};
+    return LLVMConstGEP2(strType, global, idx, 2);
+}
+
 static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
 {
     assert(t->lanes <= 1);
@@ -502,7 +525,16 @@ static LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)
     LLVMBasicBlockRef cond = NewBb(b, "cstrlen.cond");
     LLVMBasicBlockRef body = NewBb(b, "cstrlen.body");
     LLVMBasicBlockRef done = NewBb(b, "cstrlen.done");
-    Br(b, cond);
+    LLVMBasicBlockRef nullBB = NewBb(b, "cstrlen.null");
+
+    /* A NULL pointer has length 0 (defensive: a zero-initialized `cstring`
+       struct field or omitted field init is NULL, never a valid buffer). */
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, s, LLVMConstNull(b->m_ptrTy), "cstrlen.null");
+    LLVMBuildCondBr(b->m_builder, isNull, nullBB, cond);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, nullBB);
+    Br(b, done);
 
     PositionAtEnd(b, cond);
     LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "cstrlen.i");
@@ -792,6 +824,67 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
     }
 }
 
+/* Statically recognizes a `cstring`-typed argument WITHOUT emitting IR. Used
+   to route the cstring -> string value copy for internal call arguments;
+   only forms that can appear as a call arg are covered (identifier, call,
+   cast, member read). A false negative would emit a mismatched ABI, so the
+   shapes are kept in sync with the argument forms codegen supports. */
+static bool StaticExprIsCString(Builder* b, Node* n)
+{
+    if (!n)
+    {
+        return false;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIdent:
+    {
+        IdentExpr* id = (IdentExpr*)n;
+        Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+
+        if (!sym)
+        {
+            sym = (Value*)StrMapGet(&b->m_globals, id->name);
+        }
+
+        return sym && sym->typeDesc.isCString;
+    }
+    case NodeCall:
+    {
+        FuncInfo* fi = (FuncInfo*)StrMapGet(&b->m_funcs, ((CallExpr*)n)->callee);
+
+        return fi && fi->returnType.isCString;
+    }
+    case NodeCast:
+        return Resolve(b, &((CastExpr*)n)->type).isCString;
+    case NodeMember:
+    {
+        MemberExpr* m = (MemberExpr*)n;
+        const char* baseName = StaticExprTypeName(b, m->base_node);
+
+        if (!baseName || TypeRegistryIsOpaque(&b->m_registry, baseName))
+        {
+            return false;
+        }
+
+        int idx = TypeRegistryFieldIndex(&b->m_registry, baseName, m->member);
+
+        if (idx < 0)
+        {
+            return false;
+        }
+
+        const StructType* st = TypeRegistryFind(&b->m_registry, baseName);
+        FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
+
+        return Resolve(b, &field->type).isCString;
+    }
+    default:
+        return false;
+    }
+}
+
 /* Builds the getter/setter extern call for `m` (valueNode NULL = read).
    `found` reports whether `m` is an impl property at all. */
 static Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
@@ -979,6 +1072,15 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return StringFatDesc(b);
     }
 
+    // CString (or alias): a single borrowed `const char*` to `.rodata`.
+    if (TypeIsCString(&b->m_registry, t->name))
+    {
+        TypeDesc td = {0};
+        td.type = b->m_ptrTy;
+        td.isCString = true;
+        return td;
+    }
+
     if (TypeNameIsOwning(t))
     {
         TypeDesc td = TypeDescMake(b->m_ptrTy, 0, NULL);
@@ -1059,6 +1161,20 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     if (value.typeDesc.structTypeName || target.structTypeName)
     {
         return value;
+    }
+
+    /* `cstring` <-> `string`: copy in either direction at the use site.
+       cstring -> string heap-copies the NUL-terminated bytes into a fresh
+       owned fat; string -> cstring borrows the fat's data pointer (the NUL
+       invariant holds; an empty {null, 0} becomes the static empty buffer). */
+    if (value.typeDesc.isCString && target.isString)
+    {
+        return ValueMake(BuildOwnedStringFromCStr(b, value.value), target);
+    }
+
+    if (value.typeDesc.isString && target.isCString)
+    {
+        return ValueMake(BuildExternStringPtr(b, value), target);
     }
 
     /* Conversion to bool is a (non)zero test, not a bit-truncation. */
@@ -2541,6 +2657,22 @@ static LValue EmitLValue(Builder* b, Node* n)
         IndexExpr* ix = (IndexExpr*)n;
         LValue base = EmitLValue(b, ix->base_node);
 
+        if (base.valid && base.typeDesc.isCString)
+        {
+            /* cstring[i]: load the pointer, bounds-check against strlen, and
+               address the byte. Sema rejects writes, so this is a read view. */
+            LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "cs");
+            LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+            LLVMValueRef lenVal = BuildStrLen(b, ptr);
+            TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL);
+
+            none.valid = true;
+            none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, ptr, elemTd.type, elemTd, false);
+            none.typeDesc = elemTd;
+
+            return none;
+        }
+
         if (!base.valid || !base.typeDesc.isArray)
         {
             if (!base.valid || !base.typeDesc.isFixedArray)
@@ -2670,6 +2802,14 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     {
         LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)base.typeDesc.fixedLength, 0);
         return ValueMake(len, TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
+    }
+
+    /* cstring .length: runtime strlen (NUL-terminated), typed uint. */
+    if (base.typeDesc.isCString && strcmp(n->member, "length") == 0)
+    {
+        LLVMValueRef len = BuildStrLen(b, base.value);
+        return ValueMake(LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "cslen"),
+                         TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
     }
 
     if (base.typeDesc.isBox && base.typeDesc.boxInner)
@@ -2953,17 +3093,41 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
 
     TypeDesc typeDesc = l.typeDesc;
 
-    /* String equality/inequality is CONTENT comparison (strata_str_eq with a
+    /* String / cstring equality is CONTENT comparison (strata_str_eq with a
        length fast-out and pointer-identity fast-in) — never a raw compare of
-       the fat pointers. Other comparisons on strings are meaningless. */
-    if (l.typeDesc.isString || r.typeDesc.isString)
+       the pointers. `cstring` supplies its length via strlen. Other
+       comparisons are meaningless. */
+    if (l.typeDesc.isString || r.typeDesc.isString || l.typeDesc.isCString || r.typeDesc.isCString)
     {
         if (n->op == BinEqEq || n->op == BinNotEq)
         {
-            LLVMValueRef lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
-            LLVMValueRef ll = WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll"));
-            LLVMValueRef rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
-            LLVMValueRef rl = WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl"));
+            LLVMValueRef lp;
+            LLVMValueRef ll;
+            LLVMValueRef rp;
+            LLVMValueRef rl;
+
+            if (l.typeDesc.isCString)
+            {
+                lp = l.value;
+                ll = BuildStrLen(b, l.value);
+            }
+            else
+            {
+                lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
+                ll = WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll"));
+            }
+
+            if (r.typeDesc.isCString)
+            {
+                rp = r.value;
+                rl = BuildStrLen(b, r.value);
+            }
+            else
+            {
+                rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
+                rl = WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl"));
+            }
+
             LLVMValueRef args[4] = {lp, ll, rp, rl};
             StrataStrEqFn(b);
             LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
@@ -5429,7 +5593,21 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
         }
 
-        if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
+        if (shouldPassByPtr && paramIsBoxType && fd && k < fd->params.count && StaticExprIsCString(b, argNode)
+            && TypeIsString(&b->m_registry, ((ParamDecl*)VecGet((Vec*)&fd->params, k))->type.name))
+        {
+            /* cstring -> internal `string` param (which takes a slot address):
+               the callee owns and drops the value, so heap-copy the
+               NUL-terminated bytes into a fresh fat in a temp slot. */
+            Value av = EmitExpr(b, argNode);
+            LLVMValueRef owned = BuildOwnedStringFromCStr(b, av.value);
+
+            LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "cs2s");
+            LLVMBuildStore(b->m_builder, owned, slot);
+
+            args[k] = slot;
+        }
+        else if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
         {
             /* Internal string param (by slot address): the callee owns and
                drops the value, so materialize an owned fat into a fresh
@@ -6590,7 +6768,9 @@ static void EmitStmt(Builder* b, Node* n)
         }
         else
         {
-            LLVMBuildStore(b->m_builder, ZeroOf(typeDesc), slot);
+            /* A bare `cstring` defaults to the static empty buffer (never
+               NULL), mirroring the extern-boundary invariant. */
+            LLVMBuildStore(b->m_builder, typeDesc.isCString ? EmptyNulString(b) : ZeroOf(typeDesc), slot);
         }
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
@@ -7401,6 +7581,27 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             LLVMValueRef init = LLVMConstNull(typeDesc.type);
             LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
             LLVMSetInitializer(global, init);
+
+            Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+            sym->value = global;
+            sym->typeDesc = typeDesc;
+            StrMapPut(&b->m_globals, gd->name, sym);
+            continue;
+        }
+
+        /* cstring global: a `.rodata` pointer stored directly (constant
+           initializer, no runtime init/drop). No init = the static empty
+           buffer, never NULL. */
+        if (typeDesc.isCString && (!gd->init || gd->init->kind == NodeStrLiteral))
+        {
+            LLVMValueRef init = gd->init ? EmitCStringLiteralPtr(b, (StrLiteral*)gd->init) : EmptyNulString(b);
+            LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
+            LLVMSetInitializer(global, init);
+
+            if (gd->type.isConst)
+            {
+                LLVMSetGlobalConstant(global, 1);
+            }
 
             Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
             sym->value = global;

@@ -361,7 +361,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
         return true;
     }
 
-    if (t->primitiveType == PrimString)
+    if (t->primitiveType == PrimString || t->primitiveType == PrimCString)
     {
         out->size = 8;
         out->align = 8;

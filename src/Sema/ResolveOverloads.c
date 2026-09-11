@@ -900,7 +900,8 @@ static const TypeName* UnwrapBoxPtr(const TypeName* t)
 
 /* True when `member` on `base` is one of the fat pseudo-properties: dynamic
    arrays and strings carry `.length` and `.cap`; fixed arrays expose only a
-   compile-time `.length`. All are read-only views of runtime state. */
+   compile-time `.length`. `cstring` exposes `.length` only (strlen, no `.cap`).
+   All are read-only views of runtime state. */
 static bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* member)
 {
     if (strcmp(member, "length") != 0 && strcmp(member, "cap") != 0)
@@ -916,6 +917,11 @@ static bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const c
     }
 
     if (base->isArray && base->length >= 0)
+    {
+        return strcmp(member, "length") == 0;
+    }
+
+    if (TypeIsCString(&r->m_registry, base->name))
     {
         return strcmp(member, "length") == 0;
     }
@@ -1863,7 +1869,8 @@ static bool IsLengthPseudoMemberBase(const TypeRegistry* reg, const TypeName* t)
         return true;
     }
 
-    return TypeIsString(reg, TypeRegistryResolveAlias(reg, t->name));
+    const char* leaf = TypeRegistryResolveAlias(reg, t->name);
+    return TypeIsString(reg, leaf) || TypeIsCString(reg, leaf);
 }
 
 static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMap* scope)
@@ -2567,6 +2574,14 @@ static bool IsArrayElementBorrow(Node* n)
     return n && n->kind == NodeIndex;
 }
 
+/* A string literal contextually coerces to `cstring` (a `.rodata` pointer).
+   A `string`-typed value never converts to `cstring` implicitly. */
+static bool IsStrLiteralForCString(const Resolver* r, const TypeName* targetType, const Node* valueNode)
+{
+    return targetType && valueNode && valueNode->kind == NodeStrLiteral
+           && TypeIsCString(&r->m_registry, targetType->name);
+}
+
 // Array builtins (push/pop/resize); marks the call pseudo. True if handled.
 static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
@@ -2684,7 +2699,8 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* valueType = InferType(r, typedArg, scope);
 
-        if (valueType && elemType && !IsAssignableType(r, elemType, valueType))
+        if (valueType && elemType && !IsAssignableType(r, elemType, valueType)
+            && !IsStrLiteralForCString(r, elemType, typedArg))
         {
             // A proven `T?` pushed into `^T[]` moves (source emptied).
             const TypeName* vi = TypeNameBoxInner(valueType);
@@ -2771,6 +2787,12 @@ static bool IsCVarargCompatible(Resolver* r, const TypeName* type)
     if (!type || type->primitiveType == PrimVoid)
     {
         return false;
+    }
+
+    /* `cstring` crosses as `const char*` — always vararg-compatible. */
+    if (TypeIsCString(&r->m_registry, type->name))
+    {
+        return true;
     }
 
     if (IsCVarargScalarish(r, type))
@@ -4324,6 +4346,16 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             if (strcmp(argType->name, paramType->name) == 0)
             {
             }
+            else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->m_registry, paramType->name))
+            {
+                /* String literal contextually coerces to `cstring`. */
+                score += 1;
+            }
+            else if (TypeIsCString(&r->m_registry, argType->name) && TypeIsString(&r->m_registry, paramType->name))
+            {
+                /* `cstring` copies into a `string` param (heap copy). */
+                score += 1;
+            }
             else if (IsNumeric(argType->primitiveType) && IsNumeric(paramType->primitiveType))
             {
                 score += 1;
@@ -4902,6 +4934,12 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return InternTypeName(r, "byte");
         }
 
+        if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+        {
+            // `cs[i]` is a bounds-checked byte read (strlen is the length).
+            return InternTypeName(r, "byte");
+        }
+
         return baseType ? TypeNameArrayElem(baseType) : NULL;
     }
     case NodeArrayInit:
@@ -4963,6 +5001,20 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
 
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {
+    /* `cstring` copies into `string` (heap copy at the use site). The
+       reverse is never implicit: only a string literal initializes a
+       `cstring` (handled at each use site via IsStrLiteralForCString). */
+    if (targetType && valueType && TypeIsCString(&r->m_registry, valueType->name)
+        && TypeIsString(&r->m_registry, targetType->name))
+    {
+        return true;
+    }
+
+    if (targetType && TypeIsCString(&r->m_registry, targetType->name))
+    {
+        return valueType && SameResolvedType(r, valueType->name, targetType->name);
+    }
+
     if (targetType && TypeNameIsOwning(targetType))
     {
         const TypeName* inner = TypeNameBoxInner(targetType);
@@ -5134,6 +5186,22 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             bool lString = lt && TypeIsString(&r->m_registry, ln);
             bool rString = rt && TypeIsString(&r->m_registry, rn);
+            bool lCStr = lt && TypeIsCString(&r->m_registry, ln);
+            bool rCStr = rt && TypeIsCString(&r->m_registry, rn);
+
+            /* A string literal on one side of a `cstring` comparison coerces
+               to `cstring` (contextual), so `cs == "lit"` is well-typed. */
+            if (lCStr && rString && b->rhs->kind == NodeStrLiteral)
+            {
+                rString = false;
+                rCStr = true;
+            }
+
+            if (rCStr && lString && b->lhs->kind == NodeStrLiteral)
+            {
+                lString = false;
+                lCStr = true;
+            }
 
             /* Ordering a bool is meaningless (i1 compares with signed 1-bit
                semantics: `true < false` computes garbage). Only `==`/`!=`
@@ -5155,6 +5223,25 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (lString)
             {
+                break;
+            }
+
+            /* `cstring` compares by content like `string`, but never mixes
+               with `string` (copy to `string` first for cross-type compare). */
+            if (lCStr != rCStr)
+            {
+                DiagErrorFmt(r->m_diag, b->base.range, "cannot compare 'cstring' with '%s'", lCStr ? rn : ln);
+                break;
+            }
+
+            if (lCStr)
+            {
+                if (!eqOp)
+                {
+                    DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln,
+                                 rn);
+                }
+
                 break;
             }
 
@@ -5201,6 +5288,29 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
 
         CheckConstAssign(r, a->target, a->base.range, scope);
+
+        /* `cstring` is constant storage: element writes (plain or compound)
+           are rejected. Whole-slot rebinding (`cs = ...`) is fine. */
+        if (a->target->kind == NodeIndex)
+        {
+            Node* base = a->target;
+
+            while (base && base->kind == NodeIndex)
+            {
+                base = ((IndexExpr*)base)->base_node;
+            }
+
+            if (base)
+            {
+                const TypeName* baseType = InferType(r, base, scope);
+
+                if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+                {
+                    DiagErrorFmt(r->m_diag, a->base.range, "cannot assign into a 'cstring' (a constant string)");
+                    return;
+                }
+            }
+        }
 
         /* `.length` / `.cap` on arrays and strings are read-only views of
            the fat (fixed `.length` is a compile-time constant). */
@@ -5269,7 +5379,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 const TypeName* vt = InferType(r, a->value, scope);
 
-                if (vt && !IsAssignableType(r, &prop->returnType, vt))
+                if (vt && !IsAssignableType(r, &prop->returnType, vt)
+                    && !IsStrLiteralForCString(r, &prop->returnType, a->value))
                 {
                     DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to property '%s' of type '%s'", vt->name,
                                  tm->member, prop->returnType.name);
@@ -5588,7 +5699,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 const TypeName* vt = InferType(r, a->value, scope);
 
-                if (vt && !IsAssignableType(r, tt, vt))
+                if (vt && !IsAssignableType(r, tt, vt) && !IsStrLiteralForCString(r, tt, a->value))
                 {
                     DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to '%s' of type '%s'", vt->name,
                                  ((IdentExpr*)a->target)->name, tt->name);
@@ -5676,6 +5787,29 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         CheckConstAssign(r, inc->operand, inc->base.range, scope);
         ResolveExpr(r, inc->operand, scope);
 
+        /* ++/-- on an element of constant `cstring` storage is rejected. */
+        if (inc->operand->kind == NodeIndex)
+        {
+            Node* base = inc->operand;
+
+            while (base && base->kind == NodeIndex)
+            {
+                base = ((IndexExpr*)base)->base_node;
+            }
+
+            if (base)
+            {
+                const TypeName* baseType = InferType(r, base, scope);
+
+                if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+                {
+                    DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s an element of a 'cstring' (a constant string)",
+                                 inc->isDec ? "decrement" : "increment");
+                    return;
+                }
+            }
+        }
+
         /* ++/-- only makes sense on numeric storage; anything else would
            fall through to pointer arithmetic. Bool is not numeric: `b++`
            wraps the i1 (true -> false). */
@@ -5752,7 +5886,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             = src && SameResolvedType(r, srcName, dstName)
               && (TypeRegistryIsTypeAlias(&r->m_registry, srcName) || TypeRegistryIsTypeAlias(&r->m_registry, dstName));
 
-        if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair)
+        /* `cstring` -> `string` copies (heap copy at the use site);
+           a string literal casts to `cstring` (contextual `.rodata` pointer). */
+        bool cstringStringPair
+            = src
+              && ((TypeIsCString(&r->m_registry, srcName) && TypeIsString(&r->m_registry, dstName))
+                  || (cast->operand->kind == NodeStrLiteral && TypeIsCString(&r->m_registry, dstName)));
+
+        if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair && !cstringStringPair)
         {
             DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
         }
@@ -5840,9 +5981,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
+        /* `cstring` exposes only `.length` (no `.cap`, no other members). */
+        if (baseType && TypeIsCString(&r->m_registry, baseType->name) && strcmp(m->member, "length") != 0)
+        {
+            DiagErrorFmt(r->m_diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
+        }
+
         /* Box fields can be moved out too; IsBoxUnusable catches full or partial moves. */
         const TypeName* selfType = InferType(r, n, scope);
-
         if (selfType && AliasIsOwning(r, selfType))
         {
             const char* key = MovableBoxSourceKey(r, n);
@@ -6031,7 +6177,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                             const TypeName* elemType = InferType(r, elem, scope);
 
-                            if (elemType && !IsAssignableType(r, leaf, elemType))
+                            if (elemType && !IsAssignableType(r, leaf, elemType)
+                                && !IsStrLiteralForCString(r, leaf, elem))
                             {
                                 DiagErrorFmt(r->m_diag, elem->range,
                                              "element of type '%s' cannot initialize '%s' element of field '%s'",
@@ -6054,7 +6201,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                             Node* element = (Node*)VecGet(&ai->elements, k);
                             const TypeName* elemType = InferType(r, element, scope);
 
-                            if (elemType && !IsAssignableType(r, elem, elemType))
+                            if (elemType && !IsAssignableType(r, elem, elemType)
+                                && !IsStrLiteralForCString(r, elem, element))
                             {
                                 DiagErrorFmt(r->m_diag, element->range,
                                              "element of type '%s' cannot initialize '%s' element of field '%s'",
@@ -6074,7 +6222,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 {
                     const TypeName* fieldValueType = InferType(r, field->value, scope);
 
-                    if (fieldValueType && !IsAssignableType(r, &fieldDecl->type, fieldValueType))
+                    if (fieldValueType && !IsAssignableType(r, &fieldDecl->type, fieldValueType)
+                        && !IsStrLiteralForCString(r, &fieldDecl->type, field->value))
                     {
                         DiagErrorFmt(r->m_diag, structInitExpr->base.range,
                                      "field '%s' of struct '%s' cannot be initialized by expression of type '%s'",
@@ -6355,8 +6504,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             {
                 t = (t->isBox || t->isOptional) ? t->inner : t->elem;
             }
-            if (t && t->name && !IsStringType(t->primitiveType) && !IsScalarType(t->primitiveType)
-                && !IsSimdVector(t->primitiveType) && !TypeRegistryIsUserType(&r->m_registry, t->name))
+            if (t && t->name && !IsStringType(t->primitiveType) && !IsCStringType(t->primitiveType)
+                && !IsScalarType(t->primitiveType) && !IsSimdVector(t->primitiveType)
+                && !TypeRegistryIsUserType(&r->m_registry, t->name))
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "unknown type '%s'", t->name);
                 return;
@@ -6524,7 +6674,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
                 const TypeName* elemType = InferType(r, elem, scope);
 
-                if (elemType && !IsAssignableType(r, leaf, elemType))
+                if (elemType && !IsAssignableType(r, leaf, elemType) && !IsStrLiteralForCString(r, leaf, elem))
                 {
                     DiagErrorFmt(r->m_diag, elem->range,
                                  "element of type '%s' cannot initialize '%s' element of local '%s'", elemType->name,
@@ -6570,7 +6720,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ResolveExpr(r, vd->init, scope);
             const TypeName* initType = InferType(r, vd->init, scope);
 
-            bool ok = initType && IsAssignableType(r, &vd->type, initType);
+            bool ok = initType
+                      && (IsAssignableType(r, &vd->type, initType) || IsStrLiteralForCString(r, &vd->type, vd->init));
 
             if (initType && !ok)
             {
@@ -6653,7 +6804,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             // Check the returned value against the declared return type.
             if (r->m_currentReturnType && r->m_currentReturnType->primitiveType != PrimVoid && typeName
-                && !IsAssignableType(r, r->m_currentReturnType, typeName))
+                && !IsAssignableType(r, r->m_currentReturnType, typeName)
+                && !IsStrLiteralForCString(r, r->m_currentReturnType, rs->value))
             {
                 DiagErrorFmt(r->m_diag, rs->base.range,
                              "cannot return a value of type '%s' from a function returning '%s'", typeName->name,
@@ -7281,7 +7433,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 {
                     DiagErrorFmt(diag, field->type.range,
                                  "extern struct field '%s' may not have type 'string' "
-                                 "(use a '^byte' or integer-typed member for a raw char*)",
+                                 "(use 'cstring' for a raw const char*, or a '^byte' / integer-typed member)",
                                  field->name);
                 }
                 else
@@ -7408,7 +7560,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                     ResolveExpr(&r, gd->init, &globalScope);
                     const TypeName* initType = InferType(&r, gd->init, &globalScope);
 
-                    if (initType && !IsAssignableType(&r, &gd->type, initType))
+                    if (initType && !IsAssignableType(&r, &gd->type, initType)
+                        && !IsStrLiteralForCString(&r, &gd->type, gd->init))
                     {
                         DiagErrorFmt(diag, gd->base.range,
                                      "global '%s' of type '%s' cannot be initialized by expression of type '%s'",

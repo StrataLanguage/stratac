@@ -28,6 +28,7 @@ typedef struct
     const TypeName* boxInner; /* inner T of ^T / T? (NULL for string) */
     bool isArray;
     bool isString;              /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
+    bool isCString;             /* cstring / alias-of-cstring: single `const char*` to `.rodata` (borrowed) */
     bool isSimdVector;
     const TypeName* arrayInner; /* element type of T[] / T[N] */
     bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */

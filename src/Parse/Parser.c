@@ -276,6 +276,7 @@ static bool LooksLikeVarDecl(Parser* p)
     case TokKwFloat3:
     case TokKwFloat4:
     case TokKwString:
+    case TokKwCstring:
     case TokCaret:
         return true;
     case TokIdent:
@@ -498,6 +499,13 @@ bool ParserTryParseType(Parser* p, TypeName* out)
             DiagError(p->m_diag, caretRange, "redundant boxing of type 'string'");
         }
 
+        /* `^cstring` is not supported: a constant string is already a
+           plain pointer with no ownership to box. */
+        if (base.primitiveType == PrimCString)
+        {
+            DiagError(p->m_diag, caretRange, "type 'cstring' cannot be boxed");
+        }
+
         for (int i = arrayDepth - 1; i >= 0; i--)
         {
             if (i < 8 && depths[i] >= 0)
@@ -636,6 +644,9 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     case TokKwString:
         name = "string";
         break;
+    case TokKwCstring:
+        name = "cstring";
+        break;
     case TokIdent:
         name = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
         break;
@@ -655,16 +666,24 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->range = SpanToCur(p, constRange);
 
     /* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
-       so `Weapon?[]` is an array of optionals. */
+       so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
     if (p->m_cur.kind == TokQuestion)
     {
-        SourceRange qRange = p->m_cur.range;
-        Advance(p);
+        if (out->primitiveType == PrimCString && !out->isArray && !out->isBox && !out->isOptional)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "type 'cstring' cannot be optional");
+            Advance(p);
+        }
+        else
+        {
+            SourceRange qRange = p->m_cur.range;
+            Advance(p);
 
-        TypeName wrapped = TypeNameOptionalWrap(p->m_arena, *out);
-        wrapped.range = SpanToCur(p, constRange);
-        (void)qRange;
-        *out = wrapped;
+            TypeName wrapped = TypeNameOptionalWrap(p->m_arena, *out);
+            wrapped.range = SpanToCur(p, constRange);
+            (void)qRange;
+            *out = wrapped;
+        }
     }
 
     ApplyArrayBrackets(p, out, constRange);
@@ -2263,7 +2282,8 @@ static Node* ParseUnary(Parser* p)
             bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint || next.kind == TokKwLong
                                 || next.kind == TokKwUlong || next.kind == TokKwByte || next.kind == TokKwSbyte
                                 || next.kind == TokKwShort || next.kind == TokKwUshort || next.kind == TokKwFloat
-                                || next.kind == TokKwDouble || next.kind == TokKwBool || next.kind == TokKwString;
+                                || next.kind == TokKwDouble || next.kind == TokKwBool || next.kind == TokKwString
+                                || next.kind == TokKwCstring;
 
             bool isHandleCast = next.kind == TokIdent;
             bool isBoxCast = next.kind == TokCaret;

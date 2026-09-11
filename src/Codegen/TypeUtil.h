@@ -48,6 +48,9 @@ bool IsNameScalarType(const char* t);
 
 bool IsStringType(PrimitiveType prim);
 
+// `cstring` — constant NUL-terminated string (single `const char*`, `.rodata`).
+bool IsCStringType(PrimitiveType prim);
+
 bool IsFloatType(PrimitiveType prim);
 bool IsNameFloatType(const char* t);
 
@@ -72,6 +75,9 @@ bool IsScalarLikeType(const TypeRegistry* reg, const char* t);
 
 // True when the (alias-resolved) name is "string".
 bool TypeIsString(const TypeRegistry* reg, const char* name);
+
+// True when the (alias-resolved) name is "cstring".
+bool TypeIsCString(const TypeRegistry* reg, const char* name);
 
 /* True when `==`/`!=` (and ordering) compares the value directly — scalars,
    handles, enums, and aliases of those compare by value / pointer identity.
