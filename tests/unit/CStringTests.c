@@ -13,6 +13,7 @@
 #include "Util.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static StrataJit* CompileStr(const char* src, const char** err)
@@ -313,4 +314,274 @@ STRATA_TEST(cstring_rejects_element_write_and_cap)
                          "  cstring c = \"hi\";\n"
                          "  return (int)c.cap;\n"
                          "}\n"));
+}
+
+/* ---- Regression: a cstring crossing into OWNING string contexts is a
+   heap copy at the use site, for EVERY expression form (not just a bare
+   identifier or literal). Before the fix, any other form emitted a
+   mismatched ABI (raw char* where the callee reads a fat) and crashed. ---- */
+
+/* Host shim: a fresh buffer with the SAME content — different address than
+   any literal, so content-vs-pointer equality is distinguishable. */
+static char* HostDupStr(const char* s)
+{
+    char* p = (char*)malloc(strlen(s) + 1);
+    strcpy(p, s);
+    return p;
+}
+
+STRATA_TEST(string_assign_cstring_value)
+{
+    /* `s = cs` (rebind of an owning local) must heap-copy the cstring. */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("int entry()\n"
+                                "{\n"
+                                "  cstring cs = \"hello\";\n"
+                                "  string s = \"x\";\n"
+                                "  s = cs;\n"
+                                "  return (int)s.length;\n"
+                                "}\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 5);
+        }
+
+        strataJitDestroy(jit);
+    }
+
+    strataFree((char*)err);
+}
+
+STRATA_TEST(string_arg_move_semantics_preserved)
+{
+    /* A plain string arg keeps its move semantics: the source is emptied
+       and rebinding afterwards neither crashes nor double-frees. */
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("int len_of(string s) { return (int)s.length; }\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  string s = \"moved\";\n"
+                                "  int a = len_of(s);\n"
+                                "  s = \"again\";\n"
+                                "  return a + (int)s.length;\n"
+                                "}\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 10);
+        }
+
+        strataJitDestroy(jit);
+    }
+
+    strataFree((char*)err);
+}
+
+STRATA_TEST(cstring_element_arg_copies_into_string_param)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("int len_of(string s) { return (int)s.length; }\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  cstring[] arr = {\"hello\", \"hi\"};\n"
+                                "  return len_of(arr[0]);\n"
+                                "}\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 5);
+        }
+
+        strataJitDestroy(jit);
+    }
+
+    strataFree((char*)err);
+}
+
+STRATA_TEST(cstring_member_of_call_result_arg)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("struct Pair { cstring name; };\n"
+                                "Pair GetPair() { return Pair { .name = \"member\" }; }\n"
+                                "int len_of(string s) { return (int)s.length; }\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  return len_of(GetPair().name);\n"
+                                "}\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 6);
+        }
+
+        strataJitDestroy(jit);
+    }
+
+    strataFree((char*)err);
+}
+
+STRATA_TEST(cstring_push_and_element_write_into_string_array)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("int entry()\n"
+                                "{\n"
+                                "  string[] arr = {};\n"
+                                "  cstring c = \"pushed\";\n"
+                                "  array_push(arr, c);\n"
+                                "  string[] arr2 = {\"a\"};\n"
+                                "  cstring c2 = \"elem\";\n"
+                                "  arr2[0] = c2;\n"
+                                "  return (int)arr[0].length + (int)arr2[0].length;\n"
+                                "}\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 10);
+        }
+
+        strataJitDestroy(jit);
+    }
+
+    strataFree((char*)err);
+}
+
+STRATA_TEST(cstring_global_initialized_from_global)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileStr("cstring g = \"global\";\n"
+                                "cstring g2 = g;\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  return (int)g2.length + (int)g.length;\n"
+                                "}\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+
+    if (jit)
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 12);
+        }
+
+        strataJitDestroy(jit);
+    }
+
+    strataFree((char*)err);
+}
+
+STRATA_TEST(cstring_struct_field_equality_is_content)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "extern cstring dup_str(cstring s);\n"
+                                            "struct Wrapper { cstring s; int n; };\n"
+                                            "int entry()\n"
+                                            "{\n"
+                                            "  Wrapper a = Wrapper { .s = \"dup\", .n = 1 };\n"
+                                            "  Wrapper b;\n"
+                                            "  b.s = dup_str(\"dup\");\n"
+                                            "  b.n = 1;\n"
+                                            "  if (a == b) { return 7; }\n"
+                                            "  return 3;\n"
+                                            "}\n",
+                                            "cseq",
+                                            &err);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    strataJitAddSymbol(jit, "dup_str", (void*)&HostDupStr);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(cstring_array_equality_is_content)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "extern cstring dup_str(cstring s);\n"
+                                            "int entry()\n"
+                                            "{\n"
+                                            "  cstring[] a = {\"one\", \"two\"};\n"
+                                            "  cstring[] b = {dup_str(\"one\"), dup_str(\"two\")};\n"
+                                            "  if (a == b) { return 7; }\n"
+                                            "  return 3;\n"
+                                            "}\n",
+                                            "csaeq",
+                                            &err);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    strataJitAddSymbol(jit, "dup_str", (void*)&HostDupStr);
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
 }
