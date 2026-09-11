@@ -89,6 +89,8 @@ typedef struct Builder
     LLVMTypeRef m_strdupFnType;
     LLVMValueRef m_strEqFn; /* strata_str_eq: content equality for string ==/!= */
     LLVMTypeRef m_strEqFnType;
+    LLVMValueRef m_csLenFn; /* strata_cstrlen: NUL-terminated length for cstring ==/!= */
+    LLVMTypeRef m_csLenFnType;
     StrMap m_eqHelpers;
     Arena* m_arena;
     int m_strLitCount;

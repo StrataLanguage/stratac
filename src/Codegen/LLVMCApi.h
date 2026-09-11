@@ -128,6 +128,7 @@ LLVMValueRef LLVMConstArray(LLVMTypeRef elementTy, LLVMValueRef* constantVals, u
 LLVMValueRef LLVMBuildPtrToInt(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
 void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
+LLVMValueRef LLVMGetInitializer(LLVMValueRef globalVar);
 void LLVMSetLinkage(LLVMValueRef global, int linkage);
 void LLVMSetUnnamedAddr(LLVMValueRef global, LLVMBool hasUnnamedAddr);
 void LLVMSetGlobalConstant(LLVMValueRef global, LLVMBool isConstant);
