@@ -2042,7 +2042,11 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         bool structVal
             = TypeRegistryIsUserType(&b->m_registry, leafName) && !TypeRegistryIsOpaque(&b->m_registry, leafName);
 
-        bool byPtr = p->mod != ModNone || structVal || BuilderIsOwningType(b, &p->type);
+        /* Structs pass BY VALUE: the callee gets its own copy (an explicit
+           `ref` still shares the caller's storage). Externs keep crossing as
+           pointers — the host C ABI contract is `T*`, and a bare IR aggregate
+           would not match the C by-value lowering anyway. */
+        bool byPtr = p->mod != ModNone || (f->isExtern && structVal) || BuilderIsOwningType(b, &p->type);
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
         bool optionalString = p->type.isOptional && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
@@ -2123,10 +2127,14 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         bool structVal
             = TypeRegistryIsUserType(&b->m_registry, leafName) && !TypeRegistryIsOpaque(&b->m_registry, leafName);
         bool boxParam = BuilderIsOwningType(b, &p->type);
+        /* An owning struct passed BY VALUE (non-ref, non-extern): the callee
+           owns its copy's fields and drops them at return. */
+        bool owningStructParam
+            = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->m_registry, leafName);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
 
-        if (p->mod != ModNone || structVal || boxParam)
+        if (p->mod != ModNone || (f->isExtern && structVal) || boxParam)
         {
             sym->value = LLVMGetParam(b->m_curFn, (unsigned)i);
             sym->typeDesc = typeDesc;
@@ -2162,6 +2170,15 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
 
             sym->value = slot;
             sym->typeDesc = typeDesc;
+
+            if (owningStructParam)
+            {
+                OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+                ol->slot = slot;
+                ol->td = typeDesc;
+                ol->stackBuffer = false;
+                VecPush(&b->m_owningLocals, ol);
+            }
         }
 
         StrMapPut(&b->m_symbols, p->name, sym);
@@ -4511,6 +4528,18 @@ static LLVMValueRef SpillEqOperand(Builder* b, Value v)
    allocation, returning the new cell pointer. Callers guard optionals. */
 static Value EmitCopyValue(Builder* b, Value src, TypeDesc td);
 
+/* Copies an owning struct value field-by-field from srcPtr into dstPtr.
+   Owning fields recurse through EmitCopyValue; a self-referential owning
+   struct terminates because struct/box field copies go through the cached
+   per-struct copy fn (a real call), never inline expansion. */
+static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef srcPtr, const char* structName);
+
+/* Returns (creating if needed) a per-struct deep-copy fn
+   `void __strata_copy_<T>(dst, src)` — the call-based form of
+   EmitStructCopyInto that self-referential structs can recurse through at
+   runtime (the same escape hatch the drop fns use). */
+static LLVMValueRef GetOrCreateStructCopyFn(Builder* b, const char* structName);
+
 /* Copies a non-empty fat array value: fresh buffer + per-element deep copy
    for owning element types, memcpy-style loop otherwise. Callers guard
    empty optionals. */
@@ -4576,26 +4605,14 @@ static LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
 
     if (st && structTy)
     {
-        for (size_t j = 0; j < st->fields.count; j++)
-        {
-            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
-            TypeDesc fieldTd = Resolve(b, &f->type);
-            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-            LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, src.value, idxs, 2, "csf");
-            LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, heap, idxs, 2, "cdf");
-
-            if (BuilderIsOwningValue(b, &f->type))
-            {
-                Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
-                Value copied = EmitCopyValue(b, fv, fieldTd);
-                LLVMBuildStore(b->m_builder, copied.value, dstField);
-            }
-            else
-            {
-                LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
-                LLVMBuildStore(b->m_builder, loaded, dstField);
-            }
-        }
+        /* Field copies go through the cached per-struct copy fn: a REAL
+           call, so a self-referential inner (`Node? next`) recurses at
+           runtime (bounded by the null slots) instead of hanging IR-gen. */
+        LLVMTypeRef copyParamTys[2] = {b->m_ptrTy, b->m_ptrTy};
+        LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), copyParamTys, 2, 0);
+        LLVMValueRef copyFn = GetOrCreateStructCopyFn(b, td.boxInner->name);
+        LLVMValueRef copyArgs[2] = {heap, src.value};
+        LLVMBuildCall2(b->m_builder, copyFnTy, copyFn, copyArgs, 2, "");
     }
     else
     {
@@ -4626,26 +4643,13 @@ static Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
     LLVMBuildStore(b->m_builder, src.value, srcSlot);
     LLVMValueRef dstSlot = EntryAlloca(b, td.type, "cpsd");
 
-    for (size_t j = 0; j < st->fields.count; j++)
-    {
-        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
-        TypeDesc fieldTd = Resolve(b, &f->type);
-        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-        LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, srcSlot, idxs, 2, "csf");
-        LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, dstSlot, idxs, 2, "cdf");
-
-        if (BuilderIsOwningValue(b, &f->type))
-        {
-            Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
-            Value copied = EmitCopyValue(b, fv, fieldTd);
-            LLVMBuildStore(b->m_builder, copied.value, dstField);
-        }
-        else
-        {
-            LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
-            LLVMBuildStore(b->m_builder, loaded, dstField);
-        }
-    }
+    /* The cached copy fn is a real call: self-referential owning structs
+       (a `Node? next` field) recurse at runtime, not at IR-gen time. */
+    LLVMTypeRef copyParamTys[2] = {b->m_ptrTy, b->m_ptrTy};
+    LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), copyParamTys, 2, 0);
+    LLVMValueRef copyFn = GetOrCreateStructCopyFn(b, td.structTypeName);
+    LLVMValueRef copyArgs[2] = {dstSlot, srcSlot};
+    LLVMBuildCall2(b->m_builder, copyFnTy, copyFn, copyArgs, 2, "");
 
     return ValueMake(LLVMBuildLoad2(b->m_builder, td.type, dstSlot, "cpS"), td);
 }
@@ -4740,6 +4744,94 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
     }
 
     return src;
+}
+
+/* Copies `srcPtr`'s struct fields into `dstPtr`. Owning fields recurse
+   through EmitCopyValue (whose struct/box branches bottom out in the cached
+   copy fn — a real call), plain fields bitwise. */
+static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef srcPtr, const char* structName)
+{
+    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, structName) : NULL;
+
+    if (!st || !structTy)
+    {
+        return;
+    }
+
+    for (size_t j = 0; j < st->fields.count; j++)
+    {
+        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
+        TypeDesc fieldTd = Resolve(b, &f->type);
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
+        LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, srcPtr, idxs, 2, "csf");
+        LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, dstPtr, idxs, 2, "cdf");
+
+        if (BuilderIsOwningValue(b, &f->type))
+        {
+            Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
+            Value copied = EmitCopyValue(b, fv, fieldTd);
+            LLVMBuildStore(b->m_builder, copied.value, dstField);
+        }
+        else
+        {
+            LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
+            LLVMBuildStore(b->m_builder, loaded, dstField);
+        }
+    }
+}
+
+/* Builds (once) `void __strata_copy_<T>(dst, src)` around EmitStructCopyInto.
+   Registered in the cache BEFORE the body is emitted, so a self-referential
+   owning struct's own copy body looks the function back up (cache hit) and
+   recurses with a real call at runtime. May run mid-emission of another
+   function, so the enclosing build context is saved and restored. */
+static LLVMValueRef GetOrCreateStructCopyFn(Builder* b, const char* structName)
+{
+    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->m_copyFns, structName);
+
+    if (existing)
+    {
+        return existing;
+    }
+
+    LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
+    LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 2, 0);
+    char* fnName = arena_format(b->m_arena, "__strata_copy_%s", structName);
+    LLVMValueRef fn = LLVMAddFunction(b->m_mod, fnName, fnTy);
+    LLVMSetLinkage(fn, LLVMInternalLinkage);
+
+    StrMapPut(&b->m_copyFns, structName, (void*)fn);
+
+    LLVMValueRef savedCurFn = b->m_curFn;
+    LLVMBasicBlockRef savedEntryBlock = b->m_entryBlock;
+    LLVMValueRef savedEntryAllocaPt = b->m_entryAllocaPt;
+    bool savedTerminated = b->m_terminated;
+    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->m_builder);
+
+    b->m_curFn = fn;
+
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "entry");
+    PositionAtEnd(b, entry);
+    b->m_entryBlock = entry;
+    b->m_entryAllocaPt = NULL;
+
+    EmitStructCopyInto(b, LLVMGetParam(fn, 0), LLVMGetParam(fn, 1), structName);
+
+    LLVMBuildRetVoid(b->m_builder);
+    b->m_terminated = true;
+
+    b->m_curFn = savedCurFn;
+    b->m_entryBlock = savedEntryBlock;
+    b->m_entryAllocaPt = savedEntryAllocaPt;
+    b->m_terminated = savedTerminated;
+
+    if (savedInsertBlock)
+    {
+        LLVMPositionBuilderAtEnd(b->m_builder, savedInsertBlock);
+    }
+
+    return fn;
 }
 
 /* Emits copy(arg) returning a deep copy of an owning value. */
@@ -5460,13 +5552,24 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 {
                     v = DerefBoxValue(b, v);
 
-                    /* Implicit scalar widening/narrowing to the declared param
-                       type (e.g. a float literal to a double param) - without
-                       this the arg crosses at its own width and the call gets
-                       a mismatched ABI (garbage). */
                     if (fd && k < fd->params.count)
                     {
-                        v = Coerce(b, v, Resolve(b, &((ParamDecl*)VecGet(&fd->params, k))->type));
+                        /* Implicit scalar widening/narrowing to the declared
+                           param type (e.g. a float literal to a double param)
+                           - without this the arg crosses at its own width and
+                           the call gets a mismatched ABI (garbage). */
+                        TypeDesc paramTd = Resolve(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
+                        v = Coerce(b, v, paramTd);
+
+                        /* An owning struct passed by value: the callee owns
+                           and drops its copy at return, so hand it a deep
+                           copy — the caller's value keeps its own fields
+                           (C value semantics; `ref` is the zero-copy escape). */
+                        if (paramTd.structTypeName
+                            && TypeRegistryIsOwningStruct(&b->m_registry, paramTd.structTypeName))
+                        {
+                            v = EmitCopyValue(b, v, paramTd);
+                        }
                     }
 
                     args[k] = v.value;
@@ -7584,6 +7687,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_externSlots);
     StrMapInit(&b.m_implProps);
     StrMapInit(&b.m_dropFns);
+    StrMapInit(&b.m_copyFns);
     StrMapInit(&b.m_eqHelpers);
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
@@ -7615,6 +7719,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_externSlots);
     StrMapFree(&b.m_implProps);
     StrMapFree(&b.m_dropFns);
+    StrMapFree(&b.m_copyFns);
     StrMapFree(&b.m_eqHelpers);
     free(b.m_loops.items);
     free(b.m_owningLocals.items);

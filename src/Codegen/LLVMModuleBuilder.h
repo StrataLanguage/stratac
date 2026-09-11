@@ -57,6 +57,7 @@ typedef struct Builder
     StrMap m_externSlots;
     StrMap m_implProps; /* "Handle.Prop" -> ImplPropEntry (getter/setter lowering) */
     StrMap m_dropFns; /* structName -> LLVMValueRef, per-type struct-field drop helper */
+    StrMap m_copyFns; /* structName -> LLVMValueRef, per-type struct deep-copy helper */
     Vec m_externNames;
     TypeDesc m_curRet;
     LLVMTypeRef m_curRetAbi; /* widened signature return type (i32 for sub-word ints) */

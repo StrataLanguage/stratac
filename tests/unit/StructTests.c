@@ -309,14 +309,19 @@ STRATA_TEST(jit_struct_zero_initialized_by_default)
     }
 }
 
-STRATA_TEST(jit_struct_inout_param_is_by_reference)
+STRATA_TEST(jit_struct_param_is_by_value)
 {
+    /* Structs pass BY VALUE: the callee mutates its own copy, the caller's
+       value is untouched. `ref` is the explicit way to share storage. */
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
                                 "void bump(Vec3 v) { v.x = v.x + 10.0; v.y = v.y + 20.0; }\n"
+                                "void bump_ref(ref Vec3 v) { v.x = v.x + 10.0; v.y = v.y + 20.0; }\n"
                                 "float entry() {\n"
                                 "  Vec3 a; a.x = 1.0; a.y = 2.0; a.z = 3.0;\n"
                                 "  bump(a);\n"
-                                "  return a.x + a.y + a.z;\n"
+                                "  float afterCopy = a.x + a.y + a.z;\n" /* 6: copy was mutated, not a */
+                                "  bump_ref(a);\n"
+                                "  return afterCopy * 10.0 + a.x + a.y + a.z;\n" /* 60 + 36 = 96 */
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -326,7 +331,94 @@ STRATA_TEST(jit_struct_inout_param_is_by_reference)
         if (f)
         {
             float r = f();
-            STRATA_CHECK(r > 35.9f && r < 36.1f);
+            STRATA_CHECK(r > 95.9f && r < 96.1f);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_owning_struct_param_is_deep_copied)
+{
+    /* An owning struct passed by value: the callee owns and drops its COPY's
+       fields. Renaming the copy must not touch the caller's element — and
+       the caller's string must still be valid afterwards (no shared free). */
+    StrataJit* jit = CompileJit("struct Rec { string name; };\n"
+                                "void rename(Rec r) { r.name = \"changed\"; }\n"
+                                "int entry() {\n"
+                                "  Rec[] a = { Rec { .name = \"keep\" } };\n"
+                                "  rename(a[0]);\n"
+                                "  if (a[0].name == \"keep\") { return 7; }\n"
+                                "  return 0;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 7);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_box_arg_to_by_value_struct_param_copies)
+{
+    /* `^Rec` unwrapped into a plain by-value `Rec` param: the callee gets a
+       copy of the cell's value; the box itself stays intact. */
+    StrataJit* jit = CompileJit("struct Rec { int n; };\n"
+                                "void bump(Rec r) { r.n = 99; }\n"
+                                "int entry() {\n"
+                                "  ^Rec box = Rec { .n = 5 };\n"
+                                "  bump(box);\n"
+                                "  return (int)box.n;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 5);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+STRATA_TEST(jit_self_referential_struct_by_value_param_copies)
+{
+    /* A self-referential owning struct (`Node? next`) passed by value, all
+       the way down the chain: the per-struct copy fn recursion terminates at
+       the empty tail and each level reads its own copy. */
+    StrataJit* jit = CompileJit("struct Node { int v; Node? next; };\n"
+                                "int total(Node n) {\n"
+                                "  int t = n.v;\n"
+                                "  if (n.next?) { t = t + total(n.next); }\n"
+                                "  return t;\n"
+                                "}\n"
+                                "int entry() {\n"
+                                "  ^Node c = Node { .v = 3 };\n"
+                                "  ^Node b = Node { .v = 2, .next = c };\n"
+                                "  ^Node a = Node { .v = 1, .next = b };\n"
+                                "  Node? cur = a;\n"
+                                "  int sum = 0;\n"
+                                "  while (cur?)\n"
+                                "  {\n"
+                                "    sum = sum + total(cur);\n"
+                                "    cur = cur.next;\n"
+                                "  }\n"
+                                "  return sum;\n" /* total(a)=6, total(b)=5, total(c)=3 → 14 */
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 14);
         }
         strataJitDestroy(jit);
     }

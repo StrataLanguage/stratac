@@ -1217,7 +1217,9 @@ STRATA_TEST(impl_jit_property_through_struct_field)
         "    extern void SetFOV(Camera self, float v);\n"
         "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
         "}\n"
-        "float entry(Holder h)\n"
+        /* Host entry points take structs by `ref`: the pointer ABI is the
+           stable cross-language contract (plain params are now by value). */
+        "float entry(ref Holder h)\n"
         "{\n"
         "    h.cam.FOV = 5.5;\n"
         "    return h.cam.FOV;\n"

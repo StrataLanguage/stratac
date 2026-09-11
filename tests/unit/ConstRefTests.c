@@ -60,8 +60,8 @@ STRATA_TEST(const_ref_and_ref_const_both_accepted)
 
 STRATA_TEST(const_ref_struct_is_allowed)
 {
-    /* Structs are implicitly by-ref, so `const ref` is the explicit spelling
-       of the same thing - it must not be rejected. */
+    /* Structs pass by value by default, so `const ref` is the explicit
+       read-only VIEW spelling - it must not be rejected. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(

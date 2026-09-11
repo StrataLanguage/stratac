@@ -221,7 +221,12 @@ main) are the internal entry points.
   exactly like on aliases (methods hoist as `Color_Method`, self crosses as
   the underlying scalar).
 - Structs: `struct Vec3 { float x; float y; float z; };` — value types,
-  passed by reference by default (pointer at the ABI level)
+  passed BY VALUE by default (the callee gets its own copy; mutations are
+  invisible to the caller). `ref T` opts into sharing the caller's storage.
+  Owning structs (containing `string`/`^T`/`T[]` fields) passed by value are
+  DEEP-COPIED at the call site (owning fields duplicated via the cached
+  per-struct `__strata_copy_<T>` helper) — the callee owns and drops its
+  copy; `ref` is the zero-copy escape hatch
 - Extern structs: `extern struct Header { fieldoffset(8) long size; byte[16] name; };`
   — mirrors a **host-defined** C struct type. The body must match the host
   layout byte-for-byte; `fieldoffset(N)` pins a field to byte N (extern
@@ -420,7 +425,8 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
 - `ref int x` — pass by reference (mutable, caller sees changes)
 - `const int x` — by value, read-only (const-checked)
 - `const ref int x` — by reference, read-only
-- Structs: always by reference; `const` makes them read-only
+- Structs: by value (a bitwise copy for plain structs, a deep copy for
+  owning ones); `ref` shares the caller's storage, `const` is read-only
 - `int... rest` — typed rest param (only allowed last): trailing call args are
   collected into a **stack-allocated** `{ptr, len, cap}` and exposed as a real
   `int[]` (use `.length`, `[i]`, loops as usual). `ref`/`const` are allowed:
@@ -513,11 +519,16 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   exists as an export the host MAY call; nothing runs it automatically.)
 - JIT: each `extern` call goes through a writable global pointer slot
   `__strata_ext_<name>`. `strataJitAddSymbol` writes the host address.
-- Structs cross the boundary as pointers (`ptr`); handles are already
-  pointer-sized and pass by value. `extern struct` declarations let Strata
-  code name and read/write the host's own struct layouts (see Types above);
-  AOT hosts must also provide `strata_alloc`/`strata_free` (and
-  `strata_panic`) whenever the Strata code allocates boxes.
+- Structs cross the boundary as pointers (`ptr`) — every `extern` struct
+  param keeps the `T*` host ABI even though internal calls pass structs by
+  value (a raw IR aggregate would not match the C by-value lowering).
+  Handles are already pointer-sized and pass by value. Host entry points
+  that call INTO Strata should take structs as `ref T` for the same reason
+  (the pointer ABI is the stable cross-language contract). `extern struct`
+  declarations let Strata code name and read/write the host's own struct
+  layouts (see Types above); AOT hosts must also provide
+  `strata_alloc`/`strata_free` (and `strata_panic`) whenever the Strata
+  code allocates boxes.
 - Box/optional ABI at `extern`: a `T?` or `^T` param crosses as ONE pointer
   by value (`T*` in the host prototype; NULL = empty for `T?`) — not as a
   pointer to the caller's slot. A plain value arg is boxed into a temp cell
