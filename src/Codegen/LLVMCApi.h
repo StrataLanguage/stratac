@@ -30,6 +30,7 @@ struct LLVMOrcOpaqueDefinitionGenerator;
 struct LLVMOrcOpaqueSymbolStringPoolEntry;
 struct LLVMOrcOpaqueLLJITBuilder;
 struct LLVMOrcOpaqueLLJIT;
+struct LLVMOrcOpaqueObjectLayer;
 
 typedef struct LLVMOpaqueContext* LLVMContextRef;
 typedef struct LLVMOpaqueModule* LLVMModuleRef;
@@ -51,6 +52,7 @@ typedef struct LLVMOrcOpaqueDefinitionGenerator* LLVMOrcDefinitionGeneratorRef;
 typedef struct LLVMOrcOpaqueSymbolStringPoolEntry* LLVMOrcSymbolStringPoolEntryRef;
 typedef struct LLVMOrcOpaqueLLJITBuilder* LLVMOrcLLJITBuilderRef;
 typedef struct LLVMOrcOpaqueLLJIT* LLVMOrcLLJITRef;
+typedef struct LLVMOrcOpaqueObjectLayer* LLVMOrcObjectLayerRef;
 typedef uint64_t LLVMOrcExecutorAddress;
 
 
@@ -332,6 +334,23 @@ LLVMErrorRef LLVMOrcJITDylibDefine(LLVMOrcJITDylibRef jd, LLVMOrcMaterialization
 LLVMOrcLLJITBuilderRef LLVMOrcCreateLLJITBuilder(void);
 void LLVMOrcDisposeLLJITBuilder(LLVMOrcLLJITBuilderRef builder);
 void LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(LLVMOrcLLJITBuilderRef builder, LLVMOrcJITTargetMachineBuilderRef jtmb);
+
+/* Overrides the object linking layer LLJIT constructs internally. */
+typedef LLVMOrcObjectLayerRef (*LLVMOrcLLJITBuilderObjectLinkingLayerCreatorFunction)(
+    void* ctx, LLVMOrcExecutionSessionRef es, const char* triple);
+void LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(
+    LLVMOrcLLJITBuilderRef builder, LLVMOrcLLJITBuilderObjectLinkingLayerCreatorFunction fn, void* ctx);
+
+#ifdef _WIN32
+/* Only in the patched Windows LLVM-C: a SectionMemoryManager that reserves
+   one region up front and sub-allocates every section from it. The default
+   manager VirtualAllocs each section independently, and Win64 .pdata/.xdata
+   unwind info carries IMAGE_REL_AMD64_ADDR32NB relocations that fatal-error
+   whenever a module's sections land more than 2GB apart (upstream issue
+   llvm/llvm-project#65641). */
+LLVMOrcObjectLayerRef LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManagerReserveAlloc(
+    LLVMOrcExecutionSessionRef es, LLVMBool reserveAlloc);
+#endif
 
 LLVMErrorRef LLVMOrcCreateLLJIT(LLVMOrcLLJITRef* outResult, LLVMOrcLLJITBuilderRef builder);
 LLVMErrorRef LLVMOrcDisposeLLJIT(LLVMOrcLLJITRef j);

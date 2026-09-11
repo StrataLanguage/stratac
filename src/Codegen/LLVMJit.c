@@ -73,6 +73,22 @@ static void SetOrcError(char** errorMessage, LLVMErrorRef err, const char* fmt)
     free(msg);
 }
 
+#ifdef _WIN32
+/* Overrides LLJIT's default object layer. The legacy RuntimeDyld/COFF stack
+   allocates each section with its own VirtualAlloc, and Win64 .pdata/.xdata
+   unwind info carries IMAGE_REL_AMD64_ADDR32NB relocations that fatal-error
+   whenever a module's sections land more than 2GB apart — intermittent in
+   hosts that allocate gigabytes (llvm/llvm-project#65641). The ReserveAlloc
+   section memory manager carves all sections out of one reserved region. */
+static LLVMOrcObjectLayerRef ReserveAllocObjectLayerCreator(void* ctx, LLVMOrcExecutionSessionRef es, const char* triple)
+{
+    (void)ctx;
+    (void)triple;
+
+    return LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManagerReserveAlloc(es, 1);
+}
+#endif
+
 /* Disposes the module/context held by a BuiltModule after a failed load. */
 static void DisposeBuiltModuleOnError(BuiltModule* bm)
 {
@@ -282,6 +298,10 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
     LLVMOrcLLJITBuilderSetJITTargetMachineBuilder(builder, jtmb);
+
+#ifdef _WIN32
+    LLVMOrcLLJITBuilderSetObjectLinkingLayerCreator(builder, &ReserveAllocObjectLayerCreator, NULL);
+#endif
 
     LLVMOrcLLJITRef llj = NULL;
     LLVMErrorRef err = LLVMOrcCreateLLJIT(&llj, builder);
