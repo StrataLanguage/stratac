@@ -669,7 +669,10 @@ bool ParserTryParseType(Parser* p, TypeName* out)
        so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
     if (p->m_cur.kind == TokQuestion)
     {
-        if (out->primitiveType == PrimCString && !out->isArray && !out->isBox && !out->isOptional)
+        /* At this point the type is always bare (boxes and array brackets
+           are parsed elsewhere), so a plain cstring is all that can get
+           here. */
+        if (out->primitiveType == PrimCString)
         {
             DiagError(p->m_diag, p->m_cur.range, "type 'cstring' cannot be optional");
             Advance(p);
