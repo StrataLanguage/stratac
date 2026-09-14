@@ -1,9 +1,7 @@
 # Strata
 
-A small, statically typed language for embedding in game engines. The compiler
-is a single C11 library with no external dependencies; it JIT-compiles scripts
-in memory (with LLVM ORCv2) or emits native objects and assembly
-AOT for linking together with your project.
+A small, statically typed language for embedding in game engines using LLVM, written in C11.
+it JIT-compiles scripts in memory (with LLVM ORCv2) or compiles AOT to link to your project.
 
 ```c
 extern int printf(string fmt, ...);
