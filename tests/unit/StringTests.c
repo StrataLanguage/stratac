@@ -272,11 +272,15 @@ STRATA_TEST(global_string_array_element_copy_is_allowed)
 
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "strlen", (void*)&strlen), 1);
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-    STRATA_CHECK(entry != NULL);
-    if (entry)
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL && create != NULL && destroy != NULL);
+    if (entry && create && destroy)
     {
-        STRATA_CHECK_EQ(entry(), 2);
+        void* ctx = create();
+        STRATA_CHECK_EQ(entry(ctx), 2);
+        destroy(ctx);
     }
 
     strataJitDestroy(jit);

@@ -23,6 +23,9 @@ typedef struct
     bool externStringReturn; /* extern `string` (or alias) return: ABI is char*, copied into an owned fat */
     bool* paramByPtr;
     size_t paramByPtrCount;
+    bool hasHiddenCtxParam; /* non-extern fn in a module with instanced globals: LLVM param 0 is the hidden
+                                context pointer, invisible at the Strata source level (see DeclareFunction /
+                                EmitCall) */
 } FuncInfo;
 
 // Folded constant init (host-side values; LLVM-C lacks Const*Cast).
@@ -2082,11 +2085,24 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     info->paramByPtr = (bool*)arena_alloc(b->m_arena, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
 
+    /* A non-extern function in a module with instanced globals gets ONE
+       hidden leading LLVM parameter (a pointer to the per-instance globals
+       struct) that never appears at the Strata source level: invisible in
+       `f->params`, added only to the compiled signature here and forwarded
+       automatically by EmitCall. */
+    info->hasHiddenCtxParam = !f->isExtern && b->m_hasInstancedGlobals;
+    size_t ctxOffset = info->hasHiddenCtxParam ? 1 : 0;
+
     LLVMTypeRef* params = NULL;
 
-    if (pcount > 0)
+    if (pcount + ctxOffset > 0)
     {
-        params = (LLVMTypeRef*)arena_alloc(b->m_arena, pcount * sizeof(LLVMTypeRef));
+        params = (LLVMTypeRef*)arena_alloc(b->m_arena, (pcount + ctxOffset) * sizeof(LLVMTypeRef));
+    }
+
+    if (info->hasHiddenCtxParam)
+    {
+        params[0] = b->m_ptrTy;
     }
 
     for (size_t i = 0; i < pcount; i++)
@@ -2120,7 +2136,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         info->paramByPtr[i] = byPtr;
 
-        params[i] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
+        params[i + ctxOffset] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
     }
 
     // A function with a `return` param == void ret + out-pointer. An extern
@@ -2128,7 +2144,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx)
                                             : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
 
-    info->type = LLVMFunctionType(abiRetType, params, (unsigned)pcount, f->isCVararg ? 1 : 0);
+    info->type = LLVMFunctionType(abiRetType, params, (unsigned)(pcount + ctxOffset), f->isCVararg ? 1 : 0);
 
     if (b->m_jitMode && f->isExtern)
     {
@@ -2168,6 +2184,10 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
     b->m_curFn = info ? info->function : NULL;
 
+    bool hasHiddenCtx = info && info->hasHiddenCtxParam;
+    unsigned paramBase = hasHiddenCtx ? 1u : 0u;
+    b->m_curGlobalsPtr = hasHiddenCtx ? LLVMGetParam(b->m_curFn, 0) : NULL;
+
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "entry");
     b->m_entryBlock = entry;
     b->m_entryAllocaPt = NULL;
@@ -2191,7 +2211,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
 
         if (p->mod != ModNone || (f->isExtern && structVal) || boxParam)
         {
-            sym->value = LLVMGetParam(b->m_curFn, (unsigned)i);
+            sym->value = LLVMGetParam(b->m_curFn, (unsigned)(i + paramBase));
             sym->typeDesc = typeDesc;
 
             /* A `ref T... rest` with non-owning elements collects pointers to
@@ -2221,7 +2241,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         else
         {
             LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "arg");
-            LLVMBuildStore(b->m_builder, LLVMGetParam(b->m_curFn, (unsigned)i), slot);
+            LLVMBuildStore(b->m_builder, LLVMGetParam(b->m_curFn, (unsigned)(i + paramBase)), slot);
 
             sym->value = slot;
             sym->typeDesc = typeDesc;
@@ -2293,13 +2313,28 @@ static LLVMValueRef ToI1(Builder* b, Value v)
     return LLVMBuildICmp(b->m_builder, LLVMIntNE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
 }
 
+/* GEP to a module global's field inside the current function's per-instance
+   globals struct (see BuilderBuild's "instanced globals" pass). Only
+   reachable when `name` is a storage-backed global, which implies
+   b->m_hasInstancedGlobals and therefore a bound b->m_curGlobalsPtr in any
+   function whose body can reference it (extern functions have no body). */
+static LLVMValueRef GlobalFieldPtr(Builder* b, const char* name)
+{
+    void* raw = StrMapGet(&b->m_globalFieldIndex, name);
+    unsigned index = (unsigned)((uintptr_t)raw - 1);
+    LLVMValueRef idx[2] = {IdxConst(b, 0), IdxConst(b, index)};
+    return LLVMBuildGEP2(b->m_builder, b->m_globalsStructTy, b->m_curGlobalsPtr, idx, 2, "gfld");
+}
+
 static Value EmitIdent(Builder* b, IdentExpr* n)
 {
     Value* sym = (Value*)StrMapGet(&b->m_symbols, n->name);
+    bool isGlobal = false;
 
     if (!sym)
     {
         sym = (Value*)StrMapGet(&b->m_globals, n->name);
+        isGlobal = sym != NULL;
     }
 
     if (!sym)
@@ -2323,7 +2358,8 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
         return ZeroInt(b);
     }
 
-    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, sym->typeDesc.type, sym->value, "id");
+    LLVMValueRef addr = isGlobal ? GlobalFieldPtr(b, n->name) : sym->value;
+    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, sym->typeDesc.type, addr, "id");
 
     return ValueMake(v, sym->typeDesc);
 }
@@ -2489,10 +2525,12 @@ static LValue EmitLValue(Builder* b, Node* n)
     {
         IdentExpr* id = (IdentExpr*)n;
         Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+        bool isGlobal = false;
 
         if (!sym)
         {
             sym = (Value*)StrMapGet(&b->m_globals, id->name);
+            isGlobal = sym != NULL;
         }
 
         if (!sym)
@@ -2501,7 +2539,7 @@ static LValue EmitLValue(Builder* b, Node* n)
         }
 
         none.valid = true;
-        none.ptr = sym->value;
+        none.ptr = isGlobal ? GlobalFieldPtr(b, id->name) : sym->value;
         none.typeDesc = sym->typeDesc;
         return none;
     }
@@ -5824,6 +5862,27 @@ static Value EmitCall(Builder* b, CallExpr* n)
         }
     }
 
+    /* The callee's own hidden context pointer (see DeclareFunction) is never
+       written by Strata source; forward the CALLING function's pointer
+       automatically. `impl` self-insertion already happened at the sema
+       level (an ordinary arg inside [0,nargs)), so this composes for free:
+       final order is [ctx, self, ...rest]. */
+    LLVMValueRef* finalArgs = args;
+    unsigned finalCount = (unsigned)nargs;
+
+    if (info->hasHiddenCtxParam)
+    {
+        finalArgs = (LLVMValueRef*)arena_alloc(b->m_arena, (nargs + 1) * sizeof(LLVMValueRef));
+        finalArgs[0] = b->m_curGlobalsPtr;
+
+        if (nargs > 0)
+        {
+            memcpy(finalArgs + 1, args, nargs * sizeof(LLVMValueRef));
+        }
+
+        finalCount = (unsigned)(nargs + 1);
+    }
+
     LLVMValueRef callee = info->function;
     bool slotExtern = false;
 
@@ -5876,11 +5935,11 @@ static Value EmitCall(Builder* b, CallExpr* n)
         }
 
         PositionAtEnd(b, callBB);
-        call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+        call = LLVMBuildCall2(b->m_builder, info->type, callee, finalArgs, finalCount, "call");
     }
     else
     {
-        call = LLVMBuildCall2(b->m_builder, info->type, callee, args, (unsigned)nargs, "call");
+        call = LLVMBuildCall2(b->m_builder, info->type, callee, finalArgs, finalCount, "call");
     }
 
     /* Array-literal args: `ref T[]` temps are stack views (drop owning
@@ -7630,10 +7689,21 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         LLVMStructSetBody(structTy, members, (unsigned)memberCount, st->packedLayout ? 1 : 0);
     }
 
-    for (size_t i = 0; i < module->functions.count; i++)
+    /* ---- module-level globals: every global that needs real runtime
+       storage moves into ONE per-instance "context" struct, reached only
+       through a hidden pointer threaded automatically through every
+       non-extern function (see DeclareFunction/DefineFunction/EmitCall).
+       A `const` scalar whose initializer folds to a compile-time manifest
+       constant still gets NO storage at all — identical to before this
+       feature existed; only the "has real storage" cases move into the
+       struct. This pass must run BEFORE DeclareFunction so it sees the
+       correct b->m_hasInstancedGlobals gate. */
+    LLVMTypeRef* ctxFieldTypes = NULL;
+    size_t ctxFieldCount = 0;
+
+    if (module->globals.count > 0)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
-        DeclareFunction(b, f);
+        ctxFieldTypes = (LLVMTypeRef*)arena_alloc(b->m_arena, module->globals.count * sizeof(LLVMTypeRef));
     }
 
     for (size_t i = 0; i < module->globals.count; i++)
@@ -7641,29 +7711,31 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
         TypeDesc typeDesc = Resolve(b, &gd->type);
 
-        /* ^T / T[] / string / alias-of-string globals: storage starts null
-           (box) or zero (array). The runtime init (__strata_module_init)
-           fills them and __strata_module_teardown drops them. */
+        /* ^T / T[] / string / alias-of-string globals always get an
+           instanced field: __strata_context_create fills them at runtime
+           and __strata_context_destroy drops them. */
         if (BuilderIsOwningType(b, &gd->type))
         {
-            LLVMValueRef init = LLVMConstNull(typeDesc.type);
-            LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
-            LLVMSetInitializer(global, init);
+            unsigned index = (unsigned)ctxFieldCount;
+            ctxFieldTypes[ctxFieldCount++] = typeDesc.type;
+            StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
             Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-            sym->value = global;
+            sym->value = NULL; /* no static address any more; see GlobalFieldPtr */
             sym->typeDesc = typeDesc;
             StrMapPut(&b->m_globals, gd->name, sym);
             continue;
         }
 
-        /* cstring global: a `.rodata` pointer stored directly (constant
-           initializer, no runtime init/drop). No init = the static empty
-           buffer, never NULL. `cstring g2 = g;` copies the referenced
-           global's INITIALIZER constant — both start pointing at the same
-           buffer, and rebinding `g` later never rewrites `g2`. */
+        /* cstring global: a `.rodata` pointer, but still an instanced field
+           (a `cstring` binding is rebindable unless `const`, so per-instance
+           isolation applies the same as any other mutable global). No init
+           = the static empty buffer, never NULL. `cstring g2 = g;` copies
+           whatever `g`'s field currently holds — both fields live in the
+           same struct now, so __strata_context_create does this as a
+           runtime load-then-store (in declaration order) instead of a
+           compile-time constant copy. */
         bool csCopyInit = false;
-        LLVMValueRef csCopySrc = NULL;
 
         if (typeDesc.isCString && gd->init && gd->init->kind == NodeIdent)
         {
@@ -7672,32 +7744,22 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             if (srcSym && srcSym->typeDesc.isCString)
             {
                 csCopyInit = true;
-                csCopySrc = LLVMGetInitializer(srcSym->value);
             }
         }
 
         if (typeDesc.isCString && (!gd->init || gd->init->kind == NodeStrLiteral || csCopyInit))
         {
-            LLVMValueRef init = !gd->init    ? EmptyNulString(b)
-                                : csCopyInit ? csCopySrc
-                                             : EmitCStringLiteralPtr(b, (StrLiteral*)gd->init);
-
-            LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
-            LLVMSetInitializer(global, init);
-
-            if (gd->type.isConst)
-            {
-                LLVMSetGlobalConstant(global, 1);
-            }
+            unsigned index = (unsigned)ctxFieldCount;
+            ctxFieldTypes[ctxFieldCount++] = typeDesc.type;
+            StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
             Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-            sym->value = global;
+            sym->value = NULL;
             sym->typeDesc = typeDesc;
             StrMapPut(&b->m_globals, gd->name, sym);
             continue;
         }
 
-        LLVMValueRef init = LLVMConstNull(typeDesc.type);
         ConstInitVal foldedVal;
         bool folded = false;
 
@@ -7705,15 +7767,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         {
             folded = FoldConstInit(b, typeDesc, gd->init, &foldedVal);
 
-            if (folded)
-            {
-                /* The fold is type-agnostic (natural int/float kinds);
-                   convert to the declared global type once here. */
-                foldedVal = CastConstVal(b, foldedVal, typeDesc);
-                init = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, foldedVal.f)
-                                        : LLVMConstInt(typeDesc.type, foldedVal.i, 0);
-            }
-            else if (b->m_diag)
+            if (!folded && b->m_diag)
             {
                 DiagErrorFmt(b->m_diag, gd->base.range,
                              "global '%s' initializer must be a compile-time constant "
@@ -7727,29 +7781,47 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
            constant: no storage, no symbol — uses inline the value. This is
            the C++-safe alternative to `const int X = N;` globals (C++ gives
            const globals internal linkage, so the symbol can never be linked
-           against) and the enabler for `[constName]` array dimensions. */
+           against) and the enabler for `[constName]` array dimensions.
+           Unaffected by instancing: no runtime state exists for it at all. */
         if (gd->type.isConst && folded)
         {
+            ConstInitVal castVal = CastConstVal(b, foldedVal, typeDesc);
+            LLVMValueRef constant = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, castVal.f)
+                                                      : LLVMConstInt(typeDesc.type, castVal.i, 0);
+
             ConstValueSlot* cs = (ConstValueSlot*)arena_alloc(b->m_arena, sizeof(ConstValueSlot));
-            cs->civ = foldedVal;
+            cs->civ = castVal;
             cs->td = typeDesc;
-            cs->constant = init;
+            cs->constant = constant;
             StrMapPut(&b->m_constValues, gd->name, cs);
             continue;
         }
 
-        LLVMValueRef global = LLVMAddGlobal(b->m_mod, typeDesc.type, gd->name);
-        LLVMSetInitializer(global, init);
-
-        if (gd->type.isConst)
-        {
-            LLVMSetGlobalConstant(global, 1);
-        }
+        /* Mutable scalar/struct/handle/alias global (or a const one whose
+           initializer failed to fold — already diagnosed above): instanced
+           field, initial value stored at runtime by __strata_context_create. */
+        unsigned index = (unsigned)ctxFieldCount;
+        ctxFieldTypes[ctxFieldCount++] = typeDesc.type;
+        StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
-        sym->value = global;
+        sym->value = NULL;
         sym->typeDesc = typeDesc;
         StrMapPut(&b->m_globals, gd->name, sym);
+    }
+
+    b->m_hasInstancedGlobals = ctxFieldCount > 0;
+
+    if (b->m_hasInstancedGlobals)
+    {
+        b->m_globalsStructTy = LLVMStructCreateNamed(b->m_ctx, "struct.__strata_Context");
+        LLVMStructSetBody(b->m_globalsStructTy, ctxFieldTypes, (unsigned)ctxFieldCount, 0);
+    }
+
+    for (size_t i = 0; i < module->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
+        DeclareFunction(b, f);
     }
 
     for (size_t i = 0; i < module->functions.count; i++)
@@ -7758,76 +7830,78 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         DefineFunction(b, f);
     }
 
-    /* Emit __strata_module_init + __strata_module_teardown when the module
-       has owning globals (^T / T[] / string / alias) that need runtime
-       initialization or teardown. */
+    /* Emit __strata_context_create + __strata_context_destroy when the
+       module has instanced globals. Unlike the old per-process
+       __strata_module_init/teardown, these are NEVER auto-registered
+       (no llvm.global_ctors) in either mode: the whole point of instancing
+       is that a host may create many independent contexts, so it always
+       calls these explicitly — discoverable/callable exactly like any
+       other exported Strata function (JIT: strataJitGetFunction; AOT: a
+       hand-written extern prototype). */
+    if (b->m_hasInstancedGlobals)
     {
-        bool hasOwningGlobal = false;
+        LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
+        TypeDesc ptrRet = TypeDescMake(b->m_ptrTy, 0, NULL);
+        TypeDesc voidRet = TypeDescMake(voidTy, TD_VOID, NULL);
+
+        /* ---- __strata_context_create ---- */
+        LLVMTypeRef createTy = LLVMFunctionType(b->m_ptrTy, NULL, 0, 0);
+        LLVMValueRef createFn = LLVMAddFunction(b->m_mod, "__strata_context_create", createTy);
+        b->m_curFn = createFn;
+        StrMapClear(&b->m_symbols);
+        b->m_terminated = false;
+        b->m_loops.count = 0;
+        b->m_owningLocals.count = 0;
+        b->m_curRet = ptrRet;
+        b->m_curRetAbi = b->m_ptrTy;
+        LLVMBasicBlockRef createEntry = LLVMAppendBasicBlockInContext(b->m_ctx, createFn, "entry");
+        b->m_entryBlock = createEntry;
+        b->m_entryAllocaPt = NULL;
+        LLVMPositionBuilderAtEnd(b->m_builder, createEntry);
+
+        /* strata_alloc does NOT zero memory: every field must be explicitly
+           stored below (unlike the old static-initializer globals, which
+           zero-filled for free). Set as this function's own hidden context
+           pointer BEFORE evaluating any initializer, since an owning
+           global's initializer may legally be a call to another non-extern
+           Strata function (sema allows "... or a call returning T"), and
+           that call needs a context to forward. */
+        LLVMValueRef allocArgs[1] = {SizeOfConst(b, b->m_globalsStructTy)};
+        StrataAllocFn(b);
+        LLVMValueRef ctxMem = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "ctxmem");
+        b->m_curGlobalsPtr = ctxMem;
 
         for (size_t i = 0; i < module->globals.count; i++)
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
+            if (!StrMapGet(&b->m_globalFieldIndex, gd->name))
+            {
+                continue; /* manifest constant: no field, nothing to store */
+            }
+
+            TypeDesc td = Resolve(b, &gd->type);
+            LLVMValueRef fieldPtr = GlobalFieldPtr(b, gd->name);
+
             if (BuilderIsOwningType(b, &gd->type))
             {
-                hasOwningGlobal = true;
-                break;
-            }
-        }
-
-        if (hasOwningGlobal)
-        {
-            LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
-            LLVMTypeRef initTy = LLVMFunctionType(voidTy, NULL, 0, 0);
-
-            /* ---- __strata_module_init ---- */
-            LLVMValueRef initFn = LLVMAddFunction(b->m_mod, "__strata_module_init", initTy);
-            b->m_curFn = initFn;
-            StrMapClear(&b->m_symbols);
-            b->m_terminated = false;
-            b->m_loops.count = 0;
-            b->m_owningLocals.count = 0;
-            LLVMBasicBlockRef initEntry = LLVMAppendBasicBlockInContext(b->m_ctx, initFn, "entry");
-            b->m_entryBlock = initEntry;
-            b->m_entryAllocaPt = NULL;
-            LLVMPositionBuilderAtEnd(b->m_builder, initEntry);
-
-            for (size_t i = 0; i < module->globals.count; i++)
-            {
-                GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
-
-                if (!BuilderIsOwningType(b, &gd->type))
-                {
-                    continue;
-                }
-
                 if (!gd->init)
                 {
-                    continue;
+                    LLVMBuildStore(b->m_builder, LLVMConstNull(td.type), fieldPtr);
                 }
-
-                Value* sym = (Value*)StrMapGet(&b->m_globals, gd->name);
-
-                if (!sym)
-                {
-                    continue;
-                }
-
-                TypeDesc td = sym->typeDesc;
-
-                if (td.isArray && gd->init->kind == NodeArrayInit)
+                else if (td.isArray && gd->init->kind == NodeArrayInit)
                 {
                     LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
-                    LLVMBuildStore(b->m_builder, arr, sym->value);
+                    LLVMBuildStore(b->m_builder, arr, fieldPtr);
                 }
                 else if (td.isString)
                 {
                     /* string / alias-of-string global: construct the owned
-                       value directly into the slot (heap-copy a literal; take
-                       a call result). Teardown drops it. */
+                       value directly into the field (heap-copy a literal;
+                       take a call result). Teardown drops it. */
                     Value val = EmitExpr(b, gd->init);
                     LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, StringTypeName(b));
-                    LLVMBuildStore(b->m_builder, owned, sym->value);
+                    LLVMBuildStore(b->m_builder, owned, fieldPtr);
                 }
                 else if (td.isBox && td.boxInner)
                 {
@@ -7839,70 +7913,117 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
                     if (sameBoxKind)
                     {
-                        LLVMBuildStore(b->m_builder, val.value, sym->value);
+                        LLVMBuildStore(b->m_builder, val.value, fieldPtr);
                     }
                     else
                     {
                         /* Box up the inner value (owning or not). */
                         LLVMValueRef heap = EmitBoxCell(b, td.boxInner, val, gd->init, "boxgl");
-                        LLVMBuildStore(b->m_builder, heap, sym->value);
+                        LLVMBuildStore(b->m_builder, heap, fieldPtr);
                     }
                 }
+
+                continue;
             }
 
-            LLVMBuildRetVoid(b->m_builder);
-
-            /* ---- __strata_module_teardown ---- */
-            LLVMValueRef tdFn = LLVMAddFunction(b->m_mod, "__strata_module_teardown", initTy);
-            b->m_curFn = tdFn;
-            StrMapClear(&b->m_symbols);
-            b->m_terminated = false;
-            b->m_loops.count = 0;
-            b->m_owningLocals.count = 0;
-            LLVMBasicBlockRef tdEntry = LLVMAppendBasicBlockInContext(b->m_ctx, tdFn, "entry");
-            b->m_entryBlock = tdEntry;
-            b->m_entryAllocaPt = NULL;
-            LLVMPositionBuilderAtEnd(b->m_builder, tdEntry);
-
-            for (size_t i = 0; i < module->globals.count; i++)
+            if (td.isCString)
             {
-                GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
+                bool csCopyInit = false;
 
-                if (!BuilderIsOwningType(b, &gd->type))
+                if (gd->init && gd->init->kind == NodeIdent)
                 {
-                    continue;
+                    Value* srcSym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)gd->init)->name);
+                    csCopyInit = srcSym && srcSym->typeDesc.isCString
+                                 && StrMapGet(&b->m_globalFieldIndex, ((IdentExpr*)gd->init)->name);
                 }
 
-                Value* sym = (Value*)StrMapGet(&b->m_globals, gd->name);
+                LLVMValueRef value;
 
-                if (!sym)
+                if (!gd->init)
                 {
-                    continue;
+                    value = EmptyNulString(b);
+                }
+                else if (csCopyInit)
+                {
+                    /* Runtime load: the source field, declared earlier, is
+                       already initialized by this same forward pass. */
+                    LLVMValueRef srcPtr = GlobalFieldPtr(b, ((IdentExpr*)gd->init)->name);
+                    value = LLVMBuildLoad2(b->m_builder, td.type, srcPtr, "cscopy");
+                }
+                else if (gd->init->kind == NodeStrLiteral)
+                {
+                    value = EmitCStringLiteralPtr(b, (StrLiteral*)gd->init);
+                }
+                else
+                {
+                    /* Anything else already failed FoldConstInit above (pass
+                       1) and was diagnosed; store a harmless empty value. */
+                    value = EmptyNulString(b);
                 }
 
-                EmitDropOne(b, sym->value, sym->typeDesc);
+                LLVMBuildStore(b->m_builder, value, fieldPtr);
+                continue;
             }
 
-            LLVMBuildRetVoid(b->m_builder);
+            /* Mutable scalar/struct/handle/alias field: re-derive the same
+               compile-time fold pass 1 already validated (and diagnosed on
+               failure), store zero on failure/absence. */
+            ConstInitVal foldedVal;
+            bool folded = gd->init && FoldConstInit(b, td, gd->init, &foldedVal);
+            LLVMValueRef value = LLVMConstNull(td.type);
 
-            /* AOT: register the initializer as a CRT constructor
-               (`llvm.global_ctors`, default priority) so it runs when a host
-               links the object - no host-side call. ELF -> .init_array, COFF
-               -> .CRT$XCU. JIT keeps its explicit call and skips this list. */
-            if (!b->m_jitMode)
+            if (folded)
             {
-                LLVMTypeRef fields[3] = {I32Ty(b), b->m_ptrTy, b->m_ptrTy};
-                LLVMTypeRef ctorTy = LLVMStructTypeInContext(b->m_ctx, fields, 3, 0);
-                LLVMTypeRef arrTy = LLVMArrayType(ctorTy, 1);
-                LLVMValueRef elems[3] = {LLVMConstInt(I32Ty(b), 65535, 0), LLVMConstBitCast(initFn, b->m_ptrTy),
-                                         LLVMConstNull(b->m_ptrTy)};
-                LLVMValueRef entry = LLVMConstNamedStruct(ctorTy, elems, 3);
-                LLVMValueRef arr = LLVMConstArray(ctorTy, &entry, 1);
-                LLVMValueRef ctors = LLVMAddGlobal(b->m_mod, arrTy, "llvm.global_ctors");
-                LLVMSetInitializer(ctors, arr);
-                LLVMSetLinkage(ctors, LLVMAppendingLinkage);
+                foldedVal = CastConstVal(b, foldedVal, td);
+                value = td.isFloat ? LLVMConstReal(td.type, foldedVal.f) : LLVMConstInt(td.type, foldedVal.i, 0);
             }
+
+            LLVMBuildStore(b->m_builder, value, fieldPtr);
         }
+
+        LLVMBuildRet(b->m_builder, ctxMem);
+
+        /* ---- __strata_context_destroy ---- */
+        LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
+        LLVMTypeRef destroyTy = LLVMFunctionType(voidTy, destroyParams, 1, 0);
+        LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, "__strata_context_destroy", destroyTy);
+        b->m_curFn = destroyFn;
+        StrMapClear(&b->m_symbols);
+        b->m_terminated = false;
+        b->m_loops.count = 0;
+        b->m_owningLocals.count = 0;
+        b->m_curRet = voidRet;
+        b->m_curRetAbi = voidTy;
+        LLVMBasicBlockRef destroyEntry = LLVMAppendBasicBlockInContext(b->m_ctx, destroyFn, "entry");
+        b->m_entryBlock = destroyEntry;
+        b->m_entryAllocaPt = NULL;
+        LLVMPositionBuilderAtEnd(b->m_builder, destroyEntry);
+
+        b->m_curGlobalsPtr = LLVMGetParam(destroyFn, 0);
+
+        for (size_t i = 0; i < module->globals.count; i++)
+        {
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
+
+            if (!BuilderIsOwningType(b, &gd->type))
+            {
+                continue;
+            }
+
+            if (!StrMapGet(&b->m_globalFieldIndex, gd->name))
+            {
+                continue;
+            }
+
+            TypeDesc td = Resolve(b, &gd->type);
+            EmitDropOne(b, GlobalFieldPtr(b, gd->name), td);
+        }
+
+        LLVMValueRef freeArgs[1] = {b->m_curGlobalsPtr};
+        StrataFreeFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+
+        LLVMBuildRetVoid(b->m_builder);
     }
 
     for (size_t i = 0; i < module->functions.count; i++)
@@ -7927,6 +8048,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     out.ctx = b->m_ctx;
     out.mod = b->m_mod;
     out.externSymbols = b->m_externNames;
+    out.hasInstancedGlobals = b->m_hasInstancedGlobals;
 
     b->m_ctx = NULL;
     b->m_mod = NULL;
@@ -7938,6 +8060,7 @@ void BuiltModuleInit(BuiltModule* bm)
 {
     bm->ctx = NULL;
     bm->mod = NULL;
+    bm->hasInstancedGlobals = false;
     VecInit(&bm->externSymbols);
 }
 
@@ -7971,6 +8094,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapInit(&b.m_funcs);
     StrMapInit(&b.m_symbols);
     StrMapInit(&b.m_globals);
+    StrMapInit(&b.m_globalFieldIndex);
     StrMapInit(&b.m_constValues);
     StrMapInit(&b.m_externSlots);
     StrMapInit(&b.m_implProps);
@@ -8005,6 +8129,7 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_funcs);
     StrMapFree(&b.m_symbols);
     StrMapFree(&b.m_globals);
+    StrMapFree(&b.m_globalFieldIndex);
     StrMapFree(&b.m_constValues);
     StrMapFree(&b.m_externSlots);
     StrMapFree(&b.m_implProps);

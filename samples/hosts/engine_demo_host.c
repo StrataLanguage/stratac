@@ -52,14 +52,19 @@ int  get_y(Entity* e) { return e->y; }
 void move(Entity* e, int dx, int dy) { e->x += dx; e->y += dy; }
 
 /* ---- the scene (identical in both modes) -------------------------------- */
-static int run_scene(int (*chase_fn)(Entity*, Entity*, int))
+/* `chase` reads/writes the script's own globals (gStrArray, gStr), so the
+   compiler gives it a hidden leading context pointer -- invisible in the
+   .strata source, but a real first parameter here. `ctx` is a per-instance
+   copy of those globals (see __strata_context_create below): spawn one per
+   entity so concurrent scripts never clobber each other's state. */
+static int run_scene(void* ctx, int (*chase_fn)(void*, Entity*, Entity*, int))
 {
     Entity* attacker = spawn(10, 20);
     Entity* target   = spawn(3, 5);
-    
-    int result = chase_fn(attacker, target, 2);
+
+    int result = chase_fn(ctx, attacker, target, 2);
     printf("chase(attacker, target, 2) = %d\n", result);
-    
+
     destroy(attacker);
     destroy(target);
 
@@ -102,12 +107,22 @@ int main(int argc, char** argv) {
         if (fn) strataJitAddSymbol(jit, name, fn);
     }
 
-    int (*chase_fn)(Entity*, Entity*, int) =
-        (int (*)(Entity*, Entity*, int))strataJitGetFunction(jit, "chase");
+    int (*chase_fn)(void*, Entity*, Entity*, int) =
+        (int (*)(void*, Entity*, Entity*, int))strataJitGetFunction(jit, "chase");
 
     if (!chase_fn) { fprintf(stderr, "[JIT] 'chase' not found\n"); return 1; }
 
-    run_scene(chase_fn);
+    void* (*context_create)(void)  = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void  (*context_destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+
+    if (!context_create || !context_destroy) {
+        fprintf(stderr, "[JIT] '__strata_context_create'/'__strata_context_destroy' not found\n");
+        return 1;
+    }
+
+    void* ctx = context_create();
+    run_scene(ctx, chase_fn);
+    context_destroy(ctx);
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -120,11 +135,15 @@ int main(int argc, char** argv) {
 
 //-- AOT
 
-extern int chase(Entity* attacker, Entity* target, int step);
+extern int chase(void* ctx, Entity* attacker, Entity* target, int step);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void) {
     printf("[AOT] script pre-compiled and linked\n");
-    run_scene(chase);
+    void* ctx = __strata_context_create();
+    run_scene(ctx, chase);
+    __strata_context_destroy(ctx);
     return 0;
 }
 

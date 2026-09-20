@@ -12,12 +12,19 @@ void* strata_alloc(unsigned long n) { return malloc((size_t)n); }
 void strata_free(void* p) { free(p); }
 void strata_panic(const char* msg) { fprintf(stderr, "strata panic: %s\n", msg); abort(); }
 
-// Strata-provided entry (defined in strings.o).
-extern int run(void);
+// Strata-provided entry (defined in strings.o). The module declares
+// module-level globals (globalString, boxedString), so the compiler gives
+// every non-extern function a hidden leading context pointer -- invisible
+// in the .strata source, but a real first parameter here.
+extern int run(void* ctx);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void)
 {
-    int result = run();
+    void* ctx = __strata_context_create();
+    int result = run(ctx);
     printf("run() = %d\n", result);
+    __strata_context_destroy(ctx);
     return 0;
 }

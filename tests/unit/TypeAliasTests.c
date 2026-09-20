@@ -727,8 +727,13 @@ STRATA_TEST(pseudo_enum_global_codegen_ir)
 
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(strstr(res.output, "@Opaque") != NULL);
-    STRATA_CHECK(strstr(res.output, "@Translucent") != NULL);
+    /* Opaque/Translucent are plain (non-const) globals: real runtime state,
+       so they move into the per-instance context struct instead of getting
+       raw `@name` globals (see the "instanced globals" feature). */
+    STRATA_CHECK(strstr(res.output, "@Opaque") == NULL);
+    STRATA_CHECK(strstr(res.output, "@Translucent") == NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_create") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_destroy") != NULL);
 
     free((void*)res.output);
     DiagnosticEngineFree(&diag);
@@ -1136,11 +1141,17 @@ STRATA_TEST(pseudo_enum_jit_global_def)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        STRATA_CHECK(create != NULL && destroy != NULL);
+
+        int (*caller)(void*) = (int (*)(void*))strataJitGetFunction(jit, "caller");
         STRATA_CHECK(caller != NULL);
-        if (caller)
+        if (caller && create && destroy)
         {
-            STRATA_CHECK_EQ(caller(), 404);
+            void* ctx = create();
+            STRATA_CHECK_EQ(caller(ctx), 404);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1167,11 +1178,17 @@ STRATA_TEST(pseudo_enum_jit_global_switch)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*current)(void) = (int (*)(void))strataJitGetFunction(jit, "current");
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        STRATA_CHECK(create != NULL && destroy != NULL);
+
+        int (*current)(void*) = (int (*)(void*))strataJitGetFunction(jit, "current");
         STRATA_CHECK(current != NULL);
-        if (current)
+        if (current && create && destroy)
         {
-            STRATA_CHECK_EQ(current(), 1);
+            void* ctx = create();
+            STRATA_CHECK_EQ(current(ctx), 1);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1432,8 +1449,12 @@ STRATA_TEST(type_alias_string_global_no_init_defaults_empty)
 
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
-    /* Like arrays: the global is the canonical empty {null, 0} fat. */
-    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i32, i32 } zeroinitializer") != NULL);
+    /* Like arrays: `g` is an owning global, so it moves into the per-instance
+       context struct (canonical empty {null, 0} fat, filled at runtime by
+       __strata_context_create) instead of a raw `@g` global. */
+    STRATA_CHECK(strstr(res.output, "@g") == NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_create") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_destroy") != NULL);
 
     free((void*)res.output);
     DiagnosticEngineFree(&diag);
@@ -1454,9 +1475,10 @@ STRATA_TEST(type_alias_string_global_literal_init)
 
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
-    /* Owning-alias globals self-initialize and are torn down. */
-    STRATA_CHECK(strstr(res.output, "__strata_module_init") != NULL);
-    STRATA_CHECK(strstr(res.output, "__strata_module_teardown") != NULL);
+    /* Owning-alias globals are instanced fields, constructed by
+       __strata_context_create and dropped by __strata_context_destroy. */
+    STRATA_CHECK(strstr(res.output, "__strata_context_create") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_destroy") != NULL);
 
     free((void*)res.output);
     DiagnosticEngineFree(&diag);
@@ -1476,11 +1498,17 @@ STRATA_TEST(string_global_no_init_jit_empty)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        STRATA_CHECK(create != NULL && destroy != NULL);
+
+        int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
         STRATA_CHECK(run != NULL);
-        if (run)
+        if (run && create && destroy)
         {
-            STRATA_CHECK_EQ(run(), 0); /* canonical empty: length 0, nothing allocated */
+            void* ctx = create();
+            STRATA_CHECK_EQ(run(ctx), 0); /* canonical empty: length 0, nothing allocated */
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1507,12 +1535,12 @@ STRATA_TEST(string_global_owns_and_tears_down)
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
     /* String globals use the same owning representation as every other
-       owning global: a zeroed fat {ptr, len, cap} slot, runtime init fills
-       it, teardown drops it. No static constant-pool pointer, no name-keyed
-       skips. */
-    STRATA_CHECK(strstr(res.output, "@g = global { ptr, i32, i32 } zeroinitializer") != NULL);
-    STRATA_CHECK(strstr(res.output, "store { ptr, i32, i32 } %sfat.c, ptr @g") != NULL);
-    STRATA_CHECK(strstr(res.output, "__strata_module_teardown") != NULL);
+       owning global: an instanced {ptr, len, cap} field, runtime init fills
+       it, __strata_context_destroy drops it. No static constant-pool
+       pointer, no name-keyed skips, no raw `@g` global at all. */
+    STRATA_CHECK(strstr(res.output, "@g") == NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_create") != NULL);
+    STRATA_CHECK(strstr(res.output, "__strata_context_destroy") != NULL);
 
     free((void*)res.output);
     DiagnosticEngineFree(&diag);

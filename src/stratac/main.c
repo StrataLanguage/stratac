@@ -440,22 +440,48 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
         return RCIOError;
     }
 
-    if (!strataJitCanInvokeIntVoid(jit, state->entryName))
+    /* A module with module-level globals gives every non-extern function a
+       hidden leading context pointer at the compiled level (see
+       LLVMModuleBuilder.c's __strata_context_create/__strata_context_destroy),
+       so strataJitCanInvokeIntVoid correctly no longer treats it as bare
+       int(void). Detect that case and thread a context through
+       automatically so `--run` keeps working transparently. */
+    void* createFn = strataJitGetFunction(jit, "__strata_context_create");
+    void* destroyFn = strataJitGetFunction(jit, "__strata_context_destroy");
+    bool hasContext = createFn != NULL && destroyFn != NULL;
+
+    if (!hasContext && !strataJitCanInvokeIntVoid(jit, state->entryName))
     {
         fprintf(stderr, "error: entry '%s' must be a defined int(void) function\n", state->entryName);
         strataJitDestroy(jit);
         return RCIOError;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, state->entryName);
-    if (!entry)
+    void* entryRaw = strataJitGetFunction(jit, state->entryName);
+    if (!entryRaw)
     {
         fprintf(stderr, "error: entry '%s' was not found\n", state->entryName);
         strataJitDestroy(jit);
         return RCIOError;
     }
 
-    int exitCode = entry();
+    int exitCode;
+
+    if (hasContext)
+    {
+        void* (*create)(void) = (void* (*)(void))createFn;
+        void (*destroy)(void*) = (void (*)(void*))destroyFn;
+        int (*entry)(void*) = (int (*)(void*))entryRaw;
+
+        void* ctx = create();
+        exitCode = entry(ctx);
+        destroy(ctx);
+    }
+    else
+    {
+        int (*entry)(void) = (int (*)(void))entryRaw;
+        exitCode = entry();
+    }
 
     strataJitDestroy(jit);
 

@@ -505,8 +505,9 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   The value has the base scalar's own type, is a compile-time constant
   (usable in const-global initializers, enum member values, and any
   constant fold), and is read-only (assignment/`++`/`--` error).
-- Global variables: `int g_count = 0;` at module scope (LLVM globals,
-  literal constant initializers only)
+- Global variables: `int g_count = 0;` at module scope (literal constant
+  initializers only for non-owning types; see "Instanced globals" below for
+  how storage/lifetime actually works)
 - Overloads: functions may share a name with different param types;
   mangled as `name$type$type` (non-overloaded keep the base name)
 - Visibility: `@private` on its own line(s) before a function definition
@@ -526,18 +527,48 @@ member-wise (strings by content), and `^Rec[]` element-wise derefs each.
   block pushes its own scope when it runs, so its own nested defers run at
   the block's exit. Locals declared inside the deferred block drop there.
 
+## Instanced globals (per-attachment state)
+
+A Strata module is meant to be attached to many independent game objects
+(one compiled AI script driving many entities, for example) — so module-level
+globals are NOT single process-wide storage. Instead:
+
+- If a module has at least one global that needs real runtime storage (any
+  global except a `const` scalar whose initializer folds to a compile-time
+  manifest constant — those stay pure compile-time substitutions, never
+  materialized anywhere), the compiler generates ONE struct type holding
+  every such global as a field, and gives every **non-`extern`** function
+  (including inline-bodied `impl` methods) ONE hidden leading pointer
+  parameter to it. This is entirely invisible at the Strata source level —
+  no keyword, no visible param, scripts read/write globals exactly as
+  written — but it IS a real, explicit first parameter in the compiled
+  (LLVM/C ABI) signature. Strata-to-Strata calls forward the caller's own
+  hidden pointer automatically at the codegen level (no AST/sema
+  involvement at all). `extern` functions are never touched (no body, so
+  they structurally can't reach a global).
+- The host manages instances explicitly through two generated, ordinary
+  exported functions — `__strata_context_create()` (allocates + fully
+  initializes one instance, returns an opaque `ptr`) and
+  `__strata_context_destroy(ptr)` (drops owning fields, frees the block).
+  Call `strataJitGetFunction`/link an `extern` prototype for these exactly
+  like any other Strata function — there is no dedicated public API, and
+  nothing calls them automatically (unlike the old process-wide
+  `llvm.global_ctors` approach): a host creates as many independent
+  instances as it wants (e.g. one per entity) and must pass the right one
+  as the first argument to every non-extern function it calls, including
+  the top-level entry point. `stratac --run` detects and threads a context
+  through transparently when present, so the CLI UX is unaffected.
+- AOT hosts must provide `strata_alloc`/`strata_free` whenever the module
+  has ANY storage-backed global (not just owning ones — `strata_alloc`
+  backs the whole generated struct, which must exist even for a lone
+  mutable `int g;`).
+- A module with NO storage-backed globals is completely unaffected: no
+  hidden parameter anywhere, no generated struct, no exported context
+  functions — the exact same ABI as before this feature existed.
+
 ## extern and the host boundary
 
 - AOT: `extern` lowers to a body-less `declare`; the host links it.
-  Owning globals (`string`, aliases of it, `^T` / `T[]`) self-initialize:
-  `__strata_module_init` is registered in `llvm.global_ctors`, which lowers
-  to `.init_array` (ELF) / `.CRT$XCU` (COFF), so it runs before the host's
-  `main` with no host-side call. All owning globals share ONE representation
-  (null slot + runtime construct + teardown drop) — a string global is a
-  heap copy, never a static constant-pool pointer. AOT hosts must provide
-  `strata_alloc`/`strata_free` whenever the module has ANY owning global
-  (including plain `string g = "...";`). (`__strata_module_teardown` still
-  exists as an export the host MAY call; nothing runs it automatically.)
 - JIT: each `extern` call goes through a writable global pointer slot
   `__strata_ext_<name>`. `strataJitAddSymbol` writes the host address.
 - Structs cross the boundary as pointers (`ptr`) — every `extern` struct

@@ -187,16 +187,11 @@ void LLVMJitDestroy(LLVMJit* jit)
 {
     if (jit->m_jit)
     {
-        /* If the module has owning globals, their teardown was emitted as
-           __strata_module_teardown.  Call it before we unload. */
-        typedef void (*VoidFn)(void);
-        uint64_t tdAddr = 0;
-
-        if (OrcLookup(jit->m_jit, "__strata_module_teardown", &tdAddr) && tdAddr)
-        {
-            ((VoidFn)(uintptr_t)tdAddr)();
-        }
-
+        /* Unlike the old per-process __strata_module_teardown, a module with
+           instanced globals is never auto-torn-down here: the host may have
+           created zero, one, or many __strata_context_create instances, and
+           owns calling __strata_context_destroy on each (discoverable via
+           strataJitGetFunction like any other exported symbol). */
         LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(jit->m_jit);
 
         if (disposeErr)
@@ -397,17 +392,10 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         return false;
     }
 
-    /* If the module has owning globals (^T / T[]), their runtime
-       initialisation was emitted as __strata_module_init.  Call it now. */
-    {
-        typedef void (*VoidFn)(void);
-        uint64_t initAddr = 0;
-
-        if (OrcLookup(llj, "__strata_module_init", &initAddr) && initAddr)
-        {
-            ((VoidFn)(uintptr_t)initAddr)();
-        }
-    }
+    /* A module with instanced globals now exports __strata_context_create
+       (see LLVMModuleBuilder.c) instead of auto-running a single per-process
+       __strata_module_init: the host calls it explicitly, as many times as
+       it wants independent instances, exactly like any other symbol. */
 
     return true;
 }

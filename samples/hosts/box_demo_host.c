@@ -74,15 +74,23 @@ int main(void)
     strataJitAddSymbol(jit, "print_entity_name", (void*)&print_entity_name);
     strataJitAddSymbol(jit, "printf", (void*)&printf);
 
-    float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+    /* box_demo.strata declares module-level globals (i, gVec,
+       globalStringArrayBox, globalStringArray), so the compiler gives every
+       non-extern function a hidden leading context pointer -- invisible in
+       the .strata source, but a real first parameter here. */
+    void* (*context_create)(void)  = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void  (*context_destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    float (*entry)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
 
-    if (entry)
+    if (entry && context_create && context_destroy)
     {
-        printf("entry() = %.0f\n", entry());   /* 27 */
+        void* ctx = context_create();
+        printf("entry() = %.0f\n", entry(ctx));   /* 27 */
+        context_destroy(ctx);
     }
     else
     {
-        fprintf(stderr, "could not resolve 'entry'");
+        fprintf(stderr, "could not resolve 'entry' / context functions");
     }
 
     strataJitDestroy(jit);

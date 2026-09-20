@@ -821,9 +821,16 @@ STRATA_TEST(resolver_global_shared_across_modules)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-    STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 300);  /* 100 + 200 */
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL && create != NULL && destroy != NULL);
+    if (entry && create && destroy)
+    {
+        void* ctx = create();
+        STRATA_CHECK_EQ(entry(ctx), 300);  /* 100 + 200 */
+        destroy(ctx);
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
