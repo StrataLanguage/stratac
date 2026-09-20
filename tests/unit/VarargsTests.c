@@ -36,10 +36,27 @@ static void CheckParity(const char* source, int expected)
 
     if (llvmOk)
     {
-        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
-        STRATA_CHECK(llvmEntry != NULL);
-        if (llvmEntry)
+        /* A module with (e.g.) a plain global auto-gains a hidden leading
+           context pointer on every non-extern function; thread one through
+           when present (see the "instanced globals" feature). */
+        void* createFn = (void*)(uintptr_t)LLVMJitGetAddress(&llvm, "__strata_context_create");
+        void* destroyFn = (void*)(uintptr_t)LLVMJitGetAddress(&llvm, "__strata_context_destroy");
+        void* entryRaw = (void*)(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
+        STRATA_CHECK(entryRaw != NULL);
+
+        if (entryRaw && createFn && destroyFn)
         {
+            void* (*create)(void) = (void* (*)(void))createFn;
+            void (*destroy)(void*) = (void (*)(void*))destroyFn;
+            int (*llvmEntry)(void*) = (int (*)(void*))entryRaw;
+
+            void* ctx = create();
+            STRATA_CHECK_EQ(llvmEntry(ctx), expected);
+            destroy(ctx);
+        }
+        else if (entryRaw)
+        {
+            int (*llvmEntry)(void) = (int (*)(void))entryRaw;
             STRATA_CHECK_EQ(llvmEntry(), expected);
         }
     }
@@ -103,10 +120,27 @@ static void CheckVarargExtern(const char* source, const char* symbol, void* host
 
     if (llvmOk)
     {
-        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
-        STRATA_CHECK(llvmEntry != NULL);
-        if (llvmEntry)
+        /* A module with (e.g.) a plain global auto-gains a hidden leading
+           context pointer on every non-extern function; thread one through
+           when present (see the "instanced globals" feature). */
+        void* createFn = (void*)(uintptr_t)LLVMJitGetAddress(&llvm, "__strata_context_create");
+        void* destroyFn = (void*)(uintptr_t)LLVMJitGetAddress(&llvm, "__strata_context_destroy");
+        void* entryRaw = (void*)(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
+        STRATA_CHECK(entryRaw != NULL);
+
+        if (entryRaw && createFn && destroyFn)
         {
+            void* (*create)(void) = (void* (*)(void))createFn;
+            void (*destroy)(void*) = (void (*)(void*))destroyFn;
+            int (*llvmEntry)(void*) = (int (*)(void*))entryRaw;
+
+            void* ctx = create();
+            STRATA_CHECK_EQ(llvmEntry(ctx), expected);
+            destroy(ctx);
+        }
+        else if (entryRaw)
+        {
+            int (*llvmEntry)(void) = (int (*)(void))entryRaw;
             STRATA_CHECK_EQ(llvmEntry(), expected);
         }
     }

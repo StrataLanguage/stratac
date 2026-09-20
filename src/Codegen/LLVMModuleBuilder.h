@@ -14,6 +14,9 @@ typedef struct {
     LLVMContextRef ctx;
     LLVMModuleRef mod;
     Vec externSymbols;
+    bool hasInstancedGlobals; /* module has >=1 storage-backed global: every non-extern function's
+                                  compiled signature carries a hidden leading context pointer (see
+                                  __strata_context_create/__strata_context_destroy) */
 } BuiltModule;
 
 typedef struct
@@ -55,6 +58,10 @@ typedef struct Builder
     StrMap m_symbols;
     StrMap m_globals;
     StrMap m_constValues; /* manifest-const global name -> ConstValueSlot* (no storage emitted) */
+    StrMap m_globalFieldIndex; /* storage-backed global name -> boxed (field index + 1) in m_globalsStructTy */
+    bool m_hasInstancedGlobals; /* module has >=1 storage-backed global (see BuiltModule.hasInstancedGlobals) */
+    LLVMTypeRef m_globalsStructTy; /* per-instance "context" struct holding every instanced global */
+    LLVMValueRef m_curGlobalsPtr; /* current function's own hidden context pointer (NULL if none) */
     StrMap m_externSlots;
     StrMap m_implProps; /* "Handle.Prop" -> ImplPropEntry (getter/setter lowering) */
     StrMap m_dropFns; /* structName -> LLVMValueRef, per-type struct-field drop helper */

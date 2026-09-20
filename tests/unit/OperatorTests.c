@@ -405,11 +405,15 @@ STRATA_TEST(jit_double_values_are_not_zero)
     {
         STRATA_CHECK_EQ(strataJitAddSymbol(jit, "host_is_pi_half", (void*)&HostIsPiHalf), 1);
 
-        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(entry != NULL);
-        if (entry)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL && create != NULL && destroy != NULL);
+        if (entry && create && destroy)
         {
-            STRATA_CHECK_EQ(entry(), 1);
+            void* ctx = create();
+            STRATA_CHECK_EQ(entry(ctx), 1);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -619,11 +623,15 @@ STRATA_TEST(jit_bool_global)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*fn)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(fn != NULL);
-        if (fn)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*fn)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(fn != NULL && create != NULL && destroy != NULL);
+        if (fn && create && destroy)
         {
-            STRATA_CHECK_EQ(fn(), 10);
+            void* ctx = create();
+            STRATA_CHECK_EQ(fn(ctx), 10);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1008,11 +1016,15 @@ STRATA_TEST(jit_global_scalar)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 42);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 42);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1028,11 +1040,15 @@ STRATA_TEST(jit_global_mutable)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 15);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 15);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1047,12 +1063,16 @@ STRATA_TEST(jit_global_float_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            float r = f();
+            void* ctx = create();
+            float r = f(ctx);
             STRATA_CHECK(r > 5.9f && r < 6.1f);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1067,11 +1087,15 @@ STRATA_TEST(jit_global_zero_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 0);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 0);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1092,11 +1116,15 @@ STRATA_TEST(jit_global_shared_between_functions)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 3);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1111,11 +1139,15 @@ STRATA_TEST(jit_global_negative_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 100);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 100);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1132,11 +1164,15 @@ STRATA_TEST(jit_global_cast_literal_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 411);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 411);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1151,11 +1187,15 @@ STRATA_TEST(jit_global_int_to_float_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 5);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 5);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1170,11 +1210,15 @@ STRATA_TEST(jit_global_float_to_int_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 3);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1192,11 +1236,15 @@ STRATA_TEST(jit_global_bool_from_int_init_is_nonzero_test)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(f != NULL);
-        if (f)
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL && create != NULL && destroy != NULL);
+        if (f && create && destroy)
         {
-            STRATA_CHECK_EQ(f(), 1);
+            void* ctx = create();
+            STRATA_CHECK_EQ(f(ctx), 1);
+            destroy(ctx);
         }
         strataJitDestroy(jit);
     }
@@ -1672,9 +1720,16 @@ STRATA_TEST(jit_scalar_max_in_global_init)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-        STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(), 1);
+        void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+        void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+        int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL && create != NULL && destroy != NULL);
+        if (entry && create && destroy)
+        {
+            void* ctx = create();
+            STRATA_CHECK_EQ(entry(ctx), 1);
+            destroy(ctx);
+        }
         strataJitDestroy(jit);
     }
 }

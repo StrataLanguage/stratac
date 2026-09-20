@@ -14,6 +14,25 @@ if(NOT run_result EQUAL 25)
     message(FATAL_ERROR "--run returned ${run_result}; stdout=${run_output}; stderr=${run_error}")
 endif()
 
+# --run with a module-level global: the compiled entry point gains a hidden
+# leading context pointer (see the "instanced globals" feature); --run must
+# create/pass/destroy one transparently, same UX as a globals-free script.
+set(global_run_script "${OUTPUT_DIR}/cli-global-run.strata")
+file(WRITE "${global_run_script}"
+    "int g_count = 0;\n"
+    "void bump() { g_count = g_count + 1; }\n"
+    "int main() { bump(); bump(); bump(); return g_count; }\n"
+)
+execute_process(
+    COMMAND "${STRATAC}" --run "${global_run_script}"
+    RESULT_VARIABLE global_run_result
+    OUTPUT_VARIABLE global_run_output
+    ERROR_VARIABLE global_run_error
+)
+if(NOT global_run_result EQUAL 3)
+    message(FATAL_ERROR "--run (globals) returned ${global_run_result}; stdout=${global_run_output}; stderr=${global_run_error}")
+endif()
+
 # AOT: stratac's default path emits a real native object; link it with the
 # engine host and verify the ABI end to end.
 set(engine_obj "${OUTPUT_DIR}/cli-engine-api${CMAKE_C_OUTPUT_EXTENSION}")

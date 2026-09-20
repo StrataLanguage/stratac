@@ -502,7 +502,11 @@ extern "C"
 
             LlvmJitExport* exp = (LlvmJitExport*)malloc(sizeof(LlvmJitExport));
             exp->name = DupString(fn->mangledName);
-            exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0;
+            /* A module with instanced globals gives every non-extern function
+               a hidden leading context pointer at the compiled/LLVM level
+               (see LLVMModuleBuilder.c), so a Strata-level "no params" fn is
+               no longer truly `int(void)` at the ABI it can be invoked with. */
+            exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0 && !bm.hasInstancedGlobals;
             VecPush(&handle->llvmExports, exp);
         }
 

@@ -306,16 +306,21 @@ STRATA_TEST(jit_runs_defer_in_lifo_order)
         return;
     }
 
-    void (*run)(void) = (void (*)(void))strataJitGetFunction(jit, "run");
-    int (*getg)(void) = (int (*)(void))strataJitGetFunction(jit, "getg");
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    void (*run)(void*) = (void (*)(void*))strataJitGetFunction(jit, "run");
+    int (*getg)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getg");
     STRATA_CHECK(run != NULL);
     STRATA_CHECK(getg != NULL);
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
 
-    if (run && getg)
+    if (run && getg && create && destroyCtx)
     {
-        run();
+        void* ctx = create();
+        run(ctx);
         /* body sets g=1, then LIFO defers: (+2) -> 12, (+3) -> 123 */
-        STRATA_CHECK_EQ(getg(), 123);
+        STRATA_CHECK_EQ(getg(ctx), 123);
+        destroyCtx(ctx);
     }
 
     strataJitDestroy(jit);
@@ -351,17 +356,22 @@ STRATA_TEST(jit_runs_defer_block_in_lifo_order)
         return;
     }
 
-    void (*run)(void) = (void (*)(void))strataJitGetFunction(jit, "run");
-    int (*getg)(void) = (int (*)(void))strataJitGetFunction(jit, "getg");
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    void (*run)(void*) = (void (*)(void*))strataJitGetFunction(jit, "run");
+    int (*getg)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getg");
     STRATA_CHECK(run != NULL);
     STRATA_CHECK(getg != NULL);
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
 
-    if (run && getg)
+    if (run && getg && create && destroyCtx)
     {
-        run();
+        void* ctx = create();
+        run(ctx);
         /* body sets g=1, LIFO: block(+4) -> 14, stmt(+3) -> 143,
            block(k=2) -> 1432, then the block's own defer (+1) -> 14321 */
-        STRATA_CHECK_EQ(getg(), 14321);
+        STRATA_CHECK_EQ(getg(ctx), 14321);
+        destroyCtx(ctx);
     }
 
     strataJitDestroy(jit);
@@ -393,16 +403,21 @@ STRATA_TEST(jit_runs_defer_block_on_early_return)
         return;
     }
 
-    int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
-    int (*getg)(void) = (int (*)(void))strataJitGetFunction(jit, "getg");
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
+    int (*getg)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getg");
     STRATA_CHECK(run != NULL);
     STRATA_CHECK(getg != NULL);
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
 
-    if (run && getg)
+    if (run && getg && create && destroyCtx)
     {
-        int r = run();
+        void* ctx = create();
+        int r = run(ctx);
         STRATA_CHECK_EQ(r, 1);       /* return value snapshotted before defers run */
-        STRATA_CHECK_EQ(getg(), 19); /* deferred block ran despite the early return */
+        STRATA_CHECK_EQ(getg(ctx), 19); /* deferred block ran despite the early return */
+        destroyCtx(ctx);
     }
 
     strataJitDestroy(jit);
@@ -447,26 +462,33 @@ STRATA_TEST(jit_runs_defer_block_on_break_and_continue)
         return;
     }
 
-    void (*run_break)(void) = (void (*)(void))strataJitGetFunction(jit, "run_break");
-    void (*run_continue)(void) = (void (*)(void))strataJitGetFunction(jit, "run_continue");
-    int (*getgb)(void) = (int (*)(void))strataJitGetFunction(jit, "getgb");
-    int (*getgc)(void) = (int (*)(void))strataJitGetFunction(jit, "getgc");
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    void (*run_break)(void*) = (void (*)(void*))strataJitGetFunction(jit, "run_break");
+    void (*run_continue)(void*) = (void (*)(void*))strataJitGetFunction(jit, "run_continue");
+    int (*getgb)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getgb");
+    int (*getgc)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getgc");
     STRATA_CHECK(run_break != NULL);
     STRATA_CHECK(run_continue != NULL);
     STRATA_CHECK(getgb != NULL);
     STRATA_CHECK(getgc != NULL);
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
 
-    if (run_break && getgb)
+    if (run_break && getgb && create && destroyCtx)
     {
-        run_break();
+        void* ctx = create();
+        run_break(ctx);
         /* iter0: i becomes 1, block runs (gb=0*10+1=1); iter1: i=2, break, block runs (gb=1*10+2=12) */
-        STRATA_CHECK_EQ(getgb(), 12);
+        STRATA_CHECK_EQ(getgb(ctx), 12);
+        destroyCtx(ctx);
     }
-    if (run_continue && getgc)
+    if (run_continue && getgc && create && destroyCtx)
     {
-        run_continue();
+        void* ctx = create();
+        run_continue(ctx);
         /* i=0: continue, block runs (+100, *10+0) -> 1000; i=1: -> 10001; i=2: -> 100012 */
-        STRATA_CHECK_EQ(getgc(), 100012);
+        STRATA_CHECK_EQ(getgc(ctx), 100012);
+        destroyCtx(ctx);
     }
 
     strataJitDestroy(jit);
@@ -496,16 +518,21 @@ STRATA_TEST(jit_runs_defer_on_early_return)
         return;
     }
 
-    int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
-    int (*getg)(void) = (int (*)(void))strataJitGetFunction(jit, "getg");
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
+    int (*getg)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getg");
     STRATA_CHECK(run != NULL);
     STRATA_CHECK(getg != NULL);
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
 
-    if (run && getg)
+    if (run && getg && create && destroyCtx)
     {
-        int r = run();
+        void* ctx = create();
+        int r = run(ctx);
         STRATA_CHECK_EQ(r, 1);   /* return value snapshotted before defers run */
-        STRATA_CHECK_EQ(getg(), 19); /* defer ran despite the early return */
+        STRATA_CHECK_EQ(getg(ctx), 19); /* defer ran despite the early return */
+        destroyCtx(ctx);
     }
 
     strataJitDestroy(jit);
@@ -544,26 +571,33 @@ STRATA_TEST(jit_runs_defer_on_break_and_continue)
         return;
     }
 
-    void (*run_break)(void) = (void (*)(void))strataJitGetFunction(jit, "run_break");
-    void (*run_continue)(void) = (void (*)(void))strataJitGetFunction(jit, "run_continue");
-    int (*getgb)(void) = (int (*)(void))strataJitGetFunction(jit, "getgb");
-    int (*getgc)(void) = (int (*)(void))strataJitGetFunction(jit, "getgc");
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    void (*run_break)(void*) = (void (*)(void*))strataJitGetFunction(jit, "run_break");
+    void (*run_continue)(void*) = (void (*)(void*))strataJitGetFunction(jit, "run_continue");
+    int (*getgb)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getgb");
+    int (*getgc)(void*) = (int (*)(void*))strataJitGetFunction(jit, "getgc");
     STRATA_CHECK(run_break != NULL);
     STRATA_CHECK(run_continue != NULL);
     STRATA_CHECK(getgb != NULL);
     STRATA_CHECK(getgc != NULL);
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
 
-    if (run_break && getgb)
+    if (run_break && getgb && create && destroyCtx)
     {
-        run_break();
+        void* ctx = create();
+        run_break(ctx);
         /* iter0: i becomes 1, defer runs (gb=0*10+1=1); iter1: i=2, break, defer runs (gb=1*10+2=12) */
-        STRATA_CHECK_EQ(getgb(), 12);
+        STRATA_CHECK_EQ(getgb(ctx), 12);
+        destroyCtx(ctx);
     }
-    if (run_continue && getgc)
+    if (run_continue && getgc && create && destroyCtx)
     {
-        run_continue();
+        void* ctx = create();
+        run_continue(ctx);
         /* each iteration's defer runs: i=0->0, i=1->1, i=2->12 */
-        STRATA_CHECK_EQ(getgc(), 12);
+        STRATA_CHECK_EQ(getgc(ctx), 12);
+        destroyCtx(ctx);
     }
 
     strataJitDestroy(jit);
