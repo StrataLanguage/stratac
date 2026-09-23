@@ -33,6 +33,8 @@ typedef struct
     bool isString;              /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
     bool isCString;             /* cstring / alias-of-cstring: single `const char*` to `.rodata` (borrowed) */
     bool isSimdVector;
+    int simdLanes;              /* logical lanes of a SIMD vector (2/3/4), 0 if unknown: float3 shares
+                                   float4's 4-lane LLVM vector, so horizontal ops must not read lane 3 */
     const TypeName* arrayInner; /* element type of T[] / T[N] */
     bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */
     bool isFixedArray;          /* T[N]: inline [N x T] (C ABI) — struct fields and stack-allocated locals */
@@ -80,6 +82,9 @@ typedef struct Builder
     LLVMValueRef m_entryAllocaPt;
     Vec m_loops;
     Vec m_owningLocals;
+    Vec m_temps;         /* OwnLocal*: borrowed owning temporaries, dropped at the end of the full statement */
+    Vec m_freshOwned;    /* LLVMValueRef: owning call results of the current statement not yet bound/borrowed */
+    Vec m_tempParts;     /* TempPart*: owning pieces read out of a registered temporary, nulled if moved out */
     Vec m_scopes;        /* active block scopes for `defer` (BlockScope*) */
     Vec m_symDecls;      /* stack of Vec*: locals declared in each active lexical block */
     LLVMTypeRef m_arrayType; /* cached {ptr, u32 len, u32 cap} fat struct for T[] */

@@ -123,6 +123,8 @@ STRATA_TEST(aot_emits_native_object_file)
         fclose(in);
     }
 
+    remove(path);
+
     BuiltModuleDispose(&bm);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -154,6 +156,8 @@ STRATA_TEST(aot_emits_assembly_file)
         STRATA_CHECK(ftell(in) > 0);
         fclose(in);
     }
+
+    remove(path);
 
     BuiltModuleDispose(&bm);
     DiagnosticEngineFree(&diag);
@@ -598,6 +602,65 @@ STRATA_TEST(jit_runs_defer_on_break_and_continue)
         /* each iteration's defer runs: i=0->0, i=1->1, i=2->12 */
         STRATA_CHECK_EQ(getgc(ctx), 12);
         destroyCtx(ctx);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+/* Defining a runtime symbol used to collide with the JIT's absolute symbols
+   and double-free the module on the error path (hanging the host). It is now
+   a clean diagnostic. */
+STRATA_TEST(jit_reserved_runtime_name_is_a_clean_error)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "int strata_alloc() { return 1; }\n"
+                                            "int main() { return strata_alloc(); }\n",
+                                            "reserved_jit", &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL && strstr(err, "reserved Strata runtime name") != NULL);
+    strataFree((char*)err);
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+static size_t s_lastAllocSize = 0;
+
+static void* SizeRecordingAlloc(size_t n)
+{
+    s_lastAllocSize = n;
+    return malloc(n);
+}
+
+/* strata_alloc takes a 64-bit size: host allocators are `void* (size_t)`. */
+STRATA_TEST(jit_allocator_receives_full_size)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)SizeRecordingAlloc, (void*)free);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "struct Big { long a; long b; long c; };\n"
+                                            "long entry() { ^Big p = Big { .a = 1, .b = 2, .c = 3 }; return p.c; }\n",
+                                            "alloc_size_jit", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    long long (*entry)(void) = (long long (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        s_lastAllocSize = 0;
+        STRATA_CHECK_EQ(entry(), 3);
+        STRATA_CHECK_EQ((long)s_lastAllocSize, 24);
     }
 
     strataJitDestroy(jit);

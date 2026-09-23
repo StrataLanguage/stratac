@@ -59,9 +59,20 @@ void AstDispose(Node* node)
         DisposeVec(&((StructDecl*)node)->fields);
         return;
     case NodeEnum:
-        DisposeVec(&((EnumDecl*)node)->members);
+    {
+        EnumDecl* decl = (EnumDecl*)node;
+
+        for (size_t i = 0; i < decl->members.count; ++i)
+        {
+            AstDispose((Node*)VecGet(&decl->members, i));
+        }
+
+        DisposeVec(&decl->members);
+
         return;
+    }
     case NodeEnumMember:
+        AstDispose(((EnumMemberDecl*)node)->valueExpr);
         return;
     case NodeFunction:
     {
@@ -195,6 +206,9 @@ void AstDispose(Node* node)
         {
             AstDispose((Node*)VecGet(&ai->elements, i));
         }
+
+        DisposeVec(&ai->elements);
+
         return;
     }
     case NodeImport:

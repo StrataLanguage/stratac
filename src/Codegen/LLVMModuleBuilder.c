@@ -74,8 +74,8 @@ typedef struct
 {
     LLVMBasicBlockRef cont;
     LLVMBasicBlockRef end;
-    size_t headerMark; /* owning-locals count before the loop statement (dropped on break) */
-    size_t bodyMark;   /* owning-locals count before the loop body (dropped on continue) */
+    size_t bodyMark;   /* owning-locals count before the loop body (dropped on break/continue;
+                          a `for` header's own locals are dropped at for.end) */
     size_t scopeDepth; /* number of active defer scopes when the loop began (defers exit on break/continue) */
 } Loop;
 
@@ -638,6 +638,7 @@ Value EmitExpr(Builder* b, Node* n);
 static Value EmitIdent(Builder* b, IdentExpr* n);
 static LValue EmitLValue(Builder* b, Node* n);
 static void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
+static void BorrowTemp(Builder* b, Value src, TypeDesc resultTd);
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 static LLVMValueRef StrataStrdupFn(Builder* b);
 static LLVMValueRef StrataStrEqFn(Builder* b);
@@ -941,7 +942,9 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         {
             flags |= TD_VECTOR;
 
-            return TypeDescMake(VectorLlvmType(b->m_ctx, &mapped), flags, NULL);
+            TypeDesc td = TypeDescMake(VectorLlvmType(b->m_ctx, &mapped), flags, NULL);
+            td.simdLanes = IsNameSimdVector(t->name);
+            return td;
         }
 
         return TypeDescMake(ScalarLlvmType(b->m_ctx, &mapped), flags, NULL);
@@ -1031,6 +1034,16 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         td.isBox = true;
         td.isOptional = t->isOptional; // `T?` rebinds whole slots on assign.
 
+        /* `^T?` (a box over `T?`, or an optional over `^T`) is ONE heap cell
+           holding a T, exactly like `T?`: the box-up sites construct a T into
+           the cell, so the cell's inner type (its size, deref and drop) must
+           be T, not another box pointer. */
+        while (boxInner && (boxInner->isBox || boxInner->isOptional) && boxInner->inner)
+        {
+            td.isOptional = td.isOptional || boxInner->isOptional;
+            boxInner = boxInner->inner;
+        }
+
         if (boxInner)
         {
             td.boxInner = boxInner;
@@ -1084,6 +1097,9 @@ static Value DerefBoxValue(Builder* b, Value value)
     }
 
     LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, value.value, "boxval");
+
+    /* `int v = mkb();`: the box itself is a temporary once its value is read. */
+    BorrowTemp(b, value, innerTd);
 
     return ValueMake(loaded, innerTd);
 }
@@ -1788,25 +1804,14 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
 
     PositionAtEnd(b, doBB);
 
-    /* A box of an owning inner owns that inner too. An owning struct drops
-       its fields recursively; an owning primitive (string) is a single heap
-       pointer freed directly; a plain value (int) needs no inner drop. */
-    if (td.boxInner)
+    /* A box of an owning inner owns that inner too: the cell at `ptr` is the
+       inner's slot, so drop it through the same helper (an owning struct
+       drops its fields, a string/T[] its buffer and owning elements, a nested
+       box its own cell - all the way down). A plain value (int) needs no
+       inner drop. */
+    if (td.boxInner && BuilderIsOwningValue(b, td.boxInner))
     {
-        if (TypeRegistryIsOwningStruct(&b->m_registry, td.boxInner->name))
-        {
-            LLVMValueRef dropFn = GetOrCreateStructDropFn(b, td.boxInner->name);
-            LLVMTypeRef dropFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), &b->m_ptrTy, 1, 0);
-            LLVMValueRef dropArgs[1] = {ptr};
-            LLVMBuildCall2(b->m_builder, dropFnTy, dropFn, dropArgs, 1, "");
-        }
-        else if (BuilderIsOwningType(b, td.boxInner))
-        {
-            LLVMValueRef innerPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ptr, "bin");
-            LLVMValueRef iargs[1] = {innerPtr};
-            StrataFreeFn(b);
-            LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, iargs, 1, "");
-        }
+        EmitDropOneInternal(b, ptr, Resolve(b, td.boxInner), true);
     }
 
     LLVMValueRef args[1] = {ptr};
@@ -1968,6 +1973,190 @@ static void EmitDrops(Builder* b, size_t fromIndex)
             EmitDropOne(b, ol->slot, ol->td);
         }
     }
+}
+
+/* ---- Owning temporaries ----
+   A fresh owning call result that is only BORROWED inside a larger expression
+   (`mk().length`, `int v = mkb();`, `substring(mks(), 0, 1)`) has no binding
+   to drop it. EmitCall records such results in m_freshOwned; a borrow site
+   that reads a value out of one parks it in a zeroed entry slot on m_temps,
+   and the enclosing full statement (or condition) drops it via FlushTemps.
+   When the value read out is itself OWNING (`mkArr()[0]`, `mkS().name`), the
+   borrow site also records where that piece lives (m_tempParts); moving the
+   piece nulls it there (EmitLValueForNullStore, ArgAddress), so the drop
+   frees the rest of the temporary but not the moved piece. A fresh result
+   that is moved whole (bound, returned, stored, passed as an owned argument)
+   never reaches a borrow site, so it is never registered. */
+static void NoteFreshOwned(Builder* b, Value v)
+{
+    if (v.value && TypeDescIsOwning(b, &v.typeDesc))
+    {
+        VecPush(&b->m_freshOwned, (void*)v.value);
+    }
+}
+
+/* An owning piece (element / field) read out of a registered temporary,
+   keyed by the AST node that read it. If that node is later moved into an
+   owning destination, NullMovedSource nulls `addr` inside the temporary, so
+   the temporary's end-of-statement drop frees everything except the moved
+   piece. If it is only read, the drop frees it along with the rest. */
+typedef struct TempPart
+{
+    const Node* node;
+    LLVMValueRef addr;
+    TypeDesc td;
+    size_t tempIdx; /* index in m_temps of the owning temporary */
+} TempPart;
+
+static LLVMValueRef ClaimTemp(Builder* b, Value src);
+
+static const TempPart* FindTempPart(Builder* b, const Node* node)
+{
+    for (size_t i = b->m_tempParts.count; i-- > 0;)
+    {
+        const TempPart* tp = (const TempPart*)VecGet(&b->m_tempParts, i);
+
+        if (tp->node == node)
+        {
+            return tp;
+        }
+    }
+
+    return NULL;
+}
+
+static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDesc td, size_t tempIdx)
+{
+    TempPart* tp = (TempPart*)arena_alloc(b->m_arena, sizeof(TempPart));
+    tp->node = node;
+    tp->addr = addr;
+    tp->td = td;
+    tp->tempIdx = tempIdx;
+    VecPush(&b->m_tempParts, tp);
+}
+
+/* `node` read an owning piece out of `base` (evaluated from `baseNode`). If
+   `base` is a fresh owning temporary (or itself a piece of one), claim it and
+   record the piece so a move can null it. The piece lives at `heapAddr`
+   (array element buffer, box cell) or, when that is NULL, at field
+   `fieldIdx` of the by-value struct `structTy` parked in the temporary (or
+   in the parent piece). Otherwise nothing is recorded and the temporary is
+   left alone (a leak, never a double free). */
+static void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* node, TypeDesc pieceTd,
+                           LLVMValueRef heapAddr, LLVMTypeRef structTy, int fieldIdx)
+{
+    const TempPart* parent = FindTempPart(b, baseNode);
+    LLVMValueRef baseAddr = parent ? parent->addr : NULL;
+    size_t tempIdx = parent ? parent->tempIdx : b->m_temps.count;
+
+    if (!parent)
+    {
+        baseAddr = ClaimTemp(b, base);
+
+        if (!baseAddr)
+        {
+            return;
+        }
+    }
+
+    LLVMValueRef addr = heapAddr;
+
+    if (!addr)
+    {
+        /* Field of a by-value struct: address it inside the parked copy. */
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)fieldIdx)};
+        addr = LLVMBuildGEP2(b->m_builder, structTy, baseAddr, idxs, 2, "tmpf");
+    }
+
+    AddTempPart(b, node, addr, pieceTd, tempIdx);
+}
+
+/* `src` is borrowed to produce a value of type `resultTd`: if `src` is a fresh
+   owning call result and the result owns nothing, schedule `src`'s drop at
+   the end of the current statement. Owning results go through
+   BorrowTempPart instead, which also records where the piece lives. */
+static void BorrowTemp(Builder* b, Value src, TypeDesc resultTd)
+{
+    if (TypeDescIsOwning(b, &resultTd))
+    {
+        return;
+    }
+
+    ClaimTemp(b, src);
+}
+
+/* If `src` is a fresh owning call result, park it in a zeroed slot scheduled
+   for drop at the end of the current statement and return that slot;
+   otherwise return NULL. */
+static LLVMValueRef ClaimTemp(Builder* b, Value src)
+{
+    for (size_t i = 0; i < b->m_freshOwned.count; i++)
+    {
+        if ((LLVMValueRef)VecGet(&b->m_freshOwned, i) != src.value)
+        {
+            continue;
+        }
+
+        /* Claimed once: swap-remove so a second borrow cannot register it again. */
+        b->m_freshOwned.items[i] = b->m_freshOwned.items[b->m_freshOwned.count - 1];
+        b->m_freshOwned.count--;
+
+        /* Zeroed at function entry: a temp created on a conditional path
+           (`a && mk().length > 0`) is null wherever it was not created, and
+           each drop re-nulls it for the next loop iteration. */
+        LLVMValueRef slot = EntryAllocaZeroed(b, src.typeDesc.type, "tmp");
+        LLVMBuildStore(b->m_builder, src.value, slot);
+
+        OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+        ol->slot = slot;
+        ol->td = src.typeDesc;
+        ol->stackBuffer = false;
+        VecPush(&b->m_temps, ol);
+        return slot;
+    }
+
+    return NULL;
+}
+
+/* Drops the temporaries registered since `mark` (end of a full statement or
+   of a branch condition) and forgets unclaimed fresh results: past this point
+   they were either moved or dropped by their consumer. */
+static void FlushTemps(Builder* b, size_t mark)
+{
+    if (!b->m_terminated)
+    {
+        for (size_t i = mark; i < b->m_temps.count; i++)
+        {
+            OwnLocal* ol = (OwnLocal*)VecGet(&b->m_temps, i);
+            EmitDropOne(b, ol->slot, ol->td);
+        }
+    }
+
+    b->m_temps.count = mark;
+    b->m_freshOwned.count = 0;
+
+    /* Pieces of the dropped temporaries are gone too. */
+    size_t kept = 0;
+
+    for (size_t i = 0; i < b->m_tempParts.count; i++)
+    {
+        TempPart* tp = (TempPart*)VecGet(&b->m_tempParts, i);
+
+        if (tp->tempIdx < mark)
+        {
+            b->m_tempParts.items[kept++] = tp;
+        }
+    }
+
+    b->m_tempParts.count = kept;
+}
+
+/* Resets the per-function temporary state (a new function body begins). */
+static void ResetTemps(Builder* b)
+{
+    b->m_temps.count = 0;
+    b->m_freshOwned.count = 0;
+    b->m_tempParts.count = 0;
 }
 
 /* A `defer` scope: deferred statements queued for the enclosing block's exit. */
@@ -2180,6 +2369,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
     b->m_owningLocals.count = 0;
     b->m_scopes.count = 0;
     b->m_symDecls.count = 0;
+    ResetTemps(b);
 
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
     b->m_curFn = info ? info->function : NULL;
@@ -2305,6 +2495,15 @@ static LLVMValueRef ToI1(Builder* b, Value v)
         return v.value;
     }
 
+    /* An optional's truthiness is PRESENCE. A `T?` box is its (nullable)
+       cell pointer; a `string?` / `T[]?` fat is empty as {null, 0}, so test
+       the data pointer (a present value always has a non-null buffer). */
+    if (v.typeDesc.isOptional && v.typeDesc.isArray)
+    {
+        LLVMValueRef data = LLVMBuildExtractValue(b->m_builder, v.value, 0, "opt.data");
+        return LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "opt.has");
+    }
+
     if (v.typeDesc.isFloat)
     {
         return LLVMBuildFCmp(b->m_builder, LLVMRealONE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
@@ -2370,6 +2569,21 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
    (the move loads the value but does not null the scratch itself). */
 static LValue EmitLValueForNullStore(Builder* b, Node* n)
 {
+    /* A piece of a temporary (`mkArr()[0]`, `mkS().name`) has no place to
+       re-resolve (its root is a call): it lives where BorrowTempPart recorded
+       it, inside the temporary. Nulling it there makes the temporary's
+       end-of-statement drop skip the moved piece. */
+    const TempPart* tp = FindTempPart(b, n);
+
+    if (tp)
+    {
+        LValue part = {0};
+        part.valid = true;
+        part.ptr = tp->addr;
+        part.typeDesc = tp->td;
+        return part;
+    }
+
     b->m_nullStoreLValue = true;
     LValue src = EmitLValue(b, n);
     b->m_nullStoreLValue = false;
@@ -2778,7 +2992,9 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     {
         unsigned field = strcmp(n->member, "length") == 0 ? 1 : 2;
         LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
-        return ValueMake(v, TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
+        TypeDesc lenTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
+        BorrowTemp(b, base, lenTd);
+        return ValueMake(v, lenTd);
     }
 
     /* Fixed-array .length: the compile-time dimension as a constant. */
@@ -2814,6 +3030,15 @@ static Value EmitMember(Builder* b, MemberExpr* n)
             LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, base.value, idxs, 2, "f");
             LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
 
+            if (TypeDescIsOwning(b, &fieldTypeDesc))
+            {
+                BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, ptr, NULL, 0);
+            }
+            else
+            {
+                BorrowTemp(b, base, fieldTypeDesc);
+            }
+
             return ValueMake(v, fieldTypeDesc);
         }
     }
@@ -2834,7 +3059,10 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
         if (dsValue != NULL)
         {
-            return (Value){dsValue, TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL)};
+            TypeDesc dsTd = TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL);
+            size_t comps = strlen(n->member);
+            dsTd.simdLanes = comps > 1 ? (int)comps : 0;
+            return (Value){dsValue, dsTd};
         }
     }
 
@@ -2850,6 +3078,16 @@ static Value EmitMember(Builder* b, MemberExpr* n)
             TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
             LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, PhysicalFieldIndex(st, idx), "m");
+
+            if (TypeDescIsOwning(b, &fieldTypeDesc))
+            {
+                BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, NULL, base.typeDesc.type,
+                               (int)PhysicalFieldIndex(st, idx));
+            }
+            else
+            {
+                BorrowTemp(b, base, fieldTypeDesc);
+            }
 
             return ValueMake(v, fieldTypeDesc);
         }
@@ -2919,12 +3157,30 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     LLVMValueRef elemAddr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, false);
     LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elemAddr, "el");
 
+    if (TypeDescIsOwning(b, &elemTd))
+    {
+        BorrowTempPart(b, base, n->base_node, (Node*)n, elemTd, elemAddr, NULL, 0);
+    }
+    else
+    {
+        BorrowTemp(b, base, elemTd);
+    }
+
     return ValueMake(v, elemTd);
+}
+
+/* Evaluates a boolean-context operand (`&&`, `||`, `!`). An optional stays
+   un-dereferenced so ToI1 tests presence, exactly like `if (o)`; loading an
+   empty optional's cell would dereference null. Other boxes read through. */
+static Value EmitCondOperand(Builder* b, Node* n)
+{
+    Value v = EmitExpr(b, n);
+    return v.typeDesc.isOptional ? v : DerefBoxValue(b, v);
 }
 
 static Value EmitUnary(Builder* b, UnaryExpr* n)
 {
-    Value e = DerefBoxValue(b, EmitExpr(b, n->operand));
+    Value e = n->op == UnNot ? EmitCondOperand(b, n->operand) : DerefBoxValue(b, EmitExpr(b, n->operand));
 
     switch (n->op)
     {
@@ -2964,20 +3220,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     {
         bool isAnd = (n->op == BinLogicAnd);
 
-        Value l = DerefBoxValue(b, EmitExpr(b, n->lhs));
-
-        LLVMValueRef cond = l.value;
-        if (l.typeDesc.type != I1Ty(b))
-        {
-            if (l.typeDesc.isFloat)
-            {
-                cond = LLVMBuildFCmp(b->m_builder, LLVMRealONE, l.value, LLVMConstReal(l.typeDesc.type, 0.0), "tobool");
-            }
-            else
-            {
-                cond = LLVMBuildICmp(b->m_builder, LLVMIntNE, l.value, LLVMConstInt(l.typeDesc.type, 0, 0), "tobool");
-            }
-        }
+        LLVMValueRef cond = ToI1(b, EmitCondOperand(b, n->lhs));
 
         LLVMBasicBlockRef lhsEnd = LLVMGetInsertBlock(b->m_builder);
         LLVMBasicBlockRef rhsBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.rhs");
@@ -2993,22 +3236,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         }
 
         LLVMPositionBuilderAtEnd(b->m_builder, rhsBlock);
-        Value r = DerefBoxValue(b, EmitExpr(b, n->rhs));
-
-        LLVMValueRef rhsCond = r.value;
-        if (r.typeDesc.type != I1Ty(b))
-        {
-            if (r.typeDesc.isFloat)
-            {
-                rhsCond
-                    = LLVMBuildFCmp(b->m_builder, LLVMRealONE, r.value, LLVMConstReal(r.typeDesc.type, 0.0), "tobool");
-            }
-            else
-            {
-                rhsCond
-                    = LLVMBuildICmp(b->m_builder, LLVMIntNE, r.value, LLVMConstInt(r.typeDesc.type, 0, 0), "tobool");
-            }
-        }
+        LLVMValueRef rhsCond = ToI1(b, EmitCondOperand(b, n->rhs));
 
         LLVMBasicBlockRef rhsEnd = LLVMGetInsertBlock(b->m_builder);
         LLVMBuildBr(b->m_builder, mergeBlock);
@@ -3085,6 +3313,10 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     {
         if (n->op == BinEqEq || n->op == BinNotEq)
         {
+            /* Both sides are only read: `make_str() == "x"` temporaries. */
+            BorrowTemp(b, l, TypeDescMake(I1Ty(b), 0, NULL));
+            BorrowTemp(b, r, TypeDescMake(I1Ty(b), 0, NULL));
+
             LLVMValueRef lp;
             LLVMValueRef ll;
             LLVMValueRef rp;
@@ -3193,7 +3425,15 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     else if (!l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type != r.typeDesc.type && l.typeDesc.type
              && r.typeDesc.type)
     {
-        if (l.typeDesc.type == I64Ty(b))
+        /* Mixed integer widths: compute in the wider type (`int + byte`
+           must not truncate the int to i8). Non-integer operands (pointers
+           etc.) keep the old left-to-right coercion. */
+        bool bothInt = LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
+                       && LLVMGetTypeKind(r.typeDesc.type) == LLVMIntegerTypeKind;
+        bool leftWider = bothInt ? LLVMGetIntTypeWidth(l.typeDesc.type) > LLVMGetIntTypeWidth(r.typeDesc.type)
+                                 : l.typeDesc.type == I64Ty(b);
+
+        if (leftWider)
         {
             r = Coerce(b, r, l.typeDesc);
         }
@@ -3483,7 +3723,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
             {
                 EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
                 StrLiteral* lit = AsNode(StrLiteral, n->value);
-                size_t copyLen = strlen(lit->value) + 1;
+                size_t copyLen = lit->length + 1;
                 LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
                 LLVMValueRef args2[1] = {size};
                 StrataAllocFn(b);
@@ -3751,6 +3991,16 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
 
     Value value = EmitExpr(b, arg);
 
+    /* A piece of a temporary (`f(mkNested()[1])`): pass its storage inside
+       the temporary, like an lvalue, so a callee that takes ownership nulls
+       it there and the temporary's drop does not free it again. */
+    const TempPart* tp = FindTempPart(b, MovableBoxSourceNode(arg));
+
+    if (tp)
+    {
+        return tp->addr;
+    }
+
     LLVMValueRef slot = EntryAlloca(b, value.typeDesc.type, "outarg");
     LLVMBuildStore(b->m_builder, value.value, slot);
 
@@ -3867,16 +4117,36 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
         LLVMValueRef one = LLVMConstInt(I32Ty(b), 1, 0);
         LLVMValueRef lm1 = LLVMBuildSub(b->m_builder, len, one, "lm1");
         LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-        LLVMValueRef idx[1] = {WidenLen(b, lm1)};
-        LLVMValueRef elAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, idx, 1, "pop");
+
+        /* Popping an empty array is an out-of-bounds read of index len-1
+           (wraps to 0xFFFFFFFF): route it through the same bounds check as
+           `a[i]` (AOT panics; JIT reports via strata_oob and yields a dummy). */
+        LLVMValueRef elAddr = EmitCheckedElemPtr(b, WidenLen(b, lm1), WidenLen(b, len), data, elemTy, elemTd, false);
         LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "popped");
-        LLVMBuildStore(b->m_builder, lm1, lenPtr);
+
+        /* The popped value now belongs to the caller: clear the vacated slot
+           (or the JIT's OOB scratch dummy) so no later drop of it frees the
+           value a second time. */
+        if (ElemNeedsScratchDummy(b, elemTd))
+        {
+            LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), elAddr);
+        }
+
+        /* Never underflow: an empty array stays empty. */
+        LLVMValueRef isEmpty = LLVMBuildICmp(b->m_builder, LLVMIntEQ, len, LLVMConstInt(I32Ty(b), 0, 0), "pop.empty");
+        LLVMBuildStore(b->m_builder, LLVMBuildSelect(b->m_builder, isEmpty, len, lm1, "pop.len"), lenPtr);
 
         return ValueMake(v, elemTd);
     }
 
     if (strcmp(n->callee, "array_push") == 0)
     {
+        /* Evaluate the pushed value first: it may read the array itself
+           (`array_push(a, a[0])`), and the grow path below frees the old
+           buffer. */
+        Node* valNode = (Node*)VecGet(&n->args, 1);
+        Value v = EmitExpr(b, valNode);
+
         LLVMValueRef one32 = LLVMConstInt(I32Ty(b), 1, 0);
         LLVMValueRef oldLen = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
         LLVMValueRef oldLen64 = WidenLen(b, oldLen);
@@ -3926,10 +4196,8 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
         LLVMAddIncoming(data, dataIn, fromBbs, 2);
         LLVMAddIncoming(capPhi, capIn, fromBbs, 2);
 
-        Node* valNode = (Node*)VecGet(&n->args, 1);
         LLVMValueRef slotIdx[1] = {oldLen64};
         LLVMValueRef elAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, slotIdx, 1, "pushslot");
-        Value v = EmitExpr(b, valNode);
 
         bool sameOwningType = v.typeDesc.isBox
                               && ((elemTd.boxInner == NULL && v.typeDesc.boxInner == NULL)
@@ -3990,11 +4258,13 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     /* array_resize: within cap it mutates in place (zero the grown tail /
        drop the shrunken owning tail); beyond cap it reallocates to
        max(newLen, cap*2, 4) and moves the prefix. */
+    /* New length first, for the same reason as array_push: evaluating it
+       may mutate the array. */
+    LLVMValueRef newLen = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
     LLVMValueRef oldLen = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
     LLVMValueRef oldLen64 = WidenLen(b, oldLen);
     LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
     LLVMValueRef oldCap64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), capPtr, "cap"));
-    LLVMValueRef newLen = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
 
     LLVMValueRef fits = LLVMBuildICmp(b->m_builder, LLVMIntULE, newLen, oldCap64, "fits");
     LLVMBasicBlockRef fitBb = NewBb(b, "rsz.fit");
@@ -5138,6 +5408,10 @@ static Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
     Node* arg0 = (Node*)VecGet(&n->args, 0);
     Value v = EmitExpr(b, arg0);
 
+    /* The source is only read: a fresh `substring(make_str(), ...)` source is
+       a temporary (the slice is a separate copy). */
+    BorrowTemp(b, v, TypeDescMake(I32Ty(b), 0, NULL));
+
     if (!v.typeDesc.isString)
     {
         if (b->m_diag)
@@ -5290,6 +5564,13 @@ static Value EmitVectorReduce(Builder* b, CallExpr* n)
         return ValueMake(LSimdVector2HAdd(b, vA.value), ResolveByName(b, "float"));
     }
 
+    /* float3 rides in a 4-lane vector whose lane 3 is not part of the value
+       (a swizzle/division may leave anything there, even NaN): sum x+y+z. */
+    if (vA.typeDesc.simdLanes == 3)
+    {
+        return ValueMake(LSimdVector3HAdd(b, vA.value), ResolveByName(b, "float"));
+    }
+
     return ValueMake(LSimdVector4HAdd(b, vA.value), ResolveByName(b, "float"));
 }
 
@@ -5298,7 +5579,10 @@ static Value EmitVectorDot(Builder* b, CallExpr* n)
     Value vA = EmitExpr(b, (Node*)VecGet(&n->args, 0));
     Value vB = EmitExpr(b, (Node*)VecGet(&n->args, 1));
 
-    return ValueMake(LSimdVectorDot(b, vA.value, vB.value), ResolveByName(b, "float"));
+    /* Only the logical lanes contribute (float3 ignores lane 3). */
+    unsigned lanes = (unsigned)(vA.typeDesc.simdLanes ? vA.typeDesc.simdLanes : vB.typeDesc.simdLanes);
+
+    return ValueMake(LSimdVectorDot(b, vA.value, vB.value, lanes), ResolveByName(b, "float"));
 }
 
 static Value EmitVectorCross(Builder* b, CallExpr* n)
@@ -5380,6 +5664,23 @@ typedef struct
     bool stackOnly; /* stack-constructed view: drop owning ELEMENTS, never free the buffer */
 } OwnedArgTemp;
 
+/* Whether initializing a struct field of type `fieldTd` from `valueNode`
+   (evaluated as `valueTd`) moves an owning source: string, ^T, dynamic array,
+   or an owning struct like a `Rec` element. Shared by the positional
+   `S(a, b)` and braced `S{x: a}` constructors so both null the same sources. */
+static bool FieldInitMovesSource(Builder* b, TypeDesc fieldTd, TypeDesc valueTd, const Node* valueNode)
+{
+    if (valueNode->kind == NodeStrLiteral || valueNode->kind == NodeArrayInit)
+    {
+        return false;
+    }
+
+    return ((fieldTd.isBox || fieldTd.isString) && (valueTd.isBox || valueTd.isString))
+           || (fieldTd.isArray && valueTd.isArray)
+           || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, fieldTd.structTypeName)
+               && valueTd.structTypeName && strcmp(fieldTd.structTypeName, valueTd.structTypeName) == 0);
+}
+
 static Value EmitCall(Builder* b, CallExpr* n)
 {
     /* A direct expression-statement call has an unused result. Consumed here
@@ -5452,8 +5753,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
 
             /* If an owning field was moved from an owning lvalue source,
                null the source so its scope-exit drop is a no-op. */
-            if ((fieldTd.isBox || fieldTd.isString) && (rawArg.typeDesc.isBox || rawArg.typeDesc.isString)
-                && argNode->kind != NodeStrLiteral)
+            if (FieldInitMovesSource(b, fieldTd, rawArg.typeDesc, argNode))
             {
                 NullMovedSource(b, argNode);
             }
@@ -5703,13 +6003,26 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 }
                 else
                 {
-                    /* A non-lvalue string value (e.g. a call result): spill
-                       the already-computed fat (ArgAddress's fallback, minus
-                       a second evaluation of the expression). */
-                    LLVMValueRef slot = EntryAlloca(b, av.typeDesc.type, "outarg");
-                    LLVMBuildStore(b->m_builder, av.value, slot);
+                    const TempPart* tp = FindTempPart(b, MovableBoxSourceNode(argNode));
 
-                    args[k] = slot;
+                    if (tp)
+                    {
+                        /* A string piece of a temporary (`f(mkArr()[0])`):
+                           hand over its storage inside the temporary, like
+                           an lvalue, so the callee's null-at-exit keeps the
+                           temporary's drop from freeing it again. */
+                        args[k] = tp->addr;
+                    }
+                    else
+                    {
+                        /* A non-lvalue string value (e.g. a call result):
+                           spill the already-computed fat (ArgAddress's
+                           fallback, minus a second evaluation). */
+                        LLVMValueRef slot = EntryAlloca(b, av.typeDesc.type, "outarg");
+                        LLVMBuildStore(b->m_builder, av.value, slot);
+
+                        args[k] = slot;
+                    }
                 }
             }
         }
@@ -5828,7 +6141,17 @@ static Value EmitCall(Builder* b, CallExpr* n)
             }
             else
             {
-                if (shouldPassByPtr)
+                if (shouldPassByPtr && argNode->kind == NodeCall)
+                {
+                    /* A call result has no address: spill the value already
+                       computed above. ArgAddress would evaluate the call a
+                       second time (repeating its side effects and leaking the
+                       first result). */
+                    LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "outarg");
+                    LLVMBuildStore(b->m_builder, v.value, slot);
+                    args[k] = slot;
+                }
+                else if (shouldPassByPtr)
                 {
                     args[k] = ArgAddress(b, argNode);
                 }
@@ -6000,10 +6323,21 @@ static Value EmitCall(Builder* b, CallExpr* n)
             return ValueMake(LLVMConstNull(ArrayStructType(b)), info->returnType);
         }
 
-        return ValueMake(BuildOwnedStringFromCStr(b, call), info->returnType);
+        Value owned = ValueMake(BuildOwnedStringFromCStr(b, call), info->returnType);
+        NoteFreshOwned(b, owned);
+        return owned;
     }
 
-    return ValueMake(call, info->returnType);
+    Value result = ValueMake(call, info->returnType);
+
+    /* A Strata function's owning result is a fresh value the caller owns
+       (extern results keep their existing host-ownership handling). */
+    if (fd && !fd->isExtern && !discarded)
+    {
+        NoteFreshOwned(b, result);
+    }
+
+    return result;
 }
 
 /* Builds a T[] from element exprs, shared by array literals (heap-backed) and
@@ -6110,15 +6444,15 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
             }
             else if (elemTd.isArray)
             {
-                /* Nested array literal element: recurse into the inline slot. */
-                if (eNode->kind == NodeArrayInit)
+                /* Array element: `v` is already the evaluated child (a nested
+                   literal was built by the EmitExpr above - building it again
+                   here leaked the first copy). A movable source (`{ xs }`)
+                   moves in, like the string and box branches. */
+                LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
+
+                if (!borrow)
                 {
-                    LLVMValueRef child = EmitArrayInit(b, AsNode(ArrayInitExpr, eNode)).value;
-                    LLVMBuildStore(b->m_builder, child, elemAddr);
-                }
-                else
-                {
-                    LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
+                    NullMovedSource(b, eNode);
                 }
             }
             else if (elemTd.isBox && elemTd.boxInner)
@@ -6362,15 +6696,9 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
 
         agg = LLVMBuildInsertValue(b->m_builder, agg, fieldValue.value, PhysicalFieldIndex(st, (int)idx), "ins");
 
-        /* If an owning field was moved from an owning lvalue source (string,
-            ^T, dynamic array, or an owning struct like a `Rec` element),
-            null the source so its scope-exit drop is a no-op. */
-        if (((fieldTd.isBox && (rawField.typeDesc.isBox || rawField.typeDesc.isString))
-             || (fieldTd.isArray && rawField.typeDesc.isArray)
-             || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, fieldTd.structTypeName)
-                 && rawField.typeDesc.structTypeName
-                 && strcmp(fieldTd.structTypeName, rawField.typeDesc.structTypeName) == 0))
-            && field->value->kind != NodeStrLiteral && field->value->kind != NodeArrayInit)
+        /* If an owning field was moved from an owning lvalue source, null
+           the source so its scope-exit drop is a no-op. */
+        if (FieldInitMovesSource(b, fieldTd, rawField.typeDesc, field->value))
         {
             NullMovedSource(b, field->value);
         }
@@ -6431,7 +6759,7 @@ Value EmitExpr(Builder* b, Node* n)
     {
         StrLiteral* literal = (StrLiteral*)n;
 
-        size_t len = strlen(literal->value);
+        size_t len = literal->length;
         /* The constant carries its NUL terminator (flag 0 in this LLVM
            build), upholding the fat-string invariant: NUL at [len]. */
         LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
@@ -6635,7 +6963,30 @@ static void EmitDiscardExpr(Builder* b, Node* expr)
     }
 }
 
+static void EmitStmtInner(Builder* b, Node* n);
+
+/* Emits one statement, then drops the owning temporaries its expressions
+   borrowed (see BorrowTemp): a full statement is the temporaries' lifetime. */
 static void EmitStmt(Builder* b, Node* n)
+{
+    size_t tempMark = b->m_temps.count;
+
+    EmitStmtInner(b, n);
+    FlushTemps(b, tempMark);
+}
+
+/* A branch/loop condition as i1, with its borrowed temporaries dropped
+   before the branch (the i1 no longer refers to them). */
+static LLVMValueRef EmitConditionI1(Builder* b, Node* cond)
+{
+    size_t tempMark = b->m_temps.count;
+    LLVMValueRef v = ToI1(b, EmitExpr(b, cond));
+
+    FlushTemps(b, tempMark);
+    return v;
+}
+
+static void EmitStmtInner(Builder* b, Node* n)
 {
     if (!n)
     {
@@ -6688,6 +7039,10 @@ static void EmitStmt(Builder* b, Node* n)
                 }
             }
         }
+
+        /* The return value is computed: temporaries it borrowed die now,
+           before the defers run (a defer is a statement of its own). */
+        FlushTemps(b, 0);
 
         RunDefersFrom(b, 0);
         EmitDrops(b, 0);
@@ -6802,6 +7157,12 @@ static void EmitStmt(Builder* b, Node* n)
 
                     Value value = EmitExpr(b, varDecl->init);
                     LLVMBuildStore(b->m_builder, Coerce(b, value, typeDesc).value, slot);
+
+                    /* A piece of a temporary only exists once evaluated. */
+                    if (!src.valid && movedNode && FindTempPart(b, movedNode))
+                    {
+                        src = EmitLValueForNullStore(b, movedNode);
+                    }
 
                     if (src.valid && src.typeDesc.isArray)
                     {
@@ -6961,7 +7322,7 @@ static void EmitStmt(Builder* b, Node* n)
     case NodeIf:
     {
         IfStmt* i = (IfStmt*)n;
-        LLVMValueRef cond = ToI1(b, EmitExpr(b, i->condition));
+        LLVMValueRef cond = EmitConditionI1(b, i->condition);
 
         LLVMBasicBlockRef thenBB = NewBb(b, "if.then");
         LLVMBasicBlockRef endBB = NewBb(b, "if.end");
@@ -7017,7 +7378,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         PositionAtEnd(b, condBB);
 
-        LLVMValueRef cond = ToI1(b, EmitExpr(b, w->condition));
+        LLVMValueRef cond = EmitConditionI1(b, w->condition);
 
         LLVMBuildCondBr(b->m_builder, cond, bodyBB, endBB);
 
@@ -7028,7 +7389,6 @@ static void EmitStmt(Builder* b, Node* n)
         Loop* loop = (Loop*)arena_alloc(b->m_arena, sizeof(Loop));
         loop->cont = condBB;
         loop->end = endBB;
-        loop->headerMark = b->m_owningLocals.count;
         loop->bodyMark = b->m_owningLocals.count;
         loop->scopeDepth = b->m_scopes.count;
         VecPush(&b->m_loops, loop);
@@ -7079,7 +7439,7 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (fs->condition)
         {
-            LLVMBuildCondBr(b->m_builder, ToI1(b, EmitExpr(b, fs->condition)), bodyBB, endBB);
+            LLVMBuildCondBr(b->m_builder, EmitConditionI1(b, fs->condition), bodyBB, endBB);
         }
         else
         {
@@ -7093,7 +7453,6 @@ static void EmitStmt(Builder* b, Node* n)
         Loop* loop = (Loop*)arena_alloc(b->m_arena, sizeof(Loop));
         loop->cont = updBB;
         loop->end = endBB;
-        loop->headerMark = headerMark;
         loop->bodyMark = b->m_owningLocals.count;
         loop->scopeDepth = b->m_scopes.count;
         VecPush(&b->m_loops, loop);
@@ -7119,15 +7478,23 @@ static void EmitStmt(Builder* b, Node* n)
 
         if (fs->update)
         {
+            size_t tempMark = b->m_temps.count;
             EmitDiscardExpr(b, fs->update);
+            FlushTemps(b, tempMark);
         }
 
-        if (!term)
-        {
-            Br(b, condBB);
-        }
+        /* for.update is always reachable via `continue` (or is simply dead
+           when the body never falls through); either way it needs a
+           terminator, so don't key this on whether the body terminated. */
+        Br(b, condBB);
 
         PositionAtEnd(b, endBB);
+
+        /* The init's owning locals (`for (^int k = ...; ...)`) live for the
+           whole loop and die here, on normal exit and on `break` alike (break
+           only drops the body's locals, then branches here). */
+        EmitDrops(b, headerMark);
+        b->m_owningLocals.count = headerMark;
 
         SymPop(b);
 
@@ -7140,8 +7507,10 @@ static void EmitStmt(Builder* b, Node* n)
         {
             Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
             RunDefersFrom(b, loop->scopeDepth);
-            EmitDrops(b, loop->headerMark);
-            b->m_owningLocals.count = loop->headerMark;
+            /* Drops only on this edge: the locals stay registered for the
+               code that follows (an unbraced `if (c) break;` falls through
+               to the rest of the body, which must still drop them). */
+            EmitDrops(b, loop->bodyMark);
             Br(b, loop->end);
         }
         else
@@ -7158,8 +7527,8 @@ static void EmitStmt(Builder* b, Node* n)
         {
             Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
             RunDefersFrom(b, loop->scopeDepth);
+            /* Edge-only drops, as for break. */
             EmitDrops(b, loop->bodyMark);
-            b->m_owningLocals.count = loop->bodyMark;
             Br(b, loop->cont);
         }
         else
@@ -7852,6 +8221,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         b->m_terminated = false;
         b->m_loops.count = 0;
         b->m_owningLocals.count = 0;
+        ResetTemps(b);
         b->m_curRet = ptrRet;
         b->m_curRetAbi = b->m_ptrTy;
         LLVMBasicBlockRef createEntry = LLVMAppendBasicBlockInContext(b->m_ctx, createFn, "entry");
@@ -7922,6 +8292,16 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                         LLVMBuildStore(b->m_builder, heap, fieldPtr);
                     }
                 }
+                else
+                {
+                    /* Any other owning initializer (an array or owning struct
+                       from a call or literal): sema has already rejected moves
+                       from variables, so this is a fresh value we take. Without
+                       this the field would be left as uninitialized heap. */
+                    Value val = EmitExpr(b, gd->init);
+                    LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, &gd->type);
+                    LLVMBuildStore(b->m_builder, owned, fieldPtr);
+                }
 
                 continue;
             }
@@ -7981,6 +8361,9 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
             LLVMBuildStore(b->m_builder, value, fieldPtr);
         }
 
+        /* Temporaries borrowed by global initializers. */
+        FlushTemps(b, 0);
+
         LLVMBuildRet(b->m_builder, ctxMem);
 
         /* ---- __strata_context_destroy ---- */
@@ -7992,6 +8375,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         b->m_terminated = false;
         b->m_loops.count = 0;
         b->m_owningLocals.count = 0;
+        ResetTemps(b);
         b->m_curRet = voidRet;
         b->m_curRetAbi = voidTy;
         LLVMBasicBlockRef destroyEntry = LLVMAppendBasicBlockInContext(b->m_ctx, destroyFn, "entry");
@@ -8104,6 +8488,9 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     VecInit(&b.m_externNames);
     VecInit(&b.m_loops);
     VecInit(&b.m_owningLocals);
+    VecInit(&b.m_temps);
+    VecInit(&b.m_freshOwned);
+    VecInit(&b.m_tempParts);
     VecInit(&b.m_scopes);
     VecInit(&b.m_symDecls);
     b.m_allocFn = NULL;
@@ -8138,6 +8525,9 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_eqHelpers);
     free(b.m_loops.items);
     free(b.m_owningLocals.items);
+    free(b.m_temps.items);
+    free(b.m_freshOwned.items);
+    free(b.m_tempParts.items);
     TypeRegistryFree(&b.m_registry);
 
     return module;

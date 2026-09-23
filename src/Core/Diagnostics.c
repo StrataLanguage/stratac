@@ -148,6 +148,19 @@ void DiagClear(DiagnosticEngine* diag)
     diag->m_errorCount = 0;
 }
 
+void DiagTruncate(DiagnosticEngine* diag, size_t count)
+{
+    while (diag->m_count > count)
+    {
+        diag->m_count--;
+
+        if (diag->m_diagnostics[diag->m_count].severity == SevError && diag->m_errorCount > 0)
+        {
+            diag->m_errorCount--;
+        }
+    }
+}
+
 char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* sources, size_t sourceCount, Arena* arena)
 {
     Sb sb;

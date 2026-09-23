@@ -597,9 +597,12 @@ typedef struct {
     bool value;
 } BoolLiteral;
 
+/* `value` is NUL-terminated for convenience, but `\0` escapes may embed
+   NULs, so `length` (the decoded byte count) is authoritative. */
 typedef struct {
     Node base;
     char* value;
+    size_t length;
 } StrLiteral;
 
 typedef struct {

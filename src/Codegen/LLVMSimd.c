@@ -115,6 +115,20 @@ LLVMValueRef LSimdVector4HAdd(struct Builder* b, LLVMValueRef v)
     return LLVMBuildFAdd(b->m_builder, lo, hi, "hadd_scalar");
 }
 
+LLVMValueRef LSimdVector3HAdd(struct Builder* b, LLVMValueRef v)
+{
+    /* float3: x + y + z. Lane 3 is padding (a `.xyz` swizzle or a 0/0
+       division can leave any value there, NaN included) and must not leak
+       into the sum. */
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+    LLVMValueRef x = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 0, 0), "x");
+    LLVMValueRef y = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 1, 0), "y");
+    LLVMValueRef z = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 2, 0), "z");
+
+    return LLVMBuildFAdd(b->m_builder, LLVMBuildFAdd(b->m_builder, x, y, "hadd_xy"), z, "hadd_scalar");
+}
+
 LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
 {
     LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
@@ -308,9 +322,19 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
 
         Value x = EmitExpr(b, (Node*)n->args.items[0]);
 
-        /* Already a vector, pass through (something like `float4(float4(...))`) */
+        /* Already a vector, pass through (something like `float4(float4(...))`).
+           A float3 result keeps its padding lane zeroed. */
         if (IS_VECTOR(x))
         {
+            if (IsNameSimdVector(n->callee) == 3)
+            {
+                LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
+                LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+
+                return LLVMBuildInsertElement(b->m_builder, x.value, LLVMConstReal(scalarType, 0.0),
+                                              LLVMConstInt(intType, 3, 0), "vecinit");
+            }
+
             return x.value;
         }
 
@@ -467,7 +491,28 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
 
     if (numComponents == 3)
     {
-        return LSimdVector4Shuffle(b, vec, vec, c[0], c[1], c[2], VC_W);
+        /* A 3-component swizzle is a float3: take the padding lane from a
+           zero vector (shuffle index 4 = lane 0 of the second operand)
+           instead of carrying the source's w along. */
+        LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+        LLVMValueRef zeroVec = LLVMConstNull(LLVMVectorType(LLVMFloatTypeInContext(b->m_ctx), 4));
+        LLVMValueRef maskV[] = {
+            LLVMConstInt(intType, c[0], 0),
+            LLVMConstInt(intType, c[1], 0),
+            LLVMConstInt(intType, c[2], 0),
+            LLVMConstInt(intType, 4, 0),
+        };
+
+        if (LLVMGetVectorSize(LLVMTypeOf(vec)) != 4)
+        {
+            /* A float2 source (`v.xyx`): widen it through the generic 4-lane
+               shuffle, then zero the padding lane. */
+            LLVMValueRef wide = LSimdVector4Shuffle(b, vec, vec, c[0], c[1], c[2], VC_X);
+            return LLVMBuildInsertElement(b->m_builder, wide, LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 0.0),
+                                          LLVMConstInt(intType, 3, 0), "swz.pad");
+        }
+
+        return LLVMBuildShuffleVector(b->m_builder, vec, zeroVec, LLVMConstVector(maskV, 4), "swz3");
     }
 
     if (numComponents == 4)
@@ -500,12 +545,18 @@ static LLVMValueRef SimdBuildVector(struct Builder* b, LLVMValueRef* comps, unsi
     return result;
 }
 
-LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB)
+LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, unsigned lanes)
 {
     LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
-    unsigned lanes = LLVMGetVectorSize(LLVMTypeOf(vecA));
+    unsigned physLanes = LLVMGetVectorSize(LLVMTypeOf(vecA));
 
-    /* Element-wise product, then horizontal (lane-wise) sum of all lanes. */
+    if (lanes == 0 || lanes > physLanes)
+    {
+        lanes = physLanes;
+    }
+
+    /* Element-wise product, then horizontal (lane-wise) sum of the logical
+       lanes only (float3's padding lane 3 is excluded). */
     LLVMValueRef vecMul = LLVMBuildFMul(b->m_builder, vecA, vecB, "dot_mul");
 
     LLVMValueRef acc = LLVMConstReal(floatType, 0.0);
@@ -553,5 +604,5 @@ LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef
 
 LLVMValueRef LSimdVector3Dot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB)
 {
-    return LSimdVectorDot(b, vecA, vecB);
+    return LSimdVectorDot(b, vecA, vecB, 3);
 }

@@ -191,11 +191,12 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     /* The extern structs keep explicit-offset (packed) layout in the IR:
-       Header has a 4-byte pad before `size` (@8) and fixed inline arrays;
+       Header has a 4-byte pad before `size` (@8), fixed inline arrays, and a
+       4-byte tail pad so its size matches C (56, not 52);
        Owned carries the per-type drop helper for its ^Counter field. */
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(strstr(res.output, "%struct.Header = type <{ i32, [4 x i8], i64, [16 x i8], [4 x float], i32 }>")
+    STRATA_CHECK(strstr(res.output, "%struct.Header = type <{ i32, [4 x i8], i64, [16 x i8], [4 x float], i32, [4 x i8] }>")
                  != NULL);
     STRATA_CHECK(strstr(res.output, "[2 x [3 x i32]]") != NULL);
     STRATA_CHECK(strstr(res.output, "__strata_drop_Owned") != NULL);

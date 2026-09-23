@@ -1,3 +1,4 @@
+#include "Util.h"
 #include "Test.h"
 #include "strata/strata.h"
 
@@ -267,4 +268,130 @@ STRATA_TEST(missing_return_while_true_infinite_ok)
     if (jit) strataJitDestroy(jit);
 }
 
+/* ---- defer is checked where it runs ----------------------------------------
+   A deferred statement runs at every exit of its scope (end, return, break,
+   continue), after everything before that exit, so its moves and reads are
+   checked against the state at each of those exits, LIFO. */
 
+#define DEFER_FLOW_PRELUDE                                \
+    "struct E { int v; };\n"                              \
+    "^E mk(int n) { return E { .v = n }; }\n"             \
+    "int take(^E e) { return e.v; }\n"                    \
+    "int note(int x) { return x; }\n"
+
+/* Error count of resolving `src`, or -1 when it has none of `needle`. */
+static int DeferErrors(const char* src, const char* needle)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+
+    ParseAndResolve(src, &diag, &arena);
+
+    int count = (int)DiagErrorCount(&diag);
+    bool hit = false;
+
+    for (size_t i = 0; i < diag.m_count; i++)
+    {
+        hit = hit || strstr(diag.m_diagnostics[i].message, needle) != NULL;
+    }
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    return count > 0 && !hit ? -1 : count;
+}
+
+STRATA_TEST(defer_reading_box_moved_before_exit_is_an_error)
+{
+    /* The deferred read runs after `take(b)` freed the box. */
+    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE
+                             "void entry() { ^E b = mk(1); defer note(b.v); take(b); }\n",
+                             "used after move")
+                 > 0);
+
+    /* Only the early-return exit moved it. */
+    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE
+                             "int entry(bool c) {\n"
+                             "  ^E b = mk(1); defer note(b.v);\n"
+                             "  if (c) { take(b); return 1; }\n"
+                             "  return 0;\n"
+                             "}\n",
+                             "used after move")
+                 > 0);
+
+    /* The `break` exit of a loop-body scope. */
+    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE
+                             "int entry() {\n"
+                             "  int i = 0;\n"
+                             "  while (i < 3) { i++; ^E b = mk(1); defer note(b.v); take(b); if (i == 1) { break; } }\n"
+                             "  return 0;\n"
+                             "}\n",
+                             "used after move")
+                 > 0);
+
+    /* The `continue` exit runs the defer before `b` is re-lived. */
+    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE
+                             "int entry() {\n"
+                             "  ^E b = mk(1); int i = 0;\n"
+                             "  while (i < 3) { i++; defer take(b); if (i == 1) { continue; } b = mk(2); }\n"
+                             "  return 0;\n"
+                             "}\n",
+                             "used after move")
+                 > 0);
+}
+
+STRATA_TEST(defer_same_error_at_several_exits_is_reported_once)
+{
+    STRATA_CHECK_EQ(DeferErrors(DEFER_FLOW_PRELUDE
+                                "int entry(bool c) {\n"
+                                "  ^E b = mk(1); defer note(b.v);\n"
+                                "  if (c) { take(b); return 1; }\n"
+                                "  if (!c) { take(b); return 2; }\n"
+                                "  take(b);\n"
+                                "  return 0;\n"
+                                "}\n",
+                                "used after move"),
+                    1);
+}
+
+STRATA_TEST(defer_cannot_see_names_declared_after_it)
+{
+    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE "int entry() { defer note(x); int x = 1; return x; }\n",
+                             "unknown variable 'x'")
+                 > 0);
+}
+
+STRATA_TEST(defer_move_after_return_value_is_legal)
+{
+    /* `return b.v` reads the box first; the deferred `take(b)` then consumes
+       it. Nothing is used after the move. */
+    STRATA_CHECK_EQ(DeferErrors(DEFER_FLOW_PRELUDE
+                                "int entry() { ^E b = mk(7); defer note(1); defer take(b); return b.v; }\n"
+                                "int loop() {\n"
+                                "  int i = 0;\n"
+                                "  while (i < 3) {\n"
+                                "    i++; ^E b = mk(i); defer take(b);\n"
+                                "    if (i == 1) { continue; }\n"
+                                "    if (i == 2) { break; }\n"
+                                "    note(b.v);\n"
+                                "  }\n"
+                                "  return i;\n"
+                                "}\n"
+                                "void reads() { ^E b = mk(1); defer note(b.v); note(b.v); }\n",
+                                "used after move"),
+                    0);
+
+    StrataJit* jit = CompileJit(DEFER_FLOW_PRELUDE
+                                "int entry() { ^E b = mk(7); defer take(b); return b.v; }\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 7);
+        }
+        strataJitDestroy(jit);
+    }
+}

@@ -557,3 +557,76 @@ STRATA_TEST(in_param_can_be_read)
     arena_free(&arena);
 }
 
+
+/* A mutable `ref` binds the caller's storage: a numeric conversion would
+   write into a temporary and silently lose the callee's write. */
+STRATA_TEST(mutable_ref_numeric_param_requires_exact_type)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "void setv(ref int x) { x = 1; }\n"
+        "int entry() { float f = 0.0; setv(f); return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    STRATA_CHECK(Contains(DiagFormat(&diag, &sm, 1, &arena), "no matching overload for 'setv'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(mutable_ref_picks_exact_overload_and_by_value_still_converts)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    /* Exact `ref` matches still resolve; by-value and `const ref` params still convert. */
+    ParseAndResolve(
+        "void setv(ref int x) { x = 1; }\n"
+        "void setv(ref float x) { x = 2.0; }\n"
+        "float half(float x) { return x / 2.0; }\n"
+        "float read(const ref float x) { return x; }\n"
+        "int entry() { int i = 0; float f = 0.0; setv(i); setv(f); float h = half(3) + read(1); return i; }\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+/* SIMD args follow the assignment rule: no implicit lane-count or element-type change. */
+STRATA_TEST(simd_param_requires_matching_vector_type)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "float sum(float4 v) { return v.x; }\n"
+        "float entry() { float3 v = float3(1.0, 2.0, 3.0); return sum(v); }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    STRATA_CHECK(Contains(DiagFormat(&diag, &sm, 1, &arena), "no matching overload for 'sum'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(simd_param_overload_picks_matching_lane_count)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "float sum(float4 v) { return v.x + v.w; }\n"
+        "float sum(float3 v) { return v.x + v.z; }\n"
+        "float entry() {\n"
+        "  float4 a = float4(1.0, 2.0, 3.0, 4.0); float3 b = float3(1.0, 2.0, 3.0);\n"
+        "  return sum(a) + sum(b);\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}

@@ -1,6 +1,7 @@
 /* Bake out hashes for primitive types */
 
 #include <ctype.h>
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -43,6 +44,7 @@ int main()
 
         /* */
         "string",
+        "cstring",
 
         /* */
         "float2",
@@ -73,6 +75,8 @@ int main()
 
         uint64_t hash = HashStr64(typeName);
 
-        printf("#define PRIM_NAME_%s %p\n", buffer, (void*)hash);
+        /* `%p` is implementation-defined (no `0x` on the Windows CRT, 32 bits
+           on 32-bit targets): print the full 64-bit value explicitly. */
+        printf("#define PRIM_NAME_%s 0x%016" PRIx64 "\n", buffer, hash);
     }
 }

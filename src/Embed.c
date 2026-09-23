@@ -91,6 +91,112 @@ extern "C"
         arena_free(arena);
     }
 
+    /* Symbols the runtime (or the generated module itself) defines. A user
+       function with one of these names collides with it: in the JIT as a
+       duplicate definition, in AOT at host link time. */
+    static bool IsReservedRuntimeName(const char* name)
+    {
+        static const char* const kReserved[] = {
+            "strata_alloc", "strata_free", "strata_panic", "strata_oob",
+            "strata_strdup", "strata_str_eq", "strata_cstrlen",
+        };
+
+        if (!name)
+        {
+            return false;
+        }
+
+        if (strncmp(name, "__strata_", 9) == 0)
+        {
+            return true;
+        }
+
+        for (size_t i = 0; i < sizeof(kReserved) / sizeof(kReserved[0]); i++)
+        {
+            if (strcmp(name, kReserved[i]) == 0)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    static void CheckReservedNames(const Module* mod, DiagnosticEngine* diag)
+    {
+        if (!mod)
+        {
+            return;
+        }
+
+        for (size_t i = 0; i < mod->functions.count; i++)
+        {
+            const FunctionDecl* fn = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
+
+            if (!fn->isExtern && (IsReservedRuntimeName(fn->name) || IsReservedRuntimeName(fn->mangledName)))
+            {
+                DiagErrorFmt(diag, fn->base.range, "'%s' is a reserved Strata runtime name and cannot be defined",
+                             fn->name);
+            }
+        }
+    }
+
+    // Semantic analysis plus the embedding-level checks every entry point shares.
+    static void AnalyzeModule(Module* mod, DiagnosticEngine* diag, Arena* arena)
+    {
+        ResolveOverloads(mod, diag, arena);
+        CheckReservedNames(mod, diag);
+    }
+
+    static unsigned CountWarnings(const DiagnosticEngine* diag)
+    {
+        unsigned count = 0;
+
+        for (size_t i = 0; i < diag->m_count; i++)
+        {
+            if (diag->m_diagnostics[i].severity == SevWarning)
+            {
+                count++;
+            }
+        }
+
+        return count;
+    }
+
+#if STRATA_HAS_LLVM
+    /* Target triple for an explicit architecture: the host triple with its
+       arch component swapped, so vendor/OS/environment stay the host's
+       (e.g. x86_64-w64-windows-gnu -> aarch64-w64-windows-gnu). Returns NULL
+       (use the host default) for STRATA_ARCH_AUTO. Caller frees. */
+    static char* ArchTargetTriple(StrataArch arch)
+    {
+        const char* archName = NULL;
+
+        switch (arch)
+        {
+        case STRATA_ARCH_X64:
+            archName = "x86_64";
+            break;
+        case STRATA_ARCH_ARM64:
+            archName = "aarch64";
+            break;
+        default:
+            return NULL;
+        }
+
+        char* host = LLVMGetDefaultTargetTriple();
+        const char* rest = host ? strchr(host, '-') : NULL;
+        char* triple = ConcatOwned(archName, rest ? rest : "-unknown-unknown");
+
+        if (host)
+        {
+            LLVMDisposeMessage(host);
+        }
+
+        return triple;
+    }
+#endif
+
     StrataCompiler* strataCompilerCreate(void)
     {
         StrataCompiler* compiler = (StrataCompiler*)malloc(sizeof(StrataCompiler));
@@ -173,6 +279,15 @@ extern "C"
         const char* out = "";
         char* irOwned = NULL;
 
+        if (emit == STRATA_EMIT_LLVM_IR && (emitFlags & STRATA_EMIT_NO_SIMD))
+        {
+            /* SIMD vector types always lower to native LLVM vectors; there is
+               no scalarizing backend, so refuse rather than silently emit
+               SIMD code. */
+            DiagError(diag, SRC_INVALID, "STRATA_EMIT_NO_SIMD is not supported: SIMD types always lower to native "
+                                         "vector instructions");
+        }
+
         if (!DiagHasErrors(diag) && mod)
         {
             if (emit == STRATA_EMIT_AST)
@@ -203,6 +318,7 @@ extern "C"
         r.output = DupString(out);
         r.diagnostics = DupString(diagText);
         r.error_count = DiagErrorCount(diag);
+        r.warning_count = CountWarnings(diag);
         r.ok = !DiagHasErrors(diag) ? 1 : 0;
 
         free(irOwned);
@@ -222,7 +338,7 @@ extern "C"
             InitModuleLoader(&arena, &diag, &loader, c);
 
             Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
-            ResolveOverloads(mod, &diag, &arena);
+            AnalyzeModule(mod, &diag, &arena);
 
             StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, arch);
 
@@ -256,7 +372,7 @@ extern "C"
                          "strataSetImportResolver");
         }
 
-        ResolveOverloads(mod, &diag, &arena);
+        AnalyzeModule(mod, &diag, &arena);
 
         StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit, emitFlags, arch);
 
@@ -293,7 +409,7 @@ extern "C"
         InitModuleLoader(&arena, &diag, &loader, c);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
-        ResolveOverloads(mod, &diag, &arena);
+        AnalyzeModule(mod, &diag, &arena);
 
         StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, c->arch);
 
@@ -329,7 +445,7 @@ extern "C"
     InitModuleLoader(&arena, &diag, &loader, c);
 
     Module* mod = ModuleLoaderLoad(&loader, inputPath);
-    ResolveOverloads(mod, &diag, &arena);
+    AnalyzeModule(mod, &diag, &arena);
 
     if (DiagHasErrors(&diag) || !mod)
     {
@@ -355,13 +471,15 @@ extern "C"
     }
 
     char* emitErr = NULL;
-    int ok = EmitNativeFile(&bm, outputPath, assembly, &emitErr, NULL);
+    char* triple = ArchTargetTriple(c ? c->arch : STRATA_ARCH_AUTO);
+    int ok = EmitNativeFile(&bm, outputPath, assembly, &emitErr, triple);
 
     if (!ok)
     {
         SetErrOut(errOut, emitErr, "emission failed");
     }
 
+    free(triple);
     free(emitErr);
 
     BuiltModuleDispose(&bm);
@@ -421,6 +539,7 @@ extern "C"
         StrataJitKind kind;
         void* backend;   // LLVMJit*, per kind; NULL if kind == NONE
         char* diagnostics;
+        bool hasContext; // functions take a hidden leading context pointer (module has instanced globals)
 #if STRATA_HAS_LLVM
         Vec llvmExports; // LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM
 #endif
@@ -430,7 +549,7 @@ extern "C"
     typedef struct
     {
         char* name;
-        bool isIntVoid;
+        bool isIntVoid; // user-visible signature is int(void), ignoring any hidden context pointer
     } LlvmJitExport;
 
     // Frees the llvmExports list (names, entries, and the items array).
@@ -502,11 +621,10 @@ extern "C"
 
             LlvmJitExport* exp = (LlvmJitExport*)malloc(sizeof(LlvmJitExport));
             exp->name = DupString(fn->mangledName);
-            /* A module with instanced globals gives every non-extern function
-               a hidden leading context pointer at the compiled/LLVM level
-               (see LLVMModuleBuilder.c), so a Strata-level "no params" fn is
-               no longer truly `int(void)` at the ABI it can be invoked with. */
-            exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0 && !bm.hasInstancedGlobals;
+            /* The user-visible signature only; a module with instanced globals
+               additionally gives every non-extern function a hidden leading
+               context pointer (handle->hasContext, see LLVMModuleBuilder.c). */
+            exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0;
             VecPush(&handle->llvmExports, exp);
         }
 
@@ -541,6 +659,7 @@ extern "C"
 
         handle->kind = STRATA_JIT_KIND_LLVM;
         handle->backend = jit;
+        handle->hasContext = bm.hasInstancedGlobals;
         handle->diagnostics = DupString(diagText);
 
         return handle;
@@ -588,7 +707,7 @@ extern "C"
             InitModuleLoader(&arena, &diag, &loader, c);
 
             Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
-            ResolveOverloads(mod, &diag, &arena);
+            AnalyzeModule(mod, &diag, &arena);
 
             StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
                                               c->allocFn, c->freeFn, c->jitBackend, &c->profile);
@@ -623,7 +742,7 @@ extern "C"
                          "strataSetImportResolver");
         }
 
-        ResolveOverloads(mod, &diag, &arena);
+        AnalyzeModule(mod, &diag, &arena);
 
         StrataJit* handle
             = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn, c->jitBackend,
@@ -678,7 +797,7 @@ extern "C"
         InitModuleLoader(&arena, &diag, &loader, c);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
-        ResolveOverloads(mod, &diag, &arena);
+        AnalyzeModule(mod, &diag, &arena);
 
         StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
                                        c->allocFn, c->freeFn, c->jitBackend, &c->profile);
@@ -703,7 +822,7 @@ extern "C"
         return NULL;
     }
 
-    int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
+    int strataJitHasIntVoidSignature(StrataJit* jit, const char* name)
     {
         if (!jit || !jit->backend || !name)
         {
@@ -724,6 +843,18 @@ extern "C"
         }
 #endif
         return 0;
+    }
+
+    int strataJitHasContext(StrataJit* jit)
+    {
+        return jit && jit->backend && jit->hasContext ? 1 : 0;
+    }
+
+    int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
+    {
+        /* Callable as a bare int(void): a context-taking function is really
+           int(void*) at the ABI level. */
+        return strataJitHasIntVoidSignature(jit, name) && !strataJitHasContext(jit) ? 1 : 0;
     }
 
     int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)

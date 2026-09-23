@@ -157,6 +157,46 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
     }
 }
 
+/* True when a field of type `t` owns heap storage: structurally owning
+   (`string`, `^T`, `T?`, `T[]`), an owning struct, or an alias/enum whose
+   resolved underlying type is either of those. */
+static bool FieldTypeIsOwning(const TypeRegistry* reg, Arena* scratch, const TypeName* t)
+{
+    size_t depth = 0;
+
+    while (t && t->name)
+    {
+        if (TypeNameIsOwning(t))
+        {
+            return true;
+        }
+
+        const StructType* ft = TypeRegistryFind(reg, t->name);
+
+        if (!ft)
+        {
+            return false;
+        }
+
+        if (!ft->isTypeAlias)
+        {
+            return !ft->opaque && ft->owning;
+        }
+
+        if (!ft->underlyingType || ++depth > reg->count)
+        {
+            return false;
+        }
+
+        TypeName parsed = TypeNameParse(scratch, ft->underlyingType);
+        TypeName* next = (TypeName*)arena_alloc(scratch, sizeof(TypeName));
+        *next = parsed;
+        t = next;
+    }
+
+    return false;
+}
+
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
 {
     reg->count = 0;
@@ -238,7 +278,12 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->extendsFrom = hd->extendsName;
     }
 
-    /* a struct is owning if it has a ^T field or an owning field. */
+    /* a struct is owning if it has a ^T field or an owning field. Alias
+       (and enum) field types are resolved first, so `struct Name = string`
+       makes a `Name` field owning too. */
+    Arena scratch;
+    arena_init(&scratch, 1024);
+
     bool changed = true;
 
     while (changed)
@@ -258,16 +303,7 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
             {
                 FieldDecl* f = (FieldDecl*)VecGet(&t->fields, j);
 
-                if (TypeNameIsOwning(&f->type))
-                {
-                    t->owning = true;
-                    changed = true;
-                    break;
-                }
-
-                const StructType* ft = TypeRegistryFind(reg, f->type.name);
-
-                if (ft && ft->owning)
+                if (FieldTypeIsOwning(reg, &scratch, &f->type))
                 {
                     t->owning = true;
                     changed = true;
@@ -277,6 +313,8 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         }
     }
 
+    arena_free(&scratch);
+
     ComputeAllLayouts(reg);
 }
 
@@ -284,12 +322,13 @@ typedef struct
 {
     long size;
     long align;
+    bool packed; /* backend emits this type packed (LLVM alignment 1) */
 } SizeAlign;
 
 /* Transient per-struct layout state: 0 = new, 1 = computing, 2 = done,
    3 = failed. Stored in a parallel array owned by ComputeAllLayouts. */
 
-static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t idx);
+static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx);
 
 static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
 {
@@ -322,6 +361,7 @@ static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
         {
             out->size = kSizes[i].size;
             out->align = kSizes[i].align;
+            out->packed = false;
             return true;
         }
     }
@@ -329,8 +369,11 @@ static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
     return false;
 }
 
-static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeName* t, SizeAlign* out)
+static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scratch, const TypeName* t,
+                           SizeAlign* out, size_t depth)
 {
+    out->packed = false;
+
     if (t->isBox || t->isOptional)
     {
         /* Boxes and optionals are pointer-sized slots. */
@@ -351,13 +394,14 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
 
         SizeAlign elem;
 
-        if (!FieldSizeAlign(reg, state, t->elem, &elem))
+        if (!FieldSizeAlign(reg, state, scratch, t->elem, &elem, depth))
         {
             return false;
         }
 
         out->size = elem.size * t->length;
         out->align = elem.align;
+        out->packed = elem.packed;
         return true;
     }
 
@@ -382,6 +426,18 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
 
     StructType* st = &reg->types[idx];
 
+    if (st->isTypeAlias)
+    {
+        /* Aliases and enums lay out exactly like their underlying type. */
+        if (!st->underlyingType || depth > reg->count)
+        {
+            return false;
+        }
+
+        TypeName under = TypeNameParse(scratch, st->underlyingType);
+        return FieldSizeAlign(reg, state, scratch, &under, out, depth + 1);
+    }
+
     if (st->opaque)
     {
         out->size = 8;
@@ -393,6 +449,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
     {
         out->size = st->sizeBytes;
         out->align = st->alignBytes;
+        out->packed = st->packedLayout;
         return st->alignBytes > 0;
     }
 
@@ -402,13 +459,14 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, const TypeNa
         return false;
     }
 
-    if (!ComputeStructLayout(reg, state, (size_t)idx))
+    if (!ComputeStructLayout(reg, state, scratch, (size_t)idx))
     {
         return false;
     }
 
     out->size = st->sizeBytes;
     out->align = st->alignBytes;
+    out->packed = st->packedLayout;
     return true;
 }
 
@@ -417,11 +475,11 @@ static long AlignUp(long v, long a)
     return (v + a - 1) / a * a;
 }
 
-static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t idx)
+static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx)
 {
     StructType* st = &reg->types[idx];
 
-    if (st->opaque || st->incomplete || st->fields.count == 0)
+    if (st->opaque || st->incomplete || st->isTypeAlias || st->fields.count == 0)
     {
         st->sizeBytes = 0;
         st->alignBytes = 1;
@@ -448,7 +506,7 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
         FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
         SizeAlign sa;
 
-        if (!FieldSizeAlign(reg, state, &f->type, &sa))
+        if (!FieldSizeAlign(reg, state, scratch, &f->type, &sa, 0))
         {
             SetLayoutError(st,
                            "field '%s' has type '%s' with no computable size (unknown, incomplete, or by-value cycle)",
@@ -478,6 +536,14 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
             off = AlignUp(cursor, sa.align);
         }
 
+        /* A member the backend emits packed (alignment 1) would not be
+           placed at its C alignment by natural backend padding, so the
+           enclosing struct needs explicit pads as well. */
+        if (sa.packed)
+        {
+            packed = true;
+        }
+
         if (off > cursor)
         {
             pads[padCount].beforeField = i;
@@ -503,9 +569,20 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
         if (packed)
         {
             /* Explicit offsets: pads encode the full layout, so backends emit
-               packed and the size is exact. */
-            st->sizeBytes = cursor;
-            st->alignBytes = 1;
+               packed. Size and alignment still match C for the same
+               declaration: natural alignment is the max field alignment and
+               a tail pad rounds the size up to it (so T[N] strides agree). */
+            long size = AlignUp(cursor, maxAlign);
+
+            if (size > cursor)
+            {
+                pads[padCount].beforeField = n;
+                pads[padCount].bytes = size - cursor;
+                padCount++;
+            }
+
+            st->sizeBytes = size;
+            st->alignBytes = maxAlign;
         }
         else
         {
@@ -544,15 +621,18 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, size_t 
 void ComputeAllLayouts(TypeRegistry* reg)
 {
     unsigned char* state = (unsigned char*)calloc(reg->count ? reg->count : 1, 1);
+    Arena scratch;
+    arena_init(&scratch, 1024);
 
     for (size_t i = 0; i < reg->count; i++)
     {
         if (state[i] == 0)
         {
-            ComputeStructLayout(reg, state, i);
+            ComputeStructLayout(reg, state, &scratch, i);
         }
     }
 
+    arena_free(&scratch);
     free(state);
 }
 

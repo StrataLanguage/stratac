@@ -2,6 +2,8 @@
 
 #include "Codegen/TypeRegistry.h"
 
+#include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,7 +12,7 @@ static SourceRange SpanFrom(Token begin, Token end)
     uint32_t s = begin.range.start;
     uint32_t e = SourceRangeEnd(end.range);
 
-    return (SourceRange){s, (uint16_t)(e > s ? e - s : 0), begin.range.fileId};
+    return (SourceRange){s, (uint32_t)(e > s ? e - s : 0), begin.range.fileId};
 }
 
 static bool BinaryInfo(TokKind k, int* prec, BinaryOp* op)
@@ -128,14 +130,7 @@ static char* ToOwned(Arena* arena, Str s)
 
 static SourceRange SpanToCur(Parser* p, SourceRange from)
 {
-    return (SourceRange){from.start, (uint16_t)(p->m_cur.range.start - from.start), from.fileId};
-}
-
-static void CopyStrToBuf(Str sv, char* tmp)
-{
-    size_t n = sv.len < 63 ? sv.len : 63;
-    memcpy(tmp, sv.data, n);
-    tmp[n] = '\0';
+    return (SourceRange){from.start, (uint32_t)(p->m_cur.range.start - from.start), from.fileId};
 }
 
 static bool StripUnsignedSuffix(Str* sv)
@@ -148,6 +143,66 @@ static bool StripUnsignedSuffix(Str* sv)
     return false;
 }
 
+/* The one place an integer literal's value is computed (expressions, array
+   dimensions, fieldoffset). Decimal - a leading 0 is NOT octal, so `010` is
+   ten everywhere - or `0x` hex, with an optional `u`/`U` suffix and any
+   number of digits. Values past 64 bits are diagnosed and yield 0; malformed
+   spellings such as a bare `0x` were already diagnosed by the lexer. */
+static uint64_t IntLiteralValue(Parser* p, Token tok, bool* outIsUnsigned)
+{
+    Str sv = ParserIdentText(p, tok);
+    bool isUnsigned = StripUnsignedSuffix(&sv);
+
+    if (outIsUnsigned)
+    {
+        *outIsUnsigned = isUnsigned;
+    }
+
+    uint64_t base = 10;
+    size_t i = 0;
+
+    if (sv.len >= 2 && sv.data[0] == '0' && (sv.data[1] == 'x' || sv.data[1] == 'X'))
+    {
+        base = 16;
+        i = 2;
+    }
+
+    uint64_t value = 0;
+
+    for (; i < sv.len; i++)
+    {
+        char c = sv.data[i];
+        uint64_t digit;
+
+        if (c >= '0' && c <= '9')
+        {
+            digit = (uint64_t)(c - '0');
+        }
+        else if (base == 16 && c >= 'a' && c <= 'f')
+        {
+            digit = (uint64_t)(c - 'a' + 10);
+        }
+        else if (base == 16 && c >= 'A' && c <= 'F')
+        {
+            digit = (uint64_t)(c - 'A' + 10);
+        }
+        else
+        {
+            break;
+        }
+
+        if (value > (UINT64_MAX - digit) / base)
+        {
+            DiagError(p->m_diag, tok.range, "integer literal is too large to fit in 64 bits");
+            return 0;
+        }
+
+        value = value * base + digit;
+    }
+
+    return value;
+}
+
 // Snapshot of lexer + parser position so a speculative parse can be undone without emitting diagnostics.
 typedef struct
 {
@@ -155,6 +210,7 @@ typedef struct
     bool hasPeek;
     Token peeked;
     Token cur;
+    size_t diagCount;
 } LexerCheckpoint;
 
 static LexerCheckpoint SaveLexerState(Parser* p)
@@ -164,15 +220,20 @@ static LexerCheckpoint SaveLexerState(Parser* p)
     c.hasPeek = p->m_lex->m_hasPeek;
     c.peeked = p->m_lex->m_peeked;
     c.cur = p->m_cur;
+    c.diagCount = DiagCount(p->m_diag);
     return c;
 }
 
+/* Rewinds to the checkpoint and drops every diagnostic the abandoned trial
+   parse reported - parser errors and lexer errors alike. Re-lexing the same
+   tokens reports lexer errors again, so each one ends up reported exactly once. */
 static void RestoreLexerState(Parser* p, LexerCheckpoint c)
 {
     p->m_lex->m_pos = c.pos;
     p->m_lex->m_hasPeek = c.hasPeek;
     p->m_lex->m_peeked = c.peeked;
     p->m_cur = c.cur;
+    DiagTruncate(p->m_diag, c.diagCount);
 }
 
 void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, const char* moduleName)
@@ -346,15 +407,17 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
             {
                 Advance(p); /* ']' */
 
-                Str sv = ParserIdentText(p, lenTok);
-                StripUnsignedSuffix(&sv);
+                // Length < 1 is diagnosed later in sema.
+                uint64_t length = IntLiteralValue(p, lenTok, NULL);
 
-                char tmp[64];
-                CopyStrToBuf(sv, tmp);
+                if (length > (uint64_t)LONG_MAX)
+                {
+                    DiagError(p->m_diag, lenTok.range, "array dimension is too large");
+                    length = 1;
+                }
 
-                // Length < 1 is diagnosed later in sema; keep parsing diagnostic-free.
                 dim.isFixed = true;
-                dim.length = (long)strtoull(tmp, NULL, 0);
+                dim.length = (long)length;
                 dim.lengthName = NULL;
                 consumed = true;
             }
@@ -445,7 +508,10 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
     out->range = SpanToCur(p, constRange);
 }
 
-bool ParserTryParseType(Parser* p, TypeName* out)
+/* `bare` parses only the base type (`const`, `^`, a keyword or a name) and
+   leaves any trailing `?` / `[]` for the caller: the box branch uses it so
+   that `^` binds tighter than those suffixes. */
+static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
 {
     bool isConst = false;
     bool isVector = false;
@@ -459,34 +525,18 @@ bool ParserTryParseType(Parser* p, TypeName* out)
 
     if (p->m_cur.kind == TokCaret)
     {
-        // `^T` — boxed type. `^` binds tighter than a trailing `[]`, so `^S[]` is an array of boxed S.
+        /* `^T` — boxed type. `^` binds tighter than a trailing `[]` or `?`, so
+           `^S[]` is an array of boxed S and `^S[]?` an optional array of boxed
+           S. The inner type is parsed bare so the suffixes are seen here. */
         SourceRange caretRange = p->m_cur.range;
         Advance(p);
 
-        TypeName inner = {0};
+        TypeName base = {0};
 
-        if (!ParserTryParseType(p, &inner) || !TypeNameValid(&inner))
+        if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
         {
             DiagError(p->m_diag, p->m_cur.range, "expected a type after '^'");
             return false;
-        }
-
-        /* `^` binds tighter than a trailing `[]`: the recursive parse may have
-           swallowed brackets into `inner` (`^T[]` read as ^(T[])). Unwrap them
-           and re-apply around the box so the result is (^T)[N] (or (^T)[]),
-           preserving lengths and rebuilding the name in source order. */
-        TypeName base = inner;
-        long depths[8];
-        int arrayDepth = 0;
-
-        while (base.isArray)
-        {
-            if (arrayDepth < 8)
-            {
-                depths[arrayDepth] = base.length;
-            }
-            arrayDepth++;
-            base = *base.elem;
         }
 
         TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
@@ -506,59 +556,41 @@ bool ParserTryParseType(Parser* p, TypeName* out)
             DiagError(p->m_diag, caretRange, "type 'cstring' cannot be boxed");
         }
 
-        for (int i = arrayDepth - 1; i >= 0; i--)
-        {
-            if (i < 8 && depths[i] >= 0)
-            {
-                wrapped = TypeNameFixedArrayWrap(p->m_arena, wrapped, depths[i]);
-            }
-            else
-            {
-                wrapped = TypeNameArrayWrap(p->m_arena, wrapped);
-            }
-        }
-
-        if (arrayDepth > 0)
-        {
-            Sb sb;
-            SbInit(&sb);
-            SbPrintf(&sb, "^%s", base.name);
-
-            for (int i = 0; i < arrayDepth; i++)
-            {
-                if (i < 8 && depths[i] >= 0)
-                {
-                    SbPrintf(&sb, "[%ld]", depths[i]);
-                }
-                else
-                {
-                    SbPuts(&sb, "[]");
-                }
-            }
-
-            wrapped.name = SbFinish(&sb, p->m_arena);
-        }
-
         wrapped.range
-            = (SourceRange){caretRange.start, (uint16_t)(p->m_cur.range.start - caretRange.start), caretRange.fileId};
+            = (SourceRange){caretRange.start, (uint32_t)(p->m_cur.range.start - caretRange.start), caretRange.fileId};
         *out = wrapped;
+
+        if (bare)
+        {
+            out->isConst = isConst;
+
+            return true;
+        }
+
+        /* `^S?` would wrap the box, which is never empty. Report it and keep
+           going as `^S`, so a following `[]` still reads as an array of boxes. */
+        if (p->m_cur.kind == TokQuestion)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range,
+                         "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
+                         base.name, base.name);
+            Advance(p);
+        }
 
         ApplyArrayBrackets(p, out, constRange);
 
         /* A trailing `?` after brackets wraps the ARRAY in an optional
-           (`^S[]?` = optional array of boxes). Without brackets (`^S?`) it
-           would wrap the box, which is never empty; fixed dims have no empty
-           state either. */
+           (`^S[]?` = optional array of boxes). Fixed dims have no empty state. */
         if (p->m_cur.kind == TokQuestion)
         {
             bool anyFixed = false;
 
-            for (int i = 0; i < arrayDepth && i < 8; i++)
+            for (const TypeName* t = out; t && t->isArray; t = t->elem)
             {
-                anyFixed = anyFixed || depths[i] >= 0;
+                anyFixed = anyFixed || t->length >= 0;
             }
 
-            if (arrayDepth == 0)
+            if (!out->isArray)
             {
                 DiagErrorFmt(
                     p->m_diag, p->m_cur.range,
@@ -665,6 +697,14 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->primitiveType = GetPrimitiveType(name);
     out->range = SpanToCur(p, constRange);
 
+    if (bare)
+    {
+        out->isConst = isConst;
+        out->isVector = isVector;
+
+        return true;
+    }
+
     /* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
        so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
     if (p->m_cur.kind == TokQuestion)
@@ -724,6 +764,11 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     out->isVector = isVector;
 
     return true;
+}
+
+bool ParserTryParseType(Parser* p, TypeName* out)
+{
+    return ParseTypeImpl(p, out, false);
 }
 
 static HandleDecl* ParseHandleDecl(Parser* p)
@@ -860,13 +905,15 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
                     DiagError(p->m_diag, foTok.range, "'fieldoffset' is only allowed inside an 'extern struct'");
                 }
 
-                Str sv = ParserIdentText(p, lenTok);
-                StripUnsignedSuffix(&sv);
+                uint64_t value = IntLiteralValue(p, lenTok, NULL);
 
-                char tmp[64];
-                CopyStrToBuf(sv, tmp);
+                if (value > (uint64_t)LONG_MAX)
+                {
+                    DiagError(p->m_diag, lenTok.range, "field offset is too large");
+                    value = 0;
+                }
 
-                offset = (long)strtoull(tmp, NULL, 0);
+                offset = (long)value;
             }
 
             TypeName ft = {0};
@@ -1086,7 +1133,7 @@ static ParamDecl* ParseParam(Parser* p)
     ParamDecl* node = AST_NEW(p->m_arena, ParamDecl);
     node->base.kind = NodeParam;
     node->base.range
-        = (SourceRange){start.start, (uint16_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
+        = (SourceRange){start.start, (uint32_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
     node->mod = mod;
     type.isConst = isConst || type.isConst;
     node->type = type;
@@ -1545,6 +1592,7 @@ static ImplDecl* ParseImplDecl(Parser* p)
         {
             DiagError(p->m_diag, fnNode->range,
                       "impl blocks may only contain methods or properties, not global variables");
+            AstDispose(fnNode);
             Synchronize(p);
             continue;
         }
@@ -1562,6 +1610,7 @@ static ImplDecl* ParseImplDecl(Parser* p)
         {
             DiagErrorFmt(p->m_diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
                          impl->handleName);
+            AstDispose(fnNode); // never reaches impl->methods or Module::functions
             continue;
         }
 
@@ -2220,6 +2269,7 @@ static Node* ParseBinary(Parser* p, int minPrec)
 
         if (!rhs)
         {
+            AstDispose(lhs);
             return NULL;
         }
 
@@ -2302,15 +2352,27 @@ static Node* ParseUnary(Parser* p)
 
                 if (ParserTryParseType(p, &castType) && p->m_cur.kind == TokRParen)
                 {
+                    /* The parser has no type table (user types may be declared
+                       later or imported), so `(Name)` is a cast only when the
+                       next token can start a cast operand but cannot continue
+                       an expression - the C# rule. `-`, `+`, `++` and `--`
+                       could be either (`(x) - 1`, `(x)++`), so they parse as
+                       an expression; write `(Name)(-x)` to cast a negation.
+                       Keyword and box casts are unambiguous. */
                     Token afterRparen = LexerPeekToken(p->m_lex);
-                    bool startsExpr = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
-                                      || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
-                                      || afterRparen.kind == TokStrLit || afterRparen.kind == TokLParen
-                                      || afterRparen.kind == TokMinus || afterRparen.kind == TokPlus
-                                      || afterRparen.kind == TokBang || afterRparen.kind == TokTilde
-                                      || afterRparen.kind == TokInc || afterRparen.kind == TokDec;
+                    bool startsOperand = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
+                                         || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
+                                         || afterRparen.kind == TokStrLit || afterRparen.kind == TokLParen
+                                         || afterRparen.kind == TokBang || afterRparen.kind == TokTilde
+                                         || afterRparen.kind == TokKwInt || afterRparen.kind == TokKwUint
+                                         || afterRparen.kind == TokKwLong || afterRparen.kind == TokKwUlong
+                                         || afterRparen.kind == TokKwByte || afterRparen.kind == TokKwSbyte
+                                         || afterRparen.kind == TokKwShort || afterRparen.kind == TokKwUshort
+                                         || afterRparen.kind == TokKwFloat || afterRparen.kind == TokKwDouble
+                                         || afterRparen.kind == TokKwFloat2 || afterRparen.kind == TokKwFloat3
+                                         || afterRparen.kind == TokKwFloat4;
 
-                    if (startsExpr || isScalarCast || isBoxCast)
+                    if (startsOperand || isScalarCast || isBoxCast)
                     {
                         Advance(p);
                         Node* operand = ParseUnary(p);
@@ -2390,6 +2452,7 @@ static Node* ParsePostfix(Parser* p)
 
             if (!index)
             {
+                AstDispose(e);
                 return NULL;
             }
 
@@ -2628,20 +2691,8 @@ static Node* ParsePrimary(Parser* p)
     {
         Advance(p);
 
-        Str sv = ParserIdentText(p, token);
-
-        bool isUnsigned = StripUnsignedSuffix(&sv);
-
-        int base = 10;
-        if (sv.len >= 2 && sv.data[0] == '0' && (sv.data[1] == 'x' || sv.data[1] == 'X'))
-        {
-            base = 16;
-        }
-
-        char tmp[64];
-        CopyStrToBuf(sv, tmp);
-
-        uint64_t val = strtoull(tmp, NULL, base);
+        bool isUnsigned = false;
+        uint64_t val = IntLiteralValue(p, token, &isUnsigned);
 
         IntLiteral* node = AST_NEW(p->m_arena, IntLiteral);
         node->base.kind = NodeIntLiteral;
@@ -2663,10 +2714,15 @@ static Node* ParsePrimary(Parser* p)
             sv.len--;
         }
 
-        char tmp[64];
-        CopyStrToBuf(sv, tmp);
+        // Full spelling (no fixed-size buffer), so long literals are never truncated.
+        char* text = arena_strndup(p->m_arena, sv.data, sv.len);
+        double val = strtod(text, NULL);
 
-        double val = strtod(tmp, NULL);
+        if (isinf(val))
+        {
+            DiagError(p->m_diag, token.range, "floating-point literal is out of range");
+            val = 0.0;
+        }
 
         FloatLiteral* node = AST_NEW(p->m_arena, FloatLiteral);
         node->base.kind = NodeFloatLiteral;
@@ -2703,6 +2759,7 @@ static Node* ParsePrimary(Parser* p)
             node->base.kind = NodeStrLiteral;
             node->base.range = token.range;
             node->value = arena_strndup(p->m_arena, "", 0);
+            node->length = 0;
 
             return (Node*)node;
         }
@@ -2752,12 +2809,12 @@ static Node* ParsePrimary(Parser* p)
             }
         }
         *dst = '\0';
-        char* value = raw;
 
         StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
         node->base.kind = NodeStrLiteral;
         node->base.range = token.range;
-        node->value = value;
+        node->value = raw;
+        node->length = (size_t)(dst - raw); // a `\0` escape embeds a NUL, so strlen(value) may be shorter
 
         return (Node*)node;
     }

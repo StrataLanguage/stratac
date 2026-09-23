@@ -2499,3 +2499,454 @@ STRATA_TEST(optional_move_out_leaves_source_empty_not_moved)
 
     strataJitDestroy(jit);
 }
+
+/* ---- Loop / function flow soundness ----------------------------------------
+   The loop head joins the entry state with every back edge (body end,
+   `continue`, after the update), and the loop exit joins the condition-false
+   state with every `break`. Facts never carry over between functions. */
+
+#define OPT_FLOW_PRELUDE                                                     \
+    "struct E { int v; };\n"                                                 \
+    "E? Make(int n) { if (n <= 0) { return {}; } return E { .v = n }; }\n"
+
+static bool OptFlowAccepted(const char* src, Arena* arena)
+{
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(src, &diag, arena);
+    bool ok = !DiagHasErrors(&diag);
+    DiagnosticEngineFree(&diag);
+
+    return ok;
+}
+
+STRATA_TEST(optional_loop_read_before_in_body_bless_is_an_error)
+{
+    /* The early return blesses `e` for the rest of the body only; the read
+       at the top of the FIRST iteration sees the unblessed entry state. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_FLOW_PRELUDE
+        "int entry() {\n"
+        "  E? e = Make(0); int s = 0; int i = 0;\n"
+        "  while (i < 3) { s = s + e.v; if (!e?) { return 1; } i++; }\n"
+        "  return s;\n"
+        "}\n",
+        "'e' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_loop_break_state_reaches_exit)
+{
+    /* `break` leaves with `e` possibly empty: the post-loop read must see it. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_FLOW_PRELUDE
+        "int entry(bool c, bool d) {\n"
+        "  E? e = E { .v = 1 };\n"
+        "  while (c) { e = Make(0); if (d) { break; } e = E { .v = 2 }; }\n"
+        "  return e.v;\n"
+        "}\n",
+        "'e' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_loop_condition_rechecked_every_iteration)
+{
+    /* The condition runs again after the body emptied `e`. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_FLOW_PRELUDE
+        "int entry() {\n"
+        "  E? e = E { .v = 1 };\n"
+        "  while (e.v > 0) { e = Make(0); }\n"
+        "  return 0;\n"
+        "}\n",
+        "'e' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_facts_do_not_leak_between_functions)
+{
+    /* `a` blesses its own `e`; `b`'s unrelated `e` param is unproven. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "struct E { int v; };\n"
+        "int a(E? e) { if (!e?) { return 0; } return e.v; }\n"
+        "int b(E? e) { return e.v; }\n",
+        "'e' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_loop_break_on_empty_keeps_body_fact)
+{
+    /* `if (!e?) { break; }` leaves the loop: the rest of the body is blessed. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        OPT_FLOW_PRELUDE
+        "int entry(bool c) {\n"
+        "  E? e = Make(1); int s = 0;\n"
+        "  while (c) { if (!e?) { break; } s = s + e.v; e = Make(0); }\n"
+        "  return s;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_negated_while_exit_proves_non_empty)
+{
+    /* `while (!e?)` only exits once `e` is non-empty. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        OPT_FLOW_PRELUDE
+        "int entry() {\n"
+        "  E? e = Make(0);\n"
+        "  while (!e?) { e = Make(1); }\n"
+        "  return e.v;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_infinite_loop_exits_only_through_break)
+{
+    /* `while (true)` has no condition-false exit: the post-loop state is the
+       break state, where `e` is still blessed. */
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        OPT_FLOW_PRELUDE
+        "int entry() {\n"
+        "  E? e = Make(4); int i = 0;\n"
+        "  while (true) { i++; if (!e?) { return 0; } if (i > 3) { break; } }\n"
+        "  return e.v + i;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 8);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Writes, rebinds and mutable borrows invalidate path facts -------------
+   A fact about `p` holds only until something may change the value at `p`:
+   a write to `p` or any ancestor, a mutable `ref` borrow of `p` or an
+   ancestor, or a write/move through an index that may alias it. Reads never
+   invalidate anything. */
+
+#define OPT_PATH_PRELUDE                                                     \
+    OPT_FLOW_PRELUDE                                                         \
+    "struct H { E? f; };\n"                                                  \
+    "int pick() { return 0; }\n"
+
+STRATA_TEST(optional_element_write_clears_element_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "int entry() {\n"
+        "  E?[] a; array_push(a, Make(1));\n"
+        "  if (a[0]?) { a[0] = Make(0); return a[0].v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'a[0]' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_element_write_then_retest_is_accepted)
+{
+    /* A plain (non-optional) value re-proves the element; a `T?` value needs a re-test. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        OPT_PATH_PRELUDE
+        "int entry() {\n"
+        "  E?[] a; array_push(a, Make(1)); array_push(a, Make(1));\n"
+        "  a[1] = E { .v = 5 };\n"
+        "  int s = a[1].v;\n"
+        "  if (a[0]?) { a[0] = Make(2); if (a[0]?) { s = s + a[0].v; } }\n"
+        "  return s;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_box_contents_assign_clears_sub_path_facts)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "int entry() {\n"
+        "  ^H h = H { .f = Make(1) };\n"
+        "  if (h.f?) { h = H{}; return h.f.v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'h.f' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_ref_struct_assign_clears_sub_path_facts)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "int g(ref H h) { if (h.f?) { h = H{}; return h.f.v; } return 0; }\n",
+        "'h.f' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_struct_replace_then_retest_is_accepted)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        OPT_PATH_PRELUDE
+        "int entry() {\n"
+        "  ^H h = H { .f = Make(1) };\n"
+        "  h = H { .f = Make(2) };\n"
+        "  if (h.f?) { return h.f.v; }\n"
+        "  return 0;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_mutable_ref_arg_clears_field_facts)
+{
+    /* `ref H` is not itself optional, but the callee may empty `h.f`. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "void clear(ref H h) { h.f = Make(0); }\n"
+        "int entry() {\n"
+        "  ^H h = H { .f = Make(1) };\n"
+        "  if (h.f?) { clear(h); return h.f.v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'h.f' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_mutable_ref_array_arg_clears_element_facts)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "void clr(ref E?[] a) { a[0] = Make(0); }\n"
+        "int entry() {\n"
+        "  E?[] a; array_push(a, Make(1));\n"
+        "  if (a[0]?) { clr(a); return a[0].v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'a[0]' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_const_ref_arg_keeps_field_facts)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        OPT_PATH_PRELUDE
+        "int look(const ref H h) { return 0; }\n"
+        "int entry() {\n"
+        "  ^H h = H { .f = Make(1) };\n"
+        "  if (h.f?) { look(h); return h.f.v; }\n"
+        "  return 0;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_move_through_unknown_index_clears_element_fact)
+{
+    /* `E? x = a[pick()]` moves the element out (emptying it); pick() may be 0. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "int entry() {\n"
+        "  E?[] a; array_push(a, Make(1));\n"
+        "  if (a[0]?) { E? x = a[pick()]; return a[0].v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'a[0]' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_move_through_other_index_var_clears_element_fact)
+{
+    /* `i` and `j` may be equal at runtime: moving out of `a[j]` empties `a[i]`. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "int entry(int i, int j) {\n"
+        "  E?[] a; array_push(a, Make(1));\n"
+        "  if (a[i]?) { E? x = a[j]; return a[i].v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'a[i]' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_write_through_other_index_clears_element_fact)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        OPT_PATH_PRELUDE
+        "int entry(int j) {\n"
+        "  E?[] a; array_push(a, Make(1));\n"
+        "  if (a[0]?) { a[j] = Make(0); return a[0].v; }\n"
+        "  return 0;\n"
+        "}\n",
+        "'a[0]' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_aliasing_index_read_or_distinct_write_keeps_fact)
+{
+    /* Reading `a[j]` changes nothing, and `a[1]` can never be `a[0]`. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        OPT_PATH_PRELUDE
+        "int entry(int i, int j) {\n"
+        "  E?[] a; array_push(a, Make(1)); array_push(a, Make(1));\n"
+        "  int s = 0;\n"
+        "  if (a[i]?) { if (a[j]?) { s = a[j].v; } s = s + a[i].v; }\n"
+        "  if (a[0]?) { a[1] = Make(0); s = s + a[0].v; }\n"
+        "  return s;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+/* ---- Comparisons read through optionals ------------------------------------
+   `T? == T?` / `T? != T?` is null-aware (empty == empty) in codegen; every
+   other comparison with a `T?` operand derefs it and needs a blessing. */
+
+STRATA_TEST(optional_compare_with_value_requires_blessing)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptDerefRejected(
+        "int entry() { int? p; if (p == 3) { return 1; } return 0; }\n",
+        "'p' has not been blessed", &arena));
+
+    STRATA_CHECK(OptDerefRejected(
+        "int entry(int? p) { if (3 < p) { return 1; } return 0; }\n",
+        "'p' has not been blessed", &arena));
+
+    STRATA_CHECK(OptDerefRejected(
+        "int entry(int? p, int? q) { if (p < q) { return 1; } return 0; }\n",
+        "'p' has not been blessed", &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_compare_blessed_or_null_aware_is_accepted)
+{
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        "int entry(int? p, int? q) {\n"
+        "  int s = 0;\n"
+        "  if (p == q) { s = s + 1; }\n"
+        "  if (p != q) { s = s + 2; }\n"
+        "  if (p?) { if (p == 3) { s = s + 4; } if (p > 1) { s = s + 8; } }\n"
+        "  return s;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}
+
+STRATA_TEST(optional_compare_with_value_runs_when_blessed)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileOpt(
+        "int entry() {\n"
+        "  int? p = 3; int? q; int s = 0;\n"
+        "  if (p?) { if (p == 3) { s = s + 1; } }\n"
+        "  if (q == q) { s = s + 2; }\n"
+        "  if (p != q) { s = s + 4; }\n"
+        "  return s;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 7);
+    }
+
+    strataJitDestroy(jit);
+}
+
+STRATA_TEST(optional_presence_operators_type_as_bool)
+{
+    /* `!o`, `o && k`, `o || k` and `if (o)` are presence tests (codegen);
+       sema already types them as bool and needs no blessing for them. */
+    Arena arena; arena_init(&arena, 0);
+
+    STRATA_CHECK(OptFlowAccepted(
+        "bool f(int? o, bool k) {\n"
+        "  bool a = !o; bool b = o && k; bool c = o || k;\n"
+        "  if (o) { return a || b || c; }\n"
+        "  return false;\n"
+        "}\n",
+        &arena));
+
+    arena_free(&arena);
+}

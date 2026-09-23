@@ -912,3 +912,96 @@ STRATA_TEST(resolver_unknown_function_from_import_is_error)
     strataCompilerDestroy(c);
 }
 #endif
+
+/* The resolved module's `name` is its identity; without one, two distinct
+   modules imported under the same spelling would silently merge. */
+static int ResolverNoName(void* ud, const char* importer, const char* path, StrataResolvedModule* out)
+{
+    (void)ud;
+    (void)importer;
+    (void)path;
+    out->text = "int util_val() { return 1; }";
+    out->length = strlen(out->text);
+    out->name = NULL;
+    return 1;
+}
+
+STRATA_TEST(resolver_must_set_module_name)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverNoName, NULL);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+        "import util;\n"
+        "int entry() { return util_val(); }\n",
+        "noname_root", &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err != NULL && strstr(err, "did not set a canonical module name") != NULL);
+
+    strataFree((char*)err);
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+#ifdef _WIN32
+static int WriteTextFile(const char* path, const char* text)
+{
+    FILE* f = fopen(path, "wb");
+    if (!f)
+    {
+        return 0;
+    }
+    fputs(text, f);
+    fclose(f);
+    return 1;
+}
+
+/* Windows paths are case-insensitive: `import util;` and `import Util;`
+   name the same file and must load it once (a second load would redefine
+   struct U). */
+STRATA_TEST(import_case_variants_load_once_on_windows)
+{
+    const char* tmp = getenv("TEMP");
+    STRATA_CHECK(tmp != NULL);
+    if (!tmp)
+    {
+        return;
+    }
+
+    char utilPath[512];
+    char mainPath[512];
+    snprintf(utilPath, sizeof(utilPath), "%s/strata_case_util.strata", tmp);
+    snprintf(mainPath, sizeof(mainPath), "%s/strata_case_main.strata", tmp);
+
+    STRATA_CHECK(WriteTextFile(utilPath, "struct U { int x; };\nint util_val() { return 6; }\n"));
+    STRATA_CHECK(WriteTextFile(mainPath,
+                               "import strata_case_util;\n"
+                               "import STRATA_CASE_UTIL;\n"
+                               "int entry() { return util_val(); }\n"));
+
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileFile(c, mainPath, &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+    }
+    else
+    {
+        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(), 6);
+        }
+        strataJitDestroy(jit);
+    }
+
+    strataCompilerDestroy(c);
+    remove(utilPath);
+    remove(mainPath);
+}
+#endif

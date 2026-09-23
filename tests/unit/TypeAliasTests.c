@@ -1706,3 +1706,114 @@ STRATA_TEST(type_alias_string_jit_cast_and_move)
     }
     strataCompilerDestroy(c);
 }
+
+/* -- Aliases of owning types make the containing struct owning ----------- */
+
+STRATA_TEST(type_alias_owning_field_registry)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct Name = string;\n"
+                              "struct Alias2 = Name;\n"
+                              "struct Blob = int[];\n"
+                              "struct Meter = float;\n"
+                              "enum Color { Red, Green };\n"
+                              "struct P { Name n; };\n"
+                              "struct P2 { Alias2 n; };\n"
+                              "struct PB { Blob b; };\n"
+                              "struct Outer { P p; };\n"
+                              "struct Plain { Meter m; Color c; };\n",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    TypeRegistry reg;
+    TypeRegistryInit(&reg);
+    TypeRegistryBuild(&reg, mod);
+
+    STRATA_CHECK(TypeRegistryIsOwningStruct(&reg, "P"));
+    STRATA_CHECK(TypeRegistryIsOwningStruct(&reg, "P2"));
+    STRATA_CHECK(TypeRegistryIsOwningStruct(&reg, "PB"));
+    STRATA_CHECK(TypeRegistryIsOwningStruct(&reg, "Outer"));
+    STRATA_CHECK(!TypeRegistryIsOwningStruct(&reg, "Plain"));
+
+    TypeRegistryFree(&reg);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(type_alias_owning_field_must_be_boxed)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    StrataResult r = strataCompileString(c,
+                                         "struct Name = string;\n"
+                                         "struct P { Name n; int k; };\n"
+                                         "int entry() { P a = P { .n = (Name)\"hi\", .k = 1 }; return a.k; }\n",
+                                         "alias_owning", STRATA_EMIT_LLVM_IR, 0);
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "must be boxed") != NULL);
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+static long s_aliasLive = 0;
+
+static void* AliasCountAlloc(size_t n)
+{
+    void* p = malloc(n);
+    if (p)
+    {
+        s_aliasLive++;
+    }
+    return p;
+}
+
+static void AliasCountFree(void* p)
+{
+    if (p)
+    {
+        s_aliasLive--;
+        free(p);
+    }
+}
+
+STRATA_TEST(type_alias_owning_field_dropped_once)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataJitSetAllocFreeFunctions(c, (void*)AliasCountAlloc, (void*)AliasCountFree);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "struct Name = string;\n"
+                                            "struct P { Name n; int k; };\n"
+                                            "int entry() {\n"
+                                            "    ^P a = P { .n = (Name)\"hello\", .k = 2 };\n"
+                                            "    a.n = (Name)\"world\";\n"
+                                            "    a.n = (Name)\"again\";\n"
+                                            "    return a.k;\n"
+                                            "}\n",
+                                            "alias_owning_jit", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        s_aliasLive = 0;
+        STRATA_CHECK_EQ(entry(), 2);
+        /* The box and every string it held (including the overwritten ones)
+           are freed exactly once. */
+        STRATA_CHECK_EQ(s_aliasLive, 0);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}

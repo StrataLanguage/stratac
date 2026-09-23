@@ -2511,27 +2511,24 @@ STRATA_TEST(box_array_equality_after_element_drop_is_rejected)
     arena_free(&arena);
 }
 
-STRATA_TEST(box_array_equality_after_optional_element_move_is_rejected)
+STRATA_TEST(box_array_equality_after_optional_element_move_is_allowed)
 {
-    /* Optional ELEMENTS (^Foo?) poison the array like any other owning
-       element — the array is still unusable after an element moves out. */
+    /* Optional ELEMENTS (Foo?[]; `^Foo?` is not a valid type) do not poison
+       the array: moving one out just leaves that slot empty, which is a
+       valid optional state, so comparing the arrays afterwards is fine. */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Foo { int v; };\n"
         "int entry() {\n"
-        "  ^Foo?[] a = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
-        "  ^Foo?[] b = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
-        "  ^Foo? f = a[0];\n"
+        "  Foo?[] a = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  Foo?[] b = { Foo { .v = 1 }, Foo { .v = 2 } };\n"
+        "  Foo? f = a[0];\n"
         "  if (a == b) { return 1; }\n"
         "  return 0;\n"
         "}\n",
         &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
-
-    SourceManager sm; SourceManagerInit(&sm);
-    char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "'a' is poisoned"));
+    STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -2730,6 +2727,306 @@ STRATA_TEST(box_array_push_braced_literal_initializes_owning_field)
     arena_free(&arena);
 }
 
+/* ---- Loop move-state soundness ---------------------------------------------
+   A box moved in a loop must be re-lived on EVERY path back to the loop head
+   (body end, `continue`, the for-update), and every `break` state reaches the
+   code after the loop. The condition and update run on every iteration. */
 
+#define BOX_FLOW_PRELUDE                                  \
+    "struct E { int v; };\n"                              \
+    "^E mk(int n) { return E { .v = n }; }\n"             \
+    "int take(^E e) { return e.v; }\n"
 
+/* True when `src` fails to compile with a use-after-move diagnostic. */
+static bool BoxMoveRejected(const char* src)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(src, &err);
 
+    if (jit)
+    {
+        strataJitDestroy(jit);
+        return false;
+    }
+
+    bool hit = err && Contains(err, "used after move");
+    strataFree((char*)err);
+
+    return hit;
+}
+
+STRATA_TEST(box_loop_reassign_on_one_branch_is_a_double_move)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E b = mk(1); int i = 0;\n"
+        "  while (i < 3) { take(b); if (i == 1) { b = mk(2); } i++; }\n"
+        "  return 0;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_loop_continue_before_reassign_is_a_double_move)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E b = mk(1); int i = 0;\n"
+        "  while (i < 3) { i++; take(b); if (i == 1) { continue; } b = mk(2); }\n"
+        "  return 0;\n"
+        "}\n"));
+
+    /* Same through a for-loop, whose `continue` runs the update. */
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(bool c) {\n"
+        "  ^E b = mk(1);\n"
+        "  for (int i = 0; i < 3; i++) { take(b); if (c) { continue; } b = mk(3); }\n"
+        "  return 0;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_loop_break_state_reaches_exit)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(bool c, bool d) {\n"
+        "  ^E b = mk(1);\n"
+        "  while (c) { take(b); if (d) { break; } b = mk(2); }\n"
+        "  return take(b);\n"
+        "}\n"));
+
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(bool c) {\n"
+        "  ^E b = mk(1);\n"
+        "  for (int i = 0; i < 3; i++) { take(b); if (c) { break; } b = mk(2); }\n"
+        "  return take(b);\n"
+        "}\n"));
+
+    /* `while (true)` exits only through the break. */
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(bool c) {\n"
+        "  ^E b = mk(1);\n"
+        "  while (true) { take(b); if (c) { break; } b = mk(2); }\n"
+        "  return take(b);\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_loop_condition_and_update_run_every_iteration)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E b = mk(1); int s = 0;\n"
+        "  for (int i = 0; i < 3; s = s + take(b)) { i++; }\n"
+        "  return s;\n"
+        "}\n"));
+
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E b = mk(1); int i = 0;\n"
+        "  while (take(b) > 0 && i < 3) { i++; }\n"
+        "  return 0;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_loop_reassign_after_nested_loop_is_tracked)
+{
+    /* The inner loop must not hide the outer body's reassignments. */
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(bool c) {\n"
+        "  ^E b = mk(1); int i = 0;\n"
+        "  while (i < 3) {\n"
+        "    i++; int j = 0;\n"
+        "    while (j < 2) { j++; }\n"
+        "    take(b);\n"
+        "    if (c) { b = mk(2); }\n"
+        "  }\n"
+        "  return 0;\n"
+        "}\n"));
+
+    /* A break in the inner loop still reaches the outer body. */
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(bool c) {\n"
+        "  ^E b = mk(1); int i = 0;\n"
+        "  while (i < 3) { i++; while (c) { take(b); break; } }\n"
+        "  return 0;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_loop_move_and_reassign_on_every_path_runs)
+{
+    /* Re-lived before every back edge (including the `break` path, which
+       re-lives first): legal, and each box is freed exactly once. */
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E b = mk(1); int s = 0;\n"
+        "  for (int i = 0; i < 4; i++) {\n"
+        "    s = s + take(b);\n"
+        "    b = mk(i + 2);\n"
+        "    if (i == 2) { break; }\n"
+        "  }\n"
+        "  int j = 0;\n"
+        "  while (j < 2) { j++; s = s + take(b); b = mk(10); }\n"
+        "  return s + take(b);\n"          /* 1+2+3 + 4+10 + 10 = 30 */
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 30);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* ---- Moved-out array elements ----------------------------------------------
+   Moving an owning element out nulls its slot: reading that element again
+   (whole or through a member) is a use after move until the slot is
+   reassigned. A move through an index that may alias (`a[j]` for `a[i]`)
+   counts, and once the index variable changes the moved slot is unknown. */
+
+STRATA_TEST(box_array_element_double_move_is_rejected)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E[] a; array_push(a, mk(1));\n"
+        "  take(a[0]); take(a[0]);\n"
+        "  return 0;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_array_element_member_read_after_move_is_rejected)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E[] a; array_push(a, mk(1));\n"
+        "  take(a[0]);\n"
+        "  return a[0].v;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_array_element_move_through_aliasing_index_is_rejected)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(int i, int j) {\n"
+        "  ^E[] a; array_push(a, mk(1));\n"
+        "  take(a[j]);\n"
+        "  return a[i].v;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_array_element_moved_by_var_index_stays_moved_after_var_changes)
+{
+    /* After `i = 0` the moved `a[i]` is some unknown element: writing the
+       new `a[i]` does not refill it. */
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry(int i) {\n"
+        "  ^E[] a; array_push(a, mk(1));\n"
+        "  take(a[i]); i = 0; a[i] = mk(3);\n"
+        "  return a[0].v;\n"
+        "}\n"));
+}
+
+STRATA_TEST(box_array_element_refill_and_distinct_elements_run)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E[] a; array_push(a, mk(1)); array_push(a, mk(2));\n"
+        "  int s = take(a[0]);\n"
+        "  s = s + a[1].v;\n"
+        "  a[0] = mk(10);\n"
+        "  s = s + take(a[0]);\n"
+        "  return s + take(a[1]);\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 15);
+    }
+
+    strataJitDestroy(jit);
+}
+
+/* Storing a box into a `^T[]` element moves it (codegen nulls the source),
+   whether the source is a variable or another array's element. */
+STRATA_TEST(box_element_store_moves_the_source)
+{
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E[] a = { E { .v = 1 } }; ^E b = mk(5);\n"
+        "  a[0] = b;\n"
+        "  return b.v;\n"
+        "}\n"));
+
+    STRATA_CHECK(BoxMoveRejected(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E[] a = { E { .v = 1 } }; ^E[] c = { E { .v = 2 }, E { .v = 3 } };\n"
+        "  a[0] = c[1];\n"
+        "  return c[1].v;\n"
+        "}\n"));
+
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(
+        BOX_FLOW_PRELUDE
+        "int entry() {\n"
+        "  ^E[] a = { E { .v = 1 } }; ^E b = mk(5);\n"
+        "  a[0] = b;\n"
+        "  b = mk(6);\n"
+        "  return a[0].v * 10 + b.v;\n"
+        "}\n",
+        &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 56);
+    }
+
+    strataJitDestroy(jit);
+}

@@ -33,13 +33,13 @@ static Token Make(const Lexer* lex, TokKind kind, size_t start)
     Token t = {0};
     t.kind = kind;
     t.range.start = (uint32_t)start;
-    t.range.length = (uint16_t)(lex->m_pos - start);
+    t.range.length = (uint32_t)(lex->m_pos - start);
     t.range.fileId = lex->m_fileId;
 
     return t;
 }
 
-static SourceRange LexRange(const Lexer* lex, size_t pos, uint16_t len)
+static SourceRange LexRange(const Lexer* lex, size_t pos, uint32_t len)
 {
     SourceRange r = {0};
     r.start = (uint32_t)pos;
@@ -408,9 +408,17 @@ static Token LexNumber(Lexer* lex)
     {
         lex->m_pos += 2;
 
+        size_t digitsStart = lex->m_pos;
+
         while (lex->m_pos < lex->m_sourceLen && IsHexDigit(lex->m_source[lex->m_pos]))
         {
             ++lex->m_pos;
+        }
+
+        if (lex->m_pos == digitsStart)
+        {
+            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
+                      "hexadecimal literal has no digits after '0x'");
         }
 
         if (LexerPeek(lex, 0) == 'u' || LexerPeek(lex, 0) == 'U')
@@ -463,9 +471,17 @@ static Token LexNumber(Lexer* lex)
             ++lex->m_pos;
         }
 
+        size_t digitsStart = lex->m_pos;
+
         while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
         {
             ++lex->m_pos;
+        }
+
+        if (lex->m_pos == digitsStart)
+        {
+            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
+                      "exponent has no digits");
         }
     }
 
@@ -480,6 +496,12 @@ static Token LexNumber(Lexer* lex)
     else if (suffix == 'u' || suffix == 'U')
     {
         ++lex->m_pos;
+
+        if (isFloat)
+        {
+            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
+                      "'u' suffix is not allowed on a floating-point literal");
+        }
     }
 
     return Make(lex, isFloat ? TokFloatLit : TokIntLit, start);
@@ -509,13 +531,13 @@ static Token LexStringLiteral(Lexer* lex)
 
         if (c == '\n')
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint16_t)(lex->m_pos - start + 1)), "unterminated string literal");
+            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start + 1)), "unterminated string literal");
             return Make(lex, TokStrLit, start);
         }
 
         ++lex->m_pos;
     }
 
-    DiagError(lex->m_diag, LexRange(lex, start, (uint16_t)(lex->m_pos - start)), "unterminated string literal");
+    DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "unterminated string literal");
     return Make(lex, TokStrLit, start);
 }

@@ -41,4 +41,6 @@ bool DiagHasErrors(const DiagnosticEngine* diag);
 size_t DiagCount(const DiagnosticEngine* diag);
 
 void DiagClear(DiagnosticEngine* diag);
+// Drops every diagnostic reported after the first `count` (rolls back a speculative parse).
+void DiagTruncate(DiagnosticEngine* diag, size_t count);
 char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* sources, size_t sourceCount, Arena* arena);

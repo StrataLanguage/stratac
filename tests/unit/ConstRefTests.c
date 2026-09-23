@@ -118,6 +118,103 @@ STRATA_TEST(assign_to_const_ref_struct_member_is_error)
     arena_free(&arena);
 }
 
+/* ---- Const locals and const bypasses ---- */
+
+/* True when `src` fails sema with a diagnostic containing `needle`. */
+static bool ConstRejected(const char* src, const char* needle)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    (void)ParseAndResolve(src, &diag, &arena);
+
+    SourceManager sm; SourceManagerInit(&sm);
+    bool hit = DiagHasErrors(&diag) && strstr(DiagFormat(&diag, &sm, 1, &arena), needle) != NULL;
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    return hit;
+}
+
+static bool ConstAccepted(const char* src)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    (void)ParseAndResolve(src, &diag, &arena);
+
+    bool ok = !DiagHasErrors(&diag);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    return ok;
+}
+
+STRATA_TEST(const_local_assign_and_incdec_are_errors)
+{
+    STRATA_CHECK(ConstRejected("int entry() { const int x = 5; x = 6; return x; }\n", "'x' is immutable"));
+    STRATA_CHECK(ConstRejected("int entry() { const int x = 5; x++; return x; }\n", "'x' is immutable"));
+    STRATA_CHECK(ConstRejected("int entry() { const int x = 5; x += 1; return x; }\n", "'x' is immutable"));
+    STRATA_CHECK(ConstRejected("int entry() { const int[] a = {1, 2}; a[0] = 3; return a[0]; }\n",
+                               "'a' is immutable"));
+}
+
+STRATA_TEST(const_local_is_readable_and_scoped)
+{
+    /* A const local can be read and copied; a later sibling-scope name is a fresh mutable binding. */
+    STRATA_CHECK(ConstAccepted(
+        "int entry() {\n"
+        "  const int x = 5; int y = x; y++;\n"
+        "  if (y > 0) { const int z = 1; y = y + z; }\n"
+        "  int z = 2; z = 3;\n"
+        "  return y + z;\n"
+        "}\n"));
+}
+
+STRATA_TEST(const_ref_arg_to_mutable_ref_param_is_error)
+{
+    STRATA_CHECK(ConstRejected(
+        "struct P { int v; };\n"
+        "void m(ref P p) { p.v = 1; }\n"
+        "void g(const ref P p) { m(p); }\n",
+        "'p' is immutable and cannot be passed to non-const 'ref' parameter"));
+
+    STRATA_CHECK(ConstRejected(
+        "struct P { int v; };\n"
+        "void setv(ref int x) { x = 1; }\n"
+        "void g(const ref P p) { setv(p.v); }\n",
+        "'p' is immutable"));
+
+    STRATA_CHECK(ConstRejected(
+        "void setv(ref int x) { x = 1; }\n"
+        "int entry() { const int x = 5; setv(x); return x; }\n",
+        "'x' is immutable"));
+}
+
+STRATA_TEST(const_ref_arg_to_const_ref_param_is_allowed)
+{
+    STRATA_CHECK(ConstAccepted(
+        "struct P { int v; };\n"
+        "int m(const ref P p) { return p.v; }\n"
+        "int g(const ref P p) { return m(p); }\n"
+        "int h(const int[] a) { return a.length; }\n"));
+}
+
+STRATA_TEST(const_array_push_pop_resize_are_errors)
+{
+    STRATA_CHECK(ConstRejected("void g(const int[] a) { array_push(a, 1); }\n", "it is immutable"));
+    STRATA_CHECK(ConstRejected("int g(const int[] a) { return array_pop(a); }\n", "it is immutable"));
+    STRATA_CHECK(ConstRejected("void g(const int[] a) { array_resize(a, 4); }\n", "it is immutable"));
+}
+
+STRATA_TEST(const_box_drop_is_error)
+{
+    STRATA_CHECK(ConstRejected(
+        "struct P { int v; };\n"
+        "void g(const ^P p) { drop(p); }\n",
+        "cannot drop 'p'; it is immutable"));
+}
+
 #if STRATA_TEST_HAS_LLVM
 
 

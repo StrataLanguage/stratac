@@ -1,6 +1,9 @@
 #include "Util.h"
 #include "Test.h"
 
+#include <stdarg.h>
+#include <stdint.h>
+
 static ReturnStmt* SingleReturn(Module* m)
 {
     STRATA_CHECK(m != NULL);
@@ -252,5 +255,383 @@ STRATA_TEST(parser_if_else)
     STRATA_CHECK(ifn->elseBranch != NULL);
 
     DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+static size_t CountDiagsContaining(const DiagnosticEngine* diag, const char* needle)
+{
+    size_t n = 0;
+
+    for (size_t i = 0; i < diag->m_count; i++)
+    {
+        if (strstr(diag->m_diagnostics[i].message, needle))
+        {
+            n++;
+        }
+    }
+
+    return n;
+}
+
+static Node* StatementAt(Module* m, size_t fnIndex, size_t stmtIndex)
+{
+    if (!m || fnIndex >= m->functions.count)
+    {
+        return NULL;
+    }
+
+    FunctionDecl* fn = (FunctionDecl*)VecGet(&m->functions, fnIndex);
+    Block* block = (Block*)fn->body;
+
+    if (!block || stmtIndex >= block->statements.count)
+    {
+        return NULL;
+    }
+
+    return (Node*)VecGet(&block->statements, stmtIndex);
+}
+
+STRATA_TEST(parser_long_string_literal_is_not_truncated)
+{
+    size_t n = 70000;
+    Sb sb;
+    SbInit(&sb);
+    SbPuts(&sb, "int f() { string s = \"");
+    SbPutr(&sb, 'a', n);
+    SbPuts(&sb, "\"; return 0; }");
+
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    char* src = SbFinish(&sb, &arena);
+    Module* mod = ParseModule(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    VarDeclStmt* vd = (VarDeclStmt*)StatementAt(mod, 0, 0);
+    STRATA_CHECK(vd && vd->init && vd->init->kind == NodeStrLiteral);
+    if (vd && vd->init && vd->init->kind == NodeStrLiteral)
+    {
+        StrLiteral* lit = (StrLiteral*)vd->init;
+        STRATA_CHECK_EQ((long)lit->length, (long)n);
+        STRATA_CHECK_EQ((long)strlen(lit->value), (long)n);
+        STRATA_CHECK_EQ((long)lit->base.range.length, (long)(n + 2));
+    }
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_string_literal_keeps_embedded_nul)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("int f() { string s = \"ab\\0cd\"; string e = \"\"; return 0; }", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    VarDeclStmt* vd = (VarDeclStmt*)StatementAt(mod, 0, 0);
+    StrLiteral* lit = (StrLiteral*)vd->init;
+    STRATA_CHECK(lit->base.kind == NodeStrLiteral);
+    STRATA_CHECK_EQ((long)lit->length, 5);
+    STRATA_CHECK(memcmp(lit->value, "ab\0cd", 5) == 0);
+
+    VarDeclStmt* empty = (VarDeclStmt*)StatementAt(mod, 0, 1);
+    STRATA_CHECK_EQ((long)((StrLiteral*)empty->init)->length, 0);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_paren_ident_before_binary_op_is_an_expression)
+{
+    /* `(x) - 1` used to be parsed as a cast of `-1` to type `x`. */
+    const char* ops[] = {"-", "+", "*", "&", "/", "=="};
+
+    for (size_t i = 0; i < sizeof(ops) / sizeof(ops[0]); i++)
+    {
+        char src[128];
+        snprintf(src, sizeof(src), "int f(int x) { return (x) %s 1; }", ops[i]);
+
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Module* mod = ParseModule(src, &diag, &arena);
+        STRATA_CHECK(!DiagHasErrors(&diag));
+
+        ReturnStmt* ret = SingleReturn(mod);
+        STRATA_CHECK(ret && ret->value && ret->value->kind == NodeBinary);
+        if (ret && ret->value && ret->value->kind == NodeBinary)
+        {
+            STRATA_CHECK(((BinaryExpr*)ret->value)->lhs->kind == NodeIdent);
+        }
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+
+    /* `(x)++` is a postfix increment of x, not a cast of `++...`. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("void f(int x) { (x)++; (x)--; }", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    ExprStmt* es = (ExprStmt*)StatementAt(mod, 0, 0);
+    STRATA_CHECK(es && es->expr && es->expr->kind == NodeIncDec);
+    if (es && es->expr && es->expr->kind == NodeIncDec)
+    {
+        STRATA_CHECK(!((IncDecExpr*)es->expr)->isPrefix);
+    }
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_unambiguous_casts_still_parse_as_casts)
+{
+    const char* exprs[] = {"(Foo)y", "(Foo)(-y)", "(Foo)!y", "(Foo)~y", "(Foo)1", "(Foo)\"s\"",
+                           "(int)-y", "(long)+y", "(float)y", "(^Foo)y", "(Foo[])y", "(string)y"};
+
+    for (size_t i = 0; i < sizeof(exprs) / sizeof(exprs[0]); i++)
+    {
+        char src[128];
+        snprintf(src, sizeof(src), "int f(int y) { return %s; }", exprs[i]);
+
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Module* mod = ParseModule(src, &diag, &arena);
+        STRATA_CHECK(!DiagHasErrors(&diag));
+
+        ReturnStmt* ret = SingleReturn(mod);
+        STRATA_CHECK(ret && ret->value && ret->value->kind == NodeCast);
+        if (!ret || !ret->value || ret->value->kind != NodeCast)
+        {
+            printf("  not a cast: %s\n", exprs[i]);
+        }
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+STRATA_TEST(parser_int_literals_are_decimal_everywhere)
+{
+    /* Array sizes and fieldoffset used strtoull base 0: `010` was 8 there
+       (but 10 in expressions) and `09` was 0. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("extern struct E { fieldoffset(010) int a; }\n"
+                              "int f() { int[010] a = {}; int[09] b = {}; int[0x10] c = {}; return 010; }",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    StructDecl* sd = (StructDecl*)VecGet(&mod->structs, 0);
+    FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, 0);
+    STRATA_CHECK_EQ(field->offset, 10);
+
+    STRATA_CHECK_EQ(((VarDeclStmt*)StatementAt(mod, 0, 0))->type.length, 10);
+    STRATA_CHECK_EQ(((VarDeclStmt*)StatementAt(mod, 0, 1))->type.length, 9);
+    STRATA_CHECK_EQ(((VarDeclStmt*)StatementAt(mod, 0, 2))->type.length, 16);
+    STRATA_CHECK(strcmp(((VarDeclStmt*)StatementAt(mod, 0, 0))->type.name, "int[10]") == 0);
+
+    ReturnStmt* ret = (ReturnStmt*)StatementAt(mod, 0, 3);
+    STRATA_CHECK_EQ((long)((IntLiteral*)ret->value)->value, 10);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_int_literal_range_and_long_spellings)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+
+    /* 70 leading zeros used to be cut to 63 chars (all zeros) by a fixed buffer. */
+    Sb sb;
+    SbInit(&sb);
+    SbPuts(&sb, "ulong f() { return ");
+    SbPutr(&sb, '0', 70);
+    SbPuts(&sb, "1; }\nulong g() { return 18446744073709551615u; }\nulong h() { return 0xFFFFFFFFFFFFFFFF; }");
+    Module* mod = ParseModule(SbFinish(&sb, &arena), &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    STRATA_CHECK_EQ((long)((IntLiteral*)((ReturnStmt*)StatementAt(mod, 0, 0))->value)->value, 1);
+    STRATA_CHECK(((IntLiteral*)((ReturnStmt*)StatementAt(mod, 1, 0))->value)->value == UINT64_MAX);
+    STRATA_CHECK(((IntLiteral*)((ReturnStmt*)StatementAt(mod, 2, 0))->value)->value == UINT64_MAX);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    const char* bad[] = {"ulong f() { return 18446744073709551616; }", "ulong f() { return 0x10000000000000000; }",
+                         "int f() { int[99999999999999999999] a = {}; return 0; }"};
+
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+    {
+        arena_init(&arena, 0);
+        DiagnosticEngineInit(&diag);
+        ParseModule(bad[i], &diag, &arena);
+        STRATA_CHECK_EQ(CountDiagsContaining(&diag, "too large to fit in 64 bits"), 1);
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+STRATA_TEST(parser_float_literal_out_of_range_is_diagnosed)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseModule("double f() { return 1e999; }", &diag, &arena);
+    STRATA_CHECK_EQ(CountDiagsContaining(&diag, "out of range"), 1);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_box_cannot_be_optional)
+{
+    /* The inner type parse used to swallow the `?`, so `^S?` was accepted silently. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct S { int v; }\nstruct T { ^S? f; }", &diag, &arena);
+    STRATA_CHECK_EQ(CountDiagsContaining(&diag, "'^S' cannot be optional"), 1);
+    STRATA_CHECK_EQ(DiagErrorCount(&diag), 1);
+
+    /* Recovery keeps the field as a plain box. */
+    StructDecl* t = (StructDecl*)VecGet(&mod->structs, 1);
+    STRATA_CHECK_EQ((long)t->fields.count, 1);
+    FieldDecl* f = (FieldDecl*)VecGet(&t->fields, 0);
+    STRATA_CHECK(f->type.isBox && !f->type.isOptional);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_box_array_optional_shapes)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("int f() { ^S[]? a; ^S[] b = {}; ^S[4] c = {}; return 0; }", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    /* `^S[]?` is an optional array of boxes, not a box around an optional array. */
+    TypeName* a = &((VarDeclStmt*)StatementAt(mod, 0, 0))->type;
+    STRATA_CHECK(a->isOptional && !a->isBox);
+    STRATA_CHECK(a->inner && a->inner->isArray && a->inner->length < 0);
+    STRATA_CHECK(a->inner && a->inner->elem && a->inner->elem->isBox);
+    STRATA_CHECK(strcmp(a->name, "^S[]?") == 0);
+
+    TypeName* b = &((VarDeclStmt*)StatementAt(mod, 0, 1))->type;
+    STRATA_CHECK(b->isArray && b->length < 0 && b->elem->isBox);
+    STRATA_CHECK(strcmp(b->name, "^S[]") == 0);
+
+    TypeName* c = &((VarDeclStmt*)StatementAt(mod, 0, 2))->type;
+    STRATA_CHECK(c->isArray && c->length == 4 && c->elem->isBox);
+    STRATA_CHECK(strcmp(c->name, "^S[4]") == 0);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    arena_init(&arena, 0);
+    DiagnosticEngineInit(&diag);
+    ParseModule("int f() { ^S[4]? a; return 0; }", &diag, &arena);
+    STRATA_CHECK_EQ(CountDiagsContaining(&diag, "fixed-size array '^S[4]' cannot be optional"), 1);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_trial_parse_diagnostics_are_rolled_back)
+{
+    /* The cast trial parse read `arr[0]?` as a type and left an error behind. */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct S { int v; }\nint f() { S?[] arr = {}; bool b = (arr[0]?); return 0; }", &diag,
+                              &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK_EQ((long)DiagCount(&diag), 0);
+
+    VarDeclStmt* vd = (VarDeclStmt*)StatementAt(mod, 0, 1);
+    STRATA_CHECK(vd->init && vd->init->kind == NodeNullTest);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_lexer_error_is_reported_once_after_backtracking)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseModule("int f() { foo $; return 0; }", &diag, &arena);
+    STRATA_CHECK_EQ(CountDiagsContaining(&diag, "unexpected character '$'"), 1);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_dispose_frees_array_literal_and_enum_value_lists)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("enum E { A = g(1, 2), B }\nint f() { int[] a = {1, 2, 3}; return 0; }", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    ArrayInitExpr* ai = (ArrayInitExpr*)((VarDeclStmt*)StatementAt(mod, 0, 0))->init;
+    STRATA_CHECK(ai->base.kind == NodeArrayInit);
+    STRATA_CHECK_EQ((long)ai->elements.count, 3);
+
+    EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, 0);
+    EnumMemberDecl* a = (EnumMemberDecl*)VecGet(&ed->members, 0);
+    CallExpr* call = (CallExpr*)a->valueExpr;
+    STRATA_CHECK(call->base.kind == NodeCall);
+    STRATA_CHECK_EQ((long)call->args.count, 2);
+
+    /* Nodes live in the arena, so they stay readable after AstDispose frees their lists. */
+    AstDispose((Node*)mod);
+    STRATA_CHECK(ai->elements.items == NULL && ai->elements.count == 0);
+    STRATA_CHECK(call->args.items == NULL && call->args.count == 0);
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(parser_error_paths_dispose_partial_nodes)
+{
+    /* Exercise the error paths that now dispose partially built nodes. */
+    const char* srcs[] = {"int f() { return g(1, 2) + ; }", "int f(int[] a) { return a[h(1, 2)][; }",
+                          "handle H;\nimpl H { extern int M(int a); extern int M(int b); }"};
+
+    for (size_t i = 0; i < sizeof(srcs) / sizeof(srcs[0]); i++)
+    {
+        Arena arena; arena_init(&arena, 0);
+        DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+        Module* mod = ParseModule(srcs[i], &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+        AstDispose((Node*)mod);
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+STRATA_TEST(util_sb_cdup_on_empty_builder)
+{
+    Sb sb;
+    SbInit(&sb);
+    Str s = SbCDup(&sb);
+    STRATA_CHECK_EQ((long)s.len, 1);
+    STRATA_CHECK(s.data[0] == '\0');
+    free((char*)s.data);
+    SbFree(&sb);
+}
+
+static char* FormatTwice(Arena* a, char** second, const char* fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    char* first = arena_vformat(a, fmt, args);
+    *second = arena_vformat(a, fmt, args);
+    va_end(args);
+    return first;
+}
+
+STRATA_TEST(util_arena_vformat_leaves_callers_va_list_alone)
+{
+    Arena arena; arena_init(&arena, 0);
+    char* second = NULL;
+    char* first = FormatTwice(&arena, &second, "%s-%d", "x", 42);
+    STRATA_CHECK(strcmp(first, "x-42") == 0);
+    STRATA_CHECK(strcmp(second, "x-42") == 0);
     arena_free(&arena);
 }

@@ -3,6 +3,7 @@
 #include "Test.h"
 #include "strata/strata.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -248,8 +249,8 @@ STRATA_TEST(registry_layout_offsets_pads_and_size)
     STRATA_CHECK_EQ(l2->fieldOffsets[1], 8);
     STRATA_CHECK_EQ(l2->fieldOffsets[2], 16); /* natural fill after offset 8+8 */
     STRATA_CHECK_EQ(l2->fieldOffsets[3], 20);
-    STRATA_CHECK_EQ(l2->sizeBytes, 24); /* packed: exact cursor, no trailing pad */
-    STRATA_CHECK_EQ(l2->alignBytes, 1);
+    STRATA_CHECK_EQ(l2->sizeBytes, 24); /* cursor is already a multiple of 8: no trailing pad */
+    STRATA_CHECK_EQ(l2->alignBytes, 8); /* natural C alignment (max field alignment) */
     STRATA_CHECK_EQ((long)l2->padCount, 1); /* 7 bytes before field 1 */
     STRATA_CHECK_EQ((long)l2->pads[0].beforeField, 1);
     STRATA_CHECK_EQ(l2->pads[0].bytes, 7);
@@ -443,6 +444,192 @@ STRATA_TEST(jit_extern_struct_box_autodrop)
         /* Both allocations (the ^Payload box and its ^Counter field) must be
            freed when the box drops at the end of entry(). */
         STRATA_CHECK_EQ(s_dropLive, 0);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+/* -- fieldoffset layouts match C ----------------------------------------- */
+
+/* The C declarations the Strata extern structs below mirror. */
+typedef enum { LayColorRed, LayColorGreen } LayColor;
+typedef struct { LayColor c; int d; } LayE;
+typedef struct { int a; long long b; int count; } LayH;
+typedef struct { unsigned char x; LayH h; } LayW;
+typedef struct { unsigned char x; LayH hs[2]; } LayA;
+
+#define LAYOUT_DECLS                                                               \
+    "enum Color { Red, Green };\n"                                                 \
+    "struct Meters = int;\n"                                                       \
+    "extern struct E { fieldoffset(0) Color c; fieldoffset(4) int d; };\n"         \
+    "extern struct M { fieldoffset(0) Meters m; fieldoffset(4) int d; };\n"        \
+    "extern struct H { fieldoffset(0) int a; fieldoffset(8) long b; int count; };\n" \
+    "extern struct W { byte x; H h; };\n"                                          \
+    "extern struct A { byte x; H[2] hs; };\n"
+
+STRATA_TEST(registry_layout_alias_enum_and_tail_padding)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule(LAYOUT_DECLS, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    TypeRegistry reg;
+    TypeRegistryInit(&reg);
+    TypeRegistryBuild(&reg, mod);
+
+    /* Enum and alias fields take their underlying type's size/alignment. */
+    const char* names[] = {"E", "M"};
+    for (size_t i = 0; i < 2; i++)
+    {
+        const StructType* st = TypeRegistryFind(&reg, names[i]);
+        STRATA_CHECK(st != NULL && st->hasLayout && !st->layoutError);
+        if (!st || !st->hasLayout)
+        {
+            continue;
+        }
+        STRATA_CHECK_EQ(st->fieldOffsets[0], 0);
+        STRATA_CHECK_EQ(st->fieldOffsets[1], 4);
+        STRATA_CHECK_EQ(st->sizeBytes, (long)sizeof(LayE));
+        STRATA_CHECK_EQ(st->alignBytes, (long)_Alignof(LayE));
+        STRATA_CHECK_EQ((long)st->padCount, 0);
+    }
+
+    /* Packed (explicit-offset) struct: natural alignment + tail padding. */
+    const StructType* h = TypeRegistryFind(&reg, "H");
+    STRATA_CHECK(h != NULL && h->hasLayout);
+    if (h && h->hasLayout)
+    {
+        STRATA_CHECK_EQ(h->fieldOffsets[2], 16);
+        STRATA_CHECK_EQ(h->sizeBytes, (long)sizeof(LayH));
+        STRATA_CHECK_EQ(h->alignBytes, (long)_Alignof(LayH));
+    }
+
+    /* Embedding a packed-emitted struct places it at its C alignment. */
+    const StructType* w = TypeRegistryFind(&reg, "W");
+    STRATA_CHECK(w != NULL && w->hasLayout);
+    if (w && w->hasLayout)
+    {
+        STRATA_CHECK_EQ(w->fieldOffsets[1], (long)offsetof(LayW, h));
+        STRATA_CHECK_EQ(w->sizeBytes, (long)sizeof(LayW));
+    }
+
+    const StructType* a = TypeRegistryFind(&reg, "A");
+    STRATA_CHECK(a != NULL && a->hasLayout);
+    if (a && a->hasLayout)
+    {
+        STRATA_CHECK_EQ(a->fieldOffsets[1], (long)offsetof(LayA, hs));
+        STRATA_CHECK_EQ(a->sizeBytes, (long)sizeof(LayA));
+    }
+
+    TypeRegistryFree(&reg);
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(emit_ir_layout_alias_enum_and_tail_pad)
+{
+    StrataResult r = CompileSource(LAYOUT_DECLS
+                                   "int entry(E e, H h, W w, A a) { return e.d + h.count + w.x + a.x; }\n");
+    STRATA_CHECK(r.ok);
+    STRATA_CHECK(r.output != NULL);
+    if (r.output)
+    {
+        STRATA_CHECK(strstr(r.output, "%struct.E = type <{ i32, i32 }>") != NULL);
+        STRATA_CHECK(strstr(r.output, "%struct.H = type <{ i32, [4 x i8], i64, i32, [4 x i8] }>") != NULL);
+        STRATA_CHECK(strstr(r.output, "%struct.W = type <{ i8, [7 x i8], %struct.H }>") != NULL);
+    }
+    strataResultFree(&r);
+}
+
+STRATA_TEST(sema_fieldoffset_overlap_through_alias_rejected)
+{
+    StrataResult r = CompileSource(
+        "struct Wide = long;\n"
+        "extern struct Bad { fieldoffset(0) Wide a; fieldoffset(4) int b; };\n");
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "overlaps") != NULL);
+    strataResultFree(&r);
+}
+
+static void LayFillE(LayE* e)
+{
+    e->c = LayColorGreen;
+    e->d = 7;
+}
+
+static void LayFillW(LayW* w)
+{
+    memset(w, 0, sizeof(*w));
+    w->x = 1;
+    w->h.a = 10;
+    w->h.b = 200;
+    w->h.count = 3000;
+}
+
+static void LayFillA(LayA* a)
+{
+    memset(a, 0, sizeof(*a));
+    a->hs[0].count = 4;
+    a->hs[1].a = 50;
+    a->hs[1].b = 600;
+    a->hs[1].count = 7000;
+}
+
+static long long LaySumW(const LayW* w)
+{
+    return w->x + w->h.a * 10 + w->h.b * 100 + w->h.count * 1000LL;
+}
+
+/* Host C code and Strata agree on every offset: the host fills structs that
+   Strata reads, and reads a struct that Strata wrote. */
+STRATA_TEST(jit_extern_struct_layout_matches_c)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(
+        c,
+        LAYOUT_DECLS
+        "extern void fill_e(E e);\n"
+        "extern void fill_w(W w);\n"
+        "extern void fill_a(A a);\n"
+        "extern long sum_w(const W w);\n"
+        "long read_e() { E e; fill_e(e); return (long)(int)e.c * 100 + e.d; }\n"
+        "long read_w() { W w; fill_w(w); return w.x + w.h.a + w.h.b + w.h.count; }\n"
+        "long read_a() { A a; fill_a(a); return a.hs[0].count + a.hs[1].a + a.hs[1].b + a.hs[1].count; }\n"
+        "long write_w() {\n"
+        "    W w; fill_w(w);\n"
+        "    w.x = 2; w.h.a = 3; w.h.b = 4; w.h.count = 5;\n"
+        "    return sum_w(w);\n"
+        "}\n",
+        "layout_c_jit", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK(strataJitAddSymbol(jit, "fill_e", (void*)LayFillE));
+    STRATA_CHECK(strataJitAddSymbol(jit, "fill_w", (void*)LayFillW));
+    STRATA_CHECK(strataJitAddSymbol(jit, "fill_a", (void*)LayFillA));
+    STRATA_CHECK(strataJitAddSymbol(jit, "sum_w", (void*)LaySumW));
+
+    long long (*readE)(void) = (long long (*)(void))strataJitGetFunction(jit, "read_e");
+    long long (*readW)(void) = (long long (*)(void))strataJitGetFunction(jit, "read_w");
+    long long (*readA)(void) = (long long (*)(void))strataJitGetFunction(jit, "read_a");
+    long long (*writeW)(void) = (long long (*)(void))strataJitGetFunction(jit, "write_w");
+    STRATA_CHECK(readE && readW && readA && writeW);
+
+    if (readE && readW && readA && writeW)
+    {
+        STRATA_CHECK_EQ(readE(), 107);
+        STRATA_CHECK_EQ(readW(), 3211);
+        STRATA_CHECK_EQ(readA(), 7654);
+        STRATA_CHECK_EQ(writeW(), 2 + 30 + 400 + 5000);
     }
 
     strataJitDestroy(jit);

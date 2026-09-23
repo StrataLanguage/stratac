@@ -162,22 +162,24 @@ char* arena_strndup(Arena* a, const char* s, size_t n)
 
 char* arena_vformat(Arena* a, const char* fmt, va_list args)
 {
-    va_list args2;
-    va_copy(args2, args);
+    /* `args` belongs to the caller (who va_ends it): only ever read copies. */
+    va_list sizeArgs;
+    va_copy(sizeArgs, args);
 
-    int n = vsnprintf(NULL, 0, fmt, args);
-    va_end(args);
+    int n = vsnprintf(NULL, 0, fmt, sizeArgs);
+    va_end(sizeArgs);
 
     if (n < 0)
     {
-        va_end(args2);
-
         return NULL;
     }
 
+    va_list writeArgs;
+    va_copy(writeArgs, args);
+
     char* buf = (char*)arena_alloc(a, (size_t)n + 1);
-    vsnprintf(buf, (size_t)n + 1, fmt, args2);
-    va_end(args2);
+    vsnprintf(buf, (size_t)n + 1, fmt, writeArgs);
+    va_end(writeArgs);
 
     return buf;
 }
@@ -474,8 +476,8 @@ void SbPrintf(Sb* sb, const char* fmt, ...)
 
 Str SbCDup(Sb* sb)
 {
-    /* Add the null terminator if it does not exist */
-    if (sb->data[sb->len - 1] != '\0')
+    /* Add the null terminator if it does not exist (an empty builder has none) */
+    if (sb->len == 0 || sb->data[sb->len - 1] != '\0')
     {
         SbEnsure(sb, 1);
         sb->data[sb->len++] = '\0';

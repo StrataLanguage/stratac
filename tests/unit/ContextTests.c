@@ -189,3 +189,56 @@ STRATA_TEST(context_threads_through_inline_impl_methods)
 
     strataJitDestroy(jit);
 }
+
+/* The user-visible signature check ignores the hidden context parameter:
+   with globals, `int main()` is still an int() entry (called as int(void*)),
+   while `float main()` or `int main(int)` are not. */
+STRATA_TEST(context_int_void_signature_ignores_hidden_param)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileCtx("int g = 1;\n"
+                                "int main() { return g; }\n"
+                                "float fmain() { return 1.5; }\n"
+                                "int withArg(int x) { return x + g; }\n",
+                                &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    STRATA_CHECK_EQ(strataJitHasContext(jit), 1);
+    STRATA_CHECK_EQ(strataJitHasIntVoidSignature(jit, "main"), 1);
+    STRATA_CHECK_EQ(strataJitHasIntVoidSignature(jit, "fmain"), 0);
+    STRATA_CHECK_EQ(strataJitHasIntVoidSignature(jit, "withArg"), 0);
+    STRATA_CHECK_EQ(strataJitHasIntVoidSignature(jit, "missing"), 0);
+    /* Not callable as a bare int(void): it needs the context pointer. */
+    STRATA_CHECK_EQ(strataJitCanInvokeIntVoid(jit, "main"), 0);
+
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "main");
+    STRATA_CHECK(create && destroy && entry);
+    if (create && destroy && entry)
+    {
+        void* ctx = create();
+        STRATA_CHECK_EQ(entry(ctx), 1);
+        destroy(ctx);
+    }
+
+    strataJitDestroy(jit);
+
+    /* Without globals: no context, and int(void) is directly invokable. */
+    jit = CompileCtx("int main() { return 4; }\nfloat fmain() { return 1.5; }\n", &err);
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        STRATA_CHECK_EQ(strataJitHasContext(jit), 0);
+        STRATA_CHECK_EQ(strataJitHasIntVoidSignature(jit, "main"), 1);
+        STRATA_CHECK_EQ(strataJitCanInvokeIntVoid(jit, "main"), 1);
+        STRATA_CHECK_EQ(strataJitCanInvokeIntVoid(jit, "fmain"), 0);
+        strataJitDestroy(jit);
+    }
+}

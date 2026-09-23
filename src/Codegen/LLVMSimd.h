@@ -30,8 +30,9 @@ LLVMValueRef LSimdVector4Construct(struct Builder* builder, CallExpr* n);
 LLVMValueRef LSimdVectorBinExpr(struct Builder* b, LLVMValueRef vec, LLVMValueRef rhs, const struct BinaryExpr* binexp);
 LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const struct MemberExpr* expr);
 
-/* Dot product of two SIMD vectors: scalar float result (sums all lanes). */
-LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
+/* Dot product of two SIMD vectors: scalar float result. Sums the first
+   `lanes` lane products (0 = every LLVM lane; float3 passes 3). */
+LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, unsigned lanes);
 /* Cross product: float3/float4 -> a vector (float2 -> scalar z). */
 LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
 LLVMValueRef LSimdVector3Dot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
@@ -45,3 +46,6 @@ LLVMValueRef LSimdVector2HAdd(struct Builder* b, LLVMValueRef v);
  * @brief Compute the sum (aka horizontal add or reduce) of all components in a float4. Returns a scalar value.
  */
 LLVMValueRef LSimdVector4HAdd(struct Builder* b, LLVMValueRef v);
+
+/* Horizontal add of a float3 (lanes 0..2 of a 4-lane vector; lane 3 ignored). */
+LLVMValueRef LSimdVector3HAdd(struct Builder* b, LLVMValueRef v);

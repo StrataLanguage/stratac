@@ -5,8 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Strata heap runtime backing for the LLVM JIT (host malloc/free). */
-static void* strata_alloc_impl(unsigned long n)
+/* Strata heap runtime backing for the LLVM JIT (host malloc/free). Generated
+   code calls strata_alloc(i64): the size parameter must be 64-bit on every
+   target (`unsigned long` is 32-bit on Win64). */
+static void* strata_alloc_impl(uint64_t n)
 {
     return malloc((size_t)n);
 }
@@ -138,7 +140,8 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 
         if (targetErr)
         {
-            LLVMDisposeErrorMessage(targetErr);
+            /* A plain LLVM message (not from LLVMGetErrorMessage). */
+            LLVMDisposeMessage(targetErr);
         }
 
         if (triple)
@@ -362,7 +365,9 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
         if (defineErr)
         {
+            /* On failure the caller keeps ownership of the unit. */
             LLVMConsumeError(defineErr);
+            LLVMOrcDisposeMaterializationUnit(mu);
         }
     }
 
@@ -378,7 +383,8 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     {
         SetOrcError(errorMessage, err, "could not add module to execution engine: %s");
 
-        LLVMOrcDisposeThreadSafeModule(tsm);
+        /* LLVMOrcLLJITAddLLVMIRModule takes ownership of tsm even on
+           failure, so it must not be disposed again here. */
 
         LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(llj);
 

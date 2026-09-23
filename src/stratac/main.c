@@ -1,5 +1,4 @@
 #include "strata/strata.h"
-#include "Core/Util.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,6 +20,7 @@ typedef enum ResultCode
 {
     RCSuccess = 0,
     RCIOError = 1,
+    RCCompileError = 1, // compile/emit failure (diagnostics were printed)
     RCArgumentError = 2,
 } ResultCode;
 
@@ -53,6 +53,8 @@ typedef struct State
     char** arguments;
     int argumentIndex;
     int argumentCount;
+
+    bool diagnosticsShown; // a mode already printed the (identical) diagnostics
 } State;
 
 void StateDefault(State* c)
@@ -72,6 +74,47 @@ void StateDefault(State* c)
     c->arguments = NULL;
     c->argumentIndex = 0;
     c->argumentCount = 0;
+
+    c->diagnosticsShown = false;
+}
+
+// `path` with its extension replaced by `ext` (malloc-owned). Local rather
+// than the library's internal helper so stratac links against the public API
+// only (STRATA_SHARED=ON exports nothing else).
+static char* ReplaceExtension(const char* path, const char* ext)
+{
+    const char* slash = strrchr(path, '/');
+    const char* bslash = strrchr(path, '\\');
+    const char* lastSep = bslash > slash ? bslash : slash;
+    const char* dot = strrchr(path, '.');
+
+    size_t baseLen = (dot && (!lastSep || dot > lastSep)) ? (size_t)(dot - path) : strlen(path);
+    size_t extLen = strlen(ext);
+    char* result = (char*)malloc(baseLen + extLen + 1);
+
+    if (!result)
+    {
+        fprintf(stderr, "error: out of memory\n");
+        exit(RCIOError);
+    }
+
+    memcpy(result, path, baseLen);
+    memcpy(result + baseLen, ext, extLen + 1);
+
+    return result;
+}
+
+// Prints a compile's diagnostics once per invocation (every mode compiles the
+// same file, so later modes would only repeat them).
+static void PrintDiagnostics(State* state, const char* diagnostics)
+{
+    if (!diagnostics || !diagnostics[0] || state->diagnosticsShown)
+    {
+        return;
+    }
+
+    fprintf(stderr, "%s\n", diagnostics);
+    state->diagnosticsShown = true;
 }
 
 typedef enum CommandFlags
@@ -118,7 +161,7 @@ static const CLICommand commands[] = {
         COMMAND_MODE("--emit-ir", MF_EMIT_IR,   "emit LLVM IR"),
     COMMAND_MODE("--run",     MF_RUN,       "JIT and run an int(void) entry in memory"),
 
-    COMMAND_GENERAL(NULL, "--no-simd", NULL,      &Cmd_DisableSimd, "disable SIMD intrinsics"),
+    COMMAND_GENERAL(NULL, "--no-simd", NULL,      &Cmd_DisableSimd, "disable SIMD intrinsics (not supported yet)"),
     COMMAND_GENERAL(NULL, "--entry",   "<name>",  &Cmd_RunSetEntry, "entry for --run (default: main)"),
     COMMAND_GENERAL(NULL, "--arch",    "<value>", &Cmd_SetArch,     "set output architecture (default: auto, x64, arm64)"),
 };
@@ -187,8 +230,9 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
         }
     }
 
-    // If no emit mode was specified, compile and emit the object file.
-    if ((state->toggleCommands & MF_BIT(MF_EMIT_ASM)) == 0)
+    // Only the default invocation (no mode flag) writes an object file;
+    // --run, --ast, --emit-ir and --asm produce their own output only.
+    if (state->toggleCommands == MF_NONE)
     {
         ResultCode result = Impl_CompileToObject(state, compiler);
 
@@ -331,8 +375,11 @@ static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLIC
 
 static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
-    state->emitFlags |= STRATA_EMIT_NO_SIMD;
-    return RCSuccess;
+    // No backend can scalarize SIMD types yet, so reject the flag explicitly
+    // rather than accept it and emit SIMD code anyway.
+    fprintf(stderr, "error: --no-simd is not supported yet: SIMD types always lower to native vector "
+                    "instructions\n");
+    return RCArgumentError;
 }
 
 static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd)
@@ -351,18 +398,16 @@ static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const 
 static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler)
 {
     StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_AST, state->emitFlags);
-    if (r.diagnostics && r.diagnostics[0])
-    {
-        fprintf(stderr, "%s\n", r.diagnostics);
-    }
+    PrintDiagnostics(state, r.diagnostics);
     if (r.ok && r.output)
     {
         fprintf(stderr, "%s\n", r.output);
     }
 
+    ResultCode result = r.ok ? RCSuccess : RCCompileError;
     strataResultFree(&r);
 
-    return RCSuccess;
+    return result;
 }
 
 static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
@@ -372,7 +417,7 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 
     if (asmFilename == NULL)
     {
-        asmFilename = ReplaceExt(state->sourceFileName, ".s");
+        asmFilename = ReplaceExtension(state->sourceFileName, ".s");
         owned = true;
     }
     const char* asmErr = NULL;
@@ -380,7 +425,11 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 
     if (!asmOk)
     {
-        fprintf(stderr, "error writing assembly: %s\n", asmErr ? asmErr : "(no message)");
+        if (!state->diagnosticsShown)
+        {
+            fprintf(stderr, "error writing assembly: %s\n", asmErr ? asmErr : "(no message)");
+            state->diagnosticsShown = true;
+        }
         strataFree((char*)asmErr);
     }
     else
@@ -390,24 +439,22 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
 
     if (owned) free((void*)asmFilename);
 
-    return RCSuccess;
+    return asmOk ? RCSuccess : RCCompileError;
 }
 
 static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler)
 {
     StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_LLVM_IR, state->emitFlags);
-    if (r.diagnostics && r.diagnostics[0])
-    {
-        fprintf(stderr, "%s\n", r.diagnostics);
-    }
+    PrintDiagnostics(state, r.diagnostics);
     if (r.ok && r.output)
     {
         fprintf(stderr, "%s\n", r.output);
     }
 
+    ResultCode result = r.ok ? RCSuccess : RCCompileError;
     strataResultFree(&r);
 
-    return RCSuccess;
+    return result;
 }
 
 static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
@@ -422,9 +469,9 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
     StrataJit* jit = strataJitCompileFile(compiler, state->sourceFileName, &error);
     if (!jit)
     {
-        fprintf(stderr, "%s\n", error ? error : "JIT compilation failed");
+        PrintDiagnostics(state, error ? error : "JIT compilation failed");
         strataFree((char*)error);
-        return RCIOError;
+        return RCCompileError;
     }
 
     size_t externCount = strataJitGetExternSymbolCount(jit);
@@ -440,19 +487,24 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
         return RCIOError;
     }
 
-    /* A module with module-level globals gives every non-extern function a
-       hidden leading context pointer at the compiled level (see
-       LLVMModuleBuilder.c's __strata_context_create/__strata_context_destroy),
-       so strataJitCanInvokeIntVoid correctly no longer treats it as bare
-       int(void). Detect that case and thread a context through
-       automatically so `--run` keeps working transparently. */
-    void* createFn = strataJitGetFunction(jit, "__strata_context_create");
-    void* destroyFn = strataJitGetFunction(jit, "__strata_context_destroy");
-    bool hasContext = createFn != NULL && destroyFn != NULL;
-
-    if (!hasContext && !strataJitCanInvokeIntVoid(jit, state->entryName))
+    /* The entry's user-visible signature must be int(void). A module with
+       module-level globals additionally gives every non-extern function a
+       hidden leading context pointer (see strata.h), which `--run` creates,
+       passes and destroys transparently. */
+    if (!strataJitHasIntVoidSignature(jit, state->entryName))
     {
         fprintf(stderr, "error: entry '%s' must be a defined int(void) function\n", state->entryName);
+        strataJitDestroy(jit);
+        return RCIOError;
+    }
+
+    bool hasContext = strataJitHasContext(jit) != 0;
+    void* createFn = hasContext ? strataJitGetFunction(jit, "__strata_context_create") : NULL;
+    void* destroyFn = hasContext ? strataJitGetFunction(jit, "__strata_context_destroy") : NULL;
+
+    if (hasContext && (!createFn || !destroyFn))
+    {
+        fprintf(stderr, "error: module context functions were not found\n");
         strataJitDestroy(jit);
         return RCIOError;
     }
@@ -492,26 +544,28 @@ static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler)
 {
     if (state->outputFileName == NULL)
     {
-        state->outputFileName = ReplaceExt(state->sourceFileName, ".o");
+        state->outputFileName = ReplaceExtension(state->sourceFileName, ".o");
         state->outFileOwned = true;
     }
 
     const char* err = NULL;
     int ok = strataCompileToObject(compiler, state->sourceFileName, state->outputFileName, 0, &err);
 
+    if (state->outFileOwned)
+    {
+        free((void*)state->outputFileName);
+        state->outputFileName = NULL;
+        state->outFileOwned = false;
+    }
+
     if (!ok)
     {
-        fprintf(stderr, "%s\n", err ? err : "compilation failed");
+        PrintDiagnostics(state, err ? err : "compilation failed");
 
         strataFree((char*)err);
 
-        if (state->outFileOwned)
-        {
-            free((void*)state->outputFileName);
-        }
-
         // main()/ExecuteCommands owns `compiler`; don't free it here.
-        return RCArgumentError;
+        return RCCompileError;
     }
 
     return RCSuccess;

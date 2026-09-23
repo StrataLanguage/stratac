@@ -47,6 +47,9 @@ typedef enum
 
 typedef enum StrataEmitFlags
 {
+    /* Not supported yet: SIMD vector types always lower to native vector
+       instructions, so an STRATA_EMIT_LLVM_IR compile with this flag fails
+       with an error instead of silently emitting SIMD code. */
     STRATA_EMIT_NO_SIMD = (1U << 0),
 } StrataEmitFlags;
 
@@ -88,7 +91,10 @@ typedef struct
 {
     const char* text;   /* module source text (non-owning, your responsibility to ensure lifetime remains valid.) */
     size_t      length; /* length of text (in bytes) */
-    const char* name;   /* diagnostic name (copied, ) */
+    const char* name;   /* REQUIRED canonical module name (copied). It is the module's identity: imports that
+                         * resolve to the same name load once, so distinct modules need distinct names. It is also
+                         * the diagnostic name and the `importerName` for the module's own imports. A resolver
+                         * that leaves it NULL or empty fails the import with an error. */
 } StrataResolvedModule;
 
 /* Returns 1 if the module was resolved (`out` filled in), 0 if not available.
@@ -102,6 +108,36 @@ typedef int (*StrataImportResolverFn)(void* userData,
 STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn resolver, void* userData);
 
 
+/*
+ * Module-level globals and the hidden context parameter
+ * ------------------------------------------------------
+ * A module with at least one storage-backed global (any global other than a
+ * `const` scalar that folds to a compile-time constant) keeps all of them in
+ * a per-instance context. Every non-extern Strata function in such a module
+ * then takes a hidden leading `void* ctx` parameter at the ABI level, so a
+ * Strata function declared `int f(int x)` is called from C as
+ * `int f(void* ctx, int x)`. The module also exports:
+ *
+ *     void* __strata_context_create(void);    // allocate + run global initializers
+ *     void  __strata_context_destroy(void*);  // drop owned globals + free the context
+ *
+ * Each context is an independent instance of the module's globals; create as
+ * many as needed and destroy each exactly once, before strataJitDestroy for
+ * JIT modules. A module without such globals has no context parameter and
+ * does not export these functions (strataJitGetFunction returns NULL).
+ *
+ * The names `strata_alloc`, `strata_free`, `strata_panic`, `strata_oob`,
+ * `strata_strdup`, `strata_str_eq`, `strata_cstrlen` and every `__strata_*`
+ * name are reserved: defining a Strata function with one of them is an error.
+ *
+ * AOT limitation: the context functions and the string helpers (strata_strdup,
+ * strata_str_eq, strata_cstrlen) have fixed, unprefixed external names, as do
+ * the module's own functions. Two Strata objects produced by
+ * strataCompileToObject therefore cannot be linked into the same executable or
+ * DLL; put each in its own DLL/shared object, or compile them as one module
+ * via `import`.
+ */
+
 typedef struct StrataJit StrataJit;
 
 STRATA_API StrataJit* strataJitCompileString(StrataCompiler* c, const char* source,
@@ -109,7 +145,20 @@ STRATA_API StrataJit* strataJitCompileString(StrataCompiler* c, const char* sour
 STRATA_API StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut);
 
 STRATA_API void* strataJitGetFunction(StrataJit* jit, const char* name);
+
+/* 1 if `name` can be called directly as `int (*)(void)`: a defined function
+   whose Strata signature is int() in a module WITHOUT a context parameter.
+   Returns 0 for every function of a module with a context (see above). */
 STRATA_API int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name);
+
+/* 1 if `name` is a defined function whose user-visible Strata signature is
+   int(), ignoring the hidden context parameter. When strataJitHasContext is 1
+   it must be called as `int (*)(void* ctx)`, otherwise as `int (*)(void)`. */
+STRATA_API int strataJitHasIntVoidSignature(StrataJit* jit, const char* name);
+
+/* 1 if the module's functions take the hidden leading context pointer (and
+   export __strata_context_create/__strata_context_destroy), else 0. */
+STRATA_API int strataJitHasContext(StrataJit* jit);
 
 STRATA_API int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn);
 
@@ -131,6 +180,10 @@ typedef struct
 STRATA_API StrataCompiler* strataCompilerCreate(void);
 STRATA_API void strataCompilerDestroy(StrataCompiler* c);
 
+/* Target architecture for strataCompileToObject. STRATA_ARCH_AUTO (the
+   default) uses the host triple; X64/ARM64 swap the host triple's
+   architecture and keep its vendor/OS/environment. The JIT always targets
+   the host. */
 STRATA_API void strataSetArchitecture(StrataCompiler* c, StrataArch arch);
 
 STRATA_API void strataJitSetAllocFreeFunctions(StrataCompiler* c, void* allocFn, void* freeFn);

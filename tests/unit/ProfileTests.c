@@ -296,8 +296,10 @@ STRATA_TEST(profile_oob_box_struct_field_zero_llvm)
     }
 }
 
-/* Moving an OOB element out must not poison later accesses of the same site
-   (the null-the-source re-resolution must not free the moved dummy). */
+/* Moving an OOB element out must not poison later OOB accesses, which share
+   the same scratch dummy (the null-the-source re-resolution must not free the
+   moved dummy). The re-read uses a different index: re-reading the moved-out
+   element itself is a compile error. */
 STRATA_TEST(profile_oob_move_then_reread_llvm)
 {
     if (!(strataCapabilities() & STRATA_CAP_LLVM_JIT))
@@ -307,7 +309,7 @@ STRATA_TEST(profile_oob_move_then_reread_llvm)
 
     StrataJit* jit = CompileJit(
         "extern ulong strlen(string s);\n"
-        "int entry() { string[] s = {\"a\"}; string t = s[9]; string u = s[9]; return (int)(strlen(t) + strlen(u)); }",
+        "int entry() { string[] s = {\"a\"}; string t = s[9]; string u = s[8]; return (int)(strlen(t) + strlen(u)); }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -329,7 +331,7 @@ STRATA_TEST(profile_oob_box_move_then_reread_llvm)
 
     StrataJit* jit = CompileJit(
         "struct W { int dmg; };\n"
-        "int entry() { ^W[] ws = { W(7) }; ^W m = ws[9]; return ws[9].dmg + m.dmg; }",
+        "int entry() { ^W[] ws = { W(7) }; ^W m = ws[9]; return ws[8].dmg + m.dmg; }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)

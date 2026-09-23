@@ -28,10 +28,25 @@ typedef struct
     StrMap m_typeCache;      /* canonical spelling -> interned TypeName tree */
     StrMap m_constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
     const TypeName* m_currentReturnType;
-    Vec* m_liveLog; /* when set, MarkBoxLive records keys here (loop warmup) */
 
     /* Vec of Vec*'s, a list of scopes and their respective symbols. */
     Vec m_scopeDecls;
+
+    /* Vec of Vec*'s parallel to m_scopeDecls: each scope's DeferEntry*'s. */
+    Vec m_deferFrames;
+
+    /* Vec of LoopFlow*'s: break/continue targets of the enclosing loops. */
+    Vec m_loopFlows;
+
+    /* Nesting depth of deferred statements being walked. */
+    int m_deferWalkDepth;
+
+    /* The current path is dead (after return/break/continue). */
+    bool m_unreachable;
+
+    /* The index expression being resolved is the target of a plain `=`: it
+       is overwritten, not read, so a moved-out element is legal there. */
+    bool m_indexWriteTarget;
 } Resolver;
 
 /* A folded manifest constant: a `const` scalar global whose initializer is a
@@ -1094,7 +1109,8 @@ static bool IsBoxPartiallyMoved(const Resolver* r, const char* name)
     return StrMapGet(&r->m_movedBoxes, name) == (void*)3;
 }
 
-// True when `child` is `parent` or nested under it.
+/* True when `child` is spelled as `parent` or nested under it. Index groups
+   compare by spelling only; PathMayAlias handles aliasing indices. */
 static bool PathIsDescendant(const char* parent, const char* child)
 {
     if (strcmp(child, parent) == 0)
@@ -1111,18 +1127,122 @@ static bool PathIsDescendant(const char* parent, const char* child)
 
     char next = child[plen];
 
-    if (next == '.' || next == '[')
+    return next == '.' || next == '[';
+}
+
+// The ']' closing the bracket group opened at `open`, or NULL.
+static const char* MatchingBracket(const char* open)
+{
+    int depth = 0;
+
+    for (const char* p = open; *p; p++)
     {
-        return true;
+        if (*p == '[')
+        {
+            depth++;
+        }
+        else if (*p == ']' && --depth == 0)
+        {
+            return p;
+        }
     }
 
-    /* "a[]" (erased) is the parent of every "a[...]" key. */
-    if (plen >= 2 && parent[plen - 1] == ']' && parent[plen - 2] == '[')
+    return NULL;
+}
+
+static bool IndexSpellingIsIntLiteral(const char* s, size_t len)
+{
+    if (len == 0)
     {
-        return child[plen - 2] == '[';
+        return false;
     }
 
-    return false;
+    for (size_t i = 0; i < len; i++)
+    {
+        if (!isdigit((unsigned char)s[i]))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* True when `child` may name the storage of `parent` or something nested
+   under it. Index groups alias unless both are distinct integer literals
+   (`a[i]` and `a[j]` may be the same element), and the erased "a[]" aliases
+   every index. `*isSelf` is set when `child` may be `parent` itself. */
+static bool PathMayAlias(const char* parent, const char* child, bool* isSelf)
+{
+    const char* p = parent;
+    const char* c = child;
+
+    while (*p)
+    {
+        if (*p == '[')
+        {
+            const char* pe = MatchingBracket(p);
+            const char* ce = *c == '[' ? MatchingBracket(c) : NULL;
+
+            if (!pe || !ce)
+            {
+                return false;
+            }
+
+            size_t plen = (size_t)(pe - p - 1);
+            size_t clen = (size_t)(ce - c - 1);
+            bool sameSpelling = plen == clen && strncmp(p + 1, c + 1, plen) == 0;
+
+            if (!sameSpelling && IndexSpellingIsIntLiteral(p + 1, plen) && IndexSpellingIsIntLiteral(c + 1, clen))
+            {
+                return false;
+            }
+
+            p = pe + 1;
+            c = ce + 1;
+            continue;
+        }
+
+        if (*c != *p)
+        {
+            return false;
+        }
+
+        p++;
+        c++;
+    }
+
+    if (isSelf)
+    {
+        *isSelf = *c == '\0';
+    }
+
+    return *c == '\0' || *c == '.' || *c == '[';
+}
+
+/* Nulls every key in `m` that may alias `key` or a descendant of it (only
+   strict descendants when `includeSelf` is false). */
+static void ClearAliasedSubtree(StrMap* m, const char* key, bool includeSelf)
+{
+    if (!key)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < m->cap; i++)
+    {
+        bool isSelf = false;
+
+        if (!m->keys[i] || !PathMayAlias(key, m->keys[i], &isSelf))
+        {
+            continue;
+        }
+
+        if (includeSelf || !isSelf)
+        {
+            m->values[i] = NULL;
+        }
+    }
 }
 
 /* Nulls every key in `m` that is `key` or a descendant of it. */
@@ -1161,11 +1281,6 @@ static void MarkBoxLive(Resolver* r, const char* name)
 {
     ClearBoxSubtree(r, name);
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
-
-    if (r->m_liveLog)
-    {
-        VecPush(r->m_liveLog, (void*)name);
-    }
 
     // Reassigning re-lives the binding; the caller re-blesses it as needed.
     ClearNullableFacts(r, name);
@@ -1340,6 +1455,119 @@ static void MarkPathNonEmpty(Resolver* r, const char* key)
     TrackIndexDeps(r, key);
 }
 
+// True when an index group of `key` spells the variable `var`.
+static bool KeyIndexMentionsVar(const char* key, const char* var)
+{
+    size_t vlen = strlen(var);
+
+    for (const char* open = strchr(key, '['); open; open = strchr(open + 1, '['))
+    {
+        const char* close = strchr(open + 1, ']');
+
+        if (!close)
+        {
+            continue;
+        }
+
+        for (const char* p = open + 1; p < close;)
+        {
+            if (!IsIdentStart(*p))
+            {
+                p++;
+                continue;
+            }
+
+            const char* start = p;
+
+            while (p < close && IsIdentCont(*p))
+            {
+                p++;
+            }
+
+            if ((size_t)(p - start) == vlen && strncmp(start, var, vlen) == 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// `key` with every non-literal index group erased ("a[i].f" -> "a[].f").
+static const char* EraseVariableIndices(Arena* arena, const char* key)
+{
+    char* out = (char*)arena_alloc(arena, strlen(key) + 1);
+    size_t o = 0;
+
+    for (const char* p = key; *p;)
+    {
+        const char* close = *p == '[' ? MatchingBracket(p) : NULL;
+
+        if (!close)
+        {
+            out[o++] = *p++;
+            continue;
+        }
+
+        size_t len = (size_t)(close - p - 1);
+
+        if (IndexSpellingIsIntLiteral(p + 1, len))
+        {
+            memcpy(out + o, p, len + 2);
+            o += len + 2;
+        }
+        else
+        {
+            out[o++] = '[';
+            out[o++] = ']';
+        }
+
+        p = close + 1;
+    }
+
+    out[o] = '\0';
+    return out;
+}
+
+/* A moved element spelled with `var` ("a[i]") becomes an unknown element
+   once `var` changes: re-key it erased ("a[]"), which aliases every index,
+   so a later write to the new `a[i]` cannot revive it. */
+static void EraseMovedIndexVar(Resolver* r, const char* var)
+{
+    StrMap* m = &r->m_movedBoxes;
+    Vec keys;
+    Vec states;
+    VecInit(&keys);
+    VecInit(&states);
+
+    // Collect first: re-keying inserts, which may rehash the map.
+    for (size_t i = 0; i < m->cap; i++)
+    {
+        void* v = m->values[i];
+
+        if (m->keys[i] && (v == (void*)1 || v == (void*)3) && KeyIndexMentionsVar(m->keys[i], var))
+        {
+            VecPush(&keys, (void*)EraseVariableIndices(r->m_arena, m->keys[i]));
+            VecPush(&states, v);
+            m->values[i] = NULL;
+        }
+    }
+
+    for (size_t h = 0; h < keys.count; h++)
+    {
+        const char* erased = (const char*)VecGet(&keys, h);
+
+        if (StrMapGet(m, erased) != (void*)1)
+        {
+            StrMapPut(m, erased, VecGet(&states, h));
+        }
+    }
+
+    free(keys.items);
+    free(states.items);
+}
+
 // Drop facts indexed by `var` (assigned, inc/dec, or non-const ref).
 static void InvalidateIndexVar(Resolver* r, const char* var)
 {
@@ -1348,6 +1576,8 @@ static void InvalidateIndexVar(Resolver* r, const char* var)
         return;
     }
 
+    EraseMovedIndexVar(r, var);
+
     Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
 
     if (!deps)
@@ -1355,35 +1585,23 @@ static void InvalidateIndexVar(Resolver* r, const char* var)
         return;
     }
 
+    /* Only the index changed, not the array: drop exactly these spellings. */
     for (size_t i = 0; i < deps->count; i++)
     {
         const char* key = (const char*)VecGet(deps, i);
 
-        ClearNullableFacts(r, key);
+        ClearNonEmptySubtree(r, key);
+        ClearEmptySubtree(r, key);
     }
 
-    StrMapPut(&r->m_indexDeps, var, NULL);
+    /* The deps stay: a branch or loop join may restore a snapshot that still
+       holds these facts, and the next mutation must drop them again. */
 }
 
 /* Drops `key` and all `key.*` descendants from the non-empty map. */
 static void ClearNonEmptySubtree(Resolver* r, const char* key)
 {
     ClearSubtreeByPath(&r->m_nonEmptyPaths, key);
-}
-
-/* Keep only facts proven on both branches. */
-static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other);
-
-static void FinishLoopFacts(Resolver* r, StrMap* preFacts, const char* condKey, bool condNegated)
-{
-    if (condKey && !condNegated)
-    {
-        ClearSubtreeByPath(preFacts, condKey);
-        ClearSubtreeByPath(&r->m_nonEmptyPaths, condKey);
-    }
-
-    /* Keep only facts present on BOTH exit paths. */
-    MergeNonEmptyFacts(&r->m_nonEmptyPaths, preFacts);
 }
 
 static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
@@ -1410,11 +1628,22 @@ static void ClearEmptySubtree(Resolver* r, const char* key)
     ClearSubtreeByPath(&r->m_emptyPaths, key);
 }
 
-/* Drops both nullable narrowing facts (non-empty and empty) for `key`. */
+/* The value at `key` changed (written, rebound or moved out): drops both
+   nullable narrowing facts for every path that may alias it or sit under it
+   (`a[j] = ...` also drops `a[i]` and `a[0]`). */
 static void ClearNullableFacts(Resolver* r, const char* key)
 {
-    ClearNonEmptySubtree(r, key);
-    ClearEmptySubtree(r, key);
+    ClearAliasedSubtree(&r->m_nonEmptyPaths, key, true);
+    ClearAliasedSubtree(&r->m_emptyPaths, key, true);
+}
+
+/* The contents under `key` may have changed but `key` itself did not (a
+   contents-assign into a box, or a mutable `ref` borrow): drops the facts of
+   every path that may sit strictly under it. */
+static void ClearNestedNullableFacts(Resolver* r, const char* key)
+{
+    ClearAliasedSubtree(&r->m_nonEmptyPaths, key, false);
+    ClearAliasedSubtree(&r->m_emptyPaths, key, false);
 }
 
 /* "is definitely empty" for else-proven paths, else "has not been blessed". */
@@ -1532,7 +1761,24 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 
     MarkBoxMoved(r, name);
     MarkBoxPartiallyMoved(r, name);
-    ClearNonEmptySubtree(r, name); // Moving out clears the fact.
+    ClearNullableFacts(r, name); // Moving out clears the facts (aliasing indices too).
+}
+
+/* True when `key`, an ancestor, or an element that may alias it (`a[j]` for
+   `a[i]`, the erased `a[]` for any index) was fully moved out. */
+static bool IsPathMaybeMoved(const Resolver* r, const char* key)
+{
+    const StrMap* m = &r->m_movedBoxes;
+
+    for (size_t i = 0; key && i < m->cap; i++)
+    {
+        if (m->keys[i] && m->values[i] == (void*)1 && PathMayAlias(m->keys[i], key, NULL))
+        {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Moving a `T?` empties the source instead of poisoning it.
@@ -1801,34 +2047,123 @@ static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
     }
 }
 
-static bool StmtAlwaysReturns(const Node* n)
+/* A snapshot of the per-path flow state. `m_live` is false for a path that
+   cannot be reached (no state yet, or every contributor was dead). */
+typedef struct
 {
-    if (!n)
+    StrMap m_moved;
+    StrMap m_nonEmpty;
+    StrMap m_empty;
+    bool m_live;
+} FlowState;
+
+static void FlowInit(FlowState* s)
+{
+    StrMapInit(&s->m_moved);
+    StrMapInit(&s->m_nonEmpty);
+    StrMapInit(&s->m_empty);
+    s->m_live = false;
+}
+
+static void FlowFree(FlowState* s)
+{
+    StrMapFree(&s->m_moved);
+    StrMapFree(&s->m_nonEmpty);
+    StrMapFree(&s->m_empty);
+    s->m_live = false;
+}
+
+/* Snapshots the current state (dead paths are captured as not live). */
+static void FlowCapture(const Resolver* r, FlowState* s)
+{
+    ReplaceStrMapContents(&s->m_moved, &r->m_movedBoxes);
+    ReplaceStrMapContents(&s->m_nonEmpty, &r->m_nonEmptyPaths);
+    ReplaceStrMapContents(&s->m_empty, &r->m_emptyPaths);
+    s->m_live = !r->m_unreachable;
+}
+
+/* Makes `s` the current state. A dead `s` only marks the path dead: the
+   maps keep their last state so dead code still resolves against something. */
+static void FlowApply(Resolver* r, const FlowState* s)
+{
+    if (!s->m_live)
+    {
+        r->m_unreachable = true;
+        return;
+    }
+
+    ReplaceStrMapContents(&r->m_movedBoxes, &s->m_moved);
+    ReplaceStrMapContents(&r->m_nonEmptyPaths, &s->m_nonEmpty);
+    ReplaceStrMapContents(&r->m_emptyPaths, &s->m_empty);
+    r->m_unreachable = false;
+}
+
+// Control-flow join: moved on any path stays moved, facts must hold on all paths.
+static void FlowJoinMaps(FlowState* dst, const StrMap* moved, const StrMap* nonEmpty, const StrMap* empty)
+{
+    if (!dst->m_live)
+    {
+        ReplaceStrMapContents(&dst->m_moved, moved);
+        ReplaceStrMapContents(&dst->m_nonEmpty, nonEmpty);
+        ReplaceStrMapContents(&dst->m_empty, empty);
+        dst->m_live = true;
+        return;
+    }
+
+    MergeMovedBoxes(&dst->m_moved, moved);
+    MergeNonEmptyFacts(&dst->m_nonEmpty, nonEmpty);
+    MergeNonEmptyFacts(&dst->m_empty, empty);
+}
+
+static void FlowJoin(FlowState* dst, const FlowState* src)
+{
+    if (src->m_live)
+    {
+        FlowJoinMaps(dst, &src->m_moved, &src->m_nonEmpty, &src->m_empty);
+    }
+}
+
+// Joins the current path into `dst` (a dead path contributes nothing).
+static void FlowJoinCurrent(const Resolver* r, FlowState* dst)
+{
+    if (!r->m_unreachable)
+    {
+        FlowJoinMaps(dst, &r->m_movedBoxes, &r->m_nonEmptyPaths, &r->m_emptyPaths);
+    }
+}
+
+// Same non-NULL entries in both maps.
+static bool StrMapSameContents(const StrMap* a, const StrMap* b)
+{
+    for (size_t i = 0; i < a->cap; i++)
+    {
+        if (a->keys[i] && a->values[i] && StrMapGet(b, a->keys[i]) != a->values[i])
+        {
+            return false;
+        }
+    }
+
+    for (size_t i = 0; i < b->cap; i++)
+    {
+        if (b->keys[i] && b->values[i] && StrMapGet(a, b->keys[i]) != b->values[i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool FlowSame(const FlowState* a, const FlowState* b)
+{
+    if (a->m_live != b->m_live)
     {
         return false;
     }
 
-    switch (n->kind)
-    {
-    case NodeReturn:
-        return true;
-
-    case NodeBlock:
-    {
-        const Block* b = (const Block*)n;
-        return b->statements.count > 0
-               && StmtAlwaysReturns((const Node*)VecGet(&b->statements, b->statements.count - 1));
-    }
-
-    case NodeIf:
-    {
-        const IfStmt* i = (const IfStmt*)n;
-        return StmtAlwaysReturns(i->thenBranch) && StmtAlwaysReturns(i->elseBranch);
-    }
-
-    default:
-        return false;
-    }
+    return !a->m_live
+           || (StrMapSameContents(&a->m_moved, &b->m_moved) && StrMapSameContents(&a->m_nonEmpty, &b->m_nonEmpty)
+               && StrMapSameContents(&a->m_empty, &b->m_empty));
 }
 
 static int CountByName(const Module* mod, const char* name)
@@ -1854,7 +2189,10 @@ static void WalkBlock(Resolver* r, Block* b, StrMap* scope);
 static void WalkStmt(Resolver* r, Node* n, StrMap* scope);
 static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
-static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey, bool condFactNegated);
+static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, bool bodyScope, StrMap* scope);
+static void ScopePush(Resolver* r);
+static void ScopePop(Resolver* r, StrMap* scope);
+static bool ExprIsConstantTrue(const Node* n);
 static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope);
 
 static bool IsLengthPseudoMemberBase(const TypeRegistry* reg, const TypeName* t)
@@ -1873,11 +2211,48 @@ static bool IsLengthPseudoMemberBase(const TypeRegistry* reg, const TypeName* t)
     return TypeIsString(reg, leaf) || TypeIsCString(reg, leaf);
 }
 
-static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMap* scope)
+/* The name of the `const` binding (global, param or local) that the lvalue
+   `target` is rooted at, or NULL when it is mutable. */
+static const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope)
 {
     Node* base = target;
 
-    if (!base)
+    while (base && (base->kind == NodeMember || base->kind == NodeIndex || base->kind == NodeCast))
+    {
+        if (base->kind == NodeMember)
+        {
+            base = ((MemberExpr*)base)->base_node;
+        }
+        else if (base->kind == NodeIndex)
+        {
+            base = ((IndexExpr*)base)->base_node;
+        }
+        else
+        {
+            base = ((CastExpr*)base)->operand;
+        }
+    }
+
+    if (!base || base->kind != NodeIdent)
+    {
+        return NULL;
+    }
+
+    const char* name = ((IdentExpr*)base)->name;
+    const TypeName* declared = (const TypeName*)StrMapGet(scope, name);
+
+    // Const locals are declared in `scope` (shadowing-aware); globals and params are in m_constVars.
+    if ((declared && declared->isConst) || StrMapGet(&r->m_constVars, name))
+    {
+        return name;
+    }
+
+    return NULL;
+}
+
+static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMap* scope)
+{
+    if (!target)
     {
         return;
     }
@@ -1901,25 +2276,11 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMa
         }
     }
 
-    while (base->kind == NodeMember || base->kind == NodeIndex)
-    {
-        if (base->kind == NodeMember)
-        {
-            base = ((MemberExpr*)base)->base_node;
-        }
-        else
-        {
-            base = ((IndexExpr*)base)->base_node;
-        }
-    }
+    const char* name = ConstRootName(r, target, scope);
 
-    if (base->kind == NodeIdent)
+    if (name)
     {
-        const char* name = ((IdentExpr*)base)->name;
-        if (StrMapGet(&r->m_constVars, name))
-        {
-            DiagErrorFmt(r->m_diag, range, "'%s' is immutable", name);
-        }
+        DiagErrorFmt(r->m_diag, range, "'%s' is immutable", name);
     }
 }
 
@@ -2486,6 +2847,15 @@ static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
+    // Dropping frees the value: a `const` binding must stay intact.
+    const char* constName = ConstRootName(r, arg0, scope);
+
+    if (constName)
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "cannot drop '%s'; it is immutable", constName);
+        return true;
+    }
+
     c->isIntrinsicCall = true;
 
     /* Move the source — the box is invalidated after drop(). An optional
@@ -2544,6 +2914,8 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 }
 
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
+static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType,
+                                   const char* resolvedTarget, const char* resolvedValue);
 
 static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target);
 
@@ -2626,6 +2998,15 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     if (arg0->kind != NodeIdent && arg0->kind != NodeMember && arg0->kind != NodeIndex)
     {
         DiagErrorFmt(r->m_diag, arg0->range, "'%s' array argument must be an lvalue", c->callee);
+        return true;
+    }
+
+    // Push/pop/resize mutate the array in place.
+    const char* constName = ConstRootName(r, arg0, scope);
+
+    if (constName)
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "'%s' cannot modify '%s'; it is immutable", c->callee, constName);
         return true;
     }
 
@@ -2846,6 +3227,9 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
                     // The callee may write through the ref: drop nested facts.
                     InvalidateIndexVar(r, KeyRoot(r->m_arena, refKey));
 
+                    // Anything under the borrowed path may be rewritten (`h.f`, `a[0]`).
+                    ClearNestedNullableFacts(r, refKey);
+
                     // A `T?` source unwrapped into a plain `ref T` param only
                     // borrows the pointee - the callee cannot rebind (or
                     // empty) the caller's slot, so the non-empty fact
@@ -2862,9 +3246,15 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
         {
             const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, best->params.count - 1);
 
-            if (rp->mod == ModRef && !rp->type.isConst && arg->kind == NodeIdent)
+            if (rp->mod == ModRef && !rp->type.isConst)
             {
-                InvalidateIndexVar(r, ((IdentExpr*)arg)->name);
+                if (arg->kind == NodeIdent)
+                {
+                    InvalidateIndexVar(r, ((IdentExpr*)arg)->name);
+                }
+
+                // A mutable ref rest element may be rewritten like a named ref arg.
+                ClearNullableFacts(r, MovableBoxSourceKey(r, arg));
             }
         }
 
@@ -2897,6 +3287,42 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
         if (movedArgKey)
         {
             MoveBoxIdent(r, movedArgKey, arg->range);
+        }
+    }
+}
+
+// A mutable `ref` param may write through its arg, so the arg must not be rooted at a `const` binding.
+static void CheckConstRefArgs(Resolver* r, const FunctionDecl* best, CallExpr* c, StrMap* scope)
+{
+    bool typedRest = best->isVariadic && !best->isCVararg;
+    size_t namedCount = NamedParamCount(best);
+
+    for (size_t j = 0; j < c->args.count; j++)
+    {
+        const ParamDecl* rp = NULL;
+
+        if (j < namedCount)
+        {
+            rp = (ParamDecl*)VecGet(&best->params, j);
+        }
+        else if (typedRest && best->params.count > 0)
+        {
+            rp = (ParamDecl*)VecGet(&best->params, best->params.count - 1);
+        }
+
+        if (!rp || rp->mod != ModRef || rp->type.isConst)
+        {
+            continue;
+        }
+
+        Node* arg = (Node*)VecGet(&c->args, j);
+        const char* constName = ConstRootName(r, arg, scope);
+
+        if (constName)
+        {
+            DiagErrorFmt(r->m_diag, arg->range,
+                         "'%s' is immutable and cannot be passed to non-const 'ref' parameter '%s' of '%s'", constName,
+                         rp->name ? rp->name : "", best->name);
         }
     }
 }
@@ -4235,6 +4661,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         {
             /* Facts before moves. */
             CheckCallArgOptionalDerefs(r, c, scope);
+            CheckConstRefArgs(r, best, c, scope);
             TrackCallArgMoves(r, best, c);
 
             return;
@@ -4343,8 +4770,21 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 }
             }
 
+            /* A mutable `ref` binds the caller's storage itself: a converted
+               temporary would silently lose the callee's writes (and a wider
+               handle/optional slot could be written with a value the
+               caller's type cannot hold). Only exact types, box contents and
+               fixed-array views bind. */
+            bool mutableRef = !isTail && param->mod == ModRef && !paramType->isConst;
+
             if (strcmp(argType->name, paramType->name) == 0)
             {
+            }
+            else if (mutableRef && !SameResolvedType(r, argType->name, paramType->name)
+                     && !(TypeNameIsOwning(argType) && !paramType->isOptional) && !TypeNameIsFixedArray(argType))
+            {
+                viable = false;
+                break;
             }
             else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->m_registry, paramType->name))
             {
@@ -4356,13 +4796,24 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 /* `cstring` copies into a `string` param (heap copy). */
                 score += 1;
             }
-            else if (IsNumeric(argType->primitiveType) && IsNumeric(paramType->primitiveType))
+            else if (!mutableRef && IsNumeric(argType->primitiveType) && IsNumeric(paramType->primitiveType))
             {
                 score += 1;
             }
             else if (IsSimdVector(argType->primitiveType) && IsSimdVector(paramType->primitiveType))
             {
-                score += 1;
+                // Same rule as assignment: no implicit lane-count or element-type change.
+                if (IsVectorAssignableType(r, paramType, argType,
+                                           TypeRegistryResolveAlias(&r->m_registry, paramType->name),
+                                           TypeRegistryResolveAlias(&r->m_registry, argType->name)))
+                {
+                    score += 1;
+                }
+                else
+                {
+                    viable = false;
+                    break;
+                }
             }
             else if (HandleExtendsFrom(&r->m_registry, argType->name, paramType->name))
             {
@@ -4580,6 +5031,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     CheckCallArgOptionalDerefs(r, c, scope);
+    CheckConstRefArgs(r, best, c, scope);
     TrackCallArgMoves(r, best, c);
 }
 
@@ -5209,6 +5661,28 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
             bool boolOperand = (lt && IsBoolType(&r->m_registry, lt)) || (rt && IsBoolType(&r->m_registry, rt));
 
+            /* Comparing a `T?` reads through it. Only `==`/`!=` with an
+               optional LEFT side and a box/optional right side is
+               null-aware (empty == empty); every other comparison derefs the
+               optional, so it must be proven non-empty first. `T[]?`
+               compares as the array it wraps (empty is a zero-length fat). */
+            {
+                bool lOpt = lt && lt->isOptional && !TypeIsComparableAggregate(&r->m_registry, lt);
+                bool rOpt = rt && rt->isOptional && !TypeIsComparableAggregate(&r->m_registry, rt);
+                bool lNullAware = eqOp && lOpt && rt && (rt->isOptional || rt->isBox);
+                bool rNullAware = eqOp && lOpt;
+
+                if (lOpt && !lNullAware && !IsPathNonEmpty(r, MovableBoxSourceKey(r, b->lhs)))
+                {
+                    DiagOptionalReadError(r, b->lhs->range, MovableBoxSourceKey(r, b->lhs), lt->name);
+                }
+
+                if (rOpt && !rNullAware && !IsPathNonEmpty(r, MovableBoxSourceKey(r, b->rhs)))
+                {
+                    DiagOptionalReadError(r, b->rhs->range, MovableBoxSourceKey(r, b->rhs), rt->name);
+                }
+            }
+
             if (boolOperand && !eqOp)
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
@@ -5597,6 +6071,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                         MoveBoxIdent(r, movedValueKey, a->base.range);
                     }
                 }
+
+                // New contents: facts on the box's sub-paths (`h.f`) are stale.
+                ClearNestedNullableFacts(r, targetName);
             }
         }
         else if (targetIsOwningField)
@@ -5659,8 +6136,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
         else
         {
+            // A plain `=` overwrites an element: a moved-out slot may be refilled.
+            r->m_indexWriteTarget = a->target->kind == NodeIndex && a->op == AssignSet;
             ResolveExpr(r, a->target, scope);
+            r->m_indexWriteTarget = false;
             ResolveExpr(r, a->value, scope);
+
+            // Whether the stored value is provably non-empty (checked before the move below empties its source).
+            const char* writtenKey = MovableBoxSourceKey(r, a->target);
+            const TypeName* writtenValueType = InferType(r, a->value, scope);
+            bool writtenValueNonEmpty
+                = writtenValueType
+                  && (!writtenValueType->isOptional || IsPathNonEmpty(r, MovableBoxSourceKey(r, a->value)));
 
             // Enum constants are read-only.
             if (a->target->kind == NodeMember && ((MemberExpr*)a->target)->isEnumConst)
@@ -5744,6 +6231,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                         }
                     }
                 }
+                else if (et && et->isBox && vt && vt->isBox)
+                {
+                    /* `^T` element from a `^T` value: codegen moves the box
+                       pointer in and nulls the source (a variable, field or
+                       another element), so record the move. */
+                    const char* movedValueKey = MovableBoxSourceKey(r, a->value);
+
+                    if (movedValueKey)
+                    {
+                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                    }
+                }
             }
             else if (a->target->kind == NodeMember)
             {
@@ -5753,6 +6252,27 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 const TypeName* vt = InferType(r, a->value, scope);
 
                 CheckOptionalDeref(r, a->value, vt, mt, a->base.range);
+            }
+
+            /* The written path holds a new value: every fact at, under, or
+               aliasing it is stale. `=` re-proves a `T?` target when the
+               value is provably non-empty. */
+            if (writtenKey)
+            {
+                ClearNullableFacts(r, writtenKey);
+
+                const TypeName* writtenType = InferType(r, a->target, scope);
+
+                if (a->op == AssignSet && writtenType && writtenType->isOptional && writtenValueNonEmpty)
+                {
+                    MarkPathNonEmpty(r, writtenKey);
+                }
+
+                // Refilling a precisely-indexed element re-lives it (never an erased `a[]`).
+                if (a->target->kind == NodeIndex && a->op == AssignSet && !PathKeyIsErased(writtenKey))
+                {
+                    ClearBoxSubtree(r, writtenKey);
+                }
             }
         }
 
@@ -6258,8 +6778,34 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     case NodeIndex:
     {
         IndexExpr* ix = (IndexExpr*)n;
+        bool writeTarget = r->m_indexWriteTarget;
+
+        r->m_indexWriteTarget = false;
         ResolveExprImpl(r, ix->base_node, scope, true);
         ResolveExprImpl(r, ix->index, scope, false);
+
+        /* An owning element moved out (`take(a[0])`) leaves a dead slot:
+           reads are rejected until it is reassigned. A move through an index
+           that may alias this one (`a[j]`, `a[pick()]`) counts too. */
+        const TypeName* elemType = writeTarget ? NULL : InferType(r, n, scope);
+
+        if (elemType && AliasIsOwningValue(r, elemType))
+        {
+            const char* key = MovableBoxSourceKey(r, n);
+            const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
+
+            if (key && !(baseKey && IsBoxMoved(r, baseKey)))
+            {
+                if (IsPathMaybeMoved(r, key))
+                {
+                    DiagErrorFmt(r->m_diag, ix->base.range, "'%s' used after move", key);
+                }
+                else if (!asMemberBase && IsBoxPartiallyMoved(r, key))
+                {
+                    DiagErrorFmt(r->m_diag, ix->base.range, "'%s' is poisoned", key);
+                }
+            }
+        }
 
         /* Indexing an optional array (`opt[i]`) reads its contents - the
             same narrowing rule as a member read through a `T?`. */
@@ -6383,48 +6929,327 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     }
 }
 
-// Loops run twice: once muted to carry state, once for real diagnostics.
-static void WalkLoopBody(Resolver* r, Node* body, StrMap* scope, const char* condFactKey, bool condFactNegated)
+/* A `defer`red statement queued on its scope. It is checked against the flow
+   state at every exit it runs at (block end, return, break, continue). */
+typedef struct
 {
+    Node* m_stmt;
+    size_t m_frame;           /* index of the owning scope in m_scopeDecls */
+    size_t m_declMark;        /* names the scope had declared at the `defer` */
+    DiagnosticEngine m_early; /* diagnostics from the walk at the `defer` itself */
+    bool m_ranAtExit;
+} DeferEntry;
+
+/* The break/continue targets of one loop iteration being walked. */
+typedef struct
+{
+    FlowState m_breaks;    /* join of every `break`: part of the loop exit */
+    FlowState m_continues; /* join of every `continue`: a back edge */
+    size_t m_deferDepth;   /* m_deferFrames.count at body entry */
+    int m_deferWalkDepth;  /* m_deferWalkDepth when the loop began */
+} LoopFlow;
+
+/* Upper bound on muted fixed-point passes per loop. The join is monotone
+   over a finite key set so it converges long before this in practice. */
+#define LOOP_MAX_PASSES 32
+
+// Reports each diagnostic of `src` that `dst` does not hold yet.
+static void ForwardNewDiagnostics(DiagnosticEngine* dst, const DiagnosticEngine* src)
+{
+    for (size_t i = 0; i < src->m_count; i++)
+    {
+        const Diagnostic* d = &src->m_diagnostics[i];
+        bool seen = false;
+
+        for (size_t j = 0; j < dst->m_count && !seen; j++)
+        {
+            const Diagnostic* e = &dst->m_diagnostics[j];
+
+            seen = e->severity == d->severity && e->range.start == d->range.start && e->range.length == d->range.length
+                   && e->range.fileId == d->range.fileId && strcmp(e->message, d->message) == 0;
+        }
+
+        if (!seen)
+        {
+            DiagReport(dst, d->severity, d->range, d->message);
+        }
+    }
+}
+
+/* Walks a deferred statement at one of its exits. Names declared after the
+   `defer` are hidden, and repeats of a diagnostic from another exit are
+   dropped. */
+static void WalkDeferred(Resolver* r, DeferEntry* e, StrMap* scope)
+{
+    Vec hidden;
+    VecInit(&hidden);
+
+    for (size_t f = e->m_frame; f < r->m_scopeDecls.count; f++)
+    {
+        Vec* frame = (Vec*)VecGet(&r->m_scopeDecls, f);
+
+        for (size_t k = f == e->m_frame ? e->m_declMark : 0; k < frame->count; k++)
+        {
+            const char* name = (const char*)VecGet(frame, k);
+
+            VecPush(&hidden, (void*)name);
+            VecPush(&hidden, StrMapGet(scope, name));
+            StrMapPut(scope, name, NULL);
+        }
+    }
+
+    DiagnosticEngine scratch;
+    DiagnosticEngineInit(&scratch);
+
+    DiagnosticEngine* realDiag = r->m_diag;
+    r->m_diag = &scratch;
+
+    bool wasUnreachable = r->m_unreachable;
+    r->m_deferWalkDepth++;
+
+    WalkStmt(r, e->m_stmt, scope);
+
+    r->m_deferWalkDepth--;
+    r->m_unreachable = wasUnreachable;
+    r->m_diag = realDiag;
+
+    ForwardNewDiagnostics(r->m_diag, &scratch);
+    DiagnosticEngineFree(&scratch);
+
+    for (size_t i = hidden.count; i >= 2; i -= 2)
+    {
+        StrMapPut(scope, (const char*)VecGet(&hidden, i - 2), VecGet(&hidden, i - 1));
+    }
+
+    free(hidden.items);
+
+    e->m_ranAtExit = true;
+}
+
+// Runs one scope's deferred statements, last `defer` first.
+static void RunDeferFrame(Resolver* r, Vec* frame, StrMap* scope)
+{
+    for (size_t i = frame->count; i-- > 0;)
+    {
+        WalkDeferred(r, (DeferEntry*)VecGet(frame, i), scope);
+    }
+}
+
+// Runs the deferred statements of scopes [fromIndex, top), innermost first.
+static void RunDefersFrom(Resolver* r, size_t fromIndex, StrMap* scope)
+{
+    for (size_t f = r->m_deferFrames.count; f-- > fromIndex;)
+    {
+        RunDeferFrame(r, (Vec*)VecGet(&r->m_deferFrames, f), scope);
+    }
+}
+
+// Records a `defer` on the innermost scope. Its checks happen at the exits.
+static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
+{
+    if (r->m_deferFrames.count == 0 || r->m_scopeDecls.count == 0)
+    {
+        WalkStmt(r, d->stmt, scope);
+        return;
+    }
+
+    DeferEntry* e = (DeferEntry*)arena_alloc(r->m_arena, sizeof(DeferEntry));
+    e->m_stmt = d->stmt;
+    e->m_frame = r->m_scopeDecls.count - 1;
+    e->m_declMark = ((Vec*)VecGet(&r->m_scopeDecls, e->m_frame))->count;
+    e->m_ranAtExit = false;
+
+    /* Resolve it here, in the scope it was written in, but keep the flow
+       state untouched: nothing in it has run yet. The diagnostics are only
+       used if no reachable exit ever runs the statement. */
+    FlowState saved;
+    FlowInit(&saved);
+    FlowCapture(r, &saved);
+
+    DiagnosticEngineInit(&e->m_early);
+    DiagnosticEngine* realDiag = r->m_diag;
+    r->m_diag = &e->m_early;
+    r->m_deferWalkDepth++;
+
+    WalkStmt(r, d->stmt, scope);
+
+    r->m_deferWalkDepth--;
+    r->m_diag = realDiag;
+
+    ReplaceStrMapContents(&r->m_movedBoxes, &saved.m_moved);
+    ReplaceStrMapContents(&r->m_nonEmptyPaths, &saved.m_nonEmpty);
+    ReplaceStrMapContents(&r->m_emptyPaths, &saved.m_empty);
+    r->m_unreachable = !saved.m_live;
+    FlowFree(&saved);
+
+    VecPush((Vec*)VecGet(&r->m_deferFrames, r->m_deferFrames.count - 1), e);
+}
+
+/* `break`/`continue`: run the defers of the scopes being left, then hand the
+   state to the loop's exit or back edge. The path after it is dead. */
+static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak)
+{
+    LoopFlow* lf = r->m_loopFlows.count > 0 ? (LoopFlow*)VecGet(&r->m_loopFlows, r->m_loopFlows.count - 1) : NULL;
+
+    /* A jump out of a deferred statement is not modeled; it only ends the path. */
+    if (lf && lf->m_deferWalkDepth == r->m_deferWalkDepth && !r->m_unreachable)
+    {
+        RunDefersFrom(r, lf->m_deferDepth, scope);
+        FlowJoinCurrent(r, isBreak ? &lf->m_breaks : &lf->m_continues);
+    }
+
+    r->m_unreachable = true;
+}
+
+/* One trip around the loop from the current (loop head) state: condition,
+   body, continue join, update. `exit` receives the condition-false and break
+   states, `back` the state flowing back to the head. */
+static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* body, bool bodyScope, StrMap* scope,
+                              FlowState* exit, FlowState* back)
+{
+    LoopFlow lf;
+    FlowInit(&lf.m_breaks);
+    FlowInit(&lf.m_continues);
+    lf.m_deferDepth = r->m_deferFrames.count;
+    lf.m_deferWalkDepth = r->m_deferWalkDepth;
+
+    if (condition)
+    {
+        ResolveExpr(r, condition, scope);
+    }
+
+    bool factNegated = false;
+    Node* factOperand = condition ? CondNullTestOperand(condition, &factNegated) : NULL;
+    const char* factKey = factOperand ? MovableBoxSourceKey(r, factOperand) : NULL;
+
+    // Condition false: leave the loop with the opposite fact.
+    if (condition && !ExprIsConstantTrue(condition))
+    {
+        FlowState afterCond;
+        FlowInit(&afterCond);
+        FlowCapture(r, &afterCond);
+
+        if (factKey)
+        {
+            if (factNegated)
+            {
+                MarkPathNonEmpty(r, factKey);
+            }
+            else
+            {
+                ClearNonEmptySubtree(r, factKey);
+            }
+        }
+
+        FlowJoinCurrent(r, exit);
+        FlowApply(r, &afterCond);
+        FlowFree(&afterCond);
+    }
+
+    // Condition true: the fact holds through the body.
+    if (factKey)
+    {
+        if (factNegated)
+        {
+            MarkPathEmpty(r, factKey);
+        }
+        else
+        {
+            MarkPathNonEmpty(r, factKey);
+        }
+    }
+
+    VecPush(&r->m_loopFlows, &lf);
+
+    if (bodyScope)
+    {
+        ScopePush(r);
+    }
+
+    WalkStmt(r, body, scope);
+
+    if (bodyScope)
+    {
+        ScopePop(r, scope);
+    }
+
+    VecPop(&r->m_loopFlows);
+
+    // Falling off the body end and every `continue` meet before the update.
+    FlowJoinCurrent(r, &lf.m_continues);
+    FlowApply(r, &lf.m_continues);
+
+    if (update)
+    {
+        ResolveExpr(r, update, scope);
+    }
+
+    FlowCapture(r, back);
+    FlowJoin(exit, &lf.m_breaks);
+
+    FlowFree(&lf.m_breaks);
+    FlowFree(&lf.m_continues);
+}
+
+/* Loops iterate muted until the head state (entry joined with every back
+   edge) is stable, then walk once more from that state for diagnostics. The
+   state after the loop joins the condition-false exit with every `break`. */
+static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, bool bodyScope, StrMap* scope)
+{
+    FlowState head;
+    FlowInit(&head);
+    FlowCapture(r, &head);
+
     DiagnosticEngine warmup;
     DiagnosticEngineInit(&warmup);
 
     DiagnosticEngine* realDiag = r->m_diag;
     r->m_diag = &warmup;
 
-    // Muted warmup pass.
-    Vec liveLog;
-    VecInit(&liveLog);
-    r->m_liveLog = &liveLog;
+    for (int pass = 0; pass < LOOP_MAX_PASSES; pass++)
+    {
+        FlowState exit;
+        FlowState back;
+        FlowInit(&exit);
+        FlowInit(&back);
 
-    WalkStmt(r, body, scope);
+        FlowApply(r, &head);
+        WalkLoopIteration(r, condition, update, body, bodyScope, scope, &exit, &back);
 
-    r->m_liveLog = NULL;
+        FlowState next;
+        FlowInit(&next);
+        FlowJoin(&next, &head);
+        FlowJoin(&next, &back);
+
+        bool stable = FlowSame(&next, &head);
+
+        FlowFree(&head);
+        head = next;
+
+        FlowFree(&exit);
+        FlowFree(&back);
+
+        if (stable)
+        {
+            break;
+        }
+    }
+
     r->m_diag = realDiag;
     DiagnosticEngineFree(&warmup);
 
-    // Reassigned bindings start the next iteration fresh.
-    for (size_t i = 0; i < liveLog.count; i++)
-    {
-        const char* key = (const char*)VecGet(&liveLog, i);
-        ClearBoxSubtree(r, key);
-        ClearNullableFacts(r, key);
-    }
+    FlowState exit;
+    FlowState back;
+    FlowInit(&exit);
+    FlowInit(&back);
 
-    // The condition's fact holds through the body.
-    if (condFactKey)
-    {
-        if (condFactNegated)
-        {
-            MarkPathEmpty(r, condFactKey);
-        }
-        else
-        {
-            MarkPathNonEmpty(r, condFactKey);
-        }
-    }
+    FlowApply(r, &head);
+    WalkLoopIteration(r, condition, update, body, bodyScope, scope, &exit, &back);
+    FlowApply(r, &exit);
 
-    WalkStmt(r, body, scope);
+    FlowFree(&head);
+    FlowFree(&exit);
+    FlowFree(&back);
 }
 
 /**
@@ -6435,13 +7260,42 @@ static void ScopePush(Resolver* r)
     Vec* frame = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
     VecInit(frame);
     VecPush(&r->m_scopeDecls, frame);
+
+    Vec* defers = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
+    VecInit(defers);
+    VecPush(&r->m_deferFrames, defers);
 }
 
 /**
- * @brief Invalidates all symbols in a scope.
+ * @brief Runs the scope's defers (when its end is reachable) and invalidates all symbols in it.
  */
 static void ScopePop(Resolver* r, StrMap* scope)
 {
+    if (r->m_deferFrames.count > 0)
+    {
+        Vec* defers = (Vec*)VecPop(&r->m_deferFrames);
+
+        if (!r->m_unreachable)
+        {
+            RunDeferFrame(r, defers, scope);
+        }
+
+        for (size_t i = 0; i < defers->count; i++)
+        {
+            DeferEntry* e = (DeferEntry*)VecGet(defers, i);
+
+            /* No reachable exit ran it: keep what the `defer` site found. */
+            if (!e->m_ranAtExit)
+            {
+                ForwardNewDiagnostics(r->m_diag, &e->m_early);
+            }
+
+            DiagnosticEngineFree(&e->m_early);
+        }
+
+        free(defers->items);
+    }
+
     if (r->m_scopeDecls.count == 0)
     {
         return;
@@ -6778,11 +7632,16 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         return;
     case NodeDefer:
     {
-        DeferStmt* d = (DeferStmt*)n;
-        // Checks run here; the statement executes at block exit.
-        WalkStmt(r, d->stmt, scope);
+        // Runs (and is checked) at each exit of the enclosing scope.
+        QueueDefer(r, (DeferStmt*)n, scope);
         return;
     }
+    case NodeBreak:
+        WalkLoopJump(r, scope, true);
+        return;
+    case NodeContinue:
+        WalkLoopJump(r, scope, false);
+        return;
     case NodeReturn:
     {
         ReturnStmt* rs = (ReturnStmt*)n;
@@ -6858,6 +7717,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             DiagErrorFmt(r->m_diag, rs->base.range, "non-void function must return a value");
         }
 
+        // Every pending defer runs after the value is computed.
+        if (r->m_deferWalkDepth == 0 && !r->m_unreachable)
+        {
+            RunDefersFrom(r, 0, scope);
+        }
+
+        r->m_unreachable = true;
+
         return;
     }
     case NodeIf:
@@ -6881,6 +7748,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         StrMap beforeEmpty;
         CopyStrMap(&r->m_emptyPaths, &beforeEmpty);
 
+        bool entryDead = r->m_unreachable;
+
         if (factKey)
         {
             if (factNegated)
@@ -6898,6 +7767,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ScopePush(r);
         WalkStmt(r, i->thenBranch, scope);
         ScopePop(r, scope);
+
+        bool thenDead = r->m_unreachable;
+        r->m_unreachable = entryDead;
 
         StrMap afterThen;
         CopyStrMap(&r->m_movedBoxes, &afterThen);
@@ -6930,14 +7802,17 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
         }
 
-        /* A branch that always RETURNS never reaches the join, so its
-         * post-state must not poison the fall-through path. Break/continue
-         * do not qualify: their jump target carries this state outward. An
-         * else-less if always falls through on its false edge. Both arms
-         * returning leaves the join unreachable - any state is sound; the
-         * then-side is adopted. */
-        bool elseTerminates = StmtAlwaysReturns(i->elseBranch);
-        bool thenTerminates = StmtAlwaysReturns(i->thenBranch);
+        bool elseDead = r->m_unreachable;
+
+        /* A branch that never reaches the join (return, break, continue) must
+         * not poison the fall-through path: break/continue states were
+         * already handed to their loop. An else-less if falls through on its
+         * false edge. Both arms dead leaves the join unreachable - any state
+         * is sound; the then-side is adopted. */
+        bool elseTerminates = elseDead && !entryDead;
+        bool thenTerminates = thenDead && !entryDead;
+
+        r->m_unreachable = thenDead && elseDead;
 
         if (elseTerminates)
         {
@@ -6964,25 +7839,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     case NodeWhile:
     {
         WhileStmt* w = (WhileStmt*)n;
-        ResolveExpr(r, w->condition, scope);
-
-        bool whileFactNegated = false;
-        Node* whileFactOperand = CondNullTestOperand(w->condition, &whileFactNegated);
-        const char* factKey = whileFactOperand ? MovableBoxSourceKey(r, whileFactOperand) : NULL;
-
-        /* The zero-iteration exit path carries the pre-loop state. */
-        StrMap preFacts;
-        CopyStrMap(&r->m_nonEmptyPaths, &preFacts);
 
         /* The loop body is its own scope (covers non-block bodies too;
            block bodies nest a second scope harmlessly). */
-        ScopePush(r);
-        WalkLoopBody(r, w->body, scope, factKey, whileFactNegated);
-        ScopePop(r, scope);
-
-        FinishLoopFacts(r, &preFacts, factKey, whileFactNegated);
-
-        StrMapFree(&preFacts);
+        WalkLoop(r, w->condition, NULL, w->body, true, scope);
 
         return;
     }
@@ -7007,30 +7867,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
         }
 
-        if (fs->condition)
-        {
-            ResolveExpr(r, fs->condition, scope);
-        }
-
-        bool forFactNegated = false;
-        Node* forFactOperand = CondNullTestOperand(fs->condition, &forFactNegated);
-        const char* forFactKey = forFactOperand ? MovableBoxSourceKey(r, forFactOperand) : NULL;
-
-        /* The zero-iteration exit path runs init + condition, never the
-           update, so snapshot after the condition but before the update. */
-        StrMap preFacts;
-        CopyStrMap(&r->m_nonEmptyPaths, &preFacts);
-
-        if (fs->update)
-        {
-            ResolveExpr(r, fs->update, scope);
-        }
-
-        WalkLoopBody(r, fs->body, scope, forFactKey, forFactNegated);
-
-        FinishLoopFacts(r, &preFacts, forFactKey, forFactNegated);
-
-        StrMapFree(&preFacts);
+        // The condition and update run on every iteration, not just once.
+        WalkLoop(r, fs->condition, fs->update, fs->body, false, scope);
 
         ScopePop(r, scope);
 
@@ -7283,12 +8121,15 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
     StrMapInit(&r.m_nonEmptyPaths);
+    StrMapInit(&r.m_emptyPaths);
     StrMapInit(&r.m_indexDeps);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_refArrayParams);
     StrMapInit(&r.m_typeCache);
     VecInit(&r.m_scopeDecls);
+    VecInit(&r.m_deferFrames);
+    VecInit(&r.m_loopFlows);
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {
@@ -7343,11 +8184,19 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             StrMapPut(&scope, gd->name, (void*)&gd->type);
         }
 
+        // All flow state is per function: nothing proven in one holds in the next.
         ResetStrMap(&r.m_constVars);
         ResetStrMap(&r.m_movedBoxes);
+        ResetStrMap(&r.m_nonEmptyPaths);
+        ResetStrMap(&r.m_emptyPaths);
+        ResetStrMap(&r.m_indexDeps);
         ResetStrMap(&r.m_refBoxParams);
         ResetStrMap(&r.m_refArrayParams);
         r.m_scopeDecls.count = 0;
+        r.m_deferFrames.count = 0;
+        r.m_loopFlows.count = 0;
+        r.m_deferWalkDepth = 0;
+        r.m_unreachable = false;
 
         for (size_t j = 0; j < mod->globals.count; j++)
         {
@@ -7690,11 +8539,14 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_constGlobals);
     StrMapFree(&r.m_movedBoxes);
     StrMapFree(&r.m_nonEmptyPaths);
+    StrMapFree(&r.m_emptyPaths);
     StrMapFree(&r.m_indexDeps);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
     StrMapFree(&r.m_refArrayParams);
     StrMapFree(&r.m_typeCache);
     StrMapFree(&byMangled);
+    free(r.m_deferFrames.items);
+    free(r.m_loopFlows.items);
     TypeRegistryFree(&r.m_registry);
 }

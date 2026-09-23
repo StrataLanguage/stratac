@@ -330,6 +330,7 @@ void LLVMOrcJITDylibAddGenerator(LLVMOrcJITDylibRef jd, LLVMOrcDefinitionGenerat
 
 LLVMOrcMaterializationUnitRef LLVMOrcAbsoluteSymbols(LLVMOrcCSymbolMapPairs syms, size_t numPairs);
 LLVMErrorRef LLVMOrcJITDylibDefine(LLVMOrcJITDylibRef jd, LLVMOrcMaterializationUnitRef mu);
+void LLVMOrcDisposeMaterializationUnit(LLVMOrcMaterializationUnitRef mu);
 
 /* --- llvm-c/LLJIT.h (ORCv2 LLJIT) --- */
 LLVMOrcLLJITBuilderRef LLVMOrcCreateLLJITBuilder(void);

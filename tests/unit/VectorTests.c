@@ -154,6 +154,45 @@ STRATA_TEST(vector_divide_lanes)
             30);
 }
 
+/* float3 shares float4's 4-lane vector; lane 3 is padding. `.xyz` of a
+   float4 used to keep w there, and a float3 division leaves 0/0 = NaN, so
+   dot/reduce (which summed all four lanes) gave 30 / NaN. */
+STRATA_TEST(vector_float3_swizzle_dot_ignores_w)
+{
+    run_int("int entry() {\n"
+            "  float4 q = float4(1.0, 2.0, 3.0, 4.0);\n"
+            "  float3 t = q.xyz;\n"
+            "  return (int)dot(t, t);\n" /* 1 + 4 + 9 = 14 */
+            "}\n",
+            14);
+
+    run_int("int entry() {\n"
+            "  float4 q = float4(1.0, 2.0, 3.0, 4.0);\n"
+            "  float3 t = q.xyz;\n"
+            "  return (int)reduce(t);\n" /* 6 */
+            "}\n",
+            6);
+
+    /* The swizzle's padding lane is zero, so widening it back keeps w = 0. */
+    run_int("int entry() {\n"
+            "  float4 q = float4(1.0, 2.0, 3.0, 4.0);\n"
+            "  float4 r = float4(q.xyz);\n"
+            "  return (int)reduce(r);\n" /* float4(float4) pass-through: 6 */
+            "}\n",
+            6);
+}
+
+STRATA_TEST(vector_float3_division_dot_reduce_not_nan)
+{
+    run_int("int entry() {\n"
+            "  float3 a = float3(2.0, 4.0, 6.0);\n"
+            "  float3 b = float3(2.0, 2.0, 2.0);\n"
+            "  float3 d = a / b;\n" /* {1, 2, 3}, lane 3 = 0/0 */
+            "  return (int)dot(d, d) * 100 + (int)reduce(d);\n" /* 14 * 100 + 6 */
+            "}\n",
+            1406);
+}
+
 STRATA_TEST(vector_ref_rest_reassign_elements)
 {
     /* ref float3... borrows the collected stack array mutably; each element
