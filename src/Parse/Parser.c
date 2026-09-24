@@ -794,17 +794,27 @@ static HandleDecl* ParseHandleDecl(Parser* p)
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     node->extendsName = NULL;
 
-    if (ParserConsume(p, TokKwExtends))
+    if (ParserConsume(p, TokColon))
     {
         if (p->m_cur.kind != TokIdent)
         {
-            DiagError(p->m_diag, p->m_cur.range, "expected a base handle name after 'extends'");
+            DiagError(p->m_diag, p->m_cur.range, "expected a base handle name after ':'");
         }
         else
         {
             Token baseTok = p->m_cur;
             Advance(p);
             node->extendsName = ToOwned(p->m_arena, ParserIdentText(p, baseTok));
+        }
+    }
+    else if (p->m_cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->m_cur), "extends"))
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "'extends' was removed; write 'handle %s : Base'", node->name);
+        Advance(p);
+
+        if (p->m_cur.kind == TokIdent)
+        {
+            Advance(p);
         }
     }
 

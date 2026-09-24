@@ -733,6 +733,27 @@ static bool IsBoolType(const TypeRegistry* reg, const TypeName* t)
     return GetPrimitiveType(TypeRegistryResolveAlias(reg, t->name)) == PrimBool;
 }
 
+/* Types a boolean context (`if`/`while`/`for`, `!`, `&&`, `||`) accepts:
+   `bool`, `^bool` (reads through), and any `T?` (truthiness is presence).
+   Numerics are not: `if (x)` on a float is a hidden != 0.0 test. */
+static bool IsBoolContextType(const TypeRegistry* reg, const TypeName* t)
+{
+    if (t && t->isOptional)
+    {
+        return true;
+    }
+
+    return IsBoolType(reg, t && t->isBox && t->inner ? t->inner : t);
+}
+
+/* Scalars convert implicitly among themselves, except across the bool
+   boundary: `bool b = 0.5` (a != 0 test) or `int n = flag` is almost always
+   a bug, so numeric <-> bool needs an explicit cast. */
+static bool IsImplicitScalarConversion(PrimitiveType target, PrimitiveType value)
+{
+    return IsNumeric(target) && IsNumeric(value) && (target == PrimBool) == (value == PrimBool);
+}
+
 /* Resolves `[constName]` fixed-array dimensions on a type tree against the
    manifest-constant table. */
 static bool SemaResolveConstDims(Resolver* r, TypeName* t)
@@ -3578,7 +3599,7 @@ static EnumDecl* FindEnum(Resolver* r, const char* name)
     return NULL;
 }
 
-/* Method lookup with `extends` walk: a Player sees impl Entity methods. */
+/* Method lookup walks base handles: a `handle Player : Entity` sees impl Entity methods. */
 static FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
 {
     const char* hn = handleName;
@@ -3824,7 +3845,8 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
    function with that name already exists (e.g. a flat extern), its signature
    is validated against the accessor shape instead. */
 static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, const TypeName* propType,
-                               const char* handleName, bool isSetter, SourceRange range, DiagnosticEngine* diag)
+                               const char* handleName, bool selfByRef, bool isSetter, SourceRange range,
+                               DiagnosticEngine* diag)
 {
     size_t matchCount = 0;
     FunctionDecl* match = NULL;
@@ -3925,11 +3947,13 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
         fn->returnType = *propType;
     }
 
+    /* A struct receiver crosses as a pointer, like any extern struct param; a getter only reads it. */
     ParamDecl* self = AST_NEW(arena, ParamDecl);
     self->base.kind = NodeParam;
     self->base.range = range;
-    self->mod = ModNone;
+    self->mod = selfByRef ? ModRef : ModNone;
     self->type = TypeNameLeaf(arena_strdup(arena, handleName));
+    self->type.isConst = selfByRef && !isSetter;
     self->name = arena_strdup(arena, "self");
     VecPush(&fn->params, self);
 
@@ -4424,16 +4448,19 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
                 continue;
             }
 
+            const char* targetLeaf = TypeRegistryResolveAlias(registry, impl->handleName);
+            bool selfByRef = IsDefinedStruct(registry, targetLeaf) || IsIncompleteStruct(registry, targetLeaf);
+
             if (prop->getterSymbol)
             {
-                SynthesizeAccessor(mod, arena, prop->getterSymbol, &prop->returnType, impl->handleName, false,
-                                   prop->range, diag);
+                SynthesizeAccessor(mod, arena, prop->getterSymbol, &prop->returnType, impl->handleName, selfByRef,
+                                   false, prop->range, diag);
             }
 
             if (prop->setterSymbol)
             {
-                SynthesizeAccessor(mod, arena, prop->setterSymbol, &prop->returnType, impl->handleName, true,
-                                   prop->range, diag);
+                SynthesizeAccessor(mod, arena, prop->setterSymbol, &prop->returnType, impl->handleName, selfByRef,
+                                   true, prop->range, diag);
             }
         }
     }
@@ -5014,7 +5041,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                 /* `cstring` copies into a `string` param (heap copy). */
                 score += 1;
             }
-            else if (!mutableRef && IsNumeric(argType->primitiveType) && IsNumeric(paramType->primitiveType))
+            else if (!mutableRef && IsImplicitScalarConversion(paramType->primitiveType, argType->primitiveType))
             {
                 score += 1;
             }
@@ -5637,7 +5664,7 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
     // destination vector type (e.g. `float2 y = value.xy`), to prevent unintended logic errors.
     //
     // - Source values that are numeric (but not vectors!) CAN be assigned to a vector type. They will be automatically
-    // broadcasted to a vector of the destination's type.
+    // broadcasted to a vector of the destination's type. `bool` is not numeric here.
 
     const int destLanes = IsNameSimdVector(resolvedTarget);
     const int srcLanes = IsNameSimdVector(resolvedValue);
@@ -5655,7 +5682,7 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
     }
 
     // Check vector dest and scalar numeric src
-    if (destLanes && (srcLanes == 0 && IsNameNumeric(resolvedValue)))
+    if (destLanes && (srcLanes == 0 && IsNameNumeric(resolvedValue) && GetPrimitiveType(resolvedValue) != PrimBool))
     {
         // If the dest type is an alias, it is not assignable this way.
         if (TypeRegistryIsTypeAlias(&r->m_registry, targetType->name))
@@ -5706,8 +5733,8 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
         return true;
     }
 
-    // Numerics convert freely (TODO: require casts for lossy narrowing).
-    if (IsNumeric(valueType->primitiveType) && IsNumeric(targetType->primitiveType))
+    // Numerics convert freely, bool excluded (TODO: require casts for lossy narrowing).
+    if (IsImplicitScalarConversion(targetType->primitiveType, valueType->primitiveType))
     {
         return true;
     }
@@ -5788,6 +5815,17 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             const TypeName* ot = InferType(r, u->operand, scope);
 
             if (ot && IsBoolType(&r->m_registry, ot))
+            {
+                DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
+            }
+        }
+
+        // `!` is logical only: `!x` on a number is an implicit == 0 test.
+        if (u->op == UnNot)
+        {
+            const TypeName* ot = InferType(r, u->operand, scope);
+
+            if (ot && !IsBoolContextType(&r->m_registry, ot))
             {
                 DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
             }
@@ -5901,7 +5939,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
             }
 
-            if (boolOperand && !eqOp)
+            /* `flag == 1` would compare through an implicit numeric <-> bool
+               conversion; both sides of a bool comparison must be bool. */
+            const TypeName* lScalar = TypeNameBoxInner(lt) ? TypeNameBoxInner(lt) : lt;
+            const TypeName* rScalar = TypeNameBoxInner(rt) ? TypeNameBoxInner(rt) : rt;
+            bool mixedBool = lScalar && rScalar
+                             && IsBoolType(&r->m_registry, lScalar) != IsBoolType(&r->m_registry, rScalar);
+
+            if ((boolOperand && !eqOp) || mixedBool)
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
                 break;
@@ -5960,6 +6005,21 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 && (!TypeIsTriviallyComparable(&r->m_registry, lt) || !TypeIsTriviallyComparable(&r->m_registry, rt)))
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+            }
+
+            break;
+        }
+        case BinLogicAnd:
+        case BinLogicOr:
+        {
+            // Logical operators take bools only; no implicit numeric truthiness.
+            const TypeName* lt = InferType(r, b->lhs, scope);
+            const TypeName* rt = InferType(r, b->rhs, scope);
+
+            if (lt && rt && (!IsBoolContextType(&r->m_registry, lt) || !IsBoolContextType(&r->m_registry, rt)))
+            {
+                DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", lt->name,
+                             rt->name);
             }
 
             break;
@@ -7319,6 +7379,18 @@ static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak)
     r->m_unreachable = true;
 }
 
+/* `if`/`while`/`for` conditions must be `bool`: no implicit truthiness for
+   numerics (`if (x)` on a float is a != 0.0 test, rarely what was meant). */
+static void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope)
+{
+    const TypeName* t = cond ? InferType(r, cond, scope) : NULL;
+
+    if (t && !IsBoolContextType(&r->m_registry, t))
+    {
+        DiagErrorFmt(r->m_diag, cond->range, "condition must be of type 'bool', found '%s'", t->name);
+    }
+}
+
 /* One trip around the loop from the current (loop head) state: condition,
    body, continue join, update. `exit` receives the condition-false and break
    states, `back` the state flowing back to the head. */
@@ -7334,6 +7406,7 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
     if (condition)
     {
         ResolveExpr(r, condition, scope);
+        CheckBoolCondition(r, condition, scope);
     }
 
     bool factNegated = false;
@@ -7949,6 +8022,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     {
         IfStmt* i = (IfStmt*)n;
         ResolveExpr(r, i->condition, scope);
+        CheckBoolCondition(r, i->condition, scope);
 
         /* `if (path?)` blesses the then-branch; `if (!path?)` blesses the else. Facts intersect at the join;
          * moved-state unions. */

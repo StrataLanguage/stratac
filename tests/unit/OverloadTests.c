@@ -436,7 +436,7 @@ STRATA_TEST(cast_handle_downcast_in_lineage_is_allowed)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "handle Entity;\n"
-        "handle Player extends Entity;\n"
+        "handle Player : Entity;\n"
         "extern Entity spawn();\n"
         "int entry() { Entity e = spawn(); Player p = (Player)e; return 0; }\n",
         &diag, &arena);

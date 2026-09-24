@@ -764,7 +764,7 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
 
         t = TypeRegistryFind(reg, t->extendsFrom);
 
-        /* Guard against circular `extends` chains (e.g. A extends B; B extends A). */
+        /* Guard against circular base chains (e.g. `handle A : B; handle B : A;`). */
         if (++depth > reg->count)
         {
             return false;

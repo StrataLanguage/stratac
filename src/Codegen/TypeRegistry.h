@@ -17,7 +17,7 @@ typedef struct {
     bool opaque;                 // `struct Foo;` or `handle Foo`.
     bool incomplete;             // Forward-declared struct.
     bool owning;                 // Holds an owning field, transitively.
-    const char* extendsFrom;     // Base handle for `handle X extends Y`.
+    const char* extendsFrom;     // Base handle for `handle X : Y`.
     Vec fields;
     bool isExtern;               // `extern struct`: mirrors a C layout.
     bool isTypeAlias;

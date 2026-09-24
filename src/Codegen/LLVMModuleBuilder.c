@@ -7233,11 +7233,12 @@ static void EmitStmt(Builder* b, Node* n)
 }
 
 /* A branch/loop condition as i1, with its borrowed temporaries dropped
-   before the branch (the i1 no longer refers to them). */
+   before the branch (the i1 no longer refers to them). `^bool` reads
+   through like `&&`/`!` operands; an optional tests presence. */
 static LLVMValueRef EmitConditionI1(Builder* b, Node* cond)
 {
     size_t tempMark = b->m_temps.count;
-    LLVMValueRef v = ToI1(b, EmitExpr(b, cond));
+    LLVMValueRef v = ToI1(b, EmitCondOperand(b, cond));
 
     FlushTemps(b, tempMark);
     return v;

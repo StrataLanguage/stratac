@@ -201,6 +201,69 @@ STRATA_TEST(impl_on_forward_declared_struct_parses)
     arena_free(&arena);
 }
 
+STRATA_TEST(handle_base_uses_colon_and_extends_is_removed)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("handle Entity;\n"
+                              "handle Player : Entity;\n"
+                              "int extends = 1;\n",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    if (mod)
+    {
+        HandleDecl* player = (HandleDecl*)VecGet(&mod->handles, 1);
+        STRATA_CHECK(player && player->extendsName && strcmp(player->extendsName, "Entity") == 0);
+    }
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseModule("handle Entity;\n"
+                "handle Player extends Entity;\n",
+                &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "'extends' was removed; write 'handle Player : Base'"));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+}
+
+STRATA_TEST(struct_property_accessors_take_self_by_ref)
+{
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct P { int x; }\n"
+                                  "impl P {\n"
+                                  "    property int X { get = P_GetX; set = P_SetX; }\n"
+                                  "}\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    const FunctionDecl* getter = mod ? FindFunction(mod, "P_GetX") : NULL;
+    const FunctionDecl* setter = mod ? FindFunction(mod, "P_SetX") : NULL;
+    STRATA_CHECK(getter && setter);
+
+    if (getter && setter)
+    {
+        const ParamDecl* getterSelf = (const ParamDecl*)VecGet((Vec*)&getter->params, 0);
+        const ParamDecl* setterSelf = (const ParamDecl*)VecGet((Vec*)&setter->params, 0);
+        STRATA_CHECK(getterSelf->mod == ModRef && getterSelf->type.isConst);
+        STRATA_CHECK(setterSelf->mod == ModRef && !setterSelf->type.isConst);
+    }
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(impl_on_type_alias_scalar_method_rewrites)
 {
     /* `impl` on a strong alias of a scalar: `expr.M(args)` hoists to the
@@ -411,7 +474,7 @@ STRATA_TEST(impl_inherited_method_visible_on_derived)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("handle Entity;\n"
-                                  "handle Player extends Entity;\n"
+                                  "handle Player : Entity;\n"
                                   "impl Entity {\n"
                                   "    extern void Hit(Entity self, int dmg);\n"
                                   "}\n"

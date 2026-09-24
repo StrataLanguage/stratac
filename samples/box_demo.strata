@@ -106,7 +106,7 @@ void mutate_box(ref ^Vec3 inBox)
 extern float host_length_sq(const ref Vec3 v);
 
 handle BaseEntity;
-handle Entity extends BaseEntity;
+handle Entity : BaseEntity;
 
 void take_entity(^BaseEntity be)
 {

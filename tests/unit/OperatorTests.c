@@ -166,7 +166,7 @@ STRATA_TEST(jit_short_circuit_and_skips_rhs)
     StrataJit* jit = CompileJit("extern int se_true();\n"
                                 "extern int se_false();\n"
                                 "int entry() {\n"
-                                "  if (se_false() && se_true()) { return 1; }\n"
+                                "  if (se_false() != 0 && se_true() != 0) { return 1; }\n"
                                 "  return 0;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -192,7 +192,7 @@ STRATA_TEST(jit_short_circuit_or_skips_rhs)
     StrataJit* jit = CompileJit("extern int se_true();\n"
                                 "extern int se_false();\n"
                                 "int entry() {\n"
-                                "  if (se_true() || se_false()) { return 1; }\n"
+                                "  if (se_true() != 0 || se_false() != 0) { return 1; }\n"
                                 "  return 0;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -218,7 +218,7 @@ STRATA_TEST(jit_short_circuit_and_evaluates_both_when_lhs_true)
     StrataJit* jit = CompileJit("extern int se_true();\n"
                                 "extern int se_false();\n"
                                 "int entry() {\n"
-                                "  if (se_true() && se_false()) { return 1; }\n"
+                                "  if (se_true() != 0 && se_false() != 0) { return 1; }\n"
                                 "  return 0;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -244,7 +244,7 @@ STRATA_TEST(jit_short_circuit_or_evaluates_both_when_lhs_false)
     StrataJit* jit = CompileJit("extern int se_true();\n"
                                 "extern int se_false();\n"
                                 "int entry() {\n"
-                                "  if (se_false() || se_true()) { return 1; }\n"
+                                "  if (se_false() != 0 || se_true() != 0) { return 1; }\n"
                                 "  return 0;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -269,11 +269,11 @@ STRATA_TEST(jit_short_circuit_or_evaluates_both_when_lhs_false)
 STRATA_TEST(jit_or_result_value)
 {
     StrataJit* jit = CompileJit("int entry() {\n"
-                                "  int a = 0;\n"
+                                "  bool a = false;\n"
                                 "  int b = 5;\n"
-                                "  int c = 0 || 0;\n"
-                                "  int d = 0 || b;\n"
-                                "  int e = a || (b > 3);\n"
+                                "  int c = (int)(false || false);\n"
+                                "  int d = (int)(false || b != 0);\n"
+                                "  int e = (int)(a || (b > 3));\n"
                                 "  return c + d + e;\n"   // 0 + 1 + 1 = 2
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -297,7 +297,7 @@ STRATA_TEST(jit_short_circuit_or_chain)
     StrataJit* jit = CompileJit("extern int se_true();\n"
                                 "extern int se_false();\n"
                                 "int entry() {\n"
-                                "  if (se_true() || se_false() || se_false()) { return 1; }\n"
+                                "  if (se_true() != 0 || se_false() != 0 || se_false() != 0) { return 1; }\n"
                                 "  return 0;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -396,7 +396,7 @@ STRATA_TEST(jit_double_values_are_not_zero)
         "int entry() {\n"
         "  double a = 90.0 * g_pi / 180.0;\n"
         "  double d = 2.5;\n"
-        "  if (host_is_pi_half(a) && host_is_pi_half(1.5707963) && d == 2.5) { return 1; }\n"
+        "  if (host_is_pi_half(a) != 0 && host_is_pi_half(1.5707963) != 0 && d == 2.5) { return 1; }\n"
         "  return 0;\n"
         "}\n",
         "dbl", &err);
@@ -448,11 +448,11 @@ STRATA_TEST(jit_cast_to_bool_compares_to_zero)
     /* (bool)x must be "x != 0", not bit-truncation: 2 and 4 have a zero low
        bit but are truthy. */
     StrataJit* jit = CompileJit("int entry() {\n"
-                                "  int a = (bool)2;\n"
-                                "  int b = (bool)4;\n"
-                                "  int c = (bool)0;\n"
+                                "  int a = (int)(bool)2;\n"
+                                "  int b = (int)(bool)4;\n"
+                                "  int c = (int)(bool)0;\n"
                                 "  float f = 3.0;\n"
-                                "  int d = (bool)f;\n"
+                                "  int d = (int)(bool)f;\n"
                                 "  return a + b + c + d;\n"   // 1 + 1 + 0 + 1 = 3
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -809,6 +809,84 @@ STRATA_TEST(bool_bitwise_and_shift_is_an_error)
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
     if (err) strataFree((char*)err);
+}
+
+/* numeric <-> bool never converts implicitly: each of these used to compile
+   to a hidden != 0 test (or a 0/1 widening) instead of a type error. */
+static void CheckRejected(const char* src, const char* expect)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileJitErr(src, &err);
+    STRATA_CHECK(jit == NULL);
+    STRATA_CHECK(err && Contains(err, expect));
+    if (jit) strataJitDestroy(jit);
+    if (err) strataFree((char*)err);
+}
+
+STRATA_TEST(numeric_to_bool_is_not_implicit)
+{
+    CheckRejected("int entry() { float f = 0.5; bool b = f; return 0; }\n", "cannot be initialized");
+    CheckRejected("int entry() { int i = 2; bool b = i; return 0; }\n", "cannot be initialized");
+    CheckRejected("int entry() { bool b = 1; return 0; }\n", "cannot be initialized");
+    CheckRejected("bool g = 0.0;\nint entry() { return 0; }\n", "g");
+    CheckRejected("int entry() { bool b = true; b = 2.0; return 0; }\n", "cannot assign");
+    CheckRejected("bool t() { float f = 0.5; return f; }\nint entry() { return 0; }\n", "cannot return");
+    CheckRejected("bool t(bool x) { return x; }\nint entry() { t(0.5); return 0; }\n", "no matching overload");
+    CheckRejected("struct S { bool b; };\nint entry() { S s = S { .b = 1.5 }; return 0; }\n", "cannot be initialized");
+}
+
+STRATA_TEST(bool_to_numeric_is_not_implicit)
+{
+    CheckRejected("int entry() { bool b = true; int i = b; return i; }\n", "cannot be initialized");
+    CheckRejected("int entry() { bool b = true; float f = b; return 0; }\n", "cannot be initialized");
+    CheckRejected("int entry() { bool b = true; return b; }\n", "cannot return");
+    CheckRejected("float t(float x) { return x; }\nint entry() { t(true); return 0; }\n", "no matching overload");
+    CheckRejected("int entry() { float4 v = true; return 0; }\n", "cannot be initialized");
+}
+
+STRATA_TEST(numeric_condition_is_an_error)
+{
+    CheckRejected("int entry() { float f = 0.5; if (f) { return 1; } return 0; }\n", "condition must be of type 'bool'");
+    CheckRejected("int entry() { int i = 1; if (i) { return 1; } return 0; }\n", "condition must be of type 'bool'");
+    CheckRejected("int entry() { int n = 3; while (n) { n--; } return 0; }\n", "condition must be of type 'bool'");
+    CheckRejected("int entry() { for (int i = 3; i; i--) { } return 0; }\n", "condition must be of type 'bool'");
+}
+
+STRATA_TEST(numeric_logical_operand_is_an_error)
+{
+    CheckRejected("int entry() { float f = 0.5; bool b = !f; return 0; }\n", "invalid operand to unary operator");
+    CheckRejected("int entry() { float f = 0.5; bool b = f && true; return 0; }\n",
+                  "invalid operands to binary operator");
+    CheckRejected("int entry() { int i = 0; bool b = true || i; return 0; }\n", "invalid operands to binary operator");
+    CheckRejected("int entry() { float f = 1.0; bool b = f == true; return 0; }\n",
+                  "invalid operands to binary operator");
+}
+
+/* The explicit spellings still work: a cast is the (non)zero test, and
+   `^bool` conditions read the value (not the always-non-null box). */
+STRATA_TEST(jit_explicit_bool_conversions)
+{
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  float f = 0.5;\n"
+                                "  int r = 0;\n"
+                                "  if ((bool)f) { r = r + 1; }\n"
+                                "  if (f != 0.0 && !false) { r = r + 2; }\n"
+                                "  ^bool bx = false;\n"
+                                "  if (bx) { r = r + 4; }\n"
+                                "  while (bx) { r = r + 8; break; }\n"
+                                "  return r + (int)true * 16;\n"   // 1 + 2 + 16 = 19
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(f != NULL);
+        if (f)
+        {
+            STRATA_CHECK_EQ(f(), 19);
+        }
+        strataJitDestroy(jit);
+    }
 }
 
 /* `true + false` computes i1 wrap-around in codegen; `a < b` compares with
@@ -1226,9 +1304,9 @@ STRATA_TEST(jit_global_float_to_int_init)
 
 STRATA_TEST(jit_global_bool_from_int_init_is_nonzero_test)
 {
-    /* `bool = 2` is a numeric-pair conversion: the value must be a (non)zero
-     * test (true), NOT a bit-truncation of 2 into i1 (false). */
-    StrataJit* jit = CompileJit("bool g_flag = 2;\n"
+    /* `(bool)2` must fold to a (non)zero test (true), NOT a bit-truncation
+     * of 2 into i1 (false). */
+    StrataJit* jit = CompileJit("bool g_flag = (bool)2;\n"
                                 "int entry() {\n"
                                 "  if (g_flag) { return 1; }\n"
                                 "  return 0;\n"
@@ -1492,10 +1570,10 @@ static void* handle_spawn_42(void) { return (void*)(intptr_t)42; }
 static void* handle_spawn_99(void) { return (void*)(intptr_t)99; }
 static void* handle_spawn_777(void) { return (void*)(intptr_t)777; }
 
-STRATA_TEST(jit_handle_extends_pass_as_base)
+STRATA_TEST(jit_handle_base_pass_as_base)
 {
     StrataJit* jit = CompileJit("handle Entity;\n"
-                                "handle Player extends Entity;\n"
+                                "handle Player : Entity;\n"
                                 "extern int get_id(Entity e);\n"
                                 "extern Player make_player();\n"
                                 "int entry() {\n"
@@ -1518,10 +1596,10 @@ STRATA_TEST(jit_handle_extends_pass_as_base)
     }
 }
 
-STRATA_TEST(jit_handle_extends_assign_to_base)
+STRATA_TEST(jit_handle_base_assign_to_base)
 {
     StrataJit* jit = CompileJit("handle Entity;\n"
-                                "handle Player extends Entity;\n"
+                                "handle Player : Entity;\n"
                                 "extern Player spawn();\n"
                                 "extern int get_id(Entity e);\n"
                                 "int entry() {\n"
@@ -1545,10 +1623,10 @@ STRATA_TEST(jit_handle_extends_assign_to_base)
     }
 }
 
-STRATA_TEST(jit_handle_extends_cast_down)
+STRATA_TEST(jit_handle_base_cast_down)
 {
     StrataJit* jit = CompileJit("handle Entity;\n"
-                                "handle Player extends Entity;\n"
+                                "handle Player : Entity;\n"
                                 "extern Entity spawn();\n"
                                 "extern int get_player_id(Player p);\n"
                                 "int entry() {\n"
@@ -1572,11 +1650,11 @@ STRATA_TEST(jit_handle_extends_cast_down)
     }
 }
 
-STRATA_TEST(jit_handle_extends_multi_level)
+STRATA_TEST(jit_handle_base_multi_level)
 {
     StrataJit* jit = CompileJit("handle Entity;\n"
-                                "handle Character extends Entity;\n"
-                                "handle Player extends Character;\n"
+                                "handle Character : Entity;\n"
+                                "handle Player : Character;\n"
                                 "extern int get_id(Entity e);\n"
                                 "extern Player create_player();\n"
                                 "int entry() {\n"
