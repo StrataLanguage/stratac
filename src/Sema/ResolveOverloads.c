@@ -4512,6 +4512,219 @@ static void StampArrayInitElemTypes(ArrayInitExpr* ai, const TypeName* elem)
     }
 }
 
+static bool IsTypeParamName(const FunctionDecl* generic, const TypeName* type)
+{
+    return generic->typeParam && type && type->name && strcmp(type->name, generic->typeParam) == 0;
+}
+
+// True when T appears in `type`, directly or inside ^T / T? / T[] / T[N].
+static bool TypeMentionsParam(const FunctionDecl* generic, const TypeName* type)
+{
+    for (const TypeName* at = type; at; at = (at->isBox || at->isOptional) ? at->inner : (at->isArray ? at->elem : NULL))
+    {
+        if (IsTypeParamName(generic, at))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* The `extern<T>` named `name` visible from `fileId`, or NULL. */
+static FunctionDecl* FindGenericExtern(Resolver* r, const char* name, uint16_t fileId)
+{
+    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    {
+        FunctionDecl* candidate = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+
+        if (candidate->typeParam && strcmp(candidate->name, name) == 0 && FunctionVisibleTo(candidate, fileId))
+        {
+            return candidate;
+        }
+    }
+
+    return NULL;
+}
+
+/* `generic` with T replaced by `structName`, created once per type and kept on the module so
+   codegen declares it. The instantiation keeps the generic's host symbol (`name`). */
+static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic, const char* structName)
+{
+    for (size_t i = 0; i < r->m_mod->genericInstances.count; i++)
+    {
+        FunctionDecl* existing = (FunctionDecl*)VecGet(&r->m_mod->genericInstances, i);
+
+        if (existing->genericOf == generic && strcmp(existing->typeArg, structName) == 0)
+        {
+            return existing;
+        }
+    }
+
+    FunctionDecl* instance = AST_NEW(r->m_arena, FunctionDecl);
+    *instance = *generic;
+    instance->typeParam = NULL;
+    instance->genericOf = generic;
+    instance->typeArg = arena_strdup(r->m_arena, structName);
+    instance->mangledName = arena_format(r->m_arena, "%s<%s>", generic->name, structName);
+    VecInit(&instance->params);
+
+    for (size_t i = 0; i < generic->params.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&generic->params, i);
+        ParamDecl* copy = AST_NEW(r->m_arena, ParamDecl);
+        *copy = *param;
+
+        if (IsTypeParamName(generic, &param->type))
+        {
+            TypeName substituted = TypeNameParse(r->m_arena, instance->typeArg);
+            substituted.isConst = param->type.isConst;
+            substituted.range = param->type.range;
+            copy->type = substituted;
+        }
+
+        VecPush(&instance->params, copy);
+    }
+
+    VecPush(&r->m_mod->genericInstances, instance);
+
+    return instance;
+}
+
+/* What `extern<T>` allows: T only as a whole parameter type (by value or `ref`), never in the
+   return type, and no variadic or `return` parameters. */
+static void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
+{
+    if (TypeRegistryIsUserType(&r->m_registry, f->typeParam) || GetPrimitiveType(f->typeParam) != PrimNone)
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "type parameter '%s' of '%s' has the same name as a type", f->typeParam,
+                     f->name);
+    }
+
+    if (TypeMentionsParam(f, &f->returnType))
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "generic extern '%s' can't return its type parameter '%s'", f->name,
+                     f->typeParam);
+    }
+
+    if (f->isVariadic || f->hasReturnParam)
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "generic extern '%s' can't be variadic or take a 'return' parameter",
+                     f->name);
+    }
+
+    for (size_t i = 0; i < f->params.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&f->params, i);
+
+        if (TypeMentionsParam(f, &param->type) && !IsTypeParamName(f, &param->type))
+        {
+            DiagErrorFmt(r->m_diag, param->base.range,
+                         "parameter '%s' of generic extern '%s' must be '%s' or 'ref %s', not '%s'", param->name, f->name,
+                         f->typeParam, f->typeParam, param->type.name);
+        }
+    }
+}
+
+/* A call to an `extern<T>`: infers or reads T, instantiates the extern for it, and checks the
+   arguments against the instantiation. Returns false when the callee isn't generic. */
+static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->resolvedDecl)
+    {
+        return false;
+    }
+
+    FunctionDecl* generic = FindGenericExtern(r, c->callee, c->base.range.fileId);
+
+    if (!generic)
+    {
+        if (c->typeArg)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'%s' is not a generic extern; it takes no type argument",
+                         c->callee);
+            return true;
+        }
+
+        return false;
+    }
+
+    const TypeName* typeArg = c->typeArg;
+
+    for (size_t i = 0; !typeArg && i < generic->params.count && i < c->args.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&generic->params, i);
+
+        if (IsTypeParamName(generic, &param->type))
+        {
+            typeArg = InferType(r, (Node*)VecGet(&c->args, i), scope);
+        }
+    }
+
+    if (!typeArg)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "can't infer '%s' for '%s'; name it explicitly: '%s<Type>(...)'",
+                     generic->typeParam, generic->name, generic->name);
+        return true;
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, typeArg->name);
+    const StructType* structType = (typeArg->isArray || typeArg->isBox || typeArg->isOptional)
+                                       ? NULL
+                                       : TypeRegistryFind(&r->m_registry, leaf);
+
+    if (!structType || structType->opaque || structType->isTypeAlias)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "type argument '%s' for '%s' must be a struct type", typeArg->name,
+                     generic->name);
+        return true;
+    }
+
+    if (structType->owning)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range,
+                     "type argument '%s' for '%s' must be plain data; it holds owning fields (strings, boxes, "
+                     "optionals or dynamic arrays)",
+                     typeArg->name, generic->name);
+        return true;
+    }
+
+    FunctionDecl* instance = GetGenericInstance(r, generic, structType->name);
+    c->callee = instance->mangledName;
+    c->resolvedDecl = instance;
+
+    if (NamedParamCount(instance) != c->args.count)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' takes %zu argument(s) but %zu were given", generic->name,
+                     NamedParamCount(instance), c->args.count);
+        return true;
+    }
+
+    for (size_t i = 0; i < c->args.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&instance->params, i);
+        Node* arg = (Node*)VecGet(&c->args, i);
+        const TypeName* argType = InferType(r, arg, scope);
+
+        if (param->mod == ModRef && !IsLValueNode(arg))
+        {
+            DiagErrorFmt(r->m_diag, arg->range, "argument %zu of '%s' is passed by 'ref' and must be a variable", i + 1,
+                         generic->name);
+        }
+        else if (argType && !IsAssignableType(r, &param->type, argType))
+        {
+            DiagErrorFmt(r->m_diag, arg->range, "argument %zu of '%s' has type '%s' but '%s' was expected", i + 1,
+                         generic->name, argType->name, param->type.name);
+        }
+    }
+
+    CheckCallArgOptionalDerefs(r, c, scope);
+    CheckConstRefArgs(r, instance, c, scope);
+    TrackCallArgMoves(r, instance, c);
+
+    return true;
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     /* `expr.Member(args)` / `Type.Static(args)` — resolve against impl blocks.
@@ -4524,6 +4737,11 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         {
             return;
         }
+    }
+
+    if (ResolveGenericExternCall(r, c, scope))
+    {
+        return;
     }
 
     /* A whole fixed-size array *local* cannot be passed as a call argument —
@@ -8057,6 +8275,220 @@ static bool StmtFallsThrough(const Node* n, int depth)
     }
 }
 
+/* Why a component field of `type` isn't plain data (NULL when it is). The offending
+   type's spelling goes to `outOffender`. Nested structs and fixed-array elements are checked
+   too, since the host copies components as raw bytes. */
+static const char* ComponentFieldProblem(Resolver* r, const TypeName* type, const char** outOffender, size_t depth)
+{
+    if (!type || !type->name || depth > r->m_registry.count + 8)
+    {
+        return NULL;
+    }
+
+    *outOffender = type->name;
+
+    if (type->isBox)
+    {
+        return "an owning box";
+    }
+
+    if (type->isOptional)
+    {
+        return "an optional";
+    }
+
+    if (type->isArray)
+    {
+        if (type->length < 0)
+        {
+            return "a dynamic array";
+        }
+
+        return ComponentFieldProblem(r, type->elem, outOffender, depth + 1);
+    }
+
+    if (type->primitiveType == PrimString)
+    {
+        return "a string";
+    }
+
+    if (type->primitiveType == PrimCString)
+    {
+        return "a cstring";
+    }
+
+    const StructType* registered = TypeRegistryFind(&r->m_registry, type->name);
+
+    if (!registered || registered->opaque)
+    {
+        return NULL;
+    }
+
+    if (registered->isTypeAlias)
+    {
+        if (!registered->underlyingType)
+        {
+            return NULL;
+        }
+
+        TypeName underlying = TypeNameParse(r->m_arena, registered->underlyingType);
+
+        return ComponentFieldProblem(r, &underlying, outOffender, depth + 1);
+    }
+
+    for (size_t i = 0; i < registered->fields.count; i++)
+    {
+        const FieldDecl* nested = (const FieldDecl*)VecGet(&registered->fields, i);
+        const char* problem = ComponentFieldProblem(r, &nested->type, outOffender, depth + 1);
+
+        if (problem)
+        {
+            return problem;
+        }
+    }
+
+    return NULL;
+}
+
+static void CheckComponentFields(Resolver* r, const StructDecl* sd)
+{
+    for (size_t i = 0; i < sd->fields.count; i++)
+    {
+        const FieldDecl* field = (const FieldDecl*)VecGet(&sd->fields, i);
+        const char* offender = NULL;
+        const char* problem = ComponentFieldProblem(r, &field->type, &offender, 0);
+
+        if (!problem)
+        {
+            continue;
+        }
+
+        if (offender && strcmp(offender, field->type.name) != 0)
+        {
+            DiagErrorFmt(r->m_diag, field->type.range,
+                         "component '%s' field '%s' has type '%s', which contains '%s' (%s); components may only "
+                         "hold plain data: scalars, enums, float2/3/4, handles, fixed-size arrays and structs of those",
+                         sd->name, field->name, field->type.name, offender, problem);
+        }
+        else
+        {
+            DiagErrorFmt(r->m_diag, field->type.range,
+                         "component '%s' field '%s' has type '%s', which is %s; components may only hold plain data: "
+                         "scalars, enums, float2/3/4, handles, fixed-size arrays and structs of those",
+                         sd->name, field->name, field->type.name, problem);
+        }
+    }
+}
+
+/* Collects the lanes of a constant float2/3/4 constructor (nested constructors flatten). */
+static bool FoldVectorDefaultLanes(Resolver* r, Node* n, double* lanes, unsigned* laneCount, unsigned maxLanes)
+{
+    if (n && n->kind == NodeCall)
+    {
+        CallExpr* call = (CallExpr*)n;
+
+        if (!call->isIntrinsicCall || IsNameSimdVector(call->callee) == 0)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < call->args.count; i++)
+        {
+            if (!FoldVectorDefaultLanes(r, (Node*)VecGet(&call->args, i), lanes, laneCount, maxLanes))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    ConstGlobalVal value = {0};
+
+    if (*laneCount >= maxLanes || !SemaFoldConstInit(r, n, &value))
+    {
+        return false;
+    }
+
+    lanes[(*laneCount)++] = value.isFloat ? value.f : (double)value.i;
+
+    return true;
+}
+
+/* Type-checks a field's `= expr` default and folds it into `field->folded`. */
+static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
+{
+    const TypeName* type = &field->type;
+    const char* leaf = (type->isArray || type->isBox || type->isOptional)
+                           ? NULL
+                           : TypeRegistryResolveAlias(&r->m_registry, type->name);
+    PrimitiveType primitive = leaf ? GetPrimitiveType(leaf) : PrimNone;
+    unsigned vectorLanes = leaf ? (unsigned)IsNameSimdVector(leaf) : 0;
+
+    if (!leaf || (!IsNumeric(primitive) && vectorLanes == 0))
+    {
+        DiagErrorFmt(r->m_diag, field->defaultValue->range,
+                     "field '%s' of type '%s' can't have a default value; defaults are only supported on scalar, "
+                     "enum and float2/3/4 fields",
+                     field->name, type->name);
+        return;
+    }
+
+    ResolveExpr(r, field->defaultValue, scope);
+    const TypeName* valueType = InferType(r, field->defaultValue, scope);
+
+    if (valueType && !IsAssignableType(r, type, valueType))
+    {
+        DiagErrorFmt(r->m_diag, field->defaultValue->range, "default value for field '%s' of type '%s' can't be of type '%s'",
+                     field->name, type->name, valueType->name);
+        return;
+    }
+
+    FieldDefaultValue folded = {0};
+    folded.isFloat = vectorLanes > 0 || primitive == PrimFloat || primitive == PrimDouble;
+
+    if (vectorLanes > 0)
+    {
+        if (!FoldVectorDefaultLanes(r, field->defaultValue, folded.floatLanes, &folded.laneCount, vectorLanes)
+            || folded.laneCount != vectorLanes)
+        {
+            DiagErrorFmt(r->m_diag, field->defaultValue->range,
+                         "default value for field '%s' must be a compile-time constant '%s(...)'", field->name, leaf);
+            return;
+        }
+    }
+    else
+    {
+        ConstGlobalVal value = {0};
+        value.isInt = !folded.isFloat;
+
+        if (!SemaFoldConstInit(r, field->defaultValue, &value))
+        {
+            DiagErrorFmt(r->m_diag, field->defaultValue->range,
+                         "default value for field '%s' must be a compile-time constant", field->name);
+            return;
+        }
+
+        folded.laneCount = 1;
+
+        if (folded.isFloat)
+        {
+            folded.floatLanes[0] = value.isFloat ? value.f : (double)value.i;
+        }
+        else if (primitive == PrimBool)
+        {
+            folded.intValue = (value.isFloat ? value.f != 0.0 : value.i != 0) ? 1 : 0;
+        }
+        else
+        {
+            folded.intValue = value.isFloat ? (long long)value.f : value.i;
+        }
+    }
+
+    folded.isSet = true;
+    field->folded = folded;
+}
+
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     Resolver r = {0};
@@ -8170,6 +8602,16 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     {
         FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
 
+        if (functionDecl->typeParam)
+        {
+            CheckGenericExternDecl(&r, functionDecl);
+        }
+    }
+
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&mod->functions, i);
+
         if (!functionDecl->body)
         {
             continue;
@@ -8251,6 +8693,44 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         }
 
         StrMapFree(&scope);
+    }
+
+    {
+        StrMap defaultScope;
+        StrMapInit(&defaultScope);
+
+        for (size_t i = 0; i < mod->globals.count; i++)
+        {
+            GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+            StrMapPut(&defaultScope, gd->name, (void*)&gd->type);
+        }
+
+        for (size_t i = 0; i < mod->structs.count; i++)
+        {
+            StructDecl* sd = (StructDecl*)VecGet(&mod->structs, i);
+
+            if (sd->incomplete || sd->isTypeAlias)
+            {
+                continue;
+            }
+
+            if (sd->isComponent)
+            {
+                CheckComponentFields(&r, sd);
+            }
+
+            for (size_t j = 0; j < sd->fields.count; j++)
+            {
+                FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
+
+                if (field->defaultValue)
+                {
+                    ResolveFieldDefault(&r, field, &defaultScope);
+                }
+            }
+        }
+
+        StrMapFree(&defaultScope);
     }
 
     for (size_t i = 0; i < mod->structs.count; i++)

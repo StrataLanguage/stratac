@@ -107,6 +107,9 @@ LLVMTypeRef LLVMVectorType(LLVMTypeRef elementType, unsigned elementCount);
 unsigned LLVMGetVectorSize(LLVMTypeRef ty);
 LLVMTypeRef LLVMStructCreateNamed(LLVMContextRef c, const char* name);
 LLVMBool LLVMStructSetBody(LLVMTypeRef structTy, LLVMTypeRef* elementTypes, unsigned elementCount, LLVMBool packed);
+unsigned LLVMCountStructElementTypes(LLVMTypeRef structTy);
+LLVMTypeRef LLVMStructGetTypeAtIndex(LLVMTypeRef structTy, unsigned i);
+LLVMTypeRef LLVMGetElementType(LLVMTypeRef ty);
 
 LLVMTypeRef LLVMFunctionType(LLVMTypeRef returnType, LLVMTypeRef* paramTypes, unsigned paramCount, LLVMBool isVarArg);
 LLVMTypeRef LLVMGetReturnType(LLVMTypeRef functionTy);
@@ -126,6 +129,7 @@ LLVMValueRef LLVMConstGEP2(LLVMTypeRef ty, LLVMValueRef pointer, LLVMValueRef* i
 LLVMValueRef LLVMConstPtrToInt(LLVMValueRef constantVal, LLVMTypeRef toType);
 LLVMValueRef LLVMConstBitCast(LLVMValueRef constantVal, LLVMTypeRef toType);
 LLVMValueRef LLVMConstNamedStruct(LLVMTypeRef structTy, LLVMValueRef* constantMembers, unsigned memberCount);
+LLVMValueRef LLVMConstStructInContext(LLVMContextRef c, LLVMValueRef* constantVals, unsigned count, LLVMBool packed);
 LLVMValueRef LLVMConstArray(LLVMTypeRef elementTy, LLVMValueRef* constantVals, unsigned length);
 LLVMValueRef LLVMBuildPtrToInt(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
@@ -134,6 +138,7 @@ LLVMValueRef LLVMGetInitializer(LLVMValueRef globalVar);
 void LLVMSetLinkage(LLVMValueRef global, int linkage);
 void LLVMSetUnnamedAddr(LLVMValueRef global, LLVMBool hasUnnamedAddr);
 void LLVMSetGlobalConstant(LLVMValueRef global, LLVMBool isConstant);
+void LLVMSetAlignment(LLVMValueRef v, unsigned bytes);
 LLVMValueRef LLVMConstStringInContext(LLVMContextRef c, const char* str, unsigned length, LLVMBool dontNullTerminate);
 LLVMTypeRef LLVMTypeOf(LLVMValueRef val);
 LLVMTypeKind LLVMGetTypeKind(LLVMTypeRef Ty);

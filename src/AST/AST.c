@@ -22,6 +22,7 @@ void AstReleaseModuleLists(Module* module)
     DisposeVec(&module->globals);
     DisposeVec(&module->imports);
     DisposeVec(&module->impls);
+    DisposeVec(&module->genericInstances);
 }
 
 void AstDispose(Node* node)
@@ -48,6 +49,7 @@ void AstDispose(Node* node)
         DISPOSE_ALL(globals);
         DISPOSE_ALL(imports);
         DISPOSE_ALL(impls);
+        DISPOSE_ALL(genericInstances);
 
 #undef DISPOSE_ALL
 
@@ -56,8 +58,18 @@ void AstDispose(Node* node)
         return;
     }
     case NodeStruct:
-        DisposeVec(&((StructDecl*)node)->fields);
+    {
+        StructDecl* decl = (StructDecl*)node;
+
+        for (size_t i = 0; i < decl->fields.count; ++i)
+        {
+            AstDispose(((FieldDecl*)VecGet(&decl->fields, i))->defaultValue);
+        }
+
+        DisposeVec(&decl->fields);
+        DisposeVec(&decl->attributes);
         return;
+    }
     case NodeEnum:
     {
         EnumDecl* decl = (EnumDecl*)node;

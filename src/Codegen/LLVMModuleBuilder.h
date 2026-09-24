@@ -17,6 +17,8 @@ typedef struct {
     bool hasInstancedGlobals; /* module has >=1 storage-backed global: every non-extern function's
                                   compiled signature carries a hidden leading context pointer (see
                                   __strata_context_create/__strata_context_destroy) */
+    uint8_t* typeMetadata;    /* strata_types.h blob (malloc'd), NULL when the module has no components */
+    size_t typeMetadataSize;
 } BuiltModule;
 
 typedef struct
@@ -104,6 +106,10 @@ typedef struct Builder
     LLVMValueRef m_csLenFn; /* strata_cstrlen: NUL-terminated length for cstring ==/!= */
     LLVMTypeRef m_csLenFnType;
     StrMap m_eqHelpers;
+    StrMap m_structDefaults; /* structName -> LLVMValueRef constant with field defaults applied; absent = all zero */
+    StrMap m_typeDescs;      /* structName -> LLVMValueRef StrataTypeDesc global passed to `extern<T>` calls */
+    const char* m_symbolPrefix; /* prepended to every exported (non-extern) symbol; NULL = none */
+    const Module* m_module;     /* the module being built */
     Arena* m_arena;
     int m_strLitCount;
 } Builder;
@@ -113,5 +119,10 @@ void BuiltModuleDispose(BuiltModule* bm);
 
 BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
                             const StrataProfile* profile);
+
+/* As BuildLlvmModule; `symbolPrefix` (NULL or "" = none) goes in front of every exported symbol,
+   so several AOT objects can link into one binary (see strataSetSymbolPrefix). */
+BuiltModule BuildLlvmModuleEx(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
+                              const StrataProfile* profile, const char* symbolPrefix);
 
 Value EmitExpr(Builder* b, Node* n);

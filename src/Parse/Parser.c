@@ -819,6 +819,8 @@ static HandleDecl* ParseHandleDecl(Parser* p)
     return node;
 }
 
+static Node* ParseExpr(Parser* p);
+
 static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 {
     if (!ParserConsume(p, TokKwStruct))
@@ -867,6 +869,7 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     VecInit(&node->fields);
     node->isExtern = isExtern;
+    node->moduleName = p->m_moduleName;
 
     if (ParserConsume(p, TokLBrace))
     {
@@ -936,7 +939,14 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
             field->type = ft;
             field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldTok));
             field->offset = offset;
+            field->nameRange = fieldTok.range;
             VecPush(&node->fields, field);
+
+            /* `T name = expr;` — a default value, folded to a constant by sema. */
+            if (ParserConsume(p, TokAssign))
+            {
+                field->defaultValue = ParseExpr(p);
+            }
 
             Token semi = ParserExpect(p, TokSemicolon, "';'");
 
@@ -1156,24 +1166,13 @@ static Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName
 static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType);
 static void ParseCallArgs(Parser* p, CallExpr* call);
 
-/* Attributes for functions. e.g. @private */
-static bool ParseFunctionAttributes(Parser* p, bool* outIsPrivate, Token* outFirstAt)
+/* Collects a run of `@name` attributes; whatever they precede decides which are valid. */
+static void ParseAttributes(Parser* p, Vec* outAttributes)
 {
-    bool any = false;
-    bool isPrivate = false;
-    Token firstAt = {TokEof, SRC_INVALID};
-
     while (p->m_cur.kind == TokAt)
     {
         Token atTok = p->m_cur;
         Advance(p);
-
-        if (!any)
-        {
-            firstAt = atTok;
-        }
-
-        any = true;
 
         if (p->m_cur.kind != TokIdent)
         {
@@ -1181,46 +1180,115 @@ static bool ParseFunctionAttributes(Parser* p, bool* outIsPrivate, Token* outFir
             continue;
         }
 
-        Str attrName = ParserIdentText(p, p->m_cur);
+        Attribute* attribute = AST_NEW(p->m_arena, Attribute);
+        attribute->name = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+        attribute->range = SpanFrom(atTok, p->m_cur);
+        VecPush(outAttributes, attribute);
 
-        if (StrEqC(attrName, "private"))
+        Advance(p);
+    }
+}
+
+/* Function attributes, e.g. @private. */
+static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outIsPrivate)
+{
+    bool isPrivate = false;
+
+    for (size_t i = 0; i < attributes->count; i++)
+    {
+        const Attribute* attribute = (const Attribute*)VecGet(attributes, i);
+
+        if (strcmp(attribute->name, "private") == 0)
         {
             isPrivate = true;
         }
         else
         {
-            DiagErrorFmt(p->m_diag, p->m_cur.range, "unknown attribute '@%.*s'", (int)attrName.len, attrName.data);
+            DiagErrorFmt(p->m_diag, attribute->range, "unknown attribute '@%s'", attribute->name);
+        }
+    }
+
+    *outIsPrivate = isPrivate;
+
+    return attributes->count > 0;
+}
+
+/* Struct attributes, e.g. @component. The struct takes ownership of the list. */
+static void ApplyStructAttributes(Parser* p, StructDecl* sd, Vec* attributes)
+{
+    for (size_t i = 0; i < attributes->count; i++)
+    {
+        const Attribute* attribute = (const Attribute*)VecGet(attributes, i);
+
+        if (strcmp(attribute->name, "component") != 0)
+        {
+            DiagErrorFmt(p->m_diag, attribute->range, "unknown struct attribute '@%s'", attribute->name);
+            continue;
         }
 
-        Advance(p);
+        if (sd->isTypeAlias || sd->incomplete || sd->isExtern)
+        {
+            DiagErrorFmt(p->m_diag, attribute->range,
+                         "'@component' requires a struct definition with a body (not an alias, forward "
+                         "declaration or extern struct)");
+            continue;
+        }
+
+        sd->isComponent = true;
     }
 
-    if (outIsPrivate)
-    {
-        *outIsPrivate = isPrivate;
-    }
-
-    if (outFirstAt)
-    {
-        *outFirstAt = firstAt;
-    }
-
-    return any;
+    sd->attributes = *attributes;
+    VecInit(attributes);
 }
+
+static Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes);
 
 static Node* ParseFunction(Parser* p)
 {
+    Vec attributes;
+    VecInit(&attributes);
+    ParseAttributes(p, &attributes);
+
+    Node* node = ParseFunctionWithAttributes(p, &attributes);
+
+    free(attributes.items);
+
+    return node;
+}
+
+static Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
+{
     bool isPrivate = false;
-    Token firstAt = {TokEof, SRC_INVALID};
-    bool hasAttrs = ParseFunctionAttributes(p, &isPrivate, &firstAt);
+    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate);
+    SourceRange firstAttributeRange = hasAttrs ? ((const Attribute*)VecGet(attributes, 0))->range : SRC_INVALID;
 
     bool isExtern = ParserConsume(p, TokKwExtern);
+
+    /* `extern<T>`: one host function serving every type T (see strata.h). */
+    char* typeParam = NULL;
+
+    if (isExtern && p->m_cur.kind == TokLt)
+    {
+        Advance(p);
+
+        if (p->m_cur.kind == TokIdent)
+        {
+            typeParam = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+            Advance(p);
+        }
+        else
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type parameter name after 'extern<'");
+        }
+
+        ParserExpect(p, TokGt, "'>'");
+    }
 
     if (hasAttrs
         && (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwHandle || p->m_cur.kind == TokKwEnum
             || p->m_cur.kind == TokKwImport || p->m_cur.kind == TokKwImpl))
     {
-        DiagError(p->m_diag, firstAt.range, "attributes are only allowed on function definitions");
+        DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
         return NULL;
     }
 
@@ -1264,7 +1332,7 @@ static Node* ParseFunction(Parser* p)
 
         if (hasAttrs)
         {
-            DiagError(p->m_diag, firstAt.range, "attributes are only allowed on function definitions");
+            DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
         }
 
         if (ParserConsume(p, TokAssign))
@@ -1299,11 +1367,12 @@ static Node* ParseFunction(Parser* p)
     node->isExtern = isExtern;
     node->isPrivate = isPrivate;
     node->hasReturnStmt = false;
+    node->typeParam = typeParam;
     VecInit(&node->params);
 
     if (hasAttrs)
     {
-        node->base.range = SpanFrom(firstAt, nameTok);
+        node->base.range = SpanFrom((Token){TokAt, firstAttributeRange}, nameTok);
     }
 
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
@@ -1676,6 +1745,24 @@ static ImportDecl* ParseImport(Parser* p)
     return imp;
 }
 
+static void AddTopLevelDecl(Module* mod, Node* decl, Parser* p)
+{
+    if (!decl)
+    {
+        Synchronize(p);
+        return;
+    }
+
+    if (decl->kind == NodeFunction)
+    {
+        VecPush(&mod->functions, decl);
+    }
+    else if (decl->kind == NodeGlobal)
+    {
+        VecPush(&mod->globals, decl);
+    }
+}
+
 Module* ParserParseModule(Parser* p)
 {
     Module* mod = AST_NEW(p->m_arena, Module);
@@ -1695,6 +1782,42 @@ Module* ParserParseModule(Parser* p)
         if (p->m_cur.kind == TokSemicolon || p->m_cur.kind == TokRBrace)
         {
             Advance(p);
+            continue;
+        }
+
+        if (p->m_cur.kind == TokAt)
+        {
+            Vec attributes;
+            VecInit(&attributes);
+            ParseAttributes(p, &attributes);
+
+            bool isExternStruct = p->m_cur.kind == TokKwExtern && LexerPeekToken(p->m_lex).kind == TokKwStruct;
+
+            if (p->m_cur.kind == TokKwStruct || isExternStruct)
+            {
+                if (isExternStruct)
+                {
+                    Advance(p); /* 'extern' */
+                }
+
+                StructDecl* sd = ParseStructDecl(p, isExternStruct);
+
+                if (sd)
+                {
+                    ApplyStructAttributes(p, sd, &attributes);
+                    VecPush(&mod->structs, sd);
+                }
+                else
+                {
+                    Synchronize(p);
+                }
+            }
+            else
+            {
+                AddTopLevelDecl(mod, ParseFunctionWithAttributes(p, &attributes), p);
+            }
+
+            free(attributes.items);
             continue;
         }
 
@@ -1799,23 +1922,7 @@ Module* ParserParseModule(Parser* p)
             continue;
         }
 
-        Node* decl = ParseFunction(p);
-
-        if (decl)
-        {
-            if (decl->kind == NodeFunction)
-            {
-                VecPush(&mod->functions, decl);
-            }
-            else if (decl->kind == NodeGlobal)
-            {
-                VecPush(&mod->globals, decl);
-            }
-        }
-        else
-        {
-            Synchronize(p);
-        }
+        AddTopLevelDecl(mod, ParseFunction(p), p);
     }
 
     return mod;
@@ -2835,6 +2942,38 @@ static Node* ParsePrimary(Parser* p)
     case TokIdent:
     {
         Advance(p);
+
+        /* `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
+           else starting `Name <` is a comparison, so the attempt is rolled back. */
+        if (token.kind == TokIdent && p->m_cur.kind == TokLt)
+        {
+            LexerCheckpoint saved = SaveLexerState(p);
+            Advance(p);
+
+            TypeName typeArg = {0};
+
+            if (ParserTryParseType(p, &typeArg) && typeArg.name && p->m_cur.kind == TokGt)
+            {
+                Advance(p);
+
+                if (p->m_cur.kind == TokLParen)
+                {
+                    CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+                    call->base.kind = NodeCall;
+                    call->base.range = token.range;
+                    call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
+                    call->isIntrinsicCall = false;
+                    call->typeArg = (TypeName*)arena_dup(p->m_arena, &typeArg, sizeof(TypeName));
+                    VecInit(&call->args);
+
+                    ParseCallArgs(p, call);
+
+                    return (Node*)call;
+                }
+            }
+
+            RestoreLexerState(p, saved);
+        }
 
         if (p->m_cur.kind == TokLParen)
         {

@@ -3,8 +3,10 @@
 #include "Codegen/LLVMCApi.h"
 #include "Core/Diagnostics.h"
 #include "LLVMSimd.h"
+#include "TypeMetadata.h"
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
+#include "strata/strata_types.h"
 
 #include <assert.h>
 #include <stdlib.h>
@@ -26,6 +28,7 @@ typedef struct
     bool hasHiddenCtxParam; /* non-extern fn in a module with instanced globals: LLVM param 0 is the hidden
                                 context pointer, invisible at the Strata source level (see DeclareFunction /
                                 EmitCall) */
+    bool hasTypeDescParam;  /* `extern<T>` instantiation: a trailing `const StrataTypeDesc*` for T */
 } FuncInfo;
 
 // Folded constant init (host-side values; LLVM-C lacks Const*Cast).
@@ -667,6 +670,10 @@ static void DefineFunction(Builder* b, const FunctionDecl* f);
 
 static LLVMValueRef ZeroOf(TypeDesc typeDesc);
 static TypeDesc Resolve(Builder* b, const TypeName* t);
+static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type);
+static LLVMValueRef DefaultValueOf(Builder* b, const TypeName* type, TypeDesc typeDesc);
+static const char* ExportedSymbolName(Builder* b, const char* name);
+static bool HasSymbolPrefix(const Builder* b);
 
 typedef struct
 {
@@ -1063,6 +1070,161 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
 static LLVMValueRef ZeroOf(TypeDesc typeDesc)
 {
     return LLVMConstNull(typeDesc.type);
+}
+
+static bool HasSymbolPrefix(const Builder* b)
+{
+    return b->m_symbolPrefix && b->m_symbolPrefix[0];
+}
+
+/* The linker-visible name of an exported (non-extern) symbol. */
+static const char* ExportedSymbolName(Builder* b, const char* name)
+{
+    if (!HasSymbolPrefix(b))
+    {
+        return name;
+    }
+
+    return arena_format(b->m_arena, "%s%s", b->m_symbolPrefix, name);
+}
+
+/* With a symbol prefix, module-emitted runtime helpers become module-local so several objects
+   (each with its own copy) can link into one binary. */
+static void MakeHelperModuleLocal(Builder* b, LLVMValueRef function)
+{
+    if (HasSymbolPrefix(b))
+    {
+        LLVMSetLinkage(function, LLVMInternalLinkage);
+    }
+}
+
+// Marks "computed, no defaults" (and "being computed") in m_structDefaults.
+static char s_noStructDefault;
+
+/* A field default folded by sema, as a constant of the field's own type. */
+static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultValue* value)
+{
+    if (typeDesc.isSimdVector)
+    {
+        LLVMTypeRef laneTy = LLVMGetElementType(typeDesc.type);
+        unsigned laneCount = LLVMGetVectorSize(typeDesc.type);
+        LLVMValueRef lanes[4];
+
+        for (unsigned lane = 0; lane < laneCount && lane < 4; lane++)
+        {
+            lanes[lane] = LLVMConstReal(laneTy, lane < value->laneCount ? value->floatLanes[lane] : 0.0);
+        }
+
+        return LLVMConstVector(lanes, (int)(laneCount < 4 ? laneCount : 4));
+    }
+
+    if (typeDesc.isFloat)
+    {
+        return LLVMConstReal(typeDesc.type, value->floatLanes[0]);
+    }
+
+    return LLVMConstInt(typeDesc.type, (unsigned long long)value->intValue, 0);
+}
+
+/* `structName` with its field defaults applied, or NULL when that is all-zero. */
+static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
+{
+    void* cached = StrMapGet(&b->m_structDefaults, structName);
+
+    if (cached)
+    {
+        return cached == &s_noStructDefault ? NULL : (LLVMValueRef)cached;
+    }
+
+    StrMapPut(&b->m_structDefaults, structName, &s_noStructDefault);
+
+    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, structName);
+
+    if (!st || st->opaque || st->isTypeAlias || !st->hasLayout || !structTy || st->fields.count == 0)
+    {
+        return NULL;
+    }
+
+    unsigned memberCount = LLVMCountStructElementTypes(structTy);
+    LLVMValueRef* members = (LLVMValueRef*)arena_alloc(b->m_arena, memberCount * sizeof(LLVMValueRef));
+
+    for (unsigned i = 0; i < memberCount; i++)
+    {
+        members[i] = LLVMConstNull(LLVMStructGetTypeAtIndex(structTy, i));
+    }
+
+    bool hasDefault = false;
+
+    for (size_t i = 0; i < st->fields.count; i++)
+    {
+        const FieldDecl* field = (const FieldDecl*)VecGet(&st->fields, i);
+        LLVMValueRef value = field->folded.isSet ? FoldedDefaultConstant(Resolve(b, &field->type), &field->folded)
+                                                 : TypeDefaultConstant(b, &field->type);
+        unsigned member = PhysicalFieldIndex(st, (int)i);
+
+        if (value && member < memberCount)
+        {
+            members[member] = value;
+            hasDefault = true;
+        }
+    }
+
+    if (!hasDefault)
+    {
+        return NULL;
+    }
+
+    LLVMValueRef constant = LLVMConstNamedStruct(structTy, members, memberCount);
+    StrMapPut(&b->m_structDefaults, structName, (void*)constant);
+
+    return constant;
+}
+
+/* The default value of `type` when field defaults make it differ from all-zero (a struct with
+   defaults, directly or nested, or a fixed array of one), else NULL. */
+static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type)
+{
+    if (!type || !type->name || type->isBox || type->isOptional)
+    {
+        return NULL;
+    }
+
+    if (type->isArray)
+    {
+        if (type->length < 1)
+        {
+            return NULL;
+        }
+
+        LLVMValueRef element = TypeDefaultConstant(b, type->elem);
+
+        if (!element)
+        {
+            return NULL;
+        }
+
+        LLVMValueRef* elements = (LLVMValueRef*)arena_alloc(b->m_arena, (size_t)type->length * sizeof(LLVMValueRef));
+
+        for (long i = 0; i < type->length; i++)
+        {
+            elements[i] = element;
+        }
+
+        return LLVMConstArray(LLVMTypeOf(element), elements, (unsigned)type->length);
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(&b->m_registry, type->name);
+
+    return leaf ? StructDefaultConstant(b, leaf) : NULL;
+}
+
+/* What an uninitialized binding of `type` starts as: its field defaults, else zero. */
+static LLVMValueRef DefaultValueOf(Builder* b, const TypeName* type, TypeDesc typeDesc)
+{
+    LLVMValueRef defaults = TypeDefaultConstant(b, type);
+
+    return defaults ? defaults : ZeroOf(typeDesc);
 }
 
 static Value ZeroInt(Builder* b)
@@ -2250,8 +2412,72 @@ static void RunDefersFrom(Builder* b, size_t fromIndex)
     }
 }
 
+/* The JIT's `__strata_ext_<name>` slot for an extern, created on first use: every `extern<T>`
+   instantiation shares the generic's slot, since the host binds one function for all T. */
+static LLVMValueRef ExternSlot(Builder* b, const char* name)
+{
+    LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->m_externSlots, name);
+
+    if (!slot)
+    {
+        slot = LLVMAddGlobal(b->m_mod, b->m_ptrTy, arena_format(b->m_arena, "__strata_ext_%s", name));
+        LLVMSetInitializer(slot, LLVMConstNull(b->m_ptrTy));
+        StrMapPut(&b->m_externSlots, name, (void*)slot);
+    }
+
+    return slot;
+}
+
+/* T's descriptor for `extern<T>` calls: {nameHash, layoutHash, size, alignment} then the
+   NUL-terminated name, as StrataTypeDesc in strata.h. */
+static LLVMValueRef TypeDescConstant(Builder* b, const char* structName)
+{
+    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->m_typeDescs, structName);
+
+    if (existing)
+    {
+        return existing;
+    }
+
+    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+    size_t nameLength = strlen(structName);
+
+    LLVMValueRef name = LLVMConstStringInContext(b->m_ctx, structName, (unsigned)nameLength, 0);
+    LLVMTypeRef memberTypes[5] = {I64Ty(b), I64Ty(b), I32Ty(b), I32Ty(b), LLVMTypeOf(name)};
+    LLVMValueRef members[5] = {
+        LLVMConstInt(I64Ty(b), TypeMetadataNameHash(structName), 0),
+        LLVMConstInt(I64Ty(b), st ? TypeMetadataLayoutHash(&b->m_registry, b->m_module, st) : 0, 0),
+        LLVMConstInt(I32Ty(b), st ? (unsigned long long)st->sizeBytes : 0, 0),
+        LLVMConstInt(I32Ty(b), st ? (unsigned long long)st->alignBytes : 1, 0),
+        name,
+    };
+
+    LLVMTypeRef descTy = LLVMStructTypeInContext(b->m_ctx, memberTypes, 5, 0);
+    LLVMValueRef desc = LLVMAddGlobal(b->m_mod, descTy, arena_format(b->m_arena, ".typedesc.%s", structName));
+    LLVMSetInitializer(desc, LLVMConstStructInContext(b->m_ctx, members, 5, 0));
+    LLVMSetLinkage(desc, LLVMPrivateLinkage);
+    LLVMSetGlobalConstant(desc, 1);
+    LLVMSetAlignment(desc, 8);
+
+    StrMapPut(&b->m_typeDescs, structName, (void*)desc);
+
+    return desc;
+}
+
 static void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
+    /* An `extern<T>` itself is never called (sema redirects calls to instantiations), but the
+       host binds its name, so the JIT needs its slot. */
+    if (f->typeParam)
+    {
+        if (b->m_jitMode)
+        {
+            ExternSlot(b, f->name);
+        }
+
+        return;
+    }
+
     FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
 
     bool hasReturnParam = FunctionHasReturnParam(f);
@@ -2282,11 +2508,14 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     info->hasHiddenCtxParam = !f->isExtern && b->m_hasInstancedGlobals;
     size_t ctxOffset = info->hasHiddenCtxParam ? 1 : 0;
 
+    info->hasTypeDescParam = f->genericOf != NULL;
+    size_t typeDescCount = info->hasTypeDescParam ? 1 : 0;
+
     LLVMTypeRef* params = NULL;
 
-    if (pcount + ctxOffset > 0)
+    if (pcount + ctxOffset + typeDescCount > 0)
     {
-        params = (LLVMTypeRef*)arena_alloc(b->m_arena, (pcount + ctxOffset) * sizeof(LLVMTypeRef));
+        params = (LLVMTypeRef*)arena_alloc(b->m_arena, (pcount + ctxOffset + typeDescCount) * sizeof(LLVMTypeRef));
     }
 
     if (info->hasHiddenCtxParam)
@@ -2333,22 +2562,36 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx)
                                             : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
 
-    info->type = LLVMFunctionType(abiRetType, params, (unsigned)(pcount + ctxOffset), f->isCVararg ? 1 : 0);
+    if (info->hasTypeDescParam)
+    {
+        params[pcount + ctxOffset] = b->m_ptrTy;
+    }
+
+    info->type = LLVMFunctionType(abiRetType, params, (unsigned)(pcount + ctxOffset + typeDescCount),
+                                  f->isCVararg ? 1 : 0);
 
     if (b->m_jitMode && f->isExtern)
     {
-        char* slotName = arena_format(b->m_arena, "__strata_ext_%s", f->name);
+        LLVMValueRef slot = ExternSlot(b, f->name);
 
-        LLVMValueRef slot = LLVMAddGlobal(b->m_mod, b->m_ptrTy, slotName);
-        LLVMSetInitializer(slot, LLVMConstNull(b->m_ptrTy));
-
-        StrMapPut(&b->m_externSlots, f->name, (void*)slot);
+        /* Calls to an instantiation name it by its mangled `Name<T>`. */
+        if (f->genericOf)
+        {
+            StrMapPut(&b->m_externSlots, f->mangledName, (void*)slot);
+        }
 
         info->function = NULL;
     }
+    else if (f->genericOf)
+    {
+        /* Every instantiation has the same ABI (T crosses as a pointer), so all share one declaration. */
+        LLVMValueRef existing = LLVMGetNamedFunction(b->m_mod, f->name);
+        info->function = existing ? existing : LLVMAddFunction(b->m_mod, f->name, info->type);
+    }
     else
     {
-        info->function = LLVMAddFunction(b->m_mod, f->mangledName, info->type);
+        const char* symbol = f->isExtern ? f->mangledName : ExportedSymbolName(b, f->mangledName);
+        info->function = LLVMAddFunction(b->m_mod, symbol, info->type);
     }
 
     StrMapPut(&b->m_funcs, f->mangledName, info);
@@ -4411,6 +4654,7 @@ static LLVMValueRef StrataStrdupFn(Builder* b)
         LLVMTypeRef params[1] = {b->m_ptrTy};
         b->m_strdupFnType = LLVMFunctionType(b->m_ptrTy, params, 1, 0);
         b->m_strdupFn = LLVMAddFunction(b->m_mod, "strata_strdup", b->m_strdupFnType);
+        MakeHelperModuleLocal(b, b->m_strdupFn);
         EmitStrataStrdupBody(b);
     }
     return b->m_strdupFn;
@@ -4496,6 +4740,7 @@ static LLVMValueRef StrataStrEqFn(Builder* b)
         LLVMTypeRef params[4] = {b->m_ptrTy, I64Ty(b), b->m_ptrTy, I64Ty(b)};
         b->m_strEqFnType = LLVMFunctionType(I32Ty(b), params, 4, 0);
         b->m_strEqFn = LLVMAddFunction(b->m_mod, "strata_str_eq", b->m_strEqFnType);
+        MakeHelperModuleLocal(b, b->m_strEqFn);
         EmitStrataStrEqBody(b);
     }
     return b->m_strEqFn;
@@ -4566,6 +4811,7 @@ static LLVMValueRef StrataCStrLenFn(Builder* b)
         LLVMTypeRef params[1] = {b->m_ptrTy};
         b->m_csLenFnType = LLVMFunctionType(I64Ty(b), params, 1, 0);
         b->m_csLenFn = LLVMAddFunction(b->m_mod, "strata_cstrlen", b->m_csLenFnType);
+        MakeHelperModuleLocal(b, b->m_csLenFn);
         EmitStrataCStrLenBody(b);
     }
 
@@ -6206,6 +6452,21 @@ static Value EmitCall(Builder* b, CallExpr* n)
         finalCount = (unsigned)(nargs + 1);
     }
 
+    /* `extern<T>`: T's descriptor goes last, after every argument the call spells out. */
+    if (info->hasTypeDescParam && fd && fd->typeArg)
+    {
+        LLVMValueRef* withTypeDesc = (LLVMValueRef*)arena_alloc(b->m_arena, (finalCount + 1) * sizeof(LLVMValueRef));
+
+        if (finalCount > 0)
+        {
+            memcpy(withTypeDesc, finalArgs, finalCount * sizeof(LLVMValueRef));
+        }
+
+        withTypeDesc[finalCount] = TypeDescConstant(b, fd->typeArg);
+        finalArgs = withTypeDesc;
+        finalCount++;
+    }
+
     LLVMValueRef callee = info->function;
     bool slotExtern = false;
 
@@ -6607,7 +6868,8 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
 
     const StructType* st = TypeRegistryFind(&b->m_registry, n->typeName);
 
-    LLVMValueRef agg = LLVMConstNull(typeDesc.type);
+    /* Fields the literal leaves out keep their declared defaults. */
+    LLVMValueRef agg = DefaultValueOf(b, &tn, typeDesc);
 
     size_t positionalIndex = 0;
 
@@ -6649,7 +6911,7 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
             ArrayInitExpr* ai = (ArrayInitExpr*)field->value;
             TypeDesc elemTd = Resolve(b, ai->elementType);
 
-            LLVMValueRef arr = LLVMConstNull(fieldTd.type);
+            LLVMValueRef arr = DefaultValueOf(b, &fieldDecl->type, fieldTd);
 
             for (size_t k = 0; k < ai->elements.count; k++)
             {
@@ -7077,7 +7339,7 @@ static void EmitStmtInner(Builder* b, Node* n)
         {
             /* Stack-allocated fixed-size array local */
             LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "fixarr");
-            LLVMValueRef arr = LLVMConstNull(typeDesc.type);
+            LLVMValueRef arr = DefaultValueOf(b, &varDecl->type, typeDesc);
 
             if (varDecl->init && varDecl->init->kind == NodeArrayInit)
             {
@@ -7258,7 +7520,8 @@ static void EmitStmtInner(Builder* b, Node* n)
         {
             /* A bare `cstring` defaults to the static empty buffer (never
                NULL), mirroring the extern-boundary invariant. */
-            LLVMBuildStore(b->m_builder, typeDesc.isCString ? EmptyNulString(b) : ZeroOf(typeDesc), slot);
+            LLVMBuildStore(b->m_builder,
+                           typeDesc.isCString ? EmptyNulString(b) : DefaultValueOf(b, &varDecl->type, typeDesc), slot);
         }
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
@@ -7966,6 +8229,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                                 const StrataProfile* profile)
 {
     b->m_diag = diag;
+    b->m_module = module;
     b->m_jitMode = jitMode;
     b->m_boundsCheck = !profile || profile->boundsCheck;
     b->m_nullExternCheck = !profile || profile->nullExternCall;
@@ -8193,6 +8457,12 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         DeclareFunction(b, f);
     }
 
+    /* After the generics themselves, so each instantiation finds its generic's JIT slot. */
+    for (size_t i = 0; i < module->genericInstances.count; i++)
+    {
+        DeclareFunction(b, (FunctionDecl*)VecGet(&module->genericInstances, i));
+    }
+
     for (size_t i = 0; i < module->functions.count; i++)
     {
         FunctionDecl* f = (FunctionDecl*)VecGet(&module->functions, i);
@@ -8215,7 +8485,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
         /* ---- __strata_context_create ---- */
         LLVMTypeRef createTy = LLVMFunctionType(b->m_ptrTy, NULL, 0, 0);
-        LLVMValueRef createFn = LLVMAddFunction(b->m_mod, "__strata_context_create", createTy);
+        LLVMValueRef createFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_create"), createTy);
         b->m_curFn = createFn;
         StrMapClear(&b->m_symbols);
         b->m_terminated = false;
@@ -8350,7 +8620,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                failure), store zero on failure/absence. */
             ConstInitVal foldedVal;
             bool folded = gd->init && FoldConstInit(b, td, gd->init, &foldedVal);
-            LLVMValueRef value = LLVMConstNull(td.type);
+            LLVMValueRef value = DefaultValueOf(b, &gd->type, td);
 
             if (folded)
             {
@@ -8369,7 +8639,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         /* ---- __strata_context_destroy ---- */
         LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
         LLVMTypeRef destroyTy = LLVMFunctionType(voidTy, destroyParams, 1, 0);
-        LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, "__strata_context_destroy", destroyTy);
+        LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
         b->m_curFn = destroyFn;
         StrMapClear(&b->m_symbols);
         b->m_terminated = false;
@@ -8426,6 +8696,20 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         b->m_builder = NULL;
     }
 
+    uint8_t* typeMetadata = NULL;
+    size_t typeMetadataSize = 0;
+
+    /* The same blob strataCompileTypeMetadata produces, as a read-only symbol the host can
+       find in an AOT object (the JIT hands out the copy kept on the BuiltModule). */
+    if (TypeMetadataBuild(&b->m_registry, module, &typeMetadata, &typeMetadataSize))
+    {
+        LLVMValueRef bytes = LLVMConstStringInContext(b->m_ctx, (const char*)typeMetadata, (unsigned)typeMetadataSize, 1);
+        LLVMValueRef global = LLVMAddGlobal(b->m_mod, LLVMTypeOf(bytes), ExportedSymbolName(b, STRATA_TYPES_SYMBOL));
+        LLVMSetInitializer(global, bytes);
+        LLVMSetGlobalConstant(global, 1);
+        LLVMSetAlignment(global, 16);
+    }
+
     BuiltModule out;
     BuiltModuleInit(&out);
 
@@ -8433,6 +8717,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
     out.mod = b->m_mod;
     out.externSymbols = b->m_externNames;
     out.hasInstancedGlobals = b->m_hasInstancedGlobals;
+    out.typeMetadata = typeMetadata;
+    out.typeMetadataSize = typeMetadataSize;
 
     b->m_ctx = NULL;
     b->m_mod = NULL;
@@ -8445,6 +8731,8 @@ void BuiltModuleInit(BuiltModule* bm)
     bm->ctx = NULL;
     bm->mod = NULL;
     bm->hasInstancedGlobals = false;
+    bm->typeMetadata = NULL;
+    bm->typeMetadataSize = 0;
     VecInit(&bm->externSymbols);
 }
 
@@ -8467,13 +8755,26 @@ void BuiltModuleDispose(BuiltModule* bm)
         bm->externSymbols.count = 0;
         bm->externSymbols.cap = 0;
     }
+
+    free(bm->typeMetadata);
+    bm->typeMetadata = NULL;
+    bm->typeMetadataSize = 0;
 }
 
 BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
                             const StrataProfile* profile)
 {
+    return BuildLlvmModuleEx(ast, diag, arena, jitMode, profile, NULL);
+}
+
+BuiltModule BuildLlvmModuleEx(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
+                              const StrataProfile* profile, const char* symbolPrefix)
+{
     Builder b = {0};
     b.m_arena = arena;
+    b.m_symbolPrefix = symbolPrefix;
+    StrMapInit(&b.m_structDefaults);
+    StrMapInit(&b.m_typeDescs);
     StrMapInit(&b.m_structTypes);
     StrMapInit(&b.m_funcs);
     StrMapInit(&b.m_symbols);
@@ -8523,6 +8824,8 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     StrMapFree(&b.m_dropFns);
     StrMapFree(&b.m_copyFns);
     StrMapFree(&b.m_eqHelpers);
+    StrMapFree(&b.m_structDefaults);
+    StrMapFree(&b.m_typeDescs);
     free(b.m_loops.items);
     free(b.m_owningLocals.items);
     free(b.m_temps.items);

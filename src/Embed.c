@@ -1,6 +1,7 @@
 #include "strata/strata.h"
 
 #include "Codegen/CodegenBackend.h"
+#include "Codegen/TypeMetadata.h"
 #include "Core/Diagnostics.h"
 #include "Core/SourceLocation.h"
 #include "Lex/Lexer.h"
@@ -37,6 +38,8 @@ extern "C"
 
         StrataImportResolverFn importResolver;      // optional import resolver
         void* importResolverUserData;
+
+        char* symbolPrefix; // prepended to exported symbols (strataSetSymbolPrefix), NULL = none
     };
 
     static char* ConcatOwned(const char* a, const char* b)
@@ -207,12 +210,42 @@ extern "C"
         compiler->profile = strataProfileDefault();
         compiler->importResolver = NULL;
         compiler->importResolverUserData = NULL;
+        compiler->symbolPrefix = NULL;
         return compiler;
     }
 
     void strataCompilerDestroy(StrataCompiler* c)
     {
+        if (c)
+        {
+            free(c->symbolPrefix);
+        }
+
         free(c);
+    }
+
+    int strataSetSymbolPrefix(StrataCompiler* c, const char* prefix)
+    {
+        if (!c)
+        {
+            return 0;
+        }
+
+        for (const char* at = prefix; at && *at; at++)
+        {
+            char ch = *at;
+            bool valid = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_';
+
+            if (!valid)
+            {
+                return 0;
+            }
+        }
+
+        free(c->symbolPrefix);
+        c->symbolPrefix = (prefix && prefix[0]) ? DupString(prefix) : NULL;
+
+        return 1;
     }
 
     void strataSetArchitecture(StrataCompiler* c, StrataArch arch)
@@ -457,7 +490,7 @@ extern "C"
         return 0;
     }
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false, NULL);
+    BuiltModule bm = BuildLlvmModuleEx(mod, &diag, &arena, false, NULL, c ? c->symbolPrefix : NULL);
 
     if (DiagHasErrors(&diag))
     {
@@ -540,6 +573,9 @@ extern "C"
         void* backend;   // LLVMJit*, per kind; NULL if kind == NONE
         char* diagnostics;
         bool hasContext; // functions take a hidden leading context pointer (module has instanced globals)
+        char* symbolPrefix;     // exported symbols carry this prefix; lookups add it
+        uint8_t* typeMetadata;  // strata_types.h blob, NULL without components
+        size_t typeMetadataSize;
 #if STRATA_HAS_LLVM
         Vec llvmExports; // LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM
 #endif
@@ -591,9 +627,9 @@ extern "C"
 #if STRATA_HAS_LLVM
     static StrataJit* JitFromModuleLlvm(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                         size_t sourceCount, const char* diagText, const char** errOut, void* allocFn,
-                                        void* freeFn, const StrataProfile* profile)
+                                        void* freeFn, const StrataProfile* profile, const char* symbolPrefix)
     {
-        BuiltModule bm = BuildLlvmModule(mod, diag, arena, true, profile);
+        BuiltModule bm = BuildLlvmModuleEx(mod, diag, arena, true, profile, symbolPrefix);
 
         if (DiagHasErrors(diag))
         {
@@ -655,12 +691,17 @@ extern "C"
             return NULL;
         }
 
+        handle->typeMetadata = bm.typeMetadata;
+        handle->typeMetadataSize = bm.typeMetadataSize;
+        bm.typeMetadata = NULL;
+
         BuiltModuleDispose(&bm);
 
         handle->kind = STRATA_JIT_KIND_LLVM;
         handle->backend = jit;
         handle->hasContext = bm.hasInstancedGlobals;
         handle->diagnostics = DupString(diagText);
+        handle->symbolPrefix = symbolPrefix ? DupString(symbolPrefix) : NULL;
 
         return handle;
     }
@@ -668,7 +709,8 @@ extern "C"
 
     static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                     size_t sourceCount, const char** errOut, const StrataArch arch, void* allocFn,
-                                    void* freeFn, StrataJitBackend want, const StrataProfile* profile)
+                                    void* freeFn, StrataJitBackend want, const StrataProfile* profile,
+                                    const char* symbolPrefix)
     {
         char* diagText = DiagFormat(diag, sources, sourceCount, arena);
 
@@ -687,7 +729,7 @@ extern "C"
 #if STRATA_HAS_LLVM
         case STRATA_JIT_KIND_LLVM:
             return JitFromModuleLlvm(mod, diag, arena, sources, sourceCount, diagText, errOut, allocFn, freeFn,
-                                     profile);
+                                     profile, symbolPrefix);
 #endif
         default:
             return UnavailableJit(errOut);
@@ -710,7 +752,7 @@ extern "C"
             AnalyzeModule(mod, &diag, &arena);
 
             StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
-                                              c->allocFn, c->freeFn, c->jitBackend, &c->profile);
+                                              c->allocFn, c->freeFn, c->jitBackend, &c->profile, c->symbolPrefix);
 
             TeardownCompile(mod, &loader, &diag, &arena);
 
@@ -746,7 +788,7 @@ extern "C"
 
         StrataJit* handle
             = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn, c->jitBackend,
-                            &c->profile);
+                            &c->profile, c->symbolPrefix);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -800,7 +842,7 @@ extern "C"
         AnalyzeModule(mod, &diag, &arena);
 
         StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
-                                       c->allocFn, c->freeFn, c->jitBackend, &c->profile);
+                                       c->allocFn, c->freeFn, c->jitBackend, &c->profile, c->symbolPrefix);
 
         TeardownCompile(mod, &loader, &diag, &arena);
 
@@ -816,10 +858,32 @@ extern "C"
 #if STRATA_HAS_LLVM
         if (jit->kind == STRATA_JIT_KIND_LLVM)
         {
+            if (jit->symbolPrefix)
+            {
+                char* prefixed = ConcatOwned(jit->symbolPrefix, name);
+                void* address = prefixed ? (void*)(uintptr_t)LLVMJitGetAddress((LLVMJit*)jit->backend, prefixed) : NULL;
+                free(prefixed);
+
+                if (address)
+                {
+                    return address;
+                }
+            }
+
             return (void*)(uintptr_t)LLVMJitGetAddress((LLVMJit*)jit->backend, name);
         }
 #endif
         return NULL;
+    }
+
+    const void* strataJitGetTypeMetadata(StrataJit* jit, size_t* outSize)
+    {
+        if (outSize)
+        {
+            *outSize = jit ? jit->typeMetadataSize : 0;
+        }
+
+        return jit ? jit->typeMetadata : NULL;
     }
 
     int strataJitHasIntVoidSignature(StrataJit* jit, const char* name)
@@ -932,7 +996,152 @@ extern "C"
 #endif
 
         free(jit->diagnostics);
+        free(jit->symbolPrefix);
+        free(jit->typeMetadata);
         free(jit);
+    }
+
+    /* Parses and checks `mod`, then serializes its components. The loader/source cleanup stays
+       with the caller. */
+    static int TypeMetadataFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
+                                      size_t sourceCount, void** outBytes, size_t* outSize, const char** errOut)
+    {
+        AnalyzeModule(mod, diag, arena);
+
+        if (DiagHasErrors(diag) || !mod)
+        {
+            char* diagText = DiagFormat(diag, sources, sourceCount, arena);
+            SetErrOut(errOut, diagText, "compilation failed");
+            return 0;
+        }
+
+        uint8_t* bytes = NULL;
+        size_t size = 0;
+        TypeMetadataBuildFromModule(mod, &bytes, &size);
+
+        *outBytes = bytes;
+        *outSize = size;
+
+        return 1;
+    }
+
+    int strataCompileTypeMetadata(StrataCompiler* c, const char* path, void** outBytes, size_t* outSize,
+                                  const char** errOut)
+    {
+        if (errOut)
+        {
+            *errOut = NULL;
+        }
+
+        if (!outBytes || !outSize)
+        {
+            SetErrOut(errOut, "null output", "");
+            return 0;
+        }
+
+        *outBytes = NULL;
+        *outSize = 0;
+
+        if (!c || !path)
+        {
+            SetErrOut(errOut, "null compiler or path", "");
+            return 0;
+        }
+
+        Arena arena;
+        DiagnosticEngine diag;
+        ModuleLoader loader;
+        InitModuleLoader(&arena, &diag, &loader, c);
+
+        Module* mod = ModuleLoaderLoad(&loader, path);
+        int ok = TypeMetadataFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, outBytes, outSize,
+                                        errOut);
+
+        TeardownCompile(mod, &loader, &diag, &arena);
+
+        return ok;
+    }
+
+    int strataCompileTypeMetadataString(StrataCompiler* c, const char* source, const char* moduleName,
+                                        void** outBytes, size_t* outSize, const char** errOut)
+    {
+        if (errOut)
+        {
+            *errOut = NULL;
+        }
+
+        if (!outBytes || !outSize)
+        {
+            SetErrOut(errOut, "null output", "");
+            return 0;
+        }
+
+        *outBytes = NULL;
+        *outSize = 0;
+
+        if (!c || !source)
+        {
+            SetErrOut(errOut, "null compiler or source", "");
+            return 0;
+        }
+
+        const char* name = moduleName ? moduleName : "strata_module";
+        size_t sourceLen = strlen(source);
+
+        if (c->importResolver)
+        {
+            Arena arena;
+            DiagnosticEngine diag;
+            ModuleLoader loader;
+            InitModuleLoader(&arena, &diag, &loader, c);
+
+            Module* mod = ModuleLoaderLoadSource(&loader, name, source, sourceLen);
+            int ok = TypeMetadataFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, outBytes, outSize,
+                                            errOut);
+
+            TeardownCompile(mod, &loader, &diag, &arena);
+
+            return ok;
+        }
+
+        Arena arena;
+        arena_init(&arena, 0);
+
+        SourceManager src;
+        SourceManagerInit(&src);
+        SourceManagerSetSource(&src, source, sourceLen, name);
+
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
+
+        Lexer lex;
+        LexerInit(&lex, src.m_text, src.m_textLen, &diag, 0);
+
+        Parser parser;
+        ParserInit(&parser, &lex, &diag, &arena, name);
+
+        Module* mod = ParserParseModule(&parser);
+
+        if (mod && mod->imports.count > 0)
+        {
+            DiagErrorFmt(&diag, SRC_INVALID,
+                         "imports are not supported when compiling from a string; use strataCompileTypeMetadata or "
+                         "strataSetImportResolver");
+        }
+
+        int ok = TypeMetadataFromModule(mod, &diag, &arena, &src, 1, outBytes, outSize, errOut);
+
+        AstDispose((Node*)mod);
+        DiagnosticEngineFree(&diag);
+        SourceManagerFree(&src);
+        arena_free(&arena);
+
+        return ok;
+    }
+
+    void strataFreeTypeMetadata(void* bytes)
+    {
+        free(bytes);
     }
 
     static StrataPanicHandler s_panicHandler = NULL;

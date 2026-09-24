@@ -1,0 +1,48 @@
+// components.strata -- `@component` structs, field defaults and symbol prefixes.
+//
+// Built twice by CMake with different prefixes, and both objects link into one host:
+//
+//   stratac components.strata --symbol-prefix Alpha_ -o alpha.o
+//   stratac components.strata --symbol-prefix Beta_ -o beta.o
+//   clang hosts/components_host.c alpha.o beta.o -o components.exe
+//
+// Each object exports `<prefix>__strata_types`: type metadata the host reads with
+// strata/strata_types.h to register Health, without running any Strata code.
+
+enum Team : byte { Red = 1, Blue = 2 };
+
+// Plain data only: the host copies components as raw bytes.
+@component
+struct Health
+{
+    float current = 100.0;
+    float maximum = 150.0;
+    Team team = Team.Blue;
+};
+
+// One host function for every T; T's StrataTypeDesc arrives as a hidden last argument.
+extern<T> bool HostRead(ref T value);
+
+int g_hits = 0;
+
+// Uninitialized locals start with the field defaults.
+int take_hit(int amount)
+{
+    Health health;
+
+    Health stored;
+    if (HostRead(stored))
+    {
+        health.current = stored.current;
+    }
+
+    g_hits = g_hits + 1;
+
+    string label = "hit";
+    if (label == "hit")
+    {
+        return (int)health.current - amount * g_hits;
+    }
+
+    return 0;
+}

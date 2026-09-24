@@ -34,6 +34,7 @@ set(STRATA_COMMON_SOURCES
     src/Parse/Parser.c
     src/Sema/ResolveOverloads.c
     src/Codegen/TypeRegistry.c
+    src/Codegen/TypeMetadata.c
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
     src/Import/ModuleLoader.c
@@ -247,6 +248,7 @@ if(NOT STRATA_SHARED)
             tests/unit/ContextTests.c
             tests/unit/CodegenRegressionTests.c
             tests/unit/LiteralTests.c
+            tests/unit/ComponentTests.c
         )
     endif()
     add_executable(strata_tests ${STRATA_TEST_SOURCES})
@@ -389,6 +391,27 @@ if(STRATA_ENABLE_LLVM)
     set_target_properties(aot_opaque_struct_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_opaque_struct_test COMMAND aot_opaque_struct_test)
     set_tests_properties(aot_opaque_struct_test PROPERTIES PASS_REGULAR_EXPRESSION "entry\\(\\) = 87")
+
+    # Two copies of one module, told apart by --symbol-prefix, linked into one host that
+    # reads each copy's component metadata.
+    set(STRATA_COMPONENTS_TEST_OBJECTS "")
+    foreach(prefix Alpha_ Beta_)
+        set(object "${CMAKE_CURRENT_BINARY_DIR}/components_${prefix}${CMAKE_C_OUTPUT_EXTENSION}")
+        add_custom_command(
+            OUTPUT "${object}"
+            COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/components.strata"
+                    --symbol-prefix ${prefix} -o "${object}"
+            DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/components.strata"
+            COMMENT "stratac: AOT-compiling components.strata with prefix ${prefix}"
+            VERBATIM
+        )
+        list(APPEND STRATA_COMPONENTS_TEST_OBJECTS "${object}")
+    endforeach()
+    add_executable(aot_components_test samples/hosts/components_host.c ${STRATA_COMPONENTS_TEST_OBJECTS})
+    target_include_directories(aot_components_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    set_target_properties(aot_components_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_components_test COMMAND aot_components_test)
+    set_tests_properties(aot_components_test PROPERTIES PASS_REGULAR_EXPRESSION "components: alpha=40 beta=50")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES

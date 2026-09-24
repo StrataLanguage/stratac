@@ -130,13 +130,56 @@ STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverF
  * `strata_strdup`, `strata_str_eq`, `strata_cstrlen` and every `__strata_*`
  * name are reserved: defining a Strata function with one of them is an error.
  *
- * AOT limitation: the context functions and the string helpers (strata_strdup,
- * strata_str_eq, strata_cstrlen) have fixed, unprefixed external names, as do
- * the module's own functions. Two Strata objects produced by
- * strataCompileToObject therefore cannot be linked into the same executable or
- * DLL; put each in its own DLL/shared object, or compile them as one module
- * via `import`.
+ * AOT linking: by default the context functions and the string helpers
+ * (strata_strdup, strata_str_eq, strata_cstrlen) have fixed, unprefixed
+ * external names, as do the module's own functions, so two objects produced by
+ * strataCompileToObject collide at link time. Give each module its own
+ * strataSetSymbolPrefix to link several into one executable or DLL.
  */
+
+/* Generic externs: `extern<T> R Name(params)` is ONE host function serving every
+ * type T. T may only be a whole parameter type (`T value` or `ref T value`),
+ * never the return type, and each call's T must be a plain-data struct (no
+ * owning fields). Calls name T explicitly or let it be inferred from a T
+ * argument:
+ *
+ *     extern<T> bool GetComponent(Entity entity, ref T value);
+ *     extern<T> bool HasComponent(Entity entity);
+ *
+ *     Health health;
+ *     if (GetComponent(entity, health)) { ... }      // T inferred as Health
+ *     if (HasComponent<Health>(entity)) { ... }      // T named explicitly
+ *
+ * On the host side every T parameter is a pointer (to the caller's storage for
+ * `ref T`, to a copy for `T`), and T's descriptor is appended as a hidden last
+ * argument:
+ *
+ *     bool GetComponent(void* entity, void* value, const StrataTypeDesc* type);
+ *     bool HasComponent(void* entity, const StrataTypeDesc* type);
+ */
+typedef struct StrataTypeDesc
+{
+    unsigned long long nameHash;   /* FNV-1a 64 over the name's bytes (no terminator) */
+    unsigned long long layoutHash; /* equals StrataTypesStruct::layoutHash for the same layout (strata_types.h) */
+    unsigned int size;
+    unsigned int alignment;
+    /* followed by the NUL-terminated type name: see strataTypeDescName */
+} StrataTypeDesc;
+
+static inline const char* strataTypeDescName(const StrataTypeDesc* type)
+{
+    return (const char*)(type + 1);
+}
+
+/* Prepends `prefix` to every symbol a module exports: its functions,
+ * __strata_context_create/__strata_context_destroy and the type metadata
+ * symbol (see strata_types.h). The string helpers become module-local. Externs
+ * are unaffected. `prefix` may only contain [A-Za-z0-9_]; NULL or "" removes it.
+ * Returns 0 (leaving the prefix unchanged) for an invalid prefix.
+ *
+ * Applies to both AOT objects and the JIT. strataJitGetFunction still takes the
+ * unprefixed name; an AOT host looks up `<prefix><name>` itself. */
+STRATA_API int strataSetSymbolPrefix(StrataCompiler* c, const char* prefix);
 
 typedef struct StrataJit StrataJit;
 
@@ -167,6 +210,22 @@ STRATA_API const char* strataJitGetExternSymbolName(StrataJit* jit, size_t index
 
 STRATA_API const char* strataJitDiagnostics(StrataJit* jit);
 STRATA_API void strataJitDestroy(StrataJit* jit);
+
+/* The module's type metadata (read it with strata/strata_types.h), or NULL when
+ * it declares no `@component` structs. Owned by the JIT; valid until
+ * strataJitDestroy. */
+STRATA_API const void* strataJitGetTypeMetadata(StrataJit* jit, size_t* outSize);
+
+/* Type metadata without code generation: parses and checks the module, then
+ * writes the same bytes the JIT and AOT paths embed. On success returns 1 and
+ * sets *outBytes (NULL when the module has no components; free with
+ * strataFreeTypeMetadata). On a compile error returns 0 and sets *errOut
+ * (free with strataFree). */
+STRATA_API int strataCompileTypeMetadata(StrataCompiler* c, const char* path, void** outBytes, size_t* outSize,
+                                         const char** errOut);
+STRATA_API int strataCompileTypeMetadataString(StrataCompiler* c, const char* source, const char* moduleName,
+                                               void** outBytes, size_t* outSize, const char** errOut);
+STRATA_API void strataFreeTypeMetadata(void* bytes);
 
 typedef struct
 {

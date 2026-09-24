@@ -24,6 +24,9 @@ typedef struct {
     bool isEnum;                 /* `enum Foo` — a strong alias with scoped constants. */
     const char* underlyingType;  /* underlying type name for aliases */
     PrimitiveType underlyingPrimitiveType; /* underlying type value for the alias */
+    bool isComponent;            /* `@component` */
+    Vec attributes;              /* Vec<Attribute*>, shared with the StructDecl */
+    const char* moduleName;      /* module the struct was declared in */
 
     /* Computed layout; hasLayout is set only on success,
        layoutError holds the failure message. */

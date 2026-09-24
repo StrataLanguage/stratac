@@ -61,6 +61,9 @@ static StructType* TypeRegistryAdd(TypeRegistry* reg, const char* name)
     t->isEnum = false;
     t->underlyingType = NULL;
     t->underlyingPrimitiveType = PrimNone;
+    t->isComponent = false;
+    VecInit(&t->attributes);
+    t->moduleName = NULL;
     t->hasLayout = false;
     t->packedLayout = false;
     t->sizeBytes = 0;
@@ -241,6 +244,9 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->incomplete = false;
         t->fields = sd->fields;
         t->isExtern = sd->isExtern;
+        t->isComponent = sd->isComponent;
+        t->attributes = sd->attributes;
+        t->moduleName = sd->moduleName;
     }
 
     /* Forward declarations for structs (incomplete types) */

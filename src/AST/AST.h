@@ -360,11 +360,29 @@ typedef struct {
                       out-param; the Strata-level return type becomes T. */
 } ParamDecl;
 
+/* A field's `= expr` default, folded by sema. Scalars use lane 0; float2/3/4 use one lane each. */
+typedef struct {
+    bool isSet;
+    bool isFloat;          // lanes hold floating-point values (float/double fields and vectors)
+    unsigned laneCount;
+    long long intValue;    // integer, bool and enum fields
+    double floatLanes[4];
+} FieldDefaultValue;
+
 typedef struct {
     TypeName type;
     char* name;
     long offset; // explicit byte offset via `fieldoffset(N)`, or -1
+    SourceRange nameRange;
+    Node* defaultValue; // `T name = expr;`, NULL when the field has no default
+    FieldDefaultValue folded;
 } FieldDecl;
+
+// `@name` before a declaration.
+typedef struct {
+    char* name;
+    SourceRange range;
+} Attribute;
 
 typedef struct {
     Node base;
@@ -374,6 +392,9 @@ typedef struct {
     bool isExtern; // `extern struct` — mirrors a host-defined layout
     bool isTypeAlias;       // `struct Foo = uint;` — strongly typed alias
     char* underlyingType;   // underlying type name for type aliases (NULL for normal structs)
+    Vec attributes;         // Vec<Attribute*>
+    bool isComponent;       // `@component`: a plain-data type the host registers (see strata_types.h)
+    const char* moduleName; // module (file) the struct was declared in
 } StructDecl;
 
 typedef struct {
@@ -400,7 +421,7 @@ typedef struct {
     Vec members; // Vec<EnumMemberDecl*>
 } EnumDecl;
 
-typedef struct {
+typedef struct FunctionDecl {
     Node base;
     TypeName returnType;
     char* name;
@@ -418,6 +439,12 @@ typedef struct {
     // Impl members: `methodName` is the short name, `name` carries the `H_M` symbol.
     char* methodName;
     bool fromImpl;
+    // `extern<T>`: the type parameter's name, NULL for ordinary functions.
+    char* typeParam;
+    // A per-type instantiation of an `extern<T>` (sema): `typeArg` replaced T, the host symbol is
+    // still `name`, and calls pass T's StrataTypeDesc as a hidden trailing argument.
+    const struct FunctionDecl* genericOf;
+    const char* typeArg;
 } FunctionDecl;
 
 static inline const ParamDecl* FunctionReturnParam(const FunctionDecl* f)
@@ -464,6 +491,7 @@ typedef struct {
     Vec globals;
     Vec imports;
     Vec impls;
+    Vec genericInstances; // FunctionDecl*: per-type `extern<T>` instantiations, created by sema
 } Module;
 
 typedef struct {
@@ -616,6 +644,7 @@ typedef struct CallExpr {
     const FunctionDecl* resolvedDecl;
     Vec args;
     bool isIntrinsicCall;
+    TypeName* typeArg; /* explicit `Name<T>(...)` type argument (generic externs), NULL otherwise */
     /* `expr.Member(args)` — non-NULL until sema resolves the member against
        impl blocks (then the base moves into `args` as the self argument). */
     Node* calleeBase;

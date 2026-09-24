@@ -1,13 +1,3 @@
-/* ContextTests.c — the "instanced globals" feature: a module with a
- * storage-backed global gets ONE generated per-instance context struct, and
- * every non-extern function gains a hidden leading pointer to it (invisible
- * in Strata source; a real first parameter in the compiled ABI). The host
- * creates one instance per script "attachment" (e.g. per game entity) via
- * __strata_context_create/__strata_context_destroy, so concurrent instances
- * never share mutable state. A module with no storage-backed globals is
- * completely unaffected (no hidden param anywhere, no exported symbols).
- */
-
 #include "Codegen/CodegenBackend.h"
 #include "Test.h"
 #include "Util.h"
