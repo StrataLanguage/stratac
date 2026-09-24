@@ -37,9 +37,13 @@ int world_y(Entity* e) { return e->y; }
 void world_destroy(Entity* e) { free(e); }
 
 /* Strata-provided entry (defined in engine_api.o). */
-extern int run(void);
+extern int run(void* ctx);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void) {
-    printf("run() = %d\n", run());   /* 15 */
+    void* ctx = __strata_context_create();
+    printf("run() = %d\n", run(ctx));   /* 15 */
+    __strata_context_destroy(ctx);
     return 0;
 }

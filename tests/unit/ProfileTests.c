@@ -51,7 +51,7 @@ static StrataJit* CompileJit(const char* source, StrataJitBackend backend, int c
    `expectMsg`. */
 static void ExpectPanic(StrataJit* jit, const char* expectMsg)
 {
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (!entry)
     {
@@ -65,7 +65,7 @@ static void ExpectPanic(StrataJit* jit, const char* expectMsg)
 
     if (setjmp(s_panicJmp) == 0)
     {
-        entry();
+        entry(NULL);
         strataSetPanicHandler(NULL);
         STRATA_CHECK(0 && "expected a panic but entry() returned");
         return;
@@ -79,7 +79,7 @@ static void ExpectPanic(StrataJit* jit, const char* expectMsg)
 /* Runs `source` to completion and asserts it does NOT panic (all checks off). */
 static void ExpectNoPanic(StrataJit* jit)
 {
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (!entry)
     {
@@ -93,7 +93,7 @@ static void ExpectNoPanic(StrataJit* jit)
 
     if (setjmp(s_panicJmp) == 0)
     {
-        entry();
+        entry(NULL);
         strataSetPanicHandler(NULL);
         STRATA_CHECK_EQ(s_panicCount, 0);
         return;
@@ -107,7 +107,7 @@ static void ExpectNoPanic(StrataJit* jit)
    and leaves the violation count in *violations (message in s_panicMsg). */
 static int CallEntryReport(StrataJit* jit, int* violations)
 {
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (!entry)
     {
@@ -119,7 +119,7 @@ static int CallEntryReport(StrataJit* jit, int* violations)
     s_panicMsg[0] = '\0';
 
     strataSetPanicHandler(TestReportHandler);
-    int value = entry();
+    int value = entry(NULL);
     strataSetPanicHandler(NULL);
 
     *violations = s_panicCount;

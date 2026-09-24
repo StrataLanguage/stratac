@@ -854,11 +854,11 @@ STRATA_TEST(manifest_const_jit_dimension_and_value)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+        int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
         STRATA_CHECK(run != NULL);
         if (run)
         {
-            STRATA_CHECK_EQ(run(), 97); /* 65 + 32 */
+            STRATA_CHECK_EQ(run(NULL), 97); /* 65 + 32 */
         }
         strataJitDestroy(jit);
     }
@@ -1047,11 +1047,11 @@ STRATA_TEST(manifest_const_expr_and_boundary_index)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+        int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
         STRATA_CHECK(run != NULL);
         if (run)
         {
-            STRATA_CHECK_EQ(run(), 73); /* 9 + 64 */
+            STRATA_CHECK_EQ(run(NULL), 73); /* 9 + 64 */
         }
         strataJitDestroy(jit);
     }
@@ -1214,11 +1214,11 @@ STRATA_TEST(pseudo_enum_jit_cast_int_to_alias)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*make_error)(void) = (int (*)(void))strataJitGetFunction(jit, "make_error");
+        int (*make_error)(void*) = (int (*)(void*))strataJitGetFunction(jit, "make_error");
         STRATA_CHECK(make_error != NULL);
         if (make_error)
         {
-            STRATA_CHECK_EQ(make_error(), 42);
+            STRATA_CHECK_EQ(make_error(NULL), 42);
         }
         strataJitDestroy(jit);
     }
@@ -1243,11 +1243,11 @@ STRATA_TEST(pseudo_enum_jit_cast_alias_to_int)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        int (*caller)(void*) = (int (*)(void*))strataJitGetFunction(jit, "caller");
         STRATA_CHECK(caller != NULL);
         if (caller)
         {
-            STRATA_CHECK_EQ(caller(), 99);
+            STRATA_CHECK_EQ(caller(NULL), 99);
         }
         strataJitDestroy(jit);
     }
@@ -1273,11 +1273,11 @@ STRATA_TEST(pseudo_enum_jit_cross_alias_cast)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        int (*caller)(void*) = (int (*)(void*))strataJitGetFunction(jit, "caller");
         STRATA_CHECK(caller != NULL);
         if (caller)
         {
-            STRATA_CHECK_EQ(caller(), 7);
+            STRATA_CHECK_EQ(caller(NULL), 7);
         }
         strataJitDestroy(jit);
     }
@@ -1304,11 +1304,11 @@ STRATA_TEST(pseudo_enum_jit_chained_cast)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        int (*caller)(void*) = (int (*)(void*))strataJitGetFunction(jit, "caller");
         STRATA_CHECK(caller != NULL);
         if (caller)
         {
-            STRATA_CHECK_EQ(caller(), 404);
+            STRATA_CHECK_EQ(caller(NULL), 404);
         }
         strataJitDestroy(jit);
     }
@@ -1339,11 +1339,11 @@ STRATA_TEST(pseudo_enum_jit_arithmetic_through_casts)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*combine)(void) = (int (*)(void))strataJitGetFunction(jit, "combine");
+        int (*combine)(void*) = (int (*)(void*))strataJitGetFunction(jit, "combine");
         STRATA_CHECK(combine != NULL);
         if (combine)
         {
-            STRATA_CHECK_EQ(combine(), 30);
+            STRATA_CHECK_EQ(combine(NULL), 30);
         }
         strataJitDestroy(jit);
     }
@@ -1690,11 +1690,11 @@ STRATA_TEST(type_alias_string_jit_cast_and_move)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*caller)(void) = (int (*)(void))strataJitGetFunction(jit, "caller");
+        int (*caller)(void*) = (int (*)(void*))strataJitGetFunction(jit, "caller");
         STRATA_CHECK(caller != NULL);
         if (caller)
         {
-            STRATA_CHECK_EQ(caller(), 1);
+            STRATA_CHECK_EQ(caller(NULL), 1);
         }
         strataJitDestroy(jit);
     }
@@ -1803,12 +1803,12 @@ STRATA_TEST(type_alias_owning_field_dropped_once)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
         s_aliasLive = 0;
-        STRATA_CHECK_EQ(entry(), 2);
+        STRATA_CHECK_EQ(entry(NULL), 2);
         /* The box and every string it held (including the overwritten ones)
            are freed exactly once. */
         STRATA_CHECK_EQ(s_aliasLive, 0);

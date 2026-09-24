@@ -25,9 +25,8 @@ typedef struct
     bool externStringReturn; /* extern `string` (or alias) return: ABI is char*, copied into an owned fat */
     bool* paramByPtr;
     size_t paramByPtrCount;
-    bool hasHiddenCtxParam; /* non-extern fn in a module with instanced globals: LLVM param 0 is the hidden
-                                context pointer, invisible at the Strata source level (see DeclareFunction /
-                                EmitCall) */
+    bool hasHiddenCtxParam; /* every non-extern fn: LLVM param 0 is the hidden context pointer, invisible
+                                at the Strata source level (see DeclareFunction / EmitCall) */
     bool hasTypeDescParam;  /* `extern<T>` instantiation: a trailing `const StrataTypeDesc*` for T */
 } FuncInfo;
 
@@ -2500,12 +2499,13 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     info->paramByPtr = (bool*)arena_alloc(b->m_arena, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
 
-    /* A non-extern function in a module with instanced globals gets ONE
-       hidden leading LLVM parameter (a pointer to the per-instance globals
-       struct) that never appears at the Strata source level: invisible in
-       `f->params`, added only to the compiled signature here and forwarded
-       automatically by EmitCall. */
-    info->hasHiddenCtxParam = !f->isExtern && b->m_hasInstancedGlobals;
+    /* Every non-extern function gets ONE hidden leading LLVM parameter (a
+       pointer to the per-instance globals struct) that never appears at the
+       Strata source level: invisible in `f->params`, added only to the
+       compiled signature here and forwarded automatically by EmitCall. It is
+       there even when the module has no instanced globals (the context is
+       then NULL), so hosts never branch on the ABI. */
+    info->hasHiddenCtxParam = !f->isExtern;
     size_t ctxOffset = info->hasHiddenCtxParam ? 1 : 0;
 
     info->hasTypeDescParam = f->genericOf != NULL;
@@ -8325,8 +8325,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
        A `const` scalar whose initializer folds to a compile-time manifest
        constant still gets NO storage at all — identical to before this
        feature existed; only the "has real storage" cases move into the
-       struct. This pass must run BEFORE DeclareFunction so it sees the
-       correct b->m_hasInstancedGlobals gate. */
+       struct. This pass must run BEFORE DefineFunction so bodies can resolve
+       the globals' fields. */
     LLVMTypeRef* ctxFieldTypes = NULL;
     size_t ctxFieldCount = 0;
 
@@ -8465,15 +8465,31 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         DefineFunction(b, f);
     }
 
-    /* Emit __strata_context_create + __strata_context_destroy when the
-       module has instanced globals. Unlike the old per-process
+    /* Every module exports __strata_context_create +
+       __strata_context_destroy. Unlike the old per-process
        __strata_module_init/teardown, these are NEVER auto-registered
        (no llvm.global_ctors) in either mode: the whole point of instancing
        is that a host may create many independent contexts, so it always
        calls these explicitly — discoverable/callable exactly like any
        other exported Strata function (JIT: strataJitGetFunction; AOT: a
-       hand-written extern prototype). */
-    if (b->m_hasInstancedGlobals)
+       hand-written extern prototype). Without instanced globals, create
+       returns NULL and destroy does nothing. */
+    if (!b->m_hasInstancedGlobals)
+    {
+        LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
+
+        LLVMTypeRef createTy = LLVMFunctionType(b->m_ptrTy, NULL, 0, 0);
+        LLVMValueRef createFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_create"), createTy);
+        LLVMPositionBuilderAtEnd(b->m_builder, LLVMAppendBasicBlockInContext(b->m_ctx, createFn, "entry"));
+        LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_ptrTy));
+
+        LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
+        LLVMTypeRef destroyTy = LLVMFunctionType(voidTy, destroyParams, 1, 0);
+        LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
+        LLVMPositionBuilderAtEnd(b->m_builder, LLVMAppendBasicBlockInContext(b->m_ctx, destroyFn, "entry"));
+        LLVMBuildRetVoid(b->m_builder);
+    }
+    else
     {
         LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
         TypeDesc ptrRet = TypeDescMake(b->m_ptrTy, 0, NULL);

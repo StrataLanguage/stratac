@@ -22,11 +22,15 @@ void strata_panic(const char* msg)
 }
 
 // Strata-provided entry (defined in cstring.o).
-extern int entry(void);
+extern int entry(void* ctx);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void)
 {
-    int result = entry();
+    void* ctx = __strata_context_create();
+    int result = entry(ctx);
     printf("entry() = %d\n", result);
+    __strata_context_destroy(ctx);
     return 0;
 }

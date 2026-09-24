@@ -338,11 +338,11 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
 
     if (llvmOk)
     {
-        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
+        int (*llvmEntry)(void*) = (int (*)(void*))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
         STRATA_CHECK(llvmEntry != NULL);
         if (llvmEntry)
         {
-            STRATA_CHECK_EQ(llvmEntry(), expected);
+            STRATA_CHECK_EQ(llvmEntry(NULL), expected);
         }
     }
 
@@ -516,11 +516,11 @@ STRATA_TEST(extern_string_return_discard_does_not_allocate)
     g_extRetAllocs = 0;
     g_extRetFrees = 0;
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(entry(NULL), 0);
         STRATA_CHECK_EQ(g_extRetAllocs, 1); /* only the assigned copy */
         STRATA_CHECK_EQ(g_extRetFrees, 1);  /* freed at scope exit */
     }
@@ -559,11 +559,11 @@ STRATA_TEST(discarded_owning_call_result_is_dropped)
     g_extRetAllocs = 0;
     g_extRetFrees = 0;
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(entry(NULL), 0);
         STRATA_CHECK_EQ(g_extRetAllocs, 2); /* one string copy + one box cell */
         STRATA_CHECK_EQ(g_extRetFrees, 2);  /* both freed by the discard-drop */
     }

@@ -170,11 +170,11 @@ STRATA_TEST(private_same_file_call_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 7);
+        STRATA_CHECK_EQ(entry(NULL), 7);
     }
 
     strataJitDestroy(jit);
@@ -221,11 +221,11 @@ STRATA_TEST(private_single_file_program_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 9);
+        STRATA_CHECK_EQ(entry(NULL), 9);
     }
 
     strataJitDestroy(jit);
@@ -266,11 +266,11 @@ STRATA_TEST(private_overload_hidden_public_overload_visible)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
         if (entry)
         {
-            STRATA_CHECK_EQ(entry(), 7);
+            STRATA_CHECK_EQ(entry(NULL), 7);
         }
         strataJitDestroy(jit);
     }

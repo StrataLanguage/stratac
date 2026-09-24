@@ -67,7 +67,7 @@ STRATA_TEST(llvm_in_scalar_param_is_by_reference)
 {
     CodegenResult res = GenLlvm("int foo(ref int x) { return x; }");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "define i32 @foo(ptr"));
+    STRATA_CHECK(Contains(res.output, "define i32 @foo(ptr %0, ptr"));
     STRATA_CHECK(Contains(res.output, "load i32, ptr"));
 }
 
@@ -75,8 +75,8 @@ STRATA_TEST(llvm_plain_scalar_param_is_by_value)
 {
     CodegenResult res = GenLlvm("int foo(int x) { return x; }");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "define i32 @foo(i32"));
-    STRATA_CHECK(!Contains(res.output, "define i32 @foo(ptr"));
+    STRATA_CHECK(Contains(res.output, "define i32 @foo(ptr %0, i32"));
+    STRATA_CHECK(!Contains(res.output, "define i32 @foo(ptr %0, ptr"));
 }
 
 STRATA_TEST(llvm_in_scalar_call_site_passes_address)
@@ -84,14 +84,14 @@ STRATA_TEST(llvm_in_scalar_call_site_passes_address)
     CodegenResult res = GenLlvm("int foo(ref int x) { return x; }\n"
                                 "int entry() { int v = 5; return foo(v); }\n");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "call i32 @foo(ptr"));
+    STRATA_CHECK(Contains(res.output, "call i32 @foo(ptr %0, ptr"));
 }
 
 STRATA_TEST(llvm_in_float_param_is_by_reference)
 {
     CodegenResult res = GenLlvm("float foo(ref float x) { return x; }");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "define float @foo(ptr"));
+    STRATA_CHECK(Contains(res.output, "define float @foo(ptr %0, ptr"));
     STRATA_CHECK(Contains(res.output, "load float, ptr"));
 }
 
@@ -100,8 +100,8 @@ STRATA_TEST(llvm_inout_and_out_remain_by_reference)
     CodegenResult res = GenLlvm("void foo(ref int x) { x = 1; }\n"
                                 "void bar(ref int y) { y = y + 1; }\n");
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(Contains(res.output, "define void @foo(ptr"));
-    STRATA_CHECK(Contains(res.output, "define void @bar(ptr"));
+    STRATA_CHECK(Contains(res.output, "define void @foo(ptr %0, ptr"));
+    STRATA_CHECK(Contains(res.output, "define void @bar(ptr %0, ptr"));
 }
 
 STRATA_TEST(llvm_backend_builds_module)

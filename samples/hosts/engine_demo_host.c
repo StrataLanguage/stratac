@@ -52,10 +52,10 @@ int  get_y(Entity* e) { return e->y; }
 void move(Entity* e, int dx, int dy) { e->x += dx; e->y += dy; }
 
 /* ---- the scene (identical in both modes) -------------------------------- */
-/* `chase` reads/writes the script's own globals (gStrArray, gStr), so the
-   compiler gives it a hidden leading context pointer -- invisible in the
-   .strata source, but a real first parameter here. `ctx` is a per-instance
-   copy of those globals (see __strata_context_create below): spawn one per
+/* Like every non-extern Strata function, `chase` takes a hidden leading
+   context pointer -- invisible in the .strata source, but a real first
+   parameter here. It reads/writes the script's own globals (gStrArray, gStr);
+   `ctx` is a per-instance copy of those globals (see __strata_context_create below): spawn one per
    entity so concurrent scripts never clobber each other's state. */
 static int run_scene(void* ctx, int (*chase_fn)(void*, Entity*, Entity*, int))
 {

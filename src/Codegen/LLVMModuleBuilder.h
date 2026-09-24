@@ -14,9 +14,8 @@ typedef struct {
     LLVMContextRef ctx;
     LLVMModuleRef mod;
     Vec externSymbols;
-    bool hasInstancedGlobals; /* module has >=1 storage-backed global: every non-extern function's
-                                  compiled signature carries a hidden leading context pointer (see
-                                  __strata_context_create/__strata_context_destroy) */
+    bool hasInstancedGlobals; /* module has >=1 storage-backed global, so __strata_context_create
+                                  returns a real context instead of NULL */
     uint8_t* typeMetadata;    /* strata_types.h blob (malloc'd), NULL when the module has no components */
     size_t typeMetadataSize;
 } BuiltModule;

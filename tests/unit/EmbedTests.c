@@ -60,14 +60,13 @@ STRATA_TEST(jit_explicit_llvm_backend_selection)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*add)(int, int) = (int (*)(int, int))strataJitGetFunction(jit, "add");
+        int (*add)(void*, int, int) = (int (*)(void*, int, int))strataJitGetFunction(jit, "add");
         STRATA_CHECK(add != NULL);
         if (add)
         {
-            STRATA_CHECK_EQ(add(2, 3), 5);
+            STRATA_CHECK_EQ(add(NULL, 2, 3), 5);
         }
 
-        STRATA_CHECK(strataJitCanInvokeIntVoid(jit, "add") == 0);
         strataJitDestroy(jit);
     }
     else

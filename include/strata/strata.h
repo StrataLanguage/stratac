@@ -111,20 +111,19 @@ STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverF
 /*
  * Module-level globals and the hidden context parameter
  * ------------------------------------------------------
- * A module with at least one storage-backed global (any global other than a
- * `const` scalar that folds to a compile-time constant) keeps all of them in
- * a per-instance context. Every non-extern Strata function in such a module
- * then takes a hidden leading `void* ctx` parameter at the ABI level, so a
- * Strata function declared `int f(int x)` is called from C as
- * `int f(void* ctx, int x)`. The module also exports:
+ * Every non-extern Strata function takes a hidden leading `void* ctx`
+ * parameter at the ABI level, so a Strata function declared `int f(int x)` is
+ * called from C as `int f(void* ctx, int x)`. Every module also exports:
  *
  *     void* __strata_context_create(void);    // allocate + run global initializers
  *     void  __strata_context_destroy(void*);  // drop owned globals + free the context
  *
- * Each context is an independent instance of the module's globals; create as
- * many as needed and destroy each exactly once, before strataJitDestroy for
- * JIT modules. A module without such globals has no context parameter and
- * does not export these functions (strataJitGetFunction returns NULL).
+ * The context holds the module's storage-backed globals (any global other than
+ * a `const` scalar that folds to a compile-time constant). Each context is an
+ * independent instance of them; create as many as needed and destroy each
+ * exactly once, before strataJitDestroy for JIT modules. A module without such
+ * globals returns NULL from __strata_context_create, and NULL is then the
+ * context to pass; destroying it is a no-op.
  *
  * The names `strata_alloc`, `strata_free`, `strata_panic`, `strata_oob`,
  * `strata_strdup`, `strata_str_eq`, `strata_cstrlen` and every `__strata_*`
@@ -189,19 +188,9 @@ STRATA_API StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, 
 
 STRATA_API void* strataJitGetFunction(StrataJit* jit, const char* name);
 
-/* 1 if `name` can be called directly as `int (*)(void)`: a defined function
-   whose Strata signature is int() in a module WITHOUT a context parameter.
-   Returns 0 for every function of a module with a context (see above). */
-STRATA_API int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name);
-
 /* 1 if `name` is a defined function whose user-visible Strata signature is
-   int(), ignoring the hidden context parameter. When strataJitHasContext is 1
-   it must be called as `int (*)(void* ctx)`, otherwise as `int (*)(void)`. */
+   int(), ignoring the hidden context parameter: call it as `int (*)(void* ctx)`. */
 STRATA_API int strataJitHasIntVoidSignature(StrataJit* jit, const char* name);
-
-/* 1 if the module's functions take the hidden leading context pointer (and
-   export __strata_context_create/__strata_context_destroy), else 0. */
-STRATA_API int strataJitHasContext(StrataJit* jit);
 
 STRATA_API int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn);
 

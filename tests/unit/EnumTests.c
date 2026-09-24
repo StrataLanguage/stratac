@@ -490,11 +490,11 @@ static void CheckEnumImpl(const char* source, const EnumHostSymbol* hosts, size_
 
     if (llvmOk)
     {
-        int (*llvmEntry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
+        int (*llvmEntry)(void*) = (int (*)(void*))(uintptr_t)LLVMJitGetAddress(&llvm, "entry");
         STRATA_CHECK(llvmEntry != NULL);
         if (llvmEntry)
         {
-            STRATA_CHECK_EQ(llvmEntry(), expected);
+            STRATA_CHECK_EQ(llvmEntry(NULL), expected);
         }
     }
 

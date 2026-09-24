@@ -51,7 +51,7 @@ int main(int argc, char** argv)
 
     for (size_t i = 0; i < sizeof(sections) / sizeof(sections[0]); ++i)
     {
-        int (*section)(void) = (int (*)(void))strataJitGetFunction(jit, sections[i]);
+        int (*section)(void*) = (int (*)(void*))strataJitGetFunction(jit, sections[i]);
 
         if (!section)
         {
@@ -61,7 +61,7 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        int result = section();
+        int result = section(NULL);
         printf("  [%s] -> %d\n\n", sections[i], result);
         total += result;
     }

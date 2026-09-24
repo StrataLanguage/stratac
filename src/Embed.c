@@ -572,7 +572,6 @@ extern "C"
         StrataJitKind kind;
         void* backend;   // LLVMJit*, per kind; NULL if kind == NONE
         char* diagnostics;
-        bool hasContext; // functions take a hidden leading context pointer (module has instanced globals)
         char* symbolPrefix;     // exported symbols carry this prefix; lookups add it
         uint8_t* typeMetadata;  // strata_types.h blob, NULL without components
         size_t typeMetadataSize;
@@ -657,9 +656,9 @@ extern "C"
 
             LlvmJitExport* exp = (LlvmJitExport*)malloc(sizeof(LlvmJitExport));
             exp->name = DupString(fn->mangledName);
-            /* The user-visible signature only; a module with instanced globals
-               additionally gives every non-extern function a hidden leading
-               context pointer (handle->hasContext, see LLVMModuleBuilder.c). */
+            /* The user-visible signature only; every non-extern function
+               additionally takes a hidden leading context pointer (see
+               LLVMModuleBuilder.c). */
             exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0;
             VecPush(&handle->llvmExports, exp);
         }
@@ -699,7 +698,6 @@ extern "C"
 
         handle->kind = STRATA_JIT_KIND_LLVM;
         handle->backend = jit;
-        handle->hasContext = bm.hasInstancedGlobals;
         handle->diagnostics = DupString(diagText);
         handle->symbolPrefix = symbolPrefix ? DupString(symbolPrefix) : NULL;
 
@@ -907,18 +905,6 @@ extern "C"
         }
 #endif
         return 0;
-    }
-
-    int strataJitHasContext(StrataJit* jit)
-    {
-        return jit && jit->backend && jit->hasContext ? 1 : 0;
-    }
-
-    int strataJitCanInvokeIntVoid(StrataJit* jit, const char* name)
-    {
-        /* Callable as a bare int(void): a context-taking function is really
-           int(void*) at the ABI level. */
-        return strataJitHasIntVoidSignature(jit, name) && !strataJitHasContext(jit) ? 1 : 0;
     }
 
     int strataJitAddSymbol(StrataJit* jit, const char* name, void* fn)

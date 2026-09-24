@@ -29,10 +29,14 @@ int clamp_int(int value, int lo, int hi)
 }
 
 /* defined in Strata code. */
-extern int lucky_number(int seed);
+extern int lucky_number(void* ctx, int seed);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void) {
-    int n = lucky_number(42);
+    void* ctx = __strata_context_create();
+    int n = lucky_number(ctx, 42);
     printf("lucky_number(42) = %d\n", n);
+    __strata_context_destroy(ctx);
     return 0;
 }

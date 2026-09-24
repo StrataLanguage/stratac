@@ -31,11 +31,11 @@ static void run_int(const char* src, int expected)
 
     strataFree((char*)err);
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), expected);
+        STRATA_CHECK_EQ(entry(NULL), expected);
     }
 
     strataJitDestroy(jit);

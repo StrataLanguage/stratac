@@ -36,11 +36,11 @@ static int RunEntry(const char* src)
     }
 
     int result = -9999;
-    int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(f != NULL);
     if (f)
     {
-        result = f();
+        result = f(NULL);
     }
 
     strataJitDestroy(jit);
@@ -168,11 +168,11 @@ static int RunEntryCounted(const char* src)
     g_cgFrees = 0;
 
     int result = -9999;
-    int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(f != NULL);
     if (f)
     {
-        result = f();
+        result = f(NULL);
     }
 
     strataJitDestroy(jit);

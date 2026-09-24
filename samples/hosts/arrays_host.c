@@ -11,10 +11,10 @@ void* strata_alloc(size_t n) { return malloc(n); }
 void strata_free(void* p) { free(p); }
 void strata_panic(const char* msg) { fprintf(stderr, "strata panic: %s\n", msg); abort(); }
 
-// Strata-provided entry (defined in arrays.strata). The module declares a
-// module-level global (testGlobalString), so the compiler gives every
-// non-extern function a hidden leading context pointer -- invisible in the
-// .strata source, but a real first parameter here.
+// Strata-provided entry (defined in arrays.strata). Every non-extern Strata
+// function takes a hidden leading context pointer -- invisible in the .strata
+// source, but a real first parameter here. It holds the module-level globals
+// (testGlobalString).
 extern int entry(void* ctx);
 extern void* __strata_context_create(void);
 extern void __strata_context_destroy(void*);

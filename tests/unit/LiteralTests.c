@@ -23,8 +23,8 @@ static int RunEntry(const char* src)
         return -1000;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
-    int r = entry ? entry() : -1000;
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    int r = entry ? entry(NULL) : -1000;
     strataJitDestroy(jit);
 
     return r;

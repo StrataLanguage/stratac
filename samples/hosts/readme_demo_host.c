@@ -44,11 +44,11 @@ int main(void)
         }
     }
 
-    int (*main_fn)(void) = (int (*)(void))strataJitGetFunction(jit, "main");
+    int (*main_fn)(void*) = (int (*)(void*))strataJitGetFunction(jit, "main");
 
     if (main_fn)
     {
-        printf("main() = %d\n", main_fn());
+        printf("main() = %d\n", main_fn(NULL));
     }
     else
     {

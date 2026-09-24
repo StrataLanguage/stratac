@@ -34,10 +34,14 @@ void  strata_free(void* p)          { free(p); }
 void  strata_panic(const char* m)   { fprintf(stderr, "%s\n", m); }
 
 /* defined in Strata code. */
-extern int entry(void);
+extern int entry(void* ctx);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void)
 {
-    printf("entry() = %d\n", entry());   /* 87 */
+    void* ctx = __strata_context_create();
+    printf("entry() = %d\n", entry(ctx));   /* 87 */
+    __strata_context_destroy(ctx);
     return 0;
 }

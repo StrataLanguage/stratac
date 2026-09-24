@@ -236,14 +236,14 @@ STRATA_TEST(scope_sibling_reuse_runs_correctly)
 
     if (jit)
     {
-        int (*entry)(int) = (int (*)(int))strataJitGetFunction(jit, "entry");
+        int (*entry)(void*, int) = (int (*)(void*, int))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
 
         if (entry)
         {
-            STRATA_CHECK_EQ(entry(1), 10);
-            STRATA_CHECK_EQ(entry(2), 20);
-            STRATA_CHECK_EQ(entry(3), 0);
+            STRATA_CHECK_EQ(entry(NULL, 1), 10);
+            STRATA_CHECK_EQ(entry(NULL, 2), 20);
+            STRATA_CHECK_EQ(entry(NULL, 3), 0);
         }
 
         strataJitDestroy(jit);

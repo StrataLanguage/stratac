@@ -106,7 +106,7 @@ int main(int argc, char** argv)
     }
 
     /* Resolve the entry to a native function pointer and call it. */
-    int (*run)(int) = (int (*)(int))strataJitGetFunction(jit, "run");
+    int (*run)(void*, int) = (int (*)(void*, int))strataJitGetFunction(jit, "run");
     if (!run)
     {
         fprintf(stderr, "error: entry 'run' not found in the script\n");
@@ -116,7 +116,7 @@ int main(int argc, char** argv)
     }
 
     int seed = 7;
-    int result = run(seed); /* calls straight into JIT'd native code */
+    int result = run(NULL, seed); /* calls straight into JIT'd native code */
     printf("run(%d) = %d  (expected fibonacci(%d) = 55)\n", seed, result, seed + 3);
 
     strataJitDestroy(jit);

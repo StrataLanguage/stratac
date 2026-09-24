@@ -74,10 +74,10 @@ int main(void)
     strataJitAddSymbol(jit, "print_entity_name", (void*)&print_entity_name);
     strataJitAddSymbol(jit, "printf", (void*)&printf);
 
-    /* box_demo.strata declares module-level globals (i, gVec,
-       globalStringArrayBox, globalStringArray), so the compiler gives every
-       non-extern function a hidden leading context pointer -- invisible in
-       the .strata source, but a real first parameter here. */
+    /* Every non-extern Strata function takes a hidden leading context
+       pointer -- invisible in the .strata source, but a real first parameter
+       here. It holds box_demo.strata's module-level globals (i, gVec,
+       globalStringArrayBox, globalStringArray). */
     void* (*context_create)(void)  = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
     void  (*context_destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
     float (*entry)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");

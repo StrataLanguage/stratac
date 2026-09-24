@@ -274,21 +274,21 @@ STRATA_TEST(jit_field_defaults_apply_to_literals_and_locals)
         return;
     }
 
-    float (*literalSum)(void) = (float (*)(void))strataJitGetFunction(jit, "literal_sum");
-    float (*localSum)(void) = (float (*)(void))strataJitGetFunction(jit, "local_sum");
-    int (*flags)(void) = (int (*)(void))strataJitGetFunction(jit, "flags");
-    float (*tintSum)(void) = (float (*)(void))strataJitGetFunction(jit, "tint_sum");
-    float (*nestedLiteral)(void) = (float (*)(void))strataJitGetFunction(jit, "nested_literal");
+    float (*literalSum)(void*) = (float (*)(void*))strataJitGetFunction(jit, "literal_sum");
+    float (*localSum)(void*) = (float (*)(void*))strataJitGetFunction(jit, "local_sum");
+    int (*flags)(void*) = (int (*)(void*))strataJitGetFunction(jit, "flags");
+    float (*tintSum)(void*) = (float (*)(void*))strataJitGetFunction(jit, "tint_sum");
+    float (*nestedLiteral)(void*) = (float (*)(void*))strataJitGetFunction(jit, "nested_literal");
 
     STRATA_CHECK(literalSum && localSum && flags && tintSum && nestedLiteral);
 
     if (literalSum && localSum && flags && tintSum && nestedLiteral)
     {
-        STRATA_CHECK(NearlyEqual(literalSum(), 205.0f));
-        STRATA_CHECK(NearlyEqual(localSum(), 105.5f));
-        STRATA_CHECK_EQ(flags(), 1111);
-        STRATA_CHECK(NearlyEqual(tintSum(), 1.75f));
-        STRATA_CHECK(NearlyEqual(nestedLiteral(), 11.5f));
+        STRATA_CHECK(NearlyEqual(literalSum(NULL), 205.0f));
+        STRATA_CHECK(NearlyEqual(localSum(NULL), 105.5f));
+        STRATA_CHECK_EQ(flags(NULL), 1111);
+        STRATA_CHECK(NearlyEqual(tintSum(NULL), 1.75f));
+        STRATA_CHECK(NearlyEqual(nestedLiteral(NULL), 11.5f));
     }
 
     strataJitDestroy(jit);
@@ -305,8 +305,6 @@ STRATA_TEST(jit_field_defaults_apply_to_globals)
     {
         return;
     }
-
-    STRATA_CHECK(strataJitHasContext(jit));
 
     void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
     void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
@@ -666,9 +664,9 @@ STRATA_TEST(generic_extern_calls_reach_one_host_function)
     STRATA_CHECK(strataJitAddSymbol(jit, "SetComponent", (void*)&HostSetComponent));
     STRATA_CHECK(strataJitAddSymbol(jit, "HasComponent", (void*)&HostHasComponent));
 
-    float (*roundtrip)(void*) = (float (*)(void*))strataJitGetFunction(jit, "roundtrip");
-    int (*armorValue)(void*) = (int (*)(void*))strataJitGetFunction(jit, "armor_value");
-    float (*fromLiteral)(void*) = (float (*)(void*))strataJitGetFunction(jit, "from_literal");
+    float (*roundtrip)(void*, void*) = (float (*)(void*, void*))strataJitGetFunction(jit, "roundtrip");
+    int (*armorValue)(void*, void*) = (int (*)(void*, void*))strataJitGetFunction(jit, "armor_value");
+    float (*fromLiteral)(void*, void*) = (float (*)(void*, void*))strataJitGetFunction(jit, "from_literal");
     STRATA_CHECK(roundtrip && armorValue && fromLiteral);
 
     void* entity = (void*)(uintptr_t)0x1234;
@@ -676,7 +674,7 @@ STRATA_TEST(generic_extern_calls_reach_one_host_function)
     if (roundtrip && armorValue && fromLiteral)
     {
         s_hostHasValue = 0;
-        STRATA_CHECK(NearlyEqual(roundtrip(entity), 192.0f));
+        STRATA_CHECK(NearlyEqual(roundtrip(NULL, entity), 192.0f));
         STRATA_CHECK(s_hostLastEntity == entity);
         STRATA_CHECK(s_hostLastType != NULL);
 
@@ -706,12 +704,12 @@ STRATA_TEST(generic_extern_calls_reach_one_host_function)
 
         STRATA_CHECK(matchedHash);
 
-        STRATA_CHECK_EQ(armorValue(entity), 7);
+        STRATA_CHECK_EQ(armorValue(NULL, entity), 7);
         STRATA_CHECK(s_hostLastType && strcmp(strataTypeDescName(s_hostLastType), "Armor") == 0);
         STRATA_CHECK(healthType != s_hostLastType);
 
         /* A `const ref` argument can be a temporary. */
-        STRATA_CHECK(NearlyEqual(fromLiteral(entity), 155.0f));
+        STRATA_CHECK(NearlyEqual(fromLiteral(NULL, entity), 155.0f));
     }
 
     strataJitDestroy(jit);
@@ -765,14 +763,14 @@ STRATA_TEST(less_than_still_parses_as_comparison)
 
     if (jit)
     {
-        int (*pick)(int, int, int) = (int (*)(int, int, int))strataJitGetFunction(jit, "pick");
-        int (*chained)(int, int) = (int (*)(int, int))strataJitGetFunction(jit, "chained");
+        int (*pick)(void*, int, int, int) = (int (*)(void*, int, int, int))strataJitGetFunction(jit, "pick");
+        int (*chained)(void*, int, int) = (int (*)(void*, int, int))strataJitGetFunction(jit, "chained");
         STRATA_CHECK(pick && chained);
 
         if (pick && chained)
         {
-            STRATA_CHECK_EQ(pick(1, 2, 9), 9);
-            STRATA_CHECK_EQ(chained(3, 2), 2);
+            STRATA_CHECK_EQ(pick(NULL, 1, 2, 9), 9);
+            STRATA_CHECK_EQ(chained(NULL, 3, 2), 2);
         }
 
         strataJitDestroy(jit);

@@ -508,10 +508,9 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
         return RCIOError;
     }
 
-    /* The entry's user-visible signature must be int(void). A module with
-       module-level globals additionally gives every non-extern function a
-       hidden leading context pointer (see strata.h), which `--run` creates,
-       passes and destroys transparently. */
+    /* The entry's user-visible signature must be int(void). Every non-extern
+       function additionally takes a hidden leading context pointer (see
+       strata.h), which `--run` creates, passes and destroys transparently. */
     if (!strataJitHasIntVoidSignature(jit, state->entryName))
     {
         fprintf(stderr, "error: entry '%s' must be a defined int(void) function\n", state->entryName);
@@ -519,11 +518,10 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
         return RCIOError;
     }
 
-    bool hasContext = strataJitHasContext(jit) != 0;
-    void* createFn = hasContext ? strataJitGetFunction(jit, "__strata_context_create") : NULL;
-    void* destroyFn = hasContext ? strataJitGetFunction(jit, "__strata_context_destroy") : NULL;
+    void* createFn = strataJitGetFunction(jit, "__strata_context_create");
+    void* destroyFn = strataJitGetFunction(jit, "__strata_context_destroy");
 
-    if (hasContext && (!createFn || !destroyFn))
+    if (!createFn || !destroyFn)
     {
         fprintf(stderr, "error: module context functions were not found\n");
         strataJitDestroy(jit);
@@ -538,23 +536,13 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
         return RCIOError;
     }
 
-    int exitCode;
+    void* (*create)(void) = (void* (*)(void))createFn;
+    void (*destroy)(void*) = (void (*)(void*))destroyFn;
+    int (*entry)(void*) = (int (*)(void*))entryRaw;
 
-    if (hasContext)
-    {
-        void* (*create)(void) = (void* (*)(void))createFn;
-        void (*destroy)(void*) = (void (*)(void*))destroyFn;
-        int (*entry)(void*) = (int (*)(void*))entryRaw;
-
-        void* ctx = create();
-        exitCode = entry(ctx);
-        destroy(ctx);
-    }
-    else
-    {
-        int (*entry)(void) = (int (*)(void))entryRaw;
-        exitCode = entry();
-    }
+    void* ctx = create();
+    int exitCode = entry(ctx);
+    destroy(ctx);
 
     strataJitDestroy(jit);
 

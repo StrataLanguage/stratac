@@ -117,11 +117,11 @@ STRATA_TEST(array_literal_and_index)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -148,11 +148,11 @@ STRATA_TEST(array_of_strings_iterates_and_drops)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 3);
+        STRATA_CHECK_EQ(entry(NULL), 3);
     }
 
     strataJitDestroy(jit);
@@ -179,11 +179,11 @@ STRATA_TEST(array_ref_param_borrows)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 44);
+        STRATA_CHECK_EQ(entry(NULL), 44);
     }
 
     strataJitDestroy(jit);
@@ -207,11 +207,11 @@ STRATA_TEST(array_rebind_replaces_contents)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 32);
+        STRATA_CHECK_EQ(entry(NULL), 32);
     }
 
     strataJitDestroy(jit);
@@ -235,11 +235,11 @@ STRATA_TEST(array_move_value_is_owned_by_dest)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 7);
+        STRATA_CHECK_EQ(entry(NULL), 7);
     }
 
     strataJitDestroy(jit);
@@ -267,11 +267,11 @@ STRATA_TEST(array_in_loop_does_not_crash)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 3675);
+        STRATA_CHECK_EQ(entry(NULL), 3675);
     }
 
     strataJitDestroy(jit);
@@ -297,11 +297,11 @@ STRATA_TEST(array_returned_from_function)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 60);
+        STRATA_CHECK_EQ(entry(NULL), 60);
     }
 
     strataJitDestroy(jit);
@@ -329,11 +329,11 @@ STRATA_TEST(array_of_structs_sums_field)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -427,11 +427,11 @@ STRATA_TEST(array_of_owning_struct_inline_elements)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 21);
+        STRATA_CHECK_EQ(entry(NULL), 21);
     }
 
     strataJitDestroy(jit);
@@ -454,11 +454,11 @@ STRATA_TEST(array_uninitialized_decl_allowed_empty)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(entry(NULL), 0);
     }
 
     strataJitDestroy(jit);
@@ -490,11 +490,11 @@ STRATA_TEST(array_field_omitted_starts_empty)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 25);
+        STRATA_CHECK_EQ(entry(NULL), 25);
     }
 
     strataJitDestroy(jit);
@@ -523,11 +523,11 @@ STRATA_TEST(string_array_field_omitted_starts_empty)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 20);
+        STRATA_CHECK_EQ(entry(NULL), 20);
     }
 
     strataJitDestroy(jit);
@@ -581,11 +581,11 @@ STRATA_TEST(braced_literal_as_constructor_argument)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 60);
+        STRATA_CHECK_EQ(entry(NULL), 60);
     }
 
     strataJitDestroy(jit);
@@ -624,11 +624,11 @@ STRATA_TEST(braced_struct_literals_in_expression_position)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 13);
+        STRATA_CHECK_EQ(entry(NULL), 13);
     }
 
     strataJitDestroy(jit);
@@ -658,11 +658,11 @@ STRATA_TEST(braced_empty_against_optional_field_constructs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -703,11 +703,11 @@ STRATA_TEST(push_narrowed_optional_into_box_array)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 113);
+        STRATA_CHECK_EQ(entry(NULL), 113);
     }
 
     strataJitDestroy(jit);
@@ -770,11 +770,11 @@ STRATA_TEST(two_d_dynamic_array_literal_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 1034);
+        STRATA_CHECK_EQ(entry(NULL), 1034);
     }
 
     strataJitDestroy(jit);
@@ -803,11 +803,11 @@ STRATA_TEST(two_d_fixed_array_nested_rows_required_and_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 74);
+        STRATA_CHECK_EQ(entry(NULL), 74);
     }
 
     strataJitDestroy(jit);
@@ -885,11 +885,11 @@ STRATA_TEST(fixed_local_array_basic_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 16);
+        STRATA_CHECK_EQ(entry(NULL), 16);
     }
 
     strataJitDestroy(jit);
@@ -914,11 +914,11 @@ STRATA_TEST(fixed_local_array_multidim_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 62);
+        STRATA_CHECK_EQ(entry(NULL), 62);
     }
 
     strataJitDestroy(jit);
@@ -943,11 +943,11 @@ STRATA_TEST(fixed_local_array_struct_elements_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 12);
+        STRATA_CHECK_EQ(entry(NULL), 12);
     }
 
     strataJitDestroy(jit);
@@ -971,11 +971,11 @@ STRATA_TEST(fixed_local_array_const_dim_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 24);
+        STRATA_CHECK_EQ(entry(NULL), 24);
     }
 
     strataJitDestroy(jit);
@@ -1006,11 +1006,11 @@ STRATA_TEST(fixed_local_array_in_loop_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -1038,11 +1038,11 @@ STRATA_TEST(fixed_local_array_equality_run)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 11);
+        STRATA_CHECK_EQ(entry(NULL), 11);
     }
 
     strataJitDestroy(jit);
@@ -1125,11 +1125,11 @@ STRATA_TEST(fixed_array_ref_view_read)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 6);
+        STRATA_CHECK_EQ(entry(NULL), 6);
     }
 
     strataJitDestroy(jit);
@@ -1150,11 +1150,11 @@ STRATA_TEST(fixed_array_ref_view_length)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 7);
+        STRATA_CHECK_EQ(entry(NULL), 7);
     }
 
     strataJitDestroy(jit);
@@ -1185,11 +1185,11 @@ STRATA_TEST(fixed_array_ref_view_mutates_caller_storage)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 4033);
+        STRATA_CHECK_EQ(entry(NULL), 4033);
     }
 
     strataJitDestroy(jit);
@@ -1210,11 +1210,11 @@ STRATA_TEST(fixed_array_const_ref_view_read)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 9);
+        STRATA_CHECK_EQ(entry(NULL), 9);
     }
 
     strataJitDestroy(jit);
@@ -1246,11 +1246,11 @@ STRATA_TEST(fixed_array_struct_field_ref_view)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 26);
+        STRATA_CHECK_EQ(entry(NULL), 26);
     }
 
     strataJitDestroy(jit);
@@ -1284,11 +1284,11 @@ STRATA_TEST(fixed_array_box_member_ref_view)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 55);
+        STRATA_CHECK_EQ(entry(NULL), 55);
     }
 
     strataJitDestroy(jit);
@@ -1320,11 +1320,11 @@ STRATA_TEST(fixed_array_element_member_ref_view)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -1455,11 +1455,11 @@ STRATA_TEST(fixed_array_view_wins_over_by_value_overload)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 3);
+        STRATA_CHECK_EQ(entry(NULL), 3);
     }
 
     strataJitDestroy(jit);
@@ -1497,11 +1497,11 @@ STRATA_TEST(ref_array_literal_arg_borrowed_temp)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 699);
+        STRATA_CHECK_EQ(entry(NULL), 699);
     }
 
     strataJitDestroy(jit);
@@ -1524,11 +1524,11 @@ STRATA_TEST(ref_array_literal_arg_callee_writes_are_lost)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 31);
+        STRATA_CHECK_EQ(entry(NULL), 31);
     }
 
     strataJitDestroy(jit);
@@ -1558,11 +1558,11 @@ STRATA_TEST(ref_array_literal_arg_owning_elements_dropped)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 400);
+        STRATA_CHECK_EQ(entry(NULL), 400);
     }
 
     strataJitDestroy(jit);
@@ -1630,11 +1630,11 @@ STRATA_TEST(by_value_array_literal_arg_owned_temp)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 42);
+        STRATA_CHECK_EQ(entry(NULL), 42);
     }
 
     strataJitDestroy(jit);
@@ -1664,11 +1664,11 @@ STRATA_TEST(by_value_array_literal_arg_owning_elements_dropped)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 400);
+        STRATA_CHECK_EQ(entry(NULL), 400);
     }
 
     strataJitDestroy(jit);
@@ -1695,11 +1695,11 @@ STRATA_TEST(ref_array_param_reads_and_element_writes_ok)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 41);
+        STRATA_CHECK_EQ(entry(NULL), 41);
     }
 
     strataJitDestroy(jit);
@@ -1734,11 +1734,11 @@ STRATA_TEST(multidim_fixed_array_struct_elements_typed_literals)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 982);
+        STRATA_CHECK_EQ(entry(NULL), 982);
     }
 
     strataJitDestroy(jit);
@@ -1772,11 +1772,11 @@ STRATA_TEST(multidim_fixed_array_struct_elements_bare_braces)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 1204);
+        STRATA_CHECK_EQ(entry(NULL), 1204);
     }
 
     strataJitDestroy(jit);
@@ -1805,11 +1805,11 @@ STRATA_TEST(multidim_fixed_array_struct_elements_mixed_forms)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -1848,11 +1848,11 @@ STRATA_TEST(optional_array_field_narrows_and_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 1010);
+        STRATA_CHECK_EQ(entry(NULL), 1010);
     }
 
     strataJitDestroy(jit);
@@ -2146,11 +2146,11 @@ STRATA_TEST(array_length_is_count)
         return;
     }
 
-    unsigned long long (*entry)(void) = (unsigned long long (*)(void))strataJitGetFunction(jit, "entry");
+    unsigned long long (*entry)(void*) = (unsigned long long (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 5ULL);
+        STRATA_CHECK_EQ(entry(NULL), 5ULL);
     }
 
     strataJitDestroy(jit);
@@ -2174,11 +2174,11 @@ STRATA_TEST(array_index_is_mutable)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 20);
+        STRATA_CHECK_EQ(entry(NULL), 20);
     }
 
     strataJitDestroy(jit);
@@ -2205,11 +2205,11 @@ STRATA_TEST(array_iterate_and_sum)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 10);
+        STRATA_CHECK_EQ(entry(NULL), 10);
     }
 
     strataJitDestroy(jit);
@@ -2283,11 +2283,11 @@ STRATA_TEST(array_return_cleans_up_memory)
     g_arrAllocs = 0;
     g_arrFrees = 0;
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 15);
+        STRATA_CHECK_EQ(entry(NULL), 15);
         STRATA_CHECK(g_arrAllocs > 0);
         STRATA_CHECK_EQ(g_arrAllocs, g_arrFrees);
     }
@@ -2330,11 +2330,11 @@ STRATA_TEST(optional_braced_empty_constructs_in_all_positions)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 1111);
+        STRATA_CHECK_EQ(entry(NULL), 1111);
     }
 
     strataJitDestroy(jit);
@@ -2369,11 +2369,11 @@ STRATA_TEST(recursive_struct_braced_ctor_sample_shape)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 311);
+        STRATA_CHECK_EQ(entry(NULL), 311);
     }
 
     strataJitDestroy(jit);
@@ -2427,11 +2427,11 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
 
     if (ok)
     {
-        int (*entry)(void) = (int (*)(void))(uintptr_t)LLVMJitGetAddress(&jit, "entry");
+        int (*entry)(void*) = (int (*)(void*))(uintptr_t)LLVMJitGetAddress(&jit, "entry");
         STRATA_CHECK(entry != NULL);
         if (entry)
         {
-            STRATA_CHECK_EQ(entry(), 15);
+            STRATA_CHECK_EQ(entry(NULL), 15);
             STRATA_CHECK(g_arrAllocs > 0);
             STRATA_CHECK_EQ(g_arrAllocs, g_arrFrees);
         }
@@ -2504,11 +2504,11 @@ STRATA_TEST(dynamic_array_equality_is_elementwise)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 63);
+        STRATA_CHECK_EQ(entry(NULL), 63);
     }
 
     strataJitDestroy(jit);
@@ -2539,11 +2539,11 @@ STRATA_TEST(float_array_equality_is_ieee754)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 3);
+        STRATA_CHECK_EQ(entry(NULL), 3);
     }
 
     strataJitDestroy(jit);
@@ -2575,11 +2575,11 @@ STRATA_TEST(string_array_equality_is_contentwise)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 7);
+        STRATA_CHECK_EQ(entry(NULL), 7);
     }
 
     strataJitDestroy(jit);
@@ -2611,11 +2611,11 @@ STRATA_TEST(nested_array_equality_is_elementwise)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 7);
+        STRATA_CHECK_EQ(entry(NULL), 7);
     }
 
     strataJitDestroy(jit);
@@ -2719,11 +2719,11 @@ STRATA_TEST(array_length_and_cap_are_uint)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 62);
+        STRATA_CHECK_EQ(entry(NULL), 62);
     }
 
     strataJitDestroy(jit);
@@ -2754,11 +2754,11 @@ STRATA_TEST(array_cap_doubles_on_push)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 4408);
+        STRATA_CHECK_EQ(entry(NULL), 4408);
     }
 
     strataJitDestroy(jit);
@@ -2782,11 +2782,11 @@ STRATA_TEST(array_literal_cap_is_exact)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 33);
+        STRATA_CHECK_EQ(entry(NULL), 33);
     }
 
     strataJitDestroy(jit);
@@ -2821,11 +2821,11 @@ STRATA_TEST(array_resize_uses_capacity)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 132);
+        STRATA_CHECK_EQ(entry(NULL), 132);
     }
 
     strataJitDestroy(jit);
@@ -2851,11 +2851,11 @@ STRATA_TEST(string_cap_counts_nul_slot)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 65);
+        STRATA_CHECK_EQ(entry(NULL), 65);
     }
 
     strataJitDestroy(jit);

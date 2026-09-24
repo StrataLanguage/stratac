@@ -27,11 +27,11 @@ STRATA_TEST(import_function_jit_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 5);
+        STRATA_CHECK_EQ(entry(NULL), 5);
     }
 
     strataJitDestroy(jit);
@@ -55,11 +55,11 @@ STRATA_TEST(import_cycle_jit_runs)
         return;
     }
 
-    int (*a_value)(void) = (int (*)(void))strataJitGetFunction(jit, "a_value");
+    int (*a_value)(void*) = (int (*)(void*))strataJitGetFunction(jit, "a_value");
     STRATA_CHECK(a_value != NULL);
     if (a_value)
     {
-        STRATA_CHECK_EQ(a_value(), 42);
+        STRATA_CHECK_EQ(a_value(NULL), 42);
     }
 
     strataJitDestroy(jit);
@@ -153,11 +153,11 @@ STRATA_TEST(import_parent_path_jit_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 23);
+        STRATA_CHECK_EQ(entry(NULL), 23);
     }
 
     strataJitDestroy(jit);
@@ -181,11 +181,11 @@ STRATA_TEST(import_grandparent_path_jit_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 123);
+        STRATA_CHECK_EQ(entry(NULL), 123);
     }
 
     strataJitDestroy(jit);
@@ -233,11 +233,11 @@ STRATA_TEST(resolver_provides_virtual_module)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 42);
+        STRATA_CHECK_EQ(entry(NULL), 42);
     }
 
     strataJitDestroy(jit);
@@ -292,11 +292,11 @@ STRATA_TEST(resolver_handles_import_cycle)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 42);   /* b_val() + 1 = 41 + 1 */
+        STRATA_CHECK_EQ(entry(NULL), 42);   /* b_val() + 1 = 41 + 1 */
     }
 
     strataJitDestroy(jit);
@@ -385,11 +385,11 @@ STRATA_TEST(resolver_receives_importer_name)
 
     STRATA_CHECK(strcmp(g_resolverImporterBuf, "myroot") == 0);
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 7);
+        STRATA_CHECK_EQ(entry(NULL), 7);
     }
 
     strataJitDestroy(jit);
@@ -438,11 +438,11 @@ STRATA_TEST(resolver_overrides_filesystem_import)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 99);   /* virtual pistol, not the disk's 5 */
+        STRATA_CHECK_EQ(entry(NULL), 99);   /* virtual pistol, not the disk's 5 */
     }
 
     strataJitDestroy(jit);
@@ -485,9 +485,9 @@ STRATA_TEST(resolver_imports_struct_type_and_calls_function)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 25);  /* 3*3 + 4*4 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 25);  /* 3*3 + 4*4 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -509,9 +509,9 @@ STRATA_TEST(resolver_imported_struct_used_in_local_function)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 169);  /* 25 + 144 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 169);  /* 25 + 144 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -530,9 +530,9 @@ STRATA_TEST(resolver_imported_function_returns_struct)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 2);
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 2);
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -569,9 +569,9 @@ STRATA_TEST(resolver_imported_struct_passed_as_param)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 30);
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 30);
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -590,9 +590,9 @@ STRATA_TEST(resolver_array_of_imported_struct_type)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 5);  /* 1 + 4 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 5);  /* 1 + 4 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -640,9 +640,9 @@ STRATA_TEST(resolver_deep_call_chain_across_modules)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 111);  /* 1 + 10 + 100 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 111);  /* 1 + 10 + 100 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -687,9 +687,9 @@ STRATA_TEST(resolver_mutual_import_with_shared_function)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 12);  /* a_only=8, b_only=4 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 12);  /* a_only=8, b_only=4 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -757,9 +757,9 @@ STRATA_TEST(resolver_return_param_forward_decl_import)
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "GetFoo", (void*)&HostSdkGetFoo), 1);
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "UseFoo", (void*)&HostSdkUseFoo), 1);
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 81);  /* UseFoo(40)+1 + 40 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 81);  /* UseFoo(40)+1 + 40 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -784,9 +784,9 @@ STRATA_TEST(resolver_return_param_forward_decl_import_reverse)
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "GetFoo", (void*)&HostSdkGetFoo), 1);
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "UseFoo", (void*)&HostSdkUseFoo), 1);
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 81);
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 81);
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -865,9 +865,9 @@ STRATA_TEST(resolver_overloaded_function_imported)
     STRATA_CHECK(jit != NULL);
     if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(), 9);  /* 3 + 6 */
+    if (entry) STRATA_CHECK_EQ(entry(NULL), 9);  /* 3 + 6 */
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -991,11 +991,11 @@ STRATA_TEST(import_case_variants_load_once_on_windows)
     }
     else
     {
-        int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
         if (entry)
         {
-            STRATA_CHECK_EQ(entry(), 6);
+            STRATA_CHECK_EQ(entry(NULL), 6);
         }
         strataJitDestroy(jit);
     }

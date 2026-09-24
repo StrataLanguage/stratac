@@ -338,12 +338,12 @@ STRATA_TEST(jit_extern_struct_fixed_array_ops)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
         /* 1 + 2 + 7 + (1+2+3) + (10+20) = 46 */
-        STRATA_CHECK_EQ(entry(), 46);
+        STRATA_CHECK_EQ(entry(NULL), 46);
     }
 
     strataJitDestroy(jit);
@@ -371,12 +371,12 @@ STRATA_TEST(jit_extern_struct_multidim_fixed_array)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
         /* cells[1][2] = 6; .length = 2 (outer); cells[0].length = 3. */
-        STRATA_CHECK_EQ(entry(), 11);
+        STRATA_CHECK_EQ(entry(NULL), 11);
     }
 
     strataJitDestroy(jit);
@@ -434,12 +434,12 @@ STRATA_TEST(jit_extern_struct_box_autodrop)
         return;
     }
 
-    long (*entry)(void) = (long (*)(void))strataJitGetFunction(jit, "entry");
+    long (*entry)(void*) = (long (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
         /* 7 + 5 + 1 + 2 + 4 = 19 */
-        STRATA_CHECK_EQ(entry(), 19);
+        STRATA_CHECK_EQ(entry(NULL), 19);
 
         /* Both allocations (the ^Payload box and its ^Counter field) must be
            freed when the box drops at the end of entry(). */
@@ -618,18 +618,18 @@ STRATA_TEST(jit_extern_struct_layout_matches_c)
     STRATA_CHECK(strataJitAddSymbol(jit, "fill_a", (void*)LayFillA));
     STRATA_CHECK(strataJitAddSymbol(jit, "sum_w", (void*)LaySumW));
 
-    long long (*readE)(void) = (long long (*)(void))strataJitGetFunction(jit, "read_e");
-    long long (*readW)(void) = (long long (*)(void))strataJitGetFunction(jit, "read_w");
-    long long (*readA)(void) = (long long (*)(void))strataJitGetFunction(jit, "read_a");
-    long long (*writeW)(void) = (long long (*)(void))strataJitGetFunction(jit, "write_w");
+    long long (*readE)(void*) = (long long (*)(void*))strataJitGetFunction(jit, "read_e");
+    long long (*readW)(void*) = (long long (*)(void*))strataJitGetFunction(jit, "read_w");
+    long long (*readA)(void*) = (long long (*)(void*))strataJitGetFunction(jit, "read_a");
+    long long (*writeW)(void*) = (long long (*)(void*))strataJitGetFunction(jit, "write_w");
     STRATA_CHECK(readE && readW && readA && writeW);
 
     if (readE && readW && readA && writeW)
     {
-        STRATA_CHECK_EQ(readE(), 107);
-        STRATA_CHECK_EQ(readW(), 3211);
-        STRATA_CHECK_EQ(readA(), 7654);
-        STRATA_CHECK_EQ(writeW(), 2 + 30 + 400 + 5000);
+        STRATA_CHECK_EQ(readE(NULL), 107);
+        STRATA_CHECK_EQ(readW(NULL), 3211);
+        STRATA_CHECK_EQ(readA(NULL), 7654);
+        STRATA_CHECK_EQ(writeW(NULL), 2 + 30 + 400 + 5000);
     }
 
     strataJitDestroy(jit);

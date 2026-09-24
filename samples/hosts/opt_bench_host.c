@@ -121,7 +121,7 @@ static const char* kSource =
     "    return total;\n"
     "}\n";
 
-typedef int64_t (*IntFn)(int32_t);
+typedef int64_t (*IntFn)(void*, int32_t);
 
 typedef struct
 {
@@ -144,14 +144,14 @@ static const Workload kWorkloads[] = {
    printed as context columns next to the JIT result. */
 static double BestOf(IntFn fn, int32_t arg, int64_t* outResult)
 {
-    *outResult = fn(arg); /* warmup */
+    *outResult = fn(NULL, arg); /* warmup */
 
     double bestMs = 1e300;
 
     for (int i = 0; i < REPS; i++)
     {
         uint64_t t0 = NowTicks();
-        *outResult = fn(arg);
+        *outResult = fn(NULL, arg);
         double ms = TicksToMs(NowTicks() - t0);
 
         if (ms < bestMs) { bestMs = ms; }

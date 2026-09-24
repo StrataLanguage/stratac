@@ -242,11 +242,11 @@ STRATA_TEST(const_ref_scalar_is_readable_view)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 21);
+        STRATA_CHECK_EQ(entry(NULL), 21);
     }
 
     strataJitDestroy(jit);
@@ -276,11 +276,11 @@ STRATA_TEST(const_ref_struct_dot_product_runs)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 14);
+        STRATA_CHECK_EQ(entry(NULL), 14);
     }
 
     strataJitDestroy(jit);

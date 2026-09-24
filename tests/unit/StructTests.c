@@ -104,11 +104,11 @@ STRATA_TEST(jit_forward_decl_completed_and_used)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 42);
+        STRATA_CHECK_EQ(entry(NULL), 42);
     }
 
     strataJitDestroy(jit);
@@ -160,11 +160,11 @@ STRATA_TEST(jit_struct_member_read_write)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 5.9f && r < 6.1f);
         }
         strataJitDestroy(jit);
@@ -182,11 +182,11 @@ STRATA_TEST(jit_struct_constructor_and_return)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 59.9f && r < 60.1f);
         }
         strataJitDestroy(jit);
@@ -205,11 +205,11 @@ STRATA_TEST(jit_struct_passed_between_strata_functions)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 31.9f && r < 32.1f);
         }
         strataJitDestroy(jit);
@@ -229,11 +229,11 @@ STRATA_TEST(jit_struct_nested_and_mixed_fields)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 12.9f && r < 13.1f);
         }
         strataJitDestroy(jit);
@@ -277,11 +277,11 @@ STRATA_TEST(jit_opaque_engine_handle)
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "despawn", (void*)&test_despawn), 1);
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "id_of", (void*)&test_id_of), 1);
 
-    int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+    int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
     STRATA_CHECK(run != NULL);
     if (run)
     {
-        STRATA_CHECK_EQ(run(), (long)0xC0FFEE);
+        STRATA_CHECK_EQ(run(NULL), (long)0xC0FFEE);
     }
 
     strataJitDestroy(jit);
@@ -298,11 +298,11 @@ STRATA_TEST(jit_struct_zero_initialized_by_default)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 6.9f && r < 7.1f);
         }
         strataJitDestroy(jit);
@@ -326,11 +326,11 @@ STRATA_TEST(jit_struct_param_is_by_value)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 95.9f && r < 96.1f);
         }
         strataJitDestroy(jit);
@@ -353,11 +353,11 @@ STRATA_TEST(jit_owning_struct_param_is_deep_copied)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 7);
+            STRATA_CHECK_EQ(f(NULL), 7);
         }
         strataJitDestroy(jit);
     }
@@ -377,11 +377,11 @@ STRATA_TEST(jit_box_arg_to_by_value_struct_param_copies)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 5);
+            STRATA_CHECK_EQ(f(NULL), 5);
         }
         strataJitDestroy(jit);
     }
@@ -414,11 +414,11 @@ STRATA_TEST(jit_self_referential_struct_by_value_param_copies)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 14);
+            STRATA_CHECK_EQ(f(NULL), 14);
         }
         strataJitDestroy(jit);
     }
@@ -458,11 +458,11 @@ STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "length_sq", (void*)&test_length_sq), 1);
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "scale_into", (void*)&test_scale_into), 1);
 
-    float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+    float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(f != NULL);
     if (f)
     {
-        float r = f();
+        float r = f(NULL);
         STRATA_CHECK(r > 124.9f && r < 125.1f);
     }
 
@@ -514,11 +514,11 @@ STRATA_TEST(jit_braced_init_positional)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 59.9f && r < 60.1f);
         }
         strataJitDestroy(jit);
@@ -535,11 +535,11 @@ STRATA_TEST(jit_braced_init_designated)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 59.9f && r < 60.1f);
         }
         strataJitDestroy(jit);
@@ -556,11 +556,11 @@ STRATA_TEST(jit_braced_init_partial_designated)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 41.9f && r < 42.1f);
         }
         strataJitDestroy(jit);
@@ -577,11 +577,11 @@ STRATA_TEST(jit_braced_init_out_of_order)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 122.9f && r < 123.1f);
         }
         strataJitDestroy(jit);
@@ -598,11 +598,11 @@ STRATA_TEST(jit_braced_init_inferred_type)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 59.9f && r < 60.1f);
         }
         strataJitDestroy(jit);
@@ -619,11 +619,11 @@ STRATA_TEST(jit_braced_init_inferred_positional)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 59.9f && r < 60.1f);
         }
         strataJitDestroy(jit);
@@ -637,11 +637,11 @@ STRATA_TEST(jit_in_scalar_param_reads_correctly)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 42);
+            STRATA_CHECK_EQ(f(NULL), 42);
         }
         strataJitDestroy(jit);
     }
@@ -654,11 +654,11 @@ STRATA_TEST(jit_in_float_param_reads_correctly)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 4.9f && r < 5.1f);
         }
         strataJitDestroy(jit);
@@ -676,11 +676,11 @@ STRATA_TEST(jit_in_param_does_not_corrupt_caller)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 99);
+            STRATA_CHECK_EQ(f(NULL), 99);
         }
         strataJitDestroy(jit);
     }
@@ -693,11 +693,11 @@ STRATA_TEST(jit_multiple_in_params)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 60);
+            STRATA_CHECK_EQ(f(NULL), 60);
         }
         strataJitDestroy(jit);
     }
@@ -715,11 +715,11 @@ STRATA_TEST(jit_in_struct_param_passed_by_ref)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        float (*f)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+        float (*f)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            float r = f();
+            float r = f(NULL);
             STRATA_CHECK(r > 31.9f && r < 32.1f);
         }
         strataJitDestroy(jit);
@@ -750,11 +750,11 @@ STRATA_TEST(jit_struct_equality_is_memberwise)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 15);
+            STRATA_CHECK_EQ(f(NULL), 15);
         }
         strataJitDestroy(jit);
     }
@@ -779,11 +779,11 @@ STRATA_TEST(jit_struct_equality_float_fields_are_ieee754)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            STRATA_CHECK_EQ(f(NULL), 3);
         }
         strataJitDestroy(jit);
     }
@@ -808,11 +808,11 @@ STRATA_TEST(jit_struct_string_field_equality_is_content)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 7);
+            STRATA_CHECK_EQ(f(NULL), 7);
         }
         strataJitDestroy(jit);
     }
@@ -847,11 +847,11 @@ STRATA_TEST(jit_struct_string_field_content_eq_distinct_buffers)
     {
         STRATA_CHECK_EQ(strataJitAddSymbol(jit, "samestrptr", (void*)&SameStrDataPtr), 1);
 
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            STRATA_CHECK_EQ(f(NULL), 3);
         }
         strataJitDestroy(jit);
     }
@@ -876,11 +876,11 @@ STRATA_TEST(jit_boxed_struct_array_equality_derefs_each)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 7);
+            STRATA_CHECK_EQ(f(NULL), 7);
         }
         strataJitDestroy(jit);
     }
@@ -903,11 +903,11 @@ STRATA_TEST(jit_struct_fixed_array_of_floats_equality)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            STRATA_CHECK_EQ(f(NULL), 3);
         }
         strataJitDestroy(jit);
     }
@@ -932,11 +932,11 @@ STRATA_TEST(jit_struct_field_fixed_array_equality)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 15);
+            STRATA_CHECK_EQ(f(NULL), 15);
         }
         strataJitDestroy(jit);
     }
@@ -960,11 +960,11 @@ STRATA_TEST(jit_nested_struct_equality)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            STRATA_CHECK_EQ(f(NULL), 3);
         }
         strataJitDestroy(jit);
     }
@@ -987,11 +987,11 @@ STRATA_TEST(jit_extern_struct_equality_is_memberwise)
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
-        int (*f)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+        int (*f)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(f != NULL);
         if (f)
         {
-            STRATA_CHECK_EQ(f(), 3);
+            STRATA_CHECK_EQ(f(NULL), 3);
         }
         strataJitDestroy(jit);
     }

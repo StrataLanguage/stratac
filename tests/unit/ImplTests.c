@@ -939,11 +939,11 @@ STRATA_TEST(impl_on_opaque_struct_jit)
     STRATA_CHECK(strataJitAddSymbol(jit, "TheType_SetValue", (void*)&OpaqueSetValueImpl));
     STRATA_CHECK(strataJitAddSymbol(jit, "TheType_Bump", (void*)&OpaqueBumpImpl));
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 87);
+        STRATA_CHECK_EQ(entry(NULL), 87);
     }
 
     strataJitDestroy(jit);
@@ -994,11 +994,11 @@ STRATA_TEST(impl_inline_methods_jit)
         return;
     }
 
-    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(), 0);
+        STRATA_CHECK_EQ(entry(NULL), 0);
     }
 
     strataJitDestroy(jit);
@@ -1063,12 +1063,12 @@ STRATA_TEST(impl_property_getter_return_param_jit)
     STRATA_CHECK(strataJitAddSymbol(jit, "Widget_GetCount", (void*)&HostWidgetGetCount));
     STRATA_CHECK(strataJitAddSymbol(jit, "Widget_SetCount", (void*)&HostWidgetSetCount));
 
-    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*, void*) = (int (*)(void*, void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
         HostWidget w = { 5 };
-        STRATA_CHECK_EQ(entry(&w), 6); /* read 5, write 6, read 6 */
+        STRATA_CHECK_EQ(entry(NULL, &w), 6); /* read 5, write 6, read 6 */
         STRATA_CHECK_EQ(w.count, 6);
     }
 
@@ -1107,11 +1107,11 @@ STRATA_TEST(impl_property_getter_return_param_struct_jit)
 
     STRATA_CHECK(strataJitAddSymbol(jit, "Widget_GetPos", (void*)&HostWidgetGetPos));
 
-    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    int (*entry)(void*, void*) = (int (*)(void*, void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(NULL), 6); /* 1 + 2 + 3 */
+        STRATA_CHECK_EQ(entry(NULL, NULL), 6); /* 1 + 2 + 3 */
     }
 
     strataJitDestroy(jit);
@@ -1193,21 +1193,21 @@ STRATA_TEST(impl_jit_end_to_end)
     STRATA_CHECK(strataJitAddSymbol(jit, "Camera_SetFOV", (void*)&Camera_SetFOVThunk));
     STRATA_CHECK(strataJitAddSymbol(jit, "Camera_New", (void*)&Camera_NewThunk));
 
-    float (*entry)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
+    float (*entry)(void*, void*) = (float (*)(void*, void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
 
     if (entry)
     {
         float cell = 1.0f;
-        STRATA_CHECK_EQ((long)(entry(&cell) * 100.0f), 8400); /* 42 + 42 */
+        STRATA_CHECK_EQ((long)(entry(NULL, &cell) * 100.0f), 8400); /* 42 + 42 */
     }
 
-    void* (*make)(void) = (void* (*)(void))strataJitGetFunction(jit, "make");
+    void* (*make)(void*) = (void* (*)(void*))strataJitGetFunction(jit, "make");
     STRATA_CHECK(make != NULL);
 
     if (make)
     {
-        void* cam = make();
+        void* cam = make(NULL);
         STRATA_CHECK(cam != NULL);
         free(cam);
     }
@@ -1255,12 +1255,12 @@ STRATA_TEST(impl_jit_property_on_array_elem)
     /* The array is built inside Strata (a `T[]` param owns its buffer, so
        passing a host stack buffer here would be freed by the callee's drop
        glue and corrupt the heap). */
-    float (*entry)(void) = (float (*)(void))strataJitGetFunction(jit, "entry");
+    float (*entry)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
 
     if (entry)
     {
-        float sum = entry();
+        float sum = entry(NULL);
         STRATA_CHECK_EQ((long)(sum * 100.0f), 1600); /* 7 + 9 */
     }
 
@@ -1306,7 +1306,7 @@ STRATA_TEST(impl_jit_property_through_struct_field)
         void* cam;
     } Holder;
 
-    float (*entry)(Holder*) = (float (*)(Holder*))strataJitGetFunction(jit, "entry");
+    float (*entry)(void*, Holder*) = (float (*)(void*, Holder*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
 
     if (entry)
@@ -1314,7 +1314,7 @@ STRATA_TEST(impl_jit_property_through_struct_field)
         float cell = 1.0f;
         Holder h = {&cell};
 
-        float v = entry(&h);
+        float v = entry(NULL, &h);
         STRATA_CHECK_EQ((long)(v * 100.0f), 550);
         STRATA_CHECK_EQ((long)(cell * 100.0f), 550);
     }
@@ -1350,13 +1350,13 @@ STRATA_TEST(impl_jit_recursive_property_chain)
     STRATA_CHECK(strataJitAddSymbol(jit, "GetSelf", (void*)&Camera_GetSelfThunk));
     STRATA_CHECK(strataJitAddSymbol(jit, "GetFOV", (void*)&Camera_GetFOVThunk));
 
-    float (*entry)(void*) = (float (*)(void*))strataJitGetFunction(jit, "entry");
+    float (*entry)(void*, void*) = (float (*)(void*, void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
 
     if (entry)
     {
         float cell = 3.25f;
-        STRATA_CHECK_EQ((long)(entry(&cell) * 100.0f), 325);
+        STRATA_CHECK_EQ((long)(entry(NULL, &cell) * 100.0f), 325);
     }
 
     strataJitDestroy(jit);

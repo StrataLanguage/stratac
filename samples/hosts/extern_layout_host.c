@@ -68,10 +68,14 @@ void fill_header(Header* h)
 }
 
 /* defined in Strata code. */
-extern long long entry(void);
+extern long long entry(void* ctx);
+extern void* __strata_context_create(void);
+extern void __strata_context_destroy(void*);
 
 int main(void)
 {
-    printf("entry() = %lld\n", entry()); /* 385 */
+    void* ctx = __strata_context_create();
+    printf("entry() = %lld\n", entry(ctx)); /* 385 */
+    __strata_context_destroy(ctx);
     return 0;
 }

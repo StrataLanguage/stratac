@@ -48,11 +48,11 @@ int main(void)
         }
     }
 
-    int (*run)(void) = (int (*)(void))strataJitGetFunction(jit, "run");
+    int (*run)(void*) = (int (*)(void*))strataJitGetFunction(jit, "run");
 
     if (run)
     {
-        printf("run() = %d\n", run());   /* 117 */
+        printf("run() = %d\n", run(NULL));   /* 117 */
     }
     else
     {

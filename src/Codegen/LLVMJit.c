@@ -398,7 +398,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         return false;
     }
 
-    /* A module with instanced globals now exports __strata_context_create
+    /* Every module now exports __strata_context_create
        (see LLVMModuleBuilder.c) instead of auto-running a single per-process
        __strata_module_init: the host calls it explicitly, as many times as
        it wants independent instances, exactly like any other symbol. */
