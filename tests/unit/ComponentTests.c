@@ -603,7 +603,7 @@ static const char* kGenericExternSource = "handle Entity;\n"
                                           "@component struct Health { float current = 100.0; float maximum = 150.0; };\n"
                                           "@component struct Armor { int value = 7; };\n"
                                           "extern<T> bool GetComponent(Entity entity, ref T value);\n"
-                                          "extern<T> void SetComponent(Entity entity, T value);\n"
+                                          "extern<T> void SetComponent(Entity entity, const ref T value);\n"
                                           "extern<T> bool HasComponent(Entity entity);\n"
                                           "float roundtrip(Entity e)\n"
                                           "{\n"
@@ -624,6 +624,13 @@ static const char* kGenericExternSource = "handle Entity;\n"
                                           "    b.value = 0;\n"
                                           "    GetComponent(e, b);\n"
                                           "    return b.value;\n"
+                                          "}\n"
+                                          "float from_literal(Entity e)\n"
+                                          "{\n"
+                                          "    SetComponent(e, Health { .current = 5.0 });\n"
+                                          "    Health h;\n"
+                                          "    GetComponent(e, h);\n"
+                                          "    return h.current + h.maximum;\n"
                                           "}\n";
 
 STRATA_TEST(generic_extern_calls_reach_one_host_function)
@@ -661,11 +668,12 @@ STRATA_TEST(generic_extern_calls_reach_one_host_function)
 
     float (*roundtrip)(void*) = (float (*)(void*))strataJitGetFunction(jit, "roundtrip");
     int (*armorValue)(void*) = (int (*)(void*))strataJitGetFunction(jit, "armor_value");
-    STRATA_CHECK(roundtrip && armorValue);
+    float (*fromLiteral)(void*) = (float (*)(void*))strataJitGetFunction(jit, "from_literal");
+    STRATA_CHECK(roundtrip && armorValue && fromLiteral);
 
     void* entity = (void*)(uintptr_t)0x1234;
 
-    if (roundtrip && armorValue)
+    if (roundtrip && armorValue && fromLiteral)
     {
         s_hostHasValue = 0;
         STRATA_CHECK(NearlyEqual(roundtrip(entity), 192.0f));
@@ -701,6 +709,9 @@ STRATA_TEST(generic_extern_calls_reach_one_host_function)
         STRATA_CHECK_EQ(armorValue(entity), 7);
         STRATA_CHECK(s_hostLastType && strcmp(strataTypeDescName(s_hostLastType), "Armor") == 0);
         STRATA_CHECK(healthType != s_hostLastType);
+
+        /* A `const ref` argument can be a temporary. */
+        STRATA_CHECK(NearlyEqual(fromLiteral(entity), 155.0f));
     }
 
     strataJitDestroy(jit);
@@ -719,6 +730,7 @@ STRATA_TEST(generic_extern_rules)
                                  "struct Named { string name; };\n"
                                  "extern<T> T Make();\n"
                                  "extern<T> void Boxed(^T value);\n"
+                                 "extern<T> void ByValue(Entity entity, T value);\n"
                                  "extern<T> bool Has(Entity entity);\n"
                                  "extern<T> bool Get(Entity entity, ref T value);\n"
                                  "int plain(int x) { return x; }\n"
@@ -733,12 +745,13 @@ STRATA_TEST(generic_extern_rules)
                                  &arena, &diag);
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(strstr(d, "generic extern 'Make' can't return its type parameter 'T'") != NULL);
-    STRATA_CHECK(strstr(d, "parameter 'value' of generic extern 'Boxed' must be 'T' or 'ref T', not '^T'") != NULL);
+    STRATA_CHECK(strstr(d, "parameter 'value' of generic extern 'Boxed' must be 'const ref T' or 'ref T'") != NULL);
+    STRATA_CHECK(strstr(d, "parameter 'value' of generic extern 'ByValue' must be 'const ref T' or 'ref T'") != NULL);
     STRATA_CHECK(strstr(d, "can't infer 'T' for 'Has'; name it explicitly: 'Has<Type>(...)'") != NULL);
     STRATA_CHECK(strstr(d, "type argument 'Named' for 'Has' must be plain data") != NULL);
     STRATA_CHECK(strstr(d, "type argument 'int' for 'Has' must be a struct type") != NULL);
     STRATA_CHECK(strstr(d, "'plain' is not a generic extern; it takes no type argument") != NULL);
-    STRATA_CHECK(strstr(d, "argument 2 of 'Get' is passed by 'ref' and must be a variable") != NULL);
+    STRATA_CHECK(strstr(d, "argument 2 of 'Get' is passed by non-const 'ref' and must be a variable") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

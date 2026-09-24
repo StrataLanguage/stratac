@@ -138,7 +138,7 @@ STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverF
  */
 
 /* Generic externs: `extern<T> R Name(params)` is ONE host function serving every
- * type T. T may only be a whole parameter type (`T value` or `ref T value`),
+ * type T. T may only be a whole parameter type (`const ref T value` or `ref T value`),
  * never the return type, and each call's T must be a plain-data struct (no
  * owning fields). Calls name T explicitly or let it be inferred from a T
  * argument:
@@ -150,9 +150,9 @@ STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverF
  *     if (GetComponent(entity, health)) { ... }      // T inferred as Health
  *     if (HasComponent<Health>(entity)) { ... }      // T named explicitly
  *
- * On the host side every T parameter is a pointer (to the caller's storage for
- * `ref T`, to a copy for `T`), and T's descriptor is appended as a hidden last
- * argument:
+ * On the host side every T parameter is a pointer (to the caller's storage, or
+ * to a temporary for a `const ref T` argument that isn't a variable), and T's
+ * descriptor is appended as a hidden last argument:
  *
  *     bool GetComponent(void* entity, void* value, const StrataTypeDesc* type);
  *     bool HasComponent(void* entity, const StrataTypeDesc* type);

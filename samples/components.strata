@@ -18,7 +18,7 @@ struct Health
     float current = 100.0;
     float maximum = 150.0;
     Team team = Team.Blue;
-};
+}
 
 // One host function for every T; T's StrataTypeDesc arrives as a hidden last argument.
 extern<T> bool HostRead(ref T value);

@@ -1013,7 +1013,7 @@ STRATA_TEST(extern_return_param_struct_passed_to_ref)
     HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet }, { "host_box_read", (void*)&HostBoxRead } };
     CheckExtern("struct Foo { int v; };\n"
                 "extern void host_foo_get(return Foo f);\n"
-                "extern int host_box_read(Foo f);\n"
+                "extern int host_box_read(const ref Foo f);\n"
                 "int entry()\n"
                 "{\n"
                 "  Foo f = host_foo_get();\n"   /* { .v = 42 } */
@@ -1146,9 +1146,9 @@ STRATA_TEST(impl_on_forward_declared_struct_via_box)
     CheckExtern("struct TheType;\n"
                 "extern void host_get_type(return ^TheType t);\n"
                 "impl TheType {\n"
-                "    extern int GetValue(TheType self);\n"
-                "    extern void SetValue(TheType self, int v);\n"
-                "    extern int Bump(TheType self);\n"
+                "    extern int GetValue(const ref TheType self);\n"
+                "    extern void SetValue(ref TheType self, int v);\n"
+                "    extern int Bump(ref TheType self);\n"
                 "}\n"
                 "int entry()\n"
                 "{\n"
@@ -1199,7 +1199,7 @@ STRATA_TEST(impl_on_defined_struct)
     HostSymbol hosts[] = { { "Pair_Sum", (void*)&HostPairSum } };
     CheckExtern("struct Pair { int a; int b; };\n"
                 "impl Pair {\n"
-                "    extern int Sum(Pair self);\n"
+                "    extern int Sum(const ref Pair self);\n"
                 "}\n"
                 "int entry()\n"
                 "{\n"
@@ -1249,7 +1249,7 @@ STRATA_TEST(impl_on_type_alias_struct_jit)
     CheckExtern("struct Pair { int a; int b; };\n"
                 "struct X = Pair;\n"
                 "impl X {\n"
-                "    extern int Get(X self);\n"
+                "    extern int Get(const ref X self);\n"
                 "}\n"
                 "int entry()\n"
                 "{\n"
@@ -1427,7 +1427,7 @@ STRATA_TEST(extern_alias_struct_param_still_by_ref)
     HostSymbol hosts[] = { { "host_point_y", (void*)&HostPointY } };
     CheckExtern("struct Vec3 { float x; float y; float z; };\n"
                 "struct Point = Vec3;\n"
-                "extern int host_point_y(Point p);\n"
+                "extern int host_point_y(const ref Point p);\n"
                 "int entry()\n"
                 "{\n"
                 "  Point p = (Point)Vec3 { 1.0, 5.0, 3.0 };\n"

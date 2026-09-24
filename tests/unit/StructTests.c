@@ -441,8 +441,8 @@ static void test_scale_into(const HostVec3* src, float s, HostVec3* dst)
 STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
 {
     StrataJit* jit = CompileJit("struct Vec3 { float x; float y; float z; };\n"
-                                "extern float length_sq(const Vec3 v);\n"
-                                "extern void scale_into(const Vec3 src, float s, Vec3 dst);\n"
+                                "extern float length_sq(const ref Vec3 v);\n"
+                                "extern void scale_into(const ref Vec3 src, float s, ref Vec3 dst);\n"
                                 "float entry() {\n"
                                 "  Vec3 v = Vec3(3.0, 4.0, 0.0);\n"
                                 "  Vec3 r;\n"

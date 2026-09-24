@@ -35,8 +35,8 @@ extern struct Owned {
 
 // The host implements these over the SAME layout:
 //   long sum_header(const Header*), void fill_header(Header*).
-extern long sum_header(const Header h);
-extern void fill_header(Header h);
+extern long sum_header(const ref Header h);
+extern void fill_header(ref Header h);
 
 long strata_side()
 {

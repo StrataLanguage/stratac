@@ -591,10 +591,10 @@ STRATA_TEST(jit_extern_struct_layout_matches_c)
     StrataJit* jit = strataJitCompileString(
         c,
         LAYOUT_DECLS
-        "extern void fill_e(E e);\n"
-        "extern void fill_w(W w);\n"
-        "extern void fill_a(A a);\n"
-        "extern long sum_w(const W w);\n"
+        "extern void fill_e(ref E e);\n"
+        "extern void fill_w(ref W w);\n"
+        "extern void fill_a(ref A a);\n"
+        "extern long sum_w(const ref W w);\n"
         "long read_e() { E e; fill_e(e); return (long)(int)e.c * 100 + e.d; }\n"
         "long read_w() { W w; fill_w(w); return w.x + w.h.a + w.h.b + w.h.count; }\n"
         "long read_a() { A a; fill_a(a); return a.hs[0].count + a.hs[1].a + a.hs[1].b + a.hs[1].count; }\n"

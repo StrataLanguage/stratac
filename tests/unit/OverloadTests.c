@@ -220,12 +220,19 @@ STRATA_TEST(constructor_call_is_not_unknown)
     arena_free(&arena);
 }
 
-STRATA_TEST(bare_struct_param_is_allowed)
+STRATA_TEST(extern_by_value_struct_param_is_an_error)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct V { float x; };\nextern void take(V v);\n", &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
+    ParseAndResolve("struct V { float x; };\n"
+                    "struct A = V;\n"
+                    "extern void take(V v);\n"
+                    "extern void take_const(const V v);\n"
+                    "extern void take_alias(A a);\n"
+                    "struct Opaque;\n"
+                    "extern void take_opaque(Opaque o);\n",
+                    &diag, &arena);
+    STRATA_CHECK_EQ((long)DiagErrorCount(&diag), 4);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
@@ -260,14 +267,16 @@ STRATA_TEST(struct_inout_param_is_allowed)
     arena_free(&arena);
 }
 
-STRATA_TEST(extern_struct_param_with_in_is_ok)
+STRATA_TEST(extern_struct_param_with_ref_is_ok)
 {
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct V { float x; };\n"
-        "extern void take(const V v);\n"
-        "extern void fill(V v);\n",
+        "handle H;\n"
+        "extern void take(const ref V v);\n"
+        "extern void fill(ref V v);\n"
+        "extern void use(H h);\n",
         &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);

@@ -2527,15 +2527,10 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     {
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
 
-        const char* leafName = TypeRegistryResolveAlias(&b->m_registry, p->type.name);
-        bool structVal
-            = TypeRegistryIsUserType(&b->m_registry, leafName) && !TypeRegistryIsOpaque(&b->m_registry, leafName);
-
         /* Structs pass BY VALUE: the callee gets its own copy (an explicit
-           `ref` still shares the caller's storage). Externs keep crossing as
-           pointers — the host C ABI contract is `T*`, and a bare IR aggregate
-           would not match the C by-value lowering anyway. */
-        bool byPtr = p->mod != ModNone || (f->isExtern && structVal) || BuilderIsOwningType(b, &p->type);
+           `ref` still shares the caller's storage). Sema makes extern struct
+           params spell out `ref`, since the host C ABI contract is `T*`. */
+        bool byPtr = p->mod != ModNone || BuilderIsOwningType(b, &p->type);
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
         bool optionalString = p->type.isOptional && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);

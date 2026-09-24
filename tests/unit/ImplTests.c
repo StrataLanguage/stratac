@@ -193,7 +193,7 @@ STRATA_TEST(impl_on_forward_declared_struct_parses)
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct TheType;\n"
                     "impl TheType {\n"
-                    "    extern int Get(TheType self);\n"
+                    "    extern int Get(const ref TheType self);\n"
                     "}\n",
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
@@ -246,7 +246,7 @@ STRATA_TEST(impl_on_type_alias_struct_method_rewrites)
     Module* mod = ParseAndResolve("struct Foo { int x; };\n"
                                   "struct X = Foo;\n"
                                   "impl X {\n"
-                                  "    extern int GetX(X self);\n"
+                                  "    extern int GetX(const ref X self);\n"
                                   "}\n"
                                   "int entry(X x) { return x.GetX(); }\n",
                                   &diag, &arena);
@@ -848,9 +848,9 @@ STRATA_TEST(impl_on_opaque_struct_jit)
         "struct TheType;\n"
         "extern void GetType(return ^TheType t);\n"
         "impl TheType {\n"
-        "    extern int GetValue(TheType self);\n"
-        "    extern void SetValue(TheType self, int v);\n"
-        "    extern int Bump(TheType self);\n"
+        "    extern int GetValue(const ref TheType self);\n"
+        "    extern void SetValue(ref TheType self, int v);\n"
+        "    extern int Bump(ref TheType self);\n"
         "    property int Value { get = TheType_GetValue; set = TheType_SetValue; }\n"
         "}\n"
         "int entry()\n"

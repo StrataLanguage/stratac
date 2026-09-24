@@ -65,7 +65,7 @@ All three produce identical bytes. A module without components has no blob.
 
 ```strata
 extern<T> bool GetComponent(Entity entity, ref T value);
-extern<T> void SetComponent(Entity entity, T value);
+extern<T> void SetComponent(Entity entity, const ref T value);
 extern<T> bool HasComponent(Entity entity);
 
 Health health;
@@ -79,17 +79,20 @@ if (HasComponent<Health>(entity)) { }  // T named: no T argument to infer from
 ```
 
 One host function serves every `T`. Each call passes `T`'s `StrataTypeDesc` (name, name hash,
-layout hash, size, alignment) as a hidden last argument, and every `T` parameter crosses as a
-pointer:
+layout hash, size, alignment) as a hidden last argument, and every `T` parameter is a pointer:
 
 ```c
 bool GetComponent(void* entity, void* value, const StrataTypeDesc* type);
 bool HasComponent(void* entity, const StrataTypeDesc* type);
 ```
 
-`T` may only be a whole parameter type (`T` or `ref T`), never the return type, and each
-call's `T` must be a plain-data struct. Generic externs can't be variadic or take a `return`
-parameter.
+`T` may only be a whole `const ref T` or `ref T` parameter, never the return type, and each
+call's `T` must be a plain-data struct. A `const ref T` argument can be a temporary
+(`SetComponent(entity, Health { .current = 50.0 })`); a `ref T` argument must be a variable.
+Generic externs can't be variadic or take a `return` parameter.
+
+Like every extern, a struct parameter has to be spelled `ref` or `const ref`: the host always
+receives a pointer, and a by-value declaration is an error.
 
 ## Symbol prefixes
 

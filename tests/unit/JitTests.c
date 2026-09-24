@@ -188,7 +188,7 @@ STRATA_TEST(jit_extern_with_forward_declared_struct)
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
         "struct Foo;\n"
-        "extern void consume(const Foo f);\n"
+        "extern void consume(const ref Foo f);\n"
         "struct Foo { int x; };\n"
         "int entry() { Foo f; f.x = 7; consume(f); return f.x; }\n",
         "fwdfwd", &err);

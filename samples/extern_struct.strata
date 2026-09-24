@@ -8,8 +8,8 @@
 struct Vec3 { float x; float y; float z; };
 
 // struct params cross by pointer: host sees `const Vec3*` / `Vec3*`.
-extern float length_sq(const Vec3 v);
-extern void  scale_into(const Vec3 src, float s, Vec3 dst);
+extern float length_sq(const ref Vec3 v);
+extern void  scale_into(const ref Vec3 src, float s, ref Vec3 dst);
 
 // return out-param: caller writes `T x = F();`, ABI is void ret + out pointer.
 extern void MakeVec3(return Vec3 v);
@@ -17,7 +17,7 @@ extern void NextId(return int id);
 
 // impl on a defined struct: self crosses by pointer.
 impl Vec3 {
-    extern float Length(Vec3 self);           // Vec3_Length(Vec3*)
+    extern float Length(const ref Vec3 self); // Vec3_Length(Vec3*)
     extern float StaticSum(float a, float b); // Vec3.StaticSum(a, b)
 }
 
@@ -25,9 +25,9 @@ impl Vec3 {
 struct Point;
 extern void GetPoint(return ^Point p);        // GetPoint(Point**)
 impl Point {
-    extern int  GetX(Point self);
-    extern int  GetY(Point self);
-    extern void Move(Point self, int dx, int dy);
+    extern int  GetX(const ref Point self);
+    extern int  GetY(const ref Point self);
+    extern void Move(ref Point self, int dx, int dy);
     property int X { get = Point_GetX; }
 }
 

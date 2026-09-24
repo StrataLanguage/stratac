@@ -4591,7 +4591,7 @@ static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic
     return instance;
 }
 
-/* What `extern<T>` allows: T only as a whole parameter type (by value or `ref`), never in the
+/* What `extern<T>` allows: T only as a whole `ref` / `const ref` parameter type, never in the
    return type, and no variadic or `return` parameters. */
 static void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
 {
@@ -4617,11 +4617,11 @@ static void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
     {
         const ParamDecl* param = (const ParamDecl*)VecGet(&f->params, i);
 
-        if (TypeMentionsParam(f, &param->type) && !IsTypeParamName(f, &param->type))
+        if (TypeMentionsParam(f, &param->type) && (!IsTypeParamName(f, &param->type) || param->mod != ModRef))
         {
             DiagErrorFmt(r->m_diag, param->base.range,
-                         "parameter '%s' of generic extern '%s' must be '%s' or 'ref %s', not '%s'", param->name, f->name,
-                         f->typeParam, f->typeParam, param->type.name);
+                         "parameter '%s' of generic extern '%s' must be 'const ref %s' or 'ref %s'", param->name,
+                         f->name, f->typeParam, f->typeParam);
         }
     }
 }
@@ -4706,10 +4706,10 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
         Node* arg = (Node*)VecGet(&c->args, i);
         const TypeName* argType = InferType(r, arg, scope);
 
-        if (param->mod == ModRef && !IsLValueNode(arg))
+        if (param->mod == ModRef && !param->type.isConst && !IsLValueNode(arg))
         {
-            DiagErrorFmt(r->m_diag, arg->range, "argument %zu of '%s' is passed by 'ref' and must be a variable", i + 1,
-                         generic->name);
+            DiagErrorFmt(r->m_diag, arg->range, "argument %zu of '%s' is passed by non-const 'ref' and must be a variable",
+                         i + 1, generic->name);
         }
         else if (argType && !IsAssignableType(r, &param->type, argType))
         {
@@ -8962,6 +8962,20 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                              "parameter '%s' may not have a fixed-size array type ('%s'); "
                              "fixed-size arrays are only allowed as struct fields and locals",
                              p->name, p->type.name);
+            }
+
+            /* Structs (forward-declared ones included) cross to the host as pointers, so the
+               declaration has to say so. */
+            const char* paramLeaf = TypeRegistryResolveAlias(&r.m_registry, p->type.name);
+
+            if (functionDecl->isExtern && p->mod == ModNone && !p->type.isBox && !p->type.isOptional
+                && !TypeNameIsDynamicArray(&p->type)
+                && (IsDefinedStruct(&r.m_registry, paramLeaf) || IsIncompleteStruct(&r.m_registry, paramLeaf)))
+            {
+                DiagErrorFmt(diag, p->base.range,
+                             "extern parameter '%s' can't take struct '%s' by value; the host receives a pointer, "
+                             "so declare it 'const ref %s' (or 'ref %s' if the host writes to it)",
+                             p->name, p->type.name, p->type.name, p->type.name);
             }
         }
 

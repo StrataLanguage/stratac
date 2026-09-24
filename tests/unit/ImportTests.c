@@ -705,7 +705,7 @@ static int ResolverReturnParamSdk(void* ud, const char* importer, const char* pa
     {
         out->text = "struct Foo;\n"
                     "extern void GetFoo(return Foo f);\n"
-                    "extern int UseFoo(Foo f);\n";
+                    "extern int UseFoo(const ref Foo f);\n";
         out->length = strlen(out->text);
         out->name = "sdk";
         return 1;
@@ -714,7 +714,7 @@ static int ResolverReturnParamSdk(void* ud, const char* importer, const char* pa
     {
         out->text = "struct Foo { int x; };\n"
                     "extern void GetFoo(return Foo f);\n"
-                    "extern int UseFoo(Foo f);\n";
+                    "extern int UseFoo(const ref Foo f);\n";
         out->length = strlen(out->text);
         out->name = "sdkdef";
         return 1;

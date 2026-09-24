@@ -21,9 +21,9 @@ struct TheType;                      // forward-declared: never defined here
 extern void GetType(return ^TheType t);
 
 impl TheType {
-    extern int GetValue(TheType self);         // -> TheType_GetValue
-    extern void SetValue(TheType self, int v); // -> TheType_SetValue
-    extern int Bump(TheType self);             // -> TheType_Bump
+    extern int GetValue(const ref TheType self);   // -> TheType_GetValue
+    extern void SetValue(ref TheType self, int v); // -> TheType_SetValue
+    extern int Bump(ref TheType self);             // -> TheType_Bump
 }
 
 int entry()

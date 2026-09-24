@@ -103,7 +103,7 @@ void mutate_box(ref ^Vec3 inBox)
     inBox = newBoxVal;         // content-assign: overwrites in place
 }
 
-extern float host_length_sq(Vec3 v);
+extern float host_length_sq(const ref Vec3 v);
 
 handle BaseEntity;
 handle Entity extends BaseEntity;
