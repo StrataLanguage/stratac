@@ -644,6 +644,7 @@ static void BorrowTemp(Builder* b, Value src, TypeDesc resultTd);
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 static LLVMValueRef StrataStrdupFn(Builder* b);
 static LLVMValueRef StrataStrEqFn(Builder* b);
+static bool TypeDescIsOpaque(Builder* b, const TypeDesc* td);
 static LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td, bool externBoxCtx);
 static LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
                                        const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB);
@@ -3608,9 +3609,9 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
        helper can compare through addresses. */
     if (n->op == BinEqEq || n->op == BinNotEq)
     {
-        bool lAgg = (l.typeDesc.structTypeName != NULL)
+        bool lAgg = (l.typeDesc.structTypeName != NULL && !TypeDescIsOpaque(b, &l.typeDesc))
                     || ((l.typeDesc.isArray || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
-        bool rAgg = (r.typeDesc.structTypeName != NULL)
+        bool rAgg = (r.typeDesc.structTypeName != NULL && !TypeDescIsOpaque(b, &r.typeDesc))
                     || ((r.typeDesc.isArray || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
 
         if (lAgg && rAgg)
@@ -4813,6 +4814,14 @@ static LLVMValueRef StrataCStrLenFn(Builder* b)
     return b->m_csLenFn;
 }
 
+/* Opaque types (handles, incomplete structs) are held as the host pointer
+   itself, so they compare by identity rather than structurally: they have no
+   fields to compare. */
+static bool TypeDescIsOpaque(Builder* b, const TypeDesc* td)
+{
+    return td->structTypeName && !td->isBox && TypeRegistryIsOpaque(&b->m_registry, td->structTypeName);
+}
+
 /* Equality checking.
 
    `==` on aggregates is STRUCTURAL. Per compared type, one of two paths:
@@ -5076,7 +5085,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.cs");
         eq = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "eq.cs.b");
     }
-    else if (td->structTypeName || td->isArray || td->isFixedArray)
+    else if ((td->structTypeName && !TypeDescIsOpaque(b, td)) || td->isArray || td->isFixedArray)
     {
         LLVMValueRef helper = EnsureEqHelper(b, td, externBoxCtx);
         LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};

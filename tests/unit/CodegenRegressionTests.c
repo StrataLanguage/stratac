@@ -462,3 +462,63 @@ STRATA_TEST(owning_pieces_of_temporaries_are_dropped)
         STRATA_CHECK_EQ(g_cgFrees, g_cgAllocs);
     }
 }
+
+/* `==` on handles (and on structs holding them) went through the structural
+   helper, which found no fields to compare on the opaque handle and always
+   returned true. Handles compare by identity. */
+STRATA_TEST(handle_equality_is_identity)
+{
+    /* Strata `bool` returns are widened to int at the ABI */
+    StrataJit* jit = CompileJit("handle Thing;\n"
+                                "struct Holder { Thing thing; int n; }\n"
+                                "Thing NO_THING;\n"
+                                "bool eq(Thing a, Thing b) { return a == b; }\n"
+                                "bool ne(Thing a, Thing b) { return a != b; }\n"
+                                "bool is_none(Thing a) { return a == NO_THING; }\n"
+                                "bool holders_eq(Thing a, Thing b) {\n"
+                                "  Holder x = Holder { .thing = a, .n = 1 };\n"
+                                "  Holder y = Holder { .thing = b, .n = 1 };\n"
+                                "  return x == y;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        return;
+    }
+
+    void* ctx = NULL;
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    if (create)
+    {
+        ctx = create();
+    }
+
+    int (*eq)(void*, void*, void*) = (int (*)(void*, void*, void*))strataJitGetFunction(jit, "eq");
+    int (*ne)(void*, void*, void*) = (int (*)(void*, void*, void*))strataJitGetFunction(jit, "ne");
+    int (*is_none)(void*, void*) = (int (*)(void*, void*))strataJitGetFunction(jit, "is_none");
+    int (*holders_eq)(void*, void*, void*) = (int (*)(void*, void*, void*))strataJitGetFunction(jit, "holders_eq");
+    STRATA_CHECK(eq && ne && is_none && holders_eq);
+
+    if (eq && ne && is_none && holders_eq)
+    {
+        int a = 0;
+        int b = 0;
+
+        STRATA_CHECK(eq(ctx, &a, &a));
+        STRATA_CHECK(!eq(ctx, &a, &b));
+        STRATA_CHECK(ne(ctx, &a, &b));
+        STRATA_CHECK(!ne(ctx, &a, &a));
+        STRATA_CHECK(is_none(ctx, NULL));
+        STRATA_CHECK(!is_none(ctx, &a));
+        STRATA_CHECK(holders_eq(ctx, &a, &a));
+        STRATA_CHECK(!holders_eq(ctx, &a, &b));
+    }
+
+    void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    if (destroy && ctx)
+    {
+        destroy(ctx);
+    }
+
+    strataJitDestroy(jit);
+}

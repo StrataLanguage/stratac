@@ -4,10 +4,6 @@ ethan_build/
 out/
 cmake-build-*/
 
-# IDE / tooling
-.vscode/
-.idea/
-.cache/
 *.user
 
 # Compiler / object artifacts
@@ -19,11 +15,23 @@ cmake-build-*/
 *.exe
 *.pdb
 *.ilk
+*.dir
+*.cmake
+Testing/
 
 # Downloaded installer kept outside the repo (not versioned)
 LLVM-*.exe
 
-.DS_Store
-.git/
-.vs/
-.opencode
+# Ignore all hidden files
+.*
+
+# Exclusions for hidden file rule
+!.gitignore
+!.gitattributes
+!.gitmodules
+
+!.clangd
+!.clang-format
+!.clang-tidy
+
+cli-engine-api
