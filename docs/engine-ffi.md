@@ -8,7 +8,8 @@ written in it with almost no C glue. Each feature has a sample run by `ctest`:
 
 | Feature | Example |
 |---|---|
-| Raw pointers | `ptr p = null;` — every handle converts to `ptr`; `(ulong)p`, `(ptr)addr`, `(cstring)p` |
+| Raw pointers | `ptr p = ptr.null;` — every handle converts to `ptr`; `(ulong)p`, `(ptr)addr`, `(cstring)p` |
+| The null pointer | `ptr.null` converts to `ptr`, any handle and any delegate: `vkCreateDevice(gpu, info, ptr.null, device)`, `if (f == ptr.null)`. There is no bare `null`; an empty optional is one never assigned |
 | Memory intrinsics | `addressof(x)`, `addressof(fn)`, `sizeof<T>()`, `alignof<T>()`, `load<T>(p)`, `store(p, v)` |
 | Buffer of an array or string | `values.data`, `name.data` |
 | Functions C can call | `@export uint Callback(ptr data) { ... }` — plain C ABI, no hidden context; the body sees the module's newest context |
@@ -120,7 +121,7 @@ right-hand side.
 
 | Feature | Example |
 |---|---|
-| Sized / filled arrays | `VkPhysicalDevice[] adapters = { null; count };` — `count` copies of the value (evaluated once; a variable stays usable; strings are copied, rcs retained) |
+| Sized / filled arrays | `VkPhysicalDevice[] adapters = { ptr.null; count };` — `count` copies of the value (evaluated once; a variable stays usable; strings are copied, rcs retained) |
 | Default-filled | `Record[] slots = { {}; 8u };` — each element's default value (Drop types are alive and dropped); rejected for types that must hold a `^T` / `rc<T>` |
 | Fixed fill | `byte[256] fill = { 0xFF; 256 };` — the count must be the length |
 | Capacity | `array_reserve(list, 100u);` |

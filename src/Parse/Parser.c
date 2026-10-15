@@ -2831,6 +2831,19 @@ static Node* ParsePostfix(Parser* p)
         Token memberTok = p->m_cur;
         Advance(p);
 
+        /* `ptr.null`, the null pointer, is the one constant read off a type name. */
+        if (e->kind == NodeIdent && strcmp(((IdentExpr*)e)->name, STRATA_PTR_TYPE) == 0
+            && StrEqC(ParserIdentText(p, memberTok), "null") && p->m_cur.kind != TokLParen)
+        {
+            IdentExpr* constant = AST_NEW(p->m_arena, IdentExpr);
+            constant->base.kind = NodeIdent;
+            uint32_t end = SourceRangeEnd(memberTok.range);
+            constant->base.range = (SourceRange){e->range.start, end - e->range.start, e->range.fileId};
+            constant->name = (char*)STRATA_NULL_CONSTANT;
+            e = (Node*)constant;
+            continue;
+        }
+
         MemberExpr* node = AST_NEW(p->m_arena, MemberExpr);
         node->base.kind = NodeMember;
         node->base.range = SpanFrom(dot, memberTok);

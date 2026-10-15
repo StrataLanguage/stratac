@@ -32,7 +32,7 @@ extern ptr  GetProcAddress(ptr module, cstring name);
 @export void strata_panic(cstring msg)
 {
     printf("panic: %s\n", msg);
-    fflush(null);
+    fflush(ptr.null);
     abort();
 }
 
@@ -126,11 +126,11 @@ int main()
     free(block);
 
     // null converts to any handle; any handle converts to ptr
-    Window w = null;
+    Window w = ptr.null;
     ptr wp = w;
     ptr live = addressof(x);
     Window w2 = (Window)live;
-    if (w == null && wp == null && live != null && w2 != w && w2 == (Window)live && !(live == null))
+    if (w == ptr.null && wp == ptr.null && live != ptr.null && w2 != w && w2 == (Window)live && !(live == ptr.null))
     {
         printf("null ok\n");
     }
@@ -145,9 +145,9 @@ int main()
         .absolute = (UnaryFn)addressof(abs),
         .length = (LengthFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "lstrlenA")
     };
-    UnaryFn none = null;
+    UnaryFn none = ptr.null;
     printf("delegates: %d %d %d %d null=%d\n", table.negate(4), table.absolute(-6), table.length("strafe"),
-           Twice(table.negate, 7), (int)(none == null));
+           Twice(table.negate, 7), (int)(none == ptr.null));
 
     return values[0] + values[4];  // 1 + 9
 }

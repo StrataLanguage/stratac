@@ -153,6 +153,39 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     arena_free(&arena3);
 }
 
+STRATA_TEST(null_pointer_is_ptr_null)
+{
+    /* `ptr.null` is the null pointer, for ptr, handles and delegates alike. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Window;\n"
+                    "extern delegate int Callback(int x);\n"
+                    "bool Use() {\n"
+                    "    ptr p = ptr.null;\n"
+                    "    Window w = ptr.null;\n"
+                    "    Callback c = ptr.null;\n"
+                    "    ptr[] many = { ptr.null; 2u };\n"
+                    "    return p == ptr.null && w == ptr.null && c == ptr.null && many[1] == ptr.null;\n"
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    /* A bare `null` is not a thing, and says what to write instead. */
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("void Use() { ptr p = null; }\n", &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "'ptr.null'"));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+}
+
 STRATA_TEST(function_named_like_struct_is_rejected)
 {
     /* `Stamp(a, b)` would construct the struct, so a function of the same name is an error. */

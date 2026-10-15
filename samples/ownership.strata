@@ -13,7 +13,7 @@ extern int  printf(cstring fmt, ...);
 
 @export ptr strata_alloc(ulong size) { return malloc(size); }
 @export void strata_free(ptr p) { free(p); }
-@export void strata_panic(cstring msg) { printf("panic: %s\n", msg); fflush(null); abort(); }
+@export void strata_panic(cstring msg) { printf("panic: %s\n", msg); fflush(ptr.null); abort(); }
 
 int gLive = 0;
 
@@ -117,7 +117,7 @@ struct Point
 @noreturn void Die(cstring why)
 {
     printf("die: %s\n", why);
-    fflush(null);
+    fflush(ptr.null);
     abort();
 }
 

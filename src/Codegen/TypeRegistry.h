@@ -13,10 +13,13 @@
 /* The hidden field of a struct with a `Drop` method: 1 while it holds a live value, 0 once moved or dropped. */
 #define STRATA_ALIVE_FIELD "__alive"
 
-/* `null`, the builtin constant (of type `null`) that converts to any handle. */
+/* `ptr.null`, the null pointer: of type `null`, which converts to `ptr`, any handle and any delegate.
+   The parser turns `ptr.null` into an identifier of this name, which no variable can have. */
+#define STRATA_NULL_CONSTANT "ptr.null"
+
 static inline bool IsNullConstantName(const char* name)
 {
-    return name && strcmp(name, "null") == 0;
+    return name && strcmp(name, STRATA_NULL_CONSTANT) == 0;
 }
 
 /* A pad filling a `fieldoffset` gap; a trailing pad rounds out the struct. */

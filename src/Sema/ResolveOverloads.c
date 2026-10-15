@@ -7840,7 +7840,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             return;
         }
 
-        if (!varType)
+        if (!varType && strcmp(ident->name, "null") == 0)
+        {
+            DiagError(r->m_diag, ident->base.range,
+                      "there is no 'null': a null pointer, handle or delegate is 'ptr.null', and an empty optional is "
+                      "one never assigned");
+        }
+        else if (!varType)
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
         }
