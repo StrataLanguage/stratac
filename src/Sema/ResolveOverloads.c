@@ -8265,8 +8265,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     return;
                 }
 
-                // A `ref ^T` is the caller's box: assign contents, not the slot.
-                if (StrMapGet(&r->m_refBoxParams, targetName))
+                /* A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`,
+                   `rc<T>` or `rc<T>?` (or a string) is the caller's slot: `=` drops what it held and
+                   stores the new value there, so out-params work. */
+                bool slotRef = tt->isOptional || tt->isRc || TypeIsString(&r->m_registry, tt->name)
+                               || TypeNameIsDynamicArray(tt);
+
+                if (StrMapGet(&r->m_refBoxParams, targetName) && !slotRef)
                 {
                     DiagErrorFmt(r->m_diag, a->base.range,
                                  "'%s' cannot be reassigned as it is not owned because it is bound as a ref; "

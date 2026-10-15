@@ -162,8 +162,30 @@ void Borrows()
     printf("borrow: %d %s %s %s\n", lengths, names[0], names[1], kept);
 }
 
+// -- out-params: `=` through a ref replaces the caller's value ---------------------------
+
+void Describe(int code, ref string error, ref rc<Image>? image)
+{
+    if (code != 0)
+    {
+        error = "code " + "failed";
+        return;
+    }
+    image = Image { .id = 12 };
+}
+
+void OutParams()
+{
+    string error = "";
+    rc<Image>? image;
+    Describe(1, error, image);
+    Describe(0, error, image);
+    printf("out: %s %d\n", error, image? ? image.id : -1);
+}
+
 int main()
 {
+    OutParams();
     Borrows();
     RefLocals();
     Buffers();

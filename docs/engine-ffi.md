@@ -58,6 +58,19 @@ reaches through, an assignment to (or move or `drop` of) a path it reaches throu
 a path by mutable `ref`, or — for refs into globals — any call. Using it afterwards is an error
 ("may dangle"); bind it again after the change.
 
+**Out-parameters.** `=` through a `ref` param or `ref` local of a `string`, `T[]`, `T?`, `rc<T>` or
+`rc<T>?` drops what the caller's slot held and stores the new value there:
+
+```c
+void Describe(int code, ref string error, ref rc<Image>? image)
+{
+    if (code != 0) { error = "failed"; return; }
+    image = Image { .id = 12 };
+}
+```
+
+A `ref ^T` still aliases the boxed value, so `=` on it assigns the contents.
+
 **Read-only parameters borrow.** A by-value `string`, `T[]` or owning-struct parameter that the
 function never consumes (never moves it or a part of it, writes it, or passes it on to something
 that does) is passed as `const ref`: callers keep their value and nothing is copied.
