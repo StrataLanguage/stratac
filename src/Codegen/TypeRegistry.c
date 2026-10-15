@@ -512,11 +512,6 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
     return true;
 }
 
-static long AlignUp(long v, long a)
-{
-    return (v + a - 1) / a * a;
-}
-
 static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx)
 {
     StructType* st = &reg->types[idx];
