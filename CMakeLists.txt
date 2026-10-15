@@ -461,7 +461,7 @@ if(STRATA_ENABLE_LLVM)
                           RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_arrays_strings_test COMMAND aot_arrays_strings_test)
     set_tests_properties(aot_arrays_strings_test PROPERTIES
-        PASS_REGULAR_EXPRESSION "out: code failed 12\nborrow: 8 ab cde cde!\nref: main shadows 1 2\nref loop: 2 1 target 4\nbuffers: -42 1 AAAA 4 VK_LAYER_x 1 1\nrepeat: 4 0 \\| 3 1.0 \\| hi hi changed hi \\| 2 1 0 \\| 9 3 \\| 0 \\| AA\nfresh: 2\ngrid: 0 3 5\nlive after fresh: 0\nreserve: 100 99 1\nbox into field: shared 7 \\| borrowed 8 \\| direct 1")
+        PASS_REGULAR_EXPRESSION "out: code failed 12\nborrow: 8 ab cde cde!\nref: main shadows 1 2\nref loop: 2 1 target 4\nbuffers: -42 1 AAAA 4 VK_LAYER_x 1 1\nrepeat: 4 0 \\| 3 1.0 \\| hi hi changed hi \\| 2 1 0 \\| 9 3 \\| 0 \\| AA\nfresh: 2\ngrid: 0 3 5 \\| 2 8\nlive after fresh: 0\nreserve: 100 99 1\nbox into field: shared 7 \\| borrowed 8 \\| direct 1")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES

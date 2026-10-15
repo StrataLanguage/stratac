@@ -61,7 +61,9 @@ void Repeats()
 
     int[][] grid = { {}; 2u };
     grid[1] = { 5; 3u };                     // a braced value takes the element's type
-    printf("grid: %u %u %d\n", grid[0].length, grid[1].length, grid[1][2]);
+    int[] row = { 7, 8 };
+    array_push(grid, row);                   // moves row into the grid
+    printf("grid: %u %u %d | %u %d\n", grid[0].length, grid[1].length, grid[1][2], grid[2].length, grid[2][1]);
 }
 
 void Reserve()

@@ -4851,8 +4851,10 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
                               && valNode->kind != NodeStrLiteral;
 
         bool stringMove = elemTd.isString && v.typeDesc.isString && valNode->kind != NodeStrLiteral;
+        /* An array pushed into an array of arrays moves: the source is emptied, or both would free it. */
+        bool arrayMove = elemTd.isArray && !elemTd.isString && v.typeDesc.isArray && !v.typeDesc.isString;
 
-        if (sameOwningType || stringMove)
+        if (sameOwningType || stringMove || arrayMove)
         {
             LLVMBuildStore(b->m_builder, v.value, elAddr);
             NullMovedSource(b, valNode);
