@@ -2,36 +2,14 @@
 #define STRATA_TYPES_H
 
 /*
- * Strata type metadata: a self-describing blob that lists a module's `@component`
- * structs, plus every struct and enum those components use, so a host can register
- * them without the compiler being present at runtime.
+ * Standalone reader (no Strata library needed) for a module's type metadata: its
+ * `@component` structs plus the structs/enums they use, in dependency order.
+ * From strataJitGetTypeMetadata, strataCompileTypeMetadata, or the AOT symbol
+ * `<prefix>__strata_types`.
  *
- * The same bytes come out of every path:
- *   - JIT:        strataJitGetTypeMetadata
- *   - AOT:        a read-only data symbol named `<prefix>__strata_types` in the object
- *                 (prefix from strataSetSymbolPrefix, empty by default)
- *   - types-only: strataCompileTypeMetadata (parse + check, no code generation)
- *
- * This header only reads the blob. It needs no Strata library, so hosts can include it in
- * builds that ship without the compiler.
- *
- * Layout: little-endian, fixed-width integers, every reference an offset from the blob start
- * or an index into a table. There are no pointers, so the blob is relocation-free.
- *
- *   header (headerSize bytes)
- *   struct table       structCount * structRecordSize
- *   field table        fieldCount * fieldRecordSize
- *   attribute table    attributeCount * attributeRecordSize
- *   enum table         enumCount * enumRecordSize
- *   enum value table   enumValueCount * enumValueRecordSize
- *   string table       NUL-terminated UTF-8; offset 0 is the empty string
- *   data section       each struct's default value (struct size bytes, 16-byte aligned)
- *
- * Compatibility: record sizes are stored in the header and readers step by them, so newer
- * compilers may append fields to records (and kinds to StrataTypeKind) without breaking older
- * readers. `version` changes only for incompatible layouts.
- *
- * Structs are listed in dependency order: a struct only uses structs listed before it.
+ * Little-endian and pointer-free: header, struct/field/attribute/enum/enum-value
+ * tables, strings, then per-struct default values. Readers step by the header's
+ * record sizes, so records can grow; `version` bumps only on breaking changes.
  */
 
 #include <stddef.h>

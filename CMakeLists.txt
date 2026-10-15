@@ -412,6 +412,56 @@ if(STRATA_ENABLE_LLVM)
     set_target_properties(aot_components_test PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_components_test COMMAND aot_components_test)
     set_tests_properties(aot_components_test PROPERTIES PASS_REGULAR_EXPRESSION "components: alpha=40 beta=50")
+
+    # A whole program in Strata, no C host: AOT `main` entry, an `@export` runtime, raw pointers and a
+    # C callback (qsort) into Strata.
+    set(STRATA_FFI_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/ffi_pointers${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_FFI_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/ffi_pointers.strata"
+                -o "${STRATA_FFI_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/ffi_pointers.strata"
+        COMMENT "stratac: AOT-compiling ffi_pointers.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_ffi_test "${STRATA_FFI_TEST_OBJECT}")
+    set_target_properties(aot_ffi_test PROPERTIES LINKER_LANGUAGE C RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_ffi_test COMMAND aot_ffi_test)
+    set_tests_properties(aot_ffi_test PROPERTIES
+        PASS_REGULAR_EXPRESSION "sorted: 1 3 5 7 9 \\([1-9][0-9]* compares\\).*sum = 25.*x = 42.*block\\[1\\] = 2.5, sizeof<Span>\\(\\) = 24.*null ok.*union: 16 bytes, depth 1.0 = color\\[0\\] 1.0, stencil 7; flags 2.*delegates: -4 6 6 7 null=1")
+
+    # Destructors and rc<T>: every value dropped exactly once, in order.
+    set(STRATA_OWNERSHIP_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/ownership${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_OWNERSHIP_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/ownership.strata"
+                -o "${STRATA_OWNERSHIP_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/ownership.strata"
+        COMMENT "stratac: AOT-compiling ownership.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_ownership_test "${STRATA_OWNERSHIP_TEST_OBJECT}")
+    set_target_properties(aot_ownership_test PROPERTIES LINKER_LANGUAGE C RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_ownership_test COMMAND aot_ownership_test)
+    set_tests_properties(aot_ownership_test PROPERTIES
+        PASS_REGULAR_EXPRESSION "drop 1\ndrop 2\ndrop 3\ndrop 4\ndrop 5\ndrop 6\nlive after Drop tests: 1\ndescribe 10\nlive with views: 4\ndescribe through an element: 10\nfree view 0 of image 1\nkept view 1 of image 1\ndescribe through a field: 10\nfree view 1 of image 1\nfree image 1\noptional rc: -1 -1 1\nfree image 7\nfree image 9\nsmart cast: 8 8 8\nbox smart cast: 5 0\nnoreturn narrowing: 1\nfree image 8\ndrop 21\ndrop 20\nafter remove: 24 22 23 \\(3\\)\ndrop 24\ndrop 22\ndrop 23\nlive at end: 1 \\(global 100\\)\nfree image 100")
+
+    # `{ value; count }`, array_reserve, byte buffers as text, ref locals, borrowed params.
+    set(STRATA_ARRAYS_STRINGS_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/arrays_strings${CMAKE_C_OUTPUT_EXTENSION}")
+    add_custom_command(
+        OUTPUT "${STRATA_ARRAYS_STRINGS_TEST_OBJECT}"
+        COMMAND $<TARGET_FILE:stratac> "${CMAKE_CURRENT_SOURCE_DIR}/samples/arrays_strings.strata"
+                -o "${STRATA_ARRAYS_STRINGS_TEST_OBJECT}"
+        DEPENDS stratac "${CMAKE_CURRENT_SOURCE_DIR}/samples/arrays_strings.strata"
+        COMMENT "stratac: AOT-compiling arrays_strings.strata to a native object"
+        VERBATIM
+    )
+    add_executable(aot_arrays_strings_test "${STRATA_ARRAYS_STRINGS_TEST_OBJECT}")
+    set_target_properties(aot_arrays_strings_test PROPERTIES LINKER_LANGUAGE C
+                          RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+    add_test(NAME aot_arrays_strings_test COMMAND aot_arrays_strings_test)
+    set_tests_properties(aot_arrays_strings_test PROPERTIES
+        PASS_REGULAR_EXPRESSION "borrow: 8 ab cde cde!\nref: main shadows 1 2\nref loop: 2 1 target 4\nbuffers: -42 1 AAAA 4 VK_LAYER_x 1 1\nrepeat: 4 0 \\| 3 1.0 \\| hi hi changed hi \\| 2 1 0 \\| 9 3 \\| 0 \\| AA\nfresh: 2\nlive after fresh: 0\nreserve: 100 99 1")
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES

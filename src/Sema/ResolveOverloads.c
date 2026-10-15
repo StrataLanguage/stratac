@@ -24,10 +24,14 @@ typedef struct
     StrMap m_indexDeps;
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
+    StrMap m_refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
+    StrMap m_refThroughBox;  /* `ref` locals that alias the value inside a box at their path */
     StrMap m_refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
     StrMap m_typeCache;      /* canonical spelling -> interned TypeName tree */
     StrMap m_constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
     const TypeName* m_currentReturnType;
+    const FunctionDecl* m_currentFunction;
+    StrMap* m_curScope; /* the function's scope, for typing move paths (see KeyPathType) */
 
     /* Vec of Vec*'s, a list of scopes and their respective symbols. */
     Vec m_scopeDecls;
@@ -940,7 +944,9 @@ static const TypeName* UnwrapBoxPtr(const TypeName* t)
    All are read-only views of runtime state. */
 static bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* member)
 {
-    if (strcmp(member, "length") != 0 && strcmp(member, "cap") != 0)
+    bool isData = strcmp(member, "data") == 0;
+
+    if (strcmp(member, "length") != 0 && strcmp(member, "cap") != 0 && !isData)
     {
         return false;
     }
@@ -950,6 +956,12 @@ static bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const c
     if (!base)
     {
         return false;
+    }
+
+    /* `.data`: the element buffer of a dynamic array or string, as a `ptr` (for FFI). */
+    if (isData)
+    {
+        return TypeNameIsDynamicArray(base) || TypeIsString(&r->m_registry, base->name);
     }
 
     if (base->isArray && base->length >= 0)
@@ -1703,7 +1715,8 @@ static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueTy
         return;
     }
 
-    if (!targetType || targetType->isOptional || targetType->isBox)
+    /* A box target takes the optional's value as is (the smart cast): that too needs the proof. */
+    if (!targetType || targetType->isOptional)
     {
         return;
     }
@@ -1739,6 +1752,101 @@ static Node* CondNullTestOperand(Node* cond, bool* negated)
     return NULL;
 }
 
+/* The null-test facts `cond` establishes when it evaluates to `whenTrue`: `x?` and `!x?` terms,
+   joined by `&&` (each holds when the whole is true) or `||` (each holds when it is false). Keys go
+   to `keys`, and whether each says non-empty (1) or empty (2) to `kinds`. */
+static void CollectCondFacts(Resolver* r, Node* cond, bool whenTrue, Vec* keys, Vec* kinds)
+{
+    while (cond && cond->kind == NodeUnary && ((UnaryExpr*)cond)->op == UnNot)
+    {
+        cond = ((UnaryExpr*)cond)->operand;
+        whenTrue = !whenTrue;
+    }
+
+    if (!cond)
+    {
+        return;
+    }
+
+    if (cond->kind == NodeNullTest)
+    {
+        const char* key = MovableBoxSourceKey(r, ((NullTestExpr*)cond)->operand);
+
+        if (key)
+        {
+            VecPush(keys, (void*)key);
+            VecPush(kinds, whenTrue ? (void*)1 : (void*)2);
+        }
+        return;
+    }
+
+    if (cond->kind == NodeBinary)
+    {
+        BinaryExpr* b = (BinaryExpr*)cond;
+
+        if ((b->op == BinLogicAnd && whenTrue) || (b->op == BinLogicOr && !whenTrue))
+        {
+            CollectCondFacts(r, b->lhs, whenTrue, keys, kinds);
+            CollectCondFacts(r, b->rhs, whenTrue, keys, kinds);
+        }
+    }
+}
+
+static void MarkPathEmpty(Resolver* r, const char* key);
+static void CopyStrMap(const StrMap* src, StrMap* dst);
+static void ReplaceStrMapContents(StrMap* dst, const StrMap* src);
+static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
+
+/* Applies what `cond` being `whenTrue` proves. Empty facts are applied only when `withEmpty`; with
+   `clearEmpty` they instead forget any non-empty fact about the path (a loop exit). */
+static void ApplyCondFacts(Resolver* r, Node* cond, bool whenTrue, bool withEmpty, bool clearEmpty)
+{
+    Vec keys;
+    Vec kinds;
+    VecInit(&keys);
+    VecInit(&kinds);
+    CollectCondFacts(r, cond, whenTrue, &keys, &kinds);
+
+    for (size_t i = 0; i < keys.count; i++)
+    {
+        const char* key = (const char*)VecGet(&keys, i);
+
+        if (VecGet(&kinds, i) == (void*)1)
+        {
+            MarkPathNonEmpty(r, key);
+        }
+        else if (clearEmpty)
+        {
+            ClearNonEmptySubtree(r, key);
+        }
+        else if (withEmpty)
+        {
+            MarkPathEmpty(r, key);
+        }
+    }
+
+    free(keys.items);
+    free(kinds.items);
+}
+
+/* Resolves `n` with what `cond` being `whenTrue` proves, then forgets it: the right side of
+   `&&` / `||` and the arms of `?:`. */
+static void ResolveUnderCondition(Resolver* r, Node* n, Node* cond, bool whenTrue, StrMap* scope)
+{
+    StrMap facts;
+    StrMap empty;
+    CopyStrMap(&r->m_nonEmptyPaths, &facts);
+    CopyStrMap(&r->m_emptyPaths, &empty);
+
+    ApplyCondFacts(r, cond, whenTrue, true, false);
+    ResolveExpr(r, n, scope);
+
+    ReplaceStrMapContents(&r->m_nonEmptyPaths, &facts);
+    ReplaceStrMapContents(&r->m_emptyPaths, &empty);
+    StrMapFree(&facts);
+    StrMapFree(&empty);
+}
+
 // Keep only facts proven on both branches.
 static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
 {
@@ -1759,8 +1867,176 @@ static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
 }
 
 // Mark `name` moved, unless it is a borrowed global or ref param.
+/* The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it), and whether any step of it reads
+   through an `rc<T>` (a shared value, which nothing may be moved out of). NULL when it cannot be typed. */
+static const TypeName* KeyPathType(Resolver* r, const char* key, bool* throughRc)
+{
+    *throughRc = false;
+
+    if (!r->m_curScope || !key)
+    {
+        return NULL;
+    }
+
+    size_t at = 0;
+
+    while (key[at] && key[at] != '.' && key[at] != '[')
+    {
+        at++;
+    }
+
+    const TypeName* t = (const TypeName*)StrMapGet(r->m_curScope, arena_strndup(r->m_arena, key, at));
+
+    while (t && key[at])
+    {
+        if (t->isRc)
+        {
+            *throughRc = true;
+        }
+
+        if ((t->isBox || t->isOptional) && t->inner)
+        {
+            t = t->inner;
+        }
+
+        if (key[at] == '.')
+        {
+            size_t start = ++at;
+
+            while (key[at] && key[at] != '.' && key[at] != '[')
+            {
+                at++;
+            }
+
+            const char* field = arena_strndup(r->m_arena, key + start, at - start);
+            const StructType* st = TypeRegistryFind(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name));
+            int idx = st ? TypeRegistryFieldIndex(&r->m_registry, st->name, field) : -1;
+            t = idx >= 0 ? &((const FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx))->type : NULL;
+        }
+        else
+        {
+            int depth = 0;
+
+            do
+            {
+                depth += key[at] == '[' ? 1 : key[at] == ']' ? -1 : 0;
+                at++;
+            } while (key[at] && depth > 0);
+
+            t = TypeNameArrayElem(t);
+        }
+    }
+
+    return t;
+}
+
+static void MarkMoved(Resolver* r, const char* name, SourceRange range);
+
+/* Moves the value at `name` out (an owning use). Copying an `rc<T>` retains it instead, which works from
+   anywhere: a global, a ref param, a field. Moving anything else out from under an rc is an error. */
 static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 {
+    bool throughRc = false;
+    const TypeName* type = KeyPathType(r, name, &throughRc);
+
+    if (type && type->isRc)
+    {
+        return;
+    }
+
+    if (throughRc)
+    {
+        DiagErrorFmt(r->m_diag, range, "cannot move '%s' out of a shared rc<...> value; copy() it instead", name);
+        return;
+    }
+
+    MarkMoved(r, name, range);
+}
+
+static void InvalidateRefLocals(Resolver* r, const char* key);
+
+/* "'a' is poisoned", naming what was moved out of it and how to avoid that. */
+static void DiagPoisoned(Resolver* r, SourceRange range, const char* key)
+{
+    const StrMap* m = &r->m_movedBoxes;
+    size_t kl = strlen(key);
+    const char* moved = NULL;
+
+    for (size_t i = 0; i < m->cap && !moved; i++)
+    {
+        const char* k = m->keys[i];
+
+        if (k && m->values[i] == (void*)1 && strncmp(k, key, kl) == 0 && (k[kl] == '[' || k[kl] == '.'))
+        {
+            moved = k;
+        }
+    }
+
+    if (moved && strchr(moved + kl, '['))
+    {
+        DiagErrorFmt(r->m_diag, range,
+                     "'%s' is poisoned: '%s' was moved out of it. To read an element without taking it, bind "
+                     "it with 'const ref' (or 'ref') or copy() it; or put a value back in that slot first",
+                     key, moved);
+    }
+    else if (moved)
+    {
+        DiagErrorFmt(r->m_diag, range, "'%s' is poisoned: '%s' was moved out of it; put a value back first", key,
+                     moved);
+    }
+    else
+    {
+        DiagErrorFmt(r->m_diag, range, "'%s' is poisoned", key);
+    }
+}
+
+/* `key` with a `ref` local at its root replaced by the path the local aliases. */
+static const char* CanonicalRefKey(Resolver* r, const char* key)
+{
+    const char* root = KeyRoot(r->m_arena, key);
+    const char* aliased = (const char*)StrMapGet(&r->m_refLocals, root);
+
+    return aliased ? arena_format(r->m_arena, "%s%s", aliased, key + strlen(root)) : key;
+}
+
+/* Storage at `key` may move, be reallocated or be freed: every `ref` local that reaches its target
+   THROUGH `key` dies (is marked moved, and reports "may dangle" at its next use). One that aliases
+   `key` itself survives (the slot stays put), unless it aliases the value inside a box there. */
+static void InvalidateRefLocals(Resolver* r, const char* key)
+{
+    if (!key || r->m_refLocals.count == 0)
+    {
+        return;
+    }
+
+    const char* k = CanonicalRefKey(r, key);
+    size_t kl = strlen(k);
+
+    for (size_t i = 0; i < r->m_refLocals.cap; i++)
+    {
+        const char* name = r->m_refLocals.keys[i];
+        const char* path = (const char*)r->m_refLocals.values[i];
+
+        if (!name || !path)
+        {
+            continue;
+        }
+
+        bool through = strncmp(path, k, kl) == 0 && (path[kl] == '.' || path[kl] == '[');
+        bool intoBox = strcmp(path, k) == 0 && StrMapGet(&r->m_refThroughBox, name);
+
+        if (through || intoBox)
+        {
+            MarkBoxMoved(r, name);
+        }
+    }
+}
+
+/* `drop(x)` consumes x whatever it is, an rc included. */
+static void MarkMoved(Resolver* r, const char* name, SourceRange range)
+{
+    InvalidateRefLocals(r, name);
+
     const char* root = KeyRoot(r->m_arena, name);
 
     if (IsBoxGlobalName(r, root))
@@ -1803,9 +2079,29 @@ static bool IsPathMaybeMoved(const Resolver* r, const char* key)
 }
 
 // Moving a `T?` empties the source instead of poisoning it.
+static const TypeName* KeyPathType(Resolver* r, const char* key, bool* throughRc);
+static void EmptyOptionalSource(Resolver* r, const char* name);
+
 static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 {
     (void)range;
+
+    bool throughRc = false;
+    const TypeName* type = KeyPathType(r, name, &throughRc);
+
+    /* An `rc<T>?` copied out keeps its value: the copy is another reference. */
+    if (type && type->isRc)
+    {
+        return;
+    }
+
+    EmptyOptionalSource(r, name);
+}
+
+/* `drop(x)` of an optional: x is now definitely empty, rc or not. */
+static void EmptyOptionalSource(Resolver* r, const char* name)
+{
+    InvalidateRefLocals(r, name);
 
     ClearNullableFacts(r, name);
 
@@ -2744,6 +3040,14 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
+    if (TypeNameHasDrop(&r->m_registry, argType))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range,
+                     "cannot copy '%s': it holds a value with a Drop method, which would then be dropped twice",
+                     argType->name);
+        return true;
+    }
+
     c->isIntrinsicCall = true;
     return true;
 }
@@ -2887,18 +3191,1257 @@ static bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     {
         if (argType->isOptional)
         {
-            MoveOptionalSource(r, movedKey, arg0->range);
+            EmptyOptionalSource(r, movedKey);
         }
         else
         {
-            MoveBoxIdent(r, movedKey, arg0->range);
+            MarkMoved(r, movedKey, arg0->range);
         }
     }
 
     return true;
 }
 
-/* Result type of array_push/pop/resize, or NULL if not one. */
+/* `sizeof<T>()`, `alignof<T>()`, `load<T>(p)`, `store<T>(p, v)`: intrinsics that take a type argument. */
+static bool IsTypedMemoryIntrinsic(Resolver* r, const CallExpr* c)
+{
+    static const char* const names[] = {"sizeof", "alignof", "load", "store"};
+
+    for (size_t i = 0; i < ARRAY_COUNT(names); i++)
+    {
+        if (strcmp(c->callee, names[i]) == 0)
+        {
+            return !ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId);
+        }
+    }
+
+    return false;
+}
+
+/* `a + b` where both sides are a string, cstring or string literal: a new owned string. */
+static bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName* rt)
+{
+    if (op != BinAdd || !lt || !rt || lt->isOptional || rt->isOptional)
+    {
+        return false;
+    }
+
+    bool lStr = TypeIsString(&r->m_registry, lt->name) || TypeIsCString(&r->m_registry, lt->name);
+    bool rStr = TypeIsString(&r->m_registry, rt->name) || TypeIsCString(&r->m_registry, rt->name);
+
+    return lStr && rStr;
+}
+
+/* `a & b`, `a | b`, `a ^ b` on two values of one enum type: flag sets keep their enum type. */
+static bool IsEnumFlagsOp(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName* rt)
+{
+    if (op != BinBitAnd && op != BinBitOr && op != BinBitXor)
+    {
+        return false;
+    }
+
+    return lt && rt && strcmp(lt->name, rt->name) == 0 && TypeRegistryIsEnum(&r->m_registry, lt->name);
+}
+
+//-- Growable `ref T[]` parameters.
+//
+// A `ref T[]` argument may be a stack view: a fixed-size array, an array literal or a varargs
+// rest. Growing or rebinding such a binding would realloc/free stack memory, so a parameter the
+// body grows is marked `growsArray`, and call sites must hand it a real (heap) dynamic array.
+
+static ParamDecl* RefArrayParamNamed(const FunctionDecl* f, const char* name)
+{
+    for (size_t i = 0; f && name && i < f->params.count; i++)
+    {
+        ParamDecl* p = (ParamDecl*)VecGet((Vec*)&f->params, i);
+
+        if (p->mod == ModRef && !p->isVarargRest && TypeNameIsDynamicArray(&p->type) && strcmp(p->name, name) == 0)
+        {
+            return p;
+        }
+    }
+
+    return NULL;
+}
+
+/* Does any function callable as `callee` (an impl method when `isMethod`) grow its parameter `index`? */
+static bool CalleeGrowsParam(const Module* mod, const char* callee, bool isMethod, size_t index)
+{
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        const FunctionDecl* g = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
+        const char* name = isMethod ? g->methodName : g->name;
+
+        if (!name || strcmp(name, callee) != 0 || index >= g->params.count)
+        {
+            continue;
+        }
+
+        if (((const ParamDecl*)VecGet((Vec*)&g->params, index))->growsArray)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void MarkGrowth(FunctionDecl* f, Node* target, bool* changed)
+{
+    if (target && target->kind == NodeIdent)
+    {
+        ParamDecl* p = RefArrayParamNamed(f, ((IdentExpr*)target)->name);
+
+        if (p && !p->growsArray)
+        {
+            p->growsArray = true;
+            *changed = true;
+        }
+    }
+}
+
+static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* changed)
+{
+    if (!n)
+    {
+        return;
+    }
+
+    switch (n->kind)
+    {
+    case NodeBlock:
+        for (size_t i = 0; i < ((Block*)n)->statements.count; i++)
+        {
+            ScanGrowth(mod, f, (Node*)VecGet(&((Block*)n)->statements, i), changed);
+        }
+        return;
+    case NodeReturn:
+        ScanGrowth(mod, f, ((ReturnStmt*)n)->value, changed);
+        return;
+    case NodeIf:
+        ScanGrowth(mod, f, ((IfStmt*)n)->condition, changed);
+        ScanGrowth(mod, f, ((IfStmt*)n)->thenBranch, changed);
+        ScanGrowth(mod, f, ((IfStmt*)n)->elseBranch, changed);
+        return;
+    case NodeWhile:
+        ScanGrowth(mod, f, ((WhileStmt*)n)->condition, changed);
+        ScanGrowth(mod, f, ((WhileStmt*)n)->body, changed);
+        return;
+    case NodeFor:
+        ScanGrowth(mod, f, ((ForStmt*)n)->init, changed);
+        ScanGrowth(mod, f, ((ForStmt*)n)->condition, changed);
+        ScanGrowth(mod, f, ((ForStmt*)n)->update, changed);
+        ScanGrowth(mod, f, ((ForStmt*)n)->body, changed);
+        return;
+    case NodeVarDecl:
+        ScanGrowth(mod, f, ((VarDeclStmt*)n)->init, changed);
+        return;
+    case NodeExprStmt:
+        ScanGrowth(mod, f, ((ExprStmt*)n)->expr, changed);
+        return;
+    case NodeDefer:
+        ScanGrowth(mod, f, ((DeferStmt*)n)->stmt, changed);
+        return;
+    case NodeUnary:
+        ScanGrowth(mod, f, ((UnaryExpr*)n)->operand, changed);
+        return;
+    case NodeBinary:
+        ScanGrowth(mod, f, ((BinaryExpr*)n)->lhs, changed);
+        ScanGrowth(mod, f, ((BinaryExpr*)n)->rhs, changed);
+        return;
+    case NodeAssign:
+        MarkGrowth(f, ((AssignExpr*)n)->target, changed);
+        ScanGrowth(mod, f, ((AssignExpr*)n)->value, changed);
+        return;
+    case NodeIncDec:
+        ScanGrowth(mod, f, ((IncDecExpr*)n)->operand, changed);
+        return;
+    case NodeCast:
+        ScanGrowth(mod, f, ((CastExpr*)n)->operand, changed);
+        return;
+    case NodeMember:
+        ScanGrowth(mod, f, ((MemberExpr*)n)->base_node, changed);
+        return;
+    case NodeIndex:
+        ScanGrowth(mod, f, ((IndexExpr*)n)->base_node, changed);
+        ScanGrowth(mod, f, ((IndexExpr*)n)->index, changed);
+        return;
+    case NodeNullTest:
+        ScanGrowth(mod, f, ((NullTestExpr*)n)->operand, changed);
+        return;
+    case NodeConditional:
+        ScanGrowth(mod, f, ((ConditionalExpr*)n)->condition, changed);
+        ScanGrowth(mod, f, ((ConditionalExpr*)n)->thenExpr, changed);
+        ScanGrowth(mod, f, ((ConditionalExpr*)n)->elseExpr, changed);
+        return;
+    case NodeArrayInit:
+        for (size_t i = 0; i < ((ArrayInitExpr*)n)->elements.count; i++)
+        {
+            ScanGrowth(mod, f, (Node*)VecGet(&((ArrayInitExpr*)n)->elements, i), changed);
+        }
+        ScanGrowth(mod, f, ((ArrayInitExpr*)n)->repeatCount, changed);
+        return;
+    case NodeStructInit:
+        for (size_t i = 0; i < ((StructInitExpr*)n)->fields.count; i++)
+        {
+            ScanGrowth(mod, f, ((StructInitField*)VecGet(&((StructInitExpr*)n)->fields, i))->value, changed);
+        }
+        return;
+    case NodeCall:
+    {
+        CallExpr* c = (CallExpr*)n;
+        bool isMethod = c->calleeBase != NULL;
+
+        ScanGrowth(mod, f, c->calleeBase, changed);
+
+        if (c->callee && c->args.count > 0
+            && (strcmp(c->callee, "array_push") == 0 || strcmp(c->callee, "array_resize") == 0
+                || strcmp(c->callee, "array_pop") == 0 || strcmp(c->callee, "array_remove") == 0
+                || strcmp(c->callee, "array_swap_remove") == 0 || strcmp(c->callee, "array_reserve") == 0))
+        {
+            MarkGrowth(f, (Node*)VecGet(&c->args, 0), changed);
+        }
+
+        /* A receiver passed as a method's `self`. */
+        if (isMethod && c->callee && CalleeGrowsParam(mod, c->callee, true, 0))
+        {
+            MarkGrowth(f, c->calleeBase, changed);
+        }
+
+        for (size_t i = 0; i < c->args.count; i++)
+        {
+            Node* arg = (Node*)VecGet(&c->args, i);
+
+            if (c->callee && CalleeGrowsParam(mod, c->callee, isMethod, isMethod ? i + 1 : i))
+            {
+                MarkGrowth(f, arg, changed);
+            }
+
+            ScanGrowth(mod, f, arg, changed);
+        }
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+
+//-- Read-only by-value parameters borrow.
+//
+// A by-value `string`, `T[]` or owning-struct parameter would take its argument (move it out of
+// the caller). When the body never consumes it - never moves it or a part of it anywhere, never
+// writes to it, never passes it on to something that does - it is passed as `const ref` instead,
+// so callers keep their value. Decided before resolution, to a fixpoint over calls; a miss shows
+// up as a const error in the body, never as a wrong program.
+
+static bool BorrowCandidateType(Resolver* r, const TypeName* t)
+{
+    if (t->isBox || t->isOptional || t->isRc || TypeNameIsFixedArray(t))
+    {
+        return false;
+    }
+
+    const char* name = TypeRegistryResolveAlias(&r->m_registry, t->name);
+
+    return TypeIsString(&r->m_registry, t->name) || TypeNameIsDynamicArray(t)
+           || (name && TypeRegistryIsOwningStruct(&r->m_registry, name) && !TypeNameHasDrop(&r->m_registry, t));
+}
+
+/* The candidate parameter at the root of a path (`p`, `p.a[i].b`), or NULL. */
+static ParamDecl* BorrowRoot(FunctionDecl* f, Node* n)
+{
+    while (n && (n->kind == NodeMember || n->kind == NodeIndex || n->kind == NodeCast))
+    {
+        n = n->kind == NodeMember  ? ((MemberExpr*)n)->base_node
+            : n->kind == NodeIndex ? ((IndexExpr*)n)->base_node
+                                   : ((CastExpr*)n)->operand;
+    }
+
+    if (!n || n->kind != NodeIdent)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < f->params.count; i++)
+    {
+        ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
+
+        if (p->borrowCandidate && strcmp(p->name, ((IdentExpr*)n)->name) == 0)
+        {
+            return p;
+        }
+    }
+
+    return NULL;
+}
+
+/* The declared type at the end of a path rooted at a parameter; NULL when it is not an owning value
+   (a scalar, `.length`, ...). Unknown shapes count as owning. */
+static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
+{
+    if (n->kind == NodeIdent)
+    {
+        return &root->type;
+    }
+
+    if (n->kind == NodeCast)
+    {
+        return &((CastExpr*)n)->type; /* `(Alias)p` retags; `(cstring)p` only views */
+    }
+
+    const TypeName* t = NULL;
+
+    if (n->kind == NodeIndex)
+    {
+        t = BorrowPathType(r, root, ((IndexExpr*)n)->base_node);
+        return t ? (TypeNameArrayElem(t) ? TypeNameArrayElem(t) : NULL) : NULL;
+    }
+
+    if (n->kind != NodeMember)
+    {
+        return &root->type;
+    }
+
+    t = BorrowPathType(r, root, ((MemberExpr*)n)->base_node);
+
+    if (!t)
+    {
+        return NULL;
+    }
+
+    if (t->isBox || t->isOptional)
+    {
+        t = TypeNameBoxInner(t);
+    }
+
+    const char* member = ((MemberExpr*)n)->member;
+    const char* name = t ? TypeRegistryResolveAlias(&r->m_registry, t->name) : NULL;
+    const StructType* st = name ? TypeRegistryFind(&r->m_registry, name) : NULL;
+
+    if (!st)
+    {
+        return NULL; /* `.length`, `.data`, swizzles: not owning */
+    }
+
+    for (size_t i = 0; i < st->fields.count; i++)
+    {
+        const FieldDecl* fd = (const FieldDecl*)VecGet((Vec*)&st->fields, i);
+
+        if (strcmp(fd->name, member) == 0)
+        {
+            return &fd->type;
+        }
+    }
+
+    return &root->type;
+}
+
+static void ConsumeParam(ParamDecl* p, bool* changed)
+{
+    if (p && p->borrowCandidate)
+    {
+        p->borrowCandidate = false;
+        *changed = true;
+    }
+}
+
+/* `n` is used where an owning value is taken (moved): consumes its root if it is an owning path. */
+static void ConsumeIfTaken(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ParamDecl* p = BorrowRoot(f, n);
+
+    if (p)
+    {
+        const TypeName* t = BorrowPathType(r, p, n);
+
+        if (t && AliasIsOwningValue(r, t))
+        {
+            ConsumeParam(p, changed);
+        }
+    }
+}
+
+static bool IsArrayMutator(const char* callee)
+{
+    return strcmp(callee, "array_push") == 0 || strcmp(callee, "array_resize") == 0
+           || strcmp(callee, "array_pop") == 0 || strcmp(callee, "array_remove") == 0
+           || strcmp(callee, "array_swap_remove") == 0 || strcmp(callee, "array_reserve") == 0;
+}
+
+static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed);
+
+/* An argument passed to parameter `index` of whatever `callee` names. */
+static void ScanBorrowArg(Resolver* r, FunctionDecl* f, CallExpr* c, Node* arg, size_t index, bool isMethod,
+                          bool* changed)
+{
+    ParamDecl* root = BorrowRoot(f, arg);
+
+    if (!root)
+    {
+        return;
+    }
+
+    bool found = false;
+
+    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    {
+        const FunctionDecl* g = (const FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        const char* name = isMethod ? g->methodName : g->name;
+
+        if (!name || strcmp(name, c->callee) != 0)
+        {
+            continue;
+        }
+
+        found = true;
+
+        if (index >= g->params.count)
+        {
+            if (!g->isCVararg)
+            {
+                ConsumeIfTaken(r, f, arg, changed); /* a typed rest takes its elements */
+            }
+            continue;
+        }
+
+        const ParamDecl* q = (const ParamDecl*)VecGet((Vec*)&g->params, index);
+
+        if (q->mod == ModRef && !q->type.isConst)
+        {
+            ConsumeParam(root, changed); /* written through */
+        }
+        else if (q->mod == ModNone && !g->isExtern && !q->borrowCandidate && !q->inferredBorrow)
+        {
+            ConsumeIfTaken(r, f, arg, changed); /* taken */
+        }
+    }
+
+    if (!found)
+    {
+        ConsumeParam(root, changed); /* a delegate, or something unknown */
+    }
+}
+
+static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    if (!n)
+    {
+        return;
+    }
+
+    switch (n->kind)
+    {
+    case NodeBlock:
+        for (size_t i = 0; i < ((Block*)n)->statements.count; i++)
+        {
+            ScanBorrows(r, f, (Node*)VecGet(&((Block*)n)->statements, i), changed);
+        }
+        return;
+    case NodeReturn:
+        ConsumeIfTaken(r, f, ((ReturnStmt*)n)->value, changed);
+        ScanBorrows(r, f, ((ReturnStmt*)n)->value, changed);
+        return;
+    case NodeIf:
+        ScanBorrows(r, f, ((IfStmt*)n)->condition, changed);
+        ScanBorrows(r, f, ((IfStmt*)n)->thenBranch, changed);
+        ScanBorrows(r, f, ((IfStmt*)n)->elseBranch, changed);
+        return;
+    case NodeWhile:
+        ScanBorrows(r, f, ((WhileStmt*)n)->condition, changed);
+        ScanBorrows(r, f, ((WhileStmt*)n)->body, changed);
+        return;
+    case NodeFor:
+        ScanBorrows(r, f, ((ForStmt*)n)->init, changed);
+        ScanBorrows(r, f, ((ForStmt*)n)->condition, changed);
+        ScanBorrows(r, f, ((ForStmt*)n)->update, changed);
+        ScanBorrows(r, f, ((ForStmt*)n)->body, changed);
+        return;
+    case NodeVarDecl:
+    {
+        VarDeclStmt* vd = (VarDeclStmt*)n;
+
+        if (vd->isRef)
+        {
+            if (!vd->type.isConst)
+            {
+                ConsumeParam(BorrowRoot(f, vd->init), changed); /* a mutable alias */
+            }
+        }
+        else
+        {
+            ConsumeIfTaken(r, f, vd->init, changed);
+        }
+        ScanBorrows(r, f, vd->init, changed);
+        return;
+    }
+    case NodeExprStmt:
+        ScanBorrows(r, f, ((ExprStmt*)n)->expr, changed);
+        return;
+    case NodeDefer:
+        ScanBorrows(r, f, ((DeferStmt*)n)->stmt, changed);
+        return;
+    case NodeUnary:
+        ScanBorrows(r, f, ((UnaryExpr*)n)->operand, changed);
+        return;
+    case NodeBinary:
+        ScanBorrows(r, f, ((BinaryExpr*)n)->lhs, changed);
+        ScanBorrows(r, f, ((BinaryExpr*)n)->rhs, changed);
+        return;
+    case NodeAssign:
+        ConsumeParam(BorrowRoot(f, ((AssignExpr*)n)->target), changed);
+        ConsumeIfTaken(r, f, ((AssignExpr*)n)->value, changed);
+        ScanBorrows(r, f, ((AssignExpr*)n)->target, changed);
+        ScanBorrows(r, f, ((AssignExpr*)n)->value, changed);
+        return;
+    case NodeIncDec:
+        ConsumeParam(BorrowRoot(f, ((IncDecExpr*)n)->operand), changed);
+        ScanBorrows(r, f, ((IncDecExpr*)n)->operand, changed);
+        return;
+    case NodeCast:
+        ScanBorrows(r, f, ((CastExpr*)n)->operand, changed);
+        return;
+    case NodeMember:
+        ScanBorrows(r, f, ((MemberExpr*)n)->base_node, changed);
+        return;
+    case NodeIndex:
+        ScanBorrows(r, f, ((IndexExpr*)n)->base_node, changed);
+        ScanBorrows(r, f, ((IndexExpr*)n)->index, changed);
+        return;
+    case NodeNullTest:
+        ScanBorrows(r, f, ((NullTestExpr*)n)->operand, changed);
+        return;
+    case NodeConditional:
+        ScanBorrows(r, f, ((ConditionalExpr*)n)->condition, changed);
+        ScanBorrows(r, f, ((ConditionalExpr*)n)->thenExpr, changed);
+        ScanBorrows(r, f, ((ConditionalExpr*)n)->elseExpr, changed);
+        return;
+    case NodeArrayInit:
+    {
+        ArrayInitExpr* ai = (ArrayInitExpr*)n;
+
+        for (size_t i = 0; i < ai->elements.count; i++)
+        {
+            Node* e = (Node*)VecGet(&ai->elements, i);
+
+            if (!ai->repeatCount)
+            {
+                ConsumeIfTaken(r, f, e, changed); /* `{ v; n }` copies its value */
+            }
+            ScanBorrows(r, f, e, changed);
+        }
+        ScanBorrows(r, f, ai->repeatCount, changed);
+        return;
+    }
+    case NodeStructInit:
+        for (size_t i = 0; i < ((StructInitExpr*)n)->fields.count; i++)
+        {
+            Node* v = ((StructInitField*)VecGet(&((StructInitExpr*)n)->fields, i))->value;
+            ConsumeIfTaken(r, f, v, changed);
+            ScanBorrows(r, f, v, changed);
+        }
+        return;
+    case NodeCall:
+    {
+        CallExpr* c = (CallExpr*)n;
+        bool isMethod = c->calleeBase != NULL;
+
+        ScanBorrows(r, f, c->calleeBase, changed);
+
+        for (size_t i = 0; i < c->args.count; i++)
+        {
+            ScanBorrows(r, f, (Node*)VecGet(&c->args, i), changed);
+        }
+
+        if (!c->callee)
+        {
+            for (size_t i = 0; i < c->args.count; i++)
+            {
+                ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, i)), changed);
+            }
+            return;
+        }
+
+        Node* arg0 = c->args.count > 0 ? (Node*)VecGet(&c->args, 0) : NULL;
+
+        if (!isMethod && (IsArrayMutator(c->callee) || strcmp(c->callee, "drop") == 0
+                          || strcmp(c->callee, "addressof") == 0))
+        {
+            ConsumeParam(BorrowRoot(f, arg0), changed);
+
+            if (strcmp(c->callee, "array_push") == 0 && c->args.count > 1)
+            {
+                ConsumeIfTaken(r, f, (Node*)VecGet(&c->args, 1), changed);
+            }
+            return;
+        }
+
+        if (!isMethod && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0
+                          || strcmp(c->callee, "alignof") == 0 || strcmp(c->callee, "load") == 0
+                          || strcmp(c->callee, "substring") == 0))
+        {
+            return; /* only read */
+        }
+
+        if (isMethod)
+        {
+            ScanBorrowArg(r, f, c, c->calleeBase, 0, true, changed);
+        }
+
+        for (size_t i = 0; i < c->args.count; i++)
+        {
+            ScanBorrowArg(r, f, c, (Node*)VecGet(&c->args, i), isMethod ? i + 1 : i, isMethod, changed);
+        }
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+static void InferBorrowedParams(Resolver* r)
+{
+    Module* mod = r->m_mod;
+
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
+        bool eligible = f->body && !f->isExtern && !f->isExport && !f->isDelegate;
+
+        for (size_t j = 0; j < f->params.count; j++)
+        {
+            ParamDecl* p = (ParamDecl*)VecGet(&f->params, j);
+            p->borrowCandidate = eligible && p->mod == ModNone && !p->isVarargRest && !p->isReturn
+                                 && BorrowCandidateType(r, &p->type);
+        }
+    }
+
+    bool changed = true;
+
+    for (int round = 0; changed && round < 64; round++)
+    {
+        changed = false;
+
+        for (size_t i = 0; i < mod->functions.count; i++)
+        {
+            FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
+
+            if (f->body)
+            {
+                ScanBorrows(r, f, f->body, &changed);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
+
+        for (size_t j = 0; j < f->params.count; j++)
+        {
+            ParamDecl* p = (ParamDecl*)VecGet(&f->params, j);
+
+            if (p->borrowCandidate)
+            {
+                p->borrowCandidate = false;
+                p->inferredBorrow = true;
+                p->mod = ModRef;
+                p->type.isConst = true;
+            }
+        }
+    }
+}
+
+/* Marks every growing `ref T[]` parameter, to a fixpoint: passing a parameter on to a callee that
+   grows it grows it too. */
+static void MarkGrowableArrayParams(Module* mod)
+{
+    bool changed = true;
+
+    for (int round = 0; changed && round < 64; round++)
+    {
+        changed = false;
+
+        for (size_t i = 0; i < mod->functions.count; i++)
+        {
+            FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
+            ScanGrowth(mod, f, f->body, &changed);
+        }
+    }
+}
+
+static bool IsGrowableArrayParam(const Resolver* r, const char* name)
+{
+    const ParamDecl* p = RefArrayParamNamed(r->m_currentFunction, name);
+
+    return p && p->growsArray;
+}
+
+/* A growing `ref T[]` parameter needs a heap array: reject stack views at the call site. */
+static void CheckGrowableArrayArgs(Resolver* r, const FunctionDecl* best, CallExpr* c, StrMap* scope)
+{
+    for (size_t i = 0; i < best->params.count && i < c->args.count; i++)
+    {
+        const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&best->params, i);
+
+        if (!p->growsArray)
+        {
+            continue;
+        }
+
+        Node* arg = (Node*)VecGet(&c->args, i);
+        const TypeName* argType = InferType(r, arg, scope);
+        const char* why = NULL;
+
+        if (arg->kind == NodeArrayInit)
+        {
+            why = "an array literal";
+        }
+        else if (argType && TypeNameIsFixedArray(argType))
+        {
+            why = "a fixed-size array";
+        }
+        else if (arg->kind == NodeIdent && r->m_currentFunction)
+        {
+            for (size_t j = 0; j < r->m_currentFunction->params.count; j++)
+            {
+                const ParamDecl* own = (const ParamDecl*)VecGet((Vec*)&r->m_currentFunction->params, j);
+
+                if (own->isVarargRest && strcmp(own->name, ((IdentExpr*)arg)->name) == 0)
+                {
+                    why = "a varargs rest array";
+                }
+            }
+        }
+
+        if (why)
+        {
+            DiagErrorFmt(r->m_diag, arg->range,
+                         "'%s' grows or rebinds its parameter '%s', so it needs a dynamic array variable, not %s",
+                         best->methodName ? best->methodName : best->name, p->name, why);
+        }
+    }
+}
+
+//-- Conditional expressions.
+
+static void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope);
+static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
+
+static int NumericRank(PrimitiveType p)
+{
+    switch (p)
+    {
+    case PrimDouble: return 9;
+    case PrimFloat: return 8;
+    case PrimULong: return 7;
+    case PrimLong: return 6;
+    case PrimUInt: return 5;
+    case PrimInt: return 4;
+    case PrimUShort: return 3;
+    case PrimShort: return 2;
+    case PrimByte: return 1;
+    case PrimSByte: return 1;
+    default: return 0;
+    }
+}
+
+/* The type of `c ? a : b`: two string literals (or cstrings) give a borrowed `cstring`; otherwise the
+   branch types must agree (or one convert to the other, numbers widening). Owning branches are
+   rejected: one path's value would have to be dropped and the other's moved. */
+static const TypeName* ConditionalType(Resolver* r, ConditionalExpr* ce, StrMap* scope, bool diagnose)
+{
+    const TypeName* lt = InferType(r, ce->thenExpr, scope);
+    const TypeName* rt = InferType(r, ce->elseExpr, scope);
+
+    if (!lt || !rt)
+    {
+        return lt ? lt : rt;
+    }
+
+    bool lCs = ce->thenExpr->kind == NodeStrLiteral || TypeIsCString(&r->m_registry, lt->name);
+    bool rCs = ce->elseExpr->kind == NodeStrLiteral || TypeIsCString(&r->m_registry, rt->name);
+
+    if (lCs && rCs)
+    {
+        return InternTypeName(r, "cstring");
+    }
+
+    if (AliasIsOwning(r, lt) || AliasIsOwning(r, rt))
+    {
+        if (diagnose)
+        {
+            DiagErrorFmt(r->m_diag, ce->base.range,
+                         "'?:' branches cannot be owning values ('%s' and '%s'); use if/else", lt->name, rt->name);
+        }
+        return lt;
+    }
+
+    if (strcmp(lt->name, rt->name) == 0)
+    {
+        return lt;
+    }
+
+    if (IsNumeric(lt->primitiveType) && IsNumeric(rt->primitiveType) && lt->primitiveType != PrimBool
+        && rt->primitiveType != PrimBool)
+    {
+        return NumericRank(lt->primitiveType) >= NumericRank(rt->primitiveType) ? lt : rt;
+    }
+
+    if (IsAssignableType(r, lt, rt))
+    {
+        return lt;
+    }
+
+    if (IsAssignableType(r, rt, lt))
+    {
+        return rt;
+    }
+
+    if (diagnose)
+    {
+        DiagErrorFmt(r->m_diag, ce->base.range, "'?:' branches have incompatible types '%s' and '%s'", lt->name,
+                     rt->name);
+    }
+
+    return lt;
+}
+
+//-- `extern delegate` types.
+
+/* A delegate is called with the extern ABI, so its signature follows the extern rules. */
+static void CheckDelegateDecl(Resolver* r, const FunctionDecl* f)
+{
+    if (f->hasReturnParam)
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "delegate '%s' cannot take a 'return' parameter", f->name);
+    }
+
+    for (size_t i = 0; i < f->params.count; i++)
+    {
+        const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
+        const char* leaf = TypeRegistryResolveAlias(&r->m_registry, p->type.name);
+
+        if (p->mod == ModNone && !p->type.isBox && !p->type.isOptional && !TypeNameIsDynamicArray(&p->type)
+            && IsDefinedStruct(&r->m_registry, leaf))
+        {
+            DiagErrorFmt(r->m_diag, p->base.range,
+                         "delegate parameter '%s' can't take struct '%s' by value; declare it 'const ref %s'", p->name,
+                         p->type.name, p->type.name);
+        }
+
+        if (p->isVarargRest)
+        {
+            DiagErrorFmt(r->m_diag, p->base.range, "delegate '%s' cannot have a typed rest parameter", f->name);
+        }
+    }
+
+    const char* ret = TypeRegistryResolveAlias(&r->m_registry, f->returnType.name);
+
+    if (IsDefinedStruct(&r->m_registry, ret) || TypeNameIsDynamicArray(&f->returnType) || f->returnType.isOptional)
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "delegate '%s' cannot return '%s' by value", f->name,
+                     f->returnType.name);
+    }
+}
+
+//-- `@export` functions: the plain C ABI.
+
+/* A value that crosses a C call in one register: a number, bool, enum, handle or cstring. */
+static bool IsCAbiScalar(Resolver* r, const TypeName* t)
+{
+    if (!t || !t->name || TypeNameIsOwning(t) || t->isArray)
+    {
+        return false;
+    }
+
+    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, t->name);
+
+    if (IsHandleType(&r->m_registry, leaf) || TypeIsCString(&r->m_registry, leaf))
+    {
+        return true;
+    }
+
+    PrimitiveType prim = GetPrimitiveType(leaf);
+
+    return prim != PrimNone && prim != PrimVoid && prim != PrimString && IsNameSimdVector(leaf) == 0;
+}
+
+static void CheckExportDecl(Resolver* r, const FunctionDecl* f)
+{
+    if (f->isExtern || !f->body)
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "'@export' function '%s' needs a body (it is defined here, not by the host)",
+                     f->name);
+        return;
+    }
+
+    if (f->isVariadic)
+    {
+        DiagErrorFmt(r->m_diag, f->base.range, "'@export' function '%s' cannot be variadic", f->name);
+    }
+
+    for (size_t i = 0; i < f->params.count; i++)
+    {
+        const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
+        const char* leaf = TypeRegistryResolveAlias(&r->m_registry, p->type.name);
+
+        /* `ref T` of a plain struct is a `T*` in C. */
+        bool plainStructRef = p->mod == ModRef && IsDefinedStruct(&r->m_registry, leaf)
+                              && !TypeRegistryIsOwningStruct(&r->m_registry, leaf);
+
+        if (!plainStructRef && (p->mod == ModRef || !IsCAbiScalar(r, &p->type)))
+        {
+            DiagErrorFmt(r->m_diag, p->base.range,
+                         "'@export' parameter '%s' of type '%s' has no C ABI; use numbers, bools, enums, handles, "
+                         "cstring, or 'ref' to a plain struct",
+                         p->name, p->type.name);
+        }
+    }
+
+    if (GetPrimitiveType(f->returnType.name) != PrimVoid && !IsCAbiScalar(r, &f->returnType))
+    {
+        DiagErrorFmt(r->m_diag, f->base.range,
+                     "'@export' function '%s' cannot return '%s'; return a number, bool, enum, handle or cstring",
+                     f->name, f->returnType.name);
+    }
+}
+
+//-- Memory intrinsics: raw `ptr` access for FFI.
+
+static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
+
+/* The only function named `name` visible from `fileId`; NULL (with *ambiguous set) when overloaded. */
+static FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId, bool* ambiguous)
+{
+    FunctionDecl* found = NULL;
+    *ambiguous = false;
+
+    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+
+        if (strcmp(f->name, name) != 0 || !FunctionVisibleTo(f, fileId))
+        {
+            continue;
+        }
+
+        if (found)
+        {
+            *ambiguous = true;
+            return NULL;
+        }
+
+        found = f;
+    }
+
+    return found;
+}
+
+/* `addressof(f)` names a function, not a variable: a bare identifier that is no local/global. */
+static bool IsAddressOfFunctionArg(Resolver* r, const CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || strcmp(c->callee, "addressof") != 0 || c->args.count != 1)
+    {
+        return false;
+    }
+
+    const Node* arg = (const Node*)VecGet((Vec*)&c->args, 0);
+
+    if (arg->kind != NodeIdent || StrMapGet(scope, ((const IdentExpr*)arg)->name))
+    {
+        return false;
+    }
+
+    return ModuleHasFunctionNamed(r, ((const IdentExpr*)arg)->name, c->base.range.fileId);
+}
+
+/* A `T` that load/store/sizeof may move as raw bytes: no owning parts. */
+static bool CheckPlainDataTypeArg(Resolver* r, const CallExpr* c, const TypeName* t)
+{
+    if (!t || !t->name)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' needs a type argument (e.g. '%s<int>(...)')", c->callee,
+                     c->callee);
+        return false;
+    }
+
+    if (AliasIsOwningValue(r, t) || TypeRegistryIsOwningStruct(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name)))
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot move owning type '%s' as raw memory", c->callee, t->name);
+        return false;
+    }
+
+    if (TypeRegistryIsOpaque(&r->m_registry, t->name) && !IsHandleType(&r->m_registry, t->name))
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot use incomplete type '%s'", c->callee, t->name);
+        return false;
+    }
+
+    if (GetPrimitiveType(t->name) == PrimVoid)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot use 'void'", c->callee);
+        return false;
+    }
+
+    return true;
+}
+
+/* A pointer operand: any handle (they all convert to `ptr`). */
+static bool CheckPtrOperand(Resolver* r, const CallExpr* c, Node* arg, StrMap* scope)
+{
+    const TypeName* t = InferType(r, arg, scope);
+
+    if (!t || !IsHandleType(&r->m_registry, t->name))
+    {
+        DiagErrorFmt(r->m_diag, arg->range, "'%s' expects a 'ptr' (or other handle), not '%s'", c->callee,
+                     t ? t->name : "");
+        return false;
+    }
+
+    return true;
+}
+
+static const TypeName* MemoryBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    (void)scope;
+
+    if (!c->callee)
+    {
+        return NULL;
+    }
+
+    if (strcmp(c->callee, "addressof") == 0)
+    {
+        return InternTypeName(r, STRATA_PTR_TYPE);
+    }
+
+    if (strcmp(c->callee, "sizeof") == 0 || strcmp(c->callee, "alignof") == 0)
+    {
+        return InternTypeName(r, "ulong");
+    }
+
+    if (strcmp(c->callee, "load") == 0)
+    {
+        return c->typeArg;
+    }
+
+    return NULL; /* store: void */
+}
+
+/* addressof(x) -> ptr        the address of a variable, field or element (a box: its cell), or of an
+                              extern / `@export` function
+   sizeof<T>() / alignof<T>() -> ulong
+   load<T>(p) -> T            reads a T at p
+   store(p, v) / store<T>(p, v) writes v (as T) at p */
+static bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    /* These names are not reserved: a module's own function of the same name wins. */
+    if (!c->callee || ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId))
+    {
+        return false;
+    }
+
+    const char* name = c->callee;
+
+    if (strcmp(name, "addressof") == 0)
+    {
+        if (c->args.count != 1 || c->typeArg)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'addressof' expects 1 argument, got %zu", c->args.count);
+            return true;
+        }
+
+        Node* arg0 = (Node*)VecGet(&c->args, 0);
+
+        if (IsAddressOfFunctionArg(r, c, scope))
+        {
+            bool ambiguous = false;
+            const char* fnName = ((IdentExpr*)arg0)->name;
+            FunctionDecl* fn = FindSingleFunction(r, fnName, c->base.range.fileId, &ambiguous);
+
+            if (!fn)
+            {
+                DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
+                return true;
+            }
+
+            if ((!fn->isExtern && !fn->isExport) || fn->typeParam)
+            {
+                DiagErrorFmt(r->m_diag, arg0->range,
+                             "cannot take the address of '%s': only extern and '@export' functions have a C ABI",
+                             fnName);
+                return true;
+            }
+
+            c->addressOfFunction = fn;
+            c->isIntrinsicCall = true;
+            return true;
+        }
+
+        while (arg0->kind == NodeCast)
+        {
+            arg0 = ((CastExpr*)arg0)->operand;
+        }
+
+        if (!IsLValueNode(arg0))
+        {
+            DiagError(r->m_diag, arg0->range, "'addressof' expects a variable, field, element or function");
+            return true;
+        }
+
+        if (arg0->kind == NodeMember && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->base_node, scope),
+                                                             ((MemberExpr*)arg0)->member))
+        {
+            DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
+            return true;
+        }
+
+        c->isIntrinsicCall = true;
+        return true;
+    }
+
+    if (strcmp(name, "sizeof") == 0 || strcmp(name, "alignof") == 0)
+    {
+        if (c->args.count != 0)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'%s' takes no arguments: write '%s<T>()'", name, name);
+            return true;
+        }
+
+        if (c->typeArg && TypeNameIsDynamicArray(c->typeArg))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'%s' of a dynamic array is not a fixed size", name);
+            return true;
+        }
+
+        if (!c->typeArg)
+        {
+            CheckPlainDataTypeArg(r, c, NULL);
+            return true;
+        }
+
+        const TypeName* t = c->typeArg;
+        bool known = t->primitiveType != PrimNone || t->isArray || t->isBox || t->isOptional
+                     || TypeRegistryIsUserType(&r->m_registry, t->name);
+
+        if (t->primitiveType == PrimVoid || !known)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "unknown type '%s'", c->typeArg->name);
+            return true;
+        }
+
+        c->isIntrinsicCall = true;
+        return true;
+    }
+
+    if (strcmp(name, "load") == 0)
+    {
+        if (c->args.count != 1)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'load' expects 1 argument, got %zu", c->args.count);
+            return true;
+        }
+
+        if (!CheckPlainDataTypeArg(r, c, c->typeArg) || !CheckPtrOperand(r, c, (Node*)VecGet(&c->args, 0), scope))
+        {
+            return true;
+        }
+
+        c->isIntrinsicCall = true;
+        return true;
+    }
+
+    if (strcmp(name, "store") == 0)
+    {
+        if (c->args.count != 2)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "'store' expects 2 arguments (ptr, value), got %zu", c->args.count);
+            return true;
+        }
+
+        Node* value = (Node*)VecGet(&c->args, 1);
+        const TypeName* valueType = InferType(r, value, scope);
+        const TypeName* t = c->typeArg ? c->typeArg : valueType;
+
+        if (!CheckPlainDataTypeArg(r, c, t) || !CheckPtrOperand(r, c, (Node*)VecGet(&c->args, 0), scope))
+        {
+            return true;
+        }
+
+        if (c->typeArg && valueType && !IsAssignableType(r, c->typeArg, valueType))
+        {
+            DiagErrorFmt(r->m_diag, value->range, "cannot store '%s' as '%s'", valueType->name, c->typeArg->name);
+            return true;
+        }
+
+        if (!c->typeArg)
+        {
+            c->typeArg = (TypeName*)arena_dup(r->m_arena, valueType, sizeof(TypeName));
+        }
+
+        c->isIntrinsicCall = true;
+        return true;
+    }
+
+    return false;
+}
+
+/* `array_remove(a, i)` / `array_swap_remove(a, i)`: drop element i, keeping order / filling the hole
+   with the last element. */
+static bool IsArrayRemoveName(const char* callee)
+{
+    return strcmp(callee, "array_remove") == 0 || strcmp(callee, "array_swap_remove") == 0;
+}
+
+static FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId, bool* ambiguous);
+
+/* A fixed array passed where an extern takes a `ptr` decays to its first element, as in C:
+   `snprintf(buffer, ...)` with `byte[32] buffer`. The argument is wrapped in that `(ptr)` cast. */
+static void DecayFixedArgsToPtr(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (!c->callee || c->calleeBase)
+    {
+        return;
+    }
+
+    bool ambiguous = false;
+    FunctionDecl* fd = FindSingleFunction(r, c->callee, c->base.range.fileId, &ambiguous);
+
+    if (!fd || !fd->isExtern || fd->isDelegate)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < c->args.count && i < fd->params.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&fd->params, i);
+        const char* paramType = TypeRegistryResolveAlias(&r->m_registry, param->type.name);
+
+        if (param->mod != ModNone || !paramType || strcmp(paramType, STRATA_PTR_TYPE) != 0)
+        {
+            continue;
+        }
+
+        Node* arg = (Node*)VecGet(&c->args, i);
+        const TypeName* argType = InferType(r, arg, scope);
+
+        if (!argType || !TypeNameIsFixedArray(argType))
+        {
+            continue;
+        }
+
+        CastExpr* cast = AST_NEW(r->m_arena, CastExpr);
+        cast->base.kind = NodeCast;
+        cast->base.range = arg->range;
+        cast->type = *InternTypeName(r, STRATA_PTR_TYPE);
+        cast->operand = arg;
+        cast->textKind = CastFixedToPtr;
+        VecSet(&c->args, i, cast);
+    }
+}
+
+/* Result type of array_push/pop/resize/remove, or NULL if not one. */
 static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee)
@@ -2907,7 +4450,8 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     bool isPush = strcmp(c->callee, "array_push") == 0;
-    bool isResize = strcmp(c->callee, "array_resize") == 0;
+    bool isResize = strcmp(c->callee, "array_resize") == 0 || IsArrayRemoveName(c->callee)
+                    || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
 
     if (!isPush && !isResize && !isPop)
@@ -2984,10 +4528,12 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     bool isPush = strcmp(c->callee, "array_push") == 0;
-    bool isResize = strcmp(c->callee, "array_resize") == 0;
+    /* `array_reserve(a, n)` grows the capacity like a resize would, without touching the elements. */
+    bool isResize = strcmp(c->callee, "array_resize") == 0 || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
+    bool isRemove = IsArrayRemoveName(c->callee);
 
-    if (!isPush && !isResize && !isPop)
+    if (!isPush && !isResize && !isPop && !isRemove)
     {
         return false;
     }
@@ -3033,7 +4579,8 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     // A `ref T[]` param may be a borrowed stack view (fixed-array slice):
     // growing/shrinking can reallocate, which would free the caller's storage.
-    if ((isPush || isResize) && arg0->kind == NodeIdent && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)arg0)->name))
+    if ((isPush || isResize) && arg0->kind == NodeIdent && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)arg0)->name)
+        && !IsGrowableArrayParam(r, ((IdentExpr*)arg0)->name))
     {
         DiagErrorFmt(r->m_diag, arg0->range,
                      "'%s' cannot grow '%s' (a ref array param may borrow the caller's stack storage); "
@@ -3041,6 +4588,9 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
                      c->callee, ((IdentExpr*)arg0)->name);
         return true;
     }
+
+    // The buffer may be reallocated or elements shifted: refs to elements die.
+    InvalidateRefLocals(r, MovableBoxSourceKey(r, arg0));
 
     // Length may change: drop `[recv.length]` facts (resize/pop also drop below).
     {
@@ -3052,8 +4602,8 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    // Resize/pop drop element facts; push keeps them.
-    if (isResize || isPop)
+    // Resize/pop/remove drop element facts (removal moves elements between slots); push keeps them.
+    if (isResize || isPop || isRemove)
     {
         const char* recvKey = MovableBoxSourceKey(r, arg0);
 
@@ -3063,15 +4613,17 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    if (isResize)
+    if (isResize || isRemove)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
 
         const TypeName* sizeType = InferType(r, arg1, scope);
 
-        if (sizeType && !IsNumeric(sizeType->primitiveType))
+        if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
         {
-            DiagErrorFmt(r->m_diag, arg1->range, "'array_resize' size must be an integer, not '%s'", sizeType->name);
+            DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee,
+                         isRemove ? "index" : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
+                         sizeType->name);
         }
     }
     else if (isPush)
@@ -3120,11 +4672,11 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
 
         /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
-        if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
+        if (valueType && !valueType->isRc && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
         {
             DiagErrorFmt(r->m_diag, arg1->range,
                          "cannot push '%s' read from an array element - it would be owned by two arrays; "
-                         "move it into a variable first",
+                         "move it into a variable first, or push a copy() of it",
                          valueType->name);
         }
 
@@ -3219,6 +4771,28 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
         GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, g);
 
         ClearNullableFacts(r, gd->name);
+
+        // ...and refs into globals may dangle after any call that could reach them.
+        if (!best->isExtern)
+        {
+            InvalidateRefLocals(r, gd->name);
+        }
+    }
+
+    // A callee given a path by mutable ref (or taking it) may grow, shrink or rebind it.
+    {
+        size_t named = NamedParamCount(best);
+
+        for (size_t j = 0; j < c->args.count && j < named; j++)
+        {
+            const ParamDecl* p = (ParamDecl*)VecGet(&best->params, j);
+            Node* arg = (Node*)VecGet(&c->args, j);
+
+            if ((p->mod == ModRef && !p->type.isConst) || (p->mod == ModNone && AliasIsOwning(r, &p->type)))
+            {
+                InvalidateRefLocals(r, MovableBoxSourceKey(r, arg));
+            }
+        }
     }
 
     // A typed rest collects trailing args as its element type.
@@ -4666,7 +6240,7 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!generic)
     {
-        if (c->typeArg)
+        if (c->typeArg && !IsTypedMemoryIntrinsic(r, c))
         {
             DiagErrorFmt(r->m_diag, c->base.range, "'%s' is not a generic extern; it takes no type argument",
                          c->callee);
@@ -4752,8 +6326,86 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+/* A call through a value of an `extern delegate` type: `fn(args)` names a variable, `obj.field(args)` a
+   struct field. Fills c->delegateCallee / c->delegateDecl; false when the call is something else. */
+static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->delegateDecl)
+    {
+        return true;
+    }
+
+    if (!c->callee)
+    {
+        return false;
+    }
+
+    if (c->calleeBase)
+    {
+        const TypeName* baseType = UnwrapBoxPtr(InferType(r, c->calleeBase, scope));
+        const StructType* st = baseType ? TypeRegistryFind(&r->m_registry, baseType->name) : NULL;
+        int idx = st ? TypeRegistryFieldIndex(&r->m_registry, baseType->name, c->callee) : -1;
+
+        if (idx < 0)
+        {
+            return false;
+        }
+
+        const FieldDecl* field = (const FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
+
+        if (!TypeRegistryDelegate(&r->m_registry, field->type.name))
+        {
+            return false;
+        }
+
+        MemberExpr* m = AST_NEW(r->m_arena, MemberExpr);
+        m->base.kind = NodeMember;
+        m->base.range = c->base.range;
+        m->base_node = c->calleeBase;
+        m->member = c->callee;
+        c->delegateCallee = (Node*)m;
+        c->calleeBase = NULL;
+    }
+    else
+    {
+        const TypeName* varType = (const TypeName*)StrMapGet(scope, c->callee);
+
+        if (!varType || !TypeRegistryDelegate(&r->m_registry, varType->name))
+        {
+            return false;
+        }
+
+        IdentExpr* id = AST_NEW(r->m_arena, IdentExpr);
+        id->base.kind = NodeIdent;
+        id->base.range = c->base.range;
+        id->name = c->callee;
+        c->delegateCallee = (Node*)id;
+    }
+
+    ResolveExpr(r, c->delegateCallee, scope);
+
+    const TypeName* t = InferType(r, c->delegateCallee, scope);
+    c->delegateDecl = t ? TypeRegistryDelegate(&r->m_registry, t->name) : NULL;
+
+    if (!c->delegateDecl)
+    {
+        return false;
+    }
+
+    c->callee = c->delegateDecl->mangledName;
+    return true;
+}
+
 static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
+    /* Calls through delegate values pick their one signature directly. */
+    bool delegateCall = DetectDelegateCall(r, c, scope);
+
+    if (delegateCall)
+    {
+        goto resolve_candidates;
+    }
+
     /* `expr.Member(args)` / `Type.Static(args)` — resolve against impl blocks.
        On success the call is rewritten to the extern symbol (the receiver is
        prepended as the first argument for instance methods) and resolution
@@ -4777,6 +6429,8 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
        site; the callee never drops the binding). Locals are named by a bare
        identifier, so an Ident arg with a fixed type is always a local;
        field-sourced fixed arrays (`b.data`) keep the extern `^T` decay below. */
+    DecayFixedArgsToPtr(r, c, scope);
+
     {
         bool fixedArgError = false;
 
@@ -4791,7 +6445,11 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
             const TypeName* argType = InferType(r, arg, scope);
 
-            if (argType && TypeNameIsFixedArray(argType)
+            /* Taking the address of a fixed array is what `addressof` is for. */
+            bool addressOf = c->callee && strcmp(c->callee, "addressof") == 0
+                             && !ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId);
+
+            if (argType && TypeNameIsFixedArray(argType) && !addressOf
                 && !OverloadTakesFixedView(r, c->callee, argType, c->base.range.fileId))
             {
                 DiagErrorFmt(r->m_diag, arg->range,
@@ -4892,6 +6550,18 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         return;
     }
 
+resolve_candidates:;
+    /* A delegate call has exactly one candidate: its signature. */
+    Vec delegatePool;
+    VecInit(&delegatePool);
+
+    if (delegateCall)
+    {
+        VecPush(&delegatePool, (void*)c->delegateDecl);
+    }
+
+    const Vec* pool = delegateCall ? &delegatePool : &r->m_mod->functions;
+
     /* Call already resolved (e.g. warmup); reuse cached decl and rerun move tracking. */
     if (c->resolvedDecl)
     {
@@ -4907,17 +6577,19 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             /* Facts before moves. */
             CheckCallArgOptionalDerefs(r, c, scope);
             CheckConstRefArgs(r, best, c, scope);
+            CheckGrowableArrayArgs(r, best, c, scope);
             TrackCallArgMoves(r, best, c);
+            free(delegatePool.items);
 
             return;
         }
     }
 
-    bool found = false;
+    bool found = delegateCall;
 
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; !found && i < pool->count; i++)
     {
-        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet((Vec*)pool, i);
 
         if (strcmp(functionDecl->name, c->callee) == 0 && FunctionVisibleTo(functionDecl, c->base.range.fileId))
         {
@@ -4929,6 +6601,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     if (!found)
     {
         DiagErrorFmt(r->m_diag, c->base.range, "unknown function '%s'", c->callee);
+        free(delegatePool.items);
         return;
     }
 
@@ -4937,11 +6610,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     int bestScore = INT_MAX;
     bool ambiguous = false;
 
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; i < pool->count; i++)
     {
-        FunctionDecl* functionDecl = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        FunctionDecl* functionDecl = (FunctionDecl*)VecGet((Vec*)pool, i);
 
-        if (strcmp(functionDecl->name, c->callee) != 0 || !FunctionVisibleTo(functionDecl, c->base.range.fileId))
+        if (!delegateCall
+            && (strcmp(functionDecl->name, c->callee) != 0 || !FunctionVisibleTo(functionDecl, c->base.range.fileId)))
         {
             continue;
         }
@@ -5113,6 +6787,14 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
                     break;
                 }
             }
+            else if (!mutableRef && paramType->isBox && argType->isOptional && paramType->isRc == argType->isRc
+                     && TypeNameBoxInner(paramType) && TypeNameBoxInner(argType)
+                     && strcmp(TypeNameBoxInner(paramType)->name, TypeNameBoxInner(argType)->name) == 0)
+            {
+                /* Smart cast: a proven `T?` / `rc<T>?` passes as `^T` / `rc<T>` (proof checked by
+                   CheckCallArgOptionalDerefs once the overload is picked). */
+                score += 1;
+            }
             else if (TypeNameIsOwning(argType))
             {
                 /* ^T coerces to T (implicit deref). */
@@ -5188,10 +6870,19 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
+    free(delegatePool.items);
+
     if (!best)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
-                     c->args.count);
+        if (delegateCall)
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "arguments do not match delegate '%s'", c->delegateDecl->name);
+        }
+        else
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
+                         c->args.count);
+        }
         return;
     }
 
@@ -5277,6 +6968,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     CheckCallArgOptionalDerefs(r, c, scope);
     CheckConstRefArgs(r, best, c, scope);
+    CheckGrowableArrayArgs(r, best, c, scope);
     TrackCallArgMoves(r, best, c);
 }
 
@@ -5330,10 +7022,18 @@ static const IntrinsicTypeDefinition intrinsics[] = {
     {"array_push",   ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_pop",    ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_resize", ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_remove", ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_reserve", ArrayBuiltinType,          ResolveArrayBuiltin    },
+    {"array_swap_remove", ArrayBuiltinType,      ResolveArrayBuiltin    },
 
     /* Memory */
     {"copy",         CopyBuiltinType,            ResolveCopyBuiltin     },
     {"drop",         DropBuiltinType,            ResolveDropBuiltin     },
+    {"addressof",    MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"sizeof",       MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"alignof",      MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"load",         MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"store",        MemoryBuiltinType,          ResolveMemoryBuiltin   },
 
     /* Strings */
     {"substring",    SubstringBuiltinType,       ResolveSubstringBuiltin},
@@ -5408,8 +7108,8 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     {
         const IntLiteral* lit = (const IntLiteral*)n;
 
-        /* Values that don't fit a non-negative signed i32 are 64-bit */
-        if (lit->value > 0x7FFFFFFFULL)
+        /* Values that don't fit a non-negative signed i32 are 64-bit, as is any `l` literal. */
+        if (lit->value > 0x7FFFFFFFULL || lit->isLong)
         {
             return InternTypeName(r, lit->isUnsigned ? "ulong" : "long");
         }
@@ -5425,6 +7125,12 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     case NodeIdent:
     {
         const TypeName* t = (const TypeName*)StrMapGet(scope, ((IdentExpr*)n)->name);
+
+        /* The builtin `null` constant (a variable named `null` shadows it). */
+        if (!t && IsNullConstantName(((IdentExpr*)n)->name))
+        {
+            return InternTypeName(r, STRATA_NULL_TYPE);
+        }
 
         return t ? t : NULL;
     }
@@ -5454,6 +7160,16 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             const TypeName* lt = InferType(r, b->lhs, scope);
             const TypeName* rt = InferType(r, b->rhs, scope);
             PrimitiveType lp = lt ? lt->primitiveType : PrimNone;
+
+            if (IsEnumFlagsOp(r, b->op, lt, rt))
+            {
+                return lt;
+            }
+
+            if (IsStringConcat(r, b->op, lt, rt))
+            {
+                return InternTypeName(r, "string");
+            }
             PrimitiveType rp = rt ? rt->primitiveType : PrimNone;
 
             /* Box/optional operands deref to their inner for arithmetic
@@ -5502,6 +7218,12 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
         return InferType(r, ((AssignExpr*)n)->target, scope);
     case NodeNullTest:
         return InternTypeName(r, "bool");
+    case NodeConditional:
+    {
+        ConditionalExpr* ce = (ConditionalExpr*)n;
+
+        return ce->resultType ? ce->resultType : ConditionalType(r, ce, scope, false);
+    }
     case NodeIncDec:
         return InferType(r, ((IncDecExpr*)n)->operand, scope);
     case NodeCast:
@@ -5550,6 +7272,24 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
             return NULL;
         }
 
+        /* SIMD lane read / swizzle: `v.x` is a float, `v.xy` a float2, `v.xyz` a float3. */
+        if (IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name)) != 0)
+        {
+            size_t lanes = strlen(m->member);
+            bool swizzle = lanes >= 1 && lanes <= 4;
+
+            for (size_t i = 0; swizzle && i < lanes; i++)
+            {
+                swizzle = m->member[i] >= 'w' && m->member[i] <= 'z';
+            }
+
+            if (swizzle)
+            {
+                static const char* const swizzleTypes[5] = {NULL, "float", "float2", "float3", "float4"};
+                return InternTypeName(r, swizzleTypes[lanes]);
+            }
+        }
+
         if (TypeRegistryIsOpaque(&r->m_registry, baseType->name))
         {
             if (IsIncompleteStruct(&r->m_registry, baseType->name))
@@ -5571,7 +7311,7 @@ static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
            only — they have no capacity (inline storage). */
         if (IsFatPseudoProperty(r, baseType, m->member))
         {
-            return InternTypeName(r, "uint");
+            return InternTypeName(r, strcmp(m->member, "data") == 0 ? STRATA_PTR_TYPE : "uint");
         }
 
         const StructType* structType = TypeRegistryFind(&r->m_registry, baseType->name);
@@ -5698,6 +7438,13 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
 
 static bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {
+    /* A `cstring` is a `const char*`: it passes wherever a raw `ptr` is expected. */
+    if (targetType && valueType && TypeIsCString(&r->m_registry, valueType->name)
+        && strcmp(targetType->name, STRATA_PTR_TYPE) == 0)
+    {
+        return true;
+    }
+
     /* `cstring` copies into `string` (heap copy at the use site). The
        reverse is never implicit: only a string literal initializes a
        `cstring` (handled at each use site via IsStrLiteralForCString). */
@@ -5714,12 +7461,25 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
 
     if (targetType && TypeNameIsOwning(targetType))
     {
+        /* An rc cell carries a count a plain box does not: rc and ^T / T? never convert into each other. */
+        if (valueType && targetType->isRc != valueType->isRc && (valueType->isBox || valueType->isOptional))
+        {
+            return false;
+        }
+
         const TypeName* inner = TypeNameBoxInner(targetType);
 
         // `T?` and `^T` share an ABI; they convert when inners match.
         const TypeName* valueInner = TypeNameBoxInner(valueType);
 
         if (targetType->isOptional && valueType->isBox && inner && valueInner)
+        {
+            return strcmp(inner->name, valueInner->name) == 0;
+        }
+
+        /* Smart cast: a `T?` (or `rc<T>?`) goes where `^T` (or `rc<T>`) is wanted once flow typing
+           proves it non-empty; CheckOptionalDeref demands the proof at each use site. */
+        if (!targetType->isOptional && targetType->isBox && valueType->isOptional && inner && valueInner)
         {
             return strcmp(inner->name, valueInner->name) == 0;
         }
@@ -5754,6 +7514,193 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
            || (valueInner && strcmp(valueInner->name, targetType->name) == 0);
 }
 
+/* True for `{}`: an empty braced value, which default-constructs. */
+static bool IsEmptyBraced(const Node* n)
+{
+    return (n->kind == NodeArrayInit && ((const ArrayInitExpr*)n)->elements.count == 0
+            && !((const ArrayInitExpr*)n)->repeatCount)
+           || (n->kind == NodeStructInit && ((const StructInitExpr*)n)->fields.count == 0);
+}
+
+/* Whether all-zero bytes are a valid `t`: what `{ {}; count }` and array_resize fill with. Empty
+   strings, arrays and optionals and zeroed scalars are; a `^T` or `rc<T>` (which must point at
+   something) is not, nor is a struct holding one. */
+static bool ZeroIsValid(Resolver* r, const TypeName* t, int depth)
+{
+    if (!t || depth > 32 || t->isOptional || TypeNameIsDynamicArray(t) || TypeIsString(&r->m_registry, t->name))
+    {
+        return true;
+    }
+
+    if (t->isBox)
+    {
+        return false;
+    }
+
+    if (t->isArray && t->length >= 0)
+    {
+        return ZeroIsValid(r, t->elem, depth + 1);
+    }
+
+    const char* name = TypeRegistryResolveAlias(&r->m_registry, t->name);
+    const StructType* st = name ? TypeRegistryFind(&r->m_registry, name) : NULL;
+
+    if (!st || TypeRegistryIsOpaque(&r->m_registry, name))
+    {
+        return true;
+    }
+
+    for (size_t f = 0; f < st->fields.count; f++)
+    {
+        const FieldDecl* fd = (const FieldDecl*)VecGet((Vec*)&st->fields, f);
+
+        if (!ZeroIsValid(r, &fd->type, depth + 1))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* `{ value; count }` for a dynamic array: the count is any integer; the value is evaluated once and
+   each element is a copy of it (a `{}` value instead default-constructs each element). The value is
+   read, not moved, so a variable used as the value stays usable. */
+static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
+{
+    ResolveExpr(r, ai->repeatCount, scope);
+
+    const TypeName* countType = InferType(r, ai->repeatCount, scope);
+
+    if (countType && (!IsNumeric(countType->primitiveType) || countType->primitiveType == PrimBool
+                      || countType->primitiveType == PrimFloat || countType->primitiveType == PrimDouble))
+    {
+        DiagErrorFmt(r->m_diag, ai->repeatCount->range, "the count in '{ value; count }' must be an integer, not '%s'",
+                     countType->name);
+    }
+
+    Node* value = (Node*)VecGet(&ai->elements, 0);
+    const TypeName* elem = ai->elementType;
+
+    /* `{ {}; count }` zero-fills each element: the default value, built in place. */
+    if (IsEmptyBraced(value))
+    {
+        if (elem && !ZeroIsValid(r, elem, 0))
+        {
+            DiagErrorFmt(r->m_diag, value->range,
+                         "'{ {}; count }' fills each element with its zero value, which is not a valid '%s' (a "
+                         "'^T' or 'rc<T>' in it must point at something); give a value to copy instead",
+                         elem->name);
+        }
+        return;
+    }
+
+    if (elem && (value->kind == NodeArrayInit || value->kind == NodeStructInit))
+    {
+        value = ApplyBracedStructTarget(r, value, elem);
+        VecSet(&ai->elements, 0, value);
+    }
+
+    ResolveExpr(r, value, scope);
+
+    if (!elem)
+    {
+        return;
+    }
+
+    const TypeName* valueType = InferType(r, value, scope);
+
+    if (valueType && !IsAssignableType(r, elem, valueType) && !IsStrLiteralForCString(r, elem, value)
+        && !IsEmptyBraced(value))
+    {
+        DiagErrorFmt(r->m_diag, value->range, "a '%s' cannot fill an array of '%s'", valueType->name, elem->name);
+    }
+
+    if (!IsEmptyBraced(value) && AliasIsOwningValue(r, elem) && !elem->isRc && TypeNameHasDrop(&r->m_registry, elem))
+    {
+        DiagErrorFmt(r->m_diag, value->range,
+                     "'%s' has a Drop method, so it cannot be copied into each element; write '{ {}; count }' "
+                     "to default-construct them instead",
+                     elem->name);
+    }
+
+    CheckOptionalDeref(r, value, valueType, elem, value->range);
+}
+
+/* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
+   variable, field or element of type T (or a `^T` / `rc<T>` / proven `T?` holding one). Nothing is
+   moved or copied; the alias cannot be rebound or moved from, and dies (see InvalidateRefLocals) once
+   what it refers to may have moved. */
+static void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range);
+
+static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
+{
+    ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
+    ClearBoxSubtree(r, vd->name);
+    ClearNullableFacts(r, vd->name);
+    InvalidateIndexVar(r, vd->name);
+
+    if (!vd->init)
+    {
+        DiagErrorFmt(r->m_diag, vd->base.range, "ref local '%s' must be bound to a variable, field or element", vd->name);
+        return;
+    }
+
+    ResolveExpr(r, vd->init, scope);
+
+    const char* key = MovableBoxSourceKey(r, vd->init);
+
+    if (!IsLValueNode(vd->init) || !key)
+    {
+        DiagErrorFmt(r->m_diag, vd->init->range,
+                     "ref local '%s' must be bound to a variable, field or element, not a temporary", vd->name);
+        return;
+    }
+
+    const TypeName* initType = InferType(r, vd->init, scope);
+
+    if (!initType)
+    {
+        return;
+    }
+
+    const TypeName* inner = (initType->isBox || initType->isOptional) ? TypeNameBoxInner(initType) : NULL;
+    bool exact = SameResolvedType(r, initType->name, vd->type.name);
+    bool through = !exact && !vd->type.isBox && !vd->type.isOptional && inner
+                   && SameResolvedType(r, inner->name, vd->type.name);
+
+    if (!exact && !through)
+    {
+        DiagErrorFmt(r->m_diag, vd->init->range, "'ref %s %s' cannot be bound to a '%s'", vd->type.name, vd->name,
+                     initType->name);
+        return;
+    }
+
+    if (through)
+    {
+        // Reaching into a `T?` reads through it: it must be proven set.
+        CheckOptionalDeref(r, vd->init, initType, &vd->type, vd->init->range);
+    }
+
+    const char* constRoot = ConstRootName(r, vd->init, scope);
+
+    if (constRoot && !vd->type.isConst)
+    {
+        DiagErrorFmt(r->m_diag, vd->init->range,
+                     "'%s' is immutable, so a mutable ref cannot be bound into it; use 'const ref'", constRoot);
+    }
+
+    vd->refThroughBox = through;
+    StrMapPut(&r->m_refLocals, vd->name, (void*)CanonicalRefKey(r, key));
+    StrMapPut(&r->m_refThroughBox, vd->name, through ? (void*)1 : NULL);
+
+    // Like a `ref` param: it does not own what it aliases, so it is never moved from or rebound.
+    if (AliasIsOwning(r, &vd->type) || AliasIsOwningValue(r, &vd->type))
+    {
+        StrMapPut(&r->m_refBoxParams, vd->name, (void*)1);
+    }
+}
+
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 {
     ResolveExprImpl(r, n, scope, false);
@@ -5765,6 +7712,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     {
         return;
     }
+
+    r->m_curScope = scope;
 
     switch (n->kind)
     {
@@ -5778,9 +7727,21 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         IdentExpr* ident = (IdentExpr*)n;
         const TypeName* varType = (const TypeName*)StrMapGet(scope, ident->name);
 
+        if (!varType && IsNullConstantName(ident->name))
+        {
+            return;
+        }
+
         if (!varType)
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
+        }
+        else if (StrMapGet(&r->m_refLocals, ident->name) && IsBoxMoved(r, ident->name))
+        {
+            DiagErrorFmt(r->m_diag, ident->base.range,
+                         "'%s' may dangle: what it refers to may have moved, been reallocated or freed since it "
+                         "was bound (bind it again after the change)",
+                         ident->name);
         }
         else if (AliasIsOwning(r, varType))
         {
@@ -5791,7 +7752,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 if (IsBoxPartiallyMoved(r, ident->name))
                 {
-                    DiagErrorFmt(r->m_diag, ident->base.range, "'%s' is poisoned", ident->name);
+                    DiagPoisoned(r, ident->base.range, ident->name);
                 }
                 else
                 {
@@ -5838,7 +7799,16 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         BinaryExpr* b = (BinaryExpr*)n;
 
         ResolveExpr(r, b->lhs, scope);
-        ResolveExpr(r, b->rhs, scope);
+
+        /* `a? && a.x`: the right side runs only when the left is true (`||`: when it is false). */
+        if (b->op == BinLogicAnd || b->op == BinLogicOr)
+        {
+            ResolveUnderCondition(r, b->rhs, b->lhs, b->op == BinLogicAnd, scope);
+        }
+        else
+        {
+            ResolveExpr(r, b->rhs, scope);
+        }
 
         // Arithmetic needs numerics or two same-shape vectors.
         switch (b->op)
@@ -5873,7 +7843,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                wrap-around (1+1 = 0). */
             bool boolOperand = (lt && IsBoolType(&r->m_registry, lt)) || (rt && IsBoolType(&r->m_registry, rt));
 
-            if (lt && rt && (!numericPair || boolOperand) && !vectorPair)
+            /* `&`, `|`, `^` combine flags of one enum type (`Usage.A | Usage.B`). */
+            bool flagsPair = IsEnumFlagsOp(r, b->op, lt, rt);
+
+            /* `a + b` on strings / cstrings / literals concatenates into a new string. */
+            bool concatPair = IsStringConcat(r, b->op, lt, rt);
+
+            if (lt && rt && (!numericPair || boolOperand) && !vectorPair && !flagsPair && !concatPair)
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
             }
@@ -5952,6 +7928,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 break;
             }
 
+            /* `string == cstring` (either order) compares the text, like `string == string`. */
+            if (eqOp && ((lString && rCStr) || (rString && lCStr)))
+            {
+                break;
+            }
+
             if (lString != rString)
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "cannot compare 'string' with '%s'", lString ? rn : ln);
@@ -5963,8 +7945,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 break;
             }
 
-            /* `cstring` compares by content like `string`, but never mixes
-               with `string` (copy to `string` first for cross-type compare). */
+            /* `cstring` compares by content like `string`. */
             if (lCStr != rCStr)
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "cannot compare 'cstring' with '%s'", lCStr ? rn : ln);
@@ -6040,6 +8021,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
 
         CheckConstAssign(r, a->target, a->base.range, scope);
+
+        /* Storing into a path frees or rebinds what was there: refs reaching through it die. */
+        InvalidateRefLocals(r, MovableBoxSourceKey(r, a->target));
 
         /* `cstring` is constant storage: element writes (plain or compound)
            are rejected. Whole-slot rebinding (`cs = ...`) is fine. */
@@ -6164,7 +8148,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* A `ref T[]` param may be a borrowed stack view (fixed-array slice):
            rebinding drops/frees the old buffer — the caller's storage. */
         if (tt && a->target->kind == NodeIdent && TypeNameIsDynamicArray(tt)
-            && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)a->target)->name))
+            && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)a->target)->name)
+            && !IsGrowableArrayParam(r, ((IdentExpr*)a->target)->name))
         {
             DiagErrorFmt(r->m_diag, a->base.range,
                          "'%s' cannot be reassigned as it is not owned because it is bound as a ref array param; "
@@ -6691,7 +8676,47 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
               && ((TypeIsCString(&r->m_registry, srcName) && TypeIsString(&r->m_registry, dstName))
                   || (cast->operand->kind == NodeStrLiteral && TypeIsCString(&r->m_registry, dstName)));
 
-        if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair && !cstringStringPair)
+        /* Handle <-> integer: a handle reads back as its 64-bit address (`(ulong)h`, `(long)h`), and
+           any integer converts to a handle (`(ptr)addr`). */
+        PrimitiveType srcPrim = GetPrimitiveType(resolvedSrc);
+        PrimitiveType dstPrim = GetPrimitiveType(resolvedDst);
+        bool handleIntPair
+            = src
+              && ((IsHandleType(&r->m_registry, srcName) && (dstPrim == PrimLong || dstPrim == PrimULong))
+                  || (IsHandleType(&r->m_registry, dstName) && IsNumeric(srcPrim) && !IsNameFloatType(resolvedSrc)
+                      && srcPrim != PrimBool));
+
+        /* `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` the reverse. */
+        bool cstringPtrPair = src
+                              && ((TypeIsCString(&r->m_registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
+                                  || (TypeIsCString(&r->m_registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
+
+        /* Text views: a NUL-terminated `byte[N]` buffer as a `cstring` (borrowed) or a `string`
+           (copied, up to the first NUL or all N bytes); a `string` as a `cstring` (borrowed). */
+        bool bufferSrc = src && src->isArray && src->length >= 0 && src->elem && !src->elem->isArray
+                         && (strcmp(src->elem->name, "byte") == 0 || strcmp(src->elem->name, "sbyte") == 0);
+        cast->textKind = CastTextNone;
+
+        if (bufferSrc && TypeIsCString(&r->m_registry, dstName))
+        {
+            cast->textKind = CastBufferToCString;
+        }
+        else if (bufferSrc && TypeIsString(&r->m_registry, dstName))
+        {
+            cast->textKind = CastBufferToString;
+        }
+        else if (src && cast->operand->kind != NodeStrLiteral && TypeIsString(&r->m_registry, srcName)
+                 && TypeIsCString(&r->m_registry, dstName))
+        {
+            cast->textKind = CastStringToCString;
+        }
+        else if (src && TypeNameIsFixedArray(src) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0)
+        {
+            cast->textKind = CastFixedToPtr;
+        }
+
+        if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair && !cstringStringPair
+            && !handleIntPair && !cstringPtrPair && cast->textKind == CastTextNone)
         {
             DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
         }
@@ -6795,7 +8820,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 if (IsBoxPartiallyMoved(r, key))
                 {
-                    DiagErrorFmt(r->m_diag, m->base.range, "'%s' is poisoned", key);
+                    DiagPoisoned(r, m->base.range, key);
                 }
                 else
                 {
@@ -6806,11 +8831,25 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         return;
     }
+    case NodeConditional:
+    {
+        ConditionalExpr* ce = (ConditionalExpr*)n;
+
+        ResolveExpr(r, ce->condition, scope);
+        CheckBoolCondition(r, ce->condition, scope);
+        ResolveUnderCondition(r, ce->thenExpr, ce->condition, true, scope);
+        ResolveUnderCondition(r, ce->elseExpr, ce->condition, false, scope);
+        ce->resultType = ConditionalType(r, ce, scope, true);
+        return;
+    }
     case NodeCall:
     {
         CallExpr* c = (CallExpr*)n;
 
-        for (size_t i = 0; i < c->args.count; i++)
+        /* `addressof(fn)`'s argument names a function, not a value. */
+        bool argIsFunction = IsAddressOfFunctionArg(r, c, scope);
+
+        for (size_t i = 0; i < c->args.count && !argIsFunction; i++)
         {
             ResolveExpr(r, (Node*)VecGet(&c->args, i), scope);
         }
@@ -6934,6 +8973,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                             for (long z = 0; z < total; z++)
                             {
                                 VecPush(&flat, NULL);
+                            }
+
+                            if (ai->repeatCount)
+                            {
+                                DiagErrorFmt(r->m_diag, field->value->range,
+                                             "'{ value; count }' cannot initialize fixed-size array field '%s'; "
+                                             "list the elements, or fill the field after construction",
+                                             fieldDecl->name);
+                                free(flat.items);
+                                ai->repeatCount = NULL;
+                                ai->elements.count = 0;
+                                continue;
                             }
 
                             if (!PlaceFixedArrayInit(&flat, 0, &fieldDecl->type, ai))
@@ -7080,7 +9131,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
                 else if (!asMemberBase && IsBoxPartiallyMoved(r, key))
                 {
-                    DiagErrorFmt(r->m_diag, ix->base.range, "'%s' is poisoned", key);
+                    DiagPoisoned(r, ix->base.range, key);
                 }
             }
         }
@@ -7158,6 +9209,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     case NodeArrayInit:
     {
         ArrayInitExpr* ai = (ArrayInitExpr*)n;
+
+        if (ai->repeatCount)
+        {
+            ResolveArrayRepeat(r, ai, scope);
+            return;
+        }
 
         for (size_t i = 0; i < ai->elements.count; i++)
         {
@@ -7409,45 +9466,24 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
         CheckBoolCondition(r, condition, scope);
     }
 
-    bool factNegated = false;
-    Node* factOperand = condition ? CondNullTestOperand(condition, &factNegated) : NULL;
-    const char* factKey = factOperand ? MovableBoxSourceKey(r, factOperand) : NULL;
-
-    // Condition false: leave the loop with the opposite fact.
+    // Condition false: leave the loop with the opposite facts.
     if (condition && !ExprIsConstantTrue(condition))
     {
         FlowState afterCond;
         FlowInit(&afterCond);
         FlowCapture(r, &afterCond);
 
-        if (factKey)
-        {
-            if (factNegated)
-            {
-                MarkPathNonEmpty(r, factKey);
-            }
-            else
-            {
-                ClearNonEmptySubtree(r, factKey);
-            }
-        }
+        ApplyCondFacts(r, condition, false, false, true);
 
         FlowJoinCurrent(r, exit);
         FlowApply(r, &afterCond);
         FlowFree(&afterCond);
     }
 
-    // Condition true: the fact holds through the body.
-    if (factKey)
+    // Condition true: its facts hold through the body.
+    if (condition)
     {
-        if (factNegated)
-        {
-            MarkPathEmpty(r, factKey);
-        }
-        else
-        {
-            MarkPathNonEmpty(r, factKey);
-        }
+        ApplyCondFacts(r, condition, true, true, false);
     }
 
     VecPush(&r->m_loopFlows, &lf);
@@ -7642,6 +9678,20 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     {
         VarDeclStmt* vd = (VarDeclStmt*)n;
 
+        if (vd->isRef)
+        {
+            ResolveRefLocal(r, vd, scope);
+            return;
+        }
+
+        /* A plain local shadows any earlier `ref` local of the same name. */
+        if (StrMapGet(&r->m_refLocals, vd->name))
+        {
+            StrMapPut(&r->m_refLocals, vd->name, NULL);
+            StrMapPut(&r->m_refThroughBox, vd->name, NULL);
+            StrMapPut(&r->m_refBoxParams, vd->name, NULL);
+        }
+
         // Unknown types must fail here so codegen is skipped.
         {
             const TypeName* t = &vd->type;
@@ -7741,6 +9791,49 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             ArrayInitExpr* fixedInit = (ArrayInitExpr*)vd->init;
+
+            /* `{ value; N }`: every element (of every row) is the value; N must be the full length. */
+            if (fixedInit->repeatCount)
+            {
+                fixedInit->elementType = leaf;
+                ResolveExpr(r, fixedInit->repeatCount, scope);
+
+                uint64_t repeat = 0;
+                bool negative = false;
+
+                if (!ResolvedConstIntValue(fixedInit->repeatCount, &repeat, &negative) || negative
+                    || repeat != (uint64_t)total)
+                {
+                    DiagErrorFmt(r->m_diag, fixedInit->repeatCount->range,
+                                 "the count in '{ value; count }' for fixed-size array local '%s' must be the "
+                                 "constant %ld (its length)",
+                                 vd->name, total);
+                }
+
+                Node* value = (Node*)VecGet(&fixedInit->elements, 0);
+
+                if (value->kind == NodeArrayInit || value->kind == NodeStructInit)
+                {
+                    value = ApplyBracedStructTarget(r, value, leaf);
+                    VecSet(&fixedInit->elements, 0, value);
+                }
+
+                ResolveExpr(r, value, scope);
+
+                const TypeName* valueType = InferType(r, value, scope);
+
+                if (valueType && !IsAssignableType(r, leaf, valueType) && !IsStrLiteralForCString(r, leaf, value))
+                {
+                    DiagErrorFmt(r->m_diag, value->range, "a '%s' cannot fill the '%s' elements of local '%s'",
+                                 valueType->name, leaf->name, vd->name);
+                }
+
+                ClearBoxSubtree(r, vd->name);
+                ClearNullableFacts(r, vd->name);
+                InvalidateIndexVar(r, vd->name);
+                ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
+                return;
+            }
 
             /* Loop bodies walk twice (muted warmup + real); a multidim init
                flattened by the first pass must not fail the shape check on
@@ -7920,6 +10013,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
     }
     case NodeExprStmt:
         ResolveExpr(r, ((ExprStmt*)n)->expr, scope);
+        /* A call that never returns ends the path, as `return` does. */
+        if (StmtIsNoReturnCall(n))
+        {
+            r->m_unreachable = true;
+        }
         return;
     case NodeDefer:
     {
@@ -8024,11 +10122,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ResolveExpr(r, i->condition, scope);
         CheckBoolCondition(r, i->condition, scope);
 
-        /* `if (path?)` blesses the then-branch; `if (!path?)` blesses the else. Facts intersect at the join;
-         * moved-state unions. */
-        bool factNegated = false;
-        Node* factOperand = CondNullTestOperand(i->condition, &factNegated);
-        const char* factKey = factOperand ? MovableBoxSourceKey(r, factOperand) : NULL;
+        /* `if (path?)` blesses the then-branch; `if (!path?)` blesses the else; `&&` and `||` of such
+         * tests bless each on the side where they all hold. Facts intersect at the join; moved-state
+         * unions. */
 
         /* then/else are walked from the same pre-state; the result merges both. */
         StrMap beforeBranches;
@@ -8042,17 +10138,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         bool entryDead = r->m_unreachable;
 
-        if (factKey)
-        {
-            if (factNegated)
-            {
-                MarkPathEmpty(r, factKey);
-            }
-            else
-            {
-                MarkPathNonEmpty(r, factKey);
-            }
-        }
+        ApplyCondFacts(r, i->condition, true, true, false);
 
         /* Each branch is its own lexical scope: locals declared in one
            branch are invisible in the other and after the join. */
@@ -8074,18 +10160,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         /* Empty facts never escape their branch. */
         ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
 
-        /* The implicit/explicit else runs when the condition is false: establishes the opposite fact. */
-        if (factKey && factNegated)
-        {
-            MarkPathNonEmpty(r, factKey);
-        }
+        /* The implicit/explicit else runs when the condition is false: establishes the opposite facts
+           (empty ones only inside an explicit else; they never escape it). */
+        ApplyCondFacts(r, i->condition, false, false, false);
 
         if (i->elseBranch)
         {
-            if (factKey && !factNegated)
-            {
-                MarkPathEmpty(r, factKey);
-            }
+            ApplyCondFacts(r, i->condition, false, true, false);
 
             ScopePush(r);
             WalkStmt(r, i->elseBranch, scope);
@@ -8281,6 +10362,11 @@ static bool StmtFallsThrough(const Node* n, int depth)
     if (!n)
     {
         return true;
+    }
+
+    if (StmtIsNoReturnCall(n))
+    {
+        return false;
     }
 
     switch (n->kind)
@@ -8563,12 +10649,158 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
     field->folded = folded;
 }
 
+/* `void Drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct and gives the
+   struct its hidden `__alive` byte (default 1): moves zero the source, so a moved-from value reads 0
+   and is not dropped twice. Runs before the type registry is built, so the field is in every layout. */
+static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
+{
+    for (size_t i = 0; i < mod->impls.count; i++)
+    {
+        ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, i);
+        StructDecl* sd = NULL;
+
+        for (size_t k = 0; k < mod->structs.count; k++)
+        {
+            StructDecl* candidate = (StructDecl*)VecGet(&mod->structs, k);
+
+            if (!candidate->incomplete && !candidate->isTypeAlias && strcmp(candidate->name, impl->handleName) == 0)
+            {
+                sd = candidate;
+                break;
+            }
+        }
+
+        for (size_t j = 0; j < impl->methods.count; j++)
+        {
+            FunctionDecl* method = (FunctionDecl*)VecGet(&impl->methods, j);
+
+            if (!method->methodName || strcmp(method->methodName, "Drop") != 0)
+            {
+                continue;
+            }
+
+            if (!sd)
+            {
+                DiagErrorFmt(diag, method->base.range, "'Drop' is only allowed in the impl of a struct with a body");
+                continue;
+            }
+
+            const ParamDecl* self = method->params.count == 1 ? (const ParamDecl*)VecGet(&method->params, 0) : NULL;
+            bool shape = self && self->mod == ModRef && strcmp(self->type.name, sd->name) == 0
+                         && GetPrimitiveType(method->returnType.name) == PrimVoid && method->body;
+
+            if (!shape)
+            {
+                DiagErrorFmt(diag, method->base.range, "a destructor must be declared 'void Drop(ref %s self) { ... }'",
+                             sd->name);
+                continue;
+            }
+
+            if (sd->isExtern || sd->isUnion || sd->isComponent)
+            {
+                DiagErrorFmt(diag, method->base.range,
+                             "'%s' cannot have a Drop method: extern structs, unions and components are plain data",
+                             sd->name);
+                continue;
+            }
+
+            if (sd->dropFunction)
+            {
+                DiagErrorFmt(diag, method->base.range, "'%s' already has a Drop method", sd->name);
+                continue;
+            }
+
+            sd->dropFunction = method;
+
+            FieldDecl* alive = AST_NEW(arena, FieldDecl);
+            alive->type = TypeNameLeaf((char*)"byte");
+            alive->name = (char*)STRATA_ALIVE_FIELD;
+            alive->offset = -1;
+            alive->nameRange = sd->base.range;
+            alive->folded.isSet = true;
+            alive->folded.laneCount = 1;
+            alive->folded.intValue = 1;
+            VecPush(&sd->fields, alive);
+        }
+    }
+}
+
+/* Same C prototype: return type, parameter types/modifiers, variadic-ness. */
+static bool SameExternSignature(const FunctionDecl* a, const FunctionDecl* b)
+{
+    if (strcmp(a->returnType.name, b->returnType.name) != 0 || a->params.count != b->params.count
+        || a->isCVararg != b->isCVararg || a->isVariadic != b->isVariadic || !a->typeParam != !b->typeParam)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < a->params.count; i++)
+    {
+        const ParamDecl* pa = (const ParamDecl*)VecGet((Vec*)&a->params, i);
+        const ParamDecl* pb = (const ParamDecl*)VecGet((Vec*)&b->params, i);
+
+        if (pa->mod != pb->mod || pa->isReturn != pb->isReturn || pa->type.isConst != pb->type.isConst
+            || strcmp(pa->type.name, pb->type.name) != 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/* An extern may be declared more than once (two binding files both declaring `printf`), as in C:
+   identical redeclarations collapse into the first; a conflicting one is an error. */
+static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
+{
+    size_t kept = 0;
+
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, i);
+        bool duplicate = false;
+
+        for (size_t j = 0; f->isExtern && !f->fromImpl && j < kept; j++)
+        {
+            const FunctionDecl* earlier = (const FunctionDecl*)VecGet(&mod->functions, j);
+
+            if (!earlier->isExtern || earlier->fromImpl || strcmp(earlier->name, f->name) != 0)
+            {
+                continue;
+            }
+
+            if (SameExternSignature(earlier, f))
+            {
+                duplicate = true;
+            }
+            else
+            {
+                DiagErrorFmt(diag, f->base.range, "conflicting declarations of extern function '%s'", f->name);
+                duplicate = true;
+            }
+
+            break;
+        }
+
+        if (!duplicate)
+        {
+            VecSet(&mod->functions, kept++, f);
+        }
+    }
+
+    mod->functions.count = kept;
+}
+
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     Resolver r = {0};
     r.m_mod = mod;
     r.m_diag = diag;
     r.m_arena = arena;
+
+    MergeExternRedeclarations(mod, diag);
+    MarkGrowableArrayParams(mod);
+    BindDropMethods(mod, diag, arena);
 
     TypeRegistryInit(&r.m_registry);
 
@@ -8624,6 +10856,24 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
        overload/mangling pass runs. */
     ResolveImpls(mod, diag, arena, &r.m_registry);
 
+    /* A union's fields overlay one another, so none may own memory (nothing could tell which to drop). */
+    for (size_t i = 0; i < mod->structs.count; i++)
+    {
+        StructDecl* sd = (StructDecl*)VecGet(&mod->structs, i);
+
+        for (size_t j = 0; sd->isUnion && j < sd->fields.count; j++)
+        {
+            FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
+            const char* leaf = TypeRegistryResolveAlias(&r.m_registry, field->type.name);
+
+            if (AliasIsOwning(&r, &field->type) || TypeRegistryIsOwningStruct(&r.m_registry, leaf))
+            {
+                DiagErrorFmt(diag, field->nameRange, "union field '%s' cannot have owning type '%s'", field->name,
+                             field->type.name);
+            }
+        }
+    }
+
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
     StrMapInit(&r.m_nonEmptyPaths);
@@ -8631,6 +10881,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_indexDeps);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
+    StrMapInit(&r.m_refLocals);
+    StrMapInit(&r.m_refThroughBox);
     StrMapInit(&r.m_refArrayParams);
     StrMapInit(&r.m_typeCache);
     VecInit(&r.m_scopeDecls);
@@ -8656,10 +10908,15 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         bool overloaded = CountByName(mod, functionDecl->name) > 1;
 
-        if (overloaded && functionDecl->isExtern)
+        if (overloaded && (functionDecl->isExtern || functionDecl->isExport))
         {
-            DiagErrorFmt(diag, functionDecl->base.range, "extern function '%s' cannot be overloaded",
-                         functionDecl->name);
+            DiagErrorFmt(diag, functionDecl->base.range, "%s function '%s' cannot be overloaded",
+                         functionDecl->isExtern ? "extern" : "'@export'", functionDecl->name);
+        }
+
+        if (functionDecl->isExport)
+        {
+            CheckExportDecl(&r, functionDecl);
         }
 
         functionDecl->mangledName = overloaded ? Mangle(arena, functionDecl) : functionDecl->name;
@@ -8681,6 +10938,13 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             CheckGenericExternDecl(&r, functionDecl);
         }
     }
+
+    for (size_t i = 0; i < mod->delegates.count; i++)
+    {
+        CheckDelegateDecl(&r, (FunctionDecl*)VecGet(&mod->delegates, i));
+    }
+
+    InferBorrowedParams(&r);
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
@@ -8707,6 +10971,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         ResetStrMap(&r.m_emptyPaths);
         ResetStrMap(&r.m_indexDeps);
         ResetStrMap(&r.m_refBoxParams);
+        ResetStrMap(&r.m_refLocals);
+        ResetStrMap(&r.m_refThroughBox);
         ResetStrMap(&r.m_refArrayParams);
         r.m_scopeDecls.count = 0;
         r.m_deferFrames.count = 0;
@@ -8754,9 +11020,32 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         }
 
         r.m_currentReturnType = &functionDecl->returnType;
+        r.m_currentFunction = functionDecl;
 
         WalkBlock(&r, (Block*)functionDecl->body, &scope);
         r.m_currentReturnType = NULL;
+        r.m_currentFunction = NULL;
+
+        if (functionDecl->isNoReturn)
+        {
+            if (functionDecl->returnType.primitiveType != PrimVoid)
+            {
+                DiagErrorFmt(diag, functionDecl->base.range, "@noreturn function '%s' must return 'void'",
+                             functionDecl->name);
+            }
+            else if (functionDecl->hasReturnStmt)
+            {
+                DiagErrorFmt(diag, functionDecl->base.range, "@noreturn function '%s' contains a return statement",
+                             functionDecl->name);
+            }
+            else if (StmtFallsThrough(functionDecl->body, 0))
+            {
+                DiagErrorFmt(diag, functionDecl->base.range,
+                             "@noreturn function '%s' can reach the end of its body; end every path in a call to "
+                             "another @noreturn function (exit, abort, ...)",
+                             functionDecl->name);
+            }
+        }
 
         /* A non-void function must return on every path; if control can fall
            off the end of the body, at least one path is missing a return. */
@@ -9038,6 +11327,15 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                              p->name, p->type.name);
             }
 
+            /* By value, an owning struct argument is deep-copied for the callee: never for a destructor. */
+            if (!functionDecl->isExtern && p->mod == ModNone && !p->type.isBox && !p->type.isOptional
+                && !p->type.isArray && TypeNameHasDrop(&r.m_registry, &p->type))
+            {
+                DiagErrorFmt(diag, p->base.range,
+                             "parameter '%s' cannot take '%s' by value: it has a Drop method; pass 'ref %s' or a box '^%s'",
+                             p->name, p->type.name, p->type.name, p->type.name);
+            }
+
             /* Structs (forward-declared ones included) cross to the host as pointers, so the
                declaration has to say so. */
             const char* paramLeaf = TypeRegistryResolveAlias(&r.m_registry, p->type.name);
@@ -9111,6 +11409,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_indexDeps);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
+    StrMapFree(&r.m_refLocals);
+    StrMapFree(&r.m_refThroughBox);
     StrMapFree(&r.m_refArrayParams);
     StrMapFree(&r.m_typeCache);
     StrMapFree(&byMangled);

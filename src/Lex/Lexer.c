@@ -426,6 +426,11 @@ static Token LexNumber(Lexer* lex)
             ++lex->m_pos;
         }
 
+        if (LexerPeek(lex, 0) == 'l' || LexerPeek(lex, 0) == 'L')
+        {
+            ++lex->m_pos;
+        }
+
         return Make(lex, TokIntLit, start);
     }
 
@@ -493,14 +498,20 @@ static Token LexNumber(Lexer* lex)
 
         ++lex->m_pos;
     }
-    else if (suffix == 'u' || suffix == 'U')
+    else if (suffix == 'u' || suffix == 'U' || suffix == 'l' || suffix == 'L')
     {
+        /* `u` (uint), `l` (long), `ul` (ulong). */
         ++lex->m_pos;
+
+        if ((suffix == 'u' || suffix == 'U') && (LexerPeek(lex, 0) == 'l' || LexerPeek(lex, 0) == 'L'))
+        {
+            ++lex->m_pos;
+        }
 
         if (isFloat)
         {
             DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
-                      "'u' suffix is not allowed on a floating-point literal");
+                      "integer suffix is not allowed on a floating-point literal");
         }
     }
 

@@ -674,6 +674,19 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     }
 
+    case NodeConditional:
+    {
+        ConditionalExpr* ce = AsNode(ConditionalExpr, n);
+        SbPuts(out, "(? ");
+        Dump(ce->condition, 0, out);
+        SbPutc(out, ' ');
+        Dump(ce->thenExpr, 0, out);
+        SbPutc(out, ' ');
+        Dump(ce->elseExpr, 0, out);
+        SbPutc(out, ')');
+        return;
+    }
+
     case NodeNullTest:
     {
         NullTestExpr* nt = AsNode(NullTestExpr, n);

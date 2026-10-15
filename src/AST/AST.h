@@ -45,6 +45,7 @@ typedef enum {
     NodeArrayInit,
     NodeNullTest,
     NodeDefer,
+    NodeConditional,
 } NodeKind;
 
 typedef struct {
@@ -72,6 +73,7 @@ typedef struct TypeName {
     bool isBox;
     struct TypeName* inner;
     bool isOptional; // `T?` — maybe-empty box; `inner` is the wrapped type
+    bool isRc;       // `rc<T>` — a box shared by reference count (isBox is set too); `inner` is T
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -90,6 +92,32 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     t.inner = i;
     t.name = arena_format(arena, "^%s", i->name);
     t.range = i->range;
+    return t;
+}
+
+// `rc<T>`: a shared box. Laid out like `^T` (a pointer to the T), with the count in a header before it.
+static inline TypeName TypeNameRcWrap(Arena* arena, TypeName inner)
+{
+    TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *i = inner;
+
+    TypeName t = {0};
+    t.isBox = true;
+    t.isRc = true;
+    t.inner = i;
+    t.name = arena_format(arena, "rc<%s>", i->name);
+    t.range = i->range;
+    return t;
+}
+
+// `rc<T>?`: an rc that may be empty. Shaped like `T?` (inner T, isOptional) and refcounted (isRc).
+static inline TypeName TypeNameOptionalRcWrap(Arena* arena, TypeName rcType)
+{
+    TypeName t = rcType;
+    t.isBox = false;
+    t.isOptional = true;
+    t.isRc = true;
+    t.name = arena_format(arena, "%s?", rcType.name);
     return t;
 }
 
@@ -232,6 +260,11 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
     {
         TypeName inner = TypeNameParseGroups(arena, base, baseLen, groups, groupsLen - 1);
 
+        if (inner.isRc && !inner.isOptional)
+        {
+            return TypeNameOptionalRcWrap(arena, inner);
+        }
+
         TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
         *i = inner;
 
@@ -249,12 +282,25 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
         {
             TypeName inner = TypeNameParseGroups(arena, base, baseLen - 1, NULL, 0);
 
+            if (inner.isRc && !inner.isOptional)
+            {
+                return TypeNameOptionalRcWrap(arena, inner);
+            }
+
             TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
             *i = inner;
 
             TypeName t = {0};
             t.isOptional = true;
             t.inner = i;
+            t.name = arena_strndup(arena, base, baseLen);
+            return t;
+        }
+
+        if (baseLen > 4 && strncmp(base, "rc<", 3) == 0 && base[baseLen - 1] == '>')
+        {
+            TypeName inner = TypeNameParseGroups(arena, base + 3, baseLen - 4, NULL, 0);
+            TypeName t = TypeNameRcWrap(arena, inner);
             t.name = arena_strndup(arena, base, baseLen);
             return t;
         }
@@ -358,6 +404,12 @@ typedef struct {
     bool isVarargRest;
     bool isReturn; /* `return T x` — last param of an extern fn: the callee writes `x` as its
                       out-param; the Strata-level return type becomes T. */
+    bool growsArray; /* `ref T[]` the body grows, shrinks or rebinds (sema): callers must pass a real
+                        heap array, never a stack view (fixed array, array literal, varargs rest) */
+    /* A by-value `string` / `T[]` / owning-struct param the body only reads: sema passes it as
+       `const ref` instead (callers keep their value; nothing is copied or moved). */
+    bool inferredBorrow;
+    bool borrowCandidate; /* working state of that inference */
 } ParamDecl;
 
 /* A field's `= expr` default, folded by sema. Scalars use lane 0; float2/3/4 use one lane each. */
@@ -390,11 +442,15 @@ typedef struct {
     Vec fields;
     bool incomplete;
     bool isExtern; // `extern struct` — mirrors a host-defined layout
+    bool isUnion;  // `union`: every field overlays byte 0 (C union layout)
     bool isTypeAlias;       // `struct Foo = uint;` — strongly typed alias
     char* underlyingType;   // underlying type name for type aliases (NULL for normal structs)
     Vec attributes;         // Vec<Attribute*>
     bool isComponent;       // `@component`: a plain-data type the host registers (see strata_types.h)
     const char* moduleName; // module (file) the struct was declared in
+    /* The `void Drop(ref T self)` of the struct's impl, bound by sema: runs when an owned value is dropped.
+       Such a struct carries a hidden `__alive` byte (STRATA_ALIVE_FIELD) so a moved-from value is skipped. */
+    const struct FunctionDecl* dropFunction;
 } StructDecl;
 
 typedef struct {
@@ -429,6 +485,16 @@ typedef struct FunctionDecl {
     Node* body;
     bool isExtern;
     bool isPrivate;
+    /* `@export`: a defined function with the plain C ABI — no hidden context parameter and never
+       symbol-prefixed — so C code can call it by name or through `addressof(fn)` (callbacks). Its
+       body reaches the module's globals through the context created most recently. */
+    bool isExport;
+    /* `@noreturn`: never returns to its caller (exits, aborts, panics). A call to it as a statement
+       ends the path for flow typing, like `return`; its body must not reach its end or `return`. */
+    bool isNoReturn;
+    /* `extern delegate R Name(params);`: not a function but a C function-pointer type `Name` with this
+       signature. Kept in Module::delegates; `mangledName` is the internal `__delegate_Name`. */
+    bool isDelegate;
     bool hasReturnStmt;
     char* mangledName;
     // Variadic tails: bare `...` is extern-only; else the last param collects into T[].
@@ -492,6 +558,7 @@ typedef struct {
     Vec imports;
     Vec impls;
     Vec genericInstances; // FunctionDecl*: per-type `extern<T>` instantiations, created by sema
+    Vec delegates;        // FunctionDecl* (isDelegate): `extern delegate` function-pointer types
 } Module;
 
 typedef struct {
@@ -536,6 +603,10 @@ typedef struct {
     TypeName type;
     char* name;
     Node* init;
+    /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, not a copy. */
+    bool isRef;
+    /* Set by sema: the path holds a `^T` / `rc<T>` / proven `T?` and the ref aliases the value inside. */
+    bool refThroughBox;
 } VarDeclStmt;
 
 typedef struct {
@@ -613,6 +684,7 @@ typedef struct {
     Node base;
     uint64_t value;
     bool isUnsigned;
+    bool isLong; /* `l` / `ul` suffix: always 64-bit */
 } IntLiteral;
 
 typedef struct {
@@ -648,7 +720,25 @@ typedef struct CallExpr {
     /* `expr.Member(args)` — non-NULL until sema resolves the member against
        impl blocks (then the base moves into `args` as the self argument). */
     Node* calleeBase;
+    /* `addressof(fn)`: the extern or `@export` function whose address is taken (set by sema). */
+    const struct FunctionDecl* addressOfFunction;
+    /* A call through a delegate value (sema): the expression yielding the function pointer (a
+       variable, or a struct field when written `obj.field(args)`) and the delegate's signature. */
+    Node* delegateCallee;
+    const struct FunctionDecl* delegateDecl;
 } CallExpr;
+
+/* A statement that is a call to a `@noreturn` function: control never continues past it. */
+static inline bool StmtIsNoReturnCall(const Node* n)
+{
+    if (!n || n->kind != NodeExprStmt)
+    {
+        return false;
+    }
+    const Node* e = ((const ExprStmt*)n)->expr;
+    return e && e->kind == NodeCall && ((const CallExpr*)e)->resolvedDecl
+           && ((const CallExpr*)e)->resolvedDecl->isNoReturn;
+}
 
 typedef struct MemberExpr {
     Node base;
@@ -679,10 +769,21 @@ typedef struct {
     Node* operand;
 } IncDecExpr;
 
+/* Casts that view or copy text (set by sema): a `byte[N]` / `sbyte[N]` buffer as a borrowed
+   `cstring` or a copied `string`, and a `string` as a borrowed `cstring`. */
+typedef enum {
+    CastTextNone = 0,
+    CastBufferToCString,
+    CastBufferToString,
+    CastStringToCString,
+    CastFixedToPtr, /* any fixed array as a `ptr` to its first element (C's array decay) */
+} CastTextKind;
+
 typedef struct {
     Node base;
     TypeName type;
     Node* operand;
+    CastTextKind textKind;
 } CastExpr;
 
 typedef struct {
@@ -704,6 +805,8 @@ typedef struct {
     Node base;
     const TypeName* elementType;
     Vec elements;
+    /* `{ value; count }`: `count` copies of the one value in `elements`; NULL for a plain list. */
+    Node* repeatCount;
 } ArrayInitExpr;
 
 // `expr?` — null test on a `T?` path; also proves non-empty in sema.
@@ -719,6 +822,15 @@ typedef struct {
     Node base;
     Node* stmt;
 } DeferStmt;
+
+// `cond ? a : b`. Branches are non-owning values; `resultType` is set by sema.
+typedef struct {
+    Node base;
+    Node* condition;
+    Node* thenExpr;
+    Node* elseExpr;
+    const TypeName* resultType;
+} ConditionalExpr;
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);

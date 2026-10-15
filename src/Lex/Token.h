@@ -46,6 +46,8 @@ typedef enum {
     TokKwTrue,
     TokKwFalse,
     TokKwStruct,
+    TokKwUnion,
+    TokKwDelegate,
     TokKwHandle,
     TokKwFieldoffset,
     TokKwEnum,

@@ -132,6 +132,7 @@ LLVMValueRef LLVMConstNamedStruct(LLVMTypeRef structTy, LLVMValueRef* constantMe
 LLVMValueRef LLVMConstStructInContext(LLVMContextRef c, LLVMValueRef* constantVals, unsigned count, LLVMBool packed);
 LLVMValueRef LLVMConstArray(LLVMTypeRef elementTy, LLVMValueRef* constantVals, unsigned length);
 LLVMValueRef LLVMBuildPtrToInt(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char* name);
+LLVMValueRef LLVMBuildIntToPtr(LLVMBuilderRef b, LLVMValueRef val, LLVMTypeRef destTy, const char* name);
 LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
 void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
 LLVMValueRef LLVMGetInitializer(LLVMValueRef globalVar);

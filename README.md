@@ -51,3 +51,9 @@ cmake --preset default
 cmake --build --preset default
 ctest --preset default
 ```
+
+## Systems features
+
+Raw pointers, `@export` callbacks, C function pointers, destructors, `rc<T>`, `ref` locals, inferred
+borrowing, `@noreturn`, sized arrays and C string interop are described in
+[docs/engine-ffi.md](docs/engine-ffi.md).

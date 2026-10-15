@@ -133,6 +133,16 @@ static SourceRange SpanToCur(Parser* p, SourceRange from)
     return (SourceRange){from.start, (uint32_t)(p->m_cur.range.start - from.start), from.fileId};
 }
 
+static bool StripLongSuffix(Str* sv)
+{
+    if (sv->len > 0 && (sv->data[sv->len - 1] == 'l' || sv->data[sv->len - 1] == 'L'))
+    {
+        sv->len--;
+        return true;
+    }
+    return false;
+}
+
 static bool StripUnsignedSuffix(Str* sv)
 {
     if (sv->len > 0 && (sv->data[sv->len - 1] == 'u' || sv->data[sv->len - 1] == 'U'))
@@ -148,14 +158,20 @@ static bool StripUnsignedSuffix(Str* sv)
    ten everywhere - or `0x` hex, with an optional `u`/`U` suffix and any
    number of digits. Values past 64 bits are diagnosed and yield 0; malformed
    spellings such as a bare `0x` were already diagnosed by the lexer. */
-static uint64_t IntLiteralValue(Parser* p, Token tok, bool* outIsUnsigned)
+static uint64_t IntLiteralValueEx(Parser* p, Token tok, bool* outIsUnsigned, bool* outIsLong)
 {
     Str sv = ParserIdentText(p, tok);
+    bool isLong = StripLongSuffix(&sv);
     bool isUnsigned = StripUnsignedSuffix(&sv);
 
     if (outIsUnsigned)
     {
         *outIsUnsigned = isUnsigned;
+    }
+
+    if (outIsLong)
+    {
+        *outIsLong = isLong;
     }
 
     uint64_t base = 10;
@@ -201,6 +217,11 @@ static uint64_t IntLiteralValue(Parser* p, Token tok, bool* outIsUnsigned)
     }
 
     return value;
+}
+
+static uint64_t IntLiteralValue(Parser* p, Token tok, bool* outIsUnsigned)
+{
+    return IntLiteralValueEx(p, tok, outIsUnsigned, NULL);
 }
 
 // Snapshot of lexer + parser position so a speculative parse can be undone without emitting diagnostics.
@@ -320,6 +341,7 @@ static bool LooksLikeVarDecl(Parser* p)
 {
     switch (p->m_cur.kind)
     {
+    case TokKwRef:
     case TokKwConst:
     case TokKwVoid:
     case TokKwBool:
@@ -621,6 +643,51 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
         return true;
     }
 
+    /* `rc<T>` — a reference-counted shared box. Like `^T` it is never empty and never wraps an array. */
+    if (p->m_cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->m_cur), "rc")
+        && LexerPeekToken(p->m_lex).kind == TokLt)
+    {
+        SourceRange rcRange = p->m_cur.range;
+        Advance(p);
+        Advance(p); /* '<' */
+
+        TypeName base = {0};
+
+        if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type after 'rc<'");
+            return false;
+        }
+
+        ParserExpect(p, TokGt, "'>'");
+
+        if (base.primitiveType == PrimString || base.primitiveType == PrimCString || base.isBox || base.isOptional)
+        {
+            DiagErrorFmt(p->m_diag, rcRange, "'rc<%s>' is not allowed: share a struct, scalar or handle", base.name);
+        }
+
+        *out = TypeNameRcWrap(p->m_arena, base);
+        out->range = SpanToCur(p, rcRange);
+
+        if (bare)
+        {
+            out->isConst = isConst;
+            return true;
+        }
+
+        /* `rc<T>?` — an rc that may be empty. */
+        if (p->m_cur.kind == TokQuestion)
+        {
+            Advance(p);
+            *out = TypeNameOptionalRcWrap(p->m_arena, *out);
+            out->range = SpanToCur(p, rcRange);
+        }
+
+        ApplyArrayBrackets(p, out, constRange);
+        out->isConst = isConst;
+        return true;
+    }
+
     const char* name = NULL;
 
     switch (p->m_cur.kind)
@@ -833,7 +900,9 @@ static Node* ParseExpr(Parser* p);
 
 static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 {
-    if (!ParserConsume(p, TokKwStruct))
+    bool isUnion = p->m_cur.kind == TokKwUnion;
+
+    if (!ParserConsume(p, TokKwStruct) && !ParserConsume(p, TokKwUnion))
     {
         DiagError(p->m_diag, p->m_cur.range, "expected 'struct'");
         return NULL;
@@ -879,6 +948,7 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     VecInit(&node->fields);
     node->isExtern = isExtern;
+    node->isUnion = isUnion;
     node->moduleName = p->m_moduleName;
 
     if (ParserConsume(p, TokLBrace))
@@ -913,7 +983,7 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
                     break;
                 }
 
-                if (!isExtern)
+                if (!isExtern || isUnion)
                 {
                     DiagError(p->m_diag, foTok.range, "'fieldoffset' is only allowed inside an 'extern struct'");
                 }
@@ -956,6 +1026,11 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
             if (ParserConsume(p, TokAssign))
             {
                 field->defaultValue = ParseExpr(p);
+
+                if (isUnion)
+                {
+                    DiagError(p->m_diag, fieldTok.range, "union fields cannot have default values");
+                }
             }
 
             Token semi = ParserExpect(p, TokSemicolon, "';'");
@@ -1199,10 +1274,13 @@ static void ParseAttributes(Parser* p, Vec* outAttributes)
     }
 }
 
-/* Function attributes, e.g. @private. */
-static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outIsPrivate)
+/* Function attributes: @private, @export, @noreturn. */
+static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outIsPrivate, bool* outIsExport,
+                                    bool* outIsNoReturn)
 {
     bool isPrivate = false;
+    bool isExport = false;
+    bool isNoReturn = false;
 
     for (size_t i = 0; i < attributes->count; i++)
     {
@@ -1212,6 +1290,14 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
         {
             isPrivate = true;
         }
+        else if (strcmp(attribute->name, "export") == 0)
+        {
+            isExport = true;
+        }
+        else if (strcmp(attribute->name, "noreturn") == 0)
+        {
+            isNoReturn = true;
+        }
         else
         {
             DiagErrorFmt(p->m_diag, attribute->range, "unknown attribute '@%s'", attribute->name);
@@ -1219,6 +1305,8 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
     }
 
     *outIsPrivate = isPrivate;
+    *outIsExport = isExport;
+    *outIsNoReturn = isNoReturn;
 
     return attributes->count > 0;
 }
@@ -1269,10 +1357,15 @@ static Node* ParseFunction(Parser* p)
 static Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
 {
     bool isPrivate = false;
-    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate);
+    bool isExport = false;
+    bool isNoReturn = false;
+    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate, &isExport, &isNoReturn);
     SourceRange firstAttributeRange = hasAttrs ? ((const Attribute*)VecGet(attributes, 0))->range : SRC_INVALID;
 
     bool isExtern = ParserConsume(p, TokKwExtern);
+
+    /* `extern delegate R Name(params);` — a C function-pointer type. */
+    bool isDelegate = isExtern && ParserConsume(p, TokKwDelegate);
 
     /* `extern<T>`: one host function serving every type T (see strata.h). */
     char* typeParam = NULL;
@@ -1376,7 +1469,20 @@ static Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     node->mangledName = arena_strdup(p->m_arena, node->name);
     node->isExtern = isExtern;
     node->isPrivate = isPrivate;
+    node->isExport = isExport;
+    node->isNoReturn = isNoReturn;
+    node->isDelegate = isDelegate;
     node->hasReturnStmt = false;
+
+    if (isDelegate)
+    {
+        node->mangledName = arena_format(p->m_arena, "__delegate_%s", node->name);
+
+        if (hasAttrs || typeParam)
+        {
+            DiagError(p->m_diag, node->base.range, "a delegate takes no attributes or type parameter");
+        }
+    }
     node->typeParam = typeParam;
     VecInit(&node->params);
 
@@ -1693,10 +1799,11 @@ static ImplDecl* ParseImplDecl(Parser* p)
             continue;
         }
 
-        if (fn->isPrivate)
+        if (fn->isPrivate || fn->isExport)
         {
             DiagError(p->m_diag, fn->base.range, "attributes are not supported on impl methods");
             fn->isPrivate = false;
+            fn->isExport = false;
         }
 
         fn->methodName = fn->name;
@@ -1763,7 +1870,11 @@ static void AddTopLevelDecl(Module* mod, Node* decl, Parser* p)
         return;
     }
 
-    if (decl->kind == NodeFunction)
+    if (decl->kind == NodeFunction && ((FunctionDecl*)decl)->isDelegate)
+    {
+        VecPush(&mod->delegates, decl);
+    }
+    else if (decl->kind == NodeFunction)
     {
         VecPush(&mod->functions, decl);
     }
@@ -1786,6 +1897,7 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->globals);
     VecInit(&mod->imports);
     VecInit(&mod->impls);
+    VecInit(&mod->delegates);
 
     while (p->m_cur.kind != TokEof)
     {
@@ -1801,9 +1913,10 @@ Module* ParserParseModule(Parser* p)
             VecInit(&attributes);
             ParseAttributes(p, &attributes);
 
-            bool isExternStruct = p->m_cur.kind == TokKwExtern && LexerPeekToken(p->m_lex).kind == TokKwStruct;
+            TokKind afterExtern = LexerPeekToken(p->m_lex).kind;
+            bool isExternStruct = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
 
-            if (p->m_cur.kind == TokKwStruct || isExternStruct)
+            if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion || isExternStruct)
             {
                 if (isExternStruct)
                 {
@@ -1861,7 +1974,7 @@ Module* ParserParseModule(Parser* p)
             continue;
         }
 
-        if (p->m_cur.kind == TokKwStruct)
+        if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion)
         {
             StructDecl* sd = ParseStructDecl(p, false);
             if (sd)
@@ -1915,7 +2028,8 @@ Module* ParserParseModule(Parser* p)
             continue;
         }
 
-        if (p->m_cur.kind == TokKwExtern && LexerPeekToken(p->m_lex).kind == TokKwStruct)
+        if (p->m_cur.kind == TokKwExtern
+            && (LexerPeekToken(p->m_lex).kind == TokKwStruct || LexerPeekToken(p->m_lex).kind == TokKwUnion))
         {
             Advance(p); /* 'extern' */
 
@@ -2058,9 +2172,38 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
     {
         TypeName type = {0};
 
+        /* `ref T x = path;` and `const ref T x = path;` bind an alias. */
+        bool isRef = false;
+        bool refConst = false;
+
+        if (p->m_cur.kind == TokKwConst)
+        {
+            LexerCheckpoint saved = SaveLexerState(p);
+            Advance(p);
+
+            if (p->m_cur.kind == TokKwRef)
+            {
+                refConst = true;
+            }
+            else
+            {
+                RestoreLexerState(p, saved);
+            }
+        }
+
+        if (ParserConsume(p, TokKwRef))
+        {
+            isRef = true;
+        }
+
         if (!ParserTryParseType(p, &type))
         {
             return NULL;
+        }
+
+        if (refConst)
+        {
+            type.isConst = true;
         }
 
         if (p->m_cur.kind != TokIdent)
@@ -2077,6 +2220,8 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         node->base.range = SpanFrom(start, nameTok);
         node->type = type;
         node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+        node->isRef = isRef;
+        node->refThroughBox = false;
 
         if (ParserConsume(p, TokAssign))
         {
@@ -2308,9 +2453,62 @@ static Node* ParseExpr(Parser* p)
     return ParseAssign(p);
 }
 
+/* Tokens that can begin an expression: after `?` they make it the conditional operator rather than
+   the postfix null test (`opt?` is followed by `)`, `;`, `&&`, `||`, ...). */
+static bool StartsExpression(TokKind k)
+{
+    switch (k)
+    {
+    case TokIdent:
+    case TokIntLit:
+    case TokFloatLit:
+    case TokBoolLit:
+    case TokStrLit:
+    case TokKwTrue:
+    case TokKwFalse:
+    case TokLParen:
+    case TokBang:
+    case TokTilde:
+    case TokMinus:
+    case TokKwFloat2:
+    case TokKwFloat3:
+    case TokKwFloat4:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* `cond ? a : b` (right-associative, binds looser than every binary operator). */
+static Node* ParseConditional(Parser* p)
+{
+    Node* cond = ParseBinary(p, 0);
+
+    if (!cond || p->m_cur.kind != TokQuestion)
+    {
+        return cond;
+    }
+
+    Token q = p->m_cur;
+    Advance(p);
+
+    Node* thenExpr = ParseExpr(p);
+    ParserExpect(p, TokColon, "':'");
+    Node* elseExpr = ParseConditional(p);
+
+    ConditionalExpr* node = AST_NEW(p->m_arena, ConditionalExpr);
+    node->base.kind = NodeConditional;
+    node->base.range = q.range;
+    node->condition = cond;
+    node->thenExpr = thenExpr;
+    node->elseExpr = elseExpr;
+
+    return (Node*)node;
+}
+
 static Node* ParseAssign(Parser* p)
 {
-    Node* lhs = ParseBinary(p, 0);
+    Node* lhs = ParseConditional(p);
 
     if (!lhs)
     {
@@ -2544,6 +2742,11 @@ static Node* ParsePostfix(Parser* p)
            && (p->m_cur.kind == TokDot || p->m_cur.kind == TokInc || p->m_cur.kind == TokDec
                || p->m_cur.kind == TokLBracket || p->m_cur.kind == TokQuestion))
     {
+        if (p->m_cur.kind == TokQuestion && StartsExpression(LexerPeekToken(p->m_lex).kind))
+        {
+            break; // `cond ? a : b` — ParseConditional takes the `?`
+        }
+
         if (p->m_cur.kind == TokQuestion)
         {
             // `expr?` — null test (postfix). Only meaningful on a `T?`; sema rejects it everywhere else.
@@ -2759,6 +2962,7 @@ static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* eleme
     init->base.kind = NodeArrayInit;
     init->base.range = startTok.range;
     init->elementType = elementType;
+    init->repeatCount = NULL;
     VecInit(&init->elements);
 
     Advance(p); /* consume '{' */
@@ -2770,6 +2974,13 @@ static Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* eleme
         if (elem)
         {
             VecPush(&init->elements, elem);
+        }
+
+        /* `{ value; count }`: count copies of one value. */
+        if (init->elements.count == 1 && ParserConsume(p, TokSemicolon))
+        {
+            init->repeatCount = ParseExpr(p);
+            break;
         }
 
         if (ParserConsume(p, TokComma))
@@ -2809,13 +3020,15 @@ static Node* ParsePrimary(Parser* p)
         Advance(p);
 
         bool isUnsigned = false;
-        uint64_t val = IntLiteralValue(p, token, &isUnsigned);
+        bool isLong = false;
+        uint64_t val = IntLiteralValueEx(p, token, &isUnsigned, &isLong);
 
         IntLiteral* node = AST_NEW(p->m_arena, IntLiteral);
         node->base.kind = NodeIntLiteral;
         node->base.range = token.range;
         node->value = val;
         node->isUnsigned = isUnsigned;
+        node->isLong = isLong;
 
         return (Node*)node;
     }

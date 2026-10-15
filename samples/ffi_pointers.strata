@@ -1,0 +1,153 @@
+// ffi_pointers.strata -- raw pointers, C callbacks and a Strata-written runtime.
+//
+// A whole program with no C host: `main` is the AOT entry point, and the runtime
+// helpers every module needs (strata_alloc / strata_free / strata_panic) are
+// `@export` functions written right here. Build and run:
+//
+//   stratac samples/ffi_pointers.strata -o ffi.o && clang ffi.o -o ffi.exe && ffi.exe
+
+extern ptr  malloc(ulong size);
+extern void free(ptr p);
+extern void abort();
+extern int  printf(cstring fmt, ...);
+extern void qsort(ptr base, ulong count, ulong size, ptr compare);
+extern ptr  memset(ptr dst, int value, ulong size);
+extern int  fflush(ptr file);
+extern int  abs(int x);
+extern ptr  GetModuleHandleA(cstring name);
+extern ptr  GetProcAddress(ptr module, cstring name);
+
+// -- runtime --------------------------------------------------------------
+
+@export ptr strata_alloc(ulong size)
+{
+    return malloc(size);
+}
+
+@export void strata_free(ptr p)
+{
+    free(p);
+}
+
+@export void strata_panic(cstring msg)
+{
+    printf("panic: %s\n", msg);
+    fflush(null);
+    abort();
+}
+
+// -- a C callback that reaches module globals -------------------------------
+
+int gCompares = 0;
+
+@export int CompareInts(ptr a, ptr b)
+{
+    gCompares++;
+    return load<int>(a) - load<int>(b);
+}
+
+// -- C function pointers: extern delegates ------------------------------------
+
+extern delegate int UnaryFn(int x);
+extern delegate int LengthFn(cstring s);
+
+// A COM-style table of function pointers.
+extern struct MathTable
+{
+    UnaryFn negate;
+    UnaryFn absolute;
+    LengthFn length;
+};
+
+@export int Negate(int x)
+{
+    return -x;
+}
+
+int Twice(UnaryFn f, int v)
+{
+    return f(f(v));
+}
+
+// -- a C struct holding pointers ---------------------------------------------
+
+extern struct Span
+{
+    ptr data;
+    ulong count;
+    cstring label;
+};
+
+handle Window;
+
+// -- C unions and flag enums -------------------------------------------------
+
+enum Usage : uint { Read = 1u, Write = 2u, Exec = 4u };
+
+extern struct DepthStencil { float depth; uint stencil; };
+extern union ClearValue
+{
+    float[4] color;
+    DepthStencil depthStencil;
+};
+
+int SumSpan(const ref Span s)
+{
+    int total = 0;
+    for (ulong i = 0ul; i < s.count; i++)
+    {
+        total = total + load<int>((ptr)((ulong)s.data + i * sizeof<int>()));
+    }
+    return total;
+}
+
+int main()
+{
+    int[] values = { 5, 3, 9, 1, 7 };
+    qsort(values.data, (ulong)values.length, sizeof<int>(), addressof(CompareInts));
+    printf("sorted: %d %d %d %d %d (%d compares)\n", values[0], values[1], values[2], values[3], values[4],
+           gCompares);
+
+    Span s = Span { .data = values.data, .count = (ulong)values.length, .label = "values" };
+    printf("%s sum = %d\n", s.label, SumSpan(s));
+
+    // store/load through an address
+    int x = 10;
+    ptr px = addressof(x);
+    store(px, 42);
+    printf("x = %d\n", x);
+
+    // raw heap block
+    ptr block = malloc(16ul);
+    memset(block, 0, 16ul);
+    store<float>((ptr)((ulong)block + 4ul), 2.5);
+    printf("block[1] = %.1f, sizeof<Span>() = %d\n", (double)load<float>((ptr)((ulong)block + 4ul)),
+           (int)sizeof<Span>());
+    free(block);
+
+    // null converts to any handle; any handle converts to ptr
+    Window w = null;
+    ptr wp = w;
+    ptr live = addressof(x);
+    Window w2 = (Window)live;
+    if (w == null && wp == null && live != null && w2 != w && w2 == (Window)live && !(live == null))
+    {
+        printf("null ok\n");
+    }
+
+    ClearValue cv = ClearValue { .depthStencil = DepthStencil { .depth = 1.0, .stencil = 7u } };
+    Usage rw = Usage.Read | Usage.Write;
+    printf("union: %d bytes, depth %.1f = color[0] %.1f, stencil %u; flags %u\n", (int)sizeof<ClearValue>(),
+           (double)cv.depthStencil.depth, (double)cv.color[0], cv.depthStencil.stencil, (uint)(rw & Usage.Write));
+
+    MathTable table = {
+        .negate = (UnaryFn)addressof(Negate),
+        .absolute = (UnaryFn)addressof(abs),
+        .length = (LengthFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "lstrlenA")
+    };
+    UnaryFn none = null;
+    printf("delegates: %d %d %d %d null=%d\n", table.negate(4), table.absolute(-6), table.length("strafe"),
+           Twice(table.negate, 7), (int)(none == null));
+
+    return values[0] + values[4];  // 1 + 9
+}

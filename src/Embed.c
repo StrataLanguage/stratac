@@ -40,6 +40,9 @@ extern "C"
         void* importResolverUserData;
 
         char* symbolPrefix; // prepended to exported symbols (strataSetSymbolPrefix), NULL = none
+
+        char** importDirs; // strataAddImportDir, searched in order
+        size_t importDirCount;
     };
 
     static char* ConcatOwned(const char* a, const char* b)
@@ -83,6 +86,7 @@ extern "C"
         DiagnosticEngineInit(diag);
         ModuleLoaderInit(loader, arena, diag);
         ModuleLoaderSetResolver(loader, c->importResolver, c->importResolverUserData);
+        ModuleLoaderSetImportDirs(loader, (const char* const*)c->importDirs, c->importDirCount);
     }
 
     // Releases everything owned by a ModuleLoader-based compile.
@@ -125,6 +129,13 @@ extern "C"
         return false;
     }
 
+    // The runtime entry points generated code calls but never defines: the host provides them.
+    static bool IsHostRuntimeHook(const char* name)
+    {
+        return strcmp(name, "strata_alloc") == 0 || strcmp(name, "strata_free") == 0
+               || strcmp(name, "strata_panic") == 0 || strcmp(name, "strata_oob") == 0;
+    }
+
     static void CheckReservedNames(const Module* mod, DiagnosticEngine* diag)
     {
         if (!mod)
@@ -135,6 +146,12 @@ extern "C"
         for (size_t i = 0; i < mod->functions.count; i++)
         {
             const FunctionDecl* fn = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
+
+            /* A module may supply the host hooks itself, as `@export` functions (a Strata-written runtime). */
+            if (fn->isExport && IsHostRuntimeHook(fn->name))
+            {
+                continue;
+            }
 
             if (!fn->isExtern && (IsReservedRuntimeName(fn->name) || IsReservedRuntimeName(fn->mangledName)))
             {
@@ -211,6 +228,8 @@ extern "C"
         compiler->importResolver = NULL;
         compiler->importResolverUserData = NULL;
         compiler->symbolPrefix = NULL;
+        compiler->importDirs = NULL;
+        compiler->importDirCount = 0;
         return compiler;
     }
 
@@ -219,9 +238,36 @@ extern "C"
         if (c)
         {
             free(c->symbolPrefix);
+
+            for (size_t i = 0; i < c->importDirCount; i++)
+            {
+                free(c->importDirs[i]);
+            }
+
+            free(c->importDirs);
         }
 
         free(c);
+    }
+
+    int strataAddImportDir(StrataCompiler* c, const char* dir)
+    {
+        if (!c || !dir || !dir[0])
+        {
+            return 0;
+        }
+
+        char** grown = (char**)realloc(c->importDirs, (c->importDirCount + 1) * sizeof(char*));
+
+        if (!grown)
+        {
+            return 0;
+        }
+
+        c->importDirs = grown;
+        c->importDirs[c->importDirCount++] = DupString(dir);
+
+        return 1;
     }
 
     int strataSetSymbolPrefix(StrataCompiler* c, const char* prefix)

@@ -244,6 +244,9 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->incomplete = false;
         t->fields = sd->fields;
         t->isExtern = sd->isExtern;
+        t->isUnion = sd->isUnion;
+        t->dropFunction = sd->dropFunction;
+        t->owning = sd->dropFunction != NULL; /* a destructor makes the struct an owner */
         t->isComponent = sd->isComponent;
         t->attributes = sd->attributes;
         t->moduleName = sd->moduleName;
@@ -282,6 +285,39 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->opaque = true;
         t->incomplete = false;
         t->extendsFrom = hd->extendsName;
+    }
+
+    /* `extern delegate` types are handles too (a function pointer) that carry their signature. */
+    for (size_t i = 0; i < m->delegates.count; i++)
+    {
+        FunctionDecl* fd = (FunctionDecl*)VecGet((Vec*)&m->delegates, i);
+
+        if (TypeRegistryFindIndex(reg, fd->name) >= 0)
+        {
+            continue;
+        }
+
+        StructType* t = TypeRegistryAdd(reg, fd->name);
+        t->opaque = true;
+        t->incomplete = false;
+        t->delegate = fd;
+    }
+
+    /* Builtin handles: `ptr` is a raw pointer, the root every handle extends (see
+       HandleExtendsFrom); `null` is the type of the `null` constant, which converts to
+       any handle. */
+    const char* builtinHandles[2] = {STRATA_PTR_TYPE, STRATA_NULL_TYPE};
+
+    for (size_t i = 0; i < 2; i++)
+    {
+        if (TypeRegistryFindIndex(reg, builtinHandles[i]) >= 0)
+        {
+            continue;
+        }
+
+        StructType* t = TypeRegistryAdd(reg, builtinHandles[i]);
+        t->opaque = true;
+        t->incomplete = false;
     }
 
     /* a struct is owning if it has a ^T field or an owning field. Alias
@@ -501,6 +537,73 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* 
     StructPad* pads = (StructPad*)malloc((n + 1) * sizeof(StructPad));
     size_t padCount = 0;
     bool ok = true;
+
+    if (st->isUnion)
+    {
+        /* Every field overlays byte 0; the backend lays out one representative member plus a
+           tail pad, so all fields share physical index 0. */
+        long maxSize = 0;
+        long maxAlign = 1;
+        long repSize = 0;
+        long repAlign = 0;
+        int rep = 0;
+
+        for (size_t i = 0; i < n; i++)
+        {
+            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
+            SizeAlign sa;
+
+            if (!FieldSizeAlign(reg, state, scratch, &f->type, &sa, 0))
+            {
+                SetLayoutError(st, "field '%s' has type '%s' with no computable size", f->name, f->type.name);
+                ok = false;
+                break;
+            }
+
+            offsets[i] = 0;
+            physical[i] = 0;
+            maxSize = sa.size > maxSize ? sa.size : maxSize;
+            maxAlign = sa.align > maxAlign ? sa.align : maxAlign;
+
+            if (sa.align > repAlign || (sa.align == repAlign && sa.size > repSize))
+            {
+                rep = (int)i;
+                repAlign = sa.align;
+                repSize = sa.size;
+            }
+        }
+
+        if (!ok)
+        {
+            free(offsets);
+            free(physical);
+            free(pads);
+            state[idx] = 3;
+            return false;
+        }
+
+        long size = AlignUp(maxSize, maxAlign);
+
+        if (size > repSize)
+        {
+            pads[padCount].beforeField = n;
+            pads[padCount].bytes = size - repSize;
+            padCount++;
+        }
+
+        st->unionMember = rep;
+        st->sizeBytes = size;
+        st->alignBytes = maxAlign;
+        st->packedLayout = false;
+        st->fieldOffsets = offsets;
+        st->physicalIndex = physical;
+        st->pads = pads;
+        st->padCount = padCount;
+        st->physicalCount = 1 + padCount;
+        st->hasLayout = true;
+        state[idx] = 2;
+        return true;
+    }
 
     long cursor = 0;
     long maxAlign = 1;
@@ -752,6 +855,13 @@ int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, cons
 
 bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base)
 {
+    /* Every handle is a pointer underneath: it converts to `ptr`, and `null` converts to any handle. */
+    if (strcmp(derived, base) != 0 && IsHandleType(reg, derived) && IsHandleType(reg, base)
+        && (strcmp(base, STRATA_PTR_TYPE) == 0 || strcmp(derived, STRATA_NULL_TYPE) == 0))
+    {
+        return true;
+    }
+
     const StructType* t = TypeRegistryFind(reg, derived);
     size_t depth = 0;
 
@@ -772,6 +882,57 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
     }
 
     return false;
+}
+
+static bool TypeNameHasDropDepth(const TypeRegistry* reg, const TypeName* t, size_t depth)
+{
+    if (!t || !t->name || depth > reg->count + 4)
+    {
+        return false;
+    }
+
+    if (t->isArray)
+    {
+        return TypeNameHasDropDepth(reg, t->elem, depth + 1);
+    }
+
+    if (t->isBox || t->isOptional)
+    {
+        return TypeNameHasDropDepth(reg, t->inner, depth + 1);
+    }
+
+    const StructType* st = TypeRegistryFind(reg, TypeRegistryResolveAlias(reg, t->name));
+
+    if (!st || st->opaque || st->isTypeAlias)
+    {
+        return false;
+    }
+
+    if (st->dropFunction)
+    {
+        return true;
+    }
+
+    for (size_t i = 0; i < st->fields.count; i++)
+    {
+        if (TypeNameHasDropDepth(reg, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, depth + 1))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool TypeNameHasDrop(const TypeRegistry* reg, const TypeName* t)
+{
+    return TypeNameHasDropDepth(reg, t, 0);
+}
+
+const struct FunctionDecl* TypeRegistryDelegate(const TypeRegistry* reg, const char* name)
+{
+    const StructType* t = name ? TypeRegistryFind(reg, name) : NULL;
+    return t ? t->delegate : NULL;
 }
 
 bool IsHandleType(const TypeRegistry* reg, const char* name)

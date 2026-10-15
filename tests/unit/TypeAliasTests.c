@@ -1598,7 +1598,7 @@ STRATA_TEST(type_alias_string_pass_moves_source)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Name = string;\n"
-                                  "int take(Name n) { return 1; }\n"
+                                  "int take(Name n) { Name kept = n; return 1; }\n"
                                   "void test() { Name n = (Name)\"a\"; int r = take(n); Name again = n; }\n",
                                   &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));

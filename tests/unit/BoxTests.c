@@ -1989,7 +1989,7 @@ STRATA_TEST(partial_move_field_then_use_sibling_field_is_allowed)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Person { string name; int age; };\n"
-        "int take(string s) { return 7; }\n"
+        "int take(string s) { string kept = s; return 7; }\n"
         "int entry() {\n"
         "  ^Person p = Person { .name = \"Alice\", .age = 30 };\n"
         "  int r = take(p.name);\n"          /* moves p.name */
@@ -2012,7 +2012,7 @@ STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Person { string name; int age; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "int consume(^Person p) { return 1; }\n"
         "int entry() {\n"
         "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
@@ -2037,7 +2037,7 @@ STRATA_TEST(partial_move_field_then_return_whole_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Person { string name; int age; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "^Person give() {\n"
         "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
         "  take(p.name);\n"
@@ -2056,7 +2056,7 @@ STRATA_TEST(partial_move_field_then_move_whole_to_var_is_error)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Person { string name; int age; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "int entry() {\n"
         "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
         "  take(p.name);\n"
@@ -2075,7 +2075,7 @@ STRATA_TEST(partial_move_reassign_re_lives)
     const char* err = NULL;
     StrataJit* jit = CompileBox(
         "struct Person { string name; int age; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "^Person make() { ^Person p = Person { .name = \"new\", .age = 99 }; return p; }\n"
         "int entry() {\n"
         "  ^Person p = Person { .name = \"old\", .age = 1 };\n"
@@ -2103,7 +2103,7 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
         "struct Leaf { string tag; };\n"
         "struct Mid { ^Leaf c; ^Leaf d; };\n"
         "struct Root { ^Mid a_b; ^Leaf x; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "int entry() {\n"
         "  ^Root r = Root {\n"
         "    .a_b = Mid { .c = Leaf { .tag = \"c\" }, .d = Leaf { .tag = \"d\" } },\n"
@@ -2128,7 +2128,7 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
         "struct Leaf { string tag; };\n"
         "struct Mid { ^Leaf c; };\n"
         "struct Root { ^Mid a_b; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "int consume(^Mid m) { return 1; }\n"
         "int entry() {\n"
         "  ^Root r = Root { .a_b = Mid { .c = Leaf { .tag = \"c\" } } };\n"
@@ -2175,7 +2175,7 @@ STRATA_TEST(partial_move_two_fields_both_moved)
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
         "struct Pair { string a; string b; };\n"
-        "int take(string s) { return 1; }\n"
+        "int take(string s) { string kept = s; return 1; }\n"
         "int entry() {\n"
         "  ^Pair p = Pair { .a = \"x\", .b = \"y\" };\n"
         "  take(p.a);\n"

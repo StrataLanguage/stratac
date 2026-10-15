@@ -75,9 +75,7 @@ typedef enum StrataArch
 
 typedef struct StrataProfile
 {
-    unsigned boundsCheck;    /* array bounds check: AOT panics on OOB; the LLVM JIT notifies the panic handler
-                              * (strataSetPanicHandler) and continues - OOB reads yield a dummy value, OOB
-                              * writes are no-ops. A handler that longjmps still halts the run. */
+    unsigned boundsCheck;    /* AOT panics on OOB; JIT calls the panic handler and continues */
     unsigned nullExternCall; /* panic on calling an extern that was never bound */
 } StrataProfile;
 
@@ -91,10 +89,7 @@ typedef struct
 {
     const char* text;   /* module source text (non-owning, your responsibility to ensure lifetime remains valid.) */
     size_t      length; /* length of text (in bytes) */
-    const char* name;   /* REQUIRED canonical module name (copied). It is the module's identity: imports that
-                         * resolve to the same name load once, so distinct modules need distinct names. It is also
-                         * the diagnostic name and the `importerName` for the module's own imports. A resolver
-                         * that leaves it NULL or empty fails the import with an error. */
+    const char* name;   /* REQUIRED unique module name (copied); same name = same module */
 } StrataResolvedModule;
 
 /* Returns 1 if the module was resolved (`out` filled in), 0 if not available.
@@ -107,54 +102,29 @@ typedef int (*StrataImportResolverFn)(void* userData,
 
 STRATA_API void strataSetImportResolver(StrataCompiler* c, StrataImportResolverFn resolver, void* userData);
 
+/* Adds a directory searched (in the order added) for a disk import that is not found next to the
+ * importing file, e.g. a shared library root: `import engine/scene;` from anywhere. Returns 0 on bad
+ * input. Ignored when an import resolver is set. */
+STRATA_API int strataAddImportDir(StrataCompiler* c, const char* dir);
 
-/*
- * Module-level globals and the hidden context parameter
- * ------------------------------------------------------
- * Every non-extern Strata function takes a hidden leading `void* ctx`
- * parameter at the ABI level, so a Strata function declared `int f(int x)` is
- * called from C as `int f(void* ctx, int x)`. Every module also exports:
- *
- *     void* __strata_context_create(void);    // allocate + run global initializers
- *     void  __strata_context_destroy(void*);  // drop owned globals + free the context
- *
- * The context holds the module's storage-backed globals (any global other than
- * a `const` scalar that folds to a compile-time constant). Each context is an
- * independent instance of them; create as many as needed and destroy each
- * exactly once, before strataJitDestroy for JIT modules. A module without such
- * globals returns NULL from __strata_context_create, and NULL is then the
- * context to pass; destroying it is a no-op.
- *
- * The names `strata_alloc`, `strata_free`, `strata_panic`, `strata_oob`,
- * `strata_strdup`, `strata_str_eq`, `strata_cstrlen` and every `__strata_*`
- * name are reserved: defining a Strata function with one of them is an error.
- *
- * AOT linking: by default the context functions and the string helpers
- * (strata_strdup, strata_str_eq, strata_cstrlen) have fixed, unprefixed
- * external names, as do the module's own functions, so two objects produced by
- * strataCompileToObject collide at link time. Give each module its own
- * strataSetSymbolPrefix to link several into one executable or DLL.
- */
 
-/* Generic externs: `extern<T> R Name(params)` is ONE host function serving every
- * type T. T may only be a whole parameter type (`const ref T value` or `ref T value`),
- * never the return type, and each call's T must be a plain-data struct (no
- * owning fields). Calls name T explicitly or let it be inferred from a T
- * argument:
+/* Hidden context: every non-extern function takes a leading `void* ctx`, so
+ * `int f(int x)` is `int f(void* ctx, int x)` from C. Each module exports
+ * `void* __strata_context_create(void)` and `void __strata_context_destroy(void*)`;
+ * a context is one instance of the module's globals (NULL if it has none).
+ * Destroy each once, before strataJitDestroy.
  *
- *     extern<T> bool GetComponent(Entity entity, ref T value);
- *     extern<T> bool HasComponent(Entity entity);
+ * `strata_*` runtime helpers and all `__strata_*` names are reserved. To link
+ * several AOT modules together, give each its own strataSetSymbolPrefix. */
+
+/* Generic externs: `extern<T> R Name(params)` is one host function for every T.
+ * T must be a plain-data struct used only as a whole `ref T` / `const ref T`
+ * parameter; it's inferred from that argument or named (`HasComponent<Health>(e)`).
+ * The host gets each T argument as a pointer plus T's descriptor as a hidden
+ * last argument:
  *
- *     Health health;
- *     if (GetComponent(entity, health)) { ... }      // T inferred as Health
- *     if (HasComponent<Health>(entity)) { ... }      // T named explicitly
- *
- * On the host side every T parameter is a pointer (to the caller's storage, or
- * to a temporary for a `const ref T` argument that isn't a variable), and T's
- * descriptor is appended as a hidden last argument:
- *
- *     bool GetComponent(void* entity, void* value, const StrataTypeDesc* type);
- *     bool HasComponent(void* entity, const StrataTypeDesc* type);
+ *     extern<T> bool GetComponent(Entity e, ref T value);
+ *     bool GetComponent(void* e, void* value, const StrataTypeDesc* type); // host
  */
 typedef struct StrataTypeDesc
 {
@@ -170,14 +140,9 @@ static inline const char* strataTypeDescName(const StrataTypeDesc* type)
     return (const char*)(type + 1);
 }
 
-/* Prepends `prefix` to every symbol a module exports: its functions,
- * __strata_context_create/__strata_context_destroy and the type metadata
- * symbol (see strata_types.h). The string helpers become module-local. Externs
- * are unaffected. `prefix` may only contain [A-Za-z0-9_]; NULL or "" removes it.
- * Returns 0 (leaving the prefix unchanged) for an invalid prefix.
- *
- * Applies to both AOT objects and the JIT. strataJitGetFunction still takes the
- * unprefixed name; an AOT host looks up `<prefix><name>` itself. */
+/* Prefixes every exported symbol (functions, context create/destroy, type
+ * metadata); externs are unaffected. `prefix` must be [A-Za-z0-9_] (else returns 0);
+ * NULL or "" clears it. strataJitGetFunction still takes unprefixed names. */
 STRATA_API int strataSetSymbolPrefix(StrataCompiler* c, const char* prefix);
 
 typedef struct StrataJit StrataJit;

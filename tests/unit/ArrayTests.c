@@ -342,7 +342,7 @@ STRATA_TEST(array_of_structs_sums_field)
 STRATA_TEST(array_use_after_move_is_error)
 {
     const char* err = NULL;
-    StrataJit* jit = CompileArr("void take(int[] a) {}\n"
+    StrataJit* jit = CompileArr("void take(int[] a) { int[] kept = a; }\n"
                                 "int entry() {\n"
                                 "  int[] a = {1,2,3};\n"
                                 "  take(a);\n"
@@ -732,7 +732,7 @@ STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
     SourceManager sm;
     SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(strstr(d, "cannot push a value of type 'Node?'") != NULL);
+    STRATA_CHECK(strstr(d, "'a.next' has not been blessed ('Node?')") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -1072,7 +1072,7 @@ STRATA_TEST(fixed_local_array_init_rules)
         {"int take(int x) { return x; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
          "cannot pass fixed-size array"                                                                                                  },
         /* By-value T[] param implies ownership transfer — a stack view can't be owned. */
-        {"int take(int[] x) { return (int)x.length; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
+        {"int take(int[] x) { int[] kept = x; return (int)kept.length; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
          "cannot pass fixed-size array"                                                                                                  },
         /* Element type mismatch against the ref view. */
         {"int take(ref long[] x) { return 0; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
@@ -1330,10 +1330,11 @@ STRATA_TEST(fixed_array_element_member_ref_view)
     strataJitDestroy(jit);
 }
 
-/* ---- `ref T[]` params are borrowed bindings -------------------------------
-   A ref array param may be a stack view (fixed-array slice), so the binding
-   itself can never be grown or reassigned — that would free the caller's
-   storage. Mutate elements instead, or copy into an owned local array. */
+/* ---- growing `ref T[]` params ---------------------------------------------
+   A ref array argument may be a stack view (fixed-array slice, array literal,
+   varargs rest). A function may grow or rebind its `ref T[]` parameter, but then
+   every call site must pass a real dynamic array: a stack view is rejected there,
+   since growing it would free the caller's storage. */
 
 STRATA_TEST(ref_array_param_growth_rejected)
 {
@@ -1343,11 +1344,15 @@ STRATA_TEST(ref_array_param_growth_rejected)
         const char* msg;
     } cases[] = {
         {"int f(ref int[] a) { array_push(a, 4); return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "cannot grow"         },
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "not a fixed-size array"},
         {"int f(ref int[] a) { array_resize(a, 8); return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "cannot grow"         },
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "not a fixed-size array"},
         {"int f(ref int[] a) { int[] b = {9}; a = b; return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "cannot be reassigned"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "grows or rebinds its parameter 'a'"},
+        /* Passing the parameter on to a growing callee grows it too. */
+        {"void g(ref int[] a) { array_push(a, 1); }\n"
+         "void f(ref int[] a) { g(a); }\n"
+         "int entry() { int[2] v = {1, 2}; f(v); return 0; }", "'f' grows or rebinds its parameter 'a'"},
         /* A ref rest is the same borrowed binding. */
         {"int f(ref int... rest) { array_push(rest, 4); return 0; }\n"
          "int entry() { return f(1, 2, 3); }",                 "cannot grow"         },
@@ -1386,14 +1391,11 @@ STRATA_TEST(fixed_array_to_non_ref_array_param_rejected)
     } cases[] = {
         /* By-value `T[]` param implies ownership transfer — a stack view
            can't be owned. */
-        {"int take(int[] x) { return (int)x.length; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
-        /* `const` by value is still not a ref — same ownership transfer. */
-        {"int take(const int[] x) { return 0; }\n"
+        {"int take(int[] x) { int[] kept = x; return (int)kept.length; }\n"
          "int entry() { int[3] v = {1, 2, 3}; return take(v); }",                    "cannot pass fixed-size array"},
         /* Owning-element array param (`^T[]` owns its buffer + elements). */
         {"struct Foo { int v; };\n"
-         "int take(^Foo[] x) { return 0; }\n"
+         "int take(^Foo[] x) { ^Foo[] kept = x; return 0; }\n"
          "int entry() { Foo[2] v = { Foo{.v = 1}, Foo{.v = 2} }; return take(v); }", "cannot pass fixed-size array"},
         /* Optional array param (`ref T[]?` crosses the SLOT — a view can't). */
         {"int take(ref int[]? x) { return 0; }\n"
@@ -1412,7 +1414,7 @@ STRATA_TEST(fixed_array_to_non_ref_array_param_rejected)
          "int entry() { int[2][3] v = {{1, 2, 3}, {4, 5, 6}}; return take(v); }",    "cannot pass fixed-size array"},
         /* Field-sourced fixed arrays are held to the same rule. */
         {"struct Buf { int[3] data; };\n"
-         "int take(int[] x) { return 0; }\n"
+         "int take(int[] x) { int[] kept = x; return 0; }\n"
          "int entry() { Buf b = Buf { .data = {1, 2, 3} }; return take(b.data); }",  "no matching overload"        },
     };
 
@@ -1568,6 +1570,44 @@ STRATA_TEST(ref_array_literal_arg_owning_elements_dropped)
     strataJitDestroy(jit);
 }
 
+STRATA_TEST(ref_array_param_growth_reaches_caller)
+{
+    /* Growing through a `ref T[]` parameter grows the caller's own heap array. */
+    const char* err = NULL;
+    StrataJit* jit = CompileArr("void fill(ref int[] out, int n)\n"
+                                "{\n"
+                                "  array_resize(out, 0);\n"
+                                "  for (int i = 0; i < n; i++) { array_push(out, i * 10); }\n"
+                                "}\n"
+                                "void again(ref int[] out) { fill(out, 3); array_push(out, 7); }\n"
+                                "int entry()\n"
+                                "{\n"
+                                "  int[] values = {99};\n"
+                                "  fill(values, 5);\n"                         /* 0 10 20 30 40 */
+                                "  int s = (int)values.length + values[4];\n"   /* 5 + 40 */
+                                "  again(values);\n"                           /* 0 10 20 7 */
+                                "  return s * 100 + (int)values.length * 10 + values[3];\n"
+                                "}\n",
+                                &err);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 4547);
+    }
+
+    strataJitDestroy(jit);
+}
+
 STRATA_TEST(ref_array_literal_arg_rejections)
 {
     struct
@@ -1575,9 +1615,9 @@ STRATA_TEST(ref_array_literal_arg_rejections)
         const char* src;
         const char* msg;
     } cases[] = {
-        /* Growth is still rejected — the binding is borrowed. */
+        /* A literal temp is a stack view: a growing parameter rejects it. */
         {"int f(ref int[] a) { array_push(a, 9); return 0; }\n"
-         "int entry() { return f({1, 2, 3}); }",    "cannot grow"                                                    },
+         "int entry() { return f({1, 2, 3}); }",    "not an array literal"                                           },
         /* Extern by-value arrays decay to T*: the host could never free a
            Strata temp buffer, so literals are rejected there. */
         {"extern int take(int[] x);\n"

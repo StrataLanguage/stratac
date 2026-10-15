@@ -29,6 +29,7 @@ typedef struct
     const char* structTypeName;
     bool isBox;
     bool isOptional; /* T?: same repr as ^T, but may be empty (sema-gated) */
+    bool isRc;       /* rc<T>: a ^T whose cell has a 16-byte count header before the value */
     const TypeName* boxInner; /* inner T of ^T / T? (NULL for string) */
     bool isArray;
     bool isString;              /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
@@ -64,6 +65,8 @@ typedef struct Builder
     StrMap m_globalFieldIndex; /* storage-backed global name -> boxed (field index + 1) in m_globalsStructTy */
     bool m_hasInstancedGlobals; /* module has >=1 storage-backed global (see BuiltModule.hasInstancedGlobals) */
     LLVMTypeRef m_globalsStructTy; /* per-instance "context" struct holding every instanced global */
+    LLVMValueRef m_exportCtxGlobal; /* module-private slot: the context `@export` bodies use (the newest
+                                       created one); NULL without instanced globals */
     LLVMValueRef m_curGlobalsPtr; /* current function's own hidden context pointer (NULL if none) */
     StrMap m_externSlots;
     StrMap m_implProps; /* "Handle.Prop" -> ImplPropEntry (getter/setter lowering) */

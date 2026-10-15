@@ -23,6 +23,7 @@ void AstReleaseModuleLists(Module* module)
     DisposeVec(&module->imports);
     DisposeVec(&module->impls);
     DisposeVec(&module->genericInstances);
+    DisposeVec(&module->delegates);
 }
 
 void AstDispose(Node* node)
@@ -50,6 +51,7 @@ void AstDispose(Node* node)
         DISPOSE_ALL(imports);
         DISPOSE_ALL(impls);
         DISPOSE_ALL(genericInstances);
+        DISPOSE_ALL(delegates);
 
 #undef DISPOSE_ALL
 
@@ -219,6 +221,8 @@ void AstDispose(Node* node)
             AstDispose((Node*)VecGet(&ai->elements, i));
         }
 
+        AstDispose(ai->repeatCount);
+
         DisposeVec(&ai->elements);
 
         return;
@@ -247,6 +251,11 @@ void AstDispose(Node* node)
         return;
     case NodeDefer:
         AstDispose(((DeferStmt*)node)->stmt);
+        return;
+    case NodeConditional:
+        AstDispose(((ConditionalExpr*)node)->condition);
+        AstDispose(((ConditionalExpr*)node)->thenExpr);
+        AstDispose(((ConditionalExpr*)node)->elseExpr);
         return;
     }
 }

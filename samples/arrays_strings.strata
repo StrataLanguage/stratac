@@ -1,0 +1,174 @@
+// arrays_strings.strata -- building arrays (`{ value; count }`, array_reserve), fixed byte
+// buffers as text, and borrowing (ref locals, read-only params).
+
+extern ptr  malloc(ulong size);
+extern void free(ptr p);
+@noreturn extern void abort();
+extern int  fflush(ptr file);
+extern int  printf(cstring fmt, ...);
+extern int  snprintf(ptr buffer, ulong size, cstring fmt, ...);
+
+@export ptr strata_alloc(ulong size) { return malloc(size); }
+@export void strata_free(ptr p) { free(p); }
+@export void strata_panic(cstring msg) { printf("panic: %s\n", msg); fflush(null); abort(); }
+
+int gLive = 0;
+
+struct Res
+{
+    int id;
+};
+
+impl Res
+{
+    void Drop(ref Res self) { gLive--; }
+}
+
+struct Named
+{
+    string name;
+    int[] values;
+};
+
+struct Image
+{
+    int id;
+};
+
+// -- { value; count } -----------------------------------------------------------------
+
+void Repeats()
+{
+    uint n = 4u;
+    int[] zeros = { 0; n };
+    float[] ones = { 1.0; 3 };
+    string word = "hi";
+    string[] words = { word; 3u };           // copies: word stays usable
+    words[1] = "changed";
+    Named[] records = { {}; 2u };            // default-constructed
+    array_push(records[0].values, 5);
+    rc<Image> image = Image { .id = 9 };
+    rc<Image>[] shared = { image; 3u };      // retained, not copied
+    int[] none = { 7; 0u };
+    byte[8] fill = { 0x41; 8 };
+    printf("repeat: %u %d | %u %.1f | %s %s %s %s | %u %u %u | %d %u | %u | %c%c\n", zeros.length, zeros[3],
+           ones.length, ones[2], word, words[0], words[1], words[2], records.length, records[0].values.length,
+           records[1].values.length, shared[2].id, shared.length, none.length, fill[0], fill[7]);
+
+    gLive = 2;
+    Res[] fresh = { {}; 2u };                // Drop types default-construct
+    printf("fresh: %u\n", fresh.length);
+}
+
+void Reserve()
+{
+    int[] list = {};
+    array_reserve(list, 100u);
+    ptr before = list.data;
+    for (int i = 0; i < 100; i++)
+    {
+        array_push(list, i);
+    }
+    printf("reserve: %u %d %d\n", list.length, list[99], before == list.data ? 1 : 0);
+}
+
+// -- fixed byte buffers as text --------------------------------------------------------
+
+struct LayerProperties
+{
+    byte[16] layerName;
+    uint version;
+};
+
+string Number(int value)
+{
+    byte[16] buffer = {};
+    snprintf(buffer, 16ul, "%d", value);     // decays to a ptr, as in C
+    return (string)buffer;                    // copies up to the NUL
+}
+
+void Buffers()
+{
+    LayerProperties[] layers = { {}; 2u };
+    snprintf(layers[1].layerName, 16ul, "%s", "VK_LAYER_x");
+    string wanted = "VK_LAYER_x";
+    int found = -1;
+    for (uint i = 0u; i < layers.length; i++)
+    {
+        if ((cstring)layers[i].layerName == wanted)
+        {
+            found = (int)i;
+        }
+    }
+    byte[4] full = { 0x41; 4 };               // no NUL: all four bytes
+    string fromFull = (string)full;
+    cstring view = (cstring)wanted;
+    printf("buffers: %s %d %s %u %s %d %d\n", Number(-42), found, fromFull, fromFull.length, view,
+           wanted == view ? 1 : 0, view != "other" ? 1 : 0);
+}
+
+// -- ref locals ---------------------------------------------------------------------------
+
+struct Pass
+{
+    string label;
+    int[] draws;
+};
+
+struct Frame
+{
+    Pass[] passes;
+    rc<Image>? target;
+};
+
+void RefLocals()
+{
+    ^Frame frame = Frame {};
+    array_push(frame.passes, Pass { .label = "shadow" });
+    array_push(frame.passes, Pass { .label = "main" });
+    frame.target = Image { .id = 3 };
+
+    const ref string label = frame.passes[1].label;      // a borrow: frame.passes stays intact
+    ref Pass pass = frame.passes[0];
+    array_push(pass.draws, 7);                           // writes through
+    pass.label = "shadows";
+    printf("ref: %s %s %u %u\n", label, frame.passes[0].label, frame.passes[0].draws.length, frame.passes.length);
+
+    if (frame.target?)
+    {
+        ref Image image = frame.target;                  // the value inside the rc
+        image.id = 4;
+    }
+
+    for (uint i = 0u; i < frame.passes.length; i++)
+    {
+        ref Pass each = frame.passes[i];                 // bound again each iteration
+        array_push(each.draws, (int)i);
+    }
+    printf("ref loop: %u %u target %d\n", frame.passes[0].draws.length, frame.passes[1].draws.length,
+           frame.target? ? frame.target.id : -1);
+}
+
+// -- read-only params borrow ------------------------------------------------------------
+
+int Len(string s) { return (int)s.length; }            // only reads s: borrows it
+string Keep(string s) { return s; }                    // takes s
+
+void Borrows()
+{
+    string[] names = { "ab", "cde" };
+    int lengths = Len(names[0]) + Len(names[1]) + Len("lit");   // elements stay in the array
+    string kept = Keep(names[1] + "!");
+    printf("borrow: %d %s %s %s\n", lengths, names[0], names[1], kept);
+}
+
+int main()
+{
+    Borrows();
+    RefLocals();
+    Buffers();
+    Repeats();
+    printf("live after fresh: %d\n", gLive);
+    Reserve();
+    return 0;
+}

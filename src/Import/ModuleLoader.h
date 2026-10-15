@@ -31,6 +31,10 @@ typedef struct {
     size_t visitedCap;
 
     Module* root;
+
+    // Directories searched, in order, for an import not found next to its importer.
+    const char* const* importDirs;
+    size_t importDirCount;
 } ModuleLoader;
 
 void ModuleLoaderInit(ModuleLoader* l, Arena* arena, DiagnosticEngine* diag);
@@ -38,6 +42,9 @@ void ModuleLoaderDispose(ModuleLoader* l);
 
 // Install (or clear with fn=NULL) a custom import resolver.
 void ModuleLoaderSetResolver(ModuleLoader* l, StrataImportResolverFn fn, void* userData);
+
+// Directories (borrowed) searched for imports not found relative to the importing file.
+void ModuleLoaderSetImportDirs(ModuleLoader* l, const char* const* dirs, size_t count);
 
 // Load from disk; imports use the resolver when set.
 Module* ModuleLoaderLoad(ModuleLoader* l, const char* mainPath);

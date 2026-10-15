@@ -148,6 +148,8 @@ static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLIC
 static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode Cmd_SetSymbolPrefix(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 
+static ResultCode Cmd_AddImportDir(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+
 static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 
 // clang-format off
@@ -166,6 +168,7 @@ static const CLICommand commands[] = {
     COMMAND_GENERAL(NULL, "--entry",   "<name>",  &Cmd_RunSetEntry, "entry for --run (default: main)"),
     COMMAND_GENERAL(NULL, "--arch",    "<value>", &Cmd_SetArch,     "set output architecture (default: auto, x64, arm64)"),
     COMMAND_GENERAL(NULL, "--symbol-prefix", "<prefix>", &Cmd_SetSymbolPrefix, "prefix every exported symbol, so several objects can link together"),
+    COMMAND_GENERAL("-I", NULL,    "<dir>",   &Cmd_AddImportDir, "also search <dir> for imports (repeatable)"),
 };
 // clang-format on
 
@@ -388,6 +391,27 @@ static ResultCode Cmd_SetSymbolPrefix(State* state, StrataCompiler* compiler, co
     if (!strataSetSymbolPrefix(compiler, value))
     {
         fprintf(stderr, "error: symbol prefix '%s' may only contain letters, digits and '_'\n", value);
+        return RCArgumentError;
+    }
+
+    return RCSuccess;
+}
+
+static ResultCode Cmd_AddImportDir(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+{
+    (void)cmd;
+
+    if (state->argumentIndex + 1 >= state->argumentCount)
+    {
+        fprintf(stderr, "error: -I needs a directory\n");
+        return RCArgumentError;
+    }
+
+    const char* dir = state->arguments[++state->argumentIndex];
+
+    if (!strataAddImportDir(compiler, dir))
+    {
+        fprintf(stderr, "error: invalid import directory '%s'\n", dir);
         return RCArgumentError;
     }
 

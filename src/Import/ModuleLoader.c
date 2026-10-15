@@ -104,6 +104,25 @@ static char* ResolveImportPath(Arena* arena, const char* importerPath, const cha
     return arena_format(arena, "%s%s", importPath, ext);
 }
 
+static bool FileExists(const char* path)
+{
+    FILE* f = fopen(path, "rb");
+
+    if (!f)
+    {
+        return false;
+    }
+
+    fclose(f);
+    return true;
+}
+
+void ModuleLoaderSetImportDirs(ModuleLoader* l, const char* const* dirs, size_t count)
+{
+    l->importDirs = dirs;
+    l->importDirCount = count;
+}
+
 static void PushBuffer(ModuleLoader* loader, char* buf)
 {
     if (loader->bufferCount >= loader->bufferCap)
@@ -277,6 +296,11 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
     {
         VecPush(&root->impls, VecGet(&src->impls, i));
     }
+
+    for (size_t i = 0; i < src->delegates.count; i++)
+    {
+        VecPush(&root->delegates, VecGet(&src->delegates, i));
+    }
 }
 
 // Forward declarations.
@@ -378,6 +402,22 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
 
     char* childPath = ResolveImportPath(loader->arena, importerName, importPath);
     const char* canonPath = CanonicalizePath(loader->arena, childPath);
+
+    /* Not next to the importer: try each import directory (`stratac -I`), in order. */
+    for (size_t i = 0; i < loader->importDirCount && !FileExists(canonPath); i++)
+    {
+        const char* dir = loader->importDirs[i];
+        size_t impLen = strlen(importPath);
+        bool hasExt = impLen >= 7 && strcmp(importPath + impLen - 7, ".strata") == 0;
+        const char* candidate = arena_format(loader->arena, "%s/%s%s", dir, importPath, hasExt ? "" : ".strata");
+        const char* canonCandidate = CanonicalizePath(loader->arena, candidate);
+
+        if (FileExists(canonCandidate))
+        {
+            canonPath = canonCandidate;
+        }
+    }
+
     const char* key = DiskModuleKey(loader->arena, canonPath);
 
     // Skip re-reading disk files we've already loaded (canonicalized so that
@@ -411,6 +451,7 @@ static Module* NewRootModule(Arena* arena, const char* name)
     VecInit(&root->globals);
     VecInit(&root->imports);
     VecInit(&root->impls);
+    VecInit(&root->delegates);
 
     return root;
 }
