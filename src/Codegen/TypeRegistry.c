@@ -884,21 +884,25 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
     return false;
 }
 
-static bool TypeNameHasDropDepth(const TypeRegistry* reg, const TypeName* t, size_t depth)
+/* Structs already looked into during one TypeNameHasDrop query: each is walked once, so types that
+   reach themselves along several paths (a tree of rc<>s) cost linear, not exponential, time. */
+typedef struct
 {
-    if (!t || !t->name || depth > reg->count + 4)
+    const StructType** items;
+    size_t count;
+    size_t cap;
+} DropVisit;
+
+static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, DropVisit* seen)
+{
+    while (t && (t->isArray || t->isBox || t->isOptional))
+    {
+        t = t->isArray ? t->elem : t->inner;
+    }
+
+    if (!t || !t->name)
     {
         return false;
-    }
-
-    if (t->isArray)
-    {
-        return TypeNameHasDropDepth(reg, t->elem, depth + 1);
-    }
-
-    if (t->isBox || t->isOptional)
-    {
-        return TypeNameHasDropDepth(reg, t->inner, depth + 1);
     }
 
     const StructType* st = TypeRegistryFind(reg, TypeRegistryResolveAlias(reg, t->name));
@@ -913,9 +917,24 @@ static bool TypeNameHasDropDepth(const TypeRegistry* reg, const TypeName* t, siz
         return true;
     }
 
+    for (size_t i = 0; i < seen->count; i++)
+    {
+        if (seen->items[i] == st)
+        {
+            return false; /* already looked into (or being looked into): found nothing there */
+        }
+    }
+
+    if (seen->count == seen->cap)
+    {
+        seen->cap = seen->cap ? seen->cap * 2 : 16;
+        seen->items = (const StructType**)realloc((void*)seen->items, seen->cap * sizeof(*seen->items));
+    }
+    seen->items[seen->count++] = st;
+
     for (size_t i = 0; i < st->fields.count; i++)
     {
-        if (TypeNameHasDropDepth(reg, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, depth + 1))
+        if (TypeNameHasDropVisit(reg, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, seen))
         {
             return true;
         }
@@ -926,7 +945,10 @@ static bool TypeNameHasDropDepth(const TypeRegistry* reg, const TypeName* t, siz
 
 bool TypeNameHasDrop(const TypeRegistry* reg, const TypeName* t)
 {
-    return TypeNameHasDropDepth(reg, t, 0);
+    DropVisit seen = {0};
+    bool found = TypeNameHasDropVisit(reg, t, &seen);
+    free((void*)seen.items);
+    return found;
 }
 
 const struct FunctionDecl* TypeRegistryDelegate(const TypeRegistry* reg, const char* name)

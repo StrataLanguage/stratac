@@ -744,6 +744,8 @@ static LLVMValueRef SpillEqOperand(Builder* b, Value v);
 static Value EmitMember(Builder* b, MemberExpr* n);
 static Value EmitIndex(Builder* b, IndexExpr* n);
 static Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
+static bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd);
+static Value TakeBoxContents(Builder* b, Value box, Node* srcNode);
 static Value EmitTextCast(Builder* b, CastExpr* cast);
 static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer,
                                 bool borrow);
@@ -4862,6 +4864,10 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
             LLVMValueRef owned = EmitOwnedValue(b, v, valNode, StringTypeName(b));
             LLVMBuildStore(b->m_builder, owned, elAddr);
         }
+        else if (BoxIntoInlineOwning(b, elemTd, v.typeDesc))
+        {
+            LLVMBuildStore(b->m_builder, TakeBoxContents(b, v, valNode).value, elAddr);
+        }
         else if (elemTd.structTypeName && v.typeDesc.structTypeName
                  && strcmp(elemTd.structTypeName, v.typeDesc.structTypeName) == 0
                  && TypeRegistryIsOwningStruct(&b->m_registry, elemTd.structTypeName))
@@ -6409,6 +6415,39 @@ typedef struct
    (evaluated as `valueTd`) moves an owning source: string, ^T, dynamic array,
    or an owning struct like a `Rec` element. Shared by the positional
    `S(a, b)` and braced `S{x: a}` constructors so both null the same sources. */
+/* A `^T` (or a proven `T?`) given where an inline owning `T` is wanted: a struct field, an array
+   element. */
+static bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd)
+{
+    return !targetTd.isBox && !targetTd.isArray && targetTd.structTypeName
+           && TypeRegistryIsOwningStruct(&b->m_registry, targetTd.structTypeName) && valueTd.isBox && !valueTd.isRc
+           && valueTd.boxInner && strcmp(valueTd.boxInner->name, targetTd.structTypeName) == 0;
+}
+
+/* Moves the value out of its box cell (see BoxIntoInlineOwning): the cell is freed, and a variable
+   it came from is left empty, so its own drop does nothing. Dropping the box instead would drop
+   the value that now lives elsewhere. */
+static Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
+{
+    Value inner = DerefBoxValue(b, box);
+    Node* moved = srcNode ? (Node*)MovableBoxSourceNode(srcNode) : NULL;
+
+    if (moved)
+    {
+        LValue src = EmitLValueForNullStore(b, moved);
+
+        if (src.valid && !src.vectorLane)
+        {
+            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+        }
+    }
+
+    LLVMValueRef freeArgs[1] = {box.value};
+    StrataFreeFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+    return inner;
+}
+
 static bool FieldInitMovesSource(Builder* b, TypeDesc fieldTd, TypeDesc valueTd, const Node* valueNode)
 {
     if (valueNode->kind == NodeStrLiteral || valueNode->kind == NodeArrayInit)
@@ -7340,6 +7379,10 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                     LLVMBuildStore(b->m_builder, owned, elemAddr);
                 }
             }
+            else if (!borrow && BoxIntoInlineOwning(b, elemTd, v.typeDesc))
+            {
+                LLVMBuildStore(b->m_builder, TakeBoxContents(b, v, eNode).value, elemAddr);
+            }
             else if (elemTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, elemTd.structTypeName))
             {
                 /* Owning-struct element (`Rec[]` literal): temporaries (struct
@@ -7722,6 +7765,11 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
                ^T init. */
             LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawField, field->value, "fieldbox", fieldTd.isRc);
             fieldValue = ValueMake(heap, fieldTd);
+        }
+        else if (BoxIntoInlineOwning(b, fieldTd, rawField.typeDesc))
+        {
+            agg = InsertStructField(b, st, agg, (int)idx, TakeBoxContents(b, rawField, field->value).value);
+            continue;
         }
         else
         {

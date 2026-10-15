@@ -142,6 +142,13 @@ int main()
     {
         ^Holder h = Holder { .name = "holder", .res = Res.Make(6) };
     }
+    {
+        ^Res boxed = Res.Make(40);
+        ^Holder h = Holder { .name = "from a box", .res = boxed };   // moves out of the box: one drop
+        Res[] list = {};
+        ^Res other = Res.Make(41);
+        array_push(list, other);
+    }
     printf("live after Drop tests: %d\n", gLive);
 
     {
