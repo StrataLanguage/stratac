@@ -2032,6 +2032,33 @@ static void InvalidateRefLocals(Resolver* r, const char* key)
     }
 }
 
+/* True when the root of move key `key` is a module global (not a local of the same name): no function
+   owns a global, so nothing may be moved out of any path into it — a field of a global struct included. */
+static bool IsGlobalRootKey(Resolver* r, const char* key)
+{
+    const char* root = KeyRoot(r->m_arena, key);
+
+    for (size_t i = 0; i < r->m_mod->globals.count; i++)
+    {
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, i);
+
+        if (strcmp(gd->name, root) == 0)
+        {
+            return !r->m_curScope || StrMapGet(r->m_curScope, root) == (void*)&gd->type;
+        }
+    }
+
+    return false;
+}
+
+static void DiagMoveFromGlobal(Resolver* r, SourceRange range, const char* name)
+{
+    DiagErrorFmt(r->m_diag, range,
+                 "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref ^T`, copy() "
+                 "it, or pass `T` by value)",
+                 name);
+}
+
 /* `drop(x)` consumes x whatever it is, an rc included. */
 static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 {
@@ -2039,12 +2066,9 @@ static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 
     const char* root = KeyRoot(r->m_arena, name);
 
-    if (IsBoxGlobalName(r, root))
+    if (IsBoxGlobalName(r, root) || IsGlobalRootKey(r, name))
     {
-        DiagErrorFmt(r->m_diag, range,
-                     "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref ^T`, copy() "
-                     "it, or pass `T` by value)",
-                     name);
+        DiagMoveFromGlobal(r, range, name);
 
         return;
     }
@@ -2084,14 +2108,27 @@ static void EmptyOptionalSource(Resolver* r, const char* name);
 
 static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 {
-    (void)range;
-
     bool throughRc = false;
     const TypeName* type = KeyPathType(r, name, &throughRc);
 
     /* An `rc<T>?` copied out keeps its value: the copy is another reference. */
     if (type && type->isRc)
     {
+        return;
+    }
+
+    /* A `^T` taken into an optional slot (`rc<T>? r = box;`) is moved, not emptied: it has no empty state. */
+    if (type && !type->isOptional && type->isBox)
+    {
+        MarkMoved(r, name, range);
+        return;
+    }
+
+    /* Moving would empty the global behind every other function's back. */
+    if (IsGlobalRootKey(r, name))
+    {
+        DiagMoveFromGlobal(r, range, name);
+
         return;
     }
 
@@ -4484,6 +4521,43 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
 
 static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target);
 
+/* A `^T` given where an `rc<T>` or `rc<T>?` is wanted (or a `T?` where an `rc<T>?` is): the value moves
+   into a fresh rc cell, so `rc<P> p = P.Create();` works like `rc<P> p = P { ... };`. Called on a
+   RESOLVED value; returns it wrapped in a CastBoxToRc conversion, which every later check sees as an
+   rc<T> value. The source is moved by the site's own tracking (MovableBoxSourceNode sees through
+   casts), with the usual errors for globals, refs and use after move. Anything else is returned
+   unchanged, to be judged by IsAssignableType as before. */
+static Node* ApplyBoxToRcTarget(Resolver* r, Node* value, const TypeName* target, StrMap* scope)
+{
+    if (!value || !target || !target->isRc || !target->inner)
+    {
+        return value;
+    }
+
+    const TypeName* vt = InferType(r, value, scope);
+
+    if (!vt || vt->isRc || !vt->inner || !(vt->isBox || vt->isOptional) || (vt->isOptional && !target->isOptional))
+    {
+        return value;
+    }
+
+    const char* inner = TypeRegistryResolveAlias(&r->m_registry, vt->inner->name);
+
+    /* An opaque box holds a foreign pointer, not a value that could move into a cell. */
+    if (!SameResolvedType(r, vt->inner->name, target->inner->name) || !inner || TypeRegistryIsOpaque(&r->m_registry, inner))
+    {
+        return value;
+    }
+
+    CastExpr* cast = AST_NEW(r->m_arena, CastExpr);
+    cast->base.kind = NodeCast;
+    cast->base.range = value->range;
+    cast->type = *target;
+    cast->operand = value;
+    cast->textKind = CastBoxToRc;
+    return (Node*)cast;
+}
+
 /* An EMPTY braced value for a `T?` target is the canonical empty optional
    (zero-fill), not a T value missing its owning fields. */
 static bool IsEmptyBracedForOptional(const Node* n, const TypeName* target)
@@ -4649,6 +4723,12 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
             && !IsEmptyBracedForOptional(typedArg, elemType))
         {
             CheckStructInitFields(r, typedArg);
+        }
+
+        if (!bracedValue && elemType)
+        {
+            typedArg = ApplyBoxToRcTarget(r, typedArg, elemType, scope);
+            VecSet(&c->args, 1, typedArg);
         }
 
         const TypeName* valueType = InferType(r, typedArg, scope);
@@ -6479,8 +6559,13 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             bool bracedArg = (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
                              || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
 
-            // A braced arg takes the field's struct/array shape.
+            // A braced arg takes the field's struct/array shape; a `^T` for an `rc<T>` field moves into an rc.
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &fd->type);
+
+            if (!bracedArg && resolvedArg == arg)
+            {
+                resolvedArg = ApplyBoxToRcTarget(r, arg, &fd->type, scope);
+            }
 
             if (resolvedArg != arg)
             {
@@ -6787,6 +6872,13 @@ resolve_candidates:;
                     break;
                 }
             }
+            else if (!mutableRef && !functionDecl->isExtern && paramType->isRc && !paramType->isOptional && argType->isBox
+                     && !argType->isRc && !argType->isOptional && TypeNameBoxInner(paramType) && TypeNameBoxInner(argType)
+                     && SameResolvedType(r, TypeNameBoxInner(paramType)->name, TypeNameBoxInner(argType)->name))
+            {
+                /* `^T` moves into a fresh `rc<T>` (ApplyBoxToRcTarget once the overload is picked). */
+                score += 1;
+            }
             else if (!mutableRef && paramType->isBox && argType->isOptional && paramType->isRc == argType->isRc
                      && TypeNameBoxInner(paramType) && TypeNameBoxInner(argType)
                      && strcmp(TypeNameBoxInner(paramType)->name, TypeNameBoxInner(argType)->name) == 0)
@@ -6962,6 +7054,22 @@ resolve_candidates:;
                 && !IsEmptyBracedForOptional(resolvedArg, &param->type))
             {
                 CheckStructInitFields(r, resolvedArg);
+            }
+        }
+    }
+
+    /* A `^T` given for a by-value `rc<T>` / `rc<T>?` param moves into a fresh rc cell. */
+    if (!best->isExtern)
+    {
+        size_t named = NamedParamCount(best);
+
+        for (size_t j = 0; j < c->args.count && j < named; j++)
+        {
+            const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
+
+            if (param->mod == ModNone)
+            {
+                VecSet(&c->args, j, ApplyBoxToRcTarget(r, (Node*)VecGet(&c->args, j), &param->type, scope));
             }
         }
     }
@@ -8238,6 +8346,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         if (targetIsBox)
         {
             ResolveExpr(r, a->value, scope);
+
+            if (a->op == AssignSet)
+            {
+                a->value = ApplyBoxToRcTarget(r, a->value, tt, scope);
+            }
+
             const TypeName* vt = InferType(r, a->value, scope);
 
             // `=` rebinds the box; other ops mutate contents. Optionals always rebind.
@@ -8374,6 +8488,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (a->op == AssignSet)
             {
+                a->value = ApplyBoxToRcTarget(r, a->value, InferType(r, a->target, scope), scope);
                 const TypeName* vt = InferType(r, a->value, scope);
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
@@ -8409,6 +8524,11 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             ResolveExpr(r, a->target, scope);
             r->m_indexWriteTarget = false;
             ResolveExpr(r, a->value, scope);
+
+            if (a->op == AssignSet)
+            {
+                a->value = ApplyBoxToRcTarget(r, a->value, InferType(r, a->target, scope), scope);
+            }
 
             // Whether the stored value is provably non-empty (checked before the move below empties its source).
             const char* writtenKey = MovableBoxSourceKey(r, a->target);
@@ -8639,6 +8759,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     case NodeCast:
     {
         CastExpr* cast = (CastExpr*)n;
+
+        /* Inserted by ApplyBoxToRcTarget around an already resolved value; not a written cast. */
+        if (cast->textKind == CastBoxToRc)
+        {
+            return;
+        }
+
         ResolveExpr(r, cast->operand, scope);
 
         const TypeName* src = InferType(r, cast->operand, scope);
@@ -9074,6 +9201,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
                 else
                 {
+                    field->value = ApplyBoxToRcTarget(r, field->value, &fieldDecl->type, scope);
                     const TypeName* fieldValueType = InferType(r, field->value, scope);
 
                     if (fieldValueType && !IsAssignableType(r, &fieldDecl->type, fieldValueType)
@@ -9245,6 +9373,12 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
 
             ResolveExpr(r, elem, scope);
+
+            if (ai->elementType)
+            {
+                elem = ApplyBoxToRcTarget(r, elem, ai->elementType, scope);
+                VecSet(&ai->elements, i, elem);
+            }
 
             // Owning elements move out of their sources (owning-struct
             // elements included: `{ Rec{...}, arr2[0] }` takes arr2[0]).
@@ -9961,6 +10095,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (vd->init)
         {
             ResolveExpr(r, vd->init, scope);
+            vd->init = ApplyBoxToRcTarget(r, vd->init, &vd->type, scope);
             const TypeName* initType = InferType(r, vd->init, scope);
 
             bool ok = initType
@@ -10047,6 +10182,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             ResolveExpr(r, rs->value, scope);
+            rs->value = ApplyBoxToRcTarget(r, rs->value, r->m_currentReturnType, scope);
 
             const TypeName* typeName = InferType(r, rs->value, scope);
 

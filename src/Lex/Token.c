@@ -29,7 +29,6 @@ static const Spelling keywords[] = {
     { TokKwConst, "const" },
     { TokKwStatic, "static" },
     { TokKwExtern, "extern" },
-    { TokKwHandle, "handle" },
     { TokKwFieldoffset, "fieldoffset" },
     { TokKwReturn, "return" },
     { TokKwIf, "if" },
@@ -159,6 +158,8 @@ const char* TokName(TokKind kind)
         return "bool-literal";
     case TokStrLit:
         return "string-literal";
+    case TokCharLit:
+        return "char-literal";
     default:
         break;
     }

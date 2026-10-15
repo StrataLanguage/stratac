@@ -101,6 +101,13 @@ rc<Image> DepthOr(ref Target t, rc<Image> fallback)
 
 int IdOf(rc<Image> image) { return image.id; }
 
+// A `^T` moves into a fresh `rc<T>` wherever one is wanted.
+^Image MakeBoxedImage(int id)
+{
+    gLive++;
+    return Image { .id = id };
+}
+
 struct Point
 {
     int x;
@@ -202,6 +209,13 @@ int main()
         array_remove(list, 1u);          // 21 goes; 20 22 23 24 stay in order
         array_swap_remove(list, 0u);     // 20 goes; the last (24) takes its place
         printf("after remove: %d %d %d (%u)\n", list[0].id, list[1].id, list[2].id, list.length);
+    }
+    {
+        rc<Image> made = MakeBoxedImage(11);
+        rc<Image> other = made;
+        ^Image boxed = MakeBoxedImage(12);
+        rc<Image>[] list = { boxed };
+        printf("box to rc: %d %d %d\n", other.id, list[0].id, IdOf(MakeBoxedImage(13)));
     }
     rc<Image> fromGlobal = gShared;
     printf("live at end: %d (global %d)\n", gLive, fromGlobal.id);

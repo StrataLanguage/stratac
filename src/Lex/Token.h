@@ -14,6 +14,7 @@ typedef enum {
     TokFloatLit,
     TokBoolLit,
     TokStrLit,
+    TokCharLit,
 
     TokKwVoid,
     TokKwBool,
@@ -48,7 +49,6 @@ typedef enum {
     TokKwStruct,
     TokKwUnion,
     TokKwDelegate,
-    TokKwHandle,
     TokKwFieldoffset,
     TokKwEnum,
     TokKwImport,

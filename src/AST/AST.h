@@ -777,6 +777,7 @@ typedef enum {
     CastBufferToString,
     CastStringToCString,
     CastFixedToPtr, /* any fixed array as a `ptr` to its first element (C's array decay) */
+    CastBoxToRc,    /* a `^T` / `T?` moved into a fresh `rc<T>` / `rc<T>?` cell (inserted by sema) */
 } CastTextKind;
 
 typedef struct {

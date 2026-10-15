@@ -838,21 +838,35 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     return ParseTypeImpl(p, out, false);
 }
 
+/* `handle` is a keyword only where a declaration starts with it: `handle Name;` at top level. Anywhere
+   else it is an ordinary identifier (a field, local or parameter). */
+static bool AtHandleDecl(Parser* p)
+{
+    return p->m_cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->m_cur), "handle")
+           && LexerPeekToken(p->m_lex).kind == TokIdent;
+}
+
+/* A type named `handle` would turn every global of that type into a handle declaration. */
+static void CheckTypeNameNotHandle(Parser* p, Token nameTok)
+{
+    if (StrEqC(ParserIdentText(p, nameTok), "handle"))
+    {
+        DiagError(p->m_diag, nameTok.range, "'handle' cannot name a type; it starts handle declarations");
+    }
+}
+
 static HandleDecl* ParseHandleDecl(Parser* p)
 {
-    if (!ParserConsume(p, TokKwHandle))
+    if (!AtHandleDecl(p))
     {
-        DiagError(p->m_diag, p->m_cur.range, "expected 'handle' keyword");
+        DiagError(p->m_diag, p->m_cur.range, "expected 'handle' and a handle name");
         return NULL;
     }
 
-    if (p->m_cur.kind != TokIdent)
-    {
-        DiagError(p->m_diag, p->m_cur.range, "expected a handle name");
-        return NULL;
-    }
+    Advance(p);
 
     Token nameTok = p->m_cur;
+    CheckTypeNameNotHandle(p, nameTok);
     Advance(p);
 
     HandleDecl* node = AST_NEW(p->m_arena, HandleDecl);
@@ -915,6 +929,7 @@ static StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     }
 
     Token nameTok = p->m_cur;
+    CheckTypeNameNotHandle(p, nameTok);
     Advance(p);
 
     /* Type alias: `struct Foo = type;` */
@@ -1090,6 +1105,7 @@ static EnumDecl* ParseEnumDecl(Parser* p)
     }
 
     Token nameTok = p->m_cur;
+    CheckTypeNameNotHandle(p, nameTok);
     Advance(p);
 
     EnumDecl* node = AST_NEW(p->m_arena, EnumDecl);
@@ -1388,7 +1404,7 @@ static Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     }
 
     if (hasAttrs
-        && (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwHandle || p->m_cur.kind == TokKwEnum
+        && (p->m_cur.kind == TokKwStruct || AtHandleDecl(p) || p->m_cur.kind == TokKwEnum
             || p->m_cur.kind == TokKwImport || p->m_cur.kind == TokKwImpl))
     {
         DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
@@ -1959,7 +1975,7 @@ Module* ParserParseModule(Parser* p)
             continue;
         }
 
-        if (p->m_cur.kind == TokKwHandle)
+        if (AtHandleDecl(p))
         {
             HandleDecl* hd = ParseHandleDecl(p);
             if (hd)
@@ -2464,6 +2480,7 @@ static bool StartsExpression(TokKind k)
     case TokFloatLit:
     case TokBoolLit:
     case TokStrLit:
+    case TokCharLit:
     case TokKwTrue:
     case TokKwFalse:
     case TokLParen:
@@ -2677,7 +2694,8 @@ static Node* ParseUnary(Parser* p)
                     Token afterRparen = LexerPeekToken(p->m_lex);
                     bool startsOperand = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
                                          || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
-                                         || afterRparen.kind == TokStrLit || afterRparen.kind == TokLParen
+                                         || afterRparen.kind == TokStrLit || afterRparen.kind == TokCharLit
+                                         || afterRparen.kind == TokLParen
                                          || afterRparen.kind == TokBang || afterRparen.kind == TokTilde
                                          || afterRparen.kind == TokKwInt || afterRparen.kind == TokKwUint
                                          || afterRparen.kind == TokKwLong || afterRparen.kind == TokKwUlong
@@ -3073,6 +3091,44 @@ static Node* ParsePrimary(Parser* p)
         node->base.kind = NodeBoolLiteral;
         node->base.range = token.range;
         node->value = val;
+
+        return (Node*)node;
+    }
+
+    case TokCharLit:
+    {
+        Advance(p);
+
+        /* `'c'` is the byte constant `(byte)N` — the same nodes as the cast, so it goes wherever that
+           does (comparisons, arithmetic, fills, enum values, global initializers). The lexer has
+           already diagnosed a malformed literal; whatever byte it starts with stands in. */
+        Str sv = ParserIdentText(p, token);
+        unsigned char value = sv.len > 1 ? (unsigned char)sv.data[1] : 0;
+
+        if (value == '\\' && sv.len > 2)
+        {
+            switch (sv.data[2])
+            {
+            case 'n': value = '\n'; break;
+            case 't': value = '\t'; break;
+            case 'r': value = '\r'; break;
+            case '0': value = '\0'; break;
+            default: value = (unsigned char)sv.data[2]; break; /* \\ \' \" */
+            }
+        }
+
+        IntLiteral* lit = AST_NEW(p->m_arena, IntLiteral);
+        lit->base.kind = NodeIntLiteral;
+        lit->base.range = token.range;
+        lit->value = value;
+
+        CastExpr* node = AST_NEW(p->m_arena, CastExpr);
+        node->base.kind = NodeCast;
+        node->base.range = token.range;
+        node->type.name = "byte";
+        node->type.primitiveType = GetPrimitiveType("byte");
+        node->type.range = token.range;
+        node->operand = (Node*)lit;
 
         return (Node*)node;
     }

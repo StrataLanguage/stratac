@@ -872,6 +872,122 @@ STRATA_TEST(string_array_global_element_moved_to_local_is_an_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(owning_field_of_global_struct_moved_out_is_an_error)
+{
+    /* A global struct is not itself a box, but its owning fields still belong to no function: reading
+       one by value would empty it for every other function (string, array and optional alike). */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Dev { int n; };\n"
+        "struct Host { string dir; string[] args; Dev? gd; };\n"
+        "Host gHost;\n"
+        "void a() { string dir = gHost.dir; }\n"
+        "void b() { string[] args = gHost.args; }\n"
+        "void c() { Dev? gd = gHost.gd; }\n"
+        "string d() { return gHost.dir; }\n"
+        "int entry() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'gHost.dir' cannot be moved as it is not owned because it is global"));
+    STRATA_CHECK(Contains(d, "'gHost.args' cannot be moved as it is not owned because it is global"));
+    STRATA_CHECK(Contains(d, "'gHost.gd' cannot be moved as it is not owned because it is global"));
+    const char* first = strstr(d, "'gHost.dir' cannot be moved");
+    STRATA_CHECK(first && strstr(first + 1, "'gHost.dir' cannot be moved")); /* the local and the return */
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(owning_field_of_global_struct_borrowed_or_copied_is_fine)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct Dev { int n; };\n"
+        "struct Host { string dir; Dev? gd; rc<Dev>? shared; };\n"
+        "Host gHost;\n"
+        "int len(string s) { return (int)s.length; }\n"
+        "int entry() {\n"
+        "  const ref string dir = gHost.dir;\n"
+        "  string c = copy(gHost.dir);\n"
+        "  rc<Dev>? s = gHost.shared;\n"
+        "  gHost.dir = \"x\";\n"
+        "  drop(gHost.gd);\n"
+        "  return len(gHost.dir) + (int)c.length;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_moves_into_rc_wherever_one_is_wanted)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct P { int x; };\n"
+        "struct H { rc<P> p; rc<P>? q; };\n"
+        "^P make(int x) { return P { .x = x }; }\n"
+        "int id(rc<P> p) { return p.x; }\n"
+        "rc<P> wrap(int x) { return make(x); }\n"
+        "int entry() {\n"
+        "  rc<P> a = make(1);\n"
+        "  ^P b = make(2);\n"
+        "  rc<P>? c = b;\n"
+        "  P? d = make(3);\n"
+        "  rc<P>? e = d;\n"
+        "  a = make(4);\n"
+        "  ^H h = H { .p = make(5), .q = make(6) };\n"
+        "  h.p = make(7);\n"
+        "  rc<P>[] list = { make(8) };\n"
+        "  array_push(list, make(9));\n"
+        "  return id(make(10)) + wrap(11).x + a.x;\n"
+        "}\n",
+        &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
+STRATA_TEST(box_into_rc_is_a_move_with_the_usual_errors)
+{
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
+        "struct P { int x; };\n"
+        "struct Q { int y; };\n"
+        "^P gP = P { .x = 1 };\n"
+        "^P make(int x) { return P { .x = x }; }\n"
+        "int a() { ^P b = make(1); rc<P> c = b; return b.x; }\n"
+        "int b() { ^P b = make(1); rc<P>? c = b; return b.x; }\n"
+        "rc<P> c(ref ^P b) { return b; }\n"
+        "rc<P> d() { return gP; }\n"
+        "rc<P> e() { P? o = make(1); return o; }\n"
+        "rc<Q> f() { return make(1); }\n"
+        "int entry() { return 0; }\n",
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    const char* moved = strstr(d, "'b' used after move");
+    STRATA_CHECK(moved && strstr(moved + 1, "'b' used after move"));
+    STRATA_CHECK(Contains(d, "'b' cannot be moved as it is not owned because it is bound as a ref"));
+    STRATA_CHECK(Contains(d, "'gP' cannot be moved as it is not owned because it is global"));
+    STRATA_CHECK(Contains(d, "cannot return a value of type 'P?' from a function returning 'rc<P>'"));
+    STRATA_CHECK(Contains(d, "cannot return a value of type '^P' from a function returning 'rc<Q>'"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(box_owning_field_linked_list)
 {
     /* A recursive owning struct: the self-reference is an OPTIONAL field

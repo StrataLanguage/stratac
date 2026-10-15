@@ -444,7 +444,7 @@ if(STRATA_ENABLE_LLVM)
     set_target_properties(aot_ownership_test PROPERTIES LINKER_LANGUAGE C RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
     add_test(NAME aot_ownership_test COMMAND aot_ownership_test)
     set_tests_properties(aot_ownership_test PROPERTIES
-        PASS_REGULAR_EXPRESSION "drop 1\ndrop 2\ndrop 3\ndrop 4\ndrop 5\ndrop 6\ndrop 40\ndrop 41\nlive after Drop tests: 1\ndescribe 10\nlive with views: 4\ndescribe through an element: 10\nfree view 0 of image 1\nkept view 1 of image 1\ndescribe through a field: 10\nfree view 1 of image 1\nfree image 1\noptional rc: -1 -1 1\nfree image 7\nfree image 9\nsmart cast: 8 8 8\nbox smart cast: 5 0\nnoreturn narrowing: 1\nfree image 8\ndrop 21\ndrop 20\nafter remove: 24 22 23 \\(3\\)\ndrop 24\ndrop 22\ndrop 23\nlive at end: 1 \\(global 100\\)\nfree image 100")
+        PASS_REGULAR_EXPRESSION "drop 1\ndrop 2\ndrop 3\ndrop 4\ndrop 5\ndrop 6\ndrop 40\ndrop 41\nlive after Drop tests: 1\ndescribe 10\nlive with views: 4\ndescribe through an element: 10\nfree view 0 of image 1\nkept view 1 of image 1\ndescribe through a field: 10\nfree view 1 of image 1\nfree image 1\noptional rc: -1 -1 1\nfree image 7\nfree image 9\nsmart cast: 8 8 8\nbox smart cast: 5 0\nnoreturn narrowing: 1\nfree image 8\ndrop 21\ndrop 20\nafter remove: 24 22 23 \\(3\\)\ndrop 24\ndrop 22\ndrop 23\nfree image 13\nbox to rc: 11 12 13\nfree image 11\nfree image 12\nlive at end: 1 \\(global 100\\)\nfree image 100")
 
     # `{ value; count }`, array_reserve, byte buffers as text, ref locals, borrowed params.
     set(STRATA_ARRAYS_STRINGS_TEST_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/arrays_strings${CMAKE_C_OUTPUT_EXTENSION}")

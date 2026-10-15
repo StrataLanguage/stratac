@@ -19,6 +19,7 @@ written in it with almost no C glue. Each feature has a sample run by `ctest`:
 | Program entry | `int main()` in an AOT build becomes the C `main` |
 | Runtime hooks in Strata | `@export ptr strata_alloc(ulong size) { ... }` (also `strata_free`, `strata_panic`, `strata_oob`) |
 | Import paths | `stratac -I root`; identical `extern` declarations in several modules merge |
+| Opaque handles | `handle VkBuffer;` — `handle` is a keyword only there (top level, followed by a name), so fields, locals and params may be called `handle`; no type may be named `handle` |
 
 A fixed array passed where an extern takes a `ptr` decays to its first element, as in C:
 `snprintf(buffer, 32ul, "%d", n)` with `byte[32] buffer`. `(ptr)fixedArray` does the same
@@ -32,6 +33,22 @@ value goes away (scope end, overwrite, `drop()`, its owner dropping). Such value
 
 **`rc<T>`.** A box shared by reference count: copying retains, dropping releases, the last
 release drops the value. `rc<T>?` may be empty. Moving a field out of an rc is an error — copy it.
+
+A `^T` given where an `rc<T>` or `rc<T>?` is wanted (a `T?` where an `rc<T>?` is) moves into a
+fresh rc cell — initialization, assignment, field, argument, return, array literal, `array_push`:
+
+```c
+rc<DynParams> block = DynParams.Create(layout);   // Create returns ^DynParams
+```
+
+It is a move: the source is gone afterwards ("used after move"), and a global or `ref` source is
+an error. The value is copied once into the new cell (its `Drop` still runs exactly once); the
+other direction, `rc<T>` to `^T`, does not exist.
+
+**Globals are never moved out of.** No function owns a global, so reading an owning global by
+value — a `string`, array, box, optional, or any such field of a global struct — is an error
+(`string dir = gHost.dir;`); borrow it (`const ref string dir = gHost.dir;`, a read-only param),
+`copy()` it, or assign it a new value. Copying an `rc<T>` out of a global is fine (it retains).
 
 **Smart cast.** Once flow typing proves a `T?` / `rc<T>?` set, it is a `^T` / `rc<T>`:
 
@@ -110,6 +127,7 @@ right-hand side.
 | Removal | `array_remove(a, i)` keeps order; `array_swap_remove(a, i)` moves the last element into the hole; both drop the removed element |
 | Concatenation | `"effect '" + name + "': " + message` |
 | Text comparison | `string == string`, `string == cstring`, `cstring == cstring` all compare text |
+| Character literals | `'/'`, `'\\'`, `'\''`, `'\n'` — a `byte` constant (exactly `(byte)47`); one ASCII byte or one of the string escapes. Arithmetic between bytes stays `byte` and wraps: widen first (`int c = 'a';`) |
 | Byte buffers as text | `(cstring)buf` borrows a `byte[N]`; `(string)buf` copies up to the first NUL (or all N bytes) |
 | String as C string | `(cstring)s` borrows the string's NUL-terminated bytes |
 

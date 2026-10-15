@@ -7,6 +7,7 @@ static Token LexTokenImpl(Lexer* lex);
 static Token LexIdentOrKeyword(Lexer* lex);
 static Token LexNumber(Lexer* lex);
 static Token LexStringLiteral(Lexer* lex);
+static Token LexCharLiteral(Lexer* lex);
 
 static bool IsIdentStart(char c)
 {
@@ -181,6 +182,11 @@ static Token LexTokenImpl(Lexer* lex)
     if (c == '"')
     {
         return LexStringLiteral(lex);
+    }
+
+    if (c == '\'')
+    {
+        return LexCharLiteral(lex);
     }
 
     if (IsDigit(c))
@@ -551,4 +557,82 @@ static Token LexStringLiteral(Lexer* lex)
 
     DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "unterminated string literal");
     return Make(lex, TokStrLit, start);
+}
+
+/* `'c'`: exactly one byte — a printable ASCII character or one of the string escapes plus `\'`. The
+   parser decodes it; here only its shape is checked, so a bad literal is still one token. */
+static Token LexCharLiteral(Lexer* lex)
+{
+    size_t start = lex->m_pos;
+    ++lex->m_pos;
+
+    char c = lex->m_pos < lex->m_sourceLen ? lex->m_source[lex->m_pos] : '\n';
+
+    if (c == '\'')
+    {
+        ++lex->m_pos;
+        DiagError(lex->m_diag, LexRange(lex, start, 2), "empty character literal");
+        return Make(lex, TokCharLit, start);
+    }
+
+    if (c == '\n' || c == '\r')
+    {
+        DiagError(lex->m_diag, LexRange(lex, start, 1), "unterminated character literal");
+        return Make(lex, TokCharLit, start);
+    }
+
+    if (c == '\\')
+    {
+        char e = LexerPeek(lex, 1);
+
+        if (e != '\\' && e != '\'' && e != '"' && e != 'n' && e != 't' && e != 'r' && e != '0')
+        {
+            DiagErrorFmt(lex->m_diag, LexRange(lex, lex->m_pos, 2),
+                         "unknown escape '\\%c' in character literal (use \\\\ \\' \\\" \\n \\t \\r \\0, or a number)",
+                         e);
+        }
+
+        lex->m_pos += 2;
+    }
+    else if ((unsigned char)c >= 0x80)
+    {
+        DiagError(lex->m_diag, LexRange(lex, start, 1),
+                  "a character literal is one byte; a non-ASCII character takes several in UTF-8 - use a string");
+
+        while (lex->m_pos < lex->m_sourceLen && (unsigned char)lex->m_source[lex->m_pos] >= 0x80)
+        {
+            ++lex->m_pos;
+        }
+    }
+    else
+    {
+        ++lex->m_pos;
+    }
+
+    if (lex->m_pos < lex->m_sourceLen && lex->m_source[lex->m_pos] == '\'')
+    {
+        ++lex->m_pos;
+        return Make(lex, TokCharLit, start);
+    }
+
+    /* More than one character before a closing quote on this line: one error, one token. */
+    size_t close = lex->m_pos;
+
+    while (close < lex->m_sourceLen && lex->m_source[close] != '\'' && lex->m_source[close] != '\n')
+    {
+        ++close;
+    }
+
+    if (close < lex->m_sourceLen && lex->m_source[close] == '\'')
+    {
+        DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(close - start + 1)),
+                  "a character literal holds one byte; use a string for more");
+        lex->m_pos = close + 1;
+    }
+    else
+    {
+        DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "unterminated character literal");
+    }
+
+    return Make(lex, TokCharLit, start);
 }

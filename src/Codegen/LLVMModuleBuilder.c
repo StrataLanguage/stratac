@@ -6968,7 +6968,9 @@ static Value EmitCall(Builder* b, CallExpr* n)
                     /* An owned temporary lent to a `ref` param: dropped when the statement ends. */
                     args[k] = ParkTemp(b, v);
                 }
-                else if (shouldPassByPtr && argNode->kind == NodeCall)
+                else if (shouldPassByPtr
+                         && (argNode->kind == NodeCall
+                             || (argNode->kind == NodeCast && ((CastExpr*)argNode)->textKind == CastBoxToRc)))
                 {
                     /* A call result has no address: spill the value already
                        computed above. ArgAddress would evaluate the call a
@@ -7462,9 +7464,77 @@ static LLVMValueRef BuildBoundedStrLen(Builder* b, LLVMValueRef data, long capac
     return LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "bsl.len");
 }
 
-/* `(cstring)buf`, `(string)buf` and `(cstring)s` (see CastTextKind). */
+/* A `^T` (or `T?`) moved into a fresh `rc<T>` (or `rc<T>?`) cell (sema's CastBoxToRc): the value is
+   copied bitwise behind a count header, the box cell is freed without a drop (the value lives on in
+   the rc), and a variable it came from is left empty. An empty `T?` gives an empty `rc<T>?`. The box
+   is never parked as a temporary: it is consumed here. */
+static Value EmitBoxToRc(Builder* b, CastExpr* cast)
+{
+    TypeDesc target = Resolve(b, &cast->type);
+    TypeDesc innerTd = Resolve(b, target.boxInner);
+    Value box = EmitExpr(b, cast->operand);
+    Node* moved = (Node*)MovableBoxSourceNode(cast->operand);
+
+    if (moved)
+    {
+        LValue src = EmitLValueForNullStore(b, moved);
+
+        if (src.valid && !src.vectorLane)
+        {
+            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+        }
+    }
+
+    LLVMBasicBlockRef fromBB = LLVMGetInsertBlock(b->m_builder);
+    LLVMBasicBlockRef joinBB = NULL;
+
+    if (box.typeDesc.isOptional)
+    {
+        LLVMBasicBlockRef moveBB = NewBb(b, "torc.move");
+        joinBB = NewBb(b, "torc.done");
+        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, box.value, LLVMConstNull(b->m_ptrTy), "torc.null");
+        LLVMBuildCondBr(b->m_builder, isNull, joinBB, moveBB);
+        b->m_terminated = true;
+        PositionAtEnd(b, moveBB);
+    }
+
+    LLVMValueRef cell = AllocBoxCell(b, SizeOfConst(b, innerTd.type), true, "torc.cell");
+    LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, innerTd.type, box.value, "torc.value"), cell);
+
+    LLVMValueRef freeArgs[1] = {box.value};
+    StrataFreeFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+
+    /* A fresh owned value, like a call result: a site that only borrows it parks it for a drop. */
+    if (!joinBB)
+    {
+        Value result = ValueMake(cell, target);
+        NoteFreshOwned(b, result);
+        return result;
+    }
+
+    LLVMBasicBlockRef movedBB = LLVMGetInsertBlock(b->m_builder);
+    Br(b, joinBB);
+    PositionAtEnd(b, joinBB);
+
+    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, b->m_ptrTy, "torc");
+    LLVMValueRef values[2] = {LLVMConstNull(b->m_ptrTy), cell};
+    LLVMBasicBlockRef blocks[2] = {fromBB, movedBB};
+    LLVMAddIncoming(phi, values, blocks, 2);
+
+    Value result = ValueMake(phi, target);
+    NoteFreshOwned(b, result);
+    return result;
+}
+
+/* `(cstring)buf`, `(string)buf` and `(cstring)s` (see CastTextKind), and sema's `^T` -> `rc<T>`. */
 static Value EmitTextCast(Builder* b, CastExpr* cast)
 {
+    if (cast->textKind == CastBoxToRc)
+    {
+        return EmitBoxToRc(b, cast);
+    }
+
     TypeDesc target = Resolve(b, &cast->type);
 
     if (cast->textKind == CastStringToCString)
