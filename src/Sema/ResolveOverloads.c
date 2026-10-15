@@ -10796,6 +10796,39 @@ static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
     mod->functions.count = kept;
 }
 
+/* `Name(args)` constructs the struct `Name` when there is one, so a function of the same name could
+   never be called: its calls would silently build the struct from their arguments instead. */
+static void RejectFunctionsNamedLikeStructs(Module* mod, DiagnosticEngine* diag)
+{
+    StrMap structs;
+    StrMapInit(&structs);
+
+    for (size_t i = 0; i < mod->structs.count; i++)
+    {
+        StructDecl* sd = (StructDecl*)VecGet(&mod->structs, i);
+
+        if (!sd->isTypeAlias)
+        {
+            StrMapPut(&structs, sd->name, sd);
+        }
+    }
+
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        const FunctionDecl* f = (const FunctionDecl*)VecGet(&mod->functions, i);
+
+        if (!f->fromImpl && f->name && StrMapGet(&structs, f->name))
+        {
+            DiagErrorFmt(diag, f->base.range,
+                         "function '%s' has the name of a struct: 'Name(...)' constructs the struct, so the function "
+                         "could never be called; rename one of them",
+                         f->name);
+        }
+    }
+
+    StrMapFree(&structs);
+}
+
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     Resolver r = {0};
@@ -10856,6 +10889,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 
     TypeRegistryBuild(&r.m_registry, mod);
+    RejectFunctionsNamedLikeStructs(mod, diag);
 
     /* Validate impl targets and declare property accessor externs before the
        overload/mangling pass runs. */
