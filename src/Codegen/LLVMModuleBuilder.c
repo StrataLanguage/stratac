@@ -4429,6 +4429,16 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                       || (lvalue.typeDesc.structTypeName
                           && TypeRegistryIsOwningStruct(&b->m_registry, lvalue.typeDesc.structTypeName)));
 
+            if (elemOwningSlot && BoxIntoInlineOwning(b, lvalue.typeDesc, rhs.typeDesc))
+            {
+                /* `holder.field = box;` with an inline owning field: the value moves out of its box. */
+                EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+                Value moved = TakeBoxContents(b, rhs, n->value);
+                LLVMBuildStore(b->m_builder, moved.value, lvalue.ptr);
+
+                return ValueMake(moved.value, lvalue.typeDesc);
+            }
+
             if (elemOwningSlot)
             {
                 EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);

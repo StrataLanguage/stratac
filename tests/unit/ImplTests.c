@@ -153,6 +153,36 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     arena_free(&arena3);
 }
 
+STRATA_TEST(function_named_like_struct_is_rejected)
+{
+    /* `Stamp(a, b)` would construct the struct, so a function of the same name is an error. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Stamp { int a; int b; };\n"
+                    "void Stamp(int a, int b) { }\n"
+                    "void Use() { Stamp(1, 2); }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "has the name of a struct"));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+
+    /* A method may share a struct's name: it is only reached through its receiver. */
+    Arena arena2;
+    arena_init(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("struct Stamp { int a; };\n"
+                    "struct Clock { int t; };\n"
+                    "impl Clock { int Stamp(ref Clock self) { return self.t; } }\n",
+                    &diag2, &arena2);
+    STRATA_CHECK(!DiagHasErrors(&diag2));
+    DiagnosticEngineFree(&diag2);
+    arena_free(&arena2);
+}
+
 STRATA_TEST(impl_requires_handle_or_struct_target)
 {
     /* impl targets any registered type (handles, defined structs,

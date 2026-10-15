@@ -187,6 +187,46 @@ void OutParams()
     printf("out: %s %d\n", error, image? ? image.id : -1);
 }
 
+// -- a box moved into an inline field, wherever the holder lives -----------------------------
+
+struct Shelf
+{
+    string label;
+    Named item;
+};
+
+^Named NamedBox(string name, int value)
+{
+    ^Named named = Named { .name = name };
+    array_push(named.values, value);
+    return named;
+}
+
+void RestockShared(rc<Shelf> shelf)
+{
+    ^Named fresh = NamedBox("shared", 7);
+    shelf.item = fresh;                      // the box's value moves into the field
+}
+
+void RestockBorrowed(ref Shelf shelf)
+{
+    ^Named fresh = NamedBox("borrowed", 8);
+    shelf.item = fresh;
+}
+
+void BoxIntoField()
+{
+    rc<Shelf> shared = Shelf { .label = "a", .item = NamedBox("first", 1) };
+    RestockShared(shared);
+    ^Shelf local = Shelf { .label = "b", .item = NamedBox("second", 2) };
+    RestockBorrowed(local);
+    printf("box into field: %s %d | %s %d", shared.item.name, shared.item.values[0], local.item.name,
+           local.item.values[0]);
+    ^Named direct = NamedBox("direct", 9);
+    local.item = direct;
+    printf(" | %s %u\n", local.item.name, local.item.values.length);
+}
+
 int main()
 {
     OutParams();
@@ -196,5 +236,6 @@ int main()
     Repeats();
     printf("live after fresh: %d\n", gLive);
     Reserve();
+    BoxIntoField();
     return 0;
 }
