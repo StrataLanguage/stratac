@@ -884,7 +884,8 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
     return false;
 }
 
-/* Structs already looked into during one TypeNameHasDrop query: each is walked once, so types that
+/* Whether copying a `t` would copy a value with a Drop method (which would then be dropped twice).
+   Structs already looked into during one TypeNameHasDrop query: each is walked once, so types that
    reach themselves along several paths (a tree of rc<>s) cost linear, not exponential, time. */
 typedef struct
 {
@@ -897,6 +898,11 @@ static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, Dro
 {
     while (t && (t->isArray || t->isBox || t->isOptional))
     {
+        /* Copying an rc only retains it: what it holds is still dropped once, on the last release. */
+        if (t->isRc)
+        {
+            return false;
+        }
         t = t->isArray ? t->elem : t->inner;
     }
 

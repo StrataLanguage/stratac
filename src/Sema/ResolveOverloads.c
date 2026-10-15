@@ -8200,7 +8200,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         // A bare braced RHS takes its type from the target.
         if ((a->value->kind == NodeArrayInit || a->value->kind == NodeStructInit)
-            && (a->target->kind == NodeIdent || a->target->kind == NodeMember))
+            && (a->target->kind == NodeIdent || a->target->kind == NodeMember || a->target->kind == NodeIndex))
         {
             const TypeName* at = (a->target->kind == NodeIdent) ? tt : InferType(r, a->target, scope);
             const TypeName* atArr = at && at->isOptional ? at->inner : at;
