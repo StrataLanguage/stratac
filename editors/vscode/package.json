@@ -1,0 +1,79 @@
+{
+  "name": "strata",
+  "displayName": "Strata",
+  "description": "Syntax highlighting and diagnostics for the Strata scripting language",
+  "version": "0.1.0",
+  "publisher": "strata-lang",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": ["Programming Languages", "Linters"],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "strata",
+        "aliases": ["Strata", "strata"],
+        "extensions": [".strata"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "strata",
+        "scopeName": "source.strata",
+        "path": "./syntaxes/strata.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Strata",
+      "properties": {
+        "strata.server.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `strata-lsp` executable. Empty: use `strata-lsp` from `PATH`."
+        },
+        "strata.server.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the Strata language server for diagnostics."
+        },
+        "strata.importDirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "markdownDescription": "Extra directories searched for `import`s not found next to the importing file (like `stratac -I`)."
+        },
+        "strata.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace the communication between VS Code and strata-lsp."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "strata.restartServer",
+        "title": "Strata: Restart Language Server"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.82.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.4.0"
+  }
+}

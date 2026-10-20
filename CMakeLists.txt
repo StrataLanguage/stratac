@@ -23,8 +23,10 @@ endif()
 option(STRATA_SHARED "Build Strata as a shared library (DLL)" OFF)
 option(STRATA_ENABLE_LLVM "Build the LLVM IR, AOT, and LLVM JIT backends" ON)
 option(STRATA_STATIC_RUNTIME "Optimize a static, self-contained Strata runtime" OFF)
+option(STRATA_BUILD_LSP "Build the strata-lsp language server" ON)
 
-set(STRATA_COMMON_SOURCES
+# Lexing, parsing, imports and semantic analysis: everything short of codegen.
+set(STRATA_FRONTEND_SOURCES
     src/AST/AST.c
     src/Core/Util.c
     src/Core/SourceManager.c
@@ -36,8 +38,12 @@ set(STRATA_COMMON_SOURCES
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeMetadata.c
     src/Codegen/TypeUtil.c
-    src/Codegen/ASTDump.c
     src/Import/ModuleLoader.c
+)
+
+set(STRATA_COMMON_SOURCES
+    ${STRATA_FRONTEND_SOURCES}
+    src/Codegen/ASTDump.c
     src/Embed.c
 )
 
@@ -130,6 +136,20 @@ if(STRATA_STATIC_RUNTIME)
         target_compile_options(strata PRIVATE /Gy /Gw)
         target_link_options(stratac PRIVATE /OPT:REF /OPT:ICF)
     endif()
+endif()
+
+if(STRATA_BUILD_LSP)
+    # The language server only needs the front end, so it never links LLVM.
+    add_library(strata_frontend STATIC ${STRATA_FRONTEND_SOURCES})
+    target_include_directories(strata_frontend PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_definitions(strata_frontend PUBLIC STRATA_STATIC)
+
+    add_executable(strata-lsp src/strata-lsp/main.c src/strata-lsp/Json.c)
+    target_link_libraries(strata-lsp PRIVATE strata_frontend)
+    set_target_properties(strata-lsp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 endif()
 
 set(STRATA_SIZE_COPY
