@@ -215,6 +215,85 @@ STRATA_TEST(const_box_drop_is_error)
         "cannot drop 'p'; it is immutable"));
 }
 
+/* ---- Moving out of a const ref ---- */
+
+/* A const ref only borrows, and nothing can be put back through it: moving an owning part out (a
+   struct field, an element, a set optional) is an error, like moving out of a global. */
+static const char* HOLDER =
+    "struct Box { int v; };\n"
+    "struct H { ulong id; rc<Box> view; };\n"
+    "struct Holder { H tex; H? opt; H[] mips; string name; rc<Box> shared; };\n";
+
+static bool HolderRejected(const char* body, const char* needle)
+{
+    Arena arena; arena_init(&arena, 0);
+    bool hit = ConstRejected(arena_format(&arena, "%s%s", HOLDER, body), needle);
+    arena_free(&arena);
+
+    return hit;
+}
+
+static bool HolderAccepted(const char* body)
+{
+    Arena arena; arena_init(&arena, 0);
+    bool ok = ConstAccepted(arena_format(&arena, "%s%s", HOLDER, body));
+    arena_free(&arena);
+
+    return ok;
+}
+
+STRATA_TEST(move_out_of_const_ref_param_is_error)
+{
+    STRATA_CHECK(HolderRejected("H f(const ref Holder self) { return self.tex; }\n",
+                                "'self.tex' cannot be moved as it is not owned because 'self' is a const ref"));
+    STRATA_CHECK(HolderRejected("H f(const ref Holder self, uint i) { return self.mips[i]; }\n",
+                                "'self.mips[i]' cannot be moved"));
+    STRATA_CHECK(HolderRejected(
+        "H f(const ref Holder self) { if (self.opt?) { return self.opt; } return copy(self.tex); }\n",
+        "'self.opt' cannot be moved"));
+    STRATA_CHECK(HolderRejected("void f(const ref Holder self) { H? o = self.opt; }\n", "'self.opt' cannot be moved"));
+    STRATA_CHECK(HolderRejected("void f(const ref Holder self) { string s = self.name; }\n",
+                                "'self.name' cannot be moved"));
+    STRATA_CHECK(HolderRejected(
+        "string keep(string s) { return s; }\n"
+        "void f(const ref Holder self) { string k = keep(self.name); }\n",
+        "'self.name' cannot be moved"));
+}
+
+STRATA_TEST(move_out_of_const_ref_local_is_error)
+{
+    STRATA_CHECK(HolderRejected("H f(ref Holder x) { const ref Holder h = x; return h.tex; }\n",
+                                "'h.tex' cannot be moved as it is not owned because 'h' is a const ref"));
+    STRATA_CHECK(HolderRejected("void f(ref Holder x) { const ref Holder h = x; H? o = h.opt; }\n",
+                                "'h.opt' cannot be moved as it is not owned because 'h' is a const ref"));
+}
+
+STRATA_TEST(const_ref_read_copy_and_borrow_are_fine)
+{
+    STRATA_CHECK(HolderAccepted(
+        "int len(string s) { return (int)s.length; }\n"
+        "H tex(const ref Holder self) { return copy(self.tex); }\n"
+        "H opt(const ref Holder self) {\n"
+        "  if (self.opt?) { const ref H o = self.opt; return copy(o); }\n"
+        "  return copy(self.tex);\n"
+        "}\n"
+        "H mip(const ref Holder self, uint i) { return copy(self.mips[i]); }\n"
+        "rc<Box> shared(const ref Holder self) { return self.shared; }\n" /* copying an rc retains */
+        "rc<Box> view(const ref Holder self) { return self.tex.view; }\n"
+        "void take(H h) { drop(h); }\n"
+        "void give(const ref Holder self) { take(self.tex); }\n" /* a by-value struct argument is a copy */
+        "int f(const ref Holder self) {\n"
+        "  const ref H t = self.tex;\n"
+        "  return len(self.name) + (int)t.id + self.tex.view.v + (int)self.mips.length;\n"
+        "}\n"));
+}
+
+STRATA_TEST(move_out_of_ref_param_field_still_allowed)
+{
+    /* Only const refs are covered: take-and-refill through a mutable `ref` keeps working. */
+    STRATA_CHECK(HolderAccepted("H swap(ref Holder self, H next) { ^H old = self.tex; self.tex = next; return old; }\n"));
+}
+
 #if STRATA_TEST_HAS_LLVM
 
 
@@ -285,5 +364,54 @@ STRATA_TEST(const_ref_struct_dot_product_runs)
 
     strataJitDestroy(jit);
 }
+
+STRATA_TEST(const_ref_getter_copies_leave_the_holder_intact)
+{
+    /* Getters on a const ref copy, so calling them twice sees the same values and the holder keeps its own. */
+    const char* err = NULL;
+    StrataCompiler* c = strataCompilerCreate();
+    StrataJit* jit = strataJitCompileString(
+        c,
+        "struct Box { int v; };\n"
+        "struct H { ulong id; rc<Box> view; };\n"
+        "struct Holder { H tex; H? opt; H[] mips; };\n"
+        "H tex(const ref Holder self) { return copy(self.tex); }\n"
+        "H opt(const ref Holder self) {\n"
+        "  if (self.opt?) { const ref H o = self.opt; return copy(o); }\n"
+        "  return copy(self.tex);\n"
+        "}\n"
+        "H mip(const ref Holder self, uint i) { return copy(self.mips[i]); }\n"
+        "int entry() {\n"
+        "  rc<Box> b = Box { .v = 7 };\n"
+        "  ^Holder h = Holder { .tex = H { .id = 1ul, .view = b } };\n"
+        "  h.opt = H { .id = 2ul, .view = b };\n"
+        "  array_push(h.mips, H { .id = 3ul, .view = b });\n"
+        "  ^H a = tex(h); ^H a2 = tex(h);\n"
+        "  ^H o = opt(h); ^H o2 = opt(h);\n"
+        "  ^H m = mip(h, 0u); ^H m2 = mip(h, 0u);\n"
+        "  if (!h.opt?) { return 100; }\n"
+        "  return a.view.v + a2.view.v + o.view.v + o2.view.v + m.view.v + m2.view.v\n"
+        "         + h.tex.view.v + h.mips[0].view.v + (int)(o2.id + m2.id);\n" /* 8 * 7 + 5 */
+        "}\n",
+        "cref_getters", &err);
+    strataCompilerDestroy(c);
+
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        strataFree((char*)err);
+        return;
+    }
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 61);
+    }
+
+    strataJitDestroy(jit);
+}
+
 
 #endif

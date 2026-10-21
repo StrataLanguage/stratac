@@ -2059,6 +2059,44 @@ static void DiagMoveFromGlobal(Resolver* r, SourceRange range, const char* name)
                  name);
 }
 
+/* True when the root of move key `key` is a `const ref` param or local. It only borrows what it names
+   and nothing can be put back through it, so nothing may be moved out of any path into it. */
+static bool IsConstRefRootKey(Resolver* r, const char* key)
+{
+    const char* root = KeyRoot(r->m_arena, key);
+    const TypeName* t = r->m_curScope ? (const TypeName*)StrMapGet(r->m_curScope, root) : NULL;
+
+    if (!t || !t->isConst)
+    {
+        return false;
+    }
+
+    if (StrMapGet(&r->m_refLocals, root))
+    {
+        return true;
+    }
+
+    for (size_t i = 0; r->m_currentFunction && i < r->m_currentFunction->params.count; i++)
+    {
+        ParamDecl* p = (ParamDecl*)VecGet(&r->m_currentFunction->params, i);
+
+        if (&p->type == t && p->mod == ModRef)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void DiagMoveFromConstRef(Resolver* r, SourceRange range, const char* name)
+{
+    DiagErrorFmt(r->m_diag, range,
+                 "'%s' cannot be moved as it is not owned because '%s' is a const ref. (copy() it, or bind it "
+                 "with `const ref`)",
+                 name, KeyRoot(r->m_arena, name));
+}
+
 /* `drop(x)` consumes x whatever it is, an rc included. */
 static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 {
@@ -2069,6 +2107,13 @@ static void MarkMoved(Resolver* r, const char* name, SourceRange range)
     if (IsBoxGlobalName(r, root) || IsGlobalRootKey(r, name))
     {
         DiagMoveFromGlobal(r, range, name);
+
+        return;
+    }
+
+    if (IsConstRefRootKey(r, name))
+    {
+        DiagMoveFromConstRef(r, range, name);
 
         return;
     }
@@ -2128,6 +2173,13 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
     if (IsGlobalRootKey(r, name))
     {
         DiagMoveFromGlobal(r, range, name);
+
+        return;
+    }
+
+    if (IsConstRefRootKey(r, name))
+    {
+        DiagMoveFromConstRef(r, range, name);
 
         return;
     }

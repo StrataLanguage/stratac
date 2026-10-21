@@ -51,6 +51,12 @@ value — a `string`, array, box, optional, or any such field of a global struct
 (`string dir = gHost.dir;`); borrow it (`const ref string dir = gHost.dir;`, a read-only param),
 `copy()` it, or assign it a new value. Copying an `rc<T>` out of a global is fine (it retains).
 
+**Nor is a `const ref`.** A `const ref` param or local only borrows, and nothing can be put back
+through it, so moving any owning part out of one is the same error: a field, an element, or a set
+optional (`TextureHandle Texture(const ref Target self) { return self.texture; }`). `copy()` it or
+bind it with `const ref`. Copying an `rc<T>` out is fine. A mutable `ref` still allows
+take-and-refill.
+
 **Smart cast.** Once flow typing proves a `T?` / `rc<T>?` set, it is a `^T` / `rc<T>`:
 
 ```c
