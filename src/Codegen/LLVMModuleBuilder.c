@@ -1,6 +1,7 @@
 #include "LLVMModuleBuilder.h"
 #include "AST/AST.h"
 #include "Codegen/LLVMCApi.h"
+#include "Codegen/TypeDescFlags.h"
 #include "Core/Diagnostics.h"
 #include "LLVMSimd.h"
 #include "TypeMetadata.h"
@@ -469,7 +470,7 @@ static TypeDesc StringFatDesc(Builder* b)
 {
     TypeDesc td = {0};
     td.type = ArrayStructType(b);
-    td.isArray = true;
+    TypeDescSetArrayShape(&td, true);
     td.isString = true;
     return td;
 }
@@ -828,7 +829,7 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
             return sym->typeDesc.structTypeName;
         }
 
-        if ((sym->typeDesc.isBox || sym->typeDesc.isOptional) && sym->typeDesc.boxInner
+        if ((TypeDescIsBox(&sym->typeDesc) || TypeDescIsOptional(&sym->typeDesc)) && sym->typeDesc.boxInner
             && TypeRegistryIsOpaque(&b->m_registry, sym->typeDesc.boxInner->name))
         {
             return sym->typeDesc.boxInner->name; /* `T?` receiver */
@@ -883,7 +884,7 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
                 {
                     const StructType* st = TypeRegistryFind(&b->m_registry, bn);
                     FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)fidx);
-                    inner = field->type.isArray ? field->type.elem : NULL;
+                    inner = TypeNameHasArrayShape(&field->type) ? field->type.elem : NULL;
                 }
             }
         }
@@ -919,7 +920,7 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
 
         const StructType* st = TypeRegistryFind(&b->m_registry, baseName);
         FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
-        const TypeName* inner = (field->type.isBox || field->type.isOptional) ? field->type.inner : &field->type;
+        const TypeName* inner = (TypeNameIsBox(&field->type) || TypeNameIsOptional(&field->type)) ? field->type.inner : &field->type;
 
         return (inner && TypeRegistryIsOpaque(&b->m_registry, inner->name)) ? inner->name : NULL;
     }
@@ -1006,7 +1007,7 @@ static bool BuilderIsOwningValue(Builder* b, const TypeName* t)
    struct held by value. Fixed arrays / scalars are non-owning. */
 static bool TypeDescIsOwning(Builder* b, const TypeDesc* td)
 {
-    if (td->isString || td->isBox || td->isArray)
+    if (td->isString || TypeDescIsBox(td) || TypeDescHasArrayShape(td))
     {
         return true;
     }
@@ -1071,7 +1072,7 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
     }
 
     /* T[N]: fixed-size inline [N x T] (C ABI) — struct fields and stack-allocated locals. */
-    if (t->isArray && t->length >= 0)
+    if (TypeNameHasArrayShape(t) && t->length >= 0)
     {
         TypeDesc elemTd = Resolve(b, t->elem);
 
@@ -1084,30 +1085,30 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         return td;
     }
 
-    if (t->isArray)
+    if (TypeNameHasArrayShape(t))
     {
         // T[] is a fat {ptr, len, cap} struct.
         TypeDesc td = {0};
         td.type = ArrayStructType(b);
-        td.isArray = true;
+        TypeDescSetArrayShape(&td, true);
         td.arrayInner = t->elem;
 
         return td;
     }
 
     // T[]? shares the T[] representation; the flag is sema-only.
-    if (t->isOptional && t->inner && t->inner->isArray && t->inner->length < 0)
+    if (TypeNameIsOptional(t) && t->inner && TypeNameHasArrayShape(t->inner) && t->inner->length < 0)
     {
         TypeDesc td = Resolve(b, t->inner);
-        td.isOptional = true;
+        TypeDescSetOptional(&td, true);
         return td;
     }
 
     // Optional string: same fat as string, empty is {null, 0}.
-    if (t->isOptional && t->inner && TypeIsString(&b->m_registry, t->inner->name))
+    if (TypeNameIsOptional(t) && t->inner && TypeIsString(&b->m_registry, t->inner->name))
     {
         TypeDesc td = StringFatDesc(b);
-        td.isOptional = true;
+        TypeDescSetOptional(&td, true);
         return td;
     }
 
@@ -1131,17 +1132,17 @@ static TypeDesc Resolve(Builder* b, const TypeName* t)
         TypeDesc td = TypeDescMake(b->m_ptrTy, 0, NULL);
         const TypeName* boxInner = TypeNameBoxInner(t);
 
-        td.isBox = true;
-        td.isOptional = t->isOptional; // `T?` rebinds whole slots on assign.
-        td.isRc = t->isRc;
+        TypeDescSetBox(&td, true);
+        TypeDescSetOptional(&td, TypeNameIsOptional(t)); // `T?` rebinds whole slots on assign.
+        TypeDescSetRc(&td, TypeNameIsRc(t));
 
         /* `^T?` (a box over `T?`, or an optional over `^T`) is ONE heap cell
            holding a T, exactly like `T?`: the box-up sites construct a T into
            the cell, so the cell's inner type (its size, deref and drop) must
            be T, not another box pointer. */
-        while (boxInner && (boxInner->isBox || boxInner->isOptional) && boxInner->inner)
+        while (boxInner && (TypeNameIsBox(boxInner) || TypeNameIsOptional(boxInner)) && boxInner->inner)
         {
-            td.isOptional = td.isOptional || boxInner->isOptional;
+            TypeDescSetOptional(&td, TypeDescIsOptional(&td) || TypeNameIsOptional(boxInner));
             boxInner = boxInner->inner;
         }
 
@@ -1279,12 +1280,12 @@ static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
    defaults, directly or nested, or a fixed array of one), else NULL. */
 static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type)
 {
-    if (!type || !type->name || type->isBox || type->isOptional)
+    if (!type || !type->name || TypeNameIsBox(type) || TypeNameIsOptional(type))
     {
         return NULL;
     }
 
-    if (type->isArray)
+    if (TypeNameHasArrayShape(type))
     {
         if (type->length < 1)
         {
@@ -1329,7 +1330,7 @@ static Value ZeroInt(Builder* b)
 // Read through a box pointer without moving or freeing it.
 static Value DerefBoxValue(Builder* b, Value value)
 {
-    if (!value.typeDesc.isBox)
+    if (!TypeDescIsBox(&value.typeDesc))
     {
         return value;
     }
@@ -1362,7 +1363,7 @@ static Value DerefBoxValue(Builder* b, Value value)
 
 static Value Coerce(Builder* b, Value value, TypeDesc target)
 {
-    if (value.typeDesc.isBox && !target.isBox)
+    if (TypeDescIsBox(&value.typeDesc) && !TypeDescIsBox(&target))
     {
         value = DerefBoxValue(b, value);
     }
@@ -1471,7 +1472,7 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
 /* If value is ^T but the target context expects T, load the pointee. */
 static Value UnboxIfBox(Builder* b, Value value, TypeDesc target)
 {
-    if (value.typeDesc.isBox && !target.isBox && value.typeDesc.boxInner)
+    if (TypeDescIsBox(&value.typeDesc) && !TypeDescIsBox(&target) && value.typeDesc.boxInner)
     {
         return DerefBoxValue(b, value);
     }
@@ -1710,7 +1711,7 @@ static bool ChainContains(const Vec* chain, const char* name)
    out of, or re-bound, so each OOB event must install a fresh dummy. */
 static bool ElemNeedsScratchDummy(Builder* b, TypeDesc td)
 {
-    if (td.isArray || td.isBox)
+    if (TypeDescHasArrayShape(&td) || TypeDescIsBox(&td))
     {
         return true;
     }
@@ -1756,13 +1757,13 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
         return;
     }
 
-    if (td.isArray)
+    if (TypeDescHasArrayShape(&td))
     {
         LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), slot);
         return;
     }
 
-    if (td.isBox && !td.boxInner)
+    if (TypeDescIsBox(&td) && !td.boxInner)
     {
         StrataStrdupFn(b);
         LLVMValueRef args[1] = {EmptyStrConstant(b)};
@@ -1771,7 +1772,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
         return;
     }
 
-    if (td.isBox && td.boxInner)
+    if (TypeDescIsBox(&td) && td.boxInner)
     {
         TypeDesc innerTd = Resolve(b, td.boxInner);
         const StructType* st = TypeRegistryFind(&b->m_registry, td.boxInner->name);
@@ -1785,7 +1786,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
                 return;
             }
 
-            LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), td.isRc, "dbox");
+            LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), TypeDescIsRc(&td), "dbox");
 
             EmitDummyStoreStructFields(b, heap, st, structTy, chain, td.boxInner->name);
             LLVMBuildStore(b->m_builder, heap, slot);
@@ -1794,9 +1795,9 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
 
         /* Inner is a scalar, string, another box, or an array: allocate and
            initialize the single inner value. */
-        LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), td.isRc, "dbox");
+        LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), TypeDescIsRc(&td), "dbox");
 
-        if (innerTd.isArray || innerTd.isBox)
+        if (TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd))
         {
             EmitDummyStore(b, heap, innerTd, chain);
         }
@@ -2030,7 +2031,7 @@ static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
    caller's stack buffer. */
 static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool freeArrayBuffer)
 {
-    if (td.isArray)
+    if (TypeDescHasArrayShape(&td))
     {
         LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, slot), "adrop");
 
@@ -2038,7 +2039,7 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
         {
             LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, slot), "adlen"));
             TypeDesc elemTd = Resolve(b, td.arrayInner);
-            LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+            LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
             LLVMBasicBlockRef cond = NewBb(b, "adrop.cond");
             LLVMBasicBlockRef body = NewBb(b, "adrop.body");
@@ -2111,7 +2112,7 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
     /* rc: one reference fewer; only the last one goes on to drop the value and free the cell. */
     LLVMValueRef cell = ptr;
 
-    if (td.isRc)
+    if (TypeDescIsRc(&td))
     {
         LLVMValueRef countPtr = RcCountPtr(b, ptr);
         LLVMValueRef count = LLVMBuildLoad2(b->m_builder, I64Ty(b), countPtr, "rc.n");
@@ -2723,7 +2724,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
     /* An extern `string` (or alias-of-string) return crosses the host
        boundary as a NUL-terminated char*: the caller copies it into a fresh
        owned buffer. `string?` (the maybe-empty fat) stays banned in sema. */
-    info->externStringReturn = f->isExtern && !hasReturnParam && !f->returnType.isOptional
+    info->externStringReturn = f->isExtern && !hasReturnParam && !TypeNameIsOptional(&f->returnType)
                                && TypeIsString(&b->m_registry, f->returnType.name);
 
     size_t pcount = f->params.count;
@@ -2764,7 +2765,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         bool byPtr = p->mod != ModNone || BuilderIsOwningType(b, &p->type);
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
-        bool optionalString = p->type.isOptional && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
+        bool optionalString = TypeNameIsOptional(&p->type) && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
         bool externStringParam = f->isExtern && (TypeIsString(&b->m_registry, p->type.name) || optionalString);
 
         if (byPtr && externStringParam)
@@ -2773,7 +2774,7 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         }
 
         // Extern box/optional params cross as the pointer itself.
-        if (byPtr && f->isExtern && (p->type.isBox || p->type.isOptional))
+        if (byPtr && f->isExtern && (TypeNameIsBox(&p->type) || TypeNameIsOptional(&p->type)))
         {
             byPtr = false;
         }
@@ -2987,7 +2988,7 @@ static LLVMValueRef ToI1(Builder* b, Value v)
     /* An optional's truthiness is PRESENCE. A `T?` box is its (nullable)
        cell pointer; a `string?` / `T[]?` fat is empty as {null, 0}, so test
        the data pointer (a present value always has a non-null buffer). */
-    if (v.typeDesc.isOptional && v.typeDesc.isArray)
+    if (TypeDescIsOptional(&v.typeDesc) && TypeDescHasArrayShape(&v.typeDesc))
     {
         LLVMValueRef data = LLVMBuildExtractValue(b->m_builder, v.value, 0, "opt.data");
         return LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "opt.has");
@@ -3095,12 +3096,12 @@ static void NullOwningSlot(Builder* b, LValue src)
         return;
     }
 
-    if (src.typeDesc.isRc && !src.typeDesc.isArray)
+    if (TypeDescIsRc(&src.typeDesc) && !TypeDescHasArrayShape(&src.typeDesc))
     {
         /* Copied out of an rc slot: the copy holds a reference of its own; the slot keeps its own. */
         EmitRcRetain(b, LLVMBuildLoad2(b->m_builder, b->m_ptrTy, src.ptr, "rc.src"));
     }
-    else if (src.typeDesc.isArray)
+    else if (TypeDescHasArrayShape(&src.typeDesc))
     {
         /* Array / string slots rebind wholesale: zero the whole fat. */
         LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
@@ -3292,7 +3293,7 @@ static LValue EmitLValue(Builder* b, Node* n)
 
         /* array.length / array.cap — readable slots; typed uint (the fat's
            u32 fields). Assignment is rejected in sema. */
-        if (base.typeDesc.isArray && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
+        if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
         {
             none.valid = true;
             none.ptr = strcmp(m->member, "length") == 0 ? ArrayLenPtr(b, base.ptr) : ArrayCapPtr(b, base.ptr);
@@ -3310,7 +3311,7 @@ static LValue EmitLValue(Builder* b, Node* n)
         LLVMTypeRef structTy;
         const char* structName;
 
-        if (base.typeDesc.isBox)
+        if (TypeDescIsBox(&base.typeDesc))
         {
             if (!base.typeDesc.boxInner)
             {
@@ -3393,7 +3394,7 @@ static LValue EmitLValue(Builder* b, Node* n)
             return none;
         }
 
-        if (!base.valid || !base.typeDesc.isArray)
+        if (!base.valid || !TypeDescHasArrayShape(&base.typeDesc))
         {
             if (!base.valid || !base.typeDesc.isFixedArray)
             {
@@ -3402,7 +3403,7 @@ static LValue EmitLValue(Builder* b, Node* n)
 
             /* Fixed inline array: GEP into the [N x T]; length is the compile-time dimension. */
             TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
-            LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+            LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
             LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
 
@@ -3419,7 +3420,7 @@ static LValue EmitLValue(Builder* b, Node* n)
         /* string[i]: the element is a byte (arrayInner is unused for strings). */
         TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
                                                  : Resolve(b, base.typeDesc.arrayInner);
-        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+        LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
         LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, base.ptr), "len"));
@@ -3510,7 +3511,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     Value base = EmitExpr(b, n->base_node);
 
     /* array.data / string.data: the element buffer as a raw `ptr` (NULL when empty). */
-    if ((base.typeDesc.isArray || base.typeDesc.isString) && strcmp(n->member, "data") == 0)
+    if ((TypeDescHasArrayShape(&base.typeDesc) || base.typeDesc.isString) && strcmp(n->member, "data") == 0)
     {
         TypeDesc ptrTd = ResolveByName(b, STRATA_PTR_TYPE);
         LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, 0, "data");
@@ -3519,7 +3520,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     }
 
     /* array.length / array.cap on a non-lvalue array (e.g. MakeArr().length). */
-    if (base.typeDesc.isArray && (strcmp(n->member, "length") == 0 || strcmp(n->member, "cap") == 0))
+    if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(n->member, "length") == 0 || strcmp(n->member, "cap") == 0))
     {
         unsigned field = strcmp(n->member, "length") == 0 ? 1 : 2;
         LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
@@ -3543,7 +3544,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
                          TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
     }
 
-    if (base.typeDesc.isBox && base.typeDesc.boxInner)
+    if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner)
     {
         /* A box-typed value with no addressable lvalue (e.g. a call result
             used directly: `MakeThing().field`) - GEP+load through the
@@ -3574,7 +3575,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         }
     }
 
-    if (base.typeDesc.isBox && base.typeDesc.boxInner && IsNameSimdVector(base.typeDesc.boxInner->name))
+    if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner && IsNameSimdVector(base.typeDesc.boxInner->name))
     {
         /* Resolve a box (surrounding a vector) down to the vector type. */
         TypeDesc innerType = Resolve(b, base.typeDesc.boxInner);
@@ -3665,7 +3666,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
         return ValueMake(v, elemTd);
     }
 
-    if (!base.typeDesc.isArray)
+    if (!TypeDescHasArrayShape(&base.typeDesc))
     {
         if (b->m_diag)
         {
@@ -3680,7 +3681,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
     TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
                                              : Resolve(b, base.typeDesc.arrayInner);
-    LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+    LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
     LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
     LLVMValueRef lenVal = WidenLen(b, LLVMBuildExtractValue(b->m_builder, base.value, 1, "len"));
@@ -3706,7 +3707,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 static Value EmitCondOperand(Builder* b, Node* n)
 {
     Value v = EmitExpr(b, n);
-    return v.typeDesc.isOptional ? v : DerefBoxValue(b, v);
+    return TypeDescIsOptional(&v.typeDesc) ? v : DerefBoxValue(b, v);
 }
 
 static Value EmitUnary(Builder* b, UnaryExpr* n)
@@ -3795,7 +3796,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         hold the handle value, so they load. (An explicit identity intrinsic
         may come later; deep equality of cyclic T? graphs does not
         terminate.) */
-    if ((l.typeDesc.isBox && r.typeDesc.isBox) && (n->op == BinEqEq || n->op == BinNotEq))
+    if ((TypeDescIsBox(&l.typeDesc) && TypeDescIsBox(&r.typeDesc)) && (n->op == BinEqEq || n->op == BinNotEq))
     {
         LLVMBasicBlockRef falseBB = NewBb(b, "boxeq.f");
         LLVMBasicBlockRef trueBB = NewBb(b, "boxeq.t");
@@ -3804,7 +3805,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         if (l.typeDesc.boxInner)
         {
             TypeDesc innerTd = Resolve(b, l.typeDesc.boxInner);
-            eqEnd = EmitBoxCellEq(b, b->m_curFn, l.value, r.value, &innerTd, l.typeDesc.isOptional, falseBB);
+            eqEnd = EmitBoxCellEq(b, b->m_curFn, l.value, r.value, &innerTd, TypeDescIsOptional(&l.typeDesc), falseBB);
             LLVMBuildBr(b->m_builder, trueBB);
         }
         else
@@ -3922,9 +3923,9 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     {
         /* Handles (opaque) are pointers: they compare by address below, never member-wise. */
         bool lAgg = (l.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, l.typeDesc.structTypeName))
-                    || ((l.typeDesc.isArray || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
+                    || ((TypeDescHasArrayShape(&l.typeDesc) || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
         bool rAgg = (r.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, r.typeDesc.structTypeName))
-                    || ((r.typeDesc.isArray || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
+                    || ((TypeDescHasArrayShape(&r.typeDesc) || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
 
         if (lAgg && rAgg)
         {
@@ -4207,7 +4208,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                {ptr,len} struct, and null a moved source. A string literal RHS
                is a borrowed constant, so it is heap-copied first; a `cstring`
                RHS likewise (borrowed .rodata bytes — the slot owns a copy). */
-            if (lvalue.typeDesc.isArray && n->op == AssignSet)
+            if (TypeDescHasArrayShape(&lvalue.typeDesc) && n->op == AssignSet)
             {
                 if (rhs.typeDesc.isCString)
                 {
@@ -4229,7 +4230,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 {
                     LValue src = EmitLValueForNullStore(b, movedNode);
 
-                    if (src.valid && src.typeDesc.isArray)
+                    if (src.valid && TypeDescHasArrayShape(&src.typeDesc))
                     {
                         LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
                     }
@@ -4243,11 +4244,11 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                T value (`x = 5;`) or a string into ^string - mutates its
                contents instead. */
             bool rhsIsSameBoxKind
-                = rhs.typeDesc.isBox
+                = TypeDescIsBox(&rhs.typeDesc)
                   && ((lvalue.typeDesc.boxInner == NULL && rhs.typeDesc.boxInner == NULL)
                       || (lvalue.typeDesc.boxInner && rhs.typeDesc.boxInner
                           && strcmp(lvalue.typeDesc.boxInner->name, rhs.typeDesc.boxInner->name) == 0));
-            bool boxMove = lvalue.typeDesc.isBox && n->op == AssignSet && rhsIsSameBoxKind;
+            bool boxMove = TypeDescIsBox(&lvalue.typeDesc) && n->op == AssignSet && rhsIsSameBoxKind;
             bool boxMoveFromLiteral = boxMove && !lvalue.typeDesc.boxInner && n->value->kind == NodeStrLiteral;
 
             if (boxMove && !boxMoveFromLiteral)
@@ -4259,7 +4260,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 Node* movedSourceNodePre = (Node*)MovableBoxSourceNode(n->value);
                 LValue srcPre = movedSourceNodePre ? EmitLValueForNullStore(b, movedSourceNodePre) : (LValue){0};
 
-                if (srcPre.valid && srcPre.typeDesc.isRc)
+                if (srcPre.valid && TypeDescIsRc(&srcPre.typeDesc))
                 {
                     /* rc: both slots hold a reference now (retained before the old value is released). */
                     EmitRcRetain(b, rhs.value);
@@ -4306,7 +4307,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                rebind. The old value is dropped (EmitDropOne handles empty/
                NULL), then a fresh cell is allocated and the owned inner
                constructed into it. Same-kind box RHS took the boxMove path. */
-            bool optRebind = lvalue.typeDesc.isOptional && n->op == AssignSet;
+            bool optRebind = TypeDescIsOptional(&lvalue.typeDesc) && n->op == AssignSet;
 
             if (optRebind)
             {
@@ -4316,12 +4317,12 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 const TypeName* innerTn = lvalue.typeDesc.boxInner ? lvalue.typeDesc.boxInner : StringTypeName(b);
                 TypeDesc innerTd = Resolve(b, innerTn);
 
-                if (!innerTd.isArray && !innerTd.isBox)
+                if (!TypeDescHasArrayShape(&innerTd) && !TypeDescIsBox(&innerTd))
                 {
                     /* Scalar / struct / handle inner: allocate a cell and
                        construct the owned value into it. */
                     LLVMValueRef cell
-                        = AllocBoxCell(b, SizeOfConst(b, innerTd.type), lvalue.typeDesc.isRc, "optcell");
+                        = AllocBoxCell(b, SizeOfConst(b, innerTd.type), TypeDescIsRc(&lvalue.typeDesc), "optcell");
                     LLVMValueRef inner = Coerce(b, rhs, innerTd).value;
                     LLVMBuildStore(b->m_builder, inner, cell);
                     LLVMBuildStore(b->m_builder, cell, lvalue.ptr);
@@ -4346,7 +4347,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 return ValueMake(strCell, lvalue.typeDesc);
             }
 
-            if (lvalue.typeDesc.isBox && !boxMove)
+            if (TypeDescIsBox(&lvalue.typeDesc) && !boxMove)
             {
                 /* Assigning a plain T (or compound-assign) into a ^T mutates
                    its contents in place, not a move - so `x = 5;` and `val -=
@@ -4510,7 +4511,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
         if (baseLv.valid
             && (baseLv.typeDesc.isSimdVector
-                || (baseLv.typeDesc.isBox && baseLv.typeDesc.boxInner
+                || (TypeDescIsBox(&baseLv.typeDesc) && baseLv.typeDesc.boxInner
                     && IsNameSimdVector(baseLv.typeDesc.boxInner->name))))
         {
             if (b->m_diag)
@@ -4661,7 +4662,7 @@ static void EmitArrayDropRange(Builder* b, LLVMValueRef data, LLVMValueRef start
    a movable source is emptied, a literal or borrowed value is copied or boxed as the element needs. */
 static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* valNode, TypeDesc elemTd)
 {
-    bool sameOwningType = v.typeDesc.isBox
+    bool sameOwningType = TypeDescIsBox(&v.typeDesc)
                           && ((elemTd.boxInner == NULL && v.typeDesc.boxInner == NULL)
                               || (elemTd.boxInner && v.typeDesc.boxInner
                                   && strcmp(elemTd.boxInner->name, v.typeDesc.boxInner->name) == 0))
@@ -4669,20 +4670,20 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
 
     bool stringMove = elemTd.isString && v.typeDesc.isString && valNode->kind != NodeStrLiteral;
     /* An array pushed into an array of arrays moves: the source is emptied, or both would free it. */
-    bool arrayMove = elemTd.isArray && !elemTd.isString && v.typeDesc.isArray && !v.typeDesc.isString;
+    bool arrayMove = TypeDescHasArrayShape(&elemTd) && !elemTd.isString && TypeDescHasArrayShape(&v.typeDesc) && !v.typeDesc.isString;
 
     if (sameOwningType || stringMove || arrayMove)
     {
         LLVMBuildStore(b->m_builder, v.value, elAddr);
         NullMovedSource(b, valNode);
     }
-    else if (elemTd.isBox && elemTd.boxInner)
+    else if (TypeDescIsBox(&elemTd) && elemTd.boxInner)
     {
         /* ^T element from a non-^T value (bare T, string literal
            into ^string): allocate a T slot, construct the owned
            inner value, store it. */
         TypeDesc innerTd = Resolve(b, elemTd.boxInner);
-        LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), elemTd.isRc, "abox");
+        LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), TypeDescIsRc(&elemTd), "abox");
         LLVMValueRef inner = EmitOwnedValue(b, v, valNode, elemTd.boxInner);
         LLVMBuildStore(b->m_builder, inner, heap);
         LLVMBuildStore(b->m_builder, heap, elAddr);
@@ -4723,7 +4724,7 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     LValue arr = EmitLValue(b, arg0);
 
     TypeDesc elemTd = Resolve(b, arr.typeDesc.arrayInner);
-    LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+    LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
     TypeDesc uintTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
 
     LLVMValueRef dataPtrPtr = ArrayDataPtr(b, arr.ptr);
@@ -5269,14 +5270,14 @@ static LLVMValueRef StrataCStrLenFn(Builder* b)
    and JIT behave identically. */
 static bool TypeDescIsByteEq(Builder* b, const TypeDesc* td)
 {
-    if (td->isString || td->isCString || td->isArray || td->isFloat)
+    if (td->isString || td->isCString || TypeDescHasArrayShape(td) || td->isFloat)
     {
         return false;
     }
 
     /* Boxes auto-deref in equality (structural compare of the cell), so
        their pointer bits never decide. */
-    if (td->isBox)
+    if (TypeDescIsBox(td))
     {
         return false;
     }
@@ -5331,7 +5332,7 @@ static const char* EqHelperKey(Builder* b, const TypeDesc* td)
         return arena_format(b->m_arena, "%s[%ld]", EqHelperKey(b, &elemTd), td->fixedLength);
     }
 
-    if (td->isArray)
+    if (TypeDescHasArrayShape(td))
     {
         TypeDesc elemTd = Resolve(b, td->arrayInner);
         return arena_format(b->m_arena, "%s[]", EqHelperKey(b, &elemTd));
@@ -5511,7 +5512,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.cs");
         eq = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "eq.cs.b");
     }
-    else if (td->structTypeName || td->isArray || td->isFixedArray)
+    else if (td->structTypeName || TypeDescHasArrayShape(td) || td->isFixedArray)
     {
         LLVMValueRef helper = EnsureEqHelper(b, td, externBoxCtx);
         LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
@@ -5519,7 +5520,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         LLVMValueRef args[2] = {aPtr, bPtr};
         eq = LLVMBuildCall2(b->m_builder, fnTy, helper, args, 2, "eq.agg");
     }
-    else if (td->isBox)
+    else if (TypeDescIsBox(td))
     {
         LLVMValueRef aCell = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, aPtr, "eq.ca");
         LLVMValueRef bCell = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, bPtr, "eq.cb");
@@ -5533,7 +5534,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         else
         {
             TypeDesc innerTd = Resolve(b, td->boxInner);
-            return EmitBoxCellEq(b, fn, aCell, bCell, &innerTd, td->isOptional, failBB);
+            return EmitBoxCellEq(b, fn, aCell, bCell, &innerTd, TypeDescIsOptional(td), failBB);
         }
     }
     else
@@ -5593,7 +5594,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
     {
         /* Fixed array: unrolled element-wise compare. */
         TypeDesc elemTd = Resolve(b, td->arrayInner);
-        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+        LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
         for (long k = 0; k < td->fixedLength; k++)
         {
@@ -5605,7 +5606,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
 
         LLVMBuildBr(b->m_builder, done);
     }
-    else if (td->isArray)
+    else if (TypeDescHasArrayShape(td))
     {
         /* Dynamic array: lengths must match (both-empty is equal), then a
            byte compare for byte-comparable elements or an element-wise
@@ -5634,7 +5635,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
         }
         else
         {
-            LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+            LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
             LLVMBasicBlockRef from = LLVMGetInsertBlock(b->m_builder);
             LLVMBasicBlockRef cond = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.elem.cond");
@@ -5857,7 +5858,7 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         return EmitStructValueCopy(b, src, td);
     }
 
-    if (td.isBox && !td.boxInner)
+    if (TypeDescIsBox(&td) && !td.boxInner)
     {
         StrataStrdupFn(b);
         LLVMValueRef args[1] = {src.value};
@@ -5865,17 +5866,17 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         return ValueMake(copy, td);
     }
 
-    if (td.isRc)
+    if (TypeDescIsRc(&td))
     {
         EmitRcRetain(b, src.value);
         return ValueMake(src.value, td);
     }
 
-    if (td.isBox && td.boxInner)
+    if (TypeDescIsBox(&td) && td.boxInner)
     {
         /* An optional source may be EMPTY (null): copy null as null instead
            of dereferencing it. */
-        if (td.isOptional)
+        if (TypeDescIsOptional(&td))
         {
             LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, src.value, LLVMConstNull(b->m_ptrTy), "ocn");
             LLVMValueRef resSlot = EntryAlloca(b, b->m_ptrTy, "optcp");
@@ -5901,16 +5902,16 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         return ValueMake(EmitBoxCellCopy(b, src, td), td);
     }
 
-    if (td.isArray)
+    if (TypeDescHasArrayShape(&td))
     {
         TypeDesc elemTd = Resolve(b, td.arrayInner);
-        LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+        LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
         LLVMValueRef oldLen = LLVMBuildExtractValue(b->m_builder, src.value, 1, "cln");
         LLVMValueRef oldData = LLVMBuildExtractValue(b->m_builder, src.value, 0, "cdt");
 
         /* Copying an EMPTY optional array yields the canonical empty
          {null, 0} - never a {malloc(0), 0} that would test non-empty. */
-        if (td.isOptional)
+        if (TypeDescIsOptional(&td))
         {
             LLVMValueRef isEmpty = LLVMBuildICmp(b->m_builder, LLVMIntEQ, oldLen, LLVMConstInt(I32Ty(b), 0, 0), "oae");
             LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "oacp");
@@ -6072,7 +6073,7 @@ static Value EmitDropBuiltin(Builder* b, CallExpr* n)
     }
 
     Value v = EmitExpr(b, arg0);
-    LLVMValueRef slot = EntryAlloca(b, v.typeDesc.isArray ? ArrayStructType(b) : b->m_ptrTy, "drop.tmp");
+    LLVMValueRef slot = EntryAlloca(b, TypeDescHasArrayShape(&v.typeDesc) ? ArrayStructType(b) : b->m_ptrTy, "drop.tmp");
     LLVMBuildStore(b->m_builder, v.value, slot);
     EmitDropOne(b, slot, v.typeDesc);
 
@@ -6336,7 +6337,7 @@ static Value EmitAddressofBuiltin(Builder* b, CallExpr* n)
 
     LLVMValueRef addr = lv.ptr;
 
-    if (lv.typeDesc.isBox)
+    if (TypeDescIsBox(&lv.typeDesc))
     {
         addr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "cell");
     }
@@ -6348,7 +6349,7 @@ static Value EmitAddressofBuiltin(Builder* b, CallExpr* n)
 static Value EmitSizeofBuiltin(Builder* b, CallExpr* n)
 {
     TypeDesc td = Resolve(b, n->typeArg);
-    LLVMTypeRef ty = td.isArray ? ArrayStructType(b) : td.type;
+    LLVMTypeRef ty = TypeDescHasArrayShape(&td) ? ArrayStructType(b) : td.type;
     TypeDesc ulongTd = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
 
     if (strcmp(n->callee, "alignof") == 0)
@@ -6457,8 +6458,8 @@ typedef struct
    element. */
 static bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd)
 {
-    return !targetTd.isBox && !targetTd.isArray && targetTd.structTypeName
-           && TypeRegistryIsOwningStruct(&b->m_registry, targetTd.structTypeName) && valueTd.isBox && !valueTd.isRc
+    return !TypeDescIsBox(&targetTd) && !TypeDescHasArrayShape(&targetTd) && targetTd.structTypeName
+           && TypeRegistryIsOwningStruct(&b->m_registry, targetTd.structTypeName) && TypeDescIsBox(&valueTd) && !TypeDescIsRc(&valueTd)
            && valueTd.boxInner && strcmp(valueTd.boxInner->name, targetTd.structTypeName) == 0;
 }
 
@@ -6493,8 +6494,8 @@ static bool FieldInitMovesSource(Builder* b, TypeDesc fieldTd, TypeDesc valueTd,
         return false;
     }
 
-    return ((fieldTd.isBox || fieldTd.isString) && (valueTd.isBox || valueTd.isString))
-           || (fieldTd.isArray && valueTd.isArray)
+    return ((TypeDescIsBox(&fieldTd) || fieldTd.isString) && (TypeDescIsBox(&valueTd) || valueTd.isString))
+           || (TypeDescHasArrayShape(&fieldTd) && TypeDescHasArrayShape(&valueTd))
            || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, fieldTd.structTypeName)
                && valueTd.structTypeName && strcmp(fieldTd.structTypeName, valueTd.structTypeName) == 0);
 }
@@ -6552,15 +6553,15 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawArg.value, 1, "fslit.l");
                 argValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
             }
-            else if (fieldTd.isBox && fieldTd.boxInner
-                     && !(rawArg.typeDesc.isBox && rawArg.typeDesc.boxInner
+            else if (TypeDescIsBox(&fieldTd) && fieldTd.boxInner
+                     && !(TypeDescIsBox(&rawArg.typeDesc) && rawArg.typeDesc.boxInner
                           && strcmp(rawArg.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
             {
                 /* ^T / T? field from a non-box value (bare T, braced struct
                    literal): allocate a T slot and construct the value into it.
                    A braced `{}` against a `T?` field constructs a NON-EMPTY
                    boxed T (same rule as the named-literal form). */
-                LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawArg, argNode, "argbox", fieldTd.isRc);
+                LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawArg, argNode, "argbox", TypeDescIsRc(&fieldTd));
                 argValue = ValueMake(heap, fieldTd);
             }
             else
@@ -6684,12 +6685,12 @@ static Value EmitCall(Builder* b, CallExpr* n)
                     sym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)argNode)->name);
                 }
 
-                argIsBox = sym && sym->typeDesc.isBox;
+                argIsBox = sym && TypeDescIsBox(&sym->typeDesc);
             }
             else if (argNode->kind == NodeCall)
             {
                 FuncInfo* fi = (FuncInfo*)StrMapGet(&b->m_funcs, ((CallExpr*)argNode)->callee);
-                argIsBox = fi && fi->returnType.isBox;
+                argIsBox = fi && TypeDescIsBox(&fi->returnType);
             }
         }
 
@@ -6900,14 +6901,14 @@ static Value EmitCall(Builder* b, CallExpr* n)
                argument is passed as a pointer to its first element (the box
                IS that pointer). Dynamic arrays hand over their data buffer;
                fixed arrays GEP to element 0. */
-            if (extTy->isBox && (av.typeDesc.isArray || av.typeDesc.isFixedArray))
+            if (TypeNameIsBox(extTy) && (TypeDescHasArrayShape(&av.typeDesc) || av.typeDesc.isFixedArray))
             {
                 const TypeName* boxInner = TypeNameBoxInner(extTy);
                 const TypeName* argElem = av.typeDesc.arrayInner;
 
                 if (boxInner && argElem && strcmp(boxInner->name, argElem->name) == 0)
                 {
-                    if (av.typeDesc.isArray)
+                    if (TypeDescHasArrayShape(&av.typeDesc))
                     {
                         args[k] = LLVMBuildExtractValue(b->m_builder, av.value, 0, "arrptr");
                     }
@@ -6922,7 +6923,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 }
             }
 
-            bool paramIsRealBox = extTy->isBox || extTy->isOptional;
+            bool paramIsRealBox = TypeNameIsBox(extTy) || TypeNameIsOptional(extTy);
 
             if (av.typeDesc.isString)
             {
@@ -6941,7 +6942,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                     args[k] = BuildExternStringPtr(b, av);
                 }
             }
-            else if (av.typeDesc.isBox)
+            else if (TypeDescIsBox(&av.typeDesc))
             {
                 args[k] = paramIsRealBox ? av.value : DerefBoxValue(b, av).value;
             }
@@ -7012,7 +7013,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 {
                     const ParamDecl* pd = fd && k < fd->params.count ? (const ParamDecl*)VecGet(&fd->params, k) : NULL;
 
-                    if (pd && pd->mod == ModNone && pd->type.isRc && !fd->isExtern)
+                    if (pd && pd->mod == ModNone && TypeNameIsRc(&pd->type) && !fd->isExtern)
                     {
                         /* By value, an rc argument is a reference of the callee's own: retained into a
                            slot the callee consumes, the caller's binding untouched. */
@@ -7033,7 +7034,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                             slot = EmitLValue(b, argNode);
                         }
 
-                        if (slot.valid && !slot.vectorLane && slot.typeDesc.isBox)
+                        if (slot.valid && !slot.vectorLane && TypeDescIsBox(&slot.typeDesc))
                         {
                             args[k] = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot.ptr, "boxarg");
                         }
@@ -7278,7 +7279,7 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
     /* The LLVM type of one element slot in the backing buffer. Arrays and
         boxes/strings both reduce to a pointer; structs/scalars use their
         own type. */
-    LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+    LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
     /* A `ref T... rest` with non-owning elements holds POINTERS to the source
         arguments (aliased), so element writes propagate to the caller. */
@@ -7326,7 +7327,7 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                 /* Store a POINTER to the source argument. A box arg already
                    is the value's address; lvalues yield their address; a
                    non-lvalue is materialized into a stack temp. */
-                if (v.typeDesc.isBox)
+                if (TypeDescIsBox(&v.typeDesc))
                 {
                     LLVMBuildStore(b->m_builder, v.value, elemAddr);
                 }
@@ -7369,7 +7370,7 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                     NullMovedSource(b, eNode);
                 }
             }
-            else if (elemTd.isArray)
+            else if (TypeDescHasArrayShape(&elemTd))
             {
                 /* Array element: `v` is already the evaluated child (a nested
                    literal was built by the EmitExpr above - building it again
@@ -7382,10 +7383,10 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                     NullMovedSource(b, eNode);
                 }
             }
-            else if (elemTd.isBox && elemTd.boxInner)
+            else if (TypeDescIsBox(&elemTd) && elemTd.boxInner)
             {
                 /* ^T element. */
-                bool sameOwningType = v.typeDesc.isBox && v.typeDesc.boxInner
+                bool sameOwningType = TypeDescIsBox(&v.typeDesc) && v.typeDesc.boxInner
                                       && strcmp(v.typeDesc.boxInner->name, elemTd.boxInner->name) == 0;
 
                 if (borrow)
@@ -7402,11 +7403,11 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
                 else
                 {
                     /* ^T from a non-^T value: box it up. */
-                    LLVMValueRef heap = EmitBoxCell(b, elemTd.boxInner, v, eNode, "abox", elemTd.isRc);
+                    LLVMValueRef heap = EmitBoxCell(b, elemTd.boxInner, v, eNode, "abox", TypeDescIsRc(&elemTd));
                     LLVMBuildStore(b->m_builder, heap, elemAddr);
                 }
             }
-            else if (elemTd.isBox)
+            else if (TypeDescIsBox(&elemTd))
             {
                 /* string element. */
                 if (borrow)
@@ -7452,7 +7453,7 @@ static Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const V
 
     TypeDesc td = {0};
     td.type = ArrayStructType(b);
-    td.isArray = true;
+    TypeDescSetArrayShape(&td, true);
     td.arrayInner = elementType;
     td.aliasedArray = aliased;
 
@@ -7516,7 +7517,7 @@ static Value EmitBoxToRc(Builder* b, CastExpr* cast)
     LLVMBasicBlockRef fromBB = LLVMGetInsertBlock(b->m_builder);
     LLVMBasicBlockRef joinBB = NULL;
 
-    if (box.typeDesc.isOptional)
+    if (TypeDescIsOptional(&box.typeDesc))
     {
         LLVMBasicBlockRef moveBB = NewBb(b, "torc.move");
         joinBB = NewBb(b, "torc.done");
@@ -7612,7 +7613,7 @@ static bool IsEmptyBracedNode(const Node* n)
 static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
 {
     TypeDesc elemTd = Resolve(b, n->elementType);
-    LLVMTypeRef elemTy = elemTd.isArray ? ArrayStructType(b) : elemTd.type;
+    LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
     bool owning = BuilderIsOwningValue(b, n->elementType);
     Node* valueNode = (Node*)VecGet(&n->elements, 0);
     bool fresh = IsEmptyBracedNode(valueNode);
@@ -7667,7 +7668,7 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
     {
         /* The default value: empty strings, arrays and optionals, zeroed scalars (sema checked that is
            valid), with field defaults applied, so a Drop type's elements are alive and get dropped. */
-        bool plainStruct = elemTd.structTypeName && !elemTd.isBox && !elemTd.isArray;
+        bool plainStruct = elemTd.structTypeName && !TypeDescIsBox(&elemTd) && !TypeDescHasArrayShape(&elemTd);
         LLVMValueRef zero = plainStruct ? DefaultValueOf(b, n->elementType, elemTd) : LLVMConstNull(elemTy);
         LLVMBuildStore(b->m_builder, zero, slot);
     }
@@ -7701,7 +7702,7 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
 
     TypeDesc td = {0};
     td.type = ArrayStructType(b);
-    td.isArray = true;
+    TypeDescSetArrayShape(&td, true);
     td.arrayInner = n->elementType;
 
     return ValueMake(arr, td);
@@ -7738,7 +7739,7 @@ static Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 
         TypeDesc td = {0};
         td.type = ArrayStructType(b);
-        td.isArray = true;
+        TypeDescSetArrayShape(&td, true);
         return ValueMake(arr, td);
     }
 
@@ -7751,7 +7752,7 @@ static long FixedDimProduct(const TypeName* t)
 {
     long count = 1;
 
-    while (t && t->isArray && t->length >= 0)
+    while (t && TypeNameHasArrayShape(t) && t->length >= 0)
     {
         count *= t->length;
         t = t->elem;
@@ -7765,12 +7766,12 @@ static long FixedDimProduct(const TypeName* t)
    dimensions with extract/insert pairs. */
 static LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, long k)
 {
-    if (!(arrType->isArray && arrType->length >= 0))
+    if (!(TypeNameHasArrayShape(arrType) && arrType->length >= 0))
     {
         return agg;
     }
 
-    if (arrType->elem && arrType->elem->isArray && arrType->elem->length >= 0)
+    if (arrType->elem && TypeNameHasArrayShape(arrType->elem) && arrType->elem->length >= 0)
     {
         long innerCount = FixedDimProduct(arrType->elem);
         long outer = innerCount > 0 ? k / innerCount : 0;
@@ -7863,15 +7864,15 @@ static Value EmitStructInit(Builder* b, StructInitExpr* n)
             LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawField.value, 1, "fslit.l");
             fieldValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
         }
-        else if (fieldTd.isBox && fieldTd.boxInner
-                 && !(rawField.typeDesc.isBox && rawField.typeDesc.boxInner
+        else if (TypeDescIsBox(&fieldTd) && fieldTd.boxInner
+                 && !(TypeDescIsBox(&rawField.typeDesc) && rawField.typeDesc.boxInner
                       && strcmp(rawField.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
         {
             /* ^T field from a non-^T value (bare T, string literal,
                string variable into ^string): allocate a T slot, construct
                the owned inner value, store it. Same pattern as a top-level
                ^T init. */
-            LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawField, field->value, "fieldbox", fieldTd.isRc);
+            LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawField, field->value, "fieldbox", TypeDescIsRc(&fieldTd));
             fieldValue = ValueMake(heap, fieldTd);
         }
         else if (BoxIntoInlineOwning(b, fieldTd, rawField.typeDesc))
@@ -8068,7 +8069,7 @@ Value EmitExpr(Builder* b, Node* n)
         NullTestExpr* nt = (NullTestExpr*)n;
         LValue lv = EmitLValue(b, nt->operand);
 
-        if (lv.valid && lv.typeDesc.isArray)
+        if (lv.valid && TypeDescHasArrayShape(&lv.typeDesc))
         {
             LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "oad");
             LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, lv.ptr), "oal");
@@ -8121,7 +8122,7 @@ Value EmitExpr(Builder* b, Node* n)
         LLVMValueRef valPtr = lv.ptr;
         TypeDesc valTd = lv.typeDesc;
 
-        if (lv.typeDesc.isBox)
+        if (TypeDescIsBox(&lv.typeDesc))
         {
             /* lv.ptr is the address of the box pointer slot (ref-adjusted
                already by EmitLValue); load through it to get the box
@@ -8169,7 +8170,7 @@ Value EmitExpr(Builder* b, Node* n)
             return ValueMake(owned, target);
         }
 
-        if ((operand.typeDesc.isBox && target.isBox) || (operand.typeDesc.isString && target.isString))
+        if ((TypeDescIsBox(&operand.typeDesc) && TypeDescIsBox(&target)) || (operand.typeDesc.isString && target.isString))
         {
             /* Retag with the destination type; Coerce would keep the source's. */
             return ValueMake(operand.value, target);
@@ -8177,8 +8178,8 @@ Value EmitExpr(Builder* b, Node* n)
 
         /* Pointer to pointer (handle <-> handle, ptr <-> cstring): same bits, the destination's type. */
         bool operandIsPointer = operand.typeDesc.type && LLVMGetTypeKind(operand.typeDesc.type) == LLVMPointerTypeKind
-                                && !operand.typeDesc.isBox;
-        bool targetIsPointer = target.type && LLVMGetTypeKind(target.type) == LLVMPointerTypeKind && !target.isBox;
+                                && !TypeDescIsBox(&operand.typeDesc);
+        bool targetIsPointer = target.type && LLVMGetTypeKind(target.type) == LLVMPointerTypeKind && !TypeDescIsBox(&target);
 
         if (operandIsPointer && targetIsPointer)
         {
@@ -8264,11 +8265,11 @@ static void EmitStmtInner(Builder* b, Node* n)
         {
             Value raw = EmitExpr(b, r->value);
 
-            if (b->m_curRet.isBox && !raw.typeDesc.isBox)
+            if (TypeDescIsBox(&b->m_curRet) && !TypeDescIsBox(&raw.typeDesc))
             {
                 /* Returns ^T but expr is a plain T: box it, like a local. */
                 TypeDesc innerTd = Resolve(b, b->m_curRet.boxInner);
-                LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), b->m_curRet.isRc, "heap");
+                LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), TypeDescIsRc(&b->m_curRet), "heap");
                 LLVMBuildStore(b->m_builder, Coerce(b, raw, innerTd).value, heap);
                 v = ValueMake(heap, b->m_curRet);
             }
@@ -8284,7 +8285,7 @@ static void EmitStmtInner(Builder* b, Node* n)
                     v = ValueMake(owned, b->m_curRet);
                 }
 
-                Node* movedReturnNode = (v.typeDesc.isBox || v.typeDesc.isArray
+                Node* movedReturnNode = (TypeDescIsBox(&v.typeDesc) || TypeDescHasArrayShape(&v.typeDesc)
                                          || (v.typeDesc.structTypeName
                                              && TypeRegistryIsOwningStruct(&b->m_registry, v.typeDesc.structTypeName)))
                                             ? (Node*)MovableBoxSourceNode(r->value)
@@ -8372,11 +8373,11 @@ static void EmitStmtInner(Builder* b, Node* n)
                    casts). */
                 const TypeName* leafTn = ai->elementType;
 
-                if (!leafTn || (leafTn->isArray && leafTn->length >= 0))
+                if (!leafTn || (TypeNameHasArrayShape(leafTn) && leafTn->length >= 0))
                 {
                     leafTn = &varDecl->type;
 
-                    while (leafTn && leafTn->isArray && leafTn->length >= 0)
+                    while (leafTn && TypeNameHasArrayShape(leafTn) && leafTn->length >= 0)
                     {
                         leafTn = leafTn->elem;
                     }
@@ -8421,7 +8422,7 @@ static void EmitStmtInner(Builder* b, Node* n)
             return;
         }
 
-        if (typeDesc.isArray)
+        if (TypeDescHasArrayShape(&typeDesc))
         {
             LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "arr");
 
@@ -8459,7 +8460,7 @@ static void EmitStmtInner(Builder* b, Node* n)
                         src = EmitLValueForNullStore(b, movedNode);
                     }
 
-                    if (src.valid && src.typeDesc.isArray)
+                    if (src.valid && TypeDescHasArrayShape(&src.typeDesc))
                     {
                         LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
                     }
@@ -8484,7 +8485,7 @@ static void EmitStmtInner(Builder* b, Node* n)
             return;
         }
 
-        if (typeDesc.isBox)
+        if (TypeDescIsBox(&typeDesc))
         {
             LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "box");
 
@@ -8496,7 +8497,7 @@ static void EmitStmtInner(Builder* b, Node* n)
                 /* Direct move: source and destination are the same owning type
                    (string=string, ^T=^T). Copy the pointer, null the
                    source. No allocation needed. */
-                bool sameOwningType = value.typeDesc.isBox && !isLiteral
+                bool sameOwningType = TypeDescIsBox(&value.typeDesc) && !isLiteral
                                       && ((typeDesc.boxInner == NULL && value.typeDesc.boxInner == NULL)
                                           || (typeDesc.boxInner && value.typeDesc.boxInner
                                               && strcmp(typeDesc.boxInner->name, value.typeDesc.boxInner->name) == 0));
@@ -8512,7 +8513,7 @@ static void EmitStmtInner(Builder* b, Node* n)
                        store. For ^string this is: construct a string (heap-copy
                        literal / move source), then box it up - identical to ^int
                        but the inner happens to be owning. */
-                    LLVMValueRef heap = EmitBoxCell(b, typeDesc.boxInner, value, varDecl->init, "heap", typeDesc.isRc);
+                    LLVMValueRef heap = EmitBoxCell(b, typeDesc.boxInner, value, varDecl->init, "heap", TypeDescIsRc(&typeDesc));
                     LLVMBuildStore(b->m_builder, heap, slot);
                 }
                 else
@@ -9190,7 +9191,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
         CastExpr* c = AsNode(CastExpr, n);
         TypeDesc innerTd = Resolve(b, &c->type);
 
-        if (innerTd.isVoid || innerTd.structTypeName || innerTd.isArray || innerTd.isBox || innerTd.isSimdVector)
+        if (innerTd.isVoid || innerTd.structTypeName || TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd) || innerTd.isSimdVector)
         {
             return false;
         }
@@ -9640,7 +9641,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                 {
                     LLVMBuildStore(b->m_builder, LLVMConstNull(td.type), fieldPtr);
                 }
-                else if (td.isArray && gd->init->kind == NodeArrayInit)
+                else if (TypeDescHasArrayShape(&td) && gd->init->kind == NodeArrayInit)
                 {
                     LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
                     LLVMBuildStore(b->m_builder, arr, fieldPtr);
@@ -9654,7 +9655,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                     LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, StringTypeName(b));
                     LLVMBuildStore(b->m_builder, owned, fieldPtr);
                 }
-                else if (td.isBox && td.boxInner)
+                else if (TypeDescIsBox(&td) && td.boxInner)
                 {
                     Value val = EmitExpr(b, gd->init);
 
@@ -9669,7 +9670,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
                     else
                     {
                         /* Box up the inner value (owning or not). */
-                        LLVMValueRef heap = EmitBoxCell(b, td.boxInner, val, gd->init, "boxgl", td.isRc);
+                        LLVMValueRef heap = EmitBoxCell(b, td.boxInner, val, gd->init, "boxgl", TypeDescIsRc(&td));
                         LLVMBuildStore(b->m_builder, heap, fieldPtr);
                     }
                 }

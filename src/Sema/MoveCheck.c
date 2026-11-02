@@ -72,7 +72,7 @@ static int FindLocal(const Locals* ls, const char* name)
 static bool TypeOwns(const Env* env, const TypeName* t)
 {
     /* `rc<T>` is out of scope (being removed): copying a handle retains it, so it never moves. */
-    return t && t->name && !t->isRc && TypeClassify(env->reg, env->arena, t).owning;
+    return t && t->name && !TypeNameIsRc(t) && TypeClassify(env->reg, env->arena, t).owning;
 }
 
 static void AddLocalTo(Locals* ls, const char* name, bool owning, const TypeName* type)
@@ -211,7 +211,7 @@ static bool IsAncestor(const char* a, const char* d)
 /* The declared type of the field `name` of the struct `t` (looking through `^`, `?` and aliases). */
 static const TypeName* FieldType(const Env* env, const TypeName* t, const char* name)
 {
-    while (t && (t->isBox || t->isOptional) && t->inner)
+    while (t && (TypeNameIsBox(t) || TypeNameIsOptional(t)) && t->inner)
     {
         t = t->inner;
     }
@@ -464,14 +464,14 @@ static void NoteIfCopied(Env* env, const Node* value, const TypeName* target)
     }
 
     /* A box handed to a bare `T` copies the pointee; so does a bare struct element (a deep copy). */
-    if (!vt->isBox)
+    if (!TypeNameIsBox(vt))
     {
         if (value->kind != NodeIndex)
         {
             return;
         }
 
-        const StructType* st = vt->name && TypeNameIsBare(vt) && !vt->isRc
+        const StructType* st = vt->name && TypeNameIsBare(vt) && !TypeNameIsRc(vt)
                                    ? TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, vt->name))
                                    : NULL;
 
@@ -528,7 +528,7 @@ static void CollectCopies(Env* env, const Cfg* g)
 
                     /* A typed rest parameter takes each argument as one element. */
                     NoteIfCopied(env, (const Node*)VecGet(&e->args, i),
-                                 p->isVarargRest ? (p->type.isArray ? p->type.elem : NULL) : &p->type);
+                                 p->isVarargRest ? (TypeNameHasArrayShape(&p->type) ? p->type.elem : NULL) : &p->type);
                 }
             }
             else if (op->kind == CfgEval && op->node->kind == NodeStructInit)
@@ -917,7 +917,7 @@ static void AddOptionalChain(Env* env, const Node* n)
     {
         const TypeName* t = NodeTypesGet(env->types, n);
 
-        if (t && t->isOptional && FactPlaceOf(n, buf, sizeof(buf), &root))
+        if (t && TypeNameIsOptional(t) && FactPlaceOf(n, buf, sizeof(buf), &root))
         {
             AddFact(env, buf);
         }
@@ -950,7 +950,7 @@ static void CollectFacts(Env* env, const Cfg* g)
                 const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
                 const TypeName* t = DeclType(env, vd);
 
-                if (t && t->isOptional)
+                if (t && TypeNameIsOptional(t))
                 {
                     AddFact(env, vd->name);
                 }
@@ -1215,7 +1215,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 
     const TypeName* vt = ValueType(env, value);
 
-    if (!vt || !vt->isOptional)
+    if (!vt || !TypeNameIsOptional(vt))
     {
         /* Moving an owning value out ends every `ref` into it. */
         char moved[256];
@@ -1235,7 +1235,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
     int k = haveKey ? FindFact(env, buf) : -1;
     bool proven = k >= 0 && f[k] == FactNonEmpty;
 
-    if (target && !target->isOptional && !proven && found)
+    if (target && !TypeNameIsOptional(target) && !proven && found)
     {
         ReportUnproven(env, f, found, value, range, k);
     }
@@ -1320,13 +1320,13 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         else if (arg1 && strcmp(e->callee, "array_push") == 0)
         {
             const TypeName* at = arg0 ? ValueType(env, arg0) : NULL;
-            ConsumeValue(env, f, found, arg1, at && at->isArray ? at->elem : NULL, arg1->range, true);
+            ConsumeValue(env, f, found, arg1, at && TypeNameHasArrayShape(at) ? at->elem : NULL, arg1->range, true);
         }
         else if (arg0 && e->args.count > 2 && strcmp(e->callee, "array_replace") == 0)
         {
             const Node* val = (const Node*)VecGet(&e->args, 2);
             const TypeName* at = ValueType(env, arg0);
-            ConsumeValue(env, f, found, val, at && at->isArray ? at->elem : NULL, val->range, true);
+            ConsumeValue(env, f, found, val, at && TypeNameHasArrayShape(at) ? at->elem : NULL, val->range, true);
         }
         else if (arg0 && strcmp(e->callee, "substring") == 0)
         {
@@ -1384,7 +1384,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         if (p && p->mod == ModRef && !p->type.isConst)
         {
             /* Only a `ref T?` can empty the optional itself; a `ref T` changes what is inside. */
-            KillPlaceOf(env, f, arg, p->type.isOptional);
+            KillPlaceOf(env, f, arg, TypeNameIsOptional(&p->type));
         }
     }
 
@@ -1490,7 +1490,7 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
                                                            : ((const IndexExpr*)cur)->base_node;
                 const TypeName* bt = base ? ValueType(env, base) : NULL;
 
-                if (bt && bt->isOptional)
+                if (bt && TypeNameIsOptional(bt))
                 {
                     RequireProof(env, f, found, base, cur->range);
                 }
@@ -1505,7 +1505,7 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
 
             KillPlaceOf(env, f, a->target, true);
 
-            if (proves && targetType && targetType->isOptional)
+            if (proves && targetType && TypeNameIsOptional(targetType))
             {
                 char buf[256];
                 const char* root;
@@ -1526,8 +1526,8 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
             const BinaryExpr* b = (const BinaryExpr*)n;
             const TypeName* lt = ValueType(env, b->lhs);
             const TypeName* rt = ValueType(env, b->rhs);
-            bool lo = lt && lt->isOptional;
-            bool ro = rt && rt->isOptional;
+            bool lo = lt && TypeNameIsOptional(lt);
+            bool ro = rt && TypeNameIsOptional(rt);
             bool relational = b->op == BinLt || b->op == BinLtEq || b->op == BinGt || b->op == BinGtEq;
 
             if (b->op != BinLogicAnd && b->op != BinLogicOr)
@@ -1554,7 +1554,7 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
                                                            : ((const IndexExpr*)cur)->base_node;
                 const TypeName* bt = base ? ValueType(env, base) : NULL;
 
-                if (bt && bt->isOptional)
+                if (bt && TypeNameIsOptional(bt))
                 {
                     RequireProof(env, f, found, base, cur->range);
                 }
@@ -2194,7 +2194,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
 
     const TypeName* t = ValueType(env, n);
 
-    if (!t || t->isOptional || !TypeOwns(env, t))
+    if (!t || TypeNameIsOptional(t) || !TypeOwns(env, t))
     {
         return;
     }
@@ -2233,7 +2233,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
 
     const TypeName* t = ValueType(env, n);
 
-    if (!t || t->isOptional || !TypeOwns(env, t))
+    if (!t || TypeNameIsOptional(t) || !TypeOwns(env, t))
     {
         return;
     }
@@ -2242,12 +2242,12 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
     {
         const TypeName* bt = ValueType(env, ((const MemberExpr*)cur)->base_node);
 
-        while (bt && bt->isBox && bt->inner)
+        while (bt && TypeNameIsBox(bt) && bt->inner)
         {
             bt = bt->inner;
         }
 
-        const StructType* st = bt && bt->name && !bt->isRc && !bt->isArray
+        const StructType* st = bt && bt->name && !TypeNameIsRc(bt) && !TypeNameHasArrayShape(bt)
                                    ? TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, bt->name))
                                    : NULL;
 
@@ -2313,7 +2313,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
             /* Moving out of a `T?` leaves it empty, which is a usable (testable) state; null is its drop flag. */
             const TypeName* placeType = PlaceType(env, op->node);
 
-            if (op->consumed && !IsCopied(env, op->node) && !(placeType && placeType->isOptional)
+            if (op->consumed && !IsCopied(env, op->node) && !(placeType && TypeNameIsOptional(placeType))
                 && TypeOwns(env, placeType))
             {
                 SetPlace(env, state, buf, StateMoved);

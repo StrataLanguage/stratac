@@ -210,6 +210,18 @@ static inline bool TypeNameIsOptional(const TypeName* t)
     return t && t->isOptional;
 }
 
+// `rc<T>` / `rc<T>?`: a box shared by reference count.
+static inline bool TypeNameIsRc(const TypeName* t)
+{
+    return t && t->isRc;
+}
+
+// The type has array shape (dynamic `T[]` or fixed `T[N]`); `TypeNameArrayElem` gives the element.
+static inline bool TypeNameHasArrayShape(const TypeName* t)
+{
+    return t && t->isArray;
+}
+
 // Inner `T` of a box/optional, or NULL. A box never wraps an array; an optional may (`T[]?`).
 static inline const TypeName* TypeNameBoxInner(const TypeName* t)
 {

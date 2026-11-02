@@ -272,9 +272,8 @@ if(NOT STRATA_SHARED)
     add_test(NAME spec_cases_exist
         COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/spec/CheckSpec.cmake)
-    add_test(NAME type_flag_ratchet
+    add_test(NAME type_flag_gate
         COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/src
-                -DBASELINE=${CMAKE_CURRENT_SOURCE_DIR}/tests/typelayer/baseline.txt
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/typelayer/CheckTypeFlags.cmake)
     if(STRATA_ENABLE_LLVM)
         add_test(NAME stratac_cli_tests
