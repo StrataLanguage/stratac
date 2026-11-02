@@ -50,19 +50,19 @@ The CFG checker (`src/Sema/MoveCheck.c`, over the graph from `src/Sema/Cfg.c`) i
 use after move, partial moves, narrowing, loans and `ref` validity. The rest are sema checks in
 `ResolveOverloads.c` or run-time checks in the LLVM backend.
 
-| Rule | Enforced by |
+| Rules | Enforced by |
 | --- | --- |
-| O1, O2 | CFG checker: per-place move state, join at branches and loops. A part taken out of a `ref` parameter must be back before return; a `Drop` method may take its own value apart. |
-| O3 | CFG checker: an element of an array is never moved out (E0508). `array_remove`, `array_swap_remove` and `array_replace` return the element; `array_take` is not built yet. A field of a value with its own `Drop` method is never moved out. |
-| O4 | CFG checker: narrowing facts are must-facts, killed by writes, moves, `ref` arguments, array mutators, calls that write the global (transitive write sets) and by `Drop` calls (`drop()`, overwrite, scope end). |
-| O5, O6, O7 | CFG checker: loans within one expression, callee write sets for borrowed globals, `ref` locals die when their target changes. |
-| O8 | Backend: overwrite stores the new value before dropping the old, so a re-entrant `Drop` is safe; globals are destroyed in reverse order, including the fields of struct globals; temporaries tested with `x?` or lent to a `ref` are dropped at statement end. |
-| O10 | CFG checker module pass: a global's initializer may not read or change a later global, directly or through the functions it calls. |
-| O11 | Sema: zero-fill, `array_resize` and global initialization ask `TypeClassify(...).zeroValid`. |
-| O12 | Sema and backend resolve an alias before the check, and drop glue follows aliased fields. |
-| O13 | Sema: literals must fit; implicit numeric conversions must lose nothing; constant `/ 0`, `% 0`, wide shifts, `MIN / -1` and out-of-range float casts are errors. Backend: the same cases panic at run time, float-to-int casts saturate, mixed signed/unsigned comparisons compare by value. |
-| O14 | Sema: no unary minus, no comparison across enums, bitwise operators only on `@flags enum`. Backend: a cast from an integer that is not a member panics. |
-| O15 | Sema and backend: no `ref` to a field at a misaligned `fieldoffset`; such fields are read and written unaligned. |
+| Rule O1, O2 | CFG checker: per-place move state, join at branches and loops. A part taken out of a `ref` parameter must be back before return; a `Drop` method may take its own value apart. |
+| Rule O3 | CFG checker: an element of an array is never moved out (E0508). `array_remove`, `array_swap_remove` and `array_replace` return the element; `array_take` is not built yet. A field of a value with its own `Drop` method is never moved out. |
+| Rule O4 | CFG checker: narrowing facts are must-facts, killed by writes, moves, `ref` arguments, array mutators, calls that write the global (transitive write sets) and by `Drop` calls (`drop()`, overwrite, scope end). |
+| Rule O5, O6, O7 | CFG checker: loans within one expression, callee write sets for borrowed globals, `ref` locals die when their target changes. |
+| Rule O8 | Backend: overwrite stores the new value before dropping the old, so a re-entrant `Drop` is safe; globals are destroyed in reverse order, including the fields of struct globals; temporaries tested with `x?` or lent to a `ref` are dropped at statement end. |
+| Rule O10 | CFG checker module pass: a global's initializer may not read or change a later global, directly or through the functions it calls. |
+| Rule O11 | Sema: zero-fill, `array_resize` and global initialization ask `TypeClassify(...).zeroValid`. |
+| Rule O12 | Sema and backend resolve an alias before the check, and drop glue follows aliased fields. |
+| Rule O13 | Sema: literals must fit; implicit numeric conversions must lose nothing; constant `/ 0`, `% 0`, wide shifts, `MIN / -1` and out-of-range float casts are errors. Backend: the same cases panic at run time, float-to-int casts saturate, mixed signed/unsigned comparisons compare by value. |
+| Rule O14 | Sema: no unary minus, no comparison across enums, bitwise operators only on `@flags enum`. Backend: a cast from an integer that is not a member panics. |
+| Rule O15 | Sema and backend: no `ref` to a field at a misaligned `fieldoffset`; such fields are read and written unaligned. |
 
 ## Open points
 
