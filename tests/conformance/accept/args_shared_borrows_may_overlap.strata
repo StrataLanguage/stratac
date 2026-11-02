@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: 10
+// rule: any number of const ref arguments may name the same place
+int Add(const ref Res a, const ref Res b) { return a.id + b.id; }
+void F()
+{
+    ^Res x = Box(5);
+    printf("%d\n", Add(x, x));
+}
+int main() { F(); Report(); return 0; }

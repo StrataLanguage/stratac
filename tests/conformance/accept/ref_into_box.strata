@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: id 9
+// rule: a ref to the contents of a box neither moves nor copies the box
+void F()
+{
+    ^Res b = Box(9);
+    ref Res r = b;
+    printf("id %d\n", r.id);
+}
+int main() { F(); Report(); return 0; }

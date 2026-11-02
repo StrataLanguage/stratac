@@ -31,8 +31,8 @@ Type aliases are resolved before any property is read.
 | O2 | A struct field may be moved out of an owned local, a by-value param or a `ref`; the struct is then partly moved and the field must be refilled before the borrow ends. A `Drop` type is moved whole or not at all. | `partial_*` | `partial_*` |
 | O3 | A value is never moved out of a `const ref`, a global or a `T[]` element. | `opt_*` | `move_*`, `global_*` |
 | O4 | `T?` narrows to `T` where flow typing proves it set; narrowing facts die when the place may have been written. | `narrow_*`, `opt_*` | `narrow_*`, `opt_*` |
-| O5 | A `ref` or `const ref` is a loan on a place. Writing, moving, dropping or reallocating an overlapping place kills it, and a killed ref may not be used. | - | `ref_*` |
-| O6 | A mutable argument may not overlap another argument of the same call. | - | `eval_*`, `ref_*` |
+| O5 | A `ref` or `const ref` is a loan on a place. Writing, moving, dropping or reallocating an overlapping place kills it, and a killed ref may not be used. | `ref_*` | `ref_*` |
+| O6 | A mutable argument may not overlap another argument of the same call. | `args_*` | `eval_*`, `ref_*` |
 | O7 | Evaluation is left to right. A loan taken by an earlier operand lasts to the end of the expression. Temporaries are dropped at statement end. | `eval_*` | `eval_*` |
 | O8 | `Drop` runs exactly once per owned value: at scope end (reverse declaration order, after `defer`), on overwrite, on `drop()`, and after the owner's own `Drop` for fields. | `drop_*`, `defer_*` | `drop_*`, `defer_*` |
 | O9 | `copy()` deep-copies an Owning value and is rejected for UserDrop types. | `copy_*` | `copy_*` |
@@ -42,7 +42,7 @@ Type aliases are resolved before any property is read.
 | O13 | Lossy numeric conversions need a cast; literals that fit convert. Arithmetic traps instead of invoking undefined behaviour. | `arith_*`, `literal_*` | `arith_*`, `lossy_*`, `literal_*` |
 | O14 | Enum values are compared and combined only within their enum, and runtime casts are range-checked. | `enum_*` | `enum_*` |
 | O15 | Types that cross the host boundary have a fixed layout; a struct passes to an `extern` by pointer. | `layout_*`, `union_*`, `vec_*` | `extern_*`, `layout_*`, `union_*`, `vec_*` |
-| O16 | `rc<T>` is out of scope and being removed. | - | `rc_*` |
+| O16 | `rc<T>` is out of scope and being removed. | n/a | `rc_*` |
 
 ## Open points
 

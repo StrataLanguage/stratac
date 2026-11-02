@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: sum 3
+// rule: two mutable arguments that name different places do not overlap
+void Set(ref Res a, ref Res b) { a.id = 1; b.id = 2; }
+void F()
+{
+    ^Res x = Box(0);
+    ^Res y = Box(0);
+    Set(x, y);
+    printf("sum %d\n", x.id + y.id);
+}
+int main() { F(); Report(); return 0; }

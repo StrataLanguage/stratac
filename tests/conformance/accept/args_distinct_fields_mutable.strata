@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 3
+// rule: mutable arguments naming different fields of one struct do not overlap
+struct Pair { ^Res a; ^Res b; };
+void Set(ref Res a, ref Res b) { a.id = 1; b.id = 2; }
+void F()
+{
+    ^Pair p = Pair { .a = Box(0), .b = Box(0) };
+    Set(p.a, p.b);
+    printf("%d\n", p.a.id + p.b.id);
+}
+int main() { F(); Report(); return 0; }

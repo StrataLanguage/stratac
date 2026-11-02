@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: id 7
+// rule: a ref local aliases existing storage, so a write through it is seen by the owner
+void Bump(ref Res r) { r.id = r.id + 6; }
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    ref Res r = list[0];
+    Bump(r);
+    printf("id %d\n", list[0].id);
+    return 0;
+}

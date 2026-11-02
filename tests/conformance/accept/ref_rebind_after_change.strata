@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: id 1
+// rule: a ref killed by a push may be bound again afterwards
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    ref Res r = list[0];
+    printf("id %d\n", r.id);
+    array_push(list, Res.Make(2));
+    ref Res again = list[0];
+    printf("id %d\n", again.id);
+    return 0;
+}
