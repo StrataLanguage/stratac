@@ -7939,6 +7939,14 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
         if (borrowed || !owning)
         {
             source = EmitExpr(b, valueNode);
+
+            /* `{ boxed; n }` for a bare element type copies what the box points at, not the box pointer. */
+            if (TypeDescIsBox(&source.typeDesc) && !TypeDescIsBox(&elemTd) && !TypeDescHasArrayShape(&elemTd)
+                && !elemTd.isString)
+            {
+                source = DerefBoxValue(b, source);
+            }
+
             source = owning ? source : Coerce(b, source, elemTd);
         }
         else
@@ -10087,11 +10095,13 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
         b->m_curGlobalsPtr = LLVMGetParam(destroyFn, 0);
 
-        for (size_t i = 0; i < module->globals.count; i++)
+        /* Globals are built in declaration order and destroyed in the reverse, so a later global's Drop can still
+           read an earlier one. A struct that owns heap data through its fields is destroyed too. */
+        for (size_t i = module->globals.count; i-- > 0;)
         {
             GlobalDecl* gd = (GlobalDecl*)VecGet(&module->globals, i);
 
-            if (!BuilderIsOwningType(b, &gd->type))
+            if (!BuilderIsOwningType(b, &gd->type) && !BuilderIsOwningValue(b, &gd->type))
             {
                 continue;
             }
