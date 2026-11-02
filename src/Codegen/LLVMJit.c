@@ -117,13 +117,37 @@ static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
     return true;
 }
 
+/* The triple the JIT compiles for, valid for the life of the process. On x86-64 Windows that is the host's with ELF
+   objects instead of COFF: COFF puts every floating-point and vector constant in a COMDAT section (`__real@...`,
+   `__xmm@...`) that the reserve-allocating RuntimeDyld layer intermittently fails to load ("Failed to
+   materialize symbols"), where ELF objects keep constants in plain read-only sections. The calling convention
+   stays Win64. STRATA_JIT_COFF=1 keeps the host's own object format. */
+static const char* JitTriple(void)
+{
+    static char* hostTriple = NULL;
+
+    if (!hostTriple)
+    {
+        hostTriple = LLVMGetDefaultTargetTriple();
+    }
+
+#ifdef _WIN32
+    if (hostTriple && strncmp(hostTriple, "x86_64-pc-windows", 17) == 0 && !getenv("STRATA_JIT_COFF"))
+    {
+        return "x86_64-pc-windows-elf";
+    }
+#endif
+
+    return hostTriple;
+}
+
 /* Creates an execution TargetMachine for the host CPU: every feature the
    processor supports enabled, aggressive codegen level, PIC. The module's
    triple/data layout should be pinned to this machine before IR passes run.
    Returns NULL and sets *errorMessage (malloc-owned) on failure. */
 static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 {
-    char* triple = LLVMGetDefaultTargetTriple();
+    const char* triple = JitTriple();
     LLVMTargetRef target = NULL;
     char* targetErr = NULL;
 
@@ -144,11 +168,6 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
             LLVMDisposeMessage(targetErr);
         }
 
-        if (triple)
-        {
-            LLVMDisposeMessage(triple);
-        }
-
         return NULL;
     }
 
@@ -162,7 +181,6 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 
     LLVMDisposeMessage(features);
     LLVMDisposeMessage(cpu);
-    LLVMDisposeMessage(triple);
 
     if (!tm)
     {
@@ -250,10 +268,9 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
     }
 
     {
-        char* triple = LLVMGetDefaultTargetTriple();
+        const char* triple = JitTriple();
 
         LLVMSetTarget(bm->mod, triple);
-        LLVMDisposeMessage(triple);
 
         LLVMTargetDataRef td = LLVMCreateTargetDataLayout(tm);
 
