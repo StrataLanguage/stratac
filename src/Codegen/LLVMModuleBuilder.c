@@ -3854,6 +3854,51 @@ static bool IsComparisonOp(BinaryOp op)
 
 /* `l op r` for integers of different signedness. Both are widened to 64 bits (sign- or zero-extended as their
    own type says); a negative signed side is below every unsigned value, otherwise the unsigned compare decides. */
+/* The enum named `name`, or NULL. */
+static const EnumDecl* FindEnumDecl(const Builder* b, const char* name)
+{
+    for (size_t i = 0; b->m_module && name && i < b->m_module->enums.count; i++)
+    {
+        const EnumDecl* ed = (const EnumDecl*)VecGet((Vec*)&b->m_module->enums, i);
+
+        if (strcmp(ed->name, name) == 0)
+        {
+            return ed;
+        }
+    }
+
+    return NULL;
+}
+
+/* `(Color)n` at run time: an integer that is not the value of some member is not a Color, so it panics instead of
+   becoming a value no `switch`/comparison anticipates. Constants were checked by sema. */
+static void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc target)
+{
+    const EnumDecl* ed = FindEnumDecl(b, cast->type.name);
+
+    if (!ed || ed->members.count == 0 || !operand.value || operand.typeDesc.isFloat || target.isFloat
+        || !target.type || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind
+        || LLVMGetTypeKind(LLVMTypeOf(operand.value)) != LLVMIntegerTypeKind || cast->operand->kind == NodeIntLiteral
+        || (cast->operand->kind == NodeMember && ((MemberExpr*)cast->operand)->isEnumConst))
+    {
+        return;
+    }
+
+    Value converted = Coerce(b, operand, target);
+    LLVMValueRef isMember = LLVMConstInt(I1Ty(b), 0, 0);
+
+    for (size_t i = 0; i < ed->members.count; i++)
+    {
+        const EnumMemberDecl* member = (const EnumMemberDecl*)VecGet((Vec*)&ed->members, i);
+        uint64_t raw = member->isNegative ? (uint64_t)(-(int64_t)member->value) : member->value;
+        LLVMValueRef want = LLVMConstInt(target.type, raw, 0);
+        isMember = LLVMBuildOr(b->m_builder, isMember,
+                               LLVMBuildICmp(b->m_builder, LLVMIntEQ, converted.value, want, "enum.is"), "enum.any");
+    }
+
+    EmitPanicIf(b, LLVMBuildNot(b->m_builder, isMember, "enum.bad"), "enum cast: value is not a member");
+}
+
 static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
 {
     bool leftSigned = !l.typeDesc.isUnsigned;
@@ -8356,6 +8401,8 @@ Value EmitExpr(Builder* b, Node* n)
 
         Value operand = EmitExpr(b, cast->operand);
         TypeDesc target = Resolve(b, &cast->type);
+
+        EmitEnumCastCheck(b, cast, operand, target);
 
         /* `(Name)"lit"` / `(string)"lit"`: the result must OWN its bytes, so
            heap-copy the static literal (drop glue frees real memory, never
