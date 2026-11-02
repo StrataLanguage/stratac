@@ -1738,6 +1738,39 @@ static void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e)
     }
 }
 
+/* Moving an Owning value out of an indexed element (or a field of one) is forbidden: it would leave a
+   hole in the array. An optional element is fine, null being its drop flag. */
+static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
+{
+    const Node* n = op->node;
+
+    if (!op->consumed || (n->kind != NodeIndex && n->kind != NodeMember))
+    {
+        return;
+    }
+
+    const TypeName* t = ValueType(env, n);
+
+    if (!t || t->isOptional || !TypeOwns(env, t))
+    {
+        return;
+    }
+
+    for (const Node* cur = n; cur->kind == NodeIndex || cur->kind == NodeMember;)
+    {
+        if (cur->kind == NodeIndex)
+        {
+            char buf[256];
+            const char* root;
+            Report(found, n->range,
+                   PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<element>");
+            return;
+        }
+
+        cur = ((const MemberExpr*)cur)->base_node;
+    }
+}
+
 /* Steps one block. With `found` set, uses of unusable places are reported. */
 static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, Found* found)
 {
@@ -1752,6 +1785,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
         if (found && op->kind == CfgEval)
         {
             LoanCheck(env, found, op->node);
+            ElementMoveCheck(env, found, op);
         }
 
         if (op->kind == CfgDeclare)
