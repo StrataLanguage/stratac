@@ -34,6 +34,7 @@ set(STRATA_COMMON_SOURCES
     src/Parse/Parser.c
     src/Sema/ResolveOverloads.c
     src/Sema/Cfg.c
+    src/Sema/NodeTypes.c
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeMetadata.c
     src/Codegen/TypeUtil.c

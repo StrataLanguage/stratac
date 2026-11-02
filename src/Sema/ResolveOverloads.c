@@ -1,6 +1,7 @@
 #include "Sema/ResolveOverloads.h"
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
+#include "Sema/NodeTypes.h"
 
 #include <assert.h>
 #include <ctype.h>
@@ -14,6 +15,7 @@ typedef struct
     Module* m_mod;
     DiagnosticEngine* m_diag;
     TypeRegistry m_registry;
+    NodeTypes m_nodeTypes; /* the type InferType last gave each expression node */
     Arena* m_arena;
     StrMap m_constVars;
     StrMap m_movedBoxes;
@@ -7254,7 +7256,16 @@ static const TypeName* InferIntrinsicType(Resolver* r, CallExpr* c, StrMap* scop
     return NULL;
 }
 
+static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope);
+
 static const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
+{
+    const TypeName* t = InferTypeImpl(r, n, scope);
+    NodeTypesPut(&r->m_nodeTypes, n, t);
+    return t;
+}
+
+static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
 {
     if (!n)
     {
@@ -11647,5 +11658,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&byMangled);
     free(r.m_deferFrames.items);
     free(r.m_loopFlows.items);
+    NodeTypesFree(&r.m_nodeTypes);
     TypeRegistryFree(&r.m_registry);
 }
