@@ -20,11 +20,6 @@ typedef struct
     Arena* m_arena;
     StrMap m_constVars;
     StrMap m_movedBoxes;
-    StrMap m_nonEmptyPaths; /* dotted path -> 1 = definitely non-empty (`T?` narrowing) */
-    StrMap m_emptyPaths;    /* dotted path -> 1 = definitely EMPTY (else branch of `if (path?)`) */
-    /* Index var name -> Vec of fact keys spelled with it ("i" -> {"arr[i].w"}).
-       Mutating the var (or passing it non-const ref) drops those facts. */
-    StrMap m_indexDeps;
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
@@ -1310,8 +1305,6 @@ static void ClearBoxSubtree(Resolver* r, const char* key)
     ClearSubtreeByPath(&r->m_movedBoxes, key);
 }
 
-static void ClearEmptySubtree(Resolver* r, const char* key);
-static void ClearNullableFacts(Resolver* r, const char* key);
 
 static void MarkBoxLive(Resolver* r, const char* name)
 {
@@ -1319,7 +1312,6 @@ static void MarkBoxLive(Resolver* r, const char* name)
     StrMapPut(&r->m_movedBoxes, name, (void*)2);
 
     // Reassigning re-lives the binding; the caller re-blesses it as needed.
-    ClearNullableFacts(r, name);
 }
 
 /* Reassigning one owning field re-lives it and any ancestor whose moved descendants are all restored. */
@@ -1413,16 +1405,8 @@ static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
     }
 }
 
-static bool IsPathNonEmpty(const Resolver* r, const char* key);
-static void MarkPathNonEmpty(Resolver* r, const char* key);
-static void ClearNonEmptySubtree(Resolver* r, const char* key);
 
-static bool IsPathNonEmpty(const Resolver* r, const char* key)
-{
-    return key && StrMapGet(&r->m_nonEmptyPaths, key) == (void*)1;
-}
-
-// True when `key` uses the erased "a[]" form (never provable).
+// True when `key` uses the erased "a[]" form (a moved element that may be any index).
 static bool PathKeyIsErased(const char* key)
 {
     return key && strstr(key, "[]") != NULL;
@@ -1436,59 +1420,6 @@ static bool IsIdentStart(char c)
 static bool IsIdentCont(char c)
 {
     return isalnum((unsigned char)c) || c == '_';
-}
-
-// Remember which facts mention each index variable.
-static void TrackIndexDeps(Resolver* r, const char* key)
-{
-    for (const char* open = strchr(key, '['); open; open = strchr(open + 1, '['))
-    {
-        const char* close = strchr(open + 1, ']');
-
-        if (!close)
-        {
-            continue;
-        }
-
-        for (const char* p = open + 1; p < close;)
-        {
-            if (!IsIdentStart(*p))
-            {
-                p++;
-                continue;
-            }
-
-            const char* start = p;
-
-            while (p < close && IsIdentCont(*p))
-            {
-                p++;
-            }
-
-            char* var = arena_strndup(r->m_arena, start, (size_t)(p - start));
-            Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
-
-            if (!deps)
-            {
-                deps = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
-                VecInit(deps);
-                StrMapPut(&r->m_indexDeps, var, deps);
-            }
-
-            VecPush(deps, (void*)key);
-        }
-    }
-}
-
-static void MarkPathNonEmpty(Resolver* r, const char* key)
-{
-    if (!key || PathKeyIsErased(key))
-    {
-        return;
-    }
-
-    StrMapPut(&r->m_nonEmptyPaths, key, (void*)1);
-    TrackIndexDeps(r, key);
 }
 
 // True when an index group of `key` spells the variable `var`.
@@ -1604,277 +1535,20 @@ static void EraseMovedIndexVar(Resolver* r, const char* var)
     free(states.items);
 }
 
-// Drop facts indexed by `var` (assigned, inc/dec, or non-const ref).
+// A moved element spelled with `var` becomes an unknown element once `var` changes.
 static void InvalidateIndexVar(Resolver* r, const char* var)
 {
-    if (!var)
+    if (var)
     {
-        return;
+        EraseMovedIndexVar(r, var);
     }
-
-    EraseMovedIndexVar(r, var);
-
-    Vec* deps = (Vec*)StrMapGet(&r->m_indexDeps, var);
-
-    if (!deps)
-    {
-        return;
-    }
-
-    /* Only the index changed, not the array: drop exactly these spellings. */
-    for (size_t i = 0; i < deps->count; i++)
-    {
-        const char* key = (const char*)VecGet(deps, i);
-
-        ClearNonEmptySubtree(r, key);
-        ClearEmptySubtree(r, key);
-    }
-
-    /* The deps stay: a branch or loop join may restore a snapshot that still
-       holds these facts, and the next mutation must drop them again. */
-}
-
-/* Drops `key` and all `key.*` descendants from the non-empty map. */
-static void ClearNonEmptySubtree(Resolver* r, const char* key)
-{
-    ClearSubtreeByPath(&r->m_nonEmptyPaths, key);
-}
-
-static bool IsPathDefinitelyEmpty(const Resolver* r, const char* key)
-{
-    return key && StrMapGet(&r->m_emptyPaths, key) == (void*)1;
-}
-
-static void MarkPathEmpty(Resolver* r, const char* key)
-{
-    if (!key || PathKeyIsErased(key))
-    {
-        return;
-    }
-
-    /* A path cannot be both. */
-    ClearNonEmptySubtree(r, key);
-    StrMapPut(&r->m_emptyPaths, key, (void*)1);
-    TrackIndexDeps(r, key);
-}
-
-/* Drops `key` and all its descendants from the EMPTY map. */
-static void ClearEmptySubtree(Resolver* r, const char* key)
-{
-    ClearSubtreeByPath(&r->m_emptyPaths, key);
-}
-
-/* The value at `key` changed (written, rebound or moved out): drops both
-   nullable narrowing facts for every path that may alias it or sit under it
-   (`a[j] = ...` also drops `a[i]` and `a[0]`). */
-static void ClearNullableFacts(Resolver* r, const char* key)
-{
-    ClearAliasedSubtree(&r->m_nonEmptyPaths, key, true);
-    ClearAliasedSubtree(&r->m_emptyPaths, key, true);
-}
-
-/* The contents under `key` may have changed but `key` itself did not (a
-   contents-assign into a box, or a mutable `ref` borrow): drops the facts of
-   every path that may sit strictly under it. */
-static void ClearNestedNullableFacts(Resolver* r, const char* key)
-{
-    ClearAliasedSubtree(&r->m_nonEmptyPaths, key, false);
-    ClearAliasedSubtree(&r->m_emptyPaths, key, false);
-}
-
-/* "is definitely empty" for else-proven paths, else "has not been blessed". */
-static const char* EmptyWording(const Resolver* r, const char* key)
-{
-    return IsPathDefinitelyEmpty(r, key) ? "is definitely empty" : "has not been blessed";
 }
 
 static const char* MovableBoxSourceKey(Resolver* r, Node* n);
 
-// Error for reading an unproven optional; erased keys suggest a local.
-static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* key, const char* typeName)
-{
-    /* Reading an unproven optional is reported by the CFG checker (Sema/MoveCheck.c). */
-    (void)r;
-    (void)range;
-    (void)key;
-    (void)typeName;
-    return;
-
-    if (PathKeyIsErased(key))
-    {
-        size_t nlen = strlen(typeName);
-        bool alreadyOptional = nlen > 0 && typeName[nlen - 1] == '?';
-
-        DiagErrorFmt(r->m_diag, range,
-                     "'%s' has not been blessed ('%s'); the array index is not a constant or a trackable variable - "
-                     "move or copy the element into a local first ('%s x = %s...; if (x?) ...')",
-                     key, typeName, alreadyOptional ? typeName : "T?", key);
-        return;
-    }
-
-    DiagErrorFmt(r->m_diag, range, "'%s' %s ('%s'); test it first: if (%s?) { ... }", key ? key : "<expression>",
-                 EmptyWording(r, key), typeName, key ? key : "<expr>");
-}
-
-// Unwrapping an optional into a plain target needs a proven-non-empty fact.
-static void CheckOptionalDeref(Resolver* r, Node* value, const TypeName* valueType, const TypeName* targetType,
-                               SourceRange range)
-{
-    if (!valueType || !valueType->isOptional)
-    {
-        return;
-    }
-
-    /* A box target takes the optional's value as is (the smart cast): that too needs the proof. */
-    if (!targetType || targetType->isOptional)
-    {
-        return;
-    }
-
-    const char* key = MovableBoxSourceKey(r, value);
-
-    if (IsPathNonEmpty(r, key))
-    {
-        return;
-    }
-
-    DiagOptionalReadError(r, range, key, valueType->name);
-}
-
-static Node* CondNullTestOperand(Node* cond, bool* negated)
-{
-    bool neg = false;
-    Node* inner = cond;
-
-    while (inner && inner->kind == NodeUnary && ((UnaryExpr*)inner)->op == UnNot)
-    {
-        inner = ((UnaryExpr*)inner)->operand;
-        neg = !neg;
-    }
-
-    *negated = neg;
-
-    if (inner && inner->kind == NodeNullTest)
-    {
-        return ((NullTestExpr*)inner)->operand;
-    }
-
-    return NULL;
-}
-
-/* The null-test facts `cond` establishes when it evaluates to `whenTrue`: `x?` and `!x?` terms,
-   joined by `&&` (each holds when the whole is true) or `||` (each holds when it is false). Keys go
-   to `keys`, and whether each says non-empty (1) or empty (2) to `kinds`. */
-static void CollectCondFacts(Resolver* r, Node* cond, bool whenTrue, Vec* keys, Vec* kinds)
-{
-    while (cond && cond->kind == NodeUnary && ((UnaryExpr*)cond)->op == UnNot)
-    {
-        cond = ((UnaryExpr*)cond)->operand;
-        whenTrue = !whenTrue;
-    }
-
-    if (!cond)
-    {
-        return;
-    }
-
-    if (cond->kind == NodeNullTest)
-    {
-        const char* key = MovableBoxSourceKey(r, ((NullTestExpr*)cond)->operand);
-
-        if (key)
-        {
-            VecPush(keys, (void*)key);
-            VecPush(kinds, whenTrue ? (void*)1 : (void*)2);
-        }
-        return;
-    }
-
-    if (cond->kind == NodeBinary)
-    {
-        BinaryExpr* b = (BinaryExpr*)cond;
-
-        if ((b->op == BinLogicAnd && whenTrue) || (b->op == BinLogicOr && !whenTrue))
-        {
-            CollectCondFacts(r, b->lhs, whenTrue, keys, kinds);
-            CollectCondFacts(r, b->rhs, whenTrue, keys, kinds);
-        }
-    }
-}
-
-static void MarkPathEmpty(Resolver* r, const char* key);
 static void CopyStrMap(const StrMap* src, StrMap* dst);
 static void ReplaceStrMapContents(StrMap* dst, const StrMap* src);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
-
-/* Applies what `cond` being `whenTrue` proves. Empty facts are applied only when `withEmpty`; with
-   `clearEmpty` they instead forget any non-empty fact about the path (a loop exit). */
-static void ApplyCondFacts(Resolver* r, Node* cond, bool whenTrue, bool withEmpty, bool clearEmpty)
-{
-    Vec keys;
-    Vec kinds;
-    VecInit(&keys);
-    VecInit(&kinds);
-    CollectCondFacts(r, cond, whenTrue, &keys, &kinds);
-
-    for (size_t i = 0; i < keys.count; i++)
-    {
-        const char* key = (const char*)VecGet(&keys, i);
-
-        if (VecGet(&kinds, i) == (void*)1)
-        {
-            MarkPathNonEmpty(r, key);
-        }
-        else if (clearEmpty)
-        {
-            ClearNonEmptySubtree(r, key);
-        }
-        else if (withEmpty)
-        {
-            MarkPathEmpty(r, key);
-        }
-    }
-
-    free(keys.items);
-    free(kinds.items);
-}
-
-/* Resolves `n` with what `cond` being `whenTrue` proves, then forgets it: the right side of
-   `&&` / `||` and the arms of `?:`. */
-static void ResolveUnderCondition(Resolver* r, Node* n, Node* cond, bool whenTrue, StrMap* scope)
-{
-    StrMap facts;
-    StrMap empty;
-    CopyStrMap(&r->m_nonEmptyPaths, &facts);
-    CopyStrMap(&r->m_emptyPaths, &empty);
-
-    ApplyCondFacts(r, cond, whenTrue, true, false);
-    ResolveExpr(r, n, scope);
-
-    ReplaceStrMapContents(&r->m_nonEmptyPaths, &facts);
-    ReplaceStrMapContents(&r->m_emptyPaths, &empty);
-    StrMapFree(&facts);
-    StrMapFree(&empty);
-}
-
-// Keep only facts proven on both branches.
-static void MergeNonEmptyFacts(StrMap* dst, const StrMap* other)
-{
-    for (size_t i = 0; i < dst->cap; i++)
-    {
-        if (!dst->keys[i] || dst->values[i] != (void*)1)
-        {
-            continue;
-        }
-
-        if (StrMapGet(other, dst->keys[i]) != (void*)1)
-        {
-            dst->values[i] = NULL;
-        }
-    }
-
-    /* Keys that exist only in `other` cannot survive the merge either. */
-}
 
 // Mark `name` moved, unless it is a borrowed global or ref param.
 /* The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it), and whether any step of it reads
@@ -2152,7 +1826,6 @@ static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 
     MarkBoxMoved(r, name);
     MarkBoxPartiallyMoved(r, name);
-    ClearNullableFacts(r, name); // Moving out clears the facts (aliasing indices too).
 }
 
 /* True when `key`, an ancestor, or an element that may alias it (`a[j]` for
@@ -2217,11 +1890,9 @@ static void EmptyOptionalSource(Resolver* r, const char* name)
 {
     InvalidateRefLocals(r, name);
 
-    ClearNullableFacts(r, name);
 
     /* The source is now definitely empty. later `path?` tests resolve to
        "definitely empty" rather than an unproven read. */
-    MarkPathEmpty(r, name);
 }
 
 static bool IsModuleGlobalName(const Resolver* r, const char* name)
@@ -2483,24 +2154,18 @@ static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
 typedef struct
 {
     StrMap m_moved;
-    StrMap m_nonEmpty;
-    StrMap m_empty;
     bool m_live;
 } FlowState;
 
 static void FlowInit(FlowState* s)
 {
     StrMapInit(&s->m_moved);
-    StrMapInit(&s->m_nonEmpty);
-    StrMapInit(&s->m_empty);
     s->m_live = false;
 }
 
 static void FlowFree(FlowState* s)
 {
     StrMapFree(&s->m_moved);
-    StrMapFree(&s->m_nonEmpty);
-    StrMapFree(&s->m_empty);
     s->m_live = false;
 }
 
@@ -2508,8 +2173,6 @@ static void FlowFree(FlowState* s)
 static void FlowCapture(const Resolver* r, FlowState* s)
 {
     ReplaceStrMapContents(&s->m_moved, &r->m_movedBoxes);
-    ReplaceStrMapContents(&s->m_nonEmpty, &r->m_nonEmptyPaths);
-    ReplaceStrMapContents(&s->m_empty, &r->m_emptyPaths);
     s->m_live = !r->m_unreachable;
 }
 
@@ -2524,33 +2187,27 @@ static void FlowApply(Resolver* r, const FlowState* s)
     }
 
     ReplaceStrMapContents(&r->m_movedBoxes, &s->m_moved);
-    ReplaceStrMapContents(&r->m_nonEmptyPaths, &s->m_nonEmpty);
-    ReplaceStrMapContents(&r->m_emptyPaths, &s->m_empty);
     r->m_unreachable = false;
 }
 
 // Control-flow join: moved on any path stays moved, facts must hold on all paths.
-static void FlowJoinMaps(FlowState* dst, const StrMap* moved, const StrMap* nonEmpty, const StrMap* empty)
+static void FlowJoinMaps(FlowState* dst, const StrMap* moved)
 {
     if (!dst->m_live)
     {
         ReplaceStrMapContents(&dst->m_moved, moved);
-        ReplaceStrMapContents(&dst->m_nonEmpty, nonEmpty);
-        ReplaceStrMapContents(&dst->m_empty, empty);
         dst->m_live = true;
         return;
     }
 
     MergeMovedBoxes(&dst->m_moved, moved);
-    MergeNonEmptyFacts(&dst->m_nonEmpty, nonEmpty);
-    MergeNonEmptyFacts(&dst->m_empty, empty);
 }
 
 static void FlowJoin(FlowState* dst, const FlowState* src)
 {
     if (src->m_live)
     {
-        FlowJoinMaps(dst, &src->m_moved, &src->m_nonEmpty, &src->m_empty);
+        FlowJoinMaps(dst, &src->m_moved);
     }
 }
 
@@ -2559,7 +2216,7 @@ static void FlowJoinCurrent(const Resolver* r, FlowState* dst)
 {
     if (!r->m_unreachable)
     {
-        FlowJoinMaps(dst, &r->m_movedBoxes, &r->m_nonEmptyPaths, &r->m_emptyPaths);
+        FlowJoinMaps(dst, &r->m_movedBoxes);
     }
 }
 
@@ -2592,9 +2249,7 @@ static bool FlowSame(const FlowState* a, const FlowState* b)
         return false;
     }
 
-    return !a->m_live
-           || (StrMapSameContents(&a->m_moved, &b->m_moved) && StrMapSameContents(&a->m_nonEmpty, &b->m_nonEmpty)
-               && StrMapSameContents(&a->m_empty, &b->m_empty));
+    return !a->m_live || StrMapSameContents(&a->m_moved, &b->m_moved);
 }
 
 static int CountByName(const Module* mod, const char* name)
@@ -3233,7 +2888,6 @@ static bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     /* Reading through a `string?` needs the narrowing fact, like any
        other optional read. */
-    CheckOptionalDeref(r, arg0, argType, InternTypeName(r, "string"), arg0->range);
 
     const char* indexNames[2] = {"start", "len"};
 
@@ -4759,7 +4413,6 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (recvKey)
         {
-            ClearNullableFacts(r, recvKey);
         }
     }
 
@@ -4817,8 +4470,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
             const TypeName* ei = TypeNameBoxInner(elemType);
 
             bool narrowedOptIntoBox = valueType->isOptional && elemType->isBox && vi && ei
-                                      && strcmp(vi->name, ei->name) == 0
-                                      && IsPathNonEmpty(r, MovableBoxSourceKey(r, arg1));
+                                      && strcmp(vi->name, ei->name) == 0;
 
             if (!narrowedOptIntoBox)
             {
@@ -4926,7 +4578,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, g);
 
-        ClearNullableFacts(r, gd->name);
 
         // ...and refs into globals may dangle after any call that could reach them.
         if (!best->isExtern)
@@ -4979,7 +4630,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
                     InvalidateIndexVar(r, KeyRoot(r->m_arena, refKey));
 
                     // Anything under the borrowed path may be rewritten (`h.f`, `a[0]`).
-                    ClearNestedNullableFacts(r, refKey);
 
                     // A `T?` source unwrapped into a plain `ref T` param only
                     // borrows the pointee - the callee cannot rebind (or
@@ -4988,7 +4638,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
                     // which the callee may rebind: its fact dies.
                     if (rp->type.isOptional)
                     {
-                        ClearNullableFacts(r, refKey);
                     }
                 }
             }
@@ -5005,7 +4654,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
                 }
 
                 // A mutable ref rest element may be rewritten like a named ref arg.
-                ClearNullableFacts(r, MovableBoxSourceKey(r, arg));
             }
         }
 
@@ -5114,7 +4762,6 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
                 target = TypeNameBoxInner(at);
             }
 
-            CheckOptionalDeref(r, arg, at, target, arg->range);
         }
 
         return;
@@ -5130,7 +4777,6 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
             FieldDecl* fd2 = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
 
-            CheckOptionalDeref(r, arg, InferType(r, arg, scope), &fd2->type, arg->range);
         }
 
         return;
@@ -5144,13 +4790,11 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
             = arrType && arrType->isOptional ? TypeNameArrayElem(arrType->inner) : TypeNameArrayElem(arrType);
         Node* valArg = (Node*)VecGet(&c->args, 1);
 
-        CheckOptionalDeref(r, valArg, InferType(r, valArg, scope), elem, valArg->range);
 
         if (arrType && arrType->isOptional)
         {
             Node* arrArg = (Node*)VecGet(&c->args, 0);
 
-            CheckOptionalDeref(r, arrArg, arrType, arrType->inner, arrArg->range);
         }
     }
 }
@@ -5514,10 +5158,6 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
             /* Reading through a `T?` receiver needs a narrowing fact. */
             const char* key = MovableBoxSourceKey(r, base);
 
-            if (!IsPathNonEmpty(r, key))
-            {
-                DiagOptionalReadError(r, c->base.range, key, raw->name);
-            }
         }
 
         const TypeName* inner = UnwrapBoxPtr(raw);
@@ -7817,7 +7457,6 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
                      elem->name);
     }
 
-    CheckOptionalDeref(r, value, valueType, elem, value->range);
 }
 
 /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
@@ -7830,7 +7469,6 @@ static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
     ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
     ClearBoxSubtree(r, vd->name);
-    ClearNullableFacts(r, vd->name);
     InvalidateIndexVar(r, vd->name);
 
     if (!vd->init)
@@ -7872,7 +7510,6 @@ static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
     if (through)
     {
         // Reaching into a `T?` reads through it: it must be proven set.
-        CheckOptionalDeref(r, vd->init, initType, &vd->type, vd->init->range);
     }
 
     const char* constRoot = ConstRootName(r, vd->init, scope);
@@ -8002,7 +7639,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* `a? && a.x`: the right side runs only when the left is true (`||`: when it is false). */
         if (b->op == BinLogicAnd || b->op == BinLogicOr)
         {
-            ResolveUnderCondition(r, b->rhs, b->lhs, b->op == BinLogicAnd, scope);
+            ResolveExpr(r, b->rhs, scope);
         }
         else
         {
@@ -8103,15 +7740,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 bool lNullAware = eqOp && lOpt && rt && (rt->isOptional || rt->isBox);
                 bool rNullAware = eqOp && lOpt;
 
-                if (lOpt && !lNullAware && !IsPathNonEmpty(r, MovableBoxSourceKey(r, b->lhs)))
-                {
-                    DiagOptionalReadError(r, b->lhs->range, MovableBoxSourceKey(r, b->lhs), lt->name);
-                }
-
-                if (rOpt && !rNullAware && !IsPathNonEmpty(r, MovableBoxSourceKey(r, b->rhs)))
-                {
-                    DiagOptionalReadError(r, b->rhs->range, MovableBoxSourceKey(r, b->rhs), rt->name);
-                }
             }
 
             /* `flag == 1` would compare through an implicit numeric <-> bool
@@ -8278,10 +7906,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 {
                     const char* baseKey = MovableBoxSourceKey(r, tm->base_node);
 
-                    if (!IsPathNonEmpty(r, baseKey))
-                    {
-                        DiagOptionalReadError(r, a->base.range, baseKey, rawBase->name);
-                    }
                 }
 
                 ResolveExpr(r, tm->base_node, scope);
@@ -8376,11 +8000,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             for (Node* anc = ((MemberExpr*)a->target)->base_node; anc;)
             {
                 const TypeName* at2 = InferType(r, anc, scope);
-
-                if (at2 && at2->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
-                {
-                    DiagOptionalReadError(r, a->base.range, MovableBoxSourceKey(r, anc), at2->name);
-                }
 
                 if (anc->kind == NodeMember)
                 {
@@ -8486,17 +8105,9 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     return;
                 }
 
-                // Rebinding drops the fact; `=` restores it for provably non-empty values.
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
-                bool valueProvesNonEmpty
-                    = !optionalTarget || (vt && !vt->isOptional) || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
 
                 MarkBoxLive(r, targetName);
-
-                if (valueProvesNonEmpty)
-                {
-                    MarkPathNonEmpty(r, targetName);
-                }
 
                 if (movedValueKey)
                 {
@@ -8528,7 +8139,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
 
                 // Contents-assign reads through the optional.
-                CheckOptionalDeref(r, a->value, vt, inner ? inner : tt, a->base.range);
 
                 /* An owning-struct inner (`^Rec b; b = arr[i];`) REPLACES the
                    cell contents, so the RHS value moves in: the source is
@@ -8546,7 +8156,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
 
                 // New contents: facts on the box's sub-paths (`h.f`) are stale.
-                ClearNestedNullableFacts(r, targetName);
             }
         }
         else if (targetIsOwningField)
@@ -8583,17 +8192,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 const TypeName* vt = InferType(r, a->value, scope);
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
-                // Rebind drops stale facts; `=` restores them for proven values.
-                bool valueProvesNonEmpty
-                    = !vt || !vt->isOptional || (movedValueKey && IsPathNonEmpty(r, movedValueKey));
-
-                ClearNullableFacts(r, fieldKey);
-
-                if (valueProvesNonEmpty)
-                {
-                    MarkPathNonEmpty(r, fieldKey);
-                }
-
                 // An owning RHS moves out of its source, like box-to-box.
                 if (movedValueKey)
                 {
@@ -8621,12 +8219,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 a->value = ApplyBoxToRcTarget(r, a->value, InferType(r, a->target, scope), scope);
             }
 
-            // Whether the stored value is provably non-empty (checked before the move below empties its source).
             const char* writtenKey = MovableBoxSourceKey(r, a->target);
-            const TypeName* writtenValueType = InferType(r, a->value, scope);
-            bool writtenValueNonEmpty
-                = writtenValueType
-                  && (!writtenValueType->isOptional || IsPathNonEmpty(r, MovableBoxSourceKey(r, a->value)));
 
             // Enum constants are read-only.
             if (a->target->kind == NodeMember && ((MemberExpr*)a->target)->isEnumConst)
@@ -8672,7 +8265,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
 
                 /* Assigning a `T?` into a plain `T` unwraps the optional. */
-                CheckOptionalDeref(r, a->value, vt, tt, a->base.range);
             }
             else if (a->target->kind == NodeIndex && a->op == AssignSet)
             {
@@ -8693,7 +8285,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                      vt->name);
                     }
 
-                    CheckOptionalDeref(r, a->value, vt, et, a->base.range);
 
                     const char* movedValueKey
                         = vt && AliasIsOwningValue(r, vt) ? MovableBoxSourceKey(r, a->value) : NULL;
@@ -8730,7 +8321,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 const TypeName* mt = InferType(r, a->target, scope);
                 const TypeName* vt = InferType(r, a->value, scope);
 
-                CheckOptionalDeref(r, a->value, vt, mt, a->base.range);
             }
 
             /* The written path holds a new value: every fact at, under, or
@@ -8738,14 +8328,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                value is provably non-empty. */
             if (writtenKey)
             {
-                ClearNullableFacts(r, writtenKey);
 
                 const TypeName* writtenType = InferType(r, a->target, scope);
-
-                if (a->op == AssignSet && writtenType && writtenType->isOptional && writtenValueNonEmpty)
-                {
-                    MarkPathNonEmpty(r, writtenKey);
-                }
 
                 // Refilling a precisely-indexed element re-lives it (never an erased `a[]`).
                 if (a->target->kind == NodeIndex && a->op == AssignSet && !PathKeyIsErased(writtenKey))
@@ -8989,10 +8573,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         {
             const char* baseKey = MovableBoxSourceKey(r, m->base_node);
 
-            if (!IsPathNonEmpty(r, baseKey))
-            {
-                DiagOptionalReadError(r, m->base.range, baseKey, rawBaseType->name);
-            }
         }
 
         const TypeName* baseType = UnwrapBoxPtr(rawBaseType);
@@ -9060,8 +8640,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         ResolveExpr(r, ce->condition, scope);
         CheckBoolCondition(r, ce->condition, scope);
-        ResolveUnderCondition(r, ce->thenExpr, ce->condition, true, scope);
-        ResolveUnderCondition(r, ce->elseExpr, ce->condition, false, scope);
+        ResolveExpr(r, ce->thenExpr, scope);
+        ResolveExpr(r, ce->elseExpr, scope);
         ce->resultType = ConditionalType(r, ce, scope, true);
         return;
     }
@@ -9304,7 +8884,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     }
 
                     /* A plain `T` field initialized from a `T?` unwraps it. */
-                    CheckOptionalDeref(r, field->value, fieldValueType, &fieldDecl->type, field->value->range);
                 }
 
                 /* A ^T field moves its source only when that source is itself owning. */
@@ -9369,10 +8948,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
 
-                if (!IsPathNonEmpty(r, baseKey))
-                {
-                    DiagOptionalReadError(r, ix->base.range, baseKey, baseType->name);
-                }
             }
         }
 
@@ -9397,11 +8972,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         for (; anc;)
         {
             const TypeName* at = InferType(r, anc, scope);
-
-            if (at && at->isOptional && !IsPathNonEmpty(r, MovableBoxSourceKey(r, anc)))
-            {
-                DiagOptionalReadError(r, nt->base.range, MovableBoxSourceKey(r, anc), at->name);
-            }
 
             if (anc->kind == NodeMember)
             {
@@ -9484,7 +9054,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
 
             // Plain elements unwrap `T?` sources.
-            CheckOptionalDeref(r, elem, InferType(r, elem, scope), ai->elementType, elem->range);
         }
 
         return;
@@ -9642,8 +9211,6 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
     r->m_diag = realDiag;
 
     ReplaceStrMapContents(&r->m_movedBoxes, &saved.m_moved);
-    ReplaceStrMapContents(&r->m_nonEmptyPaths, &saved.m_nonEmpty);
-    ReplaceStrMapContents(&r->m_emptyPaths, &saved.m_empty);
     r->m_unreachable = !saved.m_live;
     FlowFree(&saved);
 
@@ -9703,7 +9270,6 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
         FlowInit(&afterCond);
         FlowCapture(r, &afterCond);
 
-        ApplyCondFacts(r, condition, false, false, true);
 
         FlowJoinCurrent(r, exit);
         FlowApply(r, &afterCond);
@@ -9713,7 +9279,6 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
     // Condition true: its facts hold through the body.
     if (condition)
     {
-        ApplyCondFacts(r, condition, true, true, false);
     }
 
     VecPush(&r->m_loopFlows, &lf);
@@ -9865,7 +9430,6 @@ static void ScopePop(Resolver* r, StrMap* scope)
         const char* name = (const char*)VecGet(frame, i);
         StrMapPut(scope, name, NULL);
         ClearBoxSubtree(r, name);
-        ClearNullableFacts(r, name);
         InvalidateIndexVar(r, name);
     }
 }
@@ -10059,7 +9623,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
 
                 ClearBoxSubtree(r, vd->name);
-                ClearNullableFacts(r, vd->name);
                 InvalidateIndexVar(r, vd->name);
                 ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
@@ -10151,7 +9714,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             ClearBoxSubtree(r, vd->name);
-            ClearNullableFacts(r, vd->name);
             InvalidateIndexVar(r, vd->name);
             ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
             return;
@@ -10181,8 +9743,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         // `string[]`. Fixed-array locals return early above (they are
         // non-owning by construction), so nothing here sees one.
 
-        bool initProvesNonEmpty = true;
-
         if (vd->init)
         {
             ResolveExpr(r, vd->init, scope);
@@ -10199,20 +9759,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             // Plain `T` from `T?` unwraps.
-            CheckOptionalDeref(r, vd->init, initType, &vd->type, vd->base.range);
 
             // Box init from a box source moves it; a `Rec` source (owning
             // struct value, e.g. an element of a `Rec[]`) moves too.
             const char* movedInitKey = initType && AliasIsOwning(r, &vd->type) && AliasIsOwningValue(r, initType)
                                            ? MovableBoxSourceKey(r, vd->init)
                                            : NULL;
-
-            // A `T?` init proves non-empty only when itself proven.
-            if (vd->type.isOptional)
-            {
-                initProvesNonEmpty
-                    = (initType && !initType->isOptional) || (movedInitKey && IsPathNonEmpty(r, movedInitKey));
-            }
 
             if (movedInitKey)
             {
@@ -10229,14 +9781,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
         // Fresh binding: drop stale flow state for this name.
         ClearBoxSubtree(r, vd->name);
-        ClearNullableFacts(r, vd->name);
         InvalidateIndexVar(r, vd->name);
-
-        // An init proves non-empty unless it is a maybe-empty `T?`.
-        if (vd->init && initProvesNonEmpty)
-        {
-            MarkPathNonEmpty(r, vd->name);
-        }
 
         ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
 
@@ -10293,7 +9838,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             // Returning `T?` from `T` unwraps.
-            CheckOptionalDeref(r, rs->value, typeName, r->m_currentReturnType, rs->base.range);
 
             // Moves only when the function returns an owning type (boxes,
             // strings, arrays, and owning structs — `return arr[i];` from a
@@ -10354,23 +9898,12 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ResolveExpr(r, i->condition, scope);
         CheckBoolCondition(r, i->condition, scope);
 
-        /* `if (path?)` blesses the then-branch; `if (!path?)` blesses the else; `&&` and `||` of such
-         * tests bless each on the side where they all hold. Facts intersect at the join; moved-state
-         * unions. */
-
-        /* then/else are walked from the same pre-state; the result merges both. */
+        /* then/else are walked from the same pre-state; the result merges both (moved-state unions). */
         StrMap beforeBranches;
         CopyStrMap(&r->m_movedBoxes, &beforeBranches);
 
-        StrMap beforeFacts;
-        CopyStrMap(&r->m_nonEmptyPaths, &beforeFacts);
-
-        StrMap beforeEmpty;
-        CopyStrMap(&r->m_emptyPaths, &beforeEmpty);
-
         bool entryDead = r->m_unreachable;
 
-        ApplyCondFacts(r, i->condition, true, true, false);
 
         /* Each branch is its own lexical scope: locals declared in one
            branch are invisible in the other and after the join. */
@@ -10384,27 +9917,13 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         StrMap afterThen;
         CopyStrMap(&r->m_movedBoxes, &afterThen);
 
-        StrMap factsThen;
-        CopyStrMap(&r->m_nonEmptyPaths, &factsThen);
-
         ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
-        ReplaceStrMapContents(&r->m_nonEmptyPaths, &beforeFacts);
-        /* Empty facts never escape their branch. */
-        ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
-
-        /* The implicit/explicit else runs when the condition is false: establishes the opposite facts
-           (empty ones only inside an explicit else; they never escape it). */
-        ApplyCondFacts(r, i->condition, false, false, false);
 
         if (i->elseBranch)
         {
-            ApplyCondFacts(r, i->condition, false, true, false);
-
             ScopePush(r);
             WalkStmt(r, i->elseBranch, scope);
             ScopePop(r, scope);
-
-            ReplaceStrMapContents(&r->m_emptyPaths, &beforeEmpty);
         }
 
         bool elseDead = r->m_unreachable;
@@ -10423,21 +9942,14 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         {
             /* Only the then-path reaches the join: adopt its state. */
             ReplaceStrMapContents(&r->m_movedBoxes, &afterThen);
-            ReplaceStrMapContents(&r->m_nonEmptyPaths, &factsThen);
         }
         else if (!thenTerminates)
         {
             MergeMovedBoxes(&r->m_movedBoxes, &afterThen);
-
-            /* Keep only paths proven non-empty on BOTH branches. */
-            MergeNonEmptyFacts(&r->m_nonEmptyPaths, &factsThen);
         }
 
         StrMapFree(&beforeBranches);
         StrMapFree(&afterThen);
-        StrMapFree(&beforeFacts);
-        StrMapFree(&factsThen);
-        StrMapFree(&beforeEmpty);
 
         return;
     }
@@ -11142,9 +10654,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     StrMapInit(&r.m_constVars);
     StrMapInit(&r.m_movedBoxes);
-    StrMapInit(&r.m_nonEmptyPaths);
-    StrMapInit(&r.m_emptyPaths);
-    StrMapInit(&r.m_indexDeps);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_refLocals);
@@ -11233,9 +10742,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         // All flow state is per function: nothing proven in one holds in the next.
         ResetStrMap(&r.m_constVars);
         ResetStrMap(&r.m_movedBoxes);
-        ResetStrMap(&r.m_nonEmptyPaths);
-        ResetStrMap(&r.m_emptyPaths);
-        ResetStrMap(&r.m_indexDeps);
         ResetStrMap(&r.m_refBoxParams);
         ResetStrMap(&r.m_refLocals);
         ResetStrMap(&r.m_refThroughBox);
@@ -11669,9 +11175,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_constVars);
     StrMapFree(&r.m_constGlobals);
     StrMapFree(&r.m_movedBoxes);
-    StrMapFree(&r.m_nonEmptyPaths);
-    StrMapFree(&r.m_emptyPaths);
-    StrMapFree(&r.m_indexDeps);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
     StrMapFree(&r.m_refLocals);
