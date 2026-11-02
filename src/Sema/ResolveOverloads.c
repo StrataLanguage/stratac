@@ -19,7 +19,6 @@ typedef struct
     NodeTypes m_nodeTypes; /* the type InferType last gave each expression node */
     Arena* m_arena;
     StrMap m_constVars;
-    StrMap m_movedBoxes;
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
@@ -1068,12 +1067,6 @@ static bool HasNestedArrayInit(const ArrayInitExpr* ai)
     return false;
 }
 
-/* Move-state values: 1 = fully moved, 2 = re-live, 3 = partially moved. */
-static bool IsBoxMoved(const Resolver* r, const char* name)
-{
-    return StrMapGet(&r->m_movedBoxes, name) == (void*)1;
-}
-
 /* Owning when the type itself owns, or its alias resolves to one. */
 static bool AliasIsOwning(const Resolver* r, const TypeName* t)
 {
@@ -1120,24 +1113,6 @@ static bool SameResolvedType(const Resolver* r, const char* a, const char* b)
     const char* lb = b ? TypeRegistryResolveAlias(&r->m_registry, b) : NULL;
 
     return la && lb && strcmp(la, lb) == 0;
-}
-
-static void MarkBoxMoved(Resolver* r, const char* name)
-{
-    StrMapPut(&r->m_movedBoxes, name, (void*)1);
-}
-
-/* Whole-value use is rejected when fully (1) or partially (3) moved; non-moved fields stay accessible. */
-static bool IsBoxUnusable(const Resolver* r, const char* name)
-{
-    void* v = StrMapGet(&r->m_movedBoxes, name);
-    return v == (void*)1 || v == (void*)3;
-}
-
-// A descendant field moved out: fields stay readable, whole use does not.
-static bool IsBoxPartiallyMoved(const Resolver* r, const char* name)
-{
-    return StrMapGet(&r->m_movedBoxes, name) == (void*)3;
 }
 
 /* True when `child` is spelled as `parent` or nested under it. Index groups
@@ -1298,66 +1273,6 @@ static void ClearSubtreeByPath(StrMap* m, const char* key)
     }
 }
 
-/* Clears `key` and all its descendants from the move-state map.
-   Used when a whole-value reassignment re-lives the binding. */
-static void ClearBoxSubtree(Resolver* r, const char* key)
-{
-    ClearSubtreeByPath(&r->m_movedBoxes, key);
-}
-
-
-static void MarkBoxLive(Resolver* r, const char* name)
-{
-    ClearBoxSubtree(r, name);
-    StrMapPut(&r->m_movedBoxes, name, (void*)2);
-
-    // Reassigning re-lives the binding; the caller re-blesses it as needed.
-}
-
-/* Reassigning one owning field re-lives it and any ancestor whose moved descendants are all restored. */
-static void RevalidateOwningField(Resolver* r, const char* key)
-{
-    ClearBoxSubtree(r, key);
-
-    StrMap* m = &r->m_movedBoxes;
-
-    /* Walk each dotted ancestor prefix of `key`. */
-    for (const char* dot = strchr(key, '.'); dot; dot = strchr(dot + 1, '.'))
-    {
-        const char* prefix = arena_strndup(r->m_arena, key, (size_t)(dot - key));
-
-        /* Only a partially-moved (3) ancestor can be restored. */
-        if (StrMapGet(m, prefix) != (void*)3)
-        {
-            continue;
-        }
-
-        size_t prefixLen = strlen(prefix);
-        bool hasMovedDescendant = false;
-
-        for (size_t i = 0; i < m->cap; i++)
-        {
-            const char* key = m->keys[i];
-
-            if (!key || m->values[i] == NULL)
-            {
-                continue;
-            }
-
-            if ((m->values[i] == (void*)1 || m->values[i] == (void*)3) && strncmp(key, prefix, prefixLen) == 0
-                && key[prefixLen] == '.')
-            {
-                hasMovedDescendant = true;
-                break;
-            }
-        }
-
-        if (!hasMovedDescendant)
-        {
-            StrMapPut(m, prefix, NULL);
-        }
-    }
-}
 
 static bool IsBoxGlobalName(const Resolver* r, const char* name)
 {
@@ -1379,30 +1294,6 @@ static const char* KeyRoot(Arena* arena, const char* key)
     }
 
     return base;
-}
-
-// Mark every dotted/bracketed prefix of `key` partially moved.
-static void MarkBoxPartiallyMoved(Resolver* r, const char* key)
-{
-    for (size_t i = 0; key[i]; i++)
-    {
-        if (key[i] != '.' && key[i] != '[')
-        {
-            continue;
-        }
-
-        if (i == 0)
-        {
-            continue;
-        }
-
-        char* prefix = arena_strndup(r->m_arena, key, i);
-
-        if (StrMapGet(&r->m_movedBoxes, prefix) != (void*)1)
-        {
-            StrMapPut(&r->m_movedBoxes, prefix, (void*)3);
-        }
-    }
 }
 
 
@@ -1495,53 +1386,6 @@ static const char* EraseVariableIndices(Arena* arena, const char* key)
 
     out[o] = '\0';
     return out;
-}
-
-/* A moved element spelled with `var` ("a[i]") becomes an unknown element
-   once `var` changes: re-key it erased ("a[]"), which aliases every index,
-   so a later write to the new `a[i]` cannot revive it. */
-static void EraseMovedIndexVar(Resolver* r, const char* var)
-{
-    StrMap* m = &r->m_movedBoxes;
-    Vec keys;
-    Vec states;
-    VecInit(&keys);
-    VecInit(&states);
-
-    // Collect first: re-keying inserts, which may rehash the map.
-    for (size_t i = 0; i < m->cap; i++)
-    {
-        void* v = m->values[i];
-
-        if (m->keys[i] && (v == (void*)1 || v == (void*)3) && KeyIndexMentionsVar(m->keys[i], var))
-        {
-            VecPush(&keys, (void*)EraseVariableIndices(r->m_arena, m->keys[i]));
-            VecPush(&states, v);
-            m->values[i] = NULL;
-        }
-    }
-
-    for (size_t h = 0; h < keys.count; h++)
-    {
-        const char* erased = (const char*)VecGet(&keys, h);
-
-        if (StrMapGet(m, erased) != (void*)1)
-        {
-            StrMapPut(m, erased, VecGet(&states, h));
-        }
-    }
-
-    free(keys.items);
-    free(states.items);
-}
-
-// A moved element spelled with `var` becomes an unknown element once `var` changes.
-static void InvalidateIndexVar(Resolver* r, const char* var)
-{
-    if (var)
-    {
-        EraseMovedIndexVar(r, var);
-    }
 }
 
 static const char* MovableBoxSourceKey(Resolver* r, Node* n);
@@ -1637,57 +1481,6 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
     MarkMoved(r, name, range);
 }
 
-static void InvalidateRefLocals(Resolver* r, const char* key);
-
-/* Use after move is the CFG checker's job (Sema/MoveCheck.c). This walk still reports the one case it
-   does not model yet: an element moved out of an array, until the take/replace intrinsics replace it. */
-static void DiagUsedAfterMove(Resolver* r, SourceRange range, const char* key)
-{
-    if (strchr(key, '['))
-    {
-        DiagErrorFmt(r->m_diag, range, "'%s' used after move", key);
-    }
-}
-
-/* "'a' is poisoned", naming what was moved out of it and how to avoid that. */
-static void DiagPoisoned(Resolver* r, SourceRange range, const char* key)
-{
-    const StrMap* m = &r->m_movedBoxes;
-    size_t kl = strlen(key);
-    const char* moved = NULL;
-
-    for (size_t i = 0; i < m->cap && !moved; i++)
-    {
-        const char* k = m->keys[i];
-
-        if (k && m->values[i] == (void*)1 && strncmp(k, key, kl) == 0 && (k[kl] == '[' || k[kl] == '.'))
-        {
-            moved = k;
-        }
-    }
-
-    if (!moved || !strchr(moved + kl, '['))
-    {
-        return;
-    }
-
-    if (strchr(moved + kl, '['))
-    {
-        DiagErrorFmt(r->m_diag, range,
-                     "'%s' is poisoned: '%s' was moved out of it. To read an element without taking it, bind "
-                     "it with 'const ref' (or 'ref') or copy() it; or put a value back in that slot first",
-                     key, moved);
-    }
-    else if (moved)
-    {
-        DiagErrorFmt(r->m_diag, range, "'%s' is poisoned: '%s' was moved out of it; put a value back first", key,
-                     moved);
-    }
-    else
-    {
-        DiagErrorFmt(r->m_diag, range, "'%s' is poisoned", key);
-    }
-}
 
 /* `key` with a `ref` local at its root replaced by the path the local aliases. */
 static const char* CanonicalRefKey(Resolver* r, const char* key)
@@ -1696,39 +1489,6 @@ static const char* CanonicalRefKey(Resolver* r, const char* key)
     const char* aliased = (const char*)StrMapGet(&r->m_refLocals, root);
 
     return aliased ? arena_format(r->m_arena, "%s%s", aliased, key + strlen(root)) : key;
-}
-
-/* Storage at `key` may move, be reallocated or be freed: every `ref` local that reaches its target
-   THROUGH `key` dies (is marked moved, and reports "may dangle" at its next use). One that aliases
-   `key` itself survives (the slot stays put), unless it aliases the value inside a box there. */
-static void InvalidateRefLocals(Resolver* r, const char* key)
-{
-    if (!key || r->m_refLocals.count == 0)
-    {
-        return;
-    }
-
-    const char* k = CanonicalRefKey(r, key);
-    size_t kl = strlen(k);
-
-    for (size_t i = 0; i < r->m_refLocals.cap; i++)
-    {
-        const char* name = r->m_refLocals.keys[i];
-        const char* path = (const char*)r->m_refLocals.values[i];
-
-        if (!name || !path)
-        {
-            continue;
-        }
-
-        bool through = strncmp(path, k, kl) == 0 && (path[kl] == '.' || path[kl] == '[');
-        bool intoBox = strcmp(path, k) == 0 && StrMapGet(&r->m_refThroughBox, name);
-
-        if (through || intoBox)
-        {
-            MarkBoxMoved(r, name);
-        }
-    }
 }
 
 /* True when the root of move key `key` is a module global (not a local of the same name): no function
@@ -1799,7 +1559,6 @@ static void DiagMoveFromConstRef(Resolver* r, SourceRange range, const char* nam
 /* `drop(x)` consumes x whatever it is, an rc included. */
 static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 {
-    InvalidateRefLocals(r, name);
 
     const char* root = KeyRoot(r->m_arena, name);
 
@@ -1824,25 +1583,6 @@ static void MarkMoved(Resolver* r, const char* name, SourceRange range)
         return;
     }
 
-    MarkBoxMoved(r, name);
-    MarkBoxPartiallyMoved(r, name);
-}
-
-/* True when `key`, an ancestor, or an element that may alias it (`a[j]` for
-   `a[i]`, the erased `a[]` for any index) was fully moved out. */
-static bool IsPathMaybeMoved(const Resolver* r, const char* key)
-{
-    const StrMap* m = &r->m_movedBoxes;
-
-    for (size_t i = 0; key && i < m->cap; i++)
-    {
-        if (m->keys[i] && m->values[i] == (void*)1 && PathMayAlias(m->keys[i], key, NULL))
-        {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 // Moving a `T?` empties the source instead of poisoning it.
@@ -1888,7 +1628,6 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 /* `drop(x)` of an optional: x is now definitely empty, rc or not. */
 static void EmptyOptionalSource(Resolver* r, const char* name)
 {
-    InvalidateRefLocals(r, name);
 
 
     /* The source is now definitely empty. later `path?` tests resolve to
@@ -2121,135 +1860,50 @@ static void ReplaceStrMapContents(StrMap* dst, const StrMap* src)
     }
 }
 
-// Branch merge: moved on either side stays moved; else re-lived wins.
-static void MergeMovedBoxes(StrMap* dst, const StrMap* other)
-{
-    for (size_t i = 0; i < other->cap; i++)
-    {
-        if (!other->keys[i])
-        {
-            continue;
-        }
-
-        void* otherVal = other->values[i];
-        void* dstVal = StrMapGet(dst, other->keys[i]);
-
-        if (otherVal == (void*)1 || dstVal == (void*)1)
-        {
-            StrMapPut(dst, other->keys[i], (void*)1);
-        }
-        else if (otherVal == (void*)3 || dstVal == (void*)3)
-        {
-            StrMapPut(dst, other->keys[i], (void*)3);
-        }
-        else if (otherVal == (void*)2 || dstVal == (void*)2)
-        {
-            StrMapPut(dst, other->keys[i], (void*)2);
-        }
-    }
-}
-
-/* A snapshot of the per-path flow state. `m_live` is false for a path that
-   cannot be reached (no state yet, or every contributor was dead). */
+/* What loops, `defer` and branches carry between paths: whether the path can be reached at all (no state
+   yet, or every contributor was dead, makes it dead). */
 typedef struct
 {
-    StrMap m_moved;
     bool m_live;
 } FlowState;
 
 static void FlowInit(FlowState* s)
 {
-    StrMapInit(&s->m_moved);
     s->m_live = false;
 }
 
 static void FlowFree(FlowState* s)
 {
-    StrMapFree(&s->m_moved);
     s->m_live = false;
 }
 
 /* Snapshots the current state (dead paths are captured as not live). */
 static void FlowCapture(const Resolver* r, FlowState* s)
 {
-    ReplaceStrMapContents(&s->m_moved, &r->m_movedBoxes);
     s->m_live = !r->m_unreachable;
 }
 
-/* Makes `s` the current state. A dead `s` only marks the path dead: the
-   maps keep their last state so dead code still resolves against something. */
+/* Makes `s` the current state. */
 static void FlowApply(Resolver* r, const FlowState* s)
 {
-    if (!s->m_live)
-    {
-        r->m_unreachable = true;
-        return;
-    }
-
-    ReplaceStrMapContents(&r->m_movedBoxes, &s->m_moved);
-    r->m_unreachable = false;
+    r->m_unreachable = !s->m_live;
 }
 
-// Control-flow join: moved on any path stays moved, facts must hold on all paths.
-static void FlowJoinMaps(FlowState* dst, const StrMap* moved)
-{
-    if (!dst->m_live)
-    {
-        ReplaceStrMapContents(&dst->m_moved, moved);
-        dst->m_live = true;
-        return;
-    }
-
-    MergeMovedBoxes(&dst->m_moved, moved);
-}
-
+// Control-flow join: reachable if any path in is.
 static void FlowJoin(FlowState* dst, const FlowState* src)
 {
-    if (src->m_live)
-    {
-        FlowJoinMaps(dst, &src->m_moved);
-    }
+    dst->m_live |= src->m_live;
 }
 
 // Joins the current path into `dst` (a dead path contributes nothing).
 static void FlowJoinCurrent(const Resolver* r, FlowState* dst)
 {
-    if (!r->m_unreachable)
-    {
-        FlowJoinMaps(dst, &r->m_movedBoxes);
-    }
-}
-
-// Same non-NULL entries in both maps.
-static bool StrMapSameContents(const StrMap* a, const StrMap* b)
-{
-    for (size_t i = 0; i < a->cap; i++)
-    {
-        if (a->keys[i] && a->values[i] && StrMapGet(b, a->keys[i]) != a->values[i])
-        {
-            return false;
-        }
-    }
-
-    for (size_t i = 0; i < b->cap; i++)
-    {
-        if (b->keys[i] && b->values[i] && StrMapGet(a, b->keys[i]) != b->values[i])
-        {
-            return false;
-        }
-    }
-
-    return true;
+    dst->m_live |= !r->m_unreachable;
 }
 
 static bool FlowSame(const FlowState* a, const FlowState* b)
 {
-    if (a->m_live != b->m_live)
-    {
-        return false;
-    }
-
-    return !a->m_live || StrMapSameContents(&a->m_moved, &b->m_moved);
+    return a->m_live == b->m_live;
 }
 
 static int CountByName(const Module* mod, const char* name)
@@ -4398,7 +4052,6 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     // The buffer may be reallocated or elements shifted: refs to elements die.
-    InvalidateRefLocals(r, MovableBoxSourceKey(r, arg0));
 
     // Length may change: drop `[recv.length]` facts (resize/pop also drop below).
     {
@@ -4406,7 +4059,6 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (lenRecvKey)
         {
-            InvalidateIndexVar(r, KeyRoot(r->m_arena, lenRecvKey));
         }
     }
 
@@ -4588,7 +4240,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
         // ...and refs into globals may dangle after any call that could reach them.
         if (!best->isExtern)
         {
-            InvalidateRefLocals(r, gd->name);
         }
     }
 
@@ -4603,7 +4254,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
 
             if ((p->mod == ModRef && !p->type.isConst) || (p->mod == ModNone && AliasIsOwning(r, &p->type)))
             {
-                InvalidateRefLocals(r, MovableBoxSourceKey(r, arg));
             }
         }
     }
@@ -4625,7 +4275,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
             {
                 if (arg->kind == NodeIdent)
                 {
-                    InvalidateIndexVar(r, ((IdentExpr*)arg)->name);
                 }
 
                 const char* refKey = MovableBoxSourceKey(r, arg);
@@ -4633,7 +4282,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
                 if (refKey)
                 {
                     // The callee may write through the ref: drop nested facts.
-                    InvalidateIndexVar(r, KeyRoot(r->m_arena, refKey));
 
                     // Anything under the borrowed path may be rewritten (`h.f`, `a[0]`).
 
@@ -4656,7 +4304,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
             {
                 if (arg->kind == NodeIdent)
                 {
-                    InvalidateIndexVar(r, ((IdentExpr*)arg)->name);
                 }
 
                 // A mutable ref rest element may be rewritten like a named ref arg.
@@ -7475,8 +7122,6 @@ static void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typ
 static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
     ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
-    ClearBoxSubtree(r, vd->name);
-    InvalidateIndexVar(r, vd->name);
 
     if (!vd->init)
     {
@@ -7578,30 +7223,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         else if (!varType)
         {
             DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
-        }
-        else if (StrMapGet(&r->m_refLocals, ident->name) && IsBoxMoved(r, ident->name))
-        {
-            DiagErrorFmt(r->m_diag, ident->base.range,
-                         "'%s' may dangle: what it refers to may have moved, been reallocated or freed since it "
-                         "was bound (bind it again after the change)",
-                         ident->name);
-        }
-        else if (AliasIsOwning(r, varType))
-        {
-            // Whole use rejects moved values; member bases only fully-moved ones.
-            bool blocked = asMemberBase ? IsBoxMoved(r, ident->name) : IsBoxUnusable(r, ident->name);
-
-            if (blocked)
-            {
-                if (IsBoxPartiallyMoved(r, ident->name))
-                {
-                    DiagPoisoned(r, ident->base.range, ident->name);
-                }
-                else
-                {
-                    DiagUsedAfterMove(r, ident->base.range, ident->name);
-                }
-            }
         }
 
         return;
@@ -7857,7 +7478,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         CheckConstAssign(r, a->target, a->base.range, scope);
 
         /* Storing into a path frees or rebinds what was there: refs reaching through it die. */
-        InvalidateRefLocals(r, MovableBoxSourceKey(r, a->target));
 
         /* `cstring` is constant storage: element writes (plain or compound)
            are rejected. Whole-slot rebinding (`cs = ...`) is fine. */
@@ -7959,7 +7579,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* Reassigning a scalar local invalidates its index spellings' facts. */
         if (a->target->kind == NodeIdent)
         {
-            InvalidateIndexVar(r, ((IdentExpr*)a->target)->name);
         }
         else if (a->target->kind == NodeIndex)
         {
@@ -7968,7 +7587,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (targetKey)
             {
-                InvalidateIndexVar(r, KeyRoot(r->m_arena, targetKey));
             }
         }
 
@@ -8114,7 +7732,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
-                MarkBoxLive(r, targetName);
 
                 if (movedValueKey)
                 {
@@ -8132,11 +7749,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             else
             {
                 // Contents-assign into ^T (not a move).
-                if (IsBoxMoved(r, targetName))
-                {
-                    DiagUsedAfterMove(r, a->base.range, targetName);
-                }
-
                 const TypeName* inner = TypeNameBoxInner(tt);
 
                 if (vt && inner && !IsAssignableType(r, inner, vt))
@@ -8183,7 +7795,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             if (a->op == AssignSet)
             {
                 // Plain `=` restores the field and healed ancestors.
-                RevalidateOwningField(r, fieldKey);
             }
             else
             {
@@ -8338,11 +7949,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 const TypeName* writtenType = InferType(r, a->target, scope);
 
-                // Refilling a precisely-indexed element re-lives it (never an erased `a[]`).
-                if (a->target->kind == NodeIndex && a->op == AssignSet && !PathKeyIsErased(writtenKey))
-                {
-                    ClearBoxSubtree(r, writtenKey);
-                }
             }
         }
 
@@ -8423,7 +8029,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         /* ++/-- invalidates index spellings of the operand. */
         if (inc->operand->kind == NodeIdent)
         {
-            InvalidateIndexVar(r, ((IdentExpr*)inc->operand)->name);
         }
         else if (inc->operand->kind == NodeIndex)
         {
@@ -8432,7 +8037,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (operandKey)
             {
-                InvalidateIndexVar(r, KeyRoot(r->m_arena, operandKey));
             }
         }
 
@@ -8618,25 +8222,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         if (baseType && TypeIsCString(&r->m_registry, baseType->name) && strcmp(m->member, "length") != 0)
         {
             DiagErrorFmt(r->m_diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
-        }
-
-        /* Box fields can be moved out too; IsBoxUnusable catches full or partial moves. */
-        const TypeName* selfType = InferType(r, n, scope);
-        if (selfType && AliasIsOwning(r, selfType))
-        {
-            const char* key = MovableBoxSourceKey(r, n);
-
-            if (key && IsBoxUnusable(r, key))
-            {
-                if (IsBoxPartiallyMoved(r, key))
-                {
-                    DiagPoisoned(r, m->base.range, key);
-                }
-                else
-                {
-                    DiagUsedAfterMove(r, m->base.range, key);
-                }
-            }
         }
 
         return;
@@ -8923,29 +8508,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         ResolveExprImpl(r, ix->base_node, scope, true);
         ResolveExprImpl(r, ix->index, scope, false);
 
-        /* An owning element moved out (`take(a[0])`) leaves a dead slot:
-           reads are rejected until it is reassigned. A move through an index
-           that may alias this one (`a[j]`, `a[pick()]`) counts too. */
-        const TypeName* elemType = writeTarget ? NULL : InferType(r, n, scope);
-
-        if (elemType && AliasIsOwningValue(r, elemType))
-        {
-            const char* key = MovableBoxSourceKey(r, n);
-            const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
-
-            if (key && !(baseKey && IsBoxMoved(r, baseKey)))
-            {
-                if (IsPathMaybeMoved(r, key))
-                {
-                    DiagUsedAfterMove(r, ix->base.range, key);
-                }
-                else if (!asMemberBase && IsBoxPartiallyMoved(r, key))
-                {
-                    DiagPoisoned(r, ix->base.range, key);
-                }
-            }
-        }
-
         /* Indexing an optional array (`opt[i]`) reads its contents - the
             same narrowing rule as a member read through a `T?`. */
         {
@@ -9217,7 +8779,6 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
     r->m_deferWalkDepth--;
     r->m_diag = realDiag;
 
-    ReplaceStrMapContents(&r->m_movedBoxes, &saved.m_moved);
     r->m_unreachable = !saved.m_live;
     FlowFree(&saved);
 
@@ -9436,8 +8997,6 @@ static void ScopePop(Resolver* r, StrMap* scope)
     {
         const char* name = (const char*)VecGet(frame, i);
         StrMapPut(scope, name, NULL);
-        ClearBoxSubtree(r, name);
-        InvalidateIndexVar(r, name);
     }
 }
 
@@ -9629,8 +9188,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                                  valueType->name, leaf->name, vd->name);
                 }
 
-                ClearBoxSubtree(r, vd->name);
-                InvalidateIndexVar(r, vd->name);
                 ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
                 return;
             }
@@ -9720,8 +9277,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
             }
 
-            ClearBoxSubtree(r, vd->name);
-            InvalidateIndexVar(r, vd->name);
             ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
             return;
         }
@@ -9787,8 +9342,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         }
 
         // Fresh binding: drop stale flow state for this name.
-        ClearBoxSubtree(r, vd->name);
-        InvalidateIndexVar(r, vd->name);
 
         ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
 
@@ -9905,12 +9458,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         ResolveExpr(r, i->condition, scope);
         CheckBoolCondition(r, i->condition, scope);
 
-        /* then/else are walked from the same pre-state; the result merges both (moved-state unions). */
-        StrMap beforeBranches;
-        CopyStrMap(&r->m_movedBoxes, &beforeBranches);
-
         bool entryDead = r->m_unreachable;
-
 
         /* Each branch is its own lexical scope: locals declared in one
            branch are invisible in the other and after the join. */
@@ -9921,11 +9469,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         bool thenDead = r->m_unreachable;
         r->m_unreachable = entryDead;
 
-        StrMap afterThen;
-        CopyStrMap(&r->m_movedBoxes, &afterThen);
-
-        ReplaceStrMapContents(&r->m_movedBoxes, &beforeBranches);
-
         if (i->elseBranch)
         {
             ScopePush(r);
@@ -9933,30 +9476,8 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             ScopePop(r, scope);
         }
 
-        bool elseDead = r->m_unreachable;
-
-        /* A branch that never reaches the join (return, break, continue) must
-         * not poison the fall-through path: break/continue states were
-         * already handed to their loop. An else-less if falls through on its
-         * false edge. Both arms dead leaves the join unreachable - any state
-         * is sound; the then-side is adopted. */
-        bool elseTerminates = elseDead && !entryDead;
-        bool thenTerminates = thenDead && !entryDead;
-
-        r->m_unreachable = thenDead && elseDead;
-
-        if (elseTerminates)
-        {
-            /* Only the then-path reaches the join: adopt its state. */
-            ReplaceStrMapContents(&r->m_movedBoxes, &afterThen);
-        }
-        else if (!thenTerminates)
-        {
-            MergeMovedBoxes(&r->m_movedBoxes, &afterThen);
-        }
-
-        StrMapFree(&beforeBranches);
-        StrMapFree(&afterThen);
+        /* The join is unreachable only when both arms are. An else-less if falls through on its false edge. */
+        r->m_unreachable = thenDead && r->m_unreachable;
 
         return;
     }
@@ -10660,7 +10181,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 
     StrMapInit(&r.m_constVars);
-    StrMapInit(&r.m_movedBoxes);
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_refLocals);
@@ -10748,7 +10268,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         // All flow state is per function: nothing proven in one holds in the next.
         ResetStrMap(&r.m_constVars);
-        ResetStrMap(&r.m_movedBoxes);
         ResetStrMap(&r.m_refBoxParams);
         ResetStrMap(&r.m_refLocals);
         ResetStrMap(&r.m_refThroughBox);
@@ -10982,7 +10501,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         }
 
         /* Clear per-function move state left over from the last function walked. */
-        ResetStrMap(&r.m_movedBoxes);
 
         for (size_t i = 0; i < mod->globals.count; i++)
         {
@@ -11181,7 +10699,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     StrMapFree(&r.m_constVars);
     StrMapFree(&r.m_constGlobals);
-    StrMapFree(&r.m_movedBoxes);
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
     StrMapFree(&r.m_refLocals);

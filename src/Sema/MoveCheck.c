@@ -980,10 +980,43 @@ static void SetFact(const Env* env, unsigned char* f, const char* path, unsigned
 
 /* `key` was written or moved out of: forget what was proven about it, about what is under it, and about
    every place that may be the same (`a[j]` for `a[i]`). With `selfToo` false only what is under it. */
+/* A `ref` local stays valid until what it was bound to changes. Its state follows the facts in the array. */
+static unsigned char* RefStates(const Env* env, unsigned char* f)
+{
+    return f + env->factCount;
+}
+
+/* A write to `key` (or, with `selfToo`, to `key` itself) kills the refs bound there or under it, and the
+   refs bound to any place that may be the same. */
+static void KillRefs(const Env* env, unsigned char* f, const char* key, bool selfToo)
+{
+    Seg a[MaxSegs];
+    size_t na = SplitPlace(key, a);
+
+    for (size_t i = 0; i < env->aliasCount; i++)
+    {
+        Seg b[MaxSegs];
+        size_t nb = env->aliasTarget[i][0] ? SplitPlace(env->aliasTarget[i], b) : 0;
+        bool hit = nb > na || (nb == na && nb > 0 && selfToo);
+
+        for (size_t k = 0; hit && k < na; k++)
+        {
+            hit = SegsAlias(a[k], b[k]);
+        }
+
+        if (hit)
+        {
+            RefStates(env, f)[i] = StateMoved;
+        }
+    }
+}
+
 static void KillFacts(const Env* env, unsigned char* f, const char* key, bool selfToo)
 {
     Seg a[MaxSegs];
     size_t na = SplitPlace(key, a);
+
+    KillRefs(env, f, key, selfToo);
 
     for (size_t i = 0; i < env->factCount; i++)
     {
@@ -1032,6 +1065,23 @@ static void KillIndexVar(const Env* env, unsigned char* f, const char* name)
 /* A call may write any global. */
 static void KillGlobals(const Env* env, unsigned char* f)
 {
+    for (size_t i = 0; i < env->aliasCount; i++)
+    {
+        Seg b[MaxSegs];
+        char root[128];
+
+        if (env->aliasTarget[i][0] && SplitPlace(env->aliasTarget[i], b) > 0 && b[0].n < sizeof(root))
+        {
+            memcpy(root, b[0].p, b[0].n);
+            root[b[0].n] = 0;
+
+            if (FindLocal(&env->named, root) < 0)
+            {
+                RefStates(env, f)[i] = StateMoved;
+            }
+        }
+    }
+
     for (size_t i = 0; i < env->factCount; i++)
     {
         Seg b[MaxSegs];
@@ -1167,6 +1217,15 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 
     if (!vt || !vt->isOptional)
     {
+        /* Moving an owning value out ends every `ref` into it. */
+        char moved[256];
+        const char* movedRoot;
+
+        if (move && vt && !IsCopied(env, value) && TypeOwns(env, vt) && PlaceKeyImpl(value, moved, sizeof(moved), &movedRoot, true))
+        {
+            KillFacts(env, f, moved, true);
+        }
+
         return true;
     }
 
@@ -1287,7 +1346,20 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
             {
                 KillIndexVar(env, f, name);
             }
-            else if (!keepsElements)
+
+            /* Growing can move the buffer, so refs into the elements go either way. */
+            if (keepsElements)
+            {
+                char key[256];
+                const char* keyRoot;
+
+                if (PlaceKeyImpl(arg0, key, sizeof(key), &keyRoot, true))
+                {
+                    KillRefs(env, f, key, false);
+                }
+            }
+
+            if (!keepsElements)
             {
                 KillPlaceOf(env, f, arg0, false);
             }
@@ -1330,6 +1402,41 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
     }
 }
 
+/* The name at the root of `n`: the variable a place expression starts from. */
+static const IdentExpr* RootIdent(const Node* n)
+{
+    while (n && (n->kind == NodeMember || n->kind == NodeIndex))
+    {
+        n = n->kind == NodeMember ? ((const MemberExpr*)n)->base_node : ((const IndexExpr*)n)->base_node;
+    }
+
+    return n && n->kind == NodeIdent ? (const IdentExpr*)n : NULL;
+}
+
+/* Using a `ref` after what it was bound to changed. */
+static void DanglingCheck(const Env* env, const unsigned char* f, Found* found, const Node* n)
+{
+    const IdentExpr* id = NULL;
+
+    if (n->kind == NodeIdent || n->kind == NodeMember || n->kind == NodeIndex)
+    {
+        id = RootIdent(n);
+    }
+    else if (n->kind == NodeAssign)
+    {
+        id = RootIdent(((const AssignExpr*)n)->target);
+    }
+
+    for (size_t i = 0; id && i < env->aliasCount; i++)
+    {
+        if (strcmp(env->aliasName[i], id->name) == 0 && env->aliasTarget[i][0]
+            && f[env->factCount + i] != StateLive)
+        {
+            ReportAs(found, MoveDiagDangle, id->base.range, id->name);
+        }
+    }
+}
+
 /* The effect of one op on the narrowing facts; with `found` set, reads that lack the proof are reported. */
 static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
 {
@@ -1341,6 +1448,14 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
 
         KillFacts(env, f, vd->name, true);
         KillIndexVar(env, f, vd->name);
+
+        for (size_t i = 0; i < env->aliasCount; i++)
+        {
+            if (strcmp(env->aliasName[i], vd->name) == 0)
+            {
+                RefStates(env, f)[i] = StateLive;
+            }
+        }
 
         if (proves)
         {
@@ -2160,6 +2275,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
 
         if (found && op->kind == CfgEval)
         {
+            DanglingCheck(env, state + env->pathCount, found, op->node);
             LoanCheck(env, found, op->node);
             ElementMoveCheck(env, found, op);
             DropFieldMoveCheck(env, found, op);
@@ -2261,7 +2377,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
     CollectFacts(&env, &g);
 
     size_t pathCount = env.pathCount;
-    size_t n = pathCount + env.factCount;
+    size_t n = pathCount + env.factCount + env.aliasCount;
     Found found = {0};
 
     if (g.count > 0)
@@ -2396,6 +2512,12 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
         break;
     case MoveDiagGlobalLoan:
         DiagErrorFmt(diag, d->range, "'%s' is borrowed by this call, but the callee may write it", d->name);
+        break;
+    case MoveDiagDangle:
+        DiagErrorFmt(diag, d->range,
+                     "'%s' may dangle: what it refers to may have moved, been reallocated or freed since it was "
+                     "bound (bind it again after the change)",
+                     d->name);
         break;
     case MoveDiagDropField:
         DiagErrorFmt(diag, d->range, "cannot move '%s' out of a type with a Drop method; move the whole value",

@@ -2587,7 +2587,7 @@ STRATA_TEST(box_array_equality_after_element_move_is_rejected)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "'a' is poisoned"));
+    STRATA_CHECK(Contains(d, "cannot move out of 'a[0]'"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -2613,7 +2613,7 @@ STRATA_TEST(box_array_equality_after_element_drop_is_rejected)
 
     SourceManager sm; SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "'a' is poisoned"));
+    STRATA_CHECK(Contains(d, "cannot move out of 'a[0]'"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -2863,6 +2863,23 @@ static bool BoxMoveRejected(const char* src)
     return hit;
 }
 
+static bool BoxElementMoveRejected(const char* src)
+{
+    const char* err = NULL;
+    StrataJit* jit = CompileBox(src, &err);
+
+    if (jit)
+    {
+        strataJitDestroy(jit);
+        return false;
+    }
+
+    bool hit = err && Contains(err, "cannot move out of");
+    strataFree((char*)err);
+
+    return hit;
+}
+
 STRATA_TEST(box_loop_reassign_on_one_branch_is_a_double_move)
 {
     STRATA_CHECK(BoxMoveRejected(
@@ -3013,7 +3030,7 @@ STRATA_TEST(box_loop_move_and_reassign_on_every_path_runs)
 
 STRATA_TEST(box_array_element_double_move_is_rejected)
 {
-    STRATA_CHECK(BoxMoveRejected(
+    STRATA_CHECK(BoxElementMoveRejected(
         BOX_FLOW_PRELUDE
         "int entry() {\n"
         "  ^E[] a; array_push(a, mk(1));\n"
@@ -3024,7 +3041,7 @@ STRATA_TEST(box_array_element_double_move_is_rejected)
 
 STRATA_TEST(box_array_element_member_read_after_move_is_rejected)
 {
-    STRATA_CHECK(BoxMoveRejected(
+    STRATA_CHECK(BoxElementMoveRejected(
         BOX_FLOW_PRELUDE
         "int entry() {\n"
         "  ^E[] a; array_push(a, mk(1));\n"
@@ -3035,7 +3052,7 @@ STRATA_TEST(box_array_element_member_read_after_move_is_rejected)
 
 STRATA_TEST(box_array_element_move_through_aliasing_index_is_rejected)
 {
-    STRATA_CHECK(BoxMoveRejected(
+    STRATA_CHECK(BoxElementMoveRejected(
         BOX_FLOW_PRELUDE
         "int entry(int i, int j) {\n"
         "  ^E[] a; array_push(a, mk(1));\n"
@@ -3048,7 +3065,7 @@ STRATA_TEST(box_array_element_moved_by_var_index_stays_moved_after_var_changes)
 {
     /* After `i = 0` the moved `a[i]` is some unknown element: writing the
        new `a[i]` does not refill it. */
-    STRATA_CHECK(BoxMoveRejected(
+    STRATA_CHECK(BoxElementMoveRejected(
         BOX_FLOW_PRELUDE
         "int entry(int i) {\n"
         "  ^E[] a; array_push(a, mk(1));\n"
@@ -3102,7 +3119,7 @@ STRATA_TEST(box_element_store_moves_the_source)
         "  return b.v;\n"
         "}\n"));
 
-    STRATA_CHECK(BoxMoveRejected(
+    STRATA_CHECK(BoxElementMoveRejected(
         BOX_FLOW_PRELUDE
         "int entry() {\n"
         "  ^E[] a = { E { .v = 1 } }; ^E[] c = { E { .v = 2 }, E { .v = 3 } };\n"
