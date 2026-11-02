@@ -33,6 +33,7 @@ set(STRATA_COMMON_SOURCES
     src/Lex/Lexer.c
     src/Parse/Parser.c
     src/Sema/ResolveOverloads.c
+    src/Sema/Cfg.c
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeMetadata.c
     src/Codegen/TypeUtil.c
@@ -247,6 +248,7 @@ if(NOT STRATA_SHARED)
             tests/unit/ExternStructTests.c
             tests/unit/TypeAliasTests.c
             tests/unit/TypeClassifyTests.c
+            tests/unit/CfgTests.c
             tests/unit/EnumTests.c
             tests/unit/PrivateTests.c
             tests/unit/ScopeTests.c
