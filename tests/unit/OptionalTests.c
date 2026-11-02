@@ -2211,11 +2211,11 @@ STRATA_TEST(narrowed_global_fact_dies_across_call)
     STRATA_CHECK(OptDerefRejected(
         "struct Weapon { int dmg; };\n"
         "Weapon? gw = Weapon { .dmg = 3 };\n"
-        "int side() { return 1; }\n"
+        "void side() { Weapon? none; gw = none; }\n"
         "int entry() {\n"
         "  if (gw?)\n"
         "  {\n"
-        "    side();\n"                    /* any call may rebind the global */
+        "    side();\n"                    /* a call that rebinds the global ends the narrowing */
         "    return gw.dmg;\n"
         "  }\n"
         "  return 0;\n"

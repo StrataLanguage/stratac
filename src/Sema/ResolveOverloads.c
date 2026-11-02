@@ -1693,6 +1693,13 @@ static const char* MovableBoxSourceKey(Resolver* r, Node* n);
 // Error for reading an unproven optional; erased keys suggest a local.
 static void DiagOptionalReadError(Resolver* r, SourceRange range, const char* key, const char* typeName)
 {
+    /* Reading an unproven optional is reported by the CFG checker (Sema/MoveCheck.c). */
+    (void)r;
+    (void)range;
+    (void)key;
+    (void)typeName;
+    return;
+
     if (PathKeyIsErased(key))
     {
         size_t nlen = strlen(typeName);
@@ -1958,6 +1965,16 @@ static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
 
 static void InvalidateRefLocals(Resolver* r, const char* key);
 
+/* Use after move is the CFG checker's job (Sema/MoveCheck.c). This walk still reports the one case it
+   does not model yet: an element moved out of an array, until the take/replace intrinsics replace it. */
+static void DiagUsedAfterMove(Resolver* r, SourceRange range, const char* key)
+{
+    if (strchr(key, '['))
+    {
+        DiagErrorFmt(r->m_diag, range, "'%s' used after move", key);
+    }
+}
+
 /* "'a' is poisoned", naming what was moved out of it and how to avoid that. */
 static void DiagPoisoned(Resolver* r, SourceRange range, const char* key)
 {
@@ -1975,7 +1992,12 @@ static void DiagPoisoned(Resolver* r, SourceRange range, const char* key)
         }
     }
 
-    if (moved && strchr(moved + kl, '['))
+    if (!moved || !strchr(moved + kl, '['))
+    {
+        return;
+    }
+
+    if (strchr(moved + kl, '['))
     {
         DiagErrorFmt(r->m_diag, range,
                      "'%s' is poisoned: '%s' was moved out of it. To read an element without taking it, bind "
@@ -7933,7 +7955,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
                 else
                 {
-                    DiagErrorFmt(r->m_diag, ident->base.range, "'%s' used after move", ident->name);
+                    DiagUsedAfterMove(r, ident->base.range, ident->name);
                 }
             }
         }
@@ -8494,7 +8516,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 // Contents-assign into ^T (not a move).
                 if (IsBoxMoved(r, targetName))
                 {
-                    DiagErrorFmt(r->m_diag, a->base.range, "'%s' used after move", targetName);
+                    DiagUsedAfterMove(r, a->base.range, targetName);
                 }
 
                 const TypeName* inner = TypeNameBoxInner(tt);
@@ -9025,7 +9047,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
                 else
                 {
-                    DiagErrorFmt(r->m_diag, m->base.range, "'%s' used after move", key);
+                    DiagUsedAfterMove(r, m->base.range, key);
                 }
             }
         }
@@ -9329,7 +9351,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 if (IsPathMaybeMoved(r, key))
                 {
-                    DiagErrorFmt(r->m_diag, ix->base.range, "'%s' used after move", key);
+                    DiagUsedAfterMove(r, ix->base.range, key);
                 }
                 else if (!asMemberBase && IsBoxPartiallyMoved(r, key))
                 {
@@ -11659,7 +11681,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&byMangled);
     free(r.m_deferFrames.items);
     free(r.m_loopFlows.items);
-    MoveCheckModule(mod, &r.m_registry, &r.m_nodeTypes, diag, arena, getenv("STRATA_SHADOW") != NULL);
+    MoveCheckModule(mod, &r.m_registry, &r.m_nodeTypes, diag, arena);
 
     NodeTypesFree(&r.m_nodeTypes);
     TypeRegistryFree(&r.m_registry);

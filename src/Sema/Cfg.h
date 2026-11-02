@@ -34,6 +34,7 @@ typedef struct {
     size_t succ[2];
     unsigned succCount;
     bool reachable; /* some path from the entry gets here */
+    bool loopCond;  /* the condition of a loop: its false edge leaves the loop */
 } CfgBlock;
 
 typedef struct {

@@ -1,7 +1,6 @@
 // expect: run
 // expect-output: id 7
 // rule: a call to a function that writes no globals keeps the narrowing of a global
-// xfail: wrongly rejected, any call ends global narrowing (planned: callee write sets)
 struct Device { int id; };
 struct Host { Device? gd; string dir; };
 Host gHost;

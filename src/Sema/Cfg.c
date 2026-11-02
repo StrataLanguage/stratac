@@ -79,6 +79,14 @@ static void Goto(Builder* b, size_t target)
 static void LowerStmt(Builder* b, const Node* n);
 static void LowerExprC(Builder* b, const Node* n, bool consumed);
 
+/* A cast that only looks at its operand (a buffer or string viewed as text, an array as a pointer). Any
+   other cast hands its operand on, so a move through `rc<T> c = box` still moves the box. */
+static bool CastViewsOperand(int kind)
+{
+    return kind == CastBufferToCString || kind == CastBufferToString || kind == CastStringToCString
+           || kind == CastFixedToPtr;
+}
+
 static void LowerExpr(Builder* b, const Node* n)
 {
     LowerExprC(b, n, false);
@@ -207,13 +215,20 @@ static bool ArgIsConsumed(const CallExpr* e, size_t i)
 
     const FunctionDecl* d = e->resolvedDecl;
 
-    if (!d || d->isExtern || i >= d->params.count)
+    if (!d || d->isExtern || d->params.count == 0)
     {
         return false;
     }
 
-    const ParamDecl* p = (const ParamDecl*)VecGet(&d->params, i);
-    return p->mod == ModNone && !p->inferredBorrow && !p->isVarargRest;
+    /* Arguments past the named parameters feed a typed rest parameter, which takes them by value. */
+    const ParamDecl* p = (const ParamDecl*)VecGet(&d->params, i < d->params.count ? i : d->params.count - 1);
+
+    if (i >= d->params.count && !p->isVarargRest)
+    {
+        return false;
+    }
+
+    return p->mod == ModNone && !p->inferredBorrow;
 }
 
 static void LowerExprC(Builder* b, const Node* n, bool consumed)
@@ -280,7 +295,7 @@ static void LowerExprC(Builder* b, const Node* n, bool consumed)
         break;
     case NodeCast:
         /* A text cast (`(cstring)s`) views its operand; any other cast passes it on. */
-        LowerExprC(b, ((const CastExpr*)n)->operand, consumed && ((const CastExpr*)n)->textKind == CastTextNone);
+        LowerExprC(b, ((const CastExpr*)n)->operand, consumed && !CastViewsOperand(((const CastExpr*)n)->textKind));
         break;
     case NodeNullTest:
         LowerExpr(b, ((const NullTestExpr*)n)->operand);
@@ -452,7 +467,8 @@ static void LowerStmt(Builder* b, const Node* n)
         }
         else
         {
-            Branch(b, s->condition, body, after);
+            size_t ended = Branch(b, s->condition, body, after);
+            b->cfg->blocks[ended].loopCond = true;
         }
 
         if (b->loopCount == b->loopCap)
@@ -485,7 +501,8 @@ static void LowerStmt(Builder* b, const Node* n)
 
         if (s->condition)
         {
-            Branch(b, s->condition, body, after);
+            size_t ended = Branch(b, s->condition, body, after);
+            b->cfg->blocks[ended].loopCond = true;
         }
         else
         {
