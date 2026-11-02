@@ -129,6 +129,18 @@ static void StartDeadBlock(Builder* b)
     b->cur = NewBlock(b);
 }
 
+/* `a`, `a.b`, `a.b.c`: a variable and fields only, no index or call between. Such a place is one op, so
+   the analyses see `a.b` as a use of that path and not as a use of `a`. */
+static bool IsPurePlace(const Node* n)
+{
+    while (n && n->kind == NodeMember)
+    {
+        n = ((const MemberExpr*)n)->base_node;
+    }
+
+    return n && n->kind == NodeIdent;
+}
+
 static void LowerPlace(Builder* b, const Node* n);
 
 /* The base of `base.f` or `base[i]` that is written through: a bare variable there is used (a field of a
@@ -157,7 +169,11 @@ static void LowerPlace(Builder* b, const Node* n)
     case NodeIdent:
         return;
     case NodeMember:
-        LowerPlaceRoot(b, ((const MemberExpr*)n)->base_node);
+        if (!IsPurePlace(n))
+        {
+            LowerPlaceRoot(b, ((const MemberExpr*)n)->base_node);
+        }
+
         return;
     case NodeIndex:
         LowerPlaceRoot(b, ((const IndexExpr*)n)->base_node);
@@ -270,7 +286,11 @@ static void LowerExprC(Builder* b, const Node* n, bool consumed)
         LowerExpr(b, ((const NullTestExpr*)n)->operand);
         break;
     case NodeMember:
-        LowerExpr(b, ((const MemberExpr*)n)->base_node);
+        if (!IsPurePlace(n))
+        {
+            LowerExpr(b, ((const MemberExpr*)n)->base_node);
+        }
+
         break;
     case NodeIndex:
         LowerExpr(b, ((const IndexExpr*)n)->base_node);

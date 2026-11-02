@@ -1,4 +1,6 @@
+accept/partial_array_take_and_refill_loop only-old
+accept/partial_whole_reassign_from_own_field only-old
 reject/alias_owning_struct_local_unboxed only-new
 reject/eval_field_assign_rhs_moves_owner only-new
 reject/eval_same_box_two_params only-new
-reject/opt_moved_out_is_empty only-new
+reject/partial_array_whole_use only-old
