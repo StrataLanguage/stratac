@@ -1,7 +1,6 @@
 // expect: run
 // expect-output: b 1
 // rule: x? on a temporary optional in an expression drops the temporary afterwards
-// xfail: hole 14, x? on a temporary leaks
 Res? Maybe(int i) { return Res.Make(i); }
 int main()
 {

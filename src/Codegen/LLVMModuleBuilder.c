@@ -7180,7 +7180,17 @@ static Value EmitCall(Builder* b, CallExpr* n)
         }
         else if (shouldPassByPtr && !paramIsBoxType && argIsBox)
         {
-            args[k] = EmitExpr(b, argNode).value;
+            /* The callee borrows the box's contents. A box that is only a temporary (`F(Box(1))`) has no other
+               owner: park it so the end of the statement drops it. */
+            Value boxArg = EmitExpr(b, argNode);
+
+            if (argNode->kind != NodeIdent && argNode->kind != NodeMember && argNode->kind != NodeIndex
+                && TypeDescIsOwning(b, &boxArg.typeDesc))
+            {
+                ParkTemp(b, boxArg);
+            }
+
+            args[k] = boxArg.value;
         }
         else if (!shouldPassByPtr && paramIsBoxType && fd && fd->isExtern && k < fd->params.count)
         {
@@ -8379,7 +8389,16 @@ Value EmitExpr(Builder* b, Node* n)
             return ValueMake(LLVMBuildOr(b->m_builder, dataNonNull, lenNonZero, "opt"), TypeDescMake(I1Ty(b), 0, NULL));
         }
 
-        LLVMValueRef slotPtr = lv.valid ? lv.ptr : EmitExpr(b, nt->operand).value;
+        /* Testing a temporary (`Make()?`) only reads it: the end of the statement drops it. */
+        Value tested = {0};
+
+        if (!lv.valid)
+        {
+            tested = EmitExpr(b, nt->operand);
+            ClaimTemp(b, tested);
+        }
+
+        LLVMValueRef slotPtr = lv.valid ? lv.ptr : tested.value;
         LLVMValueRef boxPtr = lv.valid ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slotPtr, "opt") : slotPtr;
 
         LLVMValueRef isNonNull = LLVMBuildICmp(b->m_builder, LLVMIntNE, boxPtr, LLVMConstNull(b->m_ptrTy), "nn");
