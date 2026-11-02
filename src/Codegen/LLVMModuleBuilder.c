@@ -3163,31 +3163,33 @@ static UseKind CheckerUseOf(const Node* n)
     }
 }
 
-static void NullMovedSource(Builder* b, Node* n)
+/* The place a consuming use empties, or NULL. The checker decides: a use it calls a read or a copy leaves the
+   place alone (an rc copy still retains, which callers handle through the returned place). Nodes the checker
+   never saw (UseUnknown) keep the old rule: any lvalue handed to an owning destination is moved from. */
+static Node* MovedSource(Node* n)
 {
     Node* moved = (Node*)MovableBoxSourceNode(n);
+
+    if (!moved)
+    {
+        return NULL;
+    }
+
+    UseKind use = CheckerUseOf(moved);
+
+    return use == UseRead || use == UseCopy ? NULL : moved;
+}
+
+static void NullMovedSource(Builder* b, Node* n)
+{
+    Node* moved = MovedSource(n);
 
     if (!moved)
     {
         return;
     }
 
-    /* The checker decided what this use does. Only a use it calls a move empties the source; a copy or a read
-       leaves the place alone. Nodes the checker never saw (UseUnknown) keep the old syntactic rule. */
-    UseKind use = CheckerUseOf(moved);
-
-    if (use == UseRead)
-    {
-        return;
-    }
-
     LValue src = EmitLValueForNullStore(b, moved);
-
-    /* A copy leaves the place alone, except that copying an rc handle retains it. */
-    if (use == UseCopy && !(src.valid && TypeDescIsRc(&src.typeDesc)))
-    {
-        return;
-    }
 
     NullOwningSlot(b, src);
 }
@@ -4514,7 +4516,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 LLVMValueRef oldArr = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
 
-                Node* movedNode = (Node*)MovableBoxSourceNode(n->value);
+                Node* movedNode = MovedSource(n->value);
 
                 if (movedNode)
                 {
@@ -4549,7 +4551,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                    value, rebind. The SOURCE is detached BEFORE the drop so the
                    drop glue (and the store) never touch freed memory - for
                    `cur = cur.next` the source slot lives inside the freed object. */
-                Node* movedSourceNodePre = (Node*)MovableBoxSourceNode(n->value);
+                Node* movedSourceNodePre = MovedSource(n->value);
                 LValue srcPre = movedSourceNodePre ? EmitLValueForNullStore(b, movedSourceNodePre) : (LValue){0};
 
                 if (srcPre.valid && TypeDescIsRc(&srcPre.typeDesc))
@@ -6391,7 +6393,7 @@ static Value EmitDropBuiltin(Builder* b, CallExpr* n)
     LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->m_ctx);
 
     /* Drop the owning lvalue in place (frees recursively, then nulls the slot). */
-    Node* moved = (Node*)MovableBoxSourceNode(arg0);
+    Node* moved = MovedSource(arg0);
 
     if (moved)
     {
@@ -6814,7 +6816,7 @@ static bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd)
 static Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
 {
     Value inner = DerefBoxValue(b, box);
-    Node* moved = srcNode ? (Node*)MovableBoxSourceNode(srcNode) : NULL;
+    Node* moved = srcNode ? MovedSource(srcNode) : NULL;
 
     if (moved)
     {
@@ -7857,7 +7859,7 @@ static Value EmitBoxToRc(Builder* b, CastExpr* cast)
     TypeDesc target = Resolve(b, &cast->type);
     TypeDesc innerTd = Resolve(b, target.boxInner);
     Value box = EmitExpr(b, cast->operand);
-    Node* moved = (Node*)MovableBoxSourceNode(cast->operand);
+    Node* moved = MovedSource(cast->operand);
 
     if (moved)
     {
@@ -8666,7 +8668,7 @@ static void EmitStmtInner(Builder* b, Node* n)
                 Node* movedReturnNode = (TypeDescIsBox(&v.typeDesc) || TypeDescHasArrayShape(&v.typeDesc)
                                          || (v.typeDesc.structTypeName
                                              && TypeRegistryIsOwningStruct(&b->m_registry, v.typeDesc.structTypeName)))
-                                            ? (Node*)MovableBoxSourceNode(r->value)
+                                            ? MovedSource(r->value)
                                             : NULL;
 
                 if (movedReturnNode)
@@ -8826,7 +8828,7 @@ static void EmitStmtInner(Builder* b, Node* n)
                     /* Move from another array/string binding: copy the
                        {ptr,len} struct and zero the source (whole slot) to
                        avoid a double free. */
-                    Node* movedNode = (Node*)MovableBoxSourceNode(varDecl->init);
+                    Node* movedNode = MovedSource(varDecl->init);
                     LValue src = movedNode ? EmitLValueForNullStore(b, movedNode) : (LValue){0};
 
                     Value value = EmitExpr(b, varDecl->init);

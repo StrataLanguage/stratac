@@ -469,7 +469,17 @@ static void NoteIfCopied(Env* env, const Node* value, const TypeName* target)
         return;
     }
 
-    /* A box handed to a bare `T` copies the pointee; so does a bare struct element (a deep copy). */
+    /* A box handed to a bare `T` copies the pointee when it is plain data. A pointee that owns something cannot be
+       copied (it would be dropped twice), so the box is emptied into the new place instead. A bare struct element
+       is a deep copy. */
+    if (TypeNameIsBox(vt))
+    {
+        if (!vt->inner || TypeClassify(env->reg, env->arena, vt->inner).owning)
+        {
+            return;
+        }
+    }
+
     if (!TypeNameIsBox(vt))
     {
         if (value->kind != NodeIndex)
@@ -2425,9 +2435,13 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         {
             kind = UseCopy;
         }
-        else if (t && (TypeNameIsRc(t) || TypeNameIsFixedArray(t)))
+        else if (t && TypeNameIsRc(t))
         {
-            /* An rc handle is retained, not moved; a fixed array is inline storage that is copied. */
+            kind = UseRetain;
+        }
+        else if (t && TypeNameIsFixedArray(t))
+        {
+            /* Inline storage is copied. */
             kind = UseCopy;
         }
         else if (t && TypeOwns(env, t))

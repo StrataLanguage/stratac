@@ -731,6 +731,7 @@ typedef enum {
     UseRead, /* looked at, or borrowed: nothing moves */
     UseMove, /* an Owning value leaves the place (an optional is left empty) */
     UseCopy, /* the value is copied; the place keeps its own */
+    UseRetain, /* an rc handle is copied by taking another reference */
 } UseKind;
 
 typedef struct {
