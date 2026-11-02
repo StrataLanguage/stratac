@@ -8,7 +8,8 @@
 /* Roadmap phase 4, shadow mode: move and narrowing checks over the CFG that never report an error.
    Moves are tracked per place path (`a`, `a.b`) for Owning locals and by-value params. Narrowing
    proves `T?` places non-empty (null tests, sets from non-empty values) and flags reads that lack the
-   proof. Both print where they disagree with the diagnostics the old checker produced. */
+   proof. Loans: a place an earlier operand of a call, operator or index takes stays loaned to the end of
+   the expression, and later operands may not move, mutate or (for a mutable loan) touch it. All print where they disagree with the diagnostics the old checker produced. */
 
 typedef struct {
     SourceRange range; /* the use of the moved variable */
