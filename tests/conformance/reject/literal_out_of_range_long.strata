@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an integer literal one past long's maximum cannot initialize a long
-// xfail: hole 24, out-of-range literals are accepted
 int main()
 {
     long m = 9223372036854775808;

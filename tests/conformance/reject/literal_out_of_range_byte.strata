@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an integer literal that does not fit the target type is an error
-// xfail: hole 24, out-of-range literals are accepted
 int main()
 {
     byte b = 300;

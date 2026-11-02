@@ -250,6 +250,57 @@ static bool EnumConstFits(const char* underlying, uint64_t mag, bool isNegative)
     return EnumSignedValue(mag, isNegative, &sv) && sv >= minVal && (uint64_t)sv <= maxVal;
 }
 
+/* A literal that initializes a scalar must fit it: `byte b = 300`, `uint u = -1` and `float f = 1e40` are errors
+   rather than silent truncation or infinity. Only plain literals (and a negated one) are checked here. */
+static void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName* target)
+{
+    if (!value || !target || !target->name || !TypeNameIsBare(target))
+    {
+        return;
+    }
+
+    PrimitiveType prim = GetPrimitiveType(target->name);
+    bool integral = prim == PrimInt || prim == PrimUInt || prim == PrimLong || prim == PrimULong || prim == PrimSByte
+                    || prim == PrimByte || prim == PrimShort || prim == PrimUShort;
+    uint64_t mag = 0;
+    bool negative = false;
+    const Node* lit = value;
+
+    if (value->kind == NodeUnary && ((const UnaryExpr*)value)->op == UnNeg)
+    {
+        lit = ((const UnaryExpr*)value)->operand;
+    }
+
+    if (integral && lit->kind == NodeIntLiteral && ResolvedConstIntValue((Node*)value, &mag, &negative))
+    {
+        bool isUnsigned = false;
+        int64_t minVal = 0;
+        uint64_t maxVal = 0;
+        EnumSignedRange(target->name, &isUnsigned, &minVal, &maxVal);
+
+        /* A negative constant fits when its magnitude is within |min|; a positive one within max. */
+        bool fits = negative ? (!isUnsigned && mag <= (uint64_t)(-(minVal + 1)) + 1ULL) : mag <= maxVal;
+
+        if (!fits)
+        {
+            DiagErrorFmt(diag, value->range, "integer constant %s%llu does not fit in '%s'", negative ? "-" : "",
+                         (unsigned long long)mag, target->name);
+        }
+
+        return;
+    }
+
+    if (prim == PrimFloat && lit->kind == NodeFloatLiteral)
+    {
+        double v = ((const FloatLiteral*)lit)->value;
+
+        if (v > 3.4028234663852886e38 || v < -3.4028234663852886e38)
+        {
+            DiagErrorFmt(diag, value->range, "float constant is out of range for 'float'");
+        }
+    }
+}
+
 /* Integer constant arithmetic (two's complement). `div`/`mod`/`>>` apply
    C signed semantics; refuses division/modulo by zero and shifts whose
    count is negative or >= 64. */
@@ -9318,6 +9369,10 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             {
                 DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'",
                              vd->type.name, initType->name);
+            }
+            else if (ok)
+            {
+                CheckLiteralFits(r->m_diag, vd->init, &vd->type);
             }
 
             // Plain `T` from `T?` unwraps.

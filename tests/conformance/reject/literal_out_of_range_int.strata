@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an integer literal larger than int's range cannot initialize an int
-// xfail: hole 24, out-of-range literals are accepted
 int main()
 {
     int big = 3000000000;

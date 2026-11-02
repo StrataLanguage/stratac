@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a negative literal cannot initialize an unsigned type
-// xfail: hole 24, out-of-range literals are accepted
 int main()
 {
     uint u = -1;
