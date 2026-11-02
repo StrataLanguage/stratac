@@ -1,6 +1,5 @@
 // expect: reject
 // rule: sizeof of an incomplete struct is an error, since its size is unknown
-// xfail: host types, sizeof of an opaque struct is allowed
 struct S;
 int main()
 {

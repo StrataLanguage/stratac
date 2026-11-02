@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an array of an incomplete struct is an error, since its element size is unknown
-// xfail: host types, arrays of an opaque struct are allowed
 struct S;
 void Arr() { S[] list = {}; array_resize(list, 4u); }
 int main() { return 0; }

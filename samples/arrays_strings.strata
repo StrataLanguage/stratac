@@ -108,7 +108,7 @@ void Buffers()
     }
     byte[4] full = { 0x41; 4 };               // no NUL: all four bytes
     string fromFull = (string)full;
-    cstring view = (cstring)wanted;
+    cstring view = "VK_LAYER_x";
     printf("buffers: %s %d %s %u %s %d %d\n", Number(-42), found, fromFull, fromFull.length, view,
            wanted == view ? 1 : 0, view != "other" ? 1 : 0);
 }

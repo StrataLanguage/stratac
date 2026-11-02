@@ -2766,6 +2766,17 @@ static bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
+    {
+        const TypeName* pointee = TypeNameBoxInner(argType) ? TypeNameBoxInner(argType) : argType;
+
+        if (IsIncompleteStruct(&r->m_registry, pointee->name))
+        {
+            DiagErrorFmt(r->m_diag, arg0->range, "cannot copy incomplete type '%s'; its contents are unknown",
+                         pointee->name);
+            return true;
+        }
+    }
+
     if (TypeNameHasDrop(&r->m_registry, argType))
     {
         DiagErrorFmt(r->m_diag, arg0->range,
@@ -4068,6 +4079,13 @@ static bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         if (t->primitiveType == PrimVoid || !known)
         {
             DiagErrorFmt(r->m_diag, c->base.range, "unknown type '%s'", c->typeArg->name);
+            return true;
+        }
+
+        if (!TypeNameIsBox(t) && !TypeNameIsOptional(t) && IsIncompleteStruct(&r->m_registry, t->name))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range, "cannot take the %s of incomplete type '%s'; its size is unknown",
+                         name, t->name);
             return true;
         }
 
@@ -8469,6 +8487,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         else if (src && cast->operand->kind != NodeStrLiteral && TypeIsString(&r->m_registry, srcName)
                  && TypeIsCString(&r->m_registry, dstName))
         {
+            /* The cstring would point into the string's buffer and dangle once the string is dropped or grows. */
+            DiagErrorFmt(r->m_diag, cast->base.range,
+                         "a string cannot be cast to cstring: the result would dangle when the string is dropped; "
+                         "pass the string itself where C expects text");
             cast->textKind = CastStringToCString;
         }
         else if (src && TypeNameIsFixedArray(src) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0)
@@ -9444,6 +9466,20 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (IsIncompleteStruct(&r->m_registry, vd->type.name))
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
+        }
+
+        /* An array of an incomplete struct has elements of unknown size. */
+        for (const TypeName* el = vd->type.name ? &vd->type : NULL; el && TypeNameHasArrayShape(el);)
+        {
+            el = el->elem;
+
+            if (el && !TypeNameHasArrayShape(el) && !TypeNameIsBox(el) && !TypeNameIsOptional(el)
+                && IsIncompleteStruct(&r->m_registry, el->name))
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' is an array of incomplete type '%s'; its element size is unknown",
+                             vd->name, el->name);
+                break;
+            }
         }
 
         /* Resolve `[constName]` dimensions before the fixed-array checks below

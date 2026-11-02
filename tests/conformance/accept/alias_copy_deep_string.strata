@@ -9,7 +9,7 @@ int main()
         ^H a = H { .k = 1, .n = (Name)"a heap string here" };
         ^H b = copy(a);
         b.k = 2;
-        printf("%s / %s\n", (cstring)a.n, (cstring)b.n);
+        printf("%s / %s\n", a.n, b.n);
     }
     return 0;
 }
