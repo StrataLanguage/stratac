@@ -1,0 +1,11 @@
+// expect: reject "used after move"
+// rule: a defer that reads a variable runs at scope end, so moving the variable earlier in the scope is a use after move
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Res a = Box(1);
+    defer printf("deferred %d\n", a.id);
+    Take(a);
+    Report();
+    return 0;
+}

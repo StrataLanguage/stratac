@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: drop 2
+// rule: elements of a dynamic array of an alias of a Drop type are dropped with the array
+struct RA = Res;
+int main()
+{
+    {
+        RA[] b = {};
+        array_push(b, (RA)Res.Make(1));
+        array_push(b, (RA)Res.Make(2));
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,9 @@
+// expect: reject "used after move"
+// rule: the left operand runs first, so a variable it moves cannot be read by the right operand
+string Take(string s) { string t = s; return t; }
+int main()
+{
+    string s = copy("hello");
+    string t = Take(s) + s;
+    return 0;
+}

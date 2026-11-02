@@ -1,0 +1,12 @@
+// expect: reject "type argument 'SA' for 'HasC' must be plain data"
+// rule: a generic extern's type argument cannot be an alias of a struct holding owning fields
+handle Entity;
+extern<T> bool HasC(Entity e);
+struct S { string s; };
+struct SA = S;
+int main()
+{
+    Entity e = (Entity)0ul;
+    HasC<SA>(e);
+    return 0;
+}

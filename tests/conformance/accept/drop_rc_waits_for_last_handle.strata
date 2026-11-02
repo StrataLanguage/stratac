@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: after drop(m) live 2
+// expect-output: drop 1
+// expect-output: drop 2
+// rule: drop() of one rc handle keeps the cell alive while another handle exists
+struct Mid { Res[] items; };
+int main()
+{
+    {
+        rc<Mid> m = Mid { .items = {} };
+        array_push(m.items, Res.Make(1));
+        array_push(m.items, Res.Make(2));
+        rc<Mid> m2 = m;
+        drop(m);
+        printf("after drop(m) live %d\n", gLive);
+    }
+    Report();
+    return 0;
+}

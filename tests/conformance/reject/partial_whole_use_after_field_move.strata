@@ -1,0 +1,13 @@
+// expect: reject "is poisoned"
+// rule: a struct with a field moved out may not be used as a whole until the field is refilled
+struct Pair { ^Res a; ^Res b; };
+void Take(^Res r) { printf("took %d\n", r.id); }
+void Whole(^Pair p) { printf("whole %d %d\n", p.a.id, p.b.id); }
+int main()
+{
+    ^Pair p = Pair { .a = Box(1), .b = Box(2) };
+    Take(p.a);
+    Whole(p);
+    Report();
+    return 0;
+}

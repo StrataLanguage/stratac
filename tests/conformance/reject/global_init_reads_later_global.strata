@@ -1,0 +1,11 @@
+// expect: reject
+// rule: a global's initializer cannot read a global declared after it, which is not initialized yet
+// xfail: hole 15, initializers touching later globals are not checked
+^Res FromLater() { return Box(gR.id + 1); }
+^Res gA = FromLater();
+^Res gR = Box(7);
+int main()
+{
+    printf("gA=%d\n", gA.id);
+    return 0;
+}

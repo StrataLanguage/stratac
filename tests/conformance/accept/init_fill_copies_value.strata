@@ -1,0 +1,21 @@
+// expect: run
+// expect-output: strings 1 1 1
+// expect-output: plain 5 6
+// expect-output: none 0 1
+// rule: '{ value; n }' copies a string or plain struct into each element and leaves the source usable
+struct Q { int a; int b; };
+int main()
+{
+    {
+        string t = copy("y");
+        string[] b = { t; 2 };
+        printf("strings %d %d %d\n", b[0] == "y" ? 1 : 0, b[1] == "y" ? 1 : 0, t == "y" ? 1 : 0);
+        ^Q q = Q { .a = 5, .b = 6 };
+        Q[] c = { q; 2 };
+        printf("plain %d %d\n", c[0].a, c[1].b);
+        string[] z = { t; 0 };
+        printf("none %u %d\n", z.length, t == "y" ? 1 : 0);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: tmp 1
+// expect-output: tmp 2
+// rule: a box temporary passed to a ref or const ref parameter is dropped after the call
+// xfail: hole 7, box temporary passed to a ref param is never dropped
+int Id(ref Res r) { return r.id; }
+int CId(const ref Res r) { return r.id; }
+int main()
+{
+    printf("tmp %d\n", Id(Box(1)));
+    printf("tmp %d\n", CId(Box(2)));
+    Report();
+    return 0;
+}

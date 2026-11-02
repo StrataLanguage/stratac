@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: -128 255 -128 1 0 -2147483648
+// rule: arithmetic happens in the operands' own type and wraps, including byte, sbyte and short
+int gMin = -2147483647 - 1;
+int main()
+{
+    sbyte s = (sbyte)-128;
+    byte b = (byte)255;
+    sbyte n = -s;
+    int m = b * b;
+    short sh = (short)-32768;
+    int q = sh * sh;
+    printf("%d %d %d %d %d %d\n", (int)s, (int)b, (int)n, m, q, -gMin);
+    return 0;
+}

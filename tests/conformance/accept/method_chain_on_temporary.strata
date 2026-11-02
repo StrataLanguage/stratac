@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: tmp 1
+// rule: a by-value method can be called on a temporary struct and move a field out as its result
+struct Bag { string s; int n; };
+impl Bag
+{
+    Bag Make() { return Bag { .s = copy("tmp"), .n = 1 }; }
+    string Into(Bag self) { return self.s; }
+}
+int main()
+{
+    string s = Bag.Make().Into();
+    printf("tmp %d\n", s == "tmp" ? 1 : 0);
+    return 0;
+}

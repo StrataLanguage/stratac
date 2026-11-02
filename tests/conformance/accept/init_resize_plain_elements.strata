@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: 3 0 0
+// rule: array_resize may grow an array of plain values; new elements are zero
+int main()
+{
+    int[] a = { 3 };
+    array_resize(a, 3u);
+    printf("%d %d %d\n", a[0], a[1], a[2]);
+    return 0;
+}

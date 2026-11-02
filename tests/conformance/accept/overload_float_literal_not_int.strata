@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: G(double)
+// rule: a float argument widens to double but does not implicitly become int, so G(double) is chosen
+// xfail: hole 8, lossy float to int counts as an implicit conversion, so the call is ambiguous
+void G(double d) { printf("G(double)\n"); }
+void G(int i) { printf("G(int)\n"); }
+int main()
+{
+    G(1.5);
+    return 0;
+}

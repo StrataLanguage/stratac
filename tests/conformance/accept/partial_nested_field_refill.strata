@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: took 1
+// expect-output: b 2
+// expect-output: a 3
+// rule: a nested field may be moved out, its siblings read, and the field refilled and used again
+struct Pair { ^Res a; ^Res b; };
+struct Outer { Pair inner; string name; };
+void Take(^Res r) { printf("took %d\n", r.id); }
+void F()
+{
+    ^Outer o = Outer { .inner = Pair { .a = Box(1), .b = Box(2) }, .name = "o" };
+    Take(o.inner.a);
+    printf("b %d\n", o.inner.b.id);
+    o.inner.a = Box(3);
+    printf("a %d\n", o.inner.a.id);
+}
+int main() { F(); Report(); return 0; }

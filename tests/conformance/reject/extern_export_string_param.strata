@@ -1,0 +1,4 @@
+// expect: reject "has no C ABI"
+// rule: an @export function may not take a string parameter, which has no C ABI
+@export int Consume(string s) { return (int)s.length; }
+int main() { return 0; }

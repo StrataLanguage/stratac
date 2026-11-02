@@ -1,0 +1,15 @@
+// expect: reject
+// rule: an index expression may not grow the array it indexes into while the assignment targets it
+// xfail: hole 10, mutation inside the target expression is not checked
+int Grow(ref Res[] l) { for (int i = 0; i < 64; i++) { array_push(l, Res.Make(300 + i)); } return 0; }
+int main()
+{
+    {
+        Res[] list = {};
+        array_push(list, Res.Make(1));
+        list[Grow(list)] = Res.Make(5);
+        printf("list[0] %d\n", list[0].id);
+    }
+    Report();
+    return 0;
+}

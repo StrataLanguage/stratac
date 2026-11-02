@@ -1,0 +1,11 @@
+// expect: reject
+// rule: values of two different enum types cannot be compared
+// xfail: hole 23, cross-enum comparison is accepted
+enum Color { Red = 5, Green, Blue };
+enum Size { S, M, L };
+int main()
+{
+    bool b = Color.Red == Size.S;
+    printf("%d\n", (int)b);
+    return 0;
+}

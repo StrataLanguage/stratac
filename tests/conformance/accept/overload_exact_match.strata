@@ -1,0 +1,24 @@
+// expect: run
+// expect-output: F(int) 1
+// expect-output: F(byte) 1
+// expect-output: F(int) 300
+// expect-output: G(float)
+// expect-output: G(double)
+// rule: an overload whose parameter types match the arguments exactly is chosen
+void F(int x) { printf("F(int) %d\n", x); }
+void F(byte x) { printf("F(byte) %d\n", (int)x); }
+void G(float f) { printf("G(float)\n"); }
+void G(double d) { printf("G(double)\n"); }
+int main()
+{
+    int i = 1;
+    byte b = (byte)1;
+    float f = 1.5;
+    double d = 2.5;
+    F(i);
+    F(b);
+    F(300);
+    G(f);
+    G(d);
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: reject "must be plain data"
+// rule: a generic extern's type argument must be plain data, not a struct holding strings or other owning fields
+extern<T> bool HostRead(ref T value);
+struct S { string n; };
+int main()
+{
+    S[] ss = {};
+    array_push(ss, S { .n = copy("x") });
+    HostRead(ss[0]);
+    return 0;
+}

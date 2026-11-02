@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: list[0] 7 len 65
+// rule: an assignment runs its right side before locating the target element, so a call that grows the array is safe
+^Res Grow(ref Res[] l) { for (int i = 0; i < 64; i++) { array_push(l, Res.Make(300 + i)); } return Box(7); }
+int main()
+{
+    {
+        Res[] list = {};
+        array_push(list, Res.Make(1));
+        list[0] = Grow(list);
+        printf("list[0] %d len %u\n", list[0].id, list.length);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: reject "owning field 'h' of struct 'W' must be initialized"
+// rule: a struct literal must set a by-value field whose struct holds a box
+struct P { int x; };
+struct H { int a; ^P b; };
+struct W { int k; H h; };
+int main()
+{
+    ^W w = W { .k = 1 };
+    printf("%d\n", w.h.b.x);
+    return 0;
+}

@@ -1,0 +1,19 @@
+// expect: reject
+// rule: a Drop that runs implicitly at scope end may change globals, so it ends narrowing of a global optional
+// xfail: hole 13, implicit Drop calls do not end narrowing
+struct Holder { Res? r; };
+struct Clearer { int id; };
+^Holder gH = Holder {};
+impl Clearer { void Drop(ref Clearer self) { Res? e; gH.r = e; } }
+int main()
+{
+    gH.r = Res.Make(1);
+    if (gH.r?)
+    {
+        {
+            ^Clearer c = Clearer { .id = 0 };
+        }
+        printf("id %d\n", gH.r.id);
+    }
+    return 0;
+}

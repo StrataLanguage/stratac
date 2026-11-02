@@ -1,0 +1,14 @@
+// expect: reject "used after move"
+// rule: a deferred move happens when its scope ends, so the variable is moved after that scope
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Res a = Box(1);
+    {
+        defer Take(a);
+        printf("in %d\n", a.id);
+    }
+    printf("after %d\n", a.id);
+    Report();
+    return 0;
+}

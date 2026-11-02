@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: len 2
+// expect-output: drop 2
+// rule: drop(list[i]) drops that element once; the array skips it when it is destroyed
+int main()
+{
+    {
+        Res[] list = {};
+        array_push(list, Res.Make(1));
+        array_push(list, Res.Make(2));
+        drop(list[0]);
+        printf("len %u\n", list.length);
+    }
+    Report();
+    return 0;
+}

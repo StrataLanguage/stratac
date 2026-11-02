@@ -1,0 +1,7 @@
+// expect: reject "unknown variable"
+// rule: a local's initializer cannot refer to the local being declared
+int main()
+{
+    ^Res r = r;
+    return 0;
+}

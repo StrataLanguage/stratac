@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: a value moved on one branch of an if may not be used after the if
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main(int argc)
+{
+    ^Res a = Box(1);
+    if (argc > 0) { Take(a); }
+    printf("%d\n", a.id);
+    return 0;
+}

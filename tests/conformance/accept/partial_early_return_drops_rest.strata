@@ -1,0 +1,26 @@
+// expect: run
+// expect-output: r 2
+// expect-output: r 1
+// rule: an early return after partial moves drops the moved-out locals and the struct's remaining fields exactly once
+struct P { ^Res a; ^Res b; ^Res c; };
+^Res F(bool early)
+{
+    ^P p = P { .a = Box(1), .b = Box(2), .c = Box(3) };
+    ^Res x = p.a;
+    if (early) { return p.b; }
+    ^Res y = p.c;
+    return x;
+}
+int main()
+{
+    {
+        ^Res r = F(true);
+        printf("r %d\n", r.id);
+    }
+    {
+        ^Res r = F(false);
+        printf("r %d\n", r.id);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: 5 5.000000 1.500000 3
+// rule: conversions that cannot lose information (int to long or double, float to double, uint to ulong) are implicit
+int main()
+{
+    int i = 5;
+    long l = i;
+    double d = i;
+    float f = 1.5;
+    double e = f;
+    uint u0 = 3u;
+    ulong u = u0;
+    printf("%lld %f %f %llu\n", l, d, e, u);
+    return 0;
+}

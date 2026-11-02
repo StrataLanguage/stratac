@@ -1,0 +1,14 @@
+// expect: reject
+// rule: a ref to a struct and a ref to one of its fields may not be passed to the same call
+// xfail: hole 1, overlapping arguments are not checked
+struct Bag { ^Res r; int n; };
+void Reset(ref Bag self, ref Res keep) { self = Bag { .r = Box(2), .n = 1 }; printf("keep %d\n", keep.id); }
+int main()
+{
+    {
+        ^Bag b = Bag { .r = Box(1), .n = 0 };
+        Reset(b, b.r);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,9 @@
+// expect: reject "fills each element with its zero value"
+// rule: '{ {}; n }' cannot fill an array of boxes with zero values
+struct P { int x; };
+int main()
+{
+    ^P[] ps = { {}; 2u };
+    printf("%d\n", ps[1].x);
+    return 0;
+}

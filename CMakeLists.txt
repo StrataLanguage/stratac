@@ -276,6 +276,40 @@ if(NOT STRATA_SHARED)
                 -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/RunCliTests.cmake
         )
+
+        # Conformance suite: one test per case in tests/conformance/{accept,reject}. A case marked
+        # `// xfail:` is a known hole: it passes while the hole is open and fails once it is fixed,
+        # so the marker gets removed (see tests/conformance/README.md).
+        file(GLOB STRATA_CONFORMANCE_CASES CONFIGURE_DEPENDS
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/accept/*.strata
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/reject/*.strata)
+        foreach(case IN LISTS STRATA_CONFORMANCE_CASES)
+            get_filename_component(case_name "${case}" NAME_WE)
+            get_filename_component(case_dir "${case}" DIRECTORY)
+            get_filename_component(case_kind "${case_dir}" NAME)
+            file(STRINGS "${case}" case_expect REGEX "^// expect: (run|reject|panic)")
+            if(NOT case_expect)
+                message(FATAL_ERROR "${case}: missing a '// expect:' line")
+            endif()
+            set(test_name "conformance/${case_kind}/${case_name}")
+            add_test(NAME ${test_name}
+                COMMAND ${CMAKE_COMMAND}
+                    -DCASE=${case}
+                    -DPRELUDE=${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/prelude.strata
+                    -DSTRATAC=$<TARGET_FILE:stratac>
+                    -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}
+                    -DC_COMPILER=${CMAKE_C_COMPILER}
+                    -DC_COMPILER_ID=${CMAKE_C_COMPILER_ID}
+                    -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/RunCase.cmake
+            )
+            file(STRINGS "${case}" case_xfail REGEX "^// xfail:")
+            if(case_xfail)
+                set_tests_properties(${test_name} PROPERTIES WILL_FAIL TRUE LABELS "conformance;xfail")
+            else()
+                set_tests_properties(${test_name} PROPERTIES LABELS "conformance")
+            endif()
+        endforeach()
     endif()
 
     set_target_properties(strata_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

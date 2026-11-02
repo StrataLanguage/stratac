@@ -1,0 +1,10 @@
+// expect: reject
+// rule: assigning a long to an int narrows it and needs an explicit cast
+// xfail: hole 8, implicit narrowing is allowed
+int main()
+{
+    long big = 5000000000l;
+    int x = big;
+    printf("%d\n", x);
+    return 0;
+}

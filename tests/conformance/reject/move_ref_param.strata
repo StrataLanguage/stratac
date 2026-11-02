@@ -1,0 +1,12 @@
+// expect: reject "cannot be moved as it is not owned"
+// rule: a ref parameter does not own its value and cannot be moved out of
+void Take(^Res r) { printf("took %d\n", r.id); }
+void Steal(ref ^Res r) { Take(r); }
+int main()
+{
+    ^Res a = Box(1);
+    Steal(a);
+    printf("a %d\n", a.id);
+    Report();
+    return 0;
+}

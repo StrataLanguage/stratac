@@ -1,0 +1,8 @@
+// expect: reject "'^P' cannot be optional"
+// rule: a box is never empty, so '^P?' is not a type
+struct P { int x; };
+int main()
+{
+    ^P? b = P { .x = 1 };
+    return 0;
+}

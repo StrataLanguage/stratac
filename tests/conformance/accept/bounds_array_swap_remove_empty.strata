@@ -1,0 +1,9 @@
+// expect: panic "array index out of bounds"
+// rule: array_swap_remove on an empty array panics
+int main()
+{
+    int[] a = {};
+    array_swap_remove(a, 0u);
+    printf("len %u\n", a.length);
+    return 0;
+}

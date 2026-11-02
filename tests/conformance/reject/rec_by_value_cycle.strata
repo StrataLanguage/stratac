@@ -1,0 +1,8 @@
+// expect: reject "with no computable size"
+// rule: two structs cannot contain each other by value
+struct A { int v; B b; };
+struct B { int w; A a; };
+int main()
+{
+    return 0;
+}

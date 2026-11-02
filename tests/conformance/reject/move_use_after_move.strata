@@ -1,0 +1,8 @@
+// expect: reject "used after move"
+// rule: moving out of a variable makes it unusable until it is assigned again
+int main()
+{
+    ^Res a = Box(1);
+    ^Res b = a;
+    return a.id;
+}

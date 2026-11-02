@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: field initializers run in the order written, so a field that moves a variable makes it unusable in later fields
+struct P { int n; string a; };
+int Len(const ref string s) { return (int)s.length; }
+int main()
+{
+    string s = copy("hello");
+    ^P p = P { .a = s, .n = Len(s) };
+    return 0;
+}

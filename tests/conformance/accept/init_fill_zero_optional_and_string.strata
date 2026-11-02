@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: len 2 empty 1 set 0
+// rule: '{ {}; n }' fills structs with empty strings and empty optionals
+struct Bag { Res? r; string s; int n; };
+int main()
+{
+    {
+        Bag[] bags = { {}; 2u };
+        printf("len %u empty %d set %d\n", bags.length, bags[1].s.length == 0u ? 1 : 0, bags[1].r? ? 1 : 0);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,5 @@
+// expect: reject "components may only hold plain data"
+// rule: a @component struct may only hold plain data
+@component
+struct Comp { string name; Res[] items; };
+int main() { return 0; }

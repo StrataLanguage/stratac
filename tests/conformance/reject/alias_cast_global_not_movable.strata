@@ -1,0 +1,9 @@
+// expect: reject "'gN' cannot be moved as it is not owned because it is global"
+// rule: casting an owning global to another type would move it, and globals cannot be moved
+struct Name = string;
+Name gN = (Name)"glob";
+int main()
+{
+    string s = (string)gN;
+    return 0;
+}

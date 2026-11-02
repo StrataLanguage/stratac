@@ -1,0 +1,12 @@
+// expect: reject
+// rule: a fixed-size array of an alias of an owning struct is rejected like one of the struct
+// xfail: hole 18, aliases skip the fixed-array owning check
+struct P { int x; };
+struct H { int a; ^P b; };
+struct HA = H;
+int main()
+{
+    HA[2] hs = {};
+    printf("%d\n", hs[1].b.x);
+    return 0;
+}

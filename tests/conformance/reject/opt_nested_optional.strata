@@ -1,0 +1,8 @@
+// expect: reject "unexpected '?' after type 'P?'"
+// rule: an optional of an optional is not a type
+struct P { int x; };
+int main()
+{
+    P?? a;
+    return 0;
+}

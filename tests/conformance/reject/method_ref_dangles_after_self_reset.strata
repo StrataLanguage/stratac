@@ -1,0 +1,12 @@
+// expect: reject "may dangle"
+// rule: a method taking 'ref self' may reassign the struct, so refs into its fields are invalidated by the call
+struct Bag { ^Res r; int n; };
+impl Bag { void Reset(ref Bag self) { self = Bag { .r = Box(2), .n = 1 }; } }
+int main()
+{
+    ^Bag b = Bag { .r = Box(1), .n = 0 };
+    ref Res inner = b.r;
+    b.Reset();
+    printf("inner %d\n", inner.id);
+    return 0;
+}

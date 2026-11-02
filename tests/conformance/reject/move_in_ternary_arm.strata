@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: a move in one arm of ?: makes the variable unusable afterwards
+int Take(^Res r) { printf("took %d\n", r.id); return 1; }
+int main(int argc)
+{
+    ^Res a = Box(1);
+    int x = argc > 5 ? Take(a) : 0;
+    printf("%d\n", a.id);
+    return x;
+}

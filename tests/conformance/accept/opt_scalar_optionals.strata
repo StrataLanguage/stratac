@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: b=5
+// expect-output: a empty
+// rule: scalars can be optional; an undeclared one is empty and a set one narrows to its value
+int main()
+{
+    int? a;
+    int? b = 5;
+    if (b?) { printf("b=%d\n", b); }
+    if (a?) { printf("a set\n"); } else { printf("a empty\n"); }
+    return 0;
+}

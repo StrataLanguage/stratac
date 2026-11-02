@@ -1,0 +1,9 @@
+// expect: reject "box variable 'r' must be initialized"
+// rule: an rc local must be initialized where it is declared
+struct P { int x; };
+int main()
+{
+    rc<P> r;
+    printf("%d\n", r.x);
+    return 0;
+}

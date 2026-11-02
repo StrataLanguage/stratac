@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: still 1
+// rule: assigning an optional to itself keeps its value and drops nothing
+int main()
+{
+    {
+        Res? opt = Res.Make(1);
+        opt = opt;
+        if (opt?) { printf("still %d\n", opt.id); }
+    }
+    Report();
+    return 0;
+}

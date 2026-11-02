@@ -1,0 +1,11 @@
+// expect: reject "owning field 'b' of struct 'H' must be initialized"
+// rule: a struct literal must set a field whose type is an alias of a box
+struct P { int x; };
+struct PB = ^P;
+struct H { int a; PB b; };
+int main()
+{
+    ^H h = H { .a = 1 };
+    printf("%d\n", h.b.x);
+    return 0;
+}

@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: swap 2 1
+// rule: fields may be swapped through a temporary by moving out and refilling
+struct Pair { ^Res a; ^Res b; };
+int main()
+{
+    {
+        ^Pair p = Pair { .a = Box(1), .b = Box(2) };
+        ^Res t = p.a;
+        p.a = p.b;
+        p.b = t;
+        printf("swap %d %d\n", p.a.id, p.b.id);
+    }
+    Report();
+    return 0;
+}

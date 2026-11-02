@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: drop 2
+// expect-output: b set 0
+// rule: drop() of an optional field drops its value and leaves the field empty
+struct P { int n; Res? b; };
+int main()
+{
+    {
+        ^P p = P { .n = 0, .b = Res.Make(2) };
+        drop(p.b);
+        printf("b set %d\n", p.b? ? 1 : 0);
+    }
+    Report();
+    return 0;
+}

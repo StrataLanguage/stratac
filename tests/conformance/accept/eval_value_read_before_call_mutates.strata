@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: k 2
+// rule: an operand read as a plain value is taken before a later operand's call changes the array
+int Pop(ref Res[] l) { array_pop(l); array_pop(l); return 0; }
+int main()
+{
+    {
+        Res[] list = {};
+        array_push(list, Res.Make(1));
+        array_push(list, Res.Make(2));
+        int k = list[1].id + Pop(list);
+        printf("k %d len %u\n", k, list.length);
+    }
+    Report();
+    return 0;
+}

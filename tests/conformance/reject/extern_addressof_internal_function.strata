@@ -1,0 +1,9 @@
+// expect: reject "only extern and '@export' functions have a C ABI"
+// rule: only extern and @export functions may have their address taken
+extern delegate int StrFn(string s);
+int Consume(string s) { return (int)s.length; }
+int main()
+{
+    StrFn f = (StrFn)addressof(Consume);
+    return 0;
+}

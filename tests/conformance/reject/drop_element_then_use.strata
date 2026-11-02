@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: drop(list[i]) moves the element out, so reading it afterwards is rejected
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    drop(list[0]);
+    printf("id %d\n", list[0].id);
+    return 0;
+}

@@ -1,0 +1,13 @@
+// expect: reject "has not been blessed"
+// rule: assigning to a narrowed optional ends its narrowing
+int main()
+{
+    Res? a = Res.Make(1);
+    if (a?)
+    {
+        Res? none;
+        a = none;
+        printf("%d\n", a.id);
+    }
+    return 0;
+}

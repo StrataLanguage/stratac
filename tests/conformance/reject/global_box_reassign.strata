@@ -1,0 +1,10 @@
+// expect: reject "cannot be reassigned"
+// rule: a box global cannot be reassigned as a whole; only its fields may be mutated
+Res[] gList = {};
+void Clear() { gList = {}; }
+int main()
+{
+    array_push(gList, Res.Make(1));
+    Clear();
+    return 0;
+}

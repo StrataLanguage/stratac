@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: sum 11
+// rule: taking list[k] and refilling list[k] in the same iteration leaves the array whole after the loop
+// xfail: wrongly rejected, a take-and-refill of the same slot in a loop still poisons the array
+int Sum(Res[] l) { int s = 0; for (uint k = 0u; k < l.length; k++) { s += l[k].id; } return s; }
+void F()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    array_push(list, Res.Make(2));
+    for (uint k = 0u; k < list.length; k++)
+    {
+        ^Res x = list[k];
+        list[k] = Res.Make(x.id + 4);
+    }
+    printf("sum %d\n", Sum(list));
+}
+int main() { F(); Report(); return 0; }

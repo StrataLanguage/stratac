@@ -1,0 +1,39 @@
+// prelude.strata -- prepended to every conformance case before it is compiled.
+//
+// The runtime hooks use a poisoning allocator, so memory errors show up in the output instead of
+// passing silently: freed memory is filled with 0xDD (an int read from it prints -572662307) and
+// is never reused, and freeing a block twice (or one strata_alloc never returned) prints
+// "!!! DOUBLE/BAD FREE". `Res` counts live values in gLive; Report() prints "END live=N", which
+// must be 0 for a case to pass.
+
+extern ptr  malloc(ulong size);
+extern void free(ptr p);
+extern ptr  memset(ptr p, int v, ulong n);
+@noreturn extern void abort();
+extern int  fflush(ptr file);
+extern int  printf(cstring fmt, ...);
+@export ptr strata_alloc(ulong size)
+{
+    ptr raw = malloc(size + 16ul);
+    store<ulong>(raw, size);
+    store<ulong>((ptr)((ulong)raw + 8ul), 0xA11CEul);
+    return (ptr)((ulong)raw + 16ul);
+}
+@export void strata_free(ptr p)
+{
+    if (p == ptr.null) { return; }
+    ptr raw = (ptr)((ulong)p - 16ul);
+    if (load<ulong>((ptr)((ulong)raw + 8ul)) != 0xA11CEul) { printf("!!! DOUBLE/BAD FREE\n"); fflush(ptr.null); return; }
+    store<ulong>((ptr)((ulong)raw + 8ul), 0xDEADul);
+    memset(p, 0xDD, load<ulong>(raw));
+}
+@export void strata_panic(cstring msg) { printf("panic: %s\n", msg); fflush(ptr.null); abort(); }
+int gLive = 0;
+struct Res { int id; };
+impl Res
+{
+    Res Make(int id) { gLive++; return Res { .id = id }; }
+    void Drop(ref Res self) { gLive--; if (self.id < 10 || self.id > 99) { printf("drop %d\n", self.id); } fflush(ptr.null); }
+}
+^Res Box(int id) { gLive++; return Res { .id = id }; }
+void Report() { printf("END live=%d\n", gLive); fflush(ptr.null); }

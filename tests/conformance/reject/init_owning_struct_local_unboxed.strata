@@ -1,0 +1,8 @@
+// expect: reject "instances of 'S' must be boxed"
+// rule: a local of a struct with owning fields must be boxed
+struct S { string s; };
+int main()
+{
+    S a;
+    return 0;
+}

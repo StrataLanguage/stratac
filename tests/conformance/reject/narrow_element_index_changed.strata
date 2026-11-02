@@ -1,0 +1,17 @@
+// expect: reject "has not been blessed"
+// rule: narrowing list[i] does not carry over once i changes
+int main()
+{
+    Res?[] list = {};
+    Res? a = Res.Make(1);
+    Res? none;
+    array_push(list, a);
+    array_push(list, none);
+    uint i = 0u;
+    if (list[i]?)
+    {
+        i = 1u;
+        printf("%d\n", list[i].id);
+    }
+    return 0;
+}

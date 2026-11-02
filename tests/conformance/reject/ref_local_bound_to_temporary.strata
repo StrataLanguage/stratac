@@ -1,0 +1,8 @@
+// expect: reject "must be bound to a variable, field or element"
+// rule: a ref local cannot be bound to a temporary
+int main()
+{
+    const ref Res r = Res.Make(1);
+    printf("%d\n", r.id);
+    return 0;
+}

@@ -1,0 +1,15 @@
+// expect: reject "used after move"
+// rule: a move on one loop iteration makes the variable unusable on later iterations, even on a different path
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Res a = Box(1);
+    for (int i = 0; i < 3; i++)
+    {
+        if (i == 1) { continue; }
+        if (i == 2) { printf("%d\n", a.id); break; }
+        Take(a);
+    }
+    Report();
+    return 0;
+}

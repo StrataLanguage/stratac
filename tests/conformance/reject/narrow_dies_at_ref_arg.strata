@@ -1,0 +1,15 @@
+// expect: reject "has not been blessed"
+// rule: passing a struct to a ref parameter ends the narrowing of its optional fields
+struct T { Res? cur; };
+void Clear(ref T t) { drop(t.cur); }
+int main()
+{
+    ^T t = T { };
+    t.cur = Res.Make(1);
+    if (t.cur?)
+    {
+        Clear(t);
+        printf("%d\n", t.cur.id);
+    }
+    return 0;
+}

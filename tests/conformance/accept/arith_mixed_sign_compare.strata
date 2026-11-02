@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: A ok
+// expect-output: B ok
+// expect-output: C ok
+// expect-output: D ok
+// rule: comparing signed with unsigned values gives the mathematically correct answer
+// xfail: hole 8, mixed signed/unsigned comparisons convert to unsigned
+int main()
+{
+    int neg = -1;
+    uint one = 1u;
+    uint big = 3000000000u;
+    if (neg < one) { printf("A ok\n"); }
+    if (neg < big) { printf("B ok\n"); }
+    long m1 = -1l;
+    ulong umax = 18446744073709551615ul;
+    if (m1 < umax) { printf("C ok\n"); }
+    if (m1 != umax) { printf("D ok\n"); }
+    return 0;
+}

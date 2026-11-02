@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: 2 1
+// rule: a runtime cast of a member's value to an enum gives that member
+enum Color { Red, Green, Blue };
+int gV = 2;
+int main()
+{
+    Color c = (Color)gV;
+    printf("%d %d\n", (int)c, (int)(c == Color.Blue));
+    return 0;
+}

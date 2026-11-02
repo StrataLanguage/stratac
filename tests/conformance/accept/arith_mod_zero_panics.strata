@@ -1,0 +1,11 @@
+// expect: panic
+// rule: integer modulo by zero panics
+// xfail: hole 22, modulo by zero traps instead of panicking
+int gZero = 0;
+int main()
+{
+    int a = 7;
+    int r = a % gZero;
+    printf("r=%d\n", r);
+    return 0;
+}

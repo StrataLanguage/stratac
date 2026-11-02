@@ -1,0 +1,12 @@
+// expect: reject
+// rule: array_resize cannot grow an array of structs holding a box, since the new boxes would be null
+// xfail: hole 19, array_resize of must-hold elements is not checked
+struct P { int x; };
+struct H { int a; ^P b; };
+int main()
+{
+    H[] hs = {};
+    array_resize(hs, 3u);
+    printf("%d\n", hs[1].b.x);
+    return 0;
+}

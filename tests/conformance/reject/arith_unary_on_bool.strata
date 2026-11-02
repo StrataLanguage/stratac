@@ -1,0 +1,8 @@
+// expect: reject "invalid operand to unary operator ('bool')"
+// rule: unary minus is not defined on bool
+int main()
+{
+    bool b = true;
+    bool y = -b;
+    return 0;
+}

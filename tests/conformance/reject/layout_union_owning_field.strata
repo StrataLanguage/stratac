@@ -1,0 +1,4 @@
+// expect: reject "cannot have owning type"
+// rule: a union field may not have an owning type
+extern union U { ^Res r; int i; };
+int main() { return 0; }

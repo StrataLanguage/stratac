@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: 7 9
+// rule: copy() of a struct with a box-alias field copies the boxed value, not the pointer
+struct P { int x; };
+struct PB = ^P;
+struct H { int k; PB p; };
+PB MkP(int v) { ^P b = P { .x = v }; return (PB)b; }
+int main()
+{
+    {
+        ^H a = H { .k = 1, .p = MkP(7) };
+        ^H b = copy(a);
+        b.p.x = 9;
+        printf("%d %d\n", a.p.x, b.p.x);
+    }
+    return 0;
+}

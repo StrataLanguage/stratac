@@ -1,0 +1,12 @@
+// expect: reject
+// rule: a const ref argument may not be moved by a later argument of the same call
+// xfail: hole 10, borrow then move inside one expression is not checked
+int Eat(^Res r) { int v = r.id; drop(r); return v; }
+int Sum(const ref Res a, int b) { return a.id + b; }
+int main()
+{
+    ^Res s = Box(5);
+    printf("%d\n", Sum(s, Eat(s)));
+    Report();
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: panic
+// rule: a runtime cast of an int that is not a member's value to an enum panics
+// xfail: hole 23, the cast is unchecked
+enum Color { Red, Green, Blue };
+int gV = 77;
+int main()
+{
+    Color c = (Color)gV;
+    printf("%d\n", (int)c);
+    return 0;
+}

@@ -1,0 +1,9 @@
+// expect: reject "has not been blessed"
+// rule: testing a call's result does not bless a second call to the same function
+int gN = 0;
+Res? Maybe() { gN++; Res? e; if (gN == 1) { return Res.Make(5); } return e; }
+int main()
+{
+    if (Maybe()?) { printf("second id %d\n", Maybe().id); }
+    return 0;
+}

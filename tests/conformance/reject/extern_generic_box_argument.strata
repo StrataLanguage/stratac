@@ -1,0 +1,10 @@
+// expect: reject "must be a struct type"
+// rule: a generic extern's type argument must be a struct type, not a box
+extern<T> bool HostRead(ref T value);
+struct P { int x; };
+int main()
+{
+    ^P p = P { .x = 1 };
+    HostRead(p);
+    return 0;
+}

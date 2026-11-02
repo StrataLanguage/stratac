@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: eq=0 ne=1 same=1
+// rule: float4 == float4 is true only when all lanes are equal, and != when any lane differs
+// xfail: hole 21, vector == looks at the first lane only
+int main()
+{
+    float4 b = float4(1.0, 2.0, 3.0, 4.0);
+    float4 c = float4(1.0, 9.0, 9.0, 9.0);
+    bool e = b == c;
+    bool n = b != c;
+    bool s = b == b;
+    printf("eq=%d ne=%d same=%d\n", (int)e, (int)n, (int)s);
+    return 0;
+}

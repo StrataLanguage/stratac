@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: took 2
+// rule: a deferred move takes the variable's value at scope end; the value it replaced is dropped on assignment
+void Take(^Res r) { printf("took %d\n", r.id); }
+void F()
+{
+    ^Res a = Box(1);
+    defer Take(a);
+    a = Box(2);
+    printf("body %d\n", a.id);
+}
+int main() { F(); Report(); return 0; }

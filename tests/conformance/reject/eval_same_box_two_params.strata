@@ -1,0 +1,11 @@
+// expect: reject
+// rule: one call cannot move the same variable into two parameters
+// xfail: hole 1, overlapping arguments are not checked
+void Two(^Res a, ^Res b) { printf("two %d %d\n", a.id, b.id); }
+int main()
+{
+    ^Res s = Box(1);
+    Two(s, s);
+    Report();
+    return 0;
+}

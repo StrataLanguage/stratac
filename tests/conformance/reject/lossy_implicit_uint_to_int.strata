@@ -1,0 +1,10 @@
+// expect: reject
+// rule: assigning a uint to an int can change its value and needs an explicit cast
+// xfail: hole 8, implicit narrowing is allowed
+int main()
+{
+    uint i = 3000000000u;
+    int j = i;
+    printf("%d\n", j);
+    return 0;
+}

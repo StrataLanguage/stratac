@@ -1,0 +1,17 @@
+// expect: reject "used after move"
+// rule: a plain parameter passed on to a method that moves it moves the caller's argument
+struct Holder { string name; };
+struct Svc { int n; };
+impl Svc
+{
+    void Keep(ref Svc self, string s) { ^Holder h = Holder { .name = s }; }
+    int Use(ref Svc self, string s) { self.Keep(s); return 1; }
+}
+int main()
+{
+    ^Svc v = Svc { .n = 1 };
+    string s = "hello" + "!";
+    v.Use(s);
+    printf("[%s]\n", (cstring)s);
+    return 0;
+}

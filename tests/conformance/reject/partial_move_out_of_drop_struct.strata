@@ -1,0 +1,15 @@
+// expect: reject
+// rule: a field may not be moved out of a value whose type has a Drop method
+// xfail: hole 11, moving a field out of a Drop struct is allowed
+struct Outer { ^Res held; int n; };
+impl Outer { void Drop(ref Outer self) { printf("outer drop %d\n", self.held.id); } }
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    {
+        ^Outer o = Outer { .held = Box(1), .n = 2 };
+        Take(o.held);
+    }
+    Report();
+    return 0;
+}

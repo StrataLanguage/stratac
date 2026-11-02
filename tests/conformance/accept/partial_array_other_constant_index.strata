@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: read 2
+// rule: after moving list[0], list[1] may still be read; the rest of the array is dropped normally
+void F()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    array_push(list, Res.Make(2));
+    ^Res x = list[0];
+    printf("read %d\n", list[1].id);
+}
+int main() { F(); Report(); return 0; }

@@ -1,0 +1,8 @@
+// expect: reject "used after move"
+// rule: an array literal cannot move the same variable into two elements
+int main()
+{
+    ^Res s = Box(1);
+    ^Res[] arr = { s, s };
+    return 0;
+}

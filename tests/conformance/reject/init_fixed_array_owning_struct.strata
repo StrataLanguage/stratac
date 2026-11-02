@@ -1,0 +1,10 @@
+// expect: reject "may not contain an owning struct"
+// rule: a fixed-size array local cannot hold an owning struct (fixed arrays have no drop glue)
+struct P { int x; };
+struct H { int a; ^P b; };
+int main()
+{
+    H[2] hs;
+    printf("%d\n", hs[1].b.x);
+    return 0;
+}

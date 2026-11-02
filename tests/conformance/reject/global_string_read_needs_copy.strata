@@ -1,0 +1,11 @@
+// expect: reject "not owned because it is global"
+// rule: an owning value in a global cannot be moved out by plain assignment; it must be copy()'d
+struct Host { string dir; };
+Host gHost;
+int main()
+{
+    gHost.dir = "assets";
+    string d = gHost.dir;
+    printf("%d\n", (int)d.length);
+    return 0;
+}

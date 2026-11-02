@@ -1,0 +1,9 @@
+// expect: panic "array index out of bounds"
+// rule: array_pop on an empty array panics
+int main()
+{
+    int[] a = {};
+    int v = array_pop(a);
+    printf("v %d\n", v);
+    return 0;
+}

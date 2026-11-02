@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: drop 1
+// rule: assigning a variable to itself keeps the value and drops it once
+int main()
+{
+    {
+        ^Res a = Box(1);
+        a = a;
+    }
+    Report();
+    return 0;
+}

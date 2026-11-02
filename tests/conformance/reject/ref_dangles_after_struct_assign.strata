@@ -1,0 +1,11 @@
+// expect: reject "may dangle"
+// rule: assigning a whole struct invalidates refs into its fields
+struct Pair { ^Res a; ^Res b; };
+int main()
+{
+    ^Pair p = Pair { .a = Box(1), .b = Box(2) };
+    ref Res r = p.a;
+    p = Pair { .a = Box(3), .b = Box(4) };
+    printf("%d\n", r.id);
+    return 0;
+}

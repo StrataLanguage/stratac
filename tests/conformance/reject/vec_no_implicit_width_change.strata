@@ -1,0 +1,8 @@
+// expect: reject "'float3' cannot be initialized by expression of type 'float4'"
+// rule: vectors of different widths do not implicitly convert
+int main()
+{
+    float4 a = float4(1.0, 2.0, 3.0, 4.0);
+    float3 b = a;
+    return 0;
+}

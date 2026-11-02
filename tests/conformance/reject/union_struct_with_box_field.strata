@@ -1,0 +1,9 @@
+// expect: reject "union field 'w' cannot have owning type 'W'"
+// rule: a union field cannot be a struct that holds a box
+struct P { int x; };
+struct W { ^P b; };
+extern union U { W w; long raw; };
+int main()
+{
+    return 0;
+}

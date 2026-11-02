@@ -1,0 +1,10 @@
+// expect: panic
+// rule: a negative fill count panics
+// xfail: bug, a negative fill count segfaults
+int N() { return -1; }
+int main()
+{
+    int[] b = { 7; N() };
+    printf("len %u\n", b.length);
+    return 0;
+}

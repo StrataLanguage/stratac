@@ -1,0 +1,13 @@
+// expect: reject "cannot be moved as it is not owned"
+// rule: a ref local does not own its value and cannot be moved out of
+struct Pair { ^Res a; ^Res b; };
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Pair p = Pair { .a = Box(1), .b = Box(2) };
+    ref ^Res ra = p.a;
+    Take(ra);
+    printf("a %d\n", p.a.id);
+    Report();
+    return 0;
+}

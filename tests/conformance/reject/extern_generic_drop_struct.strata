@@ -1,0 +1,10 @@
+// expect: reject "type argument 'Res' for 'HasC' must be plain data"
+// rule: a generic extern's type argument cannot be a type with a Drop method
+handle Entity;
+extern<T> bool HasC(Entity e);
+int main()
+{
+    Entity e = (Entity)0ul;
+    HasC<Res>(e);
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: reject "may dangle"
+// rule: a ref into an array element is invalidated by a push to that array
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    ref Res r = list[0];
+    array_push(list, Res.Make(2));
+    printf("%d\n", r.id);
+    return 0;
+}

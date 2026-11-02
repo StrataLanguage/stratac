@@ -1,0 +1,11 @@
+// expect: reject "used after move"
+// rule: after a struct is moved as a whole, assigning one of its fields is rejected until the whole struct is assigned
+struct Bag { ^Res r; int n; };
+void Sink(^Bag b) { }
+int main()
+{
+    ^Bag b = Bag { .r = Box(1), .n = 0 };
+    Sink(b);
+    b.n = 5;
+    return 0;
+}

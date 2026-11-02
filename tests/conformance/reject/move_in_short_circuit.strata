@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: a move on the right of && may or may not happen, so the variable is unusable afterwards
+bool Take(^Res r) { printf("took %d\n", r.id); return true; }
+int main(int argc)
+{
+    ^Res a = Box(1);
+    if (argc > 5 && Take(a)) { return 1; }
+    printf("%d\n", a.id);
+    return 0;
+}

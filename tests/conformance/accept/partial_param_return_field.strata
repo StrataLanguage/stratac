@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: drop 2
+// expect-output: a 1
+// rule: returning one field of a by-value box parameter drops the parameter's other fields
+struct P { ^Res a; ^Res b; };
+^Res First(^P p) { return p.a; }
+int main()
+{
+    {
+        ^P p = P { .a = Box(1), .b = Box(2) };
+        ^Res a = First(p);
+        printf("a %d\n", a.id);
+    }
+    Report();
+    return 0;
+}

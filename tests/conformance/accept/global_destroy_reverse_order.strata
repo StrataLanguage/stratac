@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: watcher sees 5
+// expect-output: drop 5
+// rule: globals are destroyed in reverse declaration order, so a later global's Drop can still read an earlier one
+// xfail: hole 16, globals are destroyed in declaration order
+^Res gR = Box(5);
+struct Watcher { int id; };
+impl Watcher { void Drop(ref Watcher self) { printf("watcher sees %d\n", gR.id); fflush(ptr.null); } }
+^Watcher gW = Watcher { .id = 1 };
+int main()
+{
+    return 0;
+}

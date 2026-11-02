@@ -1,0 +1,9 @@
+// expect: panic "array index out of bounds"
+// rule: array_remove of an index past the end panics
+int main()
+{
+    int[] a = { 1, 2 };
+    array_remove(a, 5u);
+    printf("len %u\n", a.length);
+    return 0;
+}

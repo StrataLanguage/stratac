@@ -1,0 +1,15 @@
+// expect: reject "used after move"
+// rule: a variable a defer will move cannot also be returned, since the defer runs after the return value is taken
+void Eat(^Res r) { }
+^Res F(bool early)
+{
+    ^Res a = Box(1);
+    defer Eat(a);
+    if (early) { return a; }
+    return Box(2);
+}
+int main()
+{
+    ^Res x = F(true);
+    return 0;
+}

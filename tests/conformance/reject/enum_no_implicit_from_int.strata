@@ -1,0 +1,8 @@
+// expect: reject "'Color' cannot be initialized by expression of type 'int'"
+// rule: an int does not implicitly convert to an enum
+enum Color { Red, Green, Blue };
+int main()
+{
+    Color c = 2;
+    return 0;
+}

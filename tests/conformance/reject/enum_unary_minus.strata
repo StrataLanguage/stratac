@@ -1,0 +1,11 @@
+// expect: reject
+// rule: unary minus is not defined on enums
+// xfail: hole 23, unary minus on enums is accepted
+enum Color { Red, Green, Blue };
+int main()
+{
+    Color c = Color.Blue;
+    Color d = -c;
+    printf("%d\n", (int)d);
+    return 0;
+}

@@ -1,0 +1,12 @@
+// expect: reject "may dangle"
+// rule: a push through a ref alias of an array invalidates refs into the original array
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    ref Res[] al = list;
+    ref Res r = list[0];
+    for (int k = 0; k < 64; k++) { array_push(al, Res.Make(10 + k)); }
+    printf("%d\n", r.id);
+    return 0;
+}

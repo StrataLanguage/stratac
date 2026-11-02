@@ -1,0 +1,13 @@
+// expect: reject "used after move"
+// rule: a plain parameter that is moved somewhere down a chain of mutually recursive calls moves the caller's argument
+struct Holder { string name; };
+void Keep(string s) { ^Holder h = Holder { .name = s }; }
+int A(string s, int n) { if (n <= 0) { return 0; } return B(s, n - 1); }
+int B(string s, int n) { if (n == 1) { Keep(s); return 1; } return A(s, n); }
+int main()
+{
+    string s = "hello" + "!";
+    A(s, 3);
+    printf("[%s]\n", (cstring)s);
+    return 0;
+}

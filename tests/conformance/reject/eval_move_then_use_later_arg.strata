@@ -1,0 +1,9 @@
+// expect: reject "used after move"
+// rule: arguments run left to right, so a variable moved by one argument cannot be read by a later one
+int Eat(^Res r) { int v = r.id; drop(r); return v; }
+int main()
+{
+    ^Res q = Box(6);
+    printf("%d %d\n", Eat(q), q.id);
+    return 0;
+}

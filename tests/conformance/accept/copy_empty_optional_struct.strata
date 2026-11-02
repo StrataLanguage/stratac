@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: S? set=0
+// expect-output: int[]? set=0
+// rule: copy() of an empty optional struct or array is empty
+struct S { string a; int n; };
+int main()
+{
+    S? e2;
+    S? f2 = copy(e2);
+    printf("S? set=%d\n", f2? ? 1 : 0);
+    int[]? e3;
+    int[]? f3 = copy(e3);
+    printf("int[]? set=%d\n", f3? ? 1 : 0);
+    return 0;
+}

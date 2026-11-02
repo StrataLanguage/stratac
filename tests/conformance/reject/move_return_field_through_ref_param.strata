@@ -1,0 +1,13 @@
+// expect: reject
+// rule: returning a field of a ref parameter moves it out of the caller's value and is not allowed
+// xfail: hole 2, take-without-refill through a ref param
+struct P { int x; };
+struct H { ^P p; };
+^P Take(ref H h) { return h.p; }
+int main()
+{
+    ^H h = H { .p = P { .x = 7 } };
+    ^P got = Take(h);
+    printf("%d %d\n", got.x, h.p.x);
+    return 0;
+}

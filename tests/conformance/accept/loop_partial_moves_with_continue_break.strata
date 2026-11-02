@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: drop 2
+// expect-output: drop 6
+// rule: fields not moved out of a struct are dropped on continue and break as well as at the end of an iteration
+struct P { ^Res a; ^Res b; };
+int main()
+{
+    for (int i = 0; i < 3; i++)
+    {
+        ^P p = P { .a = Box(1 + i * 2), .b = Box(2 + i * 2) };
+        ^Res t = p.a;
+        if (i == 0) { continue; }
+        if (i == 2) { break; }
+        ^Res u = p.b;
+    }
+    Report();
+    return 0;
+}

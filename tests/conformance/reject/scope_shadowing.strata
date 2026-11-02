@@ -1,0 +1,10 @@
+// expect: reject "redefinition of 'a'"
+// rule: a local in an inner block cannot shadow one in an outer block
+int main()
+{
+    ^Res a = Box(1);
+    {
+        ^Res a = Box(2);
+    }
+    return 0;
+}

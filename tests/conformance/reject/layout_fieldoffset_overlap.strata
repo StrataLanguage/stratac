@@ -1,0 +1,7 @@
+// expect: reject "overlaps the previous field"
+// rule: a fieldoffset may not place a field over the bytes of the previous field
+extern struct M { fieldoffset(8) int a; fieldoffset(0) long b; };
+int main()
+{
+    return 0;
+}

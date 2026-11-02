@@ -1,0 +1,9 @@
+// expect: reject "box global 'g' must be initialized"
+// rule: a box global must have an initializer
+struct P { int x; };
+^P g;
+int main()
+{
+    printf("%d\n", g.x);
+    return 0;
+}

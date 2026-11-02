@@ -1,0 +1,14 @@
+// expect: reject "is poisoned"
+// rule: an array with an element moved out may not be passed as a whole until the slot is refilled
+int Sum(Res[] l) { int s = 0; for (uint k = 0u; k < l.length; k++) { s += l[k].id; } return s; }
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    array_push(list, Res.Make(2));
+    uint i = 0u;
+    ^Res x = list[i];
+    printf("sum %d\n", Sum(list));
+    Report();
+    return 0;
+}

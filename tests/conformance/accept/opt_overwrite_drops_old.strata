@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: drop 2
+// expect-output: mid
+// expect-output: drop 3
+// rule: assigning to an optional drops its old value, whether the new one is set or empty
+int main()
+{
+    {
+        Res? opt = Res.Make(1);
+        opt = Res.Make(2);
+        Res? e;
+        opt = e;
+        printf("mid\n");
+        opt = Res.Make(3);
+    }
+    Report();
+    return 0;
+}

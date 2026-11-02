@@ -1,0 +1,7 @@
+// expect: reject "with no computable size"
+// rule: a struct cannot contain itself by value
+struct Node { int v; Node next; };
+int main()
+{
+    return 0;
+}

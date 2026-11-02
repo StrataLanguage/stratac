@@ -1,0 +1,10 @@
+// expect: reject "cannot be overloaded"
+// rule: a generic extern cannot share its name with an @export function
+extern<T> void HostSet(const ref T v);
+struct Plain { int x; int y; };
+@export void HostSet(ptr v, ptr type) { printf("host got %d\n", load<int>(v)); }
+int main()
+{
+    HostSet(Plain { .x = 4, .y = 5 });
+    return 0;
+}

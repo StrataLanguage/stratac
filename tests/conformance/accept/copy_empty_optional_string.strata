@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: copy set=0
+// rule: copy() of an empty string? is empty
+// xfail: bug, copy() of an empty string? gives a set optional
+int main()
+{
+    string? es;
+    string? fs = copy(es);
+    printf("copy set=%d\n", fs? ? 1 : 0);
+    return 0;
+}

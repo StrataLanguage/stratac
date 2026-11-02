@@ -1,0 +1,10 @@
+// expect: reject "branches cannot be owning values"
+// rule: ?: cannot choose between two rc handles; use if/else
+int main()
+{
+    bool c = gLive == 0;
+    rc<Res> r1 = Res.Make(1);
+    rc<Res> r2 = Res.Make(2);
+    rc<Res> r = c ? r1 : r2;
+    return 0;
+}

@@ -1,0 +1,8 @@
+// expect: reject "cannot be initialized by moving from another variable"
+// rule: a global cannot be initialized by moving another global into it
+string gA = "first";
+string gB = gA;
+int main()
+{
+    return 0;
+}

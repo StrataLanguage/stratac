@@ -1,0 +1,9 @@
+// expect: reject
+// rule: a constant shift by the type's width or more is a compile error
+// xfail: hole 22, the constant shift folds to garbage
+int main()
+{
+    int c = 1 << 40;
+    printf("%d\n", c);
+    return 0;
+}

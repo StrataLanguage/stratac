@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: took 1
+// expect-output: refilled 2
+// rule: a variable moved and refilled in the same loop iteration may be used on the next iteration
+void Take(^Res r) { printf("took %d\n", r.id); }
+void F()
+{
+    ^Res a = Box(1);
+    int i = 0;
+    while (true)
+    {
+        if (i == 1) { printf("refilled %d\n", a.id); break; }
+        Take(a);
+        a = Box(2);
+        i++;
+        if (i < 5) { continue; }
+    }
+}
+int main() { F(); Report(); return 0; }

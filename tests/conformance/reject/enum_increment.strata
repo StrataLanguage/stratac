@@ -1,0 +1,9 @@
+// expect: reject "cannot increment a value of type 'Color'"
+// rule: ++ is not defined on enums
+enum Color { Red, Green, Blue };
+int main()
+{
+    Color c = Color.Red;
+    c++;
+    return 0;
+}

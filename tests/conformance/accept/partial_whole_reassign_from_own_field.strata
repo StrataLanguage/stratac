@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: 2 3
+// rule: reassigning a whole struct from a literal that moves one of its own fields leaves every field usable
+// xfail: wrongly rejected, the moved field stays marked as moved after the whole struct is reassigned
+struct P { ^Res a; ^Res b; };
+int main()
+{
+    {
+        ^P p = P { .a = Box(1), .b = Box(2) };
+        p = P { .a = p.b, .b = Box(3) };
+        printf("%d %d\n", p.a.id, p.b.id);
+    }
+    Report();
+    return 0;
+}

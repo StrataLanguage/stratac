@@ -1,0 +1,8 @@
+// expect: reject "cannot take 'RA' by value: it has a Drop method"
+// rule: an alias of a Drop type is still a Drop type and cannot be a by-value parameter
+struct RA = Res;
+void Take(RA r) { printf("took %d\n", r.id); }
+int main()
+{
+    return 0;
+}

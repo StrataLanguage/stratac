@@ -1,0 +1,10 @@
+// expect: reject "may dangle"
+// rule: drop() of a variable invalidates refs to it
+int main()
+{
+    ^Res a = Box(1);
+    ref Res r = a;
+    drop(a);
+    printf("%d\n", r.id);
+    return 0;
+}

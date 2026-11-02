@@ -1,0 +1,18 @@
+// expect: reject
+// rule: overwriting a Drop value runs its Drop, which may change globals, so it ends narrowing of a global optional
+// xfail: hole 13, implicit Drop calls do not end narrowing
+struct Holder { Res? r; };
+struct Clearer { int id; };
+^Holder gH = Holder {};
+impl Clearer { void Drop(ref Clearer self) { Res? e; gH.r = e; } }
+int main()
+{
+    gH.r = Res.Make(1);
+    ^Clearer c = Clearer { .id = 0 };
+    if (gH.r?)
+    {
+        c = Clearer { .id = 1 };
+        printf("id %d\n", gH.r.id);
+    }
+    return 0;
+}

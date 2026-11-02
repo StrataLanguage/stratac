@@ -1,0 +1,10 @@
+// expect: reject "is poisoned"
+// rule: copy() of a struct with a field moved out is rejected until the field is put back
+struct S { string a; string b; };
+int main()
+{
+    ^S s = S { .a = copy("aa"), .b = copy("bb") };
+    string t = s.a;
+    ^S c = copy(s);
+    return 0;
+}

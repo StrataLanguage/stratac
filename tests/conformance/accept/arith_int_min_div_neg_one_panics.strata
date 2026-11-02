@@ -1,0 +1,11 @@
+// expect: panic
+// rule: INT_MIN / -1 overflows and panics
+// xfail: hole 22, the division traps instead of panicking
+int gM = -1;
+int main()
+{
+    int a = -2147483647 - 1;
+    int r = a / gM;
+    printf("r=%d\n", r);
+    return 0;
+}

@@ -1,0 +1,9 @@
+// expect: reject "cannot copy"
+// rule: copy() of an array whose elements have a Drop method is rejected
+int main()
+{
+    Res[] l = {};
+    array_push(l, Res.Make(1));
+    Res[] m = copy(l);
+    return 0;
+}

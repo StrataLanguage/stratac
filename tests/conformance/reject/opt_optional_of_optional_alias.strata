@@ -1,0 +1,19 @@
+// expect: reject
+// rule: an optional of an alias of an optional is rejected like 'P??'
+// xfail: hole 18, aliases skip the nested-optional check (the inner emptiness is lost)
+struct P { int x; };
+struct OP = P?;
+int main()
+{
+    P? e;
+    OP o = (OP)e;
+    OP? a;
+    a = o;
+    if (a?)
+    {
+        OP inner = a;
+        P? q = (P?)inner;
+        if (q?) { printf("inner set %d\n", q.x); } else { printf("inner empty\n"); }
+    }
+    return 0;
+}

@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: m0 1
+// rule: copy() of an array of rc handles shares the cells, which stay alive until the last array is gone
+int main()
+{
+    rc<Res>[] l = {};
+    array_push(l, Res.Make(1));
+    {
+        rc<Res>[] m = copy(l);
+        drop(l);
+        printf("m0 %d live %d\n", m[0].id, gLive);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: reject
+// rule: < and > are not defined on vectors
+// xfail: hole 21, ordering comparisons on vectors are accepted
+int main()
+{
+    float4 b = float4(1.0, 2.0, 3.0, 4.0);
+    float4 c = float4(1.0, 9.0, 9.0, 9.0);
+    bool lt = b < c;
+    printf("%d\n", (int)lt);
+    return 0;
+}

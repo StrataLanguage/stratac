@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: in
+// expect-output: drop 1
+// rule: a move skipped by short-circuit || leaves the variable owned, and it is dropped at scope end
+bool Eat(^Res r) { drop(r); return true; }
+int main()
+{
+    {
+        ^Res a = Box(1);
+        bool c = gLive > 0;
+        if (c || Eat(a)) { printf("in\n"); }
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: reject "used after move"
+// rule: a struct alias of an owning type moves like the type it names
+struct Name = ^Res;
+int main()
+{
+    Name n = (Name)Box(1);
+    Name m = n;
+    printf("%d %d\n", n.id, m.id);
+    Report();
+    return 0;
+}

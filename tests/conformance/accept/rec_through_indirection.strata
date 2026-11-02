@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: 2 1 3
+// rule: a struct may refer to itself through an optional, a dynamic array or a box
+struct Node { int v; Node? next; Node[] kids; };
+struct A { int v; ^B b; };
+struct B { int w; ^A a; };
+int main()
+{
+    ^Node a = Node { .v = 1 };
+    ^Node b = Node { .v = 2, .next = a };
+    array_push(b.kids, Node { .v = 3 });
+    if (b.next?) { printf("%d %d %d\n", b.v, b.next.v, b.kids[0].v); }
+    return 0;
+}

@@ -1,0 +1,9 @@
+// expect: reject
+// rule: a constant integer modulo by zero is a compile error
+// xfail: hole 22, constant modulo by zero folds to garbage
+int main()
+{
+    int r = 5 % 0;
+    printf("r=%d\n", r);
+    return 0;
+}

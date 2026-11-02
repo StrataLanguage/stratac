@@ -1,0 +1,7 @@
+// expect: reject
+// rule: copy() of an incomplete struct is an error, since its contents are unknown
+// xfail: host types, copy() of an opaque struct is allowed
+struct S;
+extern void GetS(return ^S s);
+void Copy() { ^S a = GetS(); ^S b = copy(a); }
+int main() { return 0; }

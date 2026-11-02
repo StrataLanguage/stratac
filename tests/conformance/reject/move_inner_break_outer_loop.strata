@@ -1,0 +1,17 @@
+// expect: reject "used after move"
+// rule: break leaves only the inner loop, so a move before it repeats on the next outer iteration
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Res a = Box(1);
+    for (int i = 0; i < 2; i++)
+    {
+        for (int j = 0; j < 2; j++)
+        {
+            Take(a);
+            break;
+        }
+    }
+    Report();
+    return 0;
+}

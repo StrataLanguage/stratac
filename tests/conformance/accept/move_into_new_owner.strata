@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: drop 1
+// rule: a moved value is dropped exactly once, by its new owner
+int main()
+{
+    {
+        ^Res a = Box(1);
+        ^Res b = a;
+    }
+    Report();
+    return 0;
+}

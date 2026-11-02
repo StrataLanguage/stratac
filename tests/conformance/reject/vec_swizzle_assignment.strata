@@ -1,0 +1,8 @@
+// expect: reject "swizzle assignment is not supported"
+// rule: a swizzle is not assignable; lanes are assigned individually
+int main()
+{
+    float4 a = float4(1.0, 2.0, 3.0, 4.0);
+    a.xy = float2(7.0, 8.0);
+    return 0;
+}

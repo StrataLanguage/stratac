@@ -1,0 +1,7 @@
+// expect: reject "invalid operand to unary operator ('int')"
+// rule: ! needs a bool, not an int
+int main()
+{
+    bool z = !5;
+    return 0;
+}

@@ -1,0 +1,15 @@
+// expect: reject "has not been blessed"
+// rule: a call to a function that changes a global ends the narrowing of that global
+struct Host { Res? cur; };
+Host gHost;
+void Clear() { drop(gHost.cur); }
+int main()
+{
+    gHost.cur = Res.Make(1);
+    if (gHost.cur?)
+    {
+        Clear();
+        printf("%d\n", gHost.cur.id);
+    }
+    return 0;
+}

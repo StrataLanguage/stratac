@@ -1,0 +1,14 @@
+// expect: reject
+// rule: a box cannot be cast through an opaque struct into a box of another type
+// xfail: hole 17, box casts through an opaque struct are unchecked
+struct Opaque;
+struct Q { long a; long b; long c; };
+int main()
+{
+    ^Res r = Box(5);
+    ^Opaque o = (^Opaque)r;
+    ^Q q = (^Q)o;
+    q.c = 42l;
+    Report();
+    return 0;
+}

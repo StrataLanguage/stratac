@@ -1,0 +1,12 @@
+// expect: reject "is definitely empty"
+// rule: moving the value out of a tested optional leaves it empty
+int main()
+{
+    Res? opt = Res.Make(1);
+    if (opt?)
+    {
+        ^Res taken = opt;
+        printf("opt %d\n", opt.id);
+    }
+    return 0;
+}

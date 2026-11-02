@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: k 1 1 1
+// expect-output: name lengths 1 1 1
+// rule: '{ s; n }' from a boxed struct copies its fields into each element
+// xfail: bug, filling from a boxed owning struct gives zeroed elements (today it crashes)
+struct S { string n; int k; };
+int main()
+{
+    {
+        ^S s = S { .n = copy("x"), .k = 1 };
+        S[] a = { s; 3 };
+        printf("k %d %d %d\n", a[0].k, a[1].k, a[2].k);
+        printf("name lengths %u %u %u\n", a[0].n.length, a[1].n.length, a[2].n.length);
+        fflush(ptr.null);
+    }
+    Report();
+    return 0;
+}

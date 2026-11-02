@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: 2 1
+// rule: two elements can be swapped by moving both into locals and assigning them back
+int main()
+{
+    {
+        Res[] a = {};
+        array_push(a, Res.Make(1));
+        array_push(a, Res.Make(2));
+        ^Res t0 = a[0];
+        ^Res t1 = a[1];
+        a[0] = t1;
+        a[1] = t0;
+        printf("%d %d\n", a[0].id, a[1].id);
+    }
+    Report();
+    return 0;
+}

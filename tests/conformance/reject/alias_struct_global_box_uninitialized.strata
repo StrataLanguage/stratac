@@ -1,0 +1,12 @@
+// expect: reject
+// rule: an uninitialized global of an alias of a struct holding a box is rejected
+// xfail: hole 18, aliases skip the must-hold box check
+struct P { int x; };
+struct H { int a; ^P b; };
+struct HA = H;
+HA g;
+int main()
+{
+    printf("%d\n", g.b.x);
+    return 0;
+}

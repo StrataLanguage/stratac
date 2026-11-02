@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 3.000000 6.000000
+// rule: explicit casts convert between a newtype alias and its underlying type
+struct Meter = float;
+int main()
+{
+    Meter m = (Meter)3.0;
+    float f = (float)m;
+    Meter m2 = (Meter)(f * 2.0);
+    printf("%f %f\n", f, (float)m2);
+    return 0;
+}

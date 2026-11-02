@@ -1,0 +1,10 @@
+// expect: panic
+// rule: shifting by the type's width or more panics
+// xfail: hole 22, the shift count is masked (1 << 33 gives 2)
+int gS = 33;
+int main()
+{
+    int a = 1;
+    printf("%d\n", a << gS);
+    return 0;
+}

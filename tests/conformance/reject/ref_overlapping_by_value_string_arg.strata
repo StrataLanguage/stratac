@@ -1,0 +1,14 @@
+// expect: reject
+// rule: a by-value string argument may not be an element of an array passed by ref to the same call
+// xfail: hole 1, overlapping arguments are not checked
+void Fill(ref string[] arr, string s)
+{
+    for (int i = 0; i < 40; i++) { array_push(arr, "filler"); }
+    printf("len=%u\n", s.length);
+}
+int main()
+{
+    string[] names = { "a heap allocated name" };
+    Fill(names, names[0]);
+    return 0;
+}

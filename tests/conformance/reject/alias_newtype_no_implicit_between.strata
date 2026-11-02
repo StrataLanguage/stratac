@@ -1,0 +1,10 @@
+// expect: reject "'Sec' cannot be initialized by expression of type 'Meter'"
+// rule: two newtype aliases of the same underlying type do not implicitly convert into each other
+struct Meter = float;
+struct Sec = float;
+int main()
+{
+    Meter m = (Meter)3.0;
+    Sec s = m;
+    return 0;
+}

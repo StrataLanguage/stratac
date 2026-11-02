@@ -1,0 +1,12 @@
+// expect: reject "may dangle"
+// rule: passing an array to a ref parameter invalidates refs into its elements
+void Grow(ref Res[] l) { for (int k = 0; k < 64; k++) { array_push(l, Res.Make(10 + k)); } }
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    ref Res r = list[0];
+    Grow(list);
+    printf("%d\n", r.id);
+    return 0;
+}

@@ -1,0 +1,10 @@
+// expect: reject "'s' used after move"
+// rule: casting an owning value to its newtype alias moves it
+struct Name = string;
+int main()
+{
+    string s = "hello world, long enough";
+    Name n = (Name)s;
+    printf("%s\n", (cstring)s);
+    return 0;
+}

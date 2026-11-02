@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: lit-a 1
+// rule: ?: may choose between string literals, and the result can be moved into a string
+int main()
+{
+    bool c = gLive == 0;
+    string s = c ? "lit-a" : "lit-b";
+    string t = s;
+    printf("lit-a %d\n", t == "lit-a" ? 1 : 0);
+    return 0;
+}

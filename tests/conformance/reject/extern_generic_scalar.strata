@@ -1,0 +1,11 @@
+// expect: reject "type argument 'int' for 'GetC' must be a struct type"
+// rule: a generic extern's type argument must be a struct, not a scalar
+handle Entity;
+extern<T> bool GetC(Entity e, ref T value);
+int main()
+{
+    Entity e = (Entity)0ul;
+    int i = 0;
+    GetC(e, i);
+    return 0;
+}

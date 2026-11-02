@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: a heap string here / a heap string here
+// rule: copy() of a struct with a string-alias field copies the string, so each copy frees its own
+struct Name = string;
+struct H { int k; Name n; };
+int main()
+{
+    {
+        ^H a = H { .k = 1, .n = (Name)"a heap string here" };
+        ^H b = copy(a);
+        b.k = 2;
+        printf("%s / %s\n", (cstring)a.n, (cstring)b.n);
+    }
+    return 0;
+}

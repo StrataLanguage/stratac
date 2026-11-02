@@ -1,0 +1,10 @@
+// expect: reject "box variable 'p' must be initialized"
+// rule: a local whose type is an alias of a box must be initialized
+struct P { int x; };
+struct PB = ^P;
+int main()
+{
+    PB p;
+    printf("%d\n", p.x);
+    return 0;
+}

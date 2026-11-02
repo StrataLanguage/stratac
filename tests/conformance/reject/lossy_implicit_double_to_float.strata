@@ -1,0 +1,10 @@
+// expect: reject
+// rule: assigning a double to a float loses precision and needs an explicit cast
+// xfail: hole 8, implicit narrowing is allowed
+double gD = 1.1;
+int main()
+{
+    float f = gD;
+    printf("%f\n", f);
+    return 0;
+}

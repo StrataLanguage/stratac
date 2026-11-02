@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: 1065353216 16 16
+// rule: a union overlays its fields at offset 0 and takes the largest size and alignment
+extern union U { float4 v; int i; };
+int main()
+{
+    U u;
+    u.v = float4(1.0, 2.0, 3.0, 4.0);
+    printf("%d %u %u\n", u.i, sizeof<U>(), alignof<U>());
+    return 0;
+}

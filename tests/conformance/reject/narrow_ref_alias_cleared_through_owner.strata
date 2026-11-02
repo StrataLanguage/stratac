@@ -1,0 +1,18 @@
+// expect: reject
+// rule: emptying an optional through its owner ends the narrowing made through a ref alias of it
+// xfail: hole 5, narrowing ignores ref-local aliases
+struct T { Res? cur; };
+void Clear(ref Res? o) { drop(o); }
+int main()
+{
+    ^T t = T { };
+    t.cur = Res.Make(1);
+    ref T alias = t;
+    if (alias.cur?)
+    {
+        Clear(t.cur);
+        printf("%d\n", alias.cur.id);
+    }
+    Report();
+    return 0;
+}

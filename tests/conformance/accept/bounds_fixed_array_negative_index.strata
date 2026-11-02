@@ -1,0 +1,9 @@
+// expect: panic "array index out of bounds"
+// rule: indexing a fixed-size array with a negative index panics
+int gI = -1;
+int main()
+{
+    int[4] f = { 1, 2, 3, 4 };
+    printf("%d\n", f[gI]);
+    return 0;
+}

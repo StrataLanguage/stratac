@@ -1,0 +1,21 @@
+// expect: run
+// expect-output: 0 0.000000 0
+// expect-output: len 0
+// rule: uninitialized scalar locals and dynamic arrays start at zero, not stack garbage
+int Junk() { int a = 12345; long b = 99l; return a; }
+int Read()
+{
+    int x;
+    float f;
+    long l;
+    printf("%d %f %lld\n", x, f, l);
+    return 0;
+}
+int main()
+{
+    Junk();
+    Read();
+    int[] a;
+    printf("len %u\n", a.length);
+    return 0;
+}

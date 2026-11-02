@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: drop 2
+// rule: owning fields of global structs and box globals are dropped when the globals are destroyed
+// xfail: hole 7, owning fields of a global struct are never dropped
+struct Host { string dir; Res[] items; };
+Host gHost;
+Res[] gList = {};
+int main()
+{
+    array_push(gHost.items, Res.Make(1));
+    array_push(gList, Res.Make(2));
+    return 0;
+}

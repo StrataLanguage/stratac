@@ -1,0 +1,7 @@
+// expect: reject "enum member 'B' value 300 does not fit in 'byte'"
+// rule: an enum member's value must fit the underlying type
+enum Small : byte { A = 1, B = 300 };
+int main()
+{
+    return 0;
+}

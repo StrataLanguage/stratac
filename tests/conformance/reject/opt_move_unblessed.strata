@@ -1,0 +1,8 @@
+// expect: reject "has not been blessed"
+// rule: an optional must be tested before its value is moved out
+int main()
+{
+    Res? r;
+    ^Res q = r;
+    return 0;
+}

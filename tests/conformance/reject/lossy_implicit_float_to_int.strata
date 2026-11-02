@@ -1,0 +1,10 @@
+// expect: reject
+// rule: assigning a float to an int drops the fraction and needs an explicit cast
+// xfail: hole 8, implicit narrowing is allowed
+int main()
+{
+    float f = 3.9;
+    int t = f;
+    printf("%d\n", t);
+    return 0;
+}

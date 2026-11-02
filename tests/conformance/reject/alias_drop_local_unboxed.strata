@@ -1,0 +1,12 @@
+// expect: reject
+// rule: a Drop type must be boxed even when it is named through an alias
+// xfail: hole 18, aliases skip the must-be-boxed check (and the value is never dropped)
+struct RA = Res;
+int main()
+{
+    {
+        RA a = (RA)Res.Make(1);
+    }
+    Report();
+    return 0;
+}

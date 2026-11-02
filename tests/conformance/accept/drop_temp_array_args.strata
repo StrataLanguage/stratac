@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: drop 6
+// expect-output: drop 8
+// expect-output: drop 7
+// rule: array temporaries passed by value or by ref, or discarded, are dropped
+Res[] MakeL(int id) { Res[] rs = {}; array_push(rs, Res.Make(id)); return rs; }
+int First(Res[] l) { return l[0].id; }
+int FirstR(ref Res[] l) { return l[0].id; }
+int main()
+{
+    printf("%d\n", First(MakeL(6)));
+    printf("%d\n", FirstR(MakeL(8)));
+    MakeL(7);
+    Report();
+    return 0;
+}

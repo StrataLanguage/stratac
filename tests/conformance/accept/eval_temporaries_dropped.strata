@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: 4 3 5
+// rule: discarded results, field reads of a box temporary and value temporaries passed to const ref are dropped
+Res? Maybe(int i) { return Res.Make(i); }
+int Id(const ref Res r) { return r.id; }
+impl Res { int Get(const ref Res self) { return self.id; } }
+int main()
+{
+    Maybe(1);
+    int k = Box(4).id;
+    int c = Res.Make(3).Get();
+    int d = Id(Res.Make(5));
+    printf("%d %d %d\n", k, c, d);
+    Report();
+    return 0;
+}

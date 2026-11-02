@@ -1,0 +1,10 @@
+// expect: reject "'p.a' used after move"
+// rule: drop(p.a) moves the field out, so reading it afterwards is rejected
+struct P { ^Res a; int n; };
+int main()
+{
+    ^P p = P { .a = Box(1), .n = 0 };
+    drop(p.a);
+    printf("a %d\n", p.a.id);
+    return 0;
+}

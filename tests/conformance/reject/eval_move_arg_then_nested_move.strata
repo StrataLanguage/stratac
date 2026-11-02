@@ -1,0 +1,11 @@
+// expect: reject
+// rule: a variable moved into one argument cannot be moved again by a call in a later argument
+// xfail: hole 1, overlapping arguments are not checked
+string Eat(string s) { drop(s); return copy("-x"); }
+int Show(string a, string b) { printf("%u %u\n", a.length, b.length); return 0; }
+int main()
+{
+    string s = copy("hello");
+    Show(s, Eat(s));
+    return 0;
+}

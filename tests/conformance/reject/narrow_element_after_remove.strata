@@ -1,0 +1,17 @@
+// expect: reject "has not been blessed"
+// rule: array_remove ends the narrowing of the array's elements
+int main()
+{
+    Res?[] list = {};
+    Res? a = Res.Make(1);
+    array_push(list, a);
+    uint i = 0u;
+    if (list[i]?)
+    {
+        array_remove(list, 0u);
+        Res? none;
+        array_push(list, none);
+        printf("%d\n", list[i].id);
+    }
+    return 0;
+}

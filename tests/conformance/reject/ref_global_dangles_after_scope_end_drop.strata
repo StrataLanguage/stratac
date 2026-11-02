@@ -1,0 +1,17 @@
+// expect: reject
+// rule: a Drop that runs implicitly at scope end may grow a global array, so refs into it are invalidated
+// xfail: hole 13, implicit Drop calls do not invalidate refs into globals
+struct Holder { Res[] list; };
+struct Grower { int id; };
+^Holder gH = Holder { .list = {} };
+impl Grower { void Drop(ref Grower self) { for (int i = 0; i < 64; i++) { array_push(gH.list, Res.Make(500 + i)); } } }
+int main()
+{
+    array_push(gH.list, Res.Make(1));
+    ref Res first = gH.list[0];
+    {
+        ^Grower g = Grower { .id = 0 };
+    }
+    printf("first %d\n", first.id);
+    return 0;
+}

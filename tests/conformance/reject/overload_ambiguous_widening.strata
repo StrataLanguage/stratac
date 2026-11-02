@@ -1,0 +1,5 @@
+// expect: reject "ambiguous call"
+// rule: a call that matches two overloads equally well through widening is ambiguous
+int F(long a, int b) { return 1; }
+int F(int a, long b) { return 2; }
+int main() { printf("%d\n", F(1, 2)); return 0; }

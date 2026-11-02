@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: t 1
+// expect-output: set after 0
+// rule: moving the value out of a tested optional field leaves the field empty
+struct Holder { Res? r; };
+int main()
+{
+    {
+        ^Holder h = Holder {};
+        h.r = Res.Make(1);
+        if (h.r?)
+        {
+            ^Res t = h.r;
+            printf("t %d\n", t.id);
+        }
+        printf("set after %d\n", h.r? ? 1 : 0);
+    }
+    Report();
+    return 0;
+}

@@ -1,0 +1,10 @@
+// expect: reject "fills each element with its zero value"
+// rule: '{ {}; n }' cannot fill an array of structs that hold a box
+struct P { int x; };
+struct H { int a; ^P b; };
+int main()
+{
+    H[] hs = { {}; 3u };
+    printf("%d\n", hs[0].b.x);
+    return 0;
+}

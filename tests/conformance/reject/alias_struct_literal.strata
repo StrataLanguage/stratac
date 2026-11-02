@@ -1,0 +1,9 @@
+// expect: reject "is a type alias and cannot be initialized with a struct literal"
+// rule: a struct alias cannot be initialized with a struct literal
+struct P { int x; };
+struct PA = P;
+int main()
+{
+    PA a = {};
+    return 0;
+}

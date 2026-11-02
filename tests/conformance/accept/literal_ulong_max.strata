@@ -1,0 +1,9 @@
+// expect: run
+// expect-output: 18446744073709551615
+// rule: the largest ulong value is a valid ulong literal
+int main()
+{
+    ulong u = 18446744073709551615ul;
+    printf("%llu\n", u);
+    return 0;
+}

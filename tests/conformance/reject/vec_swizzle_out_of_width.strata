@@ -1,0 +1,10 @@
+// expect: reject
+// rule: a swizzle may only name lanes the vector has; float2 has no z lane
+// xfail: hole 21, out-of-width swizzles are accepted
+int main()
+{
+    float2 a = float2(1.0, 2.0);
+    float z = a.z;
+    printf("%f\n", z);
+    return 0;
+}

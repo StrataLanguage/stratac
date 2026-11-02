@@ -1,0 +1,8 @@
+// expect: reject "duplicate function signature for 'F'"
+// rule: overloads cannot differ only in ref, const ref or by-value passing
+void F(ref int x) { printf("F(ref)\n"); }
+void F(const ref int x) { printf("F(const ref)\n"); }
+int main()
+{
+    return 0;
+}

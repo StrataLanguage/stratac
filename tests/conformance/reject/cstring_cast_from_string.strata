@@ -1,0 +1,12 @@
+// expect: reject
+// rule: a string cannot be cast to cstring, since the result would dangle once the string is dropped
+// xfail: hole 6, (cstring) of a string is allowed
+int main()
+{
+    string s = "hello" + " world";
+    cstring c = (cstring)s;
+    drop(s);
+    string back = c;
+    printf("%d\n", (int)back.length);
+    return 0;
+}

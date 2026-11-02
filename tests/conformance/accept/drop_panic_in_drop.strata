@@ -1,0 +1,11 @@
+// expect: panic "in drop"
+// rule: a panic inside a Drop method aborts the program with that message
+struct Bad { int id; };
+impl Bad { void Drop(ref Bad self) { strata_panic("in drop"); } }
+int main()
+{
+    {
+        ^Bad b = Bad { .id = 1 };
+    }
+    return 0;
+}

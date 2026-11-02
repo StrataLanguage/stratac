@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: len 1 gP 2
+// expect-output: drop 1
+// expect-output: drop 2
+// rule: a global's initializer may change a global declared before it; both are dropped when the program ends
+Res[] gList = {};
+^Res Pushy() { array_push(gList, Res.Make(1)); return Box(2); }
+^Res gP = Pushy();
+int main()
+{
+    printf("len %u gP %d\n", gList.length, gP.id);
+    return 0;
+}

@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: slot0 set 0
+// expect-output: y 1
+// rule: moving an optional element out of an array leaves that slot empty, so it is not dropped twice
+int main()
+{
+    {
+        Res?[] arr = {};
+        array_push(arr, Res.Make(1));
+        array_push(arr, Res.Make(2));
+        Res? y = arr[0];
+        printf("slot0 set %d\n", arr[0]? ? 1 : 0);
+        if (y?) { printf("y %d\n", y.id); }
+    }
+    Report();
+    return 0;
+}

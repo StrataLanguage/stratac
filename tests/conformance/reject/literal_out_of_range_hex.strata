@@ -1,0 +1,9 @@
+// expect: reject
+// rule: a hex literal with more bits than the target type is an error, not silently truncated
+// xfail: hole 24, out-of-range literals are accepted
+int main()
+{
+    int h = 0xFFFFFFFFF;
+    printf("%d\n", h);
+    return 0;
+}

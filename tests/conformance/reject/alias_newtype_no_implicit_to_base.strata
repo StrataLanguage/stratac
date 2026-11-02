@@ -1,0 +1,9 @@
+// expect: reject "'string' cannot be initialized by expression of type 'Name'"
+// rule: a newtype alias does not implicitly convert back to its underlying type
+struct Name = string;
+int main()
+{
+    Name n = (Name)"hello";
+    string s = n;
+    return 0;
+}

@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: id 7
+// rule: a call to a function that writes no globals keeps the narrowing of a global
+// xfail: wrongly rejected, any call ends global narrowing (planned: callee write sets)
+struct Device { int id; };
+struct Host { Device? gd; string dir; };
+Host gHost;
+int Pure(int x) { return x + 1; }
+int main()
+{
+    gHost.gd = Device { .id = 4 };
+    if (gHost.gd?)
+    {
+        int y = Pure(2);
+        printf("id %d\n", gHost.gd.id + y);
+    }
+    return 0;
+}

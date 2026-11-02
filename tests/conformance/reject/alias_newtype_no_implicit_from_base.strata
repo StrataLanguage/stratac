@@ -1,0 +1,8 @@
+// expect: reject "'Meter' cannot be initialized by expression of type 'float'"
+// rule: a newtype alias does not implicitly convert from its underlying type; it needs a cast
+struct Meter = float;
+int main()
+{
+    Meter m = 3.0;
+    return 0;
+}

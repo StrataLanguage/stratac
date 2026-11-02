@@ -1,0 +1,7 @@
+// expect: reject "with no computable size"
+// rule: a struct cannot contain a fixed-size array of itself
+struct N { int v; N[2] kids; };
+int main()
+{
+    return 0;
+}

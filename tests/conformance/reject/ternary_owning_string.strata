@@ -1,0 +1,10 @@
+// expect: reject "branches cannot be owning values"
+// rule: ?: cannot choose between two owned strings; use if/else
+int main()
+{
+    string a = copy("aa");
+    string b = copy("bb");
+    bool c = a.length > 0u;
+    string s = c ? a : b;
+    return 0;
+}

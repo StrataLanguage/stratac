@@ -1,0 +1,15 @@
+// expect: reject "used after move"
+// rule: refilling list[i] after i has changed does not refill the slot that was moved out
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    array_push(list, Res.Make(2));
+    uint i = 0u;
+    ^Res x = list[i];
+    i = 1u;
+    list[i] = Res.Make(9);
+    printf("read %d\n", list[0].id);
+    Report();
+    return 0;
+}

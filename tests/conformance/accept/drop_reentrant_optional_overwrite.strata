@@ -1,0 +1,17 @@
+// expect: run
+// rule: a Drop method that refills the optional being overwritten runs cleanly and every value is dropped once
+// xfail: hole 12, Drop re-entering the slot being dropped
+struct Pusher { int id; };
+struct Holder { Pusher? p; };
+^Holder gH = Holder {};
+Pusher P(int id) { gLive++; return Pusher { .id = id }; }
+impl Pusher { void Drop(ref Pusher self) { gLive--; if (self.id == 1) { gH.p = P(2); } } }
+int main()
+{
+    gH.p = P(1);
+    gH.p = P(3);
+    Pusher? e;
+    gH.p = e;
+    Report();
+    return 0;
+}

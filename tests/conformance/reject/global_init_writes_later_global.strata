@@ -1,0 +1,11 @@
+// expect: reject
+// rule: a global's initializer cannot change a global declared after it, which would then be overwritten by its own initializer
+// xfail: hole 15, initializers touching later globals are not checked
+^Res Pushy() { array_push(gList, Res.Make(1)); return Box(2); }
+^Res gP = Pushy();
+Res[] gList = {};
+int main()
+{
+    printf("len %u\n", gList.length);
+    return 0;
+}

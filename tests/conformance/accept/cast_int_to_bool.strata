@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: 1 1 0
+// expect-output: 0
+// rule: casting a number to bool tests it against zero (after any narrowing cast)
+int g2 = 2;
+int main()
+{
+    bool b = (bool)g2;
+    printf("%d %d %d\n", (int)b, (int)(b == true), (int)(!b));
+    bool c = (bool)(byte)256;
+    printf("%d\n", (int)c);
+    return 0;
+}

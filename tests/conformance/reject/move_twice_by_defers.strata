@@ -1,0 +1,13 @@
+// expect: reject "used after move"
+// rule: two deferred moves of the same variable move it twice
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Res a = Box(1);
+    {
+        defer Take(a);
+        defer Take(a);
+    }
+    Report();
+    return 0;
+}

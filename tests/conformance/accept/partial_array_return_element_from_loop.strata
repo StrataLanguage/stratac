@@ -1,0 +1,25 @@
+// expect: run
+// expect-output: drop 2
+// expect-output: r 1
+// rule: returning an element moved out of a local array inside a loop drops the array's other elements
+^Res F(int n)
+{
+    Res[] l = {};
+    array_push(l, Res.Make(1));
+    array_push(l, Res.Make(2));
+    for (int i = 0; i < 2; i++)
+    {
+        ref Res r = l[i];
+        if (r.id == n) { ^Res out = l[i]; return out; }
+    }
+    return Box(9);
+}
+int main()
+{
+    {
+        ^Res r = F(1);
+        printf("r %d\n", r.id);
+    }
+    Report();
+    return 0;
+}

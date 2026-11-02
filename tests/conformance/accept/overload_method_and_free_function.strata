@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 1 2
+// rule: a method and a free function of the same name are separate; p.Get() calls the method
+struct P { int x; };
+impl P { int Get(ref P self) { return 1; } }
+int Get(ref P self) { return 2; }
+int main()
+{
+    ^P p = P { .x = 1 };
+    printf("%d %d\n", p.Get(), Get(p));
+    return 0;
+}

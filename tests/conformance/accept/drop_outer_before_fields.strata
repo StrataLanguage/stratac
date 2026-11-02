@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: outer drop sees a=1 b=2
+// expect-output: inner drop 1
+// expect-output: inner drop 2
+// rule: a struct's Drop method runs before its fields are dropped, so it still sees them
+struct Inner { int id; };
+impl Inner { void Drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
+struct Outer { Inner a; Inner b; };
+impl Outer { void Drop(ref Outer self) { printf("outer drop sees a=%d b=%d\n", self.a.id, self.b.id); } }
+int main()
+{
+    {
+        ^Outer o = Outer { .a = Inner { .id = 1 }, .b = Inner { .id = 2 } };
+    }
+    return 0;
+}

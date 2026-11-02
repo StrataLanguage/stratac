@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: still 1
+// expect-output: took 1
+// rule: a branch that moves and then returns does not affect the code after the branch
+void Take(^Res r) { printf("took %d\n", r.id); }
+int F(int n)
+{
+    ^Res a = Box(1);
+    if (n > 0) { Take(a); return 1; }
+    printf("still %d\n", a.id);
+    return 0;
+}
+int main() { F(0); F(1); Report(); return 0; }

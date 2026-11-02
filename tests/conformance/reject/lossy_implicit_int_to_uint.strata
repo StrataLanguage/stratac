@@ -1,0 +1,10 @@
+// expect: reject
+// rule: assigning an int to a uint can change its value (negatives) and needs an explicit cast
+// xfail: hole 8, implicit narrowing is allowed
+int gN = -1;
+int main()
+{
+    uint u = gN;
+    printf("%u\n", u);
+    return 0;
+}

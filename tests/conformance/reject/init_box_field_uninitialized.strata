@@ -1,0 +1,10 @@
+// expect: reject "owning field 'b' of struct 'H' must be initialized"
+// rule: a struct literal must set every box field
+struct P { int x; };
+struct H { int a; ^P b; };
+int main()
+{
+    ^H h = H { .a = 1 };
+    printf("%d\n", h.b.x);
+    return 0;
+}

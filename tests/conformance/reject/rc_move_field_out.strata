@@ -1,0 +1,10 @@
+// expect: reject "out of a shared rc"
+// rule: a field cannot be moved out of an rc cell, which other handles may share
+struct Cell { ^Res r; string s; };
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    rc<Cell> c = Cell { .r = Box(1), .s = "x" };
+    Take(c.r);
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: reject
+// rule: array_resize cannot grow an array of rc handles, since the new elements would point at nothing
+// xfail: hole 19, array_resize of must-hold elements is not checked
+struct P { int x; };
+int main()
+{
+    rc<P>[] rs = {};
+    array_resize(rs, 2u);
+    printf("%d\n", rs[1].x);
+    return 0;
+}

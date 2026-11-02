@@ -1,0 +1,14 @@
+// expect: reject
+// rule: the right side of a field assignment may not move the struct that owns the field
+// xfail: hole 10, move of the target's owner inside the assignment is not checked
+struct Bag { ^Res r; int n; };
+^Res Eat(^Bag b) { return b.r; }
+int main()
+{
+    {
+        ^Bag b = Bag { .r = Box(1), .n = 0 };
+        b.r = Eat(b);
+    }
+    Report();
+    return 0;
+}

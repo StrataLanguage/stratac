@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: 2 3
+// rule: moving one field into another drops the target's old value, and the source field can then be refilled
+struct P { ^Res a; ^Res b; };
+int main()
+{
+    {
+        ^P p = P { .a = Box(1), .b = Box(2) };
+        p.a = p.b;
+        p.b = Box(3);
+        printf("%d %d\n", p.a.id, p.b.id);
+    }
+    Report();
+    return 0;
+}

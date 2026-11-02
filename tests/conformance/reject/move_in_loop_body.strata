@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: moving a variable in a loop body without refilling it moves it again on the next iteration
+void Take(^Res r) { printf("took %d\n", r.id); }
+int main()
+{
+    ^Res a = Box(1);
+    for (int i = 0; i < 2; i++) { Take(a); }
+    Report();
+    return 0;
+}

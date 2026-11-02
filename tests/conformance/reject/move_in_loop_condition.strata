@@ -1,0 +1,10 @@
+// expect: reject "used after move"
+// rule: a loop condition runs on every iteration, so moving in it moves more than once
+bool Take(^Res r) { printf("took %d\n", r.id); return false; }
+int main()
+{
+    ^Res a = Box(1);
+    while (Take(a)) { }
+    Report();
+    return 0;
+}

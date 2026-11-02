@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: drop 50
+// rule: a field whose type is an alias of a Drop type is dropped with its struct
+// xfail: hole 18, alias-typed fields get no drop glue
+struct RA = Res;
+struct Holder { RA r; };
+int main()
+{
+    {
+        ^Holder b = Holder { .r = (RA)Res.Make(50) };
+    }
+    Report();
+    return 0;
+}

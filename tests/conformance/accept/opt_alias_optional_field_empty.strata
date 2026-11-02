@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: empty
+// rule: a field whose type is an alias of an optional may be left empty in a struct literal
+// xfail: wrongly rejected, the alias is treated as a must-hold owning field
+struct P { int x; };
+struct OP = P?;
+struct H { OP o; };
+int main()
+{
+    ^H h = H {};
+    P? q = (P?)h.o;
+    if (q?) { printf("set\n"); } else { printf("empty\n"); }
+    return 0;
+}

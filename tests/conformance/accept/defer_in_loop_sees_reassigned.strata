@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: defer sees 10
+// expect-output: defer sees 12
+// rule: a defer in a loop body runs each iteration and reads the variable's current value
+int main()
+{
+    {
+        ^Res a = Box(1);
+        for (int i = 0; i < 3; i++)
+        {
+            defer printf("defer sees %d\n", a.id);
+            a = Box(10 + i);
+        }
+    }
+    Report();
+    return 0;
+}

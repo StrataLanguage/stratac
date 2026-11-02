@@ -1,0 +1,7 @@
+// expect: reject "may not be negative for unsigned underlying type 'byte'"
+// rule: an enum over an unsigned type cannot have a negative member
+enum Small : byte { A = 1, C = -5 };
+int main()
+{
+    return 0;
+}

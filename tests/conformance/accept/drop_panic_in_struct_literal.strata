@@ -1,0 +1,6 @@
+// expect: panic "midway"
+// rule: a panic while building a struct literal reports the panic
+struct Pair { ^Res a; ^Res b; };
+^Res Fail(int n) { if (n > 0) { strata_panic("midway"); } return Box(9); }
+int Make(int n) { ^Pair p = Pair { .a = Box(1), .b = Fail(n) }; return p.a.id; }
+int main() { printf("%d\n", Make(1)); return 0; }

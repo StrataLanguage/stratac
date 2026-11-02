@@ -1,0 +1,14 @@
+// expect: reject "used after move"
+// rule: after moving list[i], reading list[j] is rejected because j may equal i
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    array_push(list, Res.Make(2));
+    uint i = 0u;
+    uint j = 0u;
+    ^Res x = list[i];
+    printf("read %d\n", list[j].id);
+    Report();
+    return 0;
+}

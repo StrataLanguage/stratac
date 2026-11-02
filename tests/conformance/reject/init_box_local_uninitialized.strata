@@ -1,0 +1,9 @@
+// expect: reject "box variable 'p' must be initialized"
+// rule: a box local must be initialized where it is declared
+struct P { int x; };
+int main()
+{
+    ^P p;
+    printf("%d\n", p.x);
+    return 0;
+}

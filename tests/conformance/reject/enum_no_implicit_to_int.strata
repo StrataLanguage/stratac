@@ -1,0 +1,8 @@
+// expect: reject "'int' cannot be initialized by expression of type 'Color'"
+// rule: an enum does not implicitly convert to an int
+enum Color { Red, Green, Blue };
+int main()
+{
+    int i = Color.Blue;
+    return 0;
+}

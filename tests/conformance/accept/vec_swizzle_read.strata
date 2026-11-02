@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 3.000000 1.000000 4.000000
+// rule: a swizzle read picks lanes in any order and can build a vector of another width
+int main()
+{
+    float4 b = float4(1.0, 2.0, 3.0, 4.0);
+    float3 a = float3(1.0, 2.0, 3.0);
+    float2 s = a.zx;
+    float4 w = float4(a.z, a.y, a.x, b.w);
+    printf("%f %f %f\n", s.x, s.y, w.w);
+    return 0;
+}

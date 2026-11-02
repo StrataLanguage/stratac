@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: 2147483647 0 2147483647 -2147483648 0
+// expect-output: 255
+// rule: float-to-int casts saturate at the target's limits and NaN becomes 0
+// xfail: hole 22, out-of-range float-to-int casts give garbage
+float gBig = 3.0e10;
+float gZ = 0.0;
+int main()
+{
+    float nan = gZ / gZ;
+    float inf = 1.0 / gZ;
+    printf("%d %d %d %d %u\n", (int)gBig, (int)nan, (int)inf, (int)(-gBig), (uint)(-gBig));
+    byte b = (byte)gBig;
+    printf("%d\n", (int)b);
+    return 0;
+}

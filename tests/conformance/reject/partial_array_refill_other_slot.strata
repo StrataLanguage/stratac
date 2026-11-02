@@ -1,0 +1,13 @@
+// expect: reject "used after move"
+// rule: refilling list[1] does not refill list[0]
+int main()
+{
+    Res[] list = {};
+    array_push(list, Res.Make(1));
+    array_push(list, Res.Make(2));
+    ^Res x = list[0];
+    list[1] = Res.Make(9);
+    printf("read %d\n", list[0].id);
+    Report();
+    return 0;
+}

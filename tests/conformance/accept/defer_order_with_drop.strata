@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: body
+// expect-output: drop 2
+// expect-output: defer sees 1
+// expect-output: drop 1
+// rule: defers run in reverse order at scope end, before the scope's remaining locals are dropped
+void F()
+{
+    ^Res a = Box(1);
+    defer printf("defer sees %d\n", a.id);
+    ^Res b = Box(2);
+    defer drop(b);
+    printf("body\n");
+}
+int main() { F(); Report(); return 0; }
