@@ -1746,34 +1746,26 @@ STRATA_TEST(box_coerced_to_bare_return_unboxes)
    unusable in real software as under-eager rejection is unsafe.
    =========================================================================== */
 
-STRATA_TEST(box_same_variable_passed_to_two_owned_params_in_one_call_is_safe)
+STRATA_TEST(box_same_variable_passed_to_two_owned_params_in_one_call_is_an_error)
 {
-    /* What happens if the same box is (mistakenly) handed to two DIFFERENT
-       owned parameters in a single call - e.g. a mis-wired ignition
-       sequence that passes the same stage as both `primary` and `backup`?
-       Every owned/ref box param is passed by the ADDRESS of its source
-       slot (a uniform `T**` ABI), so both parameters end up aliasing the
-       exact same slot: freeing through one nulls the other too, so there
-       is no double-free even though the caller's intent was confused.
-       This test locks in that safety property so a future ABI change
-       can't silently reintroduce a double-free here. */
-    const char* err = NULL;
-    StrataJit* jit = CompileBox(
+    /* The same box handed to two owned parameters of one call would be two owners of one value. The
+       uniform `T**` ABI happens to alias both parameters onto one slot, but that is an accident of the
+       ABI, not a rule to rely on (ownership spec O6). */
+    Arena arena; arena_init(&arena, 0);
+    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    ParseAndResolve(
         "struct Stage { int fuel; };\n"
         "int ignite(^Stage primary, ^Stage backup) {\n"
         "  return primary.fuel + backup.fuel;\n"
         "}\n"
         "int entry() {\n"
         "  ^Stage stage = Stage { .fuel = 50 };\n"
-        "  return ignite(stage, stage);\n"    /* aliased - both read fuel=50 */
+        "  return ignite(stage, stage);\n"
         "}\n",
-        &err);
-    STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); return; }
-    int (*entry)(void*) = strataJitGetFunction(jit, "entry");
-    STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 100);
-    strataJitDestroy(jit);
+        &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
 }
 
 STRATA_TEST(box_struct_field_extracted_twice_via_separate_calls_is_an_error)

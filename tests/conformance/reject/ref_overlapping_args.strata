@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a mutable ref argument may not overlap another argument of the same call
-// xfail: hole 1, overlapping arguments are not checked
 int Peek(ref Res[] dst, const ref Res src)
 {
     for (int i = 0; i < 64; i++) { array_push(dst, Res.Make(50)); }

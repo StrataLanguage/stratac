@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a value may not be moved into one parameter while borrowed by another in the same call
-// xfail: hole 1, overlapping arguments are not checked
 int H(const ref Res a, ^Res b) { drop(b); return a.id; }
 int main()
 {

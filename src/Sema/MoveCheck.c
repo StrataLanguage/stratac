@@ -3,6 +3,7 @@
 #include "Codegen/TypeUtil.h"
 #include "Sema/Cfg.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,9 @@ typedef struct {
     const TypeName* fnReturn;
     bool inDropMethod; /* a Drop method may take its own fields apart */
     const WriteSets* ws;
+    const Node** copied; /* boxes handed to a bare `T`: the pointee is copied, the box stays */
+    size_t copiedCount;
+    size_t copiedCap;
     char** aliasName; /* `ref` locals and the place each was bound to */
     char** aliasTarget;
     size_t aliasCount;
@@ -341,7 +345,7 @@ typedef struct {
     size_t cap;
 } Found;
 
-static void Report(Found* f, SourceRange range, const char* name)
+static void ReportAs(Found* f, MoveDiagKind kind, SourceRange range, const char* name)
 {
     for (size_t i = 0; i < f->count; i++)
     {
@@ -357,7 +361,7 @@ static void Report(Found* f, SourceRange range, const char* name)
         f->items = (MoveDiag*)realloc(f->items, f->cap * sizeof(MoveDiag));
     }
 
-    f->items[f->count++] = (MoveDiag){range, name};
+    f->items[f->count++] = (MoveDiag){range, name, kind};
 }
 
 static unsigned char Join(unsigned char a, unsigned char b)
@@ -420,10 +424,90 @@ static void ReportPlace(Found* found, const Node* node)
         node = ((const MemberExpr*)node)->base_node;
     }
 
-    Report(found, node->range, root);
+    ReportAs(found, MoveDiagUse, node->range, root);
 }
 
 static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool lax);
+
+static const TypeName* ValueType(const Env* env, const Node* n);
+
+static bool IsCopied(const Env* env, const Node* n)
+{
+    for (size_t i = 0; i < env->copiedCount; i++)
+    {
+        if (env->copied[i] == n)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void NoteIfCopied(Env* env, const Node* value, const TypeName* target)
+{
+    const TypeName* vt = value ? ValueType(env, value) : NULL;
+
+    if (!vt || !vt->isBox || !target || !target->name || !TypeNameIsBare(target))
+    {
+        return;
+    }
+
+    if (env->copiedCount == env->copiedCap)
+    {
+        env->copiedCap = env->copiedCap ? env->copiedCap * 2 : 8;
+        env->copied = (const Node**)realloc((void*)env->copied, env->copiedCap * sizeof(*env->copied));
+    }
+
+    env->copied[env->copiedCount++] = value;
+}
+
+static void CollectCopies(Env* env, const Cfg* g)
+{
+    for (size_t b = 0; b < g->count; b++)
+    {
+        for (size_t j = 0; j < g->blocks[b].opCount; j++)
+        {
+            const CfgOp* op = &g->blocks[b].ops[j];
+
+            if (op->kind == CfgDeclare)
+            {
+                const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
+                NoteIfCopied(env, vd->isRef ? NULL : vd->init, vd->type.name && vd->type.name[0] ? &vd->type : NULL);
+            }
+            else if (op->kind == CfgReturn)
+            {
+                NoteIfCopied(env, ((const ReturnStmt*)op->node)->value, env->fnReturn);
+            }
+            else if (op->kind == CfgEval && op->node->kind == NodeAssign)
+            {
+                const AssignExpr* a = (const AssignExpr*)op->node;
+                NoteIfCopied(env, a->op == AssignSet ? a->value : NULL, NodeTypesGet(env->types, a->target));
+            }
+            else if (op->kind == CfgEval && op->node->kind == NodeCall && !((const CallExpr*)op->node)->isIntrinsicCall)
+            {
+                const CallExpr* e = (const CallExpr*)op->node;
+                const FunctionDecl* d = e->resolvedDecl;
+
+                for (size_t i = 0; d && i < e->args.count && i < d->params.count; i++)
+                {
+                    const ParamDecl* p = (const ParamDecl*)VecGet(&d->params, i);
+                    NoteIfCopied(env, (const Node*)VecGet(&e->args, i), p->isVarargRest ? NULL : &p->type);
+                }
+            }
+            else if (op->kind == CfgEval && op->node->kind == NodeStructInit)
+            {
+                const StructInitExpr* e = (const StructInitExpr*)op->node;
+
+                for (size_t i = 0; i < e->fields.count; i++)
+                {
+                    const StructInitField* fld = (const StructInitField*)VecGet(&e->fields, i);
+                    NoteIfCopied(env, fld->value, fld->name ? FieldType(env, NodeTypesGet(env->types, op->node), fld->name) : NULL);
+                }
+            }
+        }
+    }
+}
 
 /* Records, for each `ref x = place;` declaration, the place `x` stands for. A name declared twice with
    different places is ambiguous and stands for nothing. */
@@ -552,6 +636,43 @@ static const char* AliasTarget(const char* name)
 
 static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool lax);
 
+/* A canonical spelling of an index that is built from variables, literals, fields, other elements and
+   arithmetic, so that the same expression written twice names the same element. */
+static bool IndexSpelling(const Node* n, char* out, size_t cap)
+{
+    const char* root;
+
+    switch (n->kind)
+    {
+    case NodeIdent:
+    case NodeMember:
+    case NodeIndex:
+        return PlaceKeyImpl(n, out, cap, &root, false);
+    case NodeIntLiteral:
+        snprintf(out, cap, "%llu", (unsigned long long)((const IntLiteral*)n)->value);
+        return true;
+    case NodeCast:
+        return IndexSpelling(((const CastExpr*)n)->operand, out, cap);
+    case NodeBinary:
+    {
+        const BinaryExpr* b = (const BinaryExpr*)n;
+        char l[64];
+        char r[64];
+
+        if (b->op == BinLogicAnd || b->op == BinLogicOr || !IndexSpelling(b->lhs, l, sizeof(l))
+            || !IndexSpelling(b->rhs, r, sizeof(r)))
+        {
+            return false;
+        }
+
+        snprintf(out, cap, "(%s#%d#%s)", l, (int)b->op, r);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
 {
     return PlaceKeyImpl(n, buf, cap, root, false);
@@ -560,6 +681,11 @@ static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
 /* With `lax`, an index that is neither a variable nor a literal is `[?]`, which may be any element. */
 static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool lax)
 {
+    if (!n)
+    {
+        return false;
+    }
+
     if (n->kind == NodeIdent)
     {
         if (!PlaceOf(n, buf, cap, root))
@@ -583,7 +709,7 @@ static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root
     }
 
     const Node* base;
-    char suffix[64];
+    char suffix[160];
 
     if (n->kind == NodeMember)
     {
@@ -601,14 +727,11 @@ static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root
     {
         const IndexExpr* ix = (const IndexExpr*)n;
         base = ix->base_node;
+        char spelling[140];
 
-        if (ix->index->kind == NodeIdent && strlen(((const IdentExpr*)ix->index)->name) + 3 <= sizeof(suffix))
+        if (IndexSpelling(ix->index, spelling, sizeof(spelling)))
         {
-            snprintf(suffix, sizeof(suffix), "[%s]", ((const IdentExpr*)ix->index)->name);
-        }
-        else if (ix->index->kind == NodeIntLiteral)
-        {
-            snprintf(suffix, sizeof(suffix), "[%llu]", (unsigned long long)((const IntLiteral*)ix->index)->value);
+            snprintf(suffix, sizeof(suffix), "[%s]", spelling);
         }
         else if (lax)
         {
@@ -694,12 +817,17 @@ static size_t SplitPlace(const char* path, Seg* segs)
 
         if (*s == '[')
         {
-            while (*s && *s != ']')
+            for (int depth = 0; *s; s++)
             {
-                s++;
-            }
+                depth += *s == '[';
+                depth -= *s == ']';
 
-            s += *s == ']';
+                if (depth == 0)
+                {
+                    s++;
+                    break;
+                }
+            }
         }
         else
         {
@@ -847,9 +975,15 @@ static void KillIndexVar(const Env* env, unsigned char* f, const char* name)
 
         for (size_t s = 0; s < nb; s++)
         {
-            if (b[s].p[0] == '[' && b[s].n == len + 2 && memcmp(b[s].p + 1, name, len) == 0)
+            for (size_t k = 0; b[s].p[0] == '[' && k + len < b[s].n; k++)
             {
-                f[i] = FactNone;
+                bool startsWord = k == 0 || !(isalnum((unsigned char)b[s].p[k - 1]) || b[s].p[k - 1] == '_');
+                bool endsWord = !(isalnum((unsigned char)b[s].p[k + len]) || b[s].p[k + len] == '_');
+
+                if (startsWord && endsWord && memcmp(b[s].p + k, name, len) == 0)
+                {
+                    f[i] = FactNone;
+                }
             }
         }
     }
@@ -929,7 +1063,7 @@ static void RequireProof(const Env* env, const unsigned char* f, Found* found, c
 
     if (found && !(k >= 0 && f[k] == FactNonEmpty))
     {
-        Report(found, range, PlaceKey(env, value));
+        ReportAs(found, MoveDiagNarrow, range, PlaceKey(env, value));
     }
 }
 
@@ -958,7 +1092,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 
     if (target && !target->isOptional && !proven && found)
     {
-        Report(found, range, PlaceKey(env, value));
+        ReportAs(found, MoveDiagNarrow, range, PlaceKey(env, value));
     }
 
     if (move && haveKey && TypeOwns(env, vt))
@@ -1019,7 +1153,21 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
 
         if (arg0 && IsArrayMutator(e->callee))
         {
-            KillPlaceOf(env, f, arg0, true);
+            /* Pushing or reserving moves no element: only a place indexed by the array's length goes. The
+               others change what the elements are. The array itself stays set either way. */
+            bool keepsElements = strcmp(e->callee, "array_push") == 0 || strcmp(e->callee, "array_reserve") == 0;
+            const char* name = arg0->kind == NodeIdent ? ((const IdentExpr*)arg0)->name
+                               : arg0->kind == NodeMember ? ((const MemberExpr*)arg0)->member
+                                                          : NULL;
+
+            if (keepsElements && name)
+            {
+                KillIndexVar(env, f, name);
+            }
+            else if (!keepsElements)
+            {
+                KillPlaceOf(env, f, arg0, false);
+            }
         }
 
         return;
@@ -1037,7 +1185,8 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
 
         if (p && p->mod == ModRef && !p->type.isConst)
         {
-            KillPlaceOf(env, f, arg, true);
+            /* Only a `ref T?` can empty the optional itself; a `ref T` changes what is inside. */
+            KillPlaceOf(env, f, arg, p->type.isOptional);
         }
     }
 
@@ -1118,11 +1267,11 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
             break;
         case NodeMember:
         case NodeIndex:
-            for (const Node* cur = n; cur->kind == NodeMember || cur->kind == NodeIndex;)
+            for (const Node* cur = n; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
             {
                 const Node* base = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node
                                                            : ((const IndexExpr*)cur)->base_node;
-                const TypeName* bt = ValueType(env, base);
+                const TypeName* bt = base ? ValueType(env, base) : NULL;
 
                 if (bt && bt->isOptional)
                 {
@@ -1144,7 +1293,14 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
             for (size_t i = 0; i < e->fields.count; i++)
             {
                 const StructInitField* fld = (const StructInitField*)VecGet(&e->fields, i);
-                ConsumeValue(env, f, found, fld->value, FieldType(env, st, fld->name), fld->value->range, true);
+
+                if (!fld->value)
+                {
+                    continue;
+                }
+
+                ConsumeValue(env, f, found, fld->value, fld->name ? FieldType(env, st, fld->name) : NULL, fld->value->range,
+                             true);
             }
 
             break;
@@ -1156,7 +1312,11 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
             for (size_t i = 0; i < e->elements.count; i++)
             {
                 const Node* el = (const Node*)VecGet(&e->elements, i);
-                ConsumeValue(env, f, found, el, e->elementType, el->range, e->repeatCount == NULL);
+
+                if (el)
+                {
+                    ConsumeValue(env, f, found, el, e->elementType, el->range, e->repeatCount == NULL);
+                }
             }
 
             break;
@@ -1286,7 +1446,7 @@ static void CollectAccesses(const Env* env, Accesses* acc, const Node* n, LoanMo
         AddAccess(env, acc, n, mode);
 
         /* An index that is itself an expression runs too. */
-        for (const Node* cur = n; cur->kind == NodeMember || cur->kind == NodeIndex;)
+        for (const Node* cur = n; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
         {
             if (cur->kind == NodeIndex)
             {
@@ -1443,7 +1603,7 @@ static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, 
 
             if (conflict && PlacesOverlap(loans.items[i].key, effects.items[j].key))
             {
-                Report(found, effects.items[j].node->range, arena_strdup(env->arena, effects.items[j].key));
+                ReportAs(found, MoveDiagLoan, effects.items[j].node->range, arena_strdup(env->arena, effects.items[j].key));
             }
         }
     }
@@ -1734,7 +1894,7 @@ static void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e)
         if (ArgMode(e, i) != LoanMove && NonTrivial(env, arg) && PlaceKeyImpl(arg, buf, sizeof(buf), &root, true)
             && IsGlobalPlace(env, buf) && CalleeWrites(env, d, buf))
         {
-            Report(found, arg->range, arena_strdup(env->arena, buf));
+            ReportAs(found, MoveDiagGlobalLoan, arg->range, arena_strdup(env->arena, buf));
         }
     }
 }
@@ -1745,7 +1905,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
 {
     const Node* n = op->node;
 
-    if (!op->consumed || (n->kind != NodeIndex && n->kind != NodeMember))
+    if (!op->consumed || IsCopied(env, n) || (n->kind != NodeIndex && n->kind != NodeMember))
     {
         return;
     }
@@ -1757,13 +1917,13 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
         return;
     }
 
-    for (const Node* cur = n; cur->kind == NodeIndex || cur->kind == NodeMember;)
+    for (const Node* cur = n; cur && (cur->kind == NodeIndex || cur->kind == NodeMember);)
     {
         if (cur->kind == NodeIndex)
         {
             char buf[256];
             const char* root;
-            Report(found, n->range,
+            ReportAs(found, MoveDiagElement, n->range,
                    PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<element>");
             return;
         }
@@ -1777,7 +1937,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
 {
     const Node* n = op->node;
 
-    if (!op->consumed || n->kind != NodeMember || env->inDropMethod)
+    if (!op->consumed || IsCopied(env, n) || n->kind != NodeMember || env->inDropMethod)
     {
         return;
     }
@@ -1789,7 +1949,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
         return;
     }
 
-    for (const Node* cur = n; cur->kind == NodeMember; cur = ((const MemberExpr*)cur)->base_node)
+    for (const Node* cur = n; cur && cur->kind == NodeMember; cur = ((const MemberExpr*)cur)->base_node)
     {
         const TypeName* bt = ValueType(env, ((const MemberExpr*)cur)->base_node);
 
@@ -1806,7 +1966,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
         {
             char buf[256];
             const char* root;
-            Report(found, n->range,
+            ReportAs(found, MoveDiagDropField, n->range,
                    PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<field>");
             return;
         }
@@ -1861,7 +2021,8 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
             /* Moving out of a `T?` leaves it empty, which is a usable (testable) state; null is its drop flag. */
             const TypeName* placeType = PlaceType(env, op->node);
 
-            if (op->consumed && !(placeType && placeType->isOptional) && TypeOwns(env, placeType))
+            if (op->consumed && !IsCopied(env, op->node) && !(placeType && placeType->isOptional)
+                && TypeOwns(env, placeType))
             {
                 SetPlace(env, state, buf, StateMoved);
             }
@@ -1917,6 +2078,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
     BuildAliases(&env, &g);
+    CollectCopies(&env, &g);
     CollectPaths(&env, &g);
     CollectFacts(&env, &g);
 
@@ -2009,6 +2171,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
     }
 
     free(env.facts);
+    free((void*)env.copied);
     FreeAliases(&env);
     free(env.locals.locals);
     free(env.named.locals);
@@ -2058,8 +2221,35 @@ static bool ParseOldDiag(const char* message, char* name, size_t cap)
     return true;
 }
 
-size_t MoveCheckShadow(const Module* mod, const TypeRegistry* reg, const NodeTypes* types,
-                       const DiagnosticEngine* diag, Arena* arena)
+static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
+{
+    switch (d->kind)
+    {
+    case MoveDiagUse:
+        DiagErrorFmt(diag, d->range, "'%s' used after move", d->name);
+        break;
+    case MoveDiagNarrow:
+        DiagErrorFmt(diag, d->range, "'%s' has not been blessed; test it first: if (%s?) { ... }", d->name, d->name);
+        break;
+    case MoveDiagLoan:
+        DiagErrorFmt(diag, d->range,
+                     "'%s' is borrowed by an earlier operand of this expression and cannot be moved or changed here",
+                     d->name);
+        break;
+    case MoveDiagGlobalLoan:
+        DiagErrorFmt(diag, d->range, "'%s' is borrowed by this call, but the callee may write it", d->name);
+        break;
+    case MoveDiagDropField:
+        DiagErrorFmt(diag, d->range, "cannot move '%s' out of a type with a Drop method; move the whole value",
+                     d->name);
+        break;
+    case MoveDiagElement:
+        break; /* decision 11 needs the take/replace intrinsics first */
+    }
+}
+
+size_t MoveCheckModule(const Module* mod, const TypeRegistry* reg, const NodeTypes* types, DiagnosticEngine* diag,
+                       Arena* arena, bool compare)
 {
     size_t disagreements = 0;
     Found all = {0};
@@ -2087,7 +2277,7 @@ size_t MoveCheckShadow(const Module* mod, const TypeRegistry* reg, const NodeTyp
 
     bool* matched = (bool*)calloc(all.count ? all.count : 1, 1);
 
-    if (getenv("STRATA_SHADOW_VERBOSE"))
+    if (compare && getenv("STRATA_SHADOW_VERBOSE"))
     {
         for (size_t m = 0; m < all.count; m++)
         {
@@ -2121,7 +2311,7 @@ size_t MoveCheckShadow(const Module* mod, const TypeRegistry* reg, const NodeTyp
             }
         }
 
-        if (!found)
+        if (!found && compare)
         {
             fprintf(stderr, "shadow: only-old %u:%u '%s'\n", old->range.fileId, old->range.start, name);
             disagreements++;
@@ -2130,12 +2320,19 @@ size_t MoveCheckShadow(const Module* mod, const TypeRegistry* reg, const NodeTyp
 
     for (size_t m = 0; m < all.count; m++)
     {
-        if (!matched[m])
+        if (matched[m])
+        {
+            continue;
+        }
+
+        if (compare)
         {
             fprintf(stderr, "shadow: only-new %u:%u '%s'\n", all.items[m].range.fileId, all.items[m].range.start,
                     all.items[m].name);
             disagreements++;
         }
+
+        EmitNewDiag(diag, &all.items[m]);
     }
 
     free(matched);

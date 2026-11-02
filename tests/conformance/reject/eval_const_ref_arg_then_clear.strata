@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a const ref to an element may not be passed alongside a later argument that clears the array
-// xfail: hole 10, borrow then mutate inside one expression is not checked
 int Clear(ref Res[] l) { l = {}; return 0; }
 int Id(const ref Res r, int z) { return r.id + z; }
 int main()

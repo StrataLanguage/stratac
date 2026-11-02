@@ -380,6 +380,13 @@ static void LowerStmt(Builder* b, const Node* n)
         break;
     case NodeExprStmt:
         LowerExpr(b, ((const ExprStmt*)n)->expr);
+
+        /* A `@noreturn` call never continues: nothing runs after it, not even the defers. */
+        if (StmtIsNoReturnCall(n))
+        {
+            StartDeadBlock(b);
+        }
+
         break;
     case NodeDefer:
         if (b->scopeCount > 0)
@@ -437,7 +444,16 @@ static void LowerStmt(Builder* b, const Node* n)
 
         Goto(b, head);
         b->cur = head;
-        Branch(b, s->condition, body, after);
+
+        /* `while (true)` has no way out but `break` and `return`. */
+        if (s->condition->kind == NodeBoolLiteral && ((const BoolLiteral*)s->condition)->value)
+        {
+            Goto(b, body);
+        }
+        else
+        {
+            Branch(b, s->condition, body, after);
+        }
 
         if (b->loopCount == b->loopCap)
         {

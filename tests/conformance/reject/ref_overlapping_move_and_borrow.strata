@@ -1,6 +1,5 @@
 // expect: reject
 // rule: the same array may not be passed to one parameter that moves it and another that reads it
-// xfail: hole 1, overlapping arguments are not checked
 int G(Res[] a, Res[] b) { Res[] keep = b; return a[0].id + (int)keep.length * 100; }
 int main()
 {

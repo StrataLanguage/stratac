@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a ref to an rc cell and a ref to its owning handle may not be passed to the same call
-// xfail: hole 1, overlapping arguments are not checked
 struct Cell { Res[] items; };
 int Peek(ref Cell c, ref rc<Cell> owner) { owner = Cell { .items = {} }; return c.items[0].id; }
 int main()

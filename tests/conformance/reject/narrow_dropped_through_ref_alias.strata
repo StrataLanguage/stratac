@@ -1,6 +1,5 @@
 // expect: reject
 // rule: dropping an optional through a ref alias ends the narrowing of the original
-// xfail: hole 5, narrowing ignores ref-local aliases
 struct T { Res? cur; };
 int main()
 {

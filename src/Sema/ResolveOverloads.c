@@ -11659,10 +11659,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&byMangled);
     free(r.m_deferFrames.items);
     free(r.m_loopFlows.items);
-    if (getenv("STRATA_SHADOW"))
-    {
-        MoveCheckShadow(mod, &r.m_registry, &r.m_nodeTypes, diag, arena);
-    }
+    MoveCheckModule(mod, &r.m_registry, &r.m_nodeTypes, diag, arena, getenv("STRATA_SHADOW") != NULL);
 
     NodeTypesFree(&r.m_nodeTypes);
     TypeRegistryFree(&r.m_registry);

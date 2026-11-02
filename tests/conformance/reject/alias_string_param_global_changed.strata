@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a global's field may not be passed to a borrowed parameter of a function that changes that field
-// xfail: hole 3, borrowed param aliases a global the callee changes
 struct Host { string dir; Res[] items; };
 Host gHost;
 int Len(string s) { gHost.dir = "x" + "y"; return (int)s.length; }

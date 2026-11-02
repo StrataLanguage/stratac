@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an element of a global may not be passed to a const ref parameter of a function that changes that global
-// xfail: hole 3, borrowed param aliases a global the callee changes
 Res[] gList = {};
 void Grow() { for (int k = 0; k < 64; k++) { array_push(gList, Res.Make(10 + k)); } }
 int Peek(const ref Res r) { Grow(); return r.id; }

@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an operand that reads a string cannot be followed in the same expression by one that moves it
-// xfail: hole 10, borrow then move inside one expression is not checked
 string Eat(string s) { drop(s); return "-x"; }
 int main()
 {

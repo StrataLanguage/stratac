@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a field cannot be moved out of a by-value parameter whose type has a Drop method
-// xfail: hole 11, moving a field out of a Drop struct is accepted
 struct Z { ^Res inner; int id; };
 impl Z { void Drop(ref Z self) { printf("Z drop sees inner %d\n", self.inner.id); } }
 ^Res Take(^Z z) { return z.inner; }

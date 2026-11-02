@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an owning struct must be boxed even when it is named through an alias
-// xfail: hole 18, aliases skip the must-be-boxed check
 struct S { string s; };
 struct SA = S;
 int main()
