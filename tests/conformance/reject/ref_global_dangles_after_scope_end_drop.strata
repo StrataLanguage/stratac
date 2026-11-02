@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a Drop that runs implicitly at scope end may grow a global array, so refs into it are invalidated
-// xfail: hole 13, implicit Drop calls do not invalidate refs into globals
 struct Holder { Res[] list; };
 struct Grower { int id; };
 ^Holder gH = Holder { .list = {} };

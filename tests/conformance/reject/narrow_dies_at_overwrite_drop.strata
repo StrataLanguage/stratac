@@ -1,6 +1,5 @@
 // expect: reject
 // rule: overwriting a Drop value runs its Drop, which may change globals, so it ends narrowing of a global optional
-// xfail: hole 13, implicit Drop calls do not end narrowing
 struct Holder { Res? r; };
 struct Clearer { int id; };
 ^Holder gH = Holder {};

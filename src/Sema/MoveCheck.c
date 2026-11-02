@@ -1279,6 +1279,57 @@ static bool IsArrayMutator(const char* callee)
     return false;
 }
 
+/* A value being dropped runs its `Drop` method (and those of its fields and elements), which may write
+   globals: whatever the narrowing and refs rested on in those globals is gone. */
+static void ApplyDropWrites(const Env* env, unsigned char* f, const TypeName* t, int depth)
+{
+    while (t && (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameHasArrayShape(t)))
+    {
+        const TypeName* next = TypeNameHasArrayShape(t) ? t->elem : t->inner;
+
+        if (!next)
+        {
+            return;
+        }
+
+        t = next;
+    }
+
+    if (!t || !t->name || depth > 6 || TypeNameIsRc(t))
+    {
+        return;
+    }
+
+    const StructType* st = TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, t->name));
+
+    if (!st || st->opaque)
+    {
+        return;
+    }
+
+    if (st->dropFunction)
+    {
+        const FnWrites* w = FindWrites(env->ws, st->dropFunction);
+
+        if (!w || w->all)
+        {
+            KillGlobals(env, f);
+        }
+        else
+        {
+            for (size_t i = 0; i < w->count; i++)
+            {
+                KillFacts(env, f, w->keys[i], true);
+            }
+        }
+    }
+
+    for (size_t i = 0; i < st->fields.count; i++)
+    {
+        ApplyDropWrites(env, f, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, depth + 1);
+    }
+}
+
 static void KillPlaceOf(const Env* env, unsigned char* f, const Node* n, bool selfToo)
 {
     char buf[256];
@@ -1322,6 +1373,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         if (arg0 && strcmp(e->callee, "drop") == 0)
         {
             ConsumeValue(env, f, found, arg0, NULL, arg0->range, true);
+            ApplyDropWrites(env, f, ValueType(env, arg0), 0);
         }
         else if (arg1 && strcmp(e->callee, "array_push") == 0)
         {
@@ -1468,6 +1520,26 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
             SetFact(env, f, vd->name, FactNonEmpty);
         }
     }
+    else if (op->kind == CfgScopeExit)
+    {
+        /* The locals of the block drop here, running their `Drop` methods. */
+        const Block* blk = (const Block*)op->node;
+
+        for (size_t i = 0; blk && blk->base.kind == NodeBlock && i < blk->statements.count; i++)
+        {
+            const Node* st = (const Node*)VecGet(&blk->statements, i);
+
+            if (st->kind == NodeVarDecl && !((const VarDeclStmt*)st)->isRef)
+            {
+                const TypeName* t = DeclType(env, (const VarDeclStmt*)st);
+
+                if (t && TypeOwns(env, t))
+                {
+                    ApplyDropWrites(env, f, t, 0);
+                }
+            }
+        }
+    }
     else if (op->kind == CfgReturn)
     {
         const ReturnStmt* rs = (const ReturnStmt*)op->node;
@@ -1507,6 +1579,12 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
             if (a->op == AssignSet)
             {
                 proves = ConsumeValue(env, f, found, a->value, targetType, a->value->range, true);
+            }
+
+            /* Overwriting an owning value drops the old one. */
+            if (a->op == AssignSet && targetType && TypeOwns(env, targetType))
+            {
+                ApplyDropWrites(env, f, targetType, 0);
             }
 
             KillPlaceOf(env, f, a->target, true);

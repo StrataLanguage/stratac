@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a Drop that runs implicitly at scope end may change globals, so it ends narrowing of a global optional
-// xfail: hole 13, implicit Drop calls do not end narrowing
 struct Holder { Res? r; };
 struct Clearer { int id; };
 ^Holder gH = Holder {};
