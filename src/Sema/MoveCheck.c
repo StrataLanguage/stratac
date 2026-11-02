@@ -2401,7 +2401,22 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         return;
     }
 
+    /* Sema does not always infer the type of an identifier (one directly inside a literal): use its declaration. */
     const TypeName* t = ValueType(env, n);
+
+    if (!t)
+    {
+        t = PlaceType(env, n);
+    }
+
+    /* An element of an array whose type is known has the array's element type. */
+    if (!t && n->kind == NodeIndex)
+    {
+        const Node* base = ((const IndexExpr*)n)->base_node;
+        const TypeName* bt = base ? ValueType(env, base) : NULL;
+        t = bt ? TypeNameArrayElem(bt) : NULL;
+    }
+
     UseKind kind = UseRead;
 
     if (op->consumed)

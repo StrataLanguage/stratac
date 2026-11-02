@@ -225,6 +225,13 @@ static bool ArgIsConsumed(const CallExpr* e, size_t i)
 
     const FunctionDecl* d = e->resolvedDecl;
 
+    /* No function behind the call: a struct constructor `S(a, b)` (or a vector one), whose arguments become
+       the fields by value. */
+    if (!d && !e->calleeBase && !e->delegateCallee)
+    {
+        return true;
+    }
+
     if (!d || d->isExtern || d->params.count == 0)
     {
         return false;
