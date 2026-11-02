@@ -1,6 +1,10 @@
 accept/partial_array_take_and_refill_loop only-old
 accept/partial_whole_reassign_from_own_field only-old
 reject/alias_owning_struct_local_unboxed only-new
+reject/drop_element_then_use only-old
 reject/eval_field_assign_rhs_moves_owner only-new
 reject/eval_same_box_two_params only-new
+reject/partial_array_refill_index_changed only-old
+reject/partial_array_refill_other_slot only-old
+reject/partial_array_unknown_index only-old
 reject/partial_array_whole_use only-old

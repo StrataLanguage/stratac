@@ -33,9 +33,14 @@ typedef struct {
     const NodeTypes* types;
     Arena* arena;
     Locals locals;
+    Locals named; /* every parameter and local, whatever its type; any other root is a global */
+    const TypeName* fnReturn;
     char** paths;
     size_t pathCount;
     size_t pathCap;
+    char** facts; /* optional places that narrowing can prove non-empty */
+    size_t factCount;
+    size_t factCap;
 } Env;
 
 static int FindLocal(const Locals* ls, const char* name)
@@ -57,9 +62,8 @@ static bool TypeOwns(const Env* env, const TypeName* t)
     return t && t->name && !t->isRc && TypeClassify(env->reg, env->arena, t).owning;
 }
 
-static void AddLocal(Env* env, const char* name, bool owning, const TypeName* type)
+static void AddLocalTo(Locals* ls, const char* name, bool owning, const TypeName* type)
 {
-    Locals* ls = &env->locals;
     int existing = FindLocal(ls, name);
 
     if (existing >= 0)
@@ -82,6 +86,12 @@ static void AddLocal(Env* env, const char* name, bool owning, const TypeName* ty
     }
 
     ls->locals[ls->count++] = (Local){name, owning, type};
+}
+
+static void AddLocal(Env* env, const char* name, bool owning, const TypeName* type)
+{
+    AddLocalTo(&env->locals, name, owning, type);
+    AddLocalTo(&env->named, name, false, NULL);
 }
 
 static const TypeName* DeclType(const Env* env, const VarDeclStmt* vd)
@@ -249,6 +259,8 @@ static void CollectLocals(Env* env, const FunctionDecl* fn, const Cfg* g)
     {
         const ParamDecl* p = (const ParamDecl*)VecGet(&fn->params, i);
 
+        AddLocalTo(&env->named, p->name, false, NULL);
+
         if (p->mod == ModNone && !p->inferredBorrow && !fn->isExtern)
         {
             AddLocal(env, p->name, TypeOwns(env, &p->type), &p->type);
@@ -402,6 +414,593 @@ static void ReportPlace(Found* found, const Node* node)
     Report(found, node->range, root);
 }
 
+/* Narrowing: a `T?` place is proven non-empty by a null test, or by being set from a value that is.
+   The proof is a must-fact: it holds only if every path to the point agrees. Facts live after the move
+   states in a block's state array: 1 = not proven, 2 = non-empty (3 = paths disagree). */
+enum {
+    FactNone = 1,
+    FactNonEmpty = 2,
+};
+
+/* The place of a variable-and-fields-and-indices expression (`a`, `a.b`, `a[i].b`, `a[0]`). An index
+   is a variable or an integer literal; any other index is no place. */
+static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
+{
+    if (n->kind == NodeIdent)
+    {
+        return PlaceOf(n, buf, cap, root);
+    }
+
+    const Node* base;
+    char suffix[64];
+
+    if (n->kind == NodeMember)
+    {
+        const MemberExpr* m = (const MemberExpr*)n;
+
+        if (m->isImplProperty || m->isEnumConst || m->isScalarConst || strlen(m->member) + 2 > sizeof(suffix))
+        {
+            return false;
+        }
+
+        base = m->base_node;
+        snprintf(suffix, sizeof(suffix), ".%s", m->member);
+    }
+    else if (n->kind == NodeIndex)
+    {
+        const IndexExpr* ix = (const IndexExpr*)n;
+        base = ix->base_node;
+
+        if (ix->index->kind == NodeIdent && strlen(((const IdentExpr*)ix->index)->name) + 3 <= sizeof(suffix))
+        {
+            snprintf(suffix, sizeof(suffix), "[%s]", ((const IdentExpr*)ix->index)->name);
+        }
+        else if (ix->index->kind == NodeIntLiteral)
+        {
+            snprintf(suffix, sizeof(suffix), "[%llu]", (unsigned long long)((const IntLiteral*)ix->index)->value);
+        }
+        else
+        {
+            return false;
+        }
+    }
+    else
+    {
+        return false;
+    }
+
+    if (!FactPlaceOf(base, buf, cap, root))
+    {
+        return false;
+    }
+
+    size_t len = strlen(buf);
+    size_t add = strlen(suffix);
+
+    if (len + add >= cap)
+    {
+        return false;
+    }
+
+    memcpy(buf + len, suffix, add + 1);
+    return true;
+}
+
+static int FindFact(const Env* env, const char* path)
+{
+    for (size_t i = 0; i < env->factCount; i++)
+    {
+        if (strcmp(env->facts[i], path) == 0)
+        {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
+static void AddFact(Env* env, const char* path)
+{
+    if (FindFact(env, path) >= 0)
+    {
+        return;
+    }
+
+    if (env->factCount == env->factCap)
+    {
+        env->factCap = env->factCap ? env->factCap * 2 : 16;
+        env->facts = (char**)realloc(env->facts, env->factCap * sizeof(char*));
+    }
+
+    env->facts[env->factCount++] = strdup(path);
+}
+
+/* A place split into segments: names (`a`, `b`) and index groups (`[i]`, `[0]`). */
+typedef struct {
+    const char* p;
+    size_t n;
+} Seg;
+
+enum { MaxSegs = 24 };
+
+static size_t SplitPlace(const char* path, Seg* segs)
+{
+    size_t count = 0;
+
+    for (const char* s = path; *s && count < MaxSegs;)
+    {
+        if (*s == '.')
+        {
+            s++;
+            continue;
+        }
+
+        const char* start = s;
+
+        if (*s == '[')
+        {
+            while (*s && *s != ']')
+            {
+                s++;
+            }
+
+            s += *s == ']';
+        }
+        else
+        {
+            while (*s && *s != '.' && *s != '[')
+            {
+                s++;
+            }
+        }
+
+        segs[count++] = (Seg){start, (size_t)(s - start)};
+    }
+
+    return count;
+}
+
+/* Can the two segments name the same thing? Different literal indices cannot; a variable index can be anything. */
+static bool SegsAlias(Seg a, Seg b)
+{
+    if (a.p[0] == '[' && b.p[0] == '[' && !(a.p[1] >= '0' && a.p[1] <= '9' && b.p[1] >= '0' && b.p[1] <= '9'))
+    {
+        return true;
+    }
+
+    return a.n == b.n && memcmp(a.p, b.p, a.n) == 0;
+}
+
+/* The type of a value: what sema inferred, else a call's declared return type. */
+static const TypeName* ValueType(const Env* env, const Node* n)
+{
+    const TypeName* t = NodeTypesGet(env->types, n);
+
+    if (!t && n->kind == NodeCall && ((const CallExpr*)n)->resolvedDecl)
+    {
+        t = &((const CallExpr*)n)->resolvedDecl->returnType;
+    }
+
+    return t;
+}
+
+/* Registers every optional place on the chain `n`, `n`'s base, and so on. */
+static void AddOptionalChain(Env* env, const Node* n)
+{
+    char buf[256];
+    const char* root;
+
+    while (n)
+    {
+        const TypeName* t = NodeTypesGet(env->types, n);
+
+        if (t && t->isOptional && FactPlaceOf(n, buf, sizeof(buf), &root))
+        {
+            AddFact(env, buf);
+        }
+
+        if (n->kind == NodeMember)
+        {
+            n = ((const MemberExpr*)n)->base_node;
+        }
+        else if (n->kind == NodeIndex)
+        {
+            n = ((const IndexExpr*)n)->base_node;
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+static void CollectFacts(Env* env, const Cfg* g)
+{
+    for (size_t b = 0; b < g->count; b++)
+    {
+        for (size_t j = 0; j < g->blocks[b].opCount; j++)
+        {
+            const CfgOp* op = &g->blocks[b].ops[j];
+
+            if (op->kind == CfgDeclare)
+            {
+                const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
+                const TypeName* t = DeclType(env, vd);
+
+                if (t && t->isOptional)
+                {
+                    AddFact(env, vd->name);
+                }
+            }
+            else if (op->kind == CfgEval
+                     && (op->node->kind == NodeIdent || op->node->kind == NodeMember || op->node->kind == NodeIndex))
+            {
+                AddOptionalChain(env, op->node);
+            }
+            else if (op->kind == CfgEval && op->node->kind == NodeAssign)
+            {
+                AddOptionalChain(env, ((const AssignExpr*)op->node)->target);
+            }
+        }
+    }
+}
+
+static void SetFact(const Env* env, unsigned char* f, const char* path, unsigned char value)
+{
+    int k = FindFact(env, path);
+
+    if (k >= 0)
+    {
+        f[k] = value;
+    }
+}
+
+/* `key` was written or moved out of: forget what was proven about it, about what is under it, and about
+   every place that may be the same (`a[j]` for `a[i]`). With `selfToo` false only what is under it. */
+static void KillFacts(const Env* env, unsigned char* f, const char* key, bool selfToo)
+{
+    Seg a[MaxSegs];
+    size_t na = SplitPlace(key, a);
+
+    for (size_t i = 0; i < env->factCount; i++)
+    {
+        Seg b[MaxSegs];
+        size_t nb = SplitPlace(env->facts[i], b);
+        bool hit = nb > na || (nb == na && selfToo);
+
+        for (size_t s = 0; hit && s < na; s++)
+        {
+            hit = SegsAlias(a[s], b[s]);
+        }
+
+        if (hit)
+        {
+            f[i] = FactNone;
+        }
+    }
+}
+
+/* The variable `name` changed: facts about elements indexed by it no longer hold. */
+static void KillIndexVar(const Env* env, unsigned char* f, const char* name)
+{
+    size_t len = strlen(name);
+
+    for (size_t i = 0; i < env->factCount; i++)
+    {
+        Seg b[MaxSegs];
+        size_t nb = SplitPlace(env->facts[i], b);
+
+        for (size_t s = 0; s < nb; s++)
+        {
+            if (b[s].p[0] == '[' && b[s].n == len + 2 && memcmp(b[s].p + 1, name, len) == 0)
+            {
+                f[i] = FactNone;
+            }
+        }
+    }
+}
+
+/* A call may write any global. */
+static void KillGlobals(const Env* env, unsigned char* f)
+{
+    for (size_t i = 0; i < env->factCount; i++)
+    {
+        Seg b[MaxSegs];
+        char root[128];
+
+        if (SplitPlace(env->facts[i], b) > 0 && b[0].n < sizeof(root))
+        {
+            memcpy(root, b[0].p, b[0].n);
+            root[b[0].n] = 0;
+
+            if (FindLocal(&env->named, root) < 0)
+            {
+                f[i] = FactNone;
+            }
+        }
+    }
+}
+
+/* Applies what `c` evaluating to `whenTrue` proves: `x?` terms joined by `&&` (all hold when true) or
+   `||` (all hold when false), under any number of `!`. */
+static void ApplyCond(const Env* env, unsigned char* f, const Node* c, bool whenTrue)
+{
+    while (c && c->kind == NodeUnary && ((const UnaryExpr*)c)->op == UnNot)
+    {
+        c = ((const UnaryExpr*)c)->operand;
+        whenTrue = !whenTrue;
+    }
+
+    if (!c)
+    {
+        return;
+    }
+
+    if (c->kind == NodeNullTest)
+    {
+        char buf[256];
+        const char* root;
+
+        if (whenTrue && FactPlaceOf(((const NullTestExpr*)c)->operand, buf, sizeof(buf), &root))
+        {
+            SetFact(env, f, buf, FactNonEmpty);
+        }
+    }
+    else if (c->kind == NodeBinary)
+    {
+        const BinaryExpr* b = (const BinaryExpr*)c;
+
+        if ((b->op == BinLogicAnd && whenTrue) || (b->op == BinLogicOr && !whenTrue))
+        {
+            ApplyCond(env, f, b->lhs, whenTrue);
+            ApplyCond(env, f, b->rhs, whenTrue);
+        }
+    }
+}
+
+static const char* PlaceKey(const Env* env, const Node* n)
+{
+    char buf[256];
+    const char* root;
+    return FactPlaceOf(n, buf, sizeof(buf), &root) ? arena_strdup(env->arena, buf) : "<expression>";
+}
+
+/* Reading through a `T?` needs the proof. */
+static void RequireProof(const Env* env, const unsigned char* f, Found* found, const Node* value, SourceRange range)
+{
+    char buf[256];
+    const char* root;
+    int k = FactPlaceOf(value, buf, sizeof(buf), &root) ? FindFact(env, buf) : -1;
+
+    if (found && !(k >= 0 && f[k] == FactNonEmpty))
+    {
+        Report(found, range, PlaceKey(env, value));
+    }
+}
+
+/* `value` is handed to something of type `target` (NULL: unknown, so no proof is wanted). Returns whether
+   the target may count it as non-empty. A moved optional leaves its source empty. */
+static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const Node* value, const TypeName* target,
+                         SourceRange range, bool move)
+{
+    if (!value)
+    {
+        return false;
+    }
+
+    const TypeName* vt = ValueType(env, value);
+
+    if (!vt || !vt->isOptional)
+    {
+        return true;
+    }
+
+    char buf[256];
+    const char* root;
+    bool haveKey = FactPlaceOf(value, buf, sizeof(buf), &root);
+    int k = haveKey ? FindFact(env, buf) : -1;
+    bool proven = k >= 0 && f[k] == FactNonEmpty;
+
+    if (target && !target->isOptional && !proven && found)
+    {
+        Report(found, range, PlaceKey(env, value));
+    }
+
+    if (move && haveKey && TypeOwns(env, vt))
+    {
+        KillFacts(env, f, buf, true);
+    }
+
+    return proven;
+}
+
+static bool IsArrayMutator(const char* callee)
+{
+    static const char* const names[] = {"array_pop",     "array_push",   "array_remove",
+                                        "array_reserve", "array_resize", "array_swap_remove"};
+
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+    {
+        if (strcmp(callee, names[i]) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void KillPlaceOf(const Env* env, unsigned char* f, const Node* n, bool selfToo)
+{
+    char buf[256];
+    const char* root;
+
+    if (FactPlaceOf(n, buf, sizeof(buf), &root))
+    {
+        KillFacts(env, f, buf, selfToo);
+
+        if (n->kind == NodeIdent)
+        {
+            KillIndexVar(env, f, buf);
+        }
+    }
+}
+
+static void CallFactStep(const Env* env, unsigned char* f, Found* found, const CallExpr* e)
+{
+    if (e->isIntrinsicCall)
+    {
+        const Node* arg0 = e->args.count > 0 ? (const Node*)VecGet(&e->args, 0) : NULL;
+        const Node* arg1 = e->args.count > 1 ? (const Node*)VecGet(&e->args, 1) : NULL;
+
+        if (arg0 && strcmp(e->callee, "drop") == 0)
+        {
+            ConsumeValue(env, f, found, arg0, NULL, arg0->range, true);
+        }
+        else if (arg1 && strcmp(e->callee, "array_push") == 0)
+        {
+            ConsumeValue(env, f, found, arg1, NULL, arg1->range, true);
+        }
+
+        if (arg0 && IsArrayMutator(e->callee))
+        {
+            KillPlaceOf(env, f, arg0, true);
+        }
+
+        return;
+    }
+
+    const FunctionDecl* d = e->resolvedDecl;
+
+    for (size_t i = 0; d && i < e->args.count; i++)
+    {
+        const Node* arg = (const Node*)VecGet(&e->args, i);
+        const ParamDecl* p = i < d->params.count ? (const ParamDecl*)VecGet(&d->params, i) : NULL;
+        bool byValue = p && !d->isExtern && p->mod == ModNone && !p->inferredBorrow && !p->isVarargRest;
+
+        ConsumeValue(env, f, found, arg, p && !p->isVarargRest ? &p->type : NULL, arg->range, byValue);
+
+        if (p && p->mod == ModRef && !p->type.isConst)
+        {
+            KillPlaceOf(env, f, arg, true);
+        }
+    }
+
+    KillGlobals(env, f);
+}
+
+/* The effect of one op on the narrowing facts; with `found` set, reads that lack the proof are reported. */
+static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
+{
+    if (op->kind == CfgDeclare)
+    {
+        const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
+        const TypeName* declared = vd->type.name && vd->type.name[0] ? &vd->type : NULL;
+        bool proves = vd->init && !vd->isRef && ConsumeValue(env, f, found, vd->init, declared, vd->base.range, true);
+
+        KillFacts(env, f, vd->name, true);
+        KillIndexVar(env, f, vd->name);
+
+        if (proves)
+        {
+            SetFact(env, f, vd->name, FactNonEmpty);
+        }
+    }
+    else if (op->kind == CfgReturn)
+    {
+        const ReturnStmt* rs = (const ReturnStmt*)op->node;
+
+        if (rs->value)
+        {
+            ConsumeValue(env, f, found, rs->value, env->fnReturn, rs->value->range, true);
+        }
+    }
+    else if (op->kind == CfgEval)
+    {
+        const Node* n = op->node;
+
+        switch (n->kind)
+        {
+        case NodeAssign:
+        {
+            const AssignExpr* a = (const AssignExpr*)n;
+            const TypeName* targetType = NodeTypesGet(env->types, a->target);
+            bool proves = false;
+
+            if (a->op == AssignSet)
+            {
+                proves = ConsumeValue(env, f, found, a->value, targetType, a->value->range, true);
+            }
+
+            KillPlaceOf(env, f, a->target, true);
+
+            if (proves && targetType && targetType->isOptional)
+            {
+                char buf[256];
+                const char* root;
+
+                if (FactPlaceOf(a->target, buf, sizeof(buf), &root))
+                {
+                    SetFact(env, f, buf, FactNonEmpty);
+                }
+            }
+
+            break;
+        }
+        case NodeIncDec:
+            KillPlaceOf(env, f, ((const IncDecExpr*)n)->operand, true);
+            break;
+        case NodeMember:
+        case NodeIndex:
+            for (const Node* cur = n; cur->kind == NodeMember || cur->kind == NodeIndex;)
+            {
+                const Node* base = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node
+                                                           : ((const IndexExpr*)cur)->base_node;
+                const TypeName* bt = ValueType(env, base);
+
+                if (bt && bt->isOptional)
+                {
+                    RequireProof(env, f, found, base, cur->range);
+                }
+
+                cur = base;
+            }
+
+            break;
+        case NodeCall:
+            CallFactStep(env, f, found, (const CallExpr*)n);
+            break;
+        case NodeStructInit:
+        {
+            const StructInitExpr* e = (const StructInitExpr*)n;
+            const TypeName* st = NodeTypesGet(env->types, n);
+
+            for (size_t i = 0; i < e->fields.count; i++)
+            {
+                const StructInitField* fld = (const StructInitField*)VecGet(&e->fields, i);
+                ConsumeValue(env, f, found, fld->value, FieldType(env, st, fld->name), fld->value->range, true);
+            }
+
+            break;
+        }
+        case NodeArrayInit:
+        {
+            const ArrayInitExpr* e = (const ArrayInitExpr*)n;
+
+            for (size_t i = 0; i < e->elements.count; i++)
+            {
+                const Node* el = (const Node*)VecGet(&e->elements, i);
+                ConsumeValue(env, f, found, el, e->elementType, el->range, e->repeatCount == NULL);
+            }
+
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
 /* Steps one block. With `found` set, uses of unusable places are reported. */
 static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, Found* found)
 {
@@ -410,6 +1009,8 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
     for (size_t j = 0; j < blk->opCount; j++)
     {
         const CfgOp* op = &blk->ops[j];
+
+        FactStep(env, state + env->pathCount, op, found);
 
         if (op->kind == CfgDeclare)
         {
@@ -486,19 +1087,22 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
         return 0;
     }
 
-    Env env = {.reg = reg, .types = types, .arena = arena};
+    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
     CollectPaths(&env, &g);
+    CollectFacts(&env, &g);
 
-    size_t n = env.pathCount;
+    size_t pathCount = env.pathCount;
+    size_t n = pathCount + env.factCount;
     Found found = {0};
 
-    if (n > 0)
+    if (g.count > 0)
     {
         /* Entry state of every block; everything is Live on entry. */
-        unsigned char* in = (unsigned char*)calloc(g.count * n, 1);
-        unsigned char* cur = (unsigned char*)malloc(n);
+        unsigned char* in = (unsigned char*)calloc(g.count * n + 1, 1);
+        unsigned char* cur = (unsigned char*)malloc(n + 1);
+        unsigned char* edge = (unsigned char*)malloc(n + 1);
 
         for (size_t k = 0; k < n; k++)
         {
@@ -524,10 +1128,18 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
                 for (unsigned s = 0; s < blk->succCount; s++)
                 {
                     unsigned char* dst = &in[blk->succ[s] * n];
+                    const CfgOp* last = blk->opCount ? &blk->ops[blk->opCount - 1] : NULL;
+
+                    memcpy(edge, cur, n);
+
+                    if (last && last->kind == CfgCondition)
+                    {
+                        ApplyCond(&env, edge + pathCount, last->node, s == 0);
+                    }
 
                     for (size_t k = 0; k < n; k++)
                     {
-                        unsigned char joined = Join(dst[k], cur[k]);
+                        unsigned char joined = Join(dst[k], edge[k]);
 
                         if (joined != dst[k])
                         {
@@ -555,6 +1167,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
 
         free(in);
         free(cur);
+        free(edge);
     }
 
     for (size_t i = 0; i < env.pathCount; i++)
@@ -563,7 +1176,14 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
     }
 
     free(env.paths);
+    for (size_t i = 0; i < env.factCount; i++)
+    {
+        free(env.facts[i]);
+    }
+
+    free(env.facts);
     free(env.locals.locals);
+    free(env.named.locals);
     CfgFree(&g);
     *out = found.items;
     return found.count;
@@ -587,7 +1207,10 @@ static bool ParseOldDiag(const char* message, char* name, size_t cap)
 
     size_t nameLen = (size_t)(close - (message + 1));
 
-    if (nameLen == 0 || nameLen >= cap || (strcmp(close + 1, " used after move") != 0 && strncmp(close + 1, " is poisoned", 12) != 0))
+    if (nameLen == 0 || nameLen >= cap
+        || (strcmp(close + 1, " used after move") != 0 && strncmp(close + 1, " is poisoned", 12) != 0
+            && strncmp(close + 1, " has not been blessed", 21) != 0
+            && strncmp(close + 1, " is definitely empty", 20) != 0))
     {
         return false;
     }
@@ -596,7 +1219,7 @@ static bool ParseOldDiag(const char* message, char* name, size_t cap)
     {
         char c = message[1 + i];
 
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.'))
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '[' || c == ']' || c == '<' || c == '>'))
         {
             return false;
         }
