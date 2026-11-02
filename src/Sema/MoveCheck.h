@@ -16,9 +16,14 @@ typedef struct {
     const char* name;
 } MoveDiag;
 
+/* The global places each function of a module may write, for `MoveCheckFunction`. */
+typedef struct WriteSets WriteSets;
+WriteSets* WriteSetsBuild(const Module* mod, const TypeRegistry* reg, const NodeTypes* types, Arena* arena);
+void WriteSetsFree(WriteSets* ws);
+
 /* Uses of a moved or maybe-moved place, and reads of an unproven `T?`, in `fn`. The caller frees `*out`. */
-size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types, Arena* arena,
-                         MoveDiag** out);
+size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types,
+                         const WriteSets* ws, Arena* arena, MoveDiag** out);
 
 /* Runs MoveCheckFunction over every function of `mod` and compares with the "used after move" errors
    (and "has not been blessed" ones) in `diag`, writing each disagreement to stderr as `shadow: only-new|only-old file+offset 'name'`.

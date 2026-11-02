@@ -35,6 +35,7 @@ typedef struct {
     Locals locals;
     Locals named; /* every parameter and local, whatever its type; any other root is a global */
     const TypeName* fnReturn;
+    const WriteSets* ws;
     char** paths;
     size_t pathCount;
     size_t pathCap;
@@ -412,6 +413,38 @@ static void ReportPlace(Found* found, const Node* node)
     }
 
     Report(found, node->range, root);
+}
+
+/* Write sets: the global places each function may write, directly or through the functions it calls. A
+   call changes only those, so it ends narrowing only for them, and an argument that borrows one of them
+   conflicts with a callee that writes it. `all` is for a callee nothing is known about. */
+typedef struct {
+    const FunctionDecl* fn;
+    char** keys;
+    size_t count;
+    size_t cap;
+    const FunctionDecl** callees;
+    size_t calleeCount;
+    size_t calleeCap;
+    bool all;
+} FnWrites;
+
+struct WriteSets {
+    FnWrites* fns;
+    size_t count;
+};
+
+static const FnWrites* FindWrites(const WriteSets* ws, const FunctionDecl* d)
+{
+    for (size_t i = 0; ws && d && i < ws->count; i++)
+    {
+        if (ws->fns[i].fn == d)
+        {
+            return &ws->fns[i];
+        }
+    }
+
+    return NULL;
 }
 
 /* Narrowing: a `T?` place is proven non-empty by a null test, or by being set from a value that is.
@@ -898,7 +931,18 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         }
     }
 
-    KillGlobals(env, f);
+    const FnWrites* w = FindWrites(env->ws, d);
+
+    if (!w || w->all)
+    {
+        KillGlobals(env, f);
+        return;
+    }
+
+    for (size_t i = 0; i < w->count; i++)
+    {
+        KillFacts(env, f, w->keys[i], true);
+    }
 }
 
 /* The effect of one op on the narrowing facts; with `found` set, reads that lack the proof are reported. */
@@ -1298,6 +1342,8 @@ static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, 
     free(effects.items);
 }
 
+static void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e);
+
 /* Checks the loans that the operands of expression `n` take against each other. */
 static void LoanCheck(const Env* env, Found* found, const Node* n)
 {
@@ -1322,11 +1368,261 @@ static void LoanCheck(const Env* env, Found* found, const Node* n)
         return;
     }
 
+    if (call)
+    {
+        CheckGlobalArgs(env, found, call);
+    }
+
     for (size_t i = 0; i < count; i++)
     {
         for (size_t j = i + 1; j < count; j++)
         {
             CheckOperandPair(env, found, ops[i], modes[i], ops[j], modes[j]);
+        }
+    }
+}
+
+static bool WritesAdd(FnWrites* w, const char* key)
+{
+    for (size_t i = 0; i < w->count; i++)
+    {
+        if (strcmp(w->keys[i], key) == 0)
+        {
+            return false;
+        }
+    }
+
+    if (w->count == w->cap)
+    {
+        w->cap = w->cap ? w->cap * 2 : 4;
+        w->keys = (char**)realloc(w->keys, w->cap * sizeof(char*));
+    }
+
+    w->keys[w->count++] = strdup(key);
+    return true;
+}
+
+static bool IsGlobalPlace(const Env* env, const char* key)
+{
+    Seg b[MaxSegs];
+    char root[128];
+
+    if (SplitPlace(key, b) == 0 || b[0].n >= sizeof(root))
+    {
+        return false;
+    }
+
+    memcpy(root, b[0].p, b[0].n);
+    root[b[0].n] = 0;
+    return FindLocal(&env->named, root) < 0;
+}
+
+static void NoteWrite(const Env* env, FnWrites* w, const Node* place)
+{
+    char buf[256];
+    const char* root;
+
+    if (PlaceKeyImpl(place, buf, sizeof(buf), &root, true) && IsGlobalPlace(env, buf))
+    {
+        WritesAdd(w, buf);
+    }
+}
+
+static void NoteCallee(FnWrites* w, const FunctionDecl* d)
+{
+    if (w->calleeCount == w->calleeCap)
+    {
+        w->calleeCap = w->calleeCap ? w->calleeCap * 2 : 4;
+        w->callees = (const FunctionDecl**)realloc(w->callees, w->calleeCap * sizeof(*w->callees));
+    }
+
+    w->callees[w->calleeCount++] = d;
+}
+
+/* What `fn` writes by itself, and whom it calls. */
+static void ScanWrites(const Env* shared, FnWrites* w, const FunctionDecl* fn)
+{
+    Env env = {.reg = shared->reg, .types = shared->types, .arena = shared->arena};
+    Cfg g = CfgBuild(fn);
+    CollectLocals(&env, fn, &g);
+
+    for (size_t b = 0; b < g.count; b++)
+    {
+        for (size_t j = 0; j < g.blocks[b].opCount; j++)
+        {
+            const CfgOp* op = &g.blocks[b].ops[j];
+
+            if (op->kind != CfgEval)
+            {
+                continue;
+            }
+
+            if (op->node->kind == NodeAssign)
+            {
+                NoteWrite(&env, w, ((const AssignExpr*)op->node)->target);
+            }
+            else if (op->node->kind == NodeIncDec)
+            {
+                NoteWrite(&env, w, ((const IncDecExpr*)op->node)->operand);
+            }
+            else if (op->node->kind == NodeCall)
+            {
+                const CallExpr* e = (const CallExpr*)op->node;
+
+                for (size_t i = 0; i < e->args.count; i++)
+                {
+                    LoanMode mode = ArgMode(e, i);
+
+                    if (mode == LoanMut || (e->isIntrinsicCall && strcmp(e->callee, "drop") == 0 && i == 0))
+                    {
+                        NoteWrite(&env, w, (const Node*)VecGet(&e->args, i));
+                    }
+                }
+
+                if (e->isIntrinsicCall)
+                {
+                    continue;
+                }
+
+                if (e->resolvedDecl)
+                {
+                    if (!e->resolvedDecl->isExtern)
+                    {
+                        NoteCallee(w, e->resolvedDecl);
+                    }
+                }
+                else
+                {
+                    w->all = true;
+                }
+            }
+        }
+    }
+
+    CfgFree(&g);
+    free(env.locals.locals);
+    free(env.named.locals);
+}
+
+WriteSets* WriteSetsBuild(const Module* mod, const TypeRegistry* reg, const NodeTypes* types, Arena* arena)
+{
+    WriteSets* ws = (WriteSets*)calloc(1, sizeof(WriteSets));
+    Env shared = {.reg = reg, .types = types, .arena = arena};
+    ws->count = mod->functions.count;
+    ws->fns = (FnWrites*)calloc(ws->count ? ws->count : 1, sizeof(FnWrites));
+
+    for (size_t i = 0; i < ws->count; i++)
+    {
+        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
+        ws->fns[i].fn = fn;
+
+        if (fn->body)
+        {
+            ScanWrites(&shared, &ws->fns[i], fn);
+        }
+        else if (!fn->isExtern)
+        {
+            ws->fns[i].all = true;
+        }
+    }
+
+    for (bool changed = true; changed;)
+    {
+        changed = false;
+
+        for (size_t i = 0; i < ws->count; i++)
+        {
+            FnWrites* w = &ws->fns[i];
+
+            for (size_t c = 0; c < w->calleeCount; c++)
+            {
+                const FnWrites* callee = FindWrites(ws, w->callees[c]);
+
+                if (!callee)
+                {
+                    changed |= !w->all;
+                    w->all = true;
+                    continue;
+                }
+
+                if (callee->all && !w->all)
+                {
+                    w->all = true;
+                    changed = true;
+                }
+
+                for (size_t k = 0; k < callee->count; k++)
+                {
+                    changed |= WritesAdd(w, callee->keys[k]);
+                }
+            }
+        }
+    }
+
+    return ws;
+}
+
+void WriteSetsFree(WriteSets* ws)
+{
+    for (size_t i = 0; ws && i < ws->count; i++)
+    {
+        for (size_t k = 0; k < ws->fns[i].count; k++)
+        {
+            free(ws->fns[i].keys[k]);
+        }
+
+        free(ws->fns[i].keys);
+        free(ws->fns[i].callees);
+    }
+
+    if (ws)
+    {
+        free(ws->fns);
+        free(ws);
+    }
+}
+
+/* Does a call to `d` possibly write a place overlapping `key`? Unknown callees may write anything global. */
+static bool CalleeWrites(const Env* env, const FunctionDecl* d, const char* key)
+{
+    const FnWrites* w = FindWrites(env->ws, d);
+
+    if (!w)
+    {
+        return true;
+    }
+
+    for (size_t i = 0; !w->all ? i < w->count : false; i++)
+    {
+        if (PlacesOverlap(w->keys[i], key))
+        {
+            return true;
+        }
+    }
+
+    return w->all;
+}
+
+/* An argument that borrows a global place must not be one the callee writes. */
+static void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e)
+{
+    const FunctionDecl* d = e->resolvedDecl;
+
+    if (!env->ws || !d || e->isIntrinsicCall || d->isExtern)
+    {
+        return;
+    }
+
+    for (size_t i = 0; i < e->args.count; i++)
+    {
+        const Node* arg = (const Node*)VecGet(&e->args, i);
+        char buf[256];
+        const char* root;
+
+        if (ArgMode(e, i) != LoanMove && NonTrivial(env, arg) && PlaceKeyImpl(arg, buf, sizeof(buf), &root, true)
+            && IsGlobalPlace(env, buf) && CalleeWrites(env, d, buf))
+        {
+            Report(found, arg->range, arena_strdup(env->arena, buf));
         }
     }
 }
@@ -1412,8 +1708,8 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
     }
 }
 
-size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types, Arena* arena,
-                         MoveDiag** out)
+size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types,
+                         const WriteSets* ws, Arena* arena, MoveDiag** out)
 {
     *out = NULL;
 
@@ -1422,7 +1718,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
         return 0;
     }
 
-    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType};
+    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .ws = ws};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
     CollectPaths(&env, &g);
@@ -1570,12 +1866,13 @@ size_t MoveCheckShadow(const Module* mod, const TypeRegistry* reg, const NodeTyp
 {
     size_t disagreements = 0;
     Found all = {0};
+    WriteSets* ws = WriteSetsBuild(mod, reg, types, arena);
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
         const FunctionDecl* fn = (const FunctionDecl*)VecGet(&mod->functions, i);
         MoveDiag* mine = NULL;
-        size_t mineCount = MoveCheckFunction(fn, reg, types, arena, &mine);
+        size_t mineCount = MoveCheckFunction(fn, reg, types, ws, arena, &mine);
 
         for (size_t m = 0; m < mineCount; m++)
         {
@@ -1645,6 +1942,7 @@ size_t MoveCheckShadow(const Module* mod, const TypeRegistry* reg, const NodeTyp
     }
 
     free(matched);
+    WriteSetsFree(ws);
     free(all.items);
     return disagreements;
 }

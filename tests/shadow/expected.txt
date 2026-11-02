@@ -1,6 +1,9 @@
+accept/narrow_global_kept_by_pure_call only-old
 accept/partial_array_take_and_refill_loop only-old
 accept/partial_whole_reassign_from_own_field only-old
+reject/alias_const_ref_param_global_changed only-new
 reject/alias_owning_struct_local_unboxed only-new
+reject/alias_string_param_global_changed only-new
 reject/drop_element_then_use only-old
 reject/eval_borrow_then_move_concat only-new
 reject/eval_const_ref_arg_then_clear only-new
