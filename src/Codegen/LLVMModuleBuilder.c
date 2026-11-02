@@ -4385,6 +4385,18 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     }
 }
 
+/* The value a slot holds, copied aside. Overwriting stores the NEW value first and then drops this copy, so a
+   `Drop` that writes the same slot meets a slot that already holds the new value instead of the half-destroyed
+   old one (and the value it stores is not overwritten and leaked). */
+static LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
+{
+    LLVMTypeRef ty = TypeDescHasArrayShape(&td) ? ArrayStructType(b) : td.type;
+    LLVMValueRef saved = EntryAlloca(b, ty, "oldval");
+    LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, ty, slot, "old"), saved);
+
+    return saved;
+}
+
 static Value EmitAssign(Builder* b, AssignExpr* n)
 {
     /* Impl property write (`cam.FOV = v`): lower to the setter extern call
@@ -4466,7 +4478,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     rhs = ValueMake(BuildOwnedStringFat(b, sp, sl), rhs.typeDesc);
                 }
 
-                EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+                LLVMValueRef oldArr = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
 
                 Node* movedNode = (Node*)MovableBoxSourceNode(n->value);
@@ -4480,6 +4492,8 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                         LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
                     }
                 }
+
+                EmitDropOne(b, oldArr, lvalue.typeDesc);
 
                 return ValueMake(rhs.value, lvalue.typeDesc);
             }
@@ -4515,8 +4529,9 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), srcPre.ptr);
                 }
 
-                EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+                LLVMValueRef oldBox = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
                 LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
+                EmitDropOne(b, oldBox, lvalue.typeDesc);
 
                 return rhs;
             }
@@ -4556,8 +4571,8 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
 
             if (optRebind)
             {
-                /* Drop whatever the slot held first (no-op when empty). */
-                EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+                /* Whatever the slot held is dropped once the new value is in (no-op when empty). */
+                LLVMValueRef oldOpt = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
 
                 const TypeName* innerTn = lvalue.typeDesc.boxInner ? lvalue.typeDesc.boxInner : StringTypeName(b);
                 TypeDesc innerTd = Resolve(b, innerTn);
@@ -4571,6 +4586,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     LLVMValueRef inner = Coerce(b, rhs, innerTd).value;
                     LLVMBuildStore(b->m_builder, inner, cell);
                     LLVMBuildStore(b->m_builder, cell, lvalue.ptr);
+                    EmitDropOne(b, oldOpt, lvalue.typeDesc);
 
                     return ValueMake(cell, lvalue.typeDesc);
                 }
@@ -4588,6 +4604,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                     = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1, "optstr");
                 LLVMBuildStore(b->m_builder, owned, strCell);
                 LLVMBuildStore(b->m_builder, strCell, lvalue.ptr);
+                EmitDropOne(b, oldOpt, lvalue.typeDesc);
 
                 return ValueMake(strCell, lvalue.typeDesc);
             }

@@ -1,6 +1,5 @@
 // expect: run
 // rule: a Drop method that pushes into the array being reset runs cleanly and every element is dropped once
-// xfail: hole 12, Drop re-entering the slot being dropped
 struct Pusher { int id; };
 struct Holder { Pusher[] items; };
 ^Holder gH = Holder { .items = {} };
