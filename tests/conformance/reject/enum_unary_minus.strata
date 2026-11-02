@@ -1,6 +1,5 @@
 // expect: reject
 // rule: unary minus is not defined on enums
-// xfail: hole 23, unary minus on enums is accepted
 enum Color { Red, Green, Blue };
 int main()
 {

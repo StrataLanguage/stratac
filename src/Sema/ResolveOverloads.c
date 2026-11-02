@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <ctype.h>
 #include <limits.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -298,6 +299,147 @@ static void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const Ty
         {
             DiagErrorFmt(diag, value->range, "float constant is out of range for 'float'");
         }
+    }
+}
+
+/* The value of a constant integer expression built from literals, negation, parentheses and + - *; false when
+   it is anything else (or overflows 64 bits). */
+static bool EvalConstInt(const Node* n, long long* out)
+{
+    if (n->kind == NodeIntLiteral)
+    {
+        *out = (long long)((const IntLiteral*)n)->value;
+        return true;
+    }
+
+    if (n->kind == NodeUnary && ((const UnaryExpr*)n)->op == UnNeg)
+    {
+        long long v = 0;
+
+        if (!EvalConstInt(((const UnaryExpr*)n)->operand, &v))
+        {
+            return false;
+        }
+
+        *out = -v;
+        return true;
+    }
+
+    if (n->kind == NodeBinary)
+    {
+        const BinaryExpr* b = (const BinaryExpr*)n;
+        long long l = 0;
+        long long r = 0;
+
+        if ((b->op != BinAdd && b->op != BinSub && b->op != BinMul) || !EvalConstInt(b->lhs, &l)
+            || !EvalConstInt(b->rhs, &r))
+        {
+            return false;
+        }
+
+        *out = b->op == BinAdd ? l + r : b->op == BinSub ? l - r : l * r;
+        return true;
+    }
+
+    return false;
+}
+
+/* Bit width of an integer scalar type, 0 for anything else. */
+static unsigned ScalarBitWidth(PrimitiveType p)
+{
+    switch (p)
+    {
+    case PrimSByte:
+    case PrimByte:
+        return 8;
+    case PrimShort:
+    case PrimUShort:
+        return 16;
+    case PrimInt:
+    case PrimUInt:
+        return 32;
+    case PrimLong:
+    case PrimULong:
+        return 64;
+    default:
+        return 0;
+    }
+}
+
+/* Constant operands that can only trap at run time are compile errors: `7 / 0`, `5 % 0`, `1 << 40`,
+   `INT_MIN / -1`. `lt` is the left operand's type. */
+static void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName* lt)
+{
+    long long rv = 0;
+
+    if (!EvalConstInt(b->rhs, &rv))
+    {
+        return;
+    }
+
+    if (b->op == BinDiv || b->op == BinMod)
+    {
+        long long lv = 0;
+        unsigned width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
+        bool isUnsigned = lt && (lt->primitiveType == PrimUInt || lt->primitiveType == PrimULong
+                                 || lt->primitiveType == PrimByte || lt->primitiveType == PrimUShort);
+
+        if (rv == 0)
+        {
+            DiagErrorFmt(diag, b->base.range, "%s by zero", b->op == BinDiv ? "division" : "modulo");
+        }
+        else if (rv == -1 && !isUnsigned && width && EvalConstInt(b->lhs, &lv)
+                 && lv == (width == 64 ? LLONG_MIN : -(1LL << (width - 1))))
+        {
+            DiagErrorFmt(diag, b->base.range, "%s overflows: the minimum value cannot be divided by -1",
+                         b->op == BinDiv ? "division" : "modulo");
+        }
+    }
+    else if (b->op == BinShl || b->op == BinShr)
+    {
+        unsigned width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
+
+        if (width && (rv < 0 || rv >= (long long)width))
+        {
+            DiagErrorFmt(diag, b->base.range, "shift count %lld is not less than the %u-bit width of '%s'", rv, width,
+                         lt->name);
+        }
+    }
+}
+
+/* `(int)3.0e10`: a constant float that cannot be represented in the integer type it is cast to. */
+static void CheckConstFloatToInt(DiagnosticEngine* diag, const CastExpr* cast)
+{
+    const Node* op = cast->operand;
+    bool negative = false;
+
+    if (op->kind == NodeUnary && ((const UnaryExpr*)op)->op == UnNeg)
+    {
+        negative = true;
+        op = ((const UnaryExpr*)op)->operand;
+    }
+
+    if (op->kind != NodeFloatLiteral || !cast->type.name)
+    {
+        return;
+    }
+
+    PrimitiveType prim = GetPrimitiveType(cast->type.name);
+    unsigned width = ScalarBitWidth(prim);
+
+    if (!width)
+    {
+        return;
+    }
+
+    bool isUnsigned = prim == PrimUInt || prim == PrimULong || prim == PrimByte || prim == PrimUShort;
+    double v = ((const FloatLiteral*)op)->value * (negative ? -1.0 : 1.0);
+    double lo = isUnsigned ? 0.0 : -ldexp(1.0, (int)width - 1);
+    double hi = isUnsigned ? ldexp(1.0, (int)width) : ldexp(1.0, (int)width - 1);
+
+    if (!(v > lo - 1.0 && v < hi))
+    {
+        DiagErrorFmt(diag, cast->base.range, "constant %g does not fit in '%s'", v, cast->type.name);
     }
 }
 
@@ -2703,6 +2845,22 @@ static bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const T
     bool rStr = TypeIsString(&r->m_registry, rt->name) || TypeIsCString(&r->m_registry, rt->name);
 
     return lStr && rStr;
+}
+
+/* The enum an expression belongs to: its type, or the enum of a `Color.Red` constant. NULL for a non-enum. */
+static const char* ExprEnumName(Resolver* r, const Node* n, const TypeName* t)
+{
+    if (n->kind == NodeMember && ((const MemberExpr*)n)->isEnumConst)
+    {
+        return ((const MemberExpr*)n)->enumTypeName;
+    }
+
+    if (t && t->name && TypeRegistryIsEnum(&r->m_registry, t->name))
+    {
+        return t->name;
+    }
+
+    return NULL;
 }
 
 /* `a & b`, `a | b`, `a ^ b` on two values of one enum type: flag sets keep their enum type. */
@@ -7296,6 +7454,17 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
+        /* An enum value is a name, not a number to negate. */
+        if (u->op == UnNeg)
+        {
+            const TypeName* ot = InferType(r, u->operand, scope);
+
+            if (ot && TypeRegistryIsEnum(&r->m_registry, ot->name))
+            {
+                DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
+            }
+        }
+
         // `!` is logical only: `!x` on a number is an implicit == 0 test.
         if (u->op == UnNot)
         {
@@ -7368,6 +7537,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
             }
+            else if (numericPair)
+            {
+                CheckConstArith(r->m_diag, b, lt);
+            }
 
             break;
         }
@@ -7382,6 +7555,19 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             const TypeName* rt = InferType(r, b->rhs, scope);
             const char* ln = lt ? lt->name : "";
             const char* rn = rt ? rt->name : "";
+
+            /* Two different enum types are never comparable, whatever their values. A constant such as
+               `Color.Red` is typed as its underlying integer, so it is named by its member expression. */
+            {
+                const char* le = ExprEnumName(r, b->lhs, lt);
+                const char* re = ExprEnumName(r, b->rhs, rt);
+
+                if (le && re && strcmp(le, re) != 0)
+                {
+                    DiagErrorFmt(r->m_diag, b->base.range, "cannot compare '%s' with '%s': they are different enums",
+                                 le, re);
+                }
+            }
 
             bool lString = lt && TypeIsString(&r->m_registry, ln);
             bool rString = rt && TypeIsString(&r->m_registry, rn);
@@ -8107,6 +8293,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
         const TypeName* src = InferType(r, cast->operand, scope);
         const TypeName* dst = &cast->type;
+
+        CheckConstFloatToInt(r->m_diag, cast);
 
         const char* srcName = src ? src->name : "";
         const char* dstName = dst->name;

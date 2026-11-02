@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a constant integer division by zero is a compile error
-// xfail: hole 22, constant division by zero folds to garbage
 int main()
 {
     int r = 7 / 0;

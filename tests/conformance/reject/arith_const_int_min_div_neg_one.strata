@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a constant INT_MIN / -1 overflows and is a compile error
-// xfail: hole 22, the constant division folds to garbage
 int main()
 {
     int s = (-2147483647 - 1) / -1;

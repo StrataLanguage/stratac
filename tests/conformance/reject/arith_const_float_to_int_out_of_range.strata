@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a constant float-to-int cast whose value does not fit is a compile error
-// xfail: hole 22, the constant cast folds to garbage
 int main()
 {
     int a = (int)3.0e10;
