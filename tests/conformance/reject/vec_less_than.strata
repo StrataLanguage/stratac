@@ -1,6 +1,5 @@
 // expect: reject
 // rule: < and > are not defined on vectors
-// xfail: hole 21, ordering comparisons on vectors are accepted
 int main()
 {
     float4 b = float4(1.0, 2.0, 3.0, 4.0);

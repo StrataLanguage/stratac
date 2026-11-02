@@ -7776,6 +7776,13 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
                 DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
             }
+            else if (lt && rt && !eqOp
+                     && (IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln)) != 0
+                         || IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, rn)) != 0))
+            {
+                /* Vectors are equal or not; they have no order. */
+                DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+            }
 
             break;
         }
@@ -8558,6 +8565,30 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         if (baseType && TypeIsCString(&r->m_registry, baseType->name) && strcmp(m->member, "length") != 0)
         {
             DiagErrorFmt(r->m_diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
+        }
+
+        /* A swizzle names lanes the vector has: `float2` has x and y, no z. */
+        if (baseType)
+        {
+            int lanes = IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name));
+            size_t len = strlen(m->member);
+            bool swizzle = lanes != 0 && len >= 1 && len <= 4;
+
+            for (size_t i = 0; swizzle && i < len; i++)
+            {
+                swizzle = m->member[i] >= 'w' && m->member[i] <= 'z';
+            }
+
+            for (size_t i = 0; swizzle && i < len; i++)
+            {
+                int lane = m->member[i] == 'w' ? 3 : m->member[i] - 'x';
+
+                if (lane >= lanes)
+                {
+                    DiagErrorFmt(r->m_diag, m->base.range, "'%s' has no lane '%c'", baseType->name, m->member[i]);
+                    break;
+                }
+            }
         }
 
         return;

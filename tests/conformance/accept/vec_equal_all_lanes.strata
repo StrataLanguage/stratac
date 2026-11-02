@@ -1,7 +1,6 @@
 // expect: run
 // expect-output: eq=0 ne=1 same=1
 // rule: float4 == float4 is true only when all lanes are equal, and != when any lane differs
-// xfail: hole 21, vector == looks at the first lane only
 int main()
 {
     float4 b = float4(1.0, 2.0, 3.0, 4.0);

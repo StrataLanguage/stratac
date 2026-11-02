@@ -710,6 +710,36 @@ static LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMVal
 
 static TypeDesc Resolve(Builder* b, const TypeName* t);
 static Value ZeroInt(Builder* b);
+/* `(int)f`: the float is clamped to the target's range and NaN becomes 0 (LLVM's saturating conversion), instead of
+   the undefined result of a plain fptosi/fptoui on an out-of-range value. Vectors and odd targets convert plainly. */
+static LLVMValueRef BuildFloatToIntSaturating(Builder* b, LLVMValueRef value, LLVMTypeRef target, bool isUnsigned)
+{
+    LLVMTypeRef src = LLVMTypeOf(value);
+    LLVMTypeKind srcKind = LLVMGetTypeKind(src);
+
+    if (LLVMGetTypeKind(target) != LLVMIntegerTypeKind || (srcKind != LLVMFloatTypeKind && srcKind != LLVMDoubleTypeKind))
+    {
+        return isUnsigned ? LLVMBuildFPToUI(b->m_builder, value, target, "c")
+                          : LLVMBuildFPToSI(b->m_builder, value, target, "c");
+    }
+
+    char name[64];
+    snprintf(name, sizeof(name), "llvm.fpto%ci.sat.i%u.%s", isUnsigned ? 'u' : 's', LLVMGetIntTypeWidth(target),
+             srcKind == LLVMFloatTypeKind ? "f32" : "f64");
+
+    LLVMTypeRef params[1] = {src};
+    LLVMTypeRef fnTy = LLVMFunctionType(target, params, 1, 0);
+    LLVMValueRef fn = LLVMGetNamedFunction(b->m_mod, name);
+
+    if (!fn)
+    {
+        fn = LLVMAddFunction(b->m_mod, name, fnTy);
+    }
+
+    LLVMValueRef args[1] = {value};
+    return LLVMBuildCall2(b->m_builder, fnTy, fn, args, 1, "sat");
+}
+
 static Value Coerce(Builder* b, Value value, TypeDesc target);
 static LLVMValueRef ToI1(Builder* b, Value v);
 static void EmitStmt(Builder* b, Node* n);
@@ -1428,8 +1458,7 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     }
     else if (value.typeDesc.isFloat && !target.isFloat)
     {
-        r = target.isUnsigned ? LLVMBuildFPToUI(b->m_builder, value.value, target.type, "c")
-                              : LLVMBuildFPToSI(b->m_builder, value.value, target.type, "c");
+        r = BuildFloatToIntSaturating(b, value.value, target.type, target.isUnsigned);
     }
     else if (!value.typeDesc.isFloat && !target.isFloat && !target.isVoid)
     {
@@ -3746,6 +3775,26 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
     return e;
 }
 
+/* A vector comparison yields one bool per lane; `==` holds when every lane does. Scalars pass through. */
+static LLVMValueRef AllLanesTrue(Builder* b, LLVMValueRef cmp)
+{
+    if (LLVMGetTypeKind(LLVMTypeOf(cmp)) != LLVMVectorTypeKind)
+    {
+        return cmp;
+    }
+
+    unsigned lanes = LLVMGetVectorSize(LLVMTypeOf(cmp));
+    LLVMValueRef all = LLVMBuildExtractElement(b->m_builder, cmp, LLVMConstInt(I32Ty(b), 0, 0), "lane");
+
+    for (unsigned i = 1; i < lanes; i++)
+    {
+        LLVMValueRef lane = LLVMBuildExtractElement(b->m_builder, cmp, LLVMConstInt(I32Ty(b), i, 0), "lane");
+        all = LLVMBuildAnd(b->m_builder, all, lane, "lanes");
+    }
+
+    return all;
+}
+
 /* Branches to a panic with `message` when `bad` is true, and carries on in the ok block otherwise. */
 static void EmitPanicIf(Builder* b, LLVMValueRef bad, const char* message)
 {
@@ -4245,13 +4294,22 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         out = flt ? FcmpByName(b->m_builder, "oeq", l.value, r.value)
                   : IcmpByName(b->m_builder, "eq", typeDesc.isUnsigned, l.value, r.value);
 
-        return ValueMake(out, boolTypeDesc);
+        return ValueMake(AllLanesTrue(b, out), boolTypeDesc);
 
     case BinNotEq:
+        /* Vectors differ when they are not all-equal; scalars keep the ordered `one`. */
+        if (flt && LLVMGetTypeKind(LLVMTypeOf(l.value)) == LLVMVectorTypeKind)
+        {
+            out = LLVMBuildNot(b->m_builder, AllLanesTrue(b, FcmpByName(b->m_builder, "oeq", l.value, r.value)),
+                               "vne");
+
+            return ValueMake(out, boolTypeDesc);
+        }
+
         out = flt ? FcmpByName(b->m_builder, "one", l.value, r.value)
                   : IcmpByName(b->m_builder, "ne", typeDesc.isUnsigned, l.value, r.value);
 
-        return ValueMake(out, boolTypeDesc);
+        return ValueMake(AllLanesTrue(b, out), boolTypeDesc);
 
     case BinLt:
         out = flt ? FcmpByName(b->m_builder, "olt", l.value, r.value)

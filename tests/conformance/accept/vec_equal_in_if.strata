@@ -1,7 +1,6 @@
 // expect: run
 // expect-output: differ
 // rule: a vector comparison is a bool and can be used directly as an if condition
-// xfail: hole 21, the compiler crashes in instruction selection
 int main()
 {
     float4 b = float4(1.0, 2.0, 3.0, 4.0);
