@@ -2390,6 +2390,58 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
+/* Records on a place expression what its use does with the value, for the code generator: moved out (an Owning
+   value, or an optional it empties), copied (a box handed to a bare `T`, a bare struct element), or just read. */
+static void AnnotateUse(const Env* env, const CfgOp* op)
+{
+    const Node* n = op->node;
+
+    if (n->kind != NodeIdent && n->kind != NodeMember && n->kind != NodeIndex)
+    {
+        return;
+    }
+
+    const TypeName* t = ValueType(env, n);
+    UseKind kind = UseRead;
+
+    if (op->consumed)
+    {
+        if (IsCopied(env, n))
+        {
+            kind = UseCopy;
+        }
+        else if (t && (TypeNameIsRc(t) || TypeNameIsFixedArray(t)))
+        {
+            /* An rc handle is retained, not moved; a fixed array is inline storage that is copied. */
+            kind = UseCopy;
+        }
+        else if (t && TypeOwns(env, t))
+        {
+            kind = UseMove;
+        }
+    }
+
+    /* A fixed array handed on as text (`(string)buffer`) is copied even though the graph sees it as a view. */
+    if (kind == UseRead && t && TypeNameIsFixedArray(t))
+    {
+        kind = UseCopy;
+    }
+
+    /* The graph is read-only for the checker; the annotation is the one thing it hands back. */
+    if (n->kind == NodeIdent)
+    {
+        ((IdentExpr*)n)->useKind = kind;
+    }
+    else if (n->kind == NodeMember)
+    {
+        ((MemberExpr*)n)->useKind = kind;
+    }
+    else
+    {
+        ((IndexExpr*)n)->useKind = kind;
+    }
+}
+
 /* Steps one block. With `found` set, uses of unusable places are reported. */
 static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, Found* found)
 {
@@ -2403,6 +2455,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
 
         if (found && op->kind == CfgEval)
         {
+            AnnotateUse(env, op);
             DanglingCheck(env, state + env->pathCount, found, op->node);
             LoanCheck(env, found, op->node);
             ElementMoveCheck(env, found, op);

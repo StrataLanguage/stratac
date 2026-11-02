@@ -3147,6 +3147,22 @@ static void NullOwningSlot(Builder* b, LValue src)
     }
 }
 
+/* What the checker decided about a use of this place; UseUnknown for anything it does not annotate. */
+static UseKind CheckerUseOf(const Node* n)
+{
+    switch (n->kind)
+    {
+    case NodeIdent:
+        return ((const IdentExpr*)n)->useKind;
+    case NodeMember:
+        return ((const MemberExpr*)n)->useKind;
+    case NodeIndex:
+        return ((const IndexExpr*)n)->useKind;
+    default:
+        return UseUnknown;
+    }
+}
+
 static void NullMovedSource(Builder* b, Node* n)
 {
     Node* moved = (Node*)MovableBoxSourceNode(n);
@@ -3156,7 +3172,22 @@ static void NullMovedSource(Builder* b, Node* n)
         return;
     }
 
+    /* The checker decided what this use does. Only a use it calls a move empties the source; a copy or a read
+       leaves the place alone. Nodes the checker never saw (UseUnknown) keep the old syntactic rule. */
+    UseKind use = CheckerUseOf(moved);
+
+    if (use == UseRead)
+    {
+        return;
+    }
+
     LValue src = EmitLValueForNullStore(b, moved);
+
+    /* A copy leaves the place alone, except that copying an rc handle retains it. */
+    if (use == UseCopy && !(src.valid && TypeDescIsRc(&src.typeDesc)))
+    {
+        return;
+    }
 
     NullOwningSlot(b, src);
 }

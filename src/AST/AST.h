@@ -724,9 +724,19 @@ typedef struct {
     size_t length;
 } StrLiteral;
 
+/* What the checker (Sema/MoveCheck.c) decided a use of a place does with the value. Set on identifier, member and
+   index expressions; UseUnknown until the checker has run over the function. */
+typedef enum {
+    UseUnknown = 0,
+    UseRead, /* looked at, or borrowed: nothing moves */
+    UseMove, /* an Owning value leaves the place (an optional is left empty) */
+    UseCopy, /* the value is copied; the place keeps its own */
+} UseKind;
+
 typedef struct {
     Node base;
     char* name;
+    UseKind useKind; /* set by the checker */
 } IdentExpr;
 
 typedef struct CallExpr {
@@ -763,6 +773,7 @@ typedef struct MemberExpr {
     Node base;
     Node* base_node;
     char* member;
+    UseKind useKind; /* set by the checker */
     bool isImplProperty; /* set by sema: member names an impl property (call-like read, never a move source) */
     bool isEnumConst;    /* set by sema: `EnumName.Member` scoped constant read */
     uint64_t enumValue;  /* resolved bit pattern of the enum member (valid when isEnumConst) */
@@ -818,6 +829,7 @@ typedef struct {
     Node base;
     Node* base_node;
     Node* index;
+    UseKind useKind; /* set by the checker */
 } IndexExpr;
 
 // { e0, ... } array literal; elementType NULL until sema infers it.
