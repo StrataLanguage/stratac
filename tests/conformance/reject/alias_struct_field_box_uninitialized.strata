@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a struct literal must set a field whose alias type holds a box
-// xfail: hole 18, aliases skip the must-hold box check
 struct P { int x; };
 struct H { int a; ^P b; };
 struct HA = H;

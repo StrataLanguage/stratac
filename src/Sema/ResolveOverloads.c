@@ -4188,6 +4188,8 @@ static bool IsStrLiteralForCString(const Resolver* r, const TypeName* targetType
            && TypeIsCString(&r->m_registry, targetType->name);
 }
 
+static bool ZeroIsValid(Resolver* r, const TypeName* t, int depth);
+
 // Array builtins (push/pop/resize); marks the call pseudo. True if handled.
 static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
@@ -4278,6 +4280,20 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (recvKey)
         {
+        }
+    }
+
+    /* Growing fills the new slots with zeroes, so the elements must have a valid zero value. */
+    if (strcmp(c->callee, "array_resize") == 0)
+    {
+        const TypeName* elemType = TypeNameArrayElem(unwrapped);
+
+        if (elemType && !ZeroIsValid(r, elemType, 0))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range,
+                         "'array_resize' fills new elements with their zero value, which is not a valid '%s' (a box "
+                         "has no zero value; make the element type optional)",
+                         elemType->name);
         }
     }
 
@@ -7223,40 +7239,10 @@ static bool IsEmptyBraced(const Node* n)
    something) is not, nor is a struct holding one. */
 static bool ZeroIsValid(Resolver* r, const TypeName* t, int depth)
 {
-    if (!t || depth > 32 || TypeNameIsOptional(t) || TypeNameIsDynamicArray(t) || TypeIsString(&r->m_registry, t->name))
-    {
-        return true;
-    }
+    (void)depth;
 
-    if (TypeNameIsBox(t))
-    {
-        return false;
-    }
-
-    if (TypeNameHasArrayShape(t) && t->length >= 0)
-    {
-        return ZeroIsValid(r, t->elem, depth + 1);
-    }
-
-    const char* name = TypeRegistryResolveAlias(&r->m_registry, t->name);
-    const StructType* st = name ? TypeRegistryFind(&r->m_registry, name) : NULL;
-
-    if (!st || TypeRegistryIsOpaque(&r->m_registry, name))
-    {
-        return true;
-    }
-
-    for (size_t f = 0; f < st->fields.count; f++)
-    {
-        const FieldDecl* fd = (const FieldDecl*)VecGet((Vec*)&st->fields, f);
-
-        if (!ZeroIsValid(r, &fd->type, depth + 1))
-        {
-            return false;
-        }
-    }
-
-    return true;
+    /* Classified once, aliases resolved: a `struct PB = ^P` alias is a box like the `^P` it names. */
+    return !t || TypeClassify(&r->m_registry, r->m_arena, t).zeroValid;
 }
 
 /* `{ value; count }` for a dynamic array: the count is any integer; the value is evaluated once and
@@ -10799,6 +10785,13 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                                      "global '%s' of type '%s' cannot be initialized by expression of type '%s'",
                                      gd->name, gd->type.name, initType->name);
                     }
+                }
+                else if (!TypeClassify(&r.m_registry, r.m_arena, &gd->type).zeroValid)
+                {
+                    /* A global starts as zeroes, and a zeroed box is a null pointer waiting to be read. */
+                    DiagErrorFmt(diag, gd->base.range,
+                                 "global '%s' of type '%s' must be initialized: it holds a box, which has no zero value",
+                                 gd->name, gd->type.name);
                 }
 
                 continue;

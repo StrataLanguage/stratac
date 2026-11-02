@@ -742,7 +742,8 @@ void ComputeAllLayouts(TypeRegistry* reg)
 
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
 {
-    const StructType* t = TypeRegistryFind(reg, name);
+    /* An alias is the type it names. */
+    const StructType* t = TypeRegistryFind(reg, TypeRegistryResolveAlias(reg, name));
 
     return t && !t->opaque && t->owning;
 }

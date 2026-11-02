@@ -1,6 +1,5 @@
 // expect: reject
 // rule: '{ {}; n }' cannot fill an array of a box alias with zero values
-// xfail: hole 18, aliases skip the zero-fill check
 struct P { int x; };
 struct PB = ^P;
 int main()
