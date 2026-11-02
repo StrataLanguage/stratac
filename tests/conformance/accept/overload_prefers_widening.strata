@@ -1,7 +1,6 @@
 // expect: run
 // expect-output: F(long)
 // rule: int converts to long without loss but not to byte, so F(long) is chosen over F(byte)
-// xfail: hole 8, lossy int to byte counts as an implicit conversion, so the call is ambiguous
 void F(byte b) { printf("F(byte)\n"); }
 void F(long l) { printf("F(long)\n"); }
 int main()

@@ -1,6 +1,5 @@
 // expect: panic
 // rule: shifting by a negative count panics
-// xfail: hole 22, the shift count is masked
 int gN = -1;
 int main()
 {

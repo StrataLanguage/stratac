@@ -1,6 +1,5 @@
 // expect: panic
 // rule: integer modulo by zero panics
-// xfail: hole 22, modulo by zero traps instead of panicking
 int gZero = 0;
 int main()
 {

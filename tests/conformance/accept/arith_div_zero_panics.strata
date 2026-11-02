@@ -1,6 +1,5 @@
 // expect: panic
 // rule: integer division by zero panics
-// xfail: hole 22, division by zero traps instead of panicking
 int gZero = 0;
 int main()
 {

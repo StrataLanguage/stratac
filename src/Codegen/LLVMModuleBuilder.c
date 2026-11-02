@@ -3746,6 +3746,124 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
     return e;
 }
 
+/* Branches to a panic with `message` when `bad` is true, and carries on in the ok block otherwise. */
+static void EmitPanicIf(Builder* b, LLVMValueRef bad, const char* message)
+{
+    LLVMBasicBlockRef panicBB = NewBb(b, "arith.panic");
+    LLVMBasicBlockRef okBB = NewBb(b, "arith.ok");
+    LLVMBuildCondBr(b->m_builder, bad, panicBB, okBB);
+
+    PositionAtEnd(b, panicBB);
+    EmitPanic(b, message);
+    b->m_terminated = true;
+    PositionAtEnd(b, okBB);
+}
+
+/* Integer `/` and `%` trap in hardware on a zero divisor and on MIN / -1; both are panics instead. */
+static void EmitDivisionChecks(Builder* b, TypeDesc td, LLVMValueRef lhs, LLVMValueRef divisor,
+                               const char* zeroMessage, const char* overflowMessage)
+{
+    LLVMTypeRef ty = LLVMTypeOf(divisor);
+
+    if (LLVMGetTypeKind(ty) != LLVMIntegerTypeKind)
+    {
+        return;
+    }
+
+    EmitPanicIf(b, LLVMBuildICmp(b->m_builder, LLVMIntEQ, divisor, LLVMConstInt(ty, 0, 0), "div.zero"), zeroMessage);
+
+    if (!td.isUnsigned)
+    {
+        unsigned width = LLVMGetIntTypeWidth(ty);
+        LLVMValueRef minVal = LLVMConstInt(ty, 1ULL << (width - 1), 0);
+        LLVMValueRef isMin = LLVMBuildICmp(b->m_builder, LLVMIntEQ, lhs, minVal, "div.min");
+        LLVMValueRef isNeg1 = LLVMBuildICmp(b->m_builder, LLVMIntEQ, divisor, LLVMConstInt(ty, ~0ULL, 1), "div.neg1");
+        EmitPanicIf(b, LLVMBuildAnd(b->m_builder, isMin, isNeg1, "div.ovf"), overflowMessage);
+    }
+}
+
+/* A shift by the operand's width or more is undefined in LLVM and masked by the hardware: a panic instead. */
+static void EmitShiftCheck(Builder* b, LLVMValueRef value, LLVMValueRef count)
+{
+    LLVMTypeRef ty = LLVMTypeOf(count);
+
+    if (LLVMGetTypeKind(ty) != LLVMIntegerTypeKind || LLVMGetTypeKind(LLVMTypeOf(value)) != LLVMIntegerTypeKind)
+    {
+        return;
+    }
+
+    unsigned width = LLVMGetIntTypeWidth(LLVMTypeOf(value));
+    LLVMValueRef limit = LLVMConstInt(ty, width, 0);
+    /* Unsigned compare: a negative count is a huge one. */
+    EmitPanicIf(b, LLVMBuildICmp(b->m_builder, LLVMIntUGE, count, limit, "shift.big"), "shift count out of range");
+}
+
+static bool IsComparisonOp(BinaryOp op)
+{
+    return op == BinEqEq || op == BinNotEq || op == BinLt || op == BinLtEq || op == BinGt || op == BinGtEq;
+}
+
+/* `l op r` for integers of different signedness. Both are widened to 64 bits (sign- or zero-extended as their
+   own type says); a negative signed side is below every unsigned value, otherwise the unsigned compare decides. */
+static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
+{
+    bool leftSigned = !l.typeDesc.isUnsigned;
+    Value sv = leftSigned ? l : r;
+    Value uv = leftSigned ? r : l;
+    LLVMValueRef s64 = LLVMBuildSExt(b->m_builder, sv.value, I64Ty(b), "mix.s");
+    LLVMValueRef u64 = LLVMBuildZExt(b->m_builder, uv.value, I64Ty(b), "mix.u");
+
+    if (LLVMGetIntTypeWidth(sv.typeDesc.type) == 64)
+    {
+        s64 = sv.value;
+    }
+
+    if (LLVMGetIntTypeWidth(uv.typeDesc.type) == 64)
+    {
+        u64 = uv.value;
+    }
+
+    LLVMValueRef neg = LLVMBuildICmp(b->m_builder, LLVMIntSLT, s64, LLVMConstInt(I64Ty(b), 0, 0), "mix.neg");
+
+    /* Put the comparison in terms of (signed, unsigned): `u < s` is `s > u`. */
+    BinaryOp sop = op;
+
+    if (!leftSigned)
+    {
+        sop = op == BinLt ? BinGt : op == BinLtEq ? BinGtEq : op == BinGt ? BinLt : op == BinGtEq ? BinLtEq : op;
+    }
+
+    LLVMValueRef out = NULL;
+    TypeDesc boolDesc = TypeDescMake(I1Ty(b), 0, NULL);
+
+    switch (sop)
+    {
+    case BinLt:
+        out = LLVMBuildOr(b->m_builder, neg, LLVMBuildICmp(b->m_builder, LLVMIntULT, s64, u64, "mix.c"), "mix.lt");
+        break;
+    case BinLtEq:
+        out = LLVMBuildOr(b->m_builder, neg, LLVMBuildICmp(b->m_builder, LLVMIntULE, s64, u64, "mix.c"), "mix.le");
+        break;
+    case BinGt:
+        out = LLVMBuildAnd(b->m_builder, LLVMBuildNot(b->m_builder, neg, "mix.pos"),
+                           LLVMBuildICmp(b->m_builder, LLVMIntUGT, s64, u64, "mix.c"), "mix.gt");
+        break;
+    case BinGtEq:
+        out = LLVMBuildAnd(b->m_builder, LLVMBuildNot(b->m_builder, neg, "mix.pos"),
+                           LLVMBuildICmp(b->m_builder, LLVMIntUGE, s64, u64, "mix.c"), "mix.ge");
+        break;
+    case BinEqEq:
+        out = LLVMBuildAnd(b->m_builder, LLVMBuildNot(b->m_builder, neg, "mix.pos"),
+                           LLVMBuildICmp(b->m_builder, LLVMIntEQ, s64, u64, "mix.c"), "mix.eq");
+        break;
+    default:
+        out = LLVMBuildOr(b->m_builder, neg, LLVMBuildICmp(b->m_builder, LLVMIntNE, s64, u64, "mix.c"), "mix.ne");
+        break;
+    }
+
+    return ValueMake(out, boolDesc);
+}
+
 static Value EmitBinary(Builder* b, BinaryExpr* n)
 {
     if (n->op == BinLogicAnd || n->op == BinLogicOr)
@@ -3946,6 +4064,16 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         }
     }
 
+    /* A signed value against an unsigned one compares by value, not by whichever signedness the operands happen
+       to be coerced to: -1 < 1u is true, and a long is never equal to an ulong it merely shares bits with. */
+    if (IsComparisonOp(n->op) && !l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type && r.typeDesc.type
+        && LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
+        && LLVMGetTypeKind(r.typeDesc.type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(l.typeDesc.type) > 1
+        && LLVMGetIntTypeWidth(r.typeDesc.type) > 1 && l.typeDesc.isUnsigned != r.typeDesc.isUnsigned)
+    {
+        return EmitMixedSignCompare(b, n->op, l, r);
+    }
+
     if (l.typeDesc.isFloat && !r.typeDesc.isFloat)
     {
         r = Coerce(b, r, l.typeDesc);
@@ -4060,6 +4188,12 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         return ValueMake(out, typeDesc);
 
     case BinDiv:
+        if (!flt)
+        {
+            EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer division by zero",
+                               "integer division overflows");
+        }
+
         out = flt ? LLVMBuildFDiv(b->m_builder, l.value, r.value, "div")
                   : (typeDesc.isUnsigned ? LLVMBuildUDiv(b->m_builder, l.value, r.value, "div")
                                          : LLVMBuildSDiv(b->m_builder, l.value, r.value, "div"));
@@ -4067,6 +4201,12 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         return ValueMake(out, typeDesc);
 
     case BinMod:
+        if (!flt)
+        {
+            EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer modulo by zero",
+                               "integer modulo overflows");
+        }
+
         out = flt ? LLVMBuildFRem(b->m_builder, l.value, r.value, "mod")
                   : (typeDesc.isUnsigned ? LLVMBuildURem(b->m_builder, l.value, r.value, "mod")
                                          : LLVMBuildSRem(b->m_builder, l.value, r.value, "mod"));
@@ -4089,11 +4229,13 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         return ValueMake(out, typeDesc);
 
     case BinShl:
+        EmitShiftCheck(b, l.value, r.value);
         out = LLVMBuildShl(b->m_builder, l.value, r.value, "shl");
 
         return ValueMake(out, typeDesc);
 
     case BinShr:
+        EmitShiftCheck(b, l.value, r.value);
         out = typeDesc.isUnsigned ? LLVMBuildLShr(b->m_builder, l.value, r.value, "shr")
                                   : LLVMBuildAShr(b->m_builder, l.value, r.value, "shr");
 

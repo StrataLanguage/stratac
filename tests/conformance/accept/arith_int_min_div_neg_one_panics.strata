@@ -1,6 +1,5 @@
 // expect: panic
 // rule: INT_MIN / -1 overflows and panics
-// xfail: hole 22, the division traps instead of panicking
 int gM = -1;
 int main()
 {

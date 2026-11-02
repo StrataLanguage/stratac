@@ -251,6 +251,18 @@ static bool EnumConstFits(const char* underlying, uint64_t mag, bool isNegative)
     return EnumSignedValue(mag, isNegative, &sv) && sv >= minVal && (uint64_t)sv <= maxVal;
 }
 
+/* Does the constant (magnitude `mag`, sign `negative`) fit the integer type named `typeName`? */
+static bool IntegerConstFits(const char* typeName, uint64_t mag, bool negative)
+{
+    bool isUnsigned = false;
+    int64_t minVal = 0;
+    uint64_t maxVal = 0;
+    EnumSignedRange(typeName, &isUnsigned, &minVal, &maxVal);
+
+    /* A negative constant fits when its magnitude is within |min|; a positive one within max. */
+    return negative ? (!isUnsigned && mag <= (uint64_t)(-(minVal + 1)) + 1ULL) : mag <= maxVal;
+}
+
 /* A literal that initializes a scalar must fit it: `byte b = 300`, `uint u = -1` and `float f = 1e40` are errors
    rather than silent truncation or infinity. Only plain literals (and a negated one) are checked here. */
 static void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName* target)
@@ -274,15 +286,7 @@ static void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const Ty
 
     if (integral && lit->kind == NodeIntLiteral && ResolvedConstIntValue((Node*)value, &mag, &negative))
     {
-        bool isUnsigned = false;
-        int64_t minVal = 0;
-        uint64_t maxVal = 0;
-        EnumSignedRange(target->name, &isUnsigned, &minVal, &maxVal);
-
-        /* A negative constant fits when its magnitude is within |min|; a positive one within max. */
-        bool fits = negative ? (!isUnsigned && mag <= (uint64_t)(-(minVal + 1)) + 1ULL) : mag <= maxVal;
-
-        if (!fits)
+        if (!IntegerConstFits(target->name, mag, negative))
         {
             DiagErrorFmt(diag, value->range, "integer constant %s%llu does not fit in '%s'", negative ? "-" : "",
                          (unsigned long long)mag, target->name);
@@ -512,6 +516,41 @@ static void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, cons
 
     DiagErrorFmt(diag, range, "implicit conversion from '%s' to '%s' may lose information; use a cast",
                  srcType->name, target->name);
+}
+
+/* An argument converts to a scalar parameter silently only if nothing is lost: a widening conversion, or a
+   constant whose value fits. Otherwise the overload is not a candidate (the caller can cast). */
+static bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, const TypeName* paramType)
+{
+    PrimitiveType src = argType->primitiveType;
+    PrimitiveType dst = paramType->primitiveType;
+
+    if (!IsNumeric(src) || !IsNumeric(dst) || src == PrimBool || dst == PrimBool || NumericConversionIsLossless(src, dst))
+    {
+        return true;
+    }
+
+    const Node* lit = arg;
+    bool negative = false;
+
+    if (lit->kind == NodeUnary && ((const UnaryExpr*)lit)->op == UnNeg)
+    {
+        negative = true;
+        lit = ((const UnaryExpr*)lit)->operand;
+    }
+
+    if (lit->kind == NodeIntLiteral)
+    {
+        if (dst == PrimFloat || dst == PrimDouble)
+        {
+            return true;
+        }
+
+        return IntegerConstFits(paramType->name, ((const IntLiteral*)lit)->value, negative);
+    }
+
+    /* A float literal is written in no particular width: it fits `float`, never an integer. */
+    return lit->kind == NodeFloatLiteral && (dst == PrimFloat || dst == PrimDouble);
 }
 
 /* Integer constant arithmetic (two's complement). `div`/`mod`/`>>` apply
@@ -6465,7 +6504,8 @@ resolve_candidates:;
                 /* `cstring` copies into a `string` param (heap copy). */
                 score += 1;
             }
-            else if (!mutableRef && IsImplicitScalarConversion(paramType->primitiveType, argType->primitiveType))
+            else if (!mutableRef && IsImplicitScalarConversion(paramType->primitiveType, argType->primitiveType)
+                     && ArgConvertsWithoutLoss(arg, argType, paramType))
             {
                 score += 1;
             }

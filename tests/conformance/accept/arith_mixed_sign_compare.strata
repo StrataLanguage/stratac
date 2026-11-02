@@ -4,7 +4,6 @@
 // expect-output: C ok
 // expect-output: D ok
 // rule: comparing signed with unsigned values gives the mathematically correct answer
-// xfail: hole 8, mixed signed/unsigned comparisons convert to unsigned
 int main()
 {
     int neg = -1;
