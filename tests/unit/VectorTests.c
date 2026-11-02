@@ -533,28 +533,24 @@ STRATA_TEST(vector_swizzle_write_is_error)
 
 STRATA_TEST(vector_lane_out_of_range_write_is_error)
 {
-    /* `v.z` on a float2 has no lane 2. */
+    /* `v.z` on a float2 has no lane 2; sema refuses it before codegen runs. */
     Arena arena;
     arena_init(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve("int entry() {\n"
-                                  "  float2 v = float2(1.0, 2.0);\n"
-                                  "  v.z = 3.0;\n"
-                                  "  return 0;\n"
-                                  "}\n",
-                                  &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
-
-    BuiltModule llvmModule = BuildLlvmModule(mod, &diag, &arena, false, NULL);
+    ParseAndResolve("int entry() {\n"
+                    "  float2 v = float2(1.0, 2.0);\n"
+                    "  v.z = 3.0;\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
     SourceManager sm;
     SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(strstr(d, "lane 'z' is out of range") != NULL);
+    STRATA_CHECK(strstr(d, "has no lane 'z'") != NULL);
 
-    BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
