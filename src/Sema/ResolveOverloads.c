@@ -4928,9 +4928,10 @@ static void CheckStructInitFields(Resolver* r, Node* n)
            initialized; optionals and dynamic arrays may stay empty (a T? is
            null, a zero-filled T[] is the canonical empty {null, 0} fat
            struct). */
-        bool mustInit = !TypeNameIsOptional(&fd->type) && !TypeNameIsDynamicArray(&fd->type)
-                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name))
-                        && !TypeClassify(&r->m_registry, r->m_arena, &fd->type).zeroValid;
+        /* An alias of an optional or an array is judged as the type it names. */
+        const TypeName* fieldType = ResolveAliasedType(&r->m_registry, r->m_arena, &fd->type);
+        bool mustInit = !TypeNameIsOptional(fieldType) && !TypeNameIsDynamicArray(fieldType)
+                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
 
         if (mustInit && !covered[f])
         {
