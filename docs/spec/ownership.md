@@ -64,6 +64,13 @@ use after move, partial moves, narrowing, loans and `ref` validity. The rest are
 | Rule O14 | Sema: no unary minus, no comparison across enums, bitwise operators only on `@flags enum`. Backend: a cast from an integer that is not a member panics. |
 | Rule O15 | Sema and backend: no `ref` to a field at a misaligned `fieldoffset`; such fields are read and written unaligned. |
 
+The checker also hands its verdict to the code generator. Every identifier, member and index expression that names
+a place carries a `UseKind` (`AST.h`): `UseMove` empties the place, `UseRetain` copies an `rc` handle by taking a
+reference, `UseCopy` and `UseRead` leave it alone. `MovedSource` in `LLVMModuleBuilder.c` is the only thing that
+decides whether a consuming use empties its source, and it asks the annotation; codegen no longer guesses from the
+shape of the expression. A box handed to a bare place is a copy when its pointee is plain data and a move when the
+pointee owns something.
+
 ## Open points
 
 - `rc<T>` narrowing and `ref` validity through another handle (Foundations hole 4) are not modelled; `rc` is
@@ -75,3 +82,6 @@ use after move, partial moves, narrowing, loans and `ref` validity. The rest are
 - The value-optional layout (Foundations, "Value optionals") will change O4's runtime drop flag from
   null to a tag for inline layouts.
 - Locals are dropped at scope end in declaration order, not reverse (O8); no case pins it yet.
+- Roadmap phase 5 is under way: codegen follows the use annotations for moves. Drop glue, temporaries and
+  argument passing still use codegen's own rules, and the AddressSanitizer gate needs a clang build for the MSVC
+  target (MinGW GCC has no ASan).
