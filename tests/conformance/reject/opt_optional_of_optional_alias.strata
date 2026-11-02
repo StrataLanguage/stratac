@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an optional of an alias of an optional is rejected like 'P??'
-// xfail: hole 18, aliases skip the nested-optional check (the inner emptiness is lost)
 struct P { int x; };
 struct OP = P?;
 int main()

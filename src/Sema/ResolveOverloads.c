@@ -4929,7 +4929,8 @@ static void CheckStructInitFields(Resolver* r, Node* n)
            null, a zero-filled T[] is the canonical empty {null, 0} fat
            struct). */
         bool mustInit = !TypeNameIsOptional(&fd->type) && !TypeNameIsDynamicArray(&fd->type)
-                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
+                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name))
+                        && !TypeClassify(&r->m_registry, r->m_arena, &fd->type).zeroValid;
 
         if (mustInit && !covered[f])
         {
@@ -9466,6 +9467,18 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (IsIncompleteStruct(&r->m_registry, vd->type.name))
         {
             DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
+        }
+
+        /* `T?` of an alias of an optional is an optional of an optional, which `T??` is not allowed to be. */
+        if (TypeNameIsOptional(&vd->type) && vd->type.inner)
+        {
+            const TypeName* innerResolved = ResolveAliasedType(&r->m_registry, r->m_arena, vd->type.inner);
+
+            if (innerResolved && TypeNameIsOptional(innerResolved))
+            {
+                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' is an optional of an optional ('%s' already may be empty)",
+                             vd->name, vd->type.inner->name);
+            }
         }
 
         /* An array of an incomplete struct has elements of unknown size. */

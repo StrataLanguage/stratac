@@ -423,7 +423,7 @@ bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
 }
 
 /* Follows alias chains to the type they stand for. */
-static const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const TypeName* t)
+const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const TypeName* t)
 {
     size_t depth = 0;
 

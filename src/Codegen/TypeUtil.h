@@ -106,6 +106,9 @@ bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName*
    element, where `Rec[]` is legal inline storage). */
 bool TypeIsOwningValueResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);
 
+/* Follows alias chains to the type they stand for (a bare name; shaped types come back as written). */
+const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const TypeName* t);
+
 /* The four type properties of docs "Strata Language Foundations", computed once per resolved type.
    New rules test these instead of `isBox`/`isOptional` or a spelling. */
 typedef struct {

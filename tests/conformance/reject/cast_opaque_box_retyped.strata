@@ -1,6 +1,6 @@
 // expect: reject
 // rule: a box cannot be cast through an opaque struct into a box of another type
-// xfail: hole 17, box casts through an opaque struct are unchecked
+// xfail: hole 17, box casts through an opaque struct are unchecked (the erase/cast-back round trip is deliberate, so the fix needs to track what the opaque box carries)
 struct Opaque;
 struct Q { long a; long b; long c; };
 int main()
