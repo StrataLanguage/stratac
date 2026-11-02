@@ -44,10 +44,34 @@ Type aliases are resolved before any property is read.
 | O15 | Types that cross the host boundary have a fixed layout; a struct passes to an `extern` by pointer. | `layout_*`, `union_*`, `vec_*` | `extern_*`, `layout_*`, `union_*`, `vec_*` |
 | O16 | `rc<T>` is out of scope and being removed. | n/a | `rc_*` |
 
+## Where each rule is enforced
+
+The CFG checker (`src/Sema/MoveCheck.c`, over the graph from `src/Sema/Cfg.c`) is the only place that reports
+use after move, partial moves, narrowing, loans and `ref` validity. The rest are sema checks in
+`ResolveOverloads.c` or run-time checks in the LLVM backend.
+
+| Rule | Enforced by |
+| --- | --- |
+| O1, O2 | CFG checker: per-place move state, join at branches and loops. A part taken out of a `ref` parameter must be back before return; a `Drop` method may take its own value apart. |
+| O3 | CFG checker: an element of an array is never moved out (E0508). `array_remove`, `array_swap_remove` and `array_replace` return the element; `array_take` is not built yet. A field of a value with its own `Drop` method is never moved out. |
+| O4 | CFG checker: narrowing facts are must-facts, killed by writes, moves, `ref` arguments, array mutators, calls that write the global (transitive write sets) and by `Drop` calls (`drop()`, overwrite, scope end). |
+| O5, O6, O7 | CFG checker: loans within one expression, callee write sets for borrowed globals, `ref` locals die when their target changes. |
+| O8 | Backend: overwrite stores the new value before dropping the old, so a re-entrant `Drop` is safe; globals are destroyed in reverse order, including the fields of struct globals; temporaries tested with `x?` or lent to a `ref` are dropped at statement end. |
+| O10 | CFG checker module pass: a global's initializer may not read or change a later global, directly or through the functions it calls. |
+| O11 | Sema: zero-fill, `array_resize` and global initialization ask `TypeClassify(...).zeroValid`. |
+| O12 | Sema and backend resolve an alias before the check, and drop glue follows aliased fields. |
+| O13 | Sema: literals must fit; implicit numeric conversions must lose nothing; constant `/ 0`, `% 0`, wide shifts, `MIN / -1` and out-of-range float casts are errors. Backend: the same cases panic at run time, float-to-int casts saturate, mixed signed/unsigned comparisons compare by value. |
+| O14 | Sema: no unary minus, no comparison across enums, bitwise operators only on `@flags enum`. Backend: a cast from an integer that is not a member panics. |
+| O15 | Sema and backend: no `ref` to a field at a misaligned `fieldoffset`; such fields are read and written unaligned. |
+
 ## Open points
 
-- O5 and O6 have no accept case yet: the checker rewrite (roadmap phase 4) is where loans become
-  explicit.
-- O1 to O4 are checked on strings of paths today; the CFG checker replaces that.
+- `rc<T>` narrowing and `ref` validity through another handle (Foundations hole 4) are not modelled; `rc` is
+  being removed (O16).
+- Casting a box through an opaque marker and back is allowed because the round trip is intended
+  (`box_cast_via_opaque_marker_round_trips`). Retyping a box through the marker (hole 17) needs the checker
+  to know what the opaque box carries.
+- `array_take` for element types with an empty value.
 - The value-optional layout (Foundations, "Value optionals") will change O4's runtime drop flag from
   null to a tag for inline layouts.
+- Locals are dropped at scope end in declaration order, not reverse (O8); no case pins it yet.
