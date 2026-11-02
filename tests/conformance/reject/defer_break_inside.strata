@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a defer body cannot break out of the enclosing loop
-// xfail: bug, break inside defer crashes the compiler
 int main()
 {
     for (int i = 0; i < 3; i++) { defer { break; } }

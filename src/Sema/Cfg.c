@@ -24,6 +24,7 @@ typedef struct {
     LoopFrame* loops;
     size_t loopCount;
     size_t loopCap;
+    int deferDepth; /* >0 while a deferred statement is being lowered: it cannot trigger the defers again */
 } Builder;
 
 static size_t NewBlock(Builder* b)
@@ -115,13 +116,21 @@ static void PopScope(Builder* b)
    first, and emits each scope's exit. Does not pop anything: other paths still need them. */
 static void RunDefers(Builder* b, size_t depth)
 {
+    /* A `return`/`break` inside a defer body is a sema error; the graph just must not loop on it. */
+    if (b->deferDepth > 0)
+    {
+        return;
+    }
+
     for (size_t s = b->scopeCount; s > depth; s--)
     {
         ScopeFrame* sf = &b->scopes[s - 1];
 
         for (size_t d = sf->defers.count; d > 0; d--)
         {
+            b->deferDepth++;
             LowerStmt(b, (const Node*)VecGet(&sf->defers, d - 1));
+            b->deferDepth--;
         }
 
         if (sf->block)

@@ -6095,6 +6095,30 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, src.value, 0, "cp.p");
         LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, src.value, 1, "cp.l");
 
+        /* An empty `string?` has no buffer (null data): its copy is empty too, not an allocated empty string that
+           would test as set. */
+        if (TypeDescIsOptional(&td))
+        {
+            LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, sp, LLVMConstNull(b->m_ptrTy), "osn");
+            LLVMValueRef resSlot = EntryAlloca(b, LLVMTypeOf(src.value), "optstrcp");
+            LLVMBasicBlockRef nullBb = NewBb(b, "os.null");
+            LLVMBasicBlockRef copyBb = NewBb(b, "os.copy");
+            LLVMBasicBlockRef endBb = NewBb(b, "os.end");
+            LLVMBuildCondBr(b->m_builder, isNull, nullBb, copyBb);
+            b->m_terminated = true;
+
+            PositionAtEnd(b, nullBb);
+            LLVMBuildStore(b->m_builder, LLVMConstNull(LLVMTypeOf(src.value)), resSlot);
+            Br(b, endBb);
+
+            PositionAtEnd(b, copyBb);
+            LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), resSlot);
+            Br(b, endBb);
+
+            PositionAtEnd(b, endBb);
+            return ValueMake(LLVMBuildLoad2(b->m_builder, LLVMTypeOf(src.value), resSlot, "osconv"), td);
+        }
+
         return ValueMake(BuildOwnedStringFat(b, sp, sl), td);
     }
 
@@ -6106,6 +6130,32 @@ static Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
     if (TypeDescIsBox(&td) && !td.boxInner)
     {
         StrataStrdupFn(b);
+
+        /* An empty `string?` (null) copies as empty, not as a set optional holding a fresh empty string. */
+        if (TypeDescIsOptional(&td))
+        {
+            LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, src.value, LLVMConstNull(b->m_ptrTy), "scn");
+            LLVMValueRef resSlot = EntryAlloca(b, b->m_ptrTy, "optscp");
+            LLVMBasicBlockRef nullBb = NewBb(b, "sc.null");
+            LLVMBasicBlockRef copyBb = NewBb(b, "sc.copy");
+            LLVMBasicBlockRef endBb = NewBb(b, "sc.end");
+            LLVMBuildCondBr(b->m_builder, isNull, nullBb, copyBb);
+            b->m_terminated = true;
+
+            PositionAtEnd(b, nullBb);
+            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), resSlot);
+            Br(b, endBb);
+
+            PositionAtEnd(b, copyBb);
+            LLVMValueRef sargs[1] = {src.value};
+            LLVMBuildStore(b->m_builder,
+                           LLVMBuildCall2(b->m_builder, b->m_strdupFnType, b->m_strdupFn, sargs, 1, "cpstr"), resSlot);
+            Br(b, endBb);
+
+            PositionAtEnd(b, endBb);
+            return ValueMake(LLVMBuildLoad2(b->m_builder, b->m_ptrTy, resSlot, "sconv"), td);
+        }
+
         LLVMValueRef args[1] = {src.value};
         LLVMValueRef copy = LLVMBuildCall2(b->m_builder, b->m_strdupFnType, b->m_strdupFn, args, 1, "cpstr");
         return ValueMake(copy, td);
@@ -7865,6 +7915,10 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
     bool borrowed = !fresh && MovableBoxSourceNode(valueNode) != NULL;
 
     LLVMValueRef count = AsI64Index(b, EmitExpr(b, n->repeatCount));
+
+    /* A negative count would size the buffer as a huge unsigned one. */
+    EmitPanicIf(b, LLVMBuildICmp(b->m_builder, LLVMIntSLT, count, LLVMConstInt(I64Ty(b), 0, 0), "fill.neg"),
+                "array fill count is negative");
 
     /* The value, once: read in place, or owned by a one-element temporary array. */
     Value source = {0};

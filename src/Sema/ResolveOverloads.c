@@ -9154,9 +9154,15 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
 
 /* `break`/`continue`: run the defers of the scopes being left, then hand the
    state to the loop's exit or back edge. The path after it is dead. */
-static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak)
+static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak, SourceRange range)
 {
     LoopFlow* lf = r->m_loopFlows.count > 0 ? (LoopFlow*)VecGet(&r->m_loopFlows, r->m_loopFlows.count - 1) : NULL;
+
+    /* A deferred statement runs at scope exit, wherever that is: it cannot also jump out of a loop. */
+    if (r->m_deferWalkDepth > 0 && (!lf || lf->m_deferWalkDepth != r->m_deferWalkDepth))
+    {
+        DiagErrorFmt(r->m_diag, range, "'%s' cannot leave a defer block", isBreak ? "break" : "continue");
+    }
 
     /* A jump out of a deferred statement is not modeled; it only ends the path. */
     if (lf && lf->m_deferWalkDepth == r->m_deferWalkDepth && !r->m_unreachable)
@@ -9734,14 +9740,20 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         return;
     }
     case NodeBreak:
-        WalkLoopJump(r, scope, true);
+        WalkLoopJump(r, scope, true, n->range);
         return;
     case NodeContinue:
-        WalkLoopJump(r, scope, false);
+        WalkLoopJump(r, scope, false, n->range);
         return;
     case NodeReturn:
     {
         ReturnStmt* rs = (ReturnStmt*)n;
+
+        if (r->m_deferWalkDepth > 0)
+        {
+            DiagErrorFmt(r->m_diag, rs->base.range, "'return' cannot leave a defer block");
+        }
+
         if (rs->value)
         {
             if (r->m_currentReturnType && r->m_currentReturnType->primitiveType == PrimVoid)

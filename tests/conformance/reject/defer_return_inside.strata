@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a defer body cannot return
-// xfail: bug, return inside defer crashes the compiler
 int G()
 {
     defer { return 5; }
