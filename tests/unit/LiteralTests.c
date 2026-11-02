@@ -32,14 +32,14 @@ static int RunEntry(const char* src)
 
 STRATA_TEST(literal_string_with_embedded_nul_keeps_its_length)
 {
-    STRATA_CHECK_EQ(RunEntry("int entry() { string s = \"ab\\0cd\"; return s.length; }\n"), 5);
-    STRATA_CHECK_EQ(RunEntry("int entry() { string s = \"ab\\0cd\"; string t = s; return t.length; }\n"), 5);
+    STRATA_CHECK_EQ(RunEntry("int entry() { string s = \"ab\\0cd\"; return (int)s.length; }\n"), 5);
+    STRATA_CHECK_EQ(RunEntry("int entry() { string s = \"ab\\0cd\"; string t = s; return (int)t.length; }\n"), 5);
 }
 
 STRATA_TEST(literal_cstring_with_embedded_nul_stops_at_the_nul)
 {
     /* cstring literals are NUL-terminated C strings: an embedded \0 ends them. */
-    STRATA_CHECK_EQ(RunEntry("int entry() { cstring c = \"ab\\0cd\"; return c.length; }\n"), 2);
+    STRATA_CHECK_EQ(RunEntry("int entry() { cstring c = \"ab\\0cd\"; return (int)c.length; }\n"), 2);
 }
 
 STRATA_TEST(literal_string_longer_than_64k)
@@ -49,7 +49,7 @@ STRATA_TEST(literal_string_longer_than_64k)
     SbInit(&sb);
     SbPuts(&sb, "int entry() { string s = \"");
     SbPutr(&sb, 'a', n);
-    SbPuts(&sb, "\"; return s.length - 69990; }\n");
+    SbPuts(&sb, "\"; return (int)s.length - 69990; }\n");
 
     Arena arena;
     arena_init(&arena, 0);
@@ -60,7 +60,7 @@ STRATA_TEST(literal_string_longer_than_64k)
 STRATA_TEST(literal_leading_zero_is_decimal_at_runtime)
 {
     STRATA_CHECK_EQ(RunEntry("int entry() { int x = 010; int[010] a = {}; int[09] b = {}; "
-                             "return x * 100 + a.length * 10 + b.length - 1000; }\n"),
+                             "return x * 100 + (int)a.length * 10 + (int)b.length - 1000; }\n"),
                     109);
 }
 

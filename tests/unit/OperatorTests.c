@@ -1470,7 +1470,7 @@ STRATA_TEST(jit_byte_type)
     StrataJit* jit = CompileJit("byte entry() {\n"
                                 "  byte a = 200;\n"
                                 "  byte b = 100;\n"
-                                "  return a + b;\n"
+                                "  return (byte)(a + b);\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -1490,7 +1490,7 @@ STRATA_TEST(jit_sbyte_type)
     StrataJit* jit = CompileJit("sbyte entry() {\n"
                                 "  sbyte a = 100;\n"
                                 "  sbyte b = 50;\n"
-                                "  return a + b;\n"
+                                "  return (sbyte)(a + b);\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -1510,7 +1510,7 @@ STRATA_TEST(jit_short_type)
     StrataJit* jit = CompileJit("short entry() {\n"
                                 "  short a = 30000;\n"
                                 "  short b = 10000;\n"
-                                "  return a + b;\n"
+                                "  return (short)(a + b);\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -1530,7 +1530,7 @@ STRATA_TEST(jit_ushort_type)
     StrataJit* jit = CompileJit("ushort entry() {\n"
                                 "  ushort a = 60000;\n"
                                 "  ushort b = 10000;\n"
-                                "  return a + b;\n"
+                                "  return (ushort)(a + b);\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)

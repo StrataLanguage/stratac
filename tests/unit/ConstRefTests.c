@@ -197,7 +197,7 @@ STRATA_TEST(const_ref_arg_to_const_ref_param_is_allowed)
         "struct P { int v; };\n"
         "int m(const ref P p) { return p.v; }\n"
         "int g(const ref P p) { return m(p); }\n"
-        "int h(const int[] a) { return a.length; }\n"));
+        "int h(const int[] a) { return (int)a.length; }\n"));
 }
 
 STRATA_TEST(const_array_push_pop_resize_are_errors)

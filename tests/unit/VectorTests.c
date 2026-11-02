@@ -121,7 +121,7 @@ STRATA_TEST(vector_binary_expr_as_call_arg)
     /* A binary vector expression passed directly as a call argument must
        infer the vector type (not fall through to the scalar `int` ladder)
        so overload resolution matches the float3 param. */
-    run_int("float consume(float3 v)\n"
+    run_int("int consume(float3 v)\n"
             "{\n"
             "  return (int)(v.x + v.y + v.z);\n"
             "}\n"

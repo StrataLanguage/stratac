@@ -443,6 +443,77 @@ static void CheckConstFloatToInt(DiagnosticEngine* diag, const CastExpr* cast)
     }
 }
 
+/* Does every value of `src` survive conversion to `dst`? Widening within a signedness, an unsigned type into a
+   wider signed one, and exact conversions to float/double. Nothing else converts silently. */
+static bool NumericConversionIsLossless(PrimitiveType src, PrimitiveType dst)
+{
+    if (src == dst)
+    {
+        return true;
+    }
+
+    switch (src)
+    {
+    case PrimSByte:
+        return dst == PrimShort || dst == PrimInt || dst == PrimLong || dst == PrimFloat || dst == PrimDouble;
+    case PrimByte:
+        return dst == PrimShort || dst == PrimUShort || dst == PrimInt || dst == PrimUInt || dst == PrimLong
+               || dst == PrimULong || dst == PrimFloat || dst == PrimDouble;
+    case PrimShort:
+        return dst == PrimInt || dst == PrimLong || dst == PrimFloat || dst == PrimDouble;
+    case PrimUShort:
+        return dst == PrimInt || dst == PrimUInt || dst == PrimLong || dst == PrimULong || dst == PrimFloat
+               || dst == PrimDouble;
+    case PrimInt:
+        return dst == PrimLong || dst == PrimDouble;
+    case PrimUInt:
+        return dst == PrimLong || dst == PrimULong || dst == PrimDouble;
+    case PrimFloat:
+        return dst == PrimDouble;
+    default:
+        return false;
+    }
+}
+
+/* A value that would lose information in an implicit numeric conversion needs a cast. A literal is judged by
+   its value (CheckLiteralFits), so `byte b = 200` and `float f = 1.5` stay legal. */
+static void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeName* srcType,
+                                 const TypeName* target, SourceRange range)
+{
+    if (!value || !srcType || !target || !TypeNameIsBare(target) || !TypeNameIsBare(srcType) || !srcType->name
+        || !target->name)
+    {
+        return;
+    }
+
+    PrimitiveType src = GetPrimitiveType(srcType->name);
+    PrimitiveType dst = GetPrimitiveType(target->name);
+    bool srcNum = IsNumeric(src) && src != PrimBool;
+    bool dstNum = IsNumeric(dst) && dst != PrimBool;
+
+    if (!srcNum || !dstNum || NumericConversionIsLossless(src, dst))
+    {
+        return;
+    }
+
+    /* Constants are judged by value, not by the type they were written in. */
+    long long ignored = 0;
+    const Node* lit = value;
+
+    if (lit->kind == NodeUnary && ((const UnaryExpr*)lit)->op == UnNeg)
+    {
+        lit = ((const UnaryExpr*)lit)->operand;
+    }
+
+    if (lit->kind == NodeIntLiteral || lit->kind == NodeFloatLiteral || EvalConstInt(value, &ignored))
+    {
+        return;
+    }
+
+    DiagErrorFmt(diag, range, "implicit conversion from '%s' to '%s' may lose information; use a cast",
+                 srcType->name, target->name);
+}
+
 /* Integer constant arithmetic (two's complement). `div`/`mod`/`>>` apply
    C signed semantics; refuses division/modulo by zero and shifts whose
    count is negative or >= 64. */
@@ -9547,6 +9618,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             else if (ok)
             {
                 CheckLiteralFits(r->m_diag, vd->init, &vd->type);
+                CheckLossyConversion(r->m_diag, vd->init, initType, &vd->type, vd->base.range);
             }
 
             // Plain `T` from `T?` unwraps.
@@ -9624,6 +9696,11 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 DiagErrorFmt(r->m_diag, rs->base.range,
                              "cannot return a value of type '%s' from a function returning '%s'", typeName->name,
                              r->m_currentReturnType->name);
+            }
+
+            if (r->m_currentReturnType && typeName)
+            {
+                CheckLossyConversion(r->m_diag, rs->value, typeName, r->m_currentReturnType, rs->base.range);
             }
 
             // Returning `T?` from `T` unwraps.

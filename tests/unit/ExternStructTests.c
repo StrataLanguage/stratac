@@ -359,7 +359,7 @@ STRATA_TEST(jit_extern_struct_multidim_fixed_array)
         "extern struct Grid { int[2][3] cells; };\n"
         "int entry() {\n"
         "    Grid g = Grid { .cells = { { 1, 2, 3 }, { 4, 5, 6 } } };\n"
-        "    return g.cells[1][2] + g.cells.length + g.cells[0].length;\n"
+        "    return g.cells[1][2] + (int)g.cells.length + (int)g.cells[0].length;\n"
         "}\n",
         "grid_jit", &err);
     STRATA_CHECK(jit != NULL);

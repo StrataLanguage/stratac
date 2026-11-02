@@ -1,6 +1,5 @@
 // expect: reject
 // rule: assigning an int to a byte narrows it and needs an explicit cast
-// xfail: hole 8, implicit narrowing is allowed
 int main()
 {
     int x = 300;
