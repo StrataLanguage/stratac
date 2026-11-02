@@ -35,6 +35,7 @@ typedef struct {
     Locals locals;
     Locals named; /* every parameter and local, whatever its type; any other root is a global */
     const TypeName* fnReturn;
+    bool inDropMethod; /* a Drop method may take its own fields apart */
     const WriteSets* ws;
     char** aliasName; /* `ref` locals and the place each was bound to */
     char** aliasTarget;
@@ -1771,6 +1772,47 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
+/* A value with a `Drop` method is moved whole or not at all: `Drop` expects every field to be there. */
+static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
+{
+    const Node* n = op->node;
+
+    if (!op->consumed || n->kind != NodeMember || env->inDropMethod)
+    {
+        return;
+    }
+
+    const TypeName* t = ValueType(env, n);
+
+    if (!t || t->isOptional || !TypeOwns(env, t))
+    {
+        return;
+    }
+
+    for (const Node* cur = n; cur->kind == NodeMember; cur = ((const MemberExpr*)cur)->base_node)
+    {
+        const TypeName* bt = ValueType(env, ((const MemberExpr*)cur)->base_node);
+
+        while (bt && bt->isBox && bt->inner)
+        {
+            bt = bt->inner;
+        }
+
+        const StructType* st = bt && bt->name && !bt->isRc && !bt->isArray
+                                   ? TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, bt->name))
+                                   : NULL;
+
+        if (st && !st->opaque && st->dropFunction)
+        {
+            char buf[256];
+            const char* root;
+            Report(found, n->range,
+                   PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<field>");
+            return;
+        }
+    }
+}
+
 /* Steps one block. With `found` set, uses of unusable places are reported. */
 static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, Found* found)
 {
@@ -1786,6 +1828,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
         {
             LoanCheck(env, found, op->node);
             ElementMoveCheck(env, found, op);
+            DropFieldMoveCheck(env, found, op);
         }
 
         if (op->kind == CfgDeclare)
@@ -1853,6 +1896,12 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
     }
 }
 
+static bool IsDropMethod(const FunctionDecl* fn)
+{
+    size_t n = strlen(fn->name);
+    return n >= 4 && strcmp(fn->name + n - 4, "Drop") == 0;
+}
+
 size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types,
                          const WriteSets* ws, Arena* arena, MoveDiag** out)
 {
@@ -1863,7 +1912,8 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
         return 0;
     }
 
-    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .ws = ws};
+    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .ws = ws,
+               .inDropMethod = IsDropMethod(fn)};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
     BuildAliases(&env, &g);

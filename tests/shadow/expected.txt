@@ -12,6 +12,8 @@ reject/alias_ref_param_owner_reassigned only-new
 reject/alias_string_param_global_changed only-new
 reject/drop_element_then_use only-new
 reject/drop_element_then_use only-old
+reject/drop_struct_field_move_local only-new
+reject/drop_struct_field_move_param only-new
 reject/eval_borrow_then_move_concat only-new
 reject/eval_const_ref_arg_then_clear only-new
 reject/eval_const_ref_arg_then_move only-new
@@ -30,6 +32,7 @@ reject/partial_array_unknown_index only-new
 reject/partial_array_unknown_index only-old
 reject/partial_array_whole_use only-new
 reject/partial_array_whole_use only-old
+reject/partial_move_out_of_drop_struct only-new
 reject/ref_overlapping_args only-new
 reject/ref_overlapping_by_value_string_arg only-new
 reject/ref_overlapping_move_and_borrow only-new
