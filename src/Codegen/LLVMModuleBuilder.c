@@ -2192,6 +2192,8 @@ static void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td)
 
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName)
 {
+    /* A field typed as an alias (`struct RA = Res;`) is dropped as the struct it names. */
+    structName = TypeRegistryResolveAlias(&b->m_registry, structName);
     const StructType* st = TypeRegistryFind(&b->m_registry, structName);
 
     if (!st)

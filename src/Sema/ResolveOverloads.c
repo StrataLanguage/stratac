@@ -2992,7 +2992,22 @@ static bool IsEnumFlagsOp(Resolver* r, BinaryOp op, const TypeName* lt, const Ty
         return false;
     }
 
-    return lt && rt && strcmp(lt->name, rt->name) == 0 && TypeRegistryIsEnum(&r->m_registry, lt->name);
+    if (!lt || !rt || strcmp(lt->name, rt->name) != 0)
+    {
+        return false;
+    }
+
+    const StructType* st = TypeRegistryFind(&r->m_registry, lt->name);
+
+    return st && st->isEnum && st->isFlagsEnum;
+}
+
+/* Is `name` an enum that is not declared `@flags`? */
+static bool IsPlainEnum(const Resolver* r, const char* name)
+{
+    const StructType* st = name ? TypeRegistryFind(&r->m_registry, name) : NULL;
+
+    return st && st->isEnum && !st->isFlagsEnum;
 }
 
 //-- Growable `ref T[]` parameters.
@@ -7571,6 +7586,18 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             }
         }
 
+        /* `~` complements the bits of a flags enum only. */
+        if (u->op == UnBitNot)
+        {
+            const TypeName* ot = InferType(r, u->operand, scope);
+            const char* en = ExprEnumName(r, u->operand, ot);
+
+            if (en && IsPlainEnum(r, en))
+            {
+                DiagErrorFmt(r->m_diag, u->base.range, "'%s' is not a flags enum: declare it '@flags enum %s'", en, en);
+            }
+        }
+
         /* An enum value is a name, not a number to negate. */
         if (u->op == UnNeg)
         {
@@ -7657,6 +7684,21 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             else if (numericPair)
             {
                 CheckConstArith(r->m_diag, b, lt);
+            }
+
+            /* Bitwise operators combine the values of a `@flags` enum; any other enum is a set of names. */
+            if (b->op == BinBitAnd || b->op == BinBitOr || b->op == BinBitXor)
+            {
+                const char* le = ExprEnumName(r, b->lhs, lt);
+                const char* re = ExprEnumName(r, b->rhs, rt);
+                const char* plain = le && IsPlainEnum(r, le) ? le : (re && IsPlainEnum(r, re) ? re : NULL);
+
+                if (plain)
+                {
+                    DiagErrorFmt(r->m_diag, b->base.range,
+                                 "'%s' is not a flags enum: declare it '@flags enum %s' to combine its values", plain,
+                                 plain);
+                }
             }
 
             break;

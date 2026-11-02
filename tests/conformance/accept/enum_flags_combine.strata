@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: both 3
+// expect-output: has write 1
+// expect-output: no exec 0
+// rule: a @flags enum combines its values with | and tests them with &
+@flags enum Perm : uint { Read = 1u, Write = 2u, Exec = 4u };
+int main()
+{
+    Perm rw = Perm.Read | Perm.Write;
+    printf("both %u\n", (uint)rw);
+    printf("has write %d\n", (rw & Perm.Write) == Perm.Write ? 1 : 0);
+    printf("no exec %d\n", (rw & Perm.Exec) == Perm.Exec ? 1 : 0);
+    return 0;
+}

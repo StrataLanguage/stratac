@@ -492,6 +492,7 @@ typedef struct {
     char* name;
     // Underlying integral type (NULL = `int`).
     char* underlyingType;
+    bool isFlags; // `@flags enum`: its values combine with `|`, `&`, `^` and `~`
     Vec members; // Vec<EnumMemberDecl*>
 } EnumDecl;
 

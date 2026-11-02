@@ -1113,6 +1113,7 @@ static EnumDecl* ParseEnumDecl(Parser* p)
     node->base.range = SpanFrom(kw, nameTok);
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
     node->underlyingType = NULL;
+    node->isFlags = false;
     VecInit(&node->members);
 
     /* `: UnderlyingType` — optional; defaults to `int`. */
@@ -1932,7 +1933,37 @@ Module* ParserParseModule(Parser* p)
             TokKind afterExtern = LexerPeekToken(p->m_lex).kind;
             bool isExternStruct = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
 
-            if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion || isExternStruct)
+            if (p->m_cur.kind == TokKwEnum)
+            {
+                EnumDecl* ed = ParseEnumDecl(p);
+
+                for (size_t i = 0; i < attributes.count; i++)
+                {
+                    const Attribute* attribute = (const Attribute*)VecGet(&attributes, i);
+
+                    if (strcmp(attribute->name, "flags") == 0)
+                    {
+                        if (ed)
+                        {
+                            ed->isFlags = true;
+                        }
+                    }
+                    else
+                    {
+                        DiagError(p->m_diag, attribute->range, "the only attribute an enum takes is @flags");
+                    }
+                }
+
+                if (ed)
+                {
+                    VecPush(&mod->enums, ed);
+                }
+                else
+                {
+                    Synchronize(p);
+                }
+            }
+            else if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion || isExternStruct)
             {
                 if (isExternStruct)
                 {

@@ -1,6 +1,5 @@
 // expect: reject
 // rule: ~ is not defined on (non-flag) enums
-// xfail: hole 23, bitwise operators on enums are accepted
 enum Color { Red, Green, Blue };
 int main()
 {

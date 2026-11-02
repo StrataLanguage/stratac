@@ -82,7 +82,7 @@ handle Window;
 
 // -- C unions and flag enums -------------------------------------------------
 
-enum Usage : uint { Read = 1u, Write = 2u, Exec = 4u };
+@flags enum Usage : uint { Read = 1u, Write = 2u, Exec = 4u };
 
 extern struct DepthStencil { float depth; uint stencil; };
 extern union ClearValue

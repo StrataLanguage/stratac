@@ -153,6 +153,7 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
         StructType* t = TypeRegistryAdd(reg, ed->name);
         t->isTypeAlias = true;
         t->isEnum = true;
+        t->isFlagsEnum = ed->isFlags;
         t->underlyingType = ed->underlyingType ? ed->underlyingType : "int";
         t->underlyingPrimitiveType = GetPrimitiveType(t->underlyingType);
         t->opaque = false;

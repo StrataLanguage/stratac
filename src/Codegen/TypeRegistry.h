@@ -43,6 +43,7 @@ typedef struct {
                                     every field's physical index is 0, a tail pad rounds out the size */
     bool isTypeAlias;
     bool isEnum;                 /* `enum Foo` — a strong alias with scoped constants. */
+    bool isFlagsEnum;            /* `@flags enum Foo`: values combine with the bitwise operators */
     const char* underlyingType;  /* underlying type name for aliases */
     PrimitiveType underlyingPrimitiveType; /* underlying type value for the alias */
     bool isComponent;            /* `@component` */
