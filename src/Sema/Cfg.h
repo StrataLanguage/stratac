@@ -22,6 +22,8 @@ typedef enum {
 typedef struct {
     CfgOpKind kind;
     const Node* node;
+    bool consumed; /* CfgEval: the parent takes this value by value (initializer, `=` right side, `return`,
+                      a by-value argument, a literal's element); an Owning one moves */
 } CfgOp;
 
 typedef struct {

@@ -1,6 +1,7 @@
 #include "Sema/ResolveOverloads.h"
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
+#include "Sema/MoveCheck.h"
 #include "Sema/NodeTypes.h"
 
 #include <assert.h>
@@ -11658,6 +11659,11 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&byMangled);
     free(r.m_deferFrames.items);
     free(r.m_loopFlows.items);
+    if (getenv("STRATA_SHADOW"))
+    {
+        MoveCheckShadow(mod, &r.m_registry, &r.m_nodeTypes, diag, arena);
+    }
+
     NodeTypesFree(&r.m_nodeTypes);
     TypeRegistryFree(&r.m_registry);
 }

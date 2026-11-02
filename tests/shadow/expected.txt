@@ -1,0 +1,4 @@
+reject/alias_owning_struct_local_unboxed only-new
+reject/eval_field_assign_rhs_moves_owner only-new
+reject/eval_same_box_two_params only-new
+reject/opt_moved_out_is_empty only-new

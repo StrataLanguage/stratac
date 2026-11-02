@@ -34,6 +34,7 @@ set(STRATA_COMMON_SOURCES
     src/Parse/Parser.c
     src/Sema/ResolveOverloads.c
     src/Sema/Cfg.c
+    src/Sema/MoveCheck.c
     src/Sema/NodeTypes.c
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeMetadata.c
@@ -268,6 +269,13 @@ if(NOT STRATA_SHARED)
     )
     strata_stage_dll(strata_tests)
     add_test(NAME strata_tests COMMAND strata_tests)
+    if(STRATA_ENABLE_LLVM)
+        add_test(NAME shadow_move_checker
+            COMMAND ${CMAKE_COMMAND} -DSTRATAC=$<TARGET_FILE:stratac> -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/shadow
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shadow/CheckShadow.cmake)
+        set_tests_properties(shadow_move_checker PROPERTIES LABELS shadow TIMEOUT 600)
+    endif()
     add_test(NAME spec_cases_exist
         COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/spec/CheckSpec.cmake)

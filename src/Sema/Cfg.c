@@ -42,7 +42,7 @@ static size_t NewBlock(Builder* b)
     return g->count++;
 }
 
-static void Emit(Builder* b, CfgOpKind kind, const Node* node)
+static void EmitC(Builder* b, CfgOpKind kind, const Node* node, bool consumed)
 {
     CfgBlock* blk = &b->cfg->blocks[b->cur];
 
@@ -52,7 +52,12 @@ static void Emit(Builder* b, CfgOpKind kind, const Node* node)
         blk->ops = (CfgOp*)realloc(blk->ops, blk->opCap * sizeof(CfgOp));
     }
 
-    blk->ops[blk->opCount++] = (CfgOp){kind, node};
+    blk->ops[blk->opCount++] = (CfgOp){kind, node, consumed};
+}
+
+static void Emit(Builder* b, CfgOpKind kind, const Node* node)
+{
+    EmitC(b, kind, node, false);
 }
 
 static void AddEdge(Builder* b, size_t from, size_t to)
@@ -72,7 +77,12 @@ static void Goto(Builder* b, size_t target)
 }
 
 static void LowerStmt(Builder* b, const Node* n);
-static void LowerExpr(Builder* b, const Node* n);
+static void LowerExprC(Builder* b, const Node* n, bool consumed);
+
+static void LowerExpr(Builder* b, const Node* n)
+{
+    LowerExprC(b, n, false);
+}
 
 static void PushScope(Builder* b, const Block* block)
 {
@@ -119,6 +129,21 @@ static void StartDeadBlock(Builder* b)
     b->cur = NewBlock(b);
 }
 
+static void LowerPlace(Builder* b, const Node* n);
+
+/* The base of `base.f` or `base[i]` that is written through: a bare variable there is used (a field of a
+   moved struct cannot be assigned), unlike a variable that is itself the whole target. */
+static void LowerPlaceRoot(Builder* b, const Node* base)
+{
+    if (base && base->kind == NodeIdent)
+    {
+        EmitC(b, CfgEval, base, false);
+        return;
+    }
+
+    LowerPlace(b, base);
+}
+
 /* A place being written or borrowed is not read: only its index operands and call bases run. */
 static void LowerPlace(Builder* b, const Node* n)
 {
@@ -132,10 +157,10 @@ static void LowerPlace(Builder* b, const Node* n)
     case NodeIdent:
         return;
     case NodeMember:
-        LowerPlace(b, ((const MemberExpr*)n)->base_node);
+        LowerPlaceRoot(b, ((const MemberExpr*)n)->base_node);
         return;
     case NodeIndex:
-        LowerPlace(b, ((const IndexExpr*)n)->base_node);
+        LowerPlaceRoot(b, ((const IndexExpr*)n)->base_node);
         LowerExpr(b, ((const IndexExpr*)n)->index);
         return;
     default:
@@ -155,7 +180,27 @@ static size_t Branch(Builder* b, const Node* cond, size_t onTrue, size_t onFalse
     return from;
 }
 
-static void LowerExpr(Builder* b, const Node* n)
+/* Does argument `i` of the call move its value? By-value params of a defined function do, unless sema
+   inferred a borrow; externs and C varargs only borrow. `drop(x)` and `array_push(a, x)` consume. */
+static bool ArgIsConsumed(const CallExpr* e, size_t i)
+{
+    if (e->isIntrinsicCall)
+    {
+        return (strcmp(e->callee, "drop") == 0 && i == 0) || (strcmp(e->callee, "array_push") == 0 && i == 1);
+    }
+
+    const FunctionDecl* d = e->resolvedDecl;
+
+    if (!d || d->isExtern || i >= d->params.count)
+    {
+        return false;
+    }
+
+    const ParamDecl* p = (const ParamDecl*)VecGet(&d->params, i);
+    return p->mod == ModNone && !p->inferredBorrow && !p->isVarargRest;
+}
+
+static void LowerExprC(Builder* b, const Node* n, bool consumed)
 {
     if (!n)
     {
@@ -179,7 +224,7 @@ static void LowerExpr(Builder* b, const Node* n)
             LowerExpr(b, e->rhs);
             Goto(b, join);
             b->cur = join;
-            Emit(b, CfgEval, n);
+            EmitC(b, CfgEval, n, consumed);
             return;
         }
 
@@ -196,10 +241,10 @@ static void LowerExpr(Builder* b, const Node* n)
 
         Branch(b, e->condition, thenBlock, elseBlock);
         b->cur = thenBlock;
-        LowerExpr(b, e->thenExpr);
+        LowerExprC(b, e->thenExpr, consumed);
         Goto(b, join);
         b->cur = elseBlock;
-        LowerExpr(b, e->elseExpr);
+        LowerExprC(b, e->elseExpr, consumed);
         Goto(b, join);
         b->cur = join;
         break;
@@ -207,7 +252,7 @@ static void LowerExpr(Builder* b, const Node* n)
     case NodeAssign:
     {
         const AssignExpr* e = (const AssignExpr*)n;
-        LowerExpr(b, e->value);
+        LowerExprC(b, e->value, e->op == AssignSet);
         LowerPlace(b, e->target);
         break;
     }
@@ -218,7 +263,8 @@ static void LowerExpr(Builder* b, const Node* n)
         LowerExpr(b, ((const UnaryExpr*)n)->operand);
         break;
     case NodeCast:
-        LowerExpr(b, ((const CastExpr*)n)->operand);
+        /* A text cast (`(cstring)s`) views its operand; any other cast passes it on. */
+        LowerExprC(b, ((const CastExpr*)n)->operand, consumed && ((const CastExpr*)n)->textKind == CastTextNone);
         break;
     case NodeNullTest:
         LowerExpr(b, ((const NullTestExpr*)n)->operand);
@@ -238,7 +284,7 @@ static void LowerExpr(Builder* b, const Node* n)
 
         for (size_t i = 0; i < e->args.count; i++)
         {
-            LowerExpr(b, (const Node*)VecGet(&e->args, i));
+            LowerExprC(b, (const Node*)VecGet(&e->args, i), ArgIsConsumed(e, i));
         }
 
         break;
@@ -250,7 +296,7 @@ static void LowerExpr(Builder* b, const Node* n)
         for (size_t i = 0; i < e->fields.count; i++)
         {
             const StructInitField* f = (const StructInitField*)VecGet(&e->fields, i);
-            LowerExpr(b, f->value);
+            LowerExprC(b, f->value, true);
         }
 
         break;
@@ -261,7 +307,8 @@ static void LowerExpr(Builder* b, const Node* n)
 
         for (size_t i = 0; i < e->elements.count; i++)
         {
-            LowerExpr(b, (const Node*)VecGet(&e->elements, i));
+            /* `{ value; n }` copies the one value into each element; a list moves each element in. */
+            LowerExprC(b, (const Node*)VecGet(&e->elements, i), e->repeatCount == NULL);
         }
 
         LowerExpr(b, e->repeatCount);
@@ -271,7 +318,7 @@ static void LowerExpr(Builder* b, const Node* n)
         break;
     }
 
-    Emit(b, CfgEval, n);
+    EmitC(b, CfgEval, n, consumed);
 }
 
 static void LowerBlock(Builder* b, const Block* blk)
@@ -308,7 +355,7 @@ static void LowerStmt(Builder* b, const Node* n)
         LowerBlock(b, (const Block*)n);
         break;
     case NodeVarDecl:
-        LowerExpr(b, ((const VarDeclStmt*)n)->init);
+        LowerExprC(b, ((const VarDeclStmt*)n)->init, !((const VarDeclStmt*)n)->isRef);
         Emit(b, CfgDeclare, n);
         break;
     case NodeExprStmt:
@@ -322,7 +369,7 @@ static void LowerStmt(Builder* b, const Node* n)
 
         break;
     case NodeReturn:
-        LowerExpr(b, ((const ReturnStmt*)n)->value);
+        LowerExprC(b, ((const ReturnStmt*)n)->value, true);
         Emit(b, CfgReturn, n);
         RunDefers(b, 0);
         Goto(b, b->cfg->exit);
