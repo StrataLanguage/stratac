@@ -265,6 +265,9 @@ if(NOT STRATA_SHARED)
     )
     strata_stage_dll(strata_tests)
     add_test(NAME strata_tests COMMAND strata_tests)
+    add_test(NAME spec_cases_exist
+        COMMAND ${CMAKE_COMMAND} -DROOT=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/spec/CheckSpec.cmake)
     add_test(NAME type_flag_ratchet
         COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/src
                 -DBASELINE=${CMAKE_CURRENT_SOURCE_DIR}/tests/typelayer/baseline.txt
