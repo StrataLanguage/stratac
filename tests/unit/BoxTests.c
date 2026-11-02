@@ -3064,11 +3064,11 @@ STRATA_TEST(box_array_element_refill_and_distinct_elements_run)
         BOX_FLOW_PRELUDE
         "int entry() {\n"
         "  ^E[] a; array_push(a, mk(1)); array_push(a, mk(2));\n"
-        "  int s = take(a[0]);\n"
+        "  int s = take(array_replace(a, 0, mk(0)));\n"
         "  s = s + a[1].v;\n"
         "  a[0] = mk(10);\n"
-        "  s = s + take(a[0]);\n"
-        "  return s + take(a[1]);\n"
+        "  s = s + take(array_replace(a, 0, mk(0)));\n"
+        "  return s + take(array_replace(a, 1, mk(0)));\n"
         "}\n",
         &err);
 

@@ -1,6 +1,7 @@
 // expect: run
 // expect-output: sum 11
-// rule: taking list[k] and refilling list[k] in the same iteration leaves the array whole after the loop
+// expect-output: END live=0
+// rule: replacing each element in a loop hands the old one out and leaves the array whole
 int Sum(Res[] l) { int s = 0; for (uint k = 0u; k < l.length; k++) { s += l[k].id; } return s; }
 void F()
 {
@@ -9,7 +10,7 @@ void F()
     array_push(list, Res.Make(2));
     for (uint k = 0u; k < list.length; k++)
     {
-        ^Res x = list[k];
+        ^Res x = array_replace(list, k, Res.Make(0));
         list[k] = Res.Make(x.id + 4);
     }
     printf("sum %d\n", Sum(list));

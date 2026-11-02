@@ -1,5 +1,5 @@
-// expect: reject "used after move"
-// rule: after moving list[i], reading list[j] is rejected because j may equal i
+// expect: reject "cannot move out of"
+// rule: an element cannot be moved out of its array through an index that is not a constant; use array_replace
 int main()
 {
     Res[] list = {};

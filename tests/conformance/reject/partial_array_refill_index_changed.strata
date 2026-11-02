@@ -1,5 +1,5 @@
-// expect: reject "used after move"
-// rule: refilling list[i] after i has changed does not refill the slot that was moved out
+// expect: reject "cannot move out of"
+// rule: an element cannot be moved out of its array, even if the slot would be refilled; use array_replace
 int main()
 {
     Res[] list = {};

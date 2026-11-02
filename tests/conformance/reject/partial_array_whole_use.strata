@@ -1,5 +1,5 @@
-// expect: reject "is poisoned"
-// rule: an array with an element moved out may not be passed as a whole until the slot is refilled
+// expect: reject "cannot move out of"
+// rule: an element cannot be moved out of its array, so the array stays whole; use array_remove or array_replace
 int Sum(Res[] l) { int s = 0; for (uint k = 0u; k < l.length; k++) { s += l[k].id; } return s; }
 int main()
 {

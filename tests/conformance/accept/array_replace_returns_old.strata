@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: old 1 new 7
+// expect-output: drop 1
+// expect-output: drop 7
+// expect-output: END live=0
+// rule: array_replace stores a new element and hands the old one back; the array stays whole
+int main()
+{
+    {
+        Res[] list = {};
+        array_push(list, Res.Make(1));
+        ^Res old = array_replace(list, 0u, Res.Make(7));
+        printf("old %d new %d\n", old.id, list[0].id);
+        drop(old);
+        array_remove(list, 0u);
+    }
+    Report();
+    return 0;
+}

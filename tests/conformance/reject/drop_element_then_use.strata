@@ -1,5 +1,5 @@
-// expect: reject "used after move"
-// rule: drop(list[i]) moves the element out, so reading it afterwards is rejected
+// expect: reject "cannot move out of"
+// rule: drop(list[i]) would take an element out of its array, which is refused; use array_remove or array_swap_remove
 int main()
 {
     Res[] list = {};

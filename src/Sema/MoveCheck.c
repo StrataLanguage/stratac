@@ -458,9 +458,27 @@ static void NoteIfCopied(Env* env, const Node* value, const TypeName* target)
 {
     const TypeName* vt = value ? ValueType(env, value) : NULL;
 
-    if (!vt || !vt->isBox || !target || !target->name || !TypeNameIsBare(target))
+    if (!vt || !target || !target->name || !TypeNameIsBare(target))
     {
         return;
+    }
+
+    /* A box handed to a bare `T` copies the pointee; so does a bare struct element (a deep copy). */
+    if (!vt->isBox)
+    {
+        if (value->kind != NodeIndex)
+        {
+            return;
+        }
+
+        const StructType* st = vt->name && TypeNameIsBare(vt) && !vt->isRc
+                                   ? TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, vt->name))
+                                   : NULL;
+
+        if (!st || st->opaque)
+        {
+            return;
+        }
     }
 
     if (env->copiedCount == env->copiedCap)
@@ -1183,7 +1201,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 static bool IsArrayMutator(const char* callee)
 {
     static const char* const names[] = {"array_pop",     "array_push",   "array_remove",
-                                        "array_reserve", "array_resize", "array_swap_remove"};
+                                        "array_reserve", "array_resize", "array_swap_remove", "array_replace"};
 
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
     {
@@ -1244,6 +1262,12 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         {
             const TypeName* at = arg0 ? ValueType(env, arg0) : NULL;
             ConsumeValue(env, f, found, arg1, at && at->isArray ? at->elem : NULL, arg1->range, true);
+        }
+        else if (arg0 && e->args.count > 2 && strcmp(e->callee, "array_replace") == 0)
+        {
+            const Node* val = (const Node*)VecGet(&e->args, 2);
+            const TypeName* at = ValueType(env, arg0);
+            ConsumeValue(env, f, found, val, at && at->isArray ? at->elem : NULL, val->range, true);
         }
         else if (arg0 && strcmp(e->callee, "substring") == 0)
         {
@@ -1549,7 +1573,8 @@ static LoanMode ArgMode(const CallExpr* e, size_t i)
 {
     if (e->isIntrinsicCall)
     {
-        if ((strcmp(e->callee, "drop") == 0 && i == 0) || (strcmp(e->callee, "array_push") == 0 && i == 1))
+        if ((strcmp(e->callee, "drop") == 0 && i == 0) || (strcmp(e->callee, "array_push") == 0 && i == 1)
+            || (strcmp(e->callee, "array_replace") == 0 && i == 2))
         {
             return LoanMove;
         }
@@ -2065,6 +2090,13 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
         {
             char buf[256];
             const char* root;
+
+            /* An element of a temporary (`Make()[0]`) goes away with it; nothing is left to hole. */
+            if (!PlaceKeyImpl(((const IndexExpr*)cur)->base_node, buf, sizeof(buf), &root, true))
+            {
+                return;
+            }
+
             ReportAs(found, MoveDiagElement, n->range,
                    PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<element>");
             return;
@@ -2370,7 +2402,11 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
                      d->name);
         break;
     case MoveDiagElement:
-        break; /* decision 11 needs the take/replace intrinsics first */
+        DiagErrorFmt(diag, d->range,
+                     "cannot move out of '%s': an element stays in its array; take it with array_remove, "
+                     "array_swap_remove or array_replace",
+                     d->name);
+        break;
     }
 }
 

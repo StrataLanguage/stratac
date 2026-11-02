@@ -238,7 +238,7 @@ STRATA_TEST(profile_oob_string_read_returns_empty_llvm)
 
     StrataJit* jit = CompileJit(
         "extern ulong strlen(string s);\n"
-        "int entry() { string[] s = {\"a\", \"b\"}; string t = s[9]; return (int)strlen(t); }",
+        "int entry() { string[] s = {\"a\", \"b\"}; string t = copy(s[9]); return (int)strlen(t); }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -309,7 +309,7 @@ STRATA_TEST(profile_oob_move_then_reread_llvm)
 
     StrataJit* jit = CompileJit(
         "extern ulong strlen(string s);\n"
-        "int entry() { string[] s = {\"a\"}; string t = s[9]; string u = s[8]; return (int)(strlen(t) + strlen(u)); }",
+        "int entry() { string[] s = {\"a\"}; string t = copy(s[9]); string u = copy(s[8]); return (int)(strlen(t) + strlen(u)); }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -331,7 +331,7 @@ STRATA_TEST(profile_oob_box_move_then_reread_llvm)
 
     StrataJit* jit = CompileJit(
         "struct W { int dmg; };\n"
-        "int entry() { ^W[] ws = { W(7) }; ^W m = ws[9]; return ws[8].dmg + m.dmg; }",
+        "int entry() { ^W[] ws = { W(7) }; ^W m = copy(ws[9]); return ws[8].dmg + m.dmg; }",
         STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)

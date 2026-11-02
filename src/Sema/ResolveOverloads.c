@@ -4220,8 +4220,9 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     bool isResize = strcmp(c->callee, "array_resize") == 0 || IsArrayRemoveName(c->callee)
                     || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
+    bool isReplace = strcmp(c->callee, "array_replace") == 0;
 
-    if (!isPush && !isResize && !isPop)
+    if (!isPush && !isResize && !isPop && !isReplace)
     {
         return NULL;
     }
@@ -4237,7 +4238,8 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
         return NULL;
     }
 
-    if (isPop)
+    /* Pop and remove hand the element to the caller. */
+    if (isPop || isReplace || IsArrayRemoveName(c->callee))
     {
         return elem;
     }
@@ -4336,13 +4338,15 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     bool isResize = strcmp(c->callee, "array_resize") == 0 || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
     bool isRemove = IsArrayRemoveName(c->callee);
+    /* `array_replace(a, i, v)` stores `v` in slot i and hands the old element to the caller. */
+    bool isReplace = strcmp(c->callee, "array_replace") == 0;
 
-    if (!isPush && !isResize && !isPop && !isRemove)
+    if (!isPush && !isResize && !isPop && !isRemove && !isReplace)
     {
         return false;
     }
 
-    size_t wantArgs = (isPop) ? 1 : 2;
+    size_t wantArgs = isPop ? 1 : isReplace ? 3 : 2;
 
     if (c->args.count != wantArgs)
     {
@@ -4416,7 +4420,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    if (isResize || isRemove)
+    if (isResize || isRemove || isReplace)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
 
@@ -4425,13 +4429,15 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
         {
             DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee,
-                         isRemove ? "index" : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
+                         isRemove || isReplace ? "index" : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
                          sizeType->name);
         }
     }
-    else if (isPush)
+
+    if (isPush || isReplace)
     {
-        Node* arg1 = (Node*)VecGet(&c->args, 1);
+        size_t valueIdx = isReplace ? 2 : 1;
+        Node* arg1 = (Node*)VecGet(&c->args, valueIdx);
 
         const TypeName* elemType = TypeNameArrayElem(unwrapped);
 
@@ -4445,7 +4451,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (typedArg != arg1)
         {
-            VecSet(&c->args, 1, typedArg);
+            VecSet(&c->args, valueIdx, typedArg);
         }
 
         if (bracedValue && typedArg->kind == NodeStructInit && ((StructInitExpr*)typedArg)->typeName
@@ -4457,7 +4463,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         if (!bracedValue && elemType)
         {
             typedArg = ApplyBoxToRcTarget(r, typedArg, elemType, scope);
-            VecSet(&c->args, 1, typedArg);
+            VecSet(&c->args, valueIdx, typedArg);
         }
 
         const TypeName* valueType = InferType(r, typedArg, scope);
@@ -4474,8 +4480,8 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
             if (!narrowedOptIntoBox)
             {
-                DiagErrorFmt(r->m_diag, arg1->range, "cannot push a value of type '%s' into '%s' (element type '%s')",
-                             valueType->name, arrType->name, elemType->name);
+                DiagErrorFmt(r->m_diag, arg1->range, "cannot %s a value of type '%s' into '%s' (element type '%s')",
+                             isReplace ? "store" : "push", valueType->name, arrType->name, elemType->name);
             }
         }
 
@@ -6849,6 +6855,7 @@ static const IntrinsicTypeDefinition intrinsics[] = {
     {"array_remove", ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_reserve", ArrayBuiltinType,          ResolveArrayBuiltin    },
     {"array_swap_remove", ArrayBuiltinType,      ResolveArrayBuiltin    },
+    {"array_replace", ArrayBuiltinType,          ResolveArrayBuiltin    },
 
     /* Memory */
     {"copy",         CopyBuiltinType,            ResolveCopyBuiltin     },

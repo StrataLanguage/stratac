@@ -2397,7 +2397,7 @@ STRATA_TEST(recursive_struct_braced_ctor_sample_shape)
                                 "  int r = (int)elems.length * 100;\n"                    /* 300 */
                                 "  if (elems[0].next?) { r += 10; }\n"                    /* constructed, non-empty */
                                 "  if (elems[2].next?) { r += 5000; } else { r += 1; }\n" /* omitted */
-                                "  return r + take(elems[0]);\n"                          /* 311 */
+                                "  return r + take(array_swap_remove(elems, 0));\n"        /* 311 */
                                 "}\n",
                                 &err);
 

@@ -2261,10 +2261,9 @@ STRATA_TEST(narrowed_element_survives_array_push)
     strataJitDestroy(jit);
 }
 
-STRATA_TEST(literal_element_move_does_not_poison_siblings)
+STRATA_TEST(moving_out_of_an_element_is_an_error)
 {
-    /* Precise keys make literal-index moves element-exact: moving rack[0]
-       leaves rack[1] usable (the erased form used to poison both). */
+    /* An element stays in its array: taking `rack[0]` by value is refused, whatever the index (decision 11). */
     Arena arena; arena_init(&arena, 0);
     DiagnosticEngine diag; DiagnosticEngineInit(&diag);
     ParseAndResolve(
@@ -2277,7 +2276,12 @@ STRATA_TEST(literal_element_move_does_not_poison_siblings)
         "  return a + b;\n"
         "}\n",
         &diag, &arena);
-    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm; SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "cannot move out of 'rack[0]'"));
+    STRATA_CHECK(Contains(d, "cannot move out of 'rack[1]'"));
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);

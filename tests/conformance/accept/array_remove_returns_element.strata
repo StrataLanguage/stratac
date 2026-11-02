@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: took 2 left 1
+// expect-output: drop 2
+// expect-output: drop 1
+// expect-output: END live=0
+// rule: array_remove hands the removed element to the caller instead of dropping it
+int main()
+{
+    {
+        Res[] list = {};
+        array_push(list, Res.Make(1));
+        array_push(list, Res.Make(2));
+        ^Res t = array_remove(list, 1u);
+        printf("took %d left %u\n", t.id, list.length);
+    }
+    Report();
+    return 0;
+}
