@@ -3163,9 +3163,9 @@ static UseKind CheckerUseOf(const Node* n)
     }
 }
 
-/* The place a consuming use empties, or NULL. The checker decides: a use it calls a read or a copy leaves the
-   place alone (an rc copy still retains, which callers handle through the returned place). Nodes the checker
-   never saw (UseUnknown) keep the old rule: any lvalue handed to an owning destination is moved from. */
+/* The place a consuming use empties, or NULL. The checker decides what every use does (UseKind): only a move
+   empties the place, and an rc copy takes a reference through the same place. A read or a copy leaves it alone,
+   and so does a node the checker never reached (nothing of that kind exists in a program that compiles). */
 static Node* MovedSource(Node* n)
 {
     Node* moved = (Node*)MovableBoxSourceNode(n);
@@ -3177,7 +3177,7 @@ static Node* MovedSource(Node* n)
 
     UseKind use = CheckerUseOf(moved);
 
-    return use == UseRead || use == UseCopy ? NULL : moved;
+    return use == UseMove || use == UseRetain ? moved : NULL;
 }
 
 static void NullMovedSource(Builder* b, Node* n)
