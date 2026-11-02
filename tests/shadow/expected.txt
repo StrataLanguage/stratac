@@ -3,6 +3,7 @@ accept/partial_array_take_and_refill_loop only-old
 accept/partial_whole_reassign_from_own_field only-old
 reject/alias_const_ref_param_global_changed only-new
 reject/alias_owning_struct_local_unboxed only-new
+reject/alias_ref_param_owner_reassigned only-new
 reject/alias_string_param_global_changed only-new
 reject/drop_element_then_use only-old
 reject/eval_borrow_then_move_concat only-new
@@ -12,6 +13,8 @@ reject/eval_field_assign_rhs_moves_owner only-new
 reject/eval_index_call_grows_array only-new
 reject/eval_move_arg_then_nested_move only-new
 reject/eval_same_box_two_params only-new
+reject/narrow_dropped_through_ref_alias only-new
+reject/narrow_ref_alias_cleared_through_owner only-new
 reject/partial_array_refill_index_changed only-old
 reject/partial_array_refill_other_slot only-old
 reject/partial_array_unknown_index only-old

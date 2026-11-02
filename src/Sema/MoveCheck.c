@@ -36,6 +36,10 @@ typedef struct {
     Locals named; /* every parameter and local, whatever its type; any other root is a global */
     const TypeName* fnReturn;
     const WriteSets* ws;
+    char** aliasName; /* `ref` locals and the place each was bound to */
+    char** aliasTarget;
+    size_t aliasCount;
+    size_t aliasCap;
     char** paths;
     size_t pathCount;
     size_t pathCap;
@@ -43,6 +47,9 @@ typedef struct {
     size_t factCount;
     size_t factCap;
 } Env;
+
+/* The aliases of the function being checked, so that place keys can name the bound place. */
+static const Env* g_aliasEnv;
 
 static int FindLocal(const Locals* ls, const char* name)
 {
@@ -415,6 +422,76 @@ static void ReportPlace(Found* found, const Node* node)
     Report(found, node->range, root);
 }
 
+static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool lax);
+
+/* Records, for each `ref x = place;` declaration, the place `x` stands for. A name declared twice with
+   different places is ambiguous and stands for nothing. */
+static void AddAlias(Env* env, const char* name, const char* target)
+{
+    for (size_t i = 0; i < env->aliasCount; i++)
+    {
+        if (strcmp(env->aliasName[i], name) == 0)
+        {
+            if (strcmp(env->aliasTarget[i], target) != 0)
+            {
+                env->aliasTarget[i][0] = 0;
+            }
+
+            return;
+        }
+    }
+
+    if (env->aliasCount == env->aliasCap)
+    {
+        env->aliasCap = env->aliasCap ? env->aliasCap * 2 : 4;
+        env->aliasName = (char**)realloc(env->aliasName, env->aliasCap * sizeof(char*));
+        env->aliasTarget = (char**)realloc(env->aliasTarget, env->aliasCap * sizeof(char*));
+    }
+
+    env->aliasName[env->aliasCount] = strdup(name);
+    env->aliasTarget[env->aliasCount++] = strdup(target);
+}
+
+static void FreeAliases(Env* env)
+{
+    for (size_t i = 0; i < env->aliasCount; i++)
+    {
+        free(env->aliasName[i]);
+        free(env->aliasTarget[i]);
+    }
+
+    free(env->aliasName);
+    free(env->aliasTarget);
+    env->aliasName = env->aliasTarget = NULL;
+    env->aliasCount = env->aliasCap = 0;
+    g_aliasEnv = NULL;
+}
+
+static void BuildAliases(Env* env, const Cfg* g)
+{
+    char buf[256];
+    const char* root;
+    g_aliasEnv = env;
+
+    for (size_t b = 0; b < g->count; b++)
+    {
+        for (size_t j = 0; j < g->blocks[b].opCount; j++)
+        {
+            const CfgOp* op = &g->blocks[b].ops[j];
+
+            if (op->kind == CfgDeclare)
+            {
+                const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
+
+                if (vd->isRef && vd->init && PlaceKeyImpl(vd->init, buf, sizeof(buf), &root, true))
+                {
+                    AddAlias(env, vd->name, buf);
+                }
+            }
+        }
+    }
+}
+
 /* Write sets: the global places each function may write, directly or through the functions it calls. A
    call changes only those, so it ends narrowing only for them, and an argument that borrows one of them
    conflicts with a callee that writes it. `all` is for a callee nothing is known about. */
@@ -457,6 +534,21 @@ enum {
 
 /* The place of a variable-and-fields-and-indices expression (`a`, `a.b`, `a[i].b`, `a[0]`). An index
    is a variable or an integer literal; any other index is no place. */
+static const char* AliasTarget(const char* name)
+{
+    const Env* env = g_aliasEnv;
+
+    for (size_t i = 0; env && i < env->aliasCount; i++)
+    {
+        if (strcmp(env->aliasName[i], name) == 0)
+        {
+            return env->aliasTarget[i][0] ? env->aliasTarget[i] : NULL;
+        }
+    }
+
+    return NULL;
+}
+
 static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool lax);
 
 static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
@@ -469,7 +561,24 @@ static bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root
 {
     if (n->kind == NodeIdent)
     {
-        return PlaceOf(n, buf, cap, root);
+        if (!PlaceOf(n, buf, cap, root))
+        {
+            return false;
+        }
+
+        const char* target = AliasTarget(buf);
+
+        if (target)
+        {
+            if (strlen(target) >= cap)
+            {
+                return false;
+            }
+
+            strcpy(buf, target);
+        }
+
+        return true;
     }
 
     const Node* base;
@@ -1445,6 +1554,7 @@ static void ScanWrites(const Env* shared, FnWrites* w, const FunctionDecl* fn)
     Env env = {.reg = shared->reg, .types = shared->types, .arena = shared->arena};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
+    BuildAliases(&env, &g);
 
     for (size_t b = 0; b < g.count; b++)
     {
@@ -1500,6 +1610,7 @@ static void ScanWrites(const Env* shared, FnWrites* w, const FunctionDecl* fn)
     }
 
     CfgFree(&g);
+    FreeAliases(&env);
     free(env.locals.locals);
     free(env.named.locals);
 }
@@ -1721,6 +1832,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
     Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .ws = ws};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
+    BuildAliases(&env, &g);
     CollectPaths(&env, &g);
     CollectFacts(&env, &g);
 
@@ -1813,6 +1925,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
     }
 
     free(env.facts);
+    FreeAliases(&env);
     free(env.locals.locals);
     free(env.named.locals);
     CfgFree(&g);
