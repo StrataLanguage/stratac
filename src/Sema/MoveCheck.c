@@ -630,6 +630,9 @@ typedef struct {
     const FunctionDecl** callees;
     size_t calleeCount;
     size_t calleeCap;
+    char** reads; /* names of the globals it reads, directly or through callees */
+    size_t readCount;
+    size_t readCap;
     bool all;
 } FnWrites;
 
@@ -2038,6 +2041,26 @@ static bool WritesAdd(FnWrites* w, const char* key)
     return true;
 }
 
+static bool ReadsAdd(FnWrites* w, const char* name)
+{
+    for (size_t i = 0; i < w->readCount; i++)
+    {
+        if (strcmp(w->reads[i], name) == 0)
+        {
+            return false;
+        }
+    }
+
+    if (w->readCount == w->readCap)
+    {
+        w->readCap = w->readCap ? w->readCap * 2 : 4;
+        w->reads = (char**)realloc(w->reads, w->readCap * sizeof(char*));
+    }
+
+    w->reads[w->readCount++] = strdup(name);
+    return true;
+}
+
 static bool IsGlobalPlace(const Env* env, const char* key)
 {
     Seg b[MaxSegs];
@@ -2092,6 +2115,16 @@ static void ScanWrites(const Env* shared, FnWrites* w, const FunctionDecl* fn)
             if (op->kind != CfgEval)
             {
                 continue;
+            }
+
+            if (op->node->kind == NodeIdent || op->node->kind == NodeMember || op->node->kind == NodeIndex)
+            {
+                const IdentExpr* root = RootIdent(op->node);
+
+                if (root && FindLocal(&env.named, root->name) < 0)
+                {
+                    ReadsAdd(w, root->name);
+                }
             }
 
             if (op->node->kind == NodeAssign)
@@ -2193,6 +2226,11 @@ WriteSets* WriteSetsBuild(const Module* mod, const TypeRegistry* reg, const Node
                 {
                     changed |= WritesAdd(w, callee->keys[k]);
                 }
+
+                for (size_t k = 0; k < callee->readCount; k++)
+                {
+                    changed |= ReadsAdd(w, callee->reads[k]);
+                }
             }
         }
     }
@@ -2209,7 +2247,13 @@ void WriteSetsFree(WriteSets* ws)
             free(ws->fns[i].keys[k]);
         }
 
+        for (size_t k = 0; k < ws->fns[i].readCount; k++)
+        {
+            free(ws->fns[i].reads[k]);
+        }
+
         free(ws->fns[i].keys);
+        free(ws->fns[i].reads);
         free(ws->fns[i].callees);
     }
 
@@ -2666,10 +2710,150 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
     }
 }
 
+typedef struct {
+    const Module* mod;
+    const WriteSets* ws;
+    DiagnosticEngine* diag;
+    size_t self;
+} InitCtx;
+
+/* A global is built in declaration order, so its initializer may use only the globals before it. */
+static void TouchGlobal(const InitCtx* c, const char* name, SourceRange range, bool write)
+{
+    for (size_t j = c->self + 1; j < c->mod->globals.count; j++)
+    {
+        const GlobalDecl* later = (const GlobalDecl*)VecGet((Vec*)&c->mod->globals, j);
+
+        if (strcmp(later->name, name) == 0)
+        {
+            const GlobalDecl* me = (const GlobalDecl*)VecGet((Vec*)&c->mod->globals, c->self);
+
+            if (write)
+            {
+                DiagErrorFmt(c->diag, range,
+                             "the initializer of global '%s' changes '%s', which is declared after it and would "
+                             "overwrite the change",
+                             me->name, name);
+            }
+            else
+            {
+                DiagErrorFmt(c->diag, range,
+                             "the initializer of global '%s' reads '%s', which is declared after it and not set yet",
+                             me->name, name);
+            }
+
+            return;
+        }
+    }
+}
+
+static void WalkInit(const InitCtx* c, const Node* n)
+{
+    if (!n)
+    {
+        return;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIdent:
+        TouchGlobal(c, ((const IdentExpr*)n)->name, n->range, false);
+        break;
+    case NodeMember:
+        WalkInit(c, ((const MemberExpr*)n)->base_node);
+        break;
+    case NodeIndex:
+        WalkInit(c, ((const IndexExpr*)n)->base_node);
+        WalkInit(c, ((const IndexExpr*)n)->index);
+        break;
+    case NodeBinary:
+        WalkInit(c, ((const BinaryExpr*)n)->lhs);
+        WalkInit(c, ((const BinaryExpr*)n)->rhs);
+        break;
+    case NodeUnary:
+        WalkInit(c, ((const UnaryExpr*)n)->operand);
+        break;
+    case NodeCast:
+        WalkInit(c, ((const CastExpr*)n)->operand);
+        break;
+    case NodeNullTest:
+        WalkInit(c, ((const NullTestExpr*)n)->operand);
+        break;
+    case NodeConditional:
+        WalkInit(c, ((const ConditionalExpr*)n)->condition);
+        WalkInit(c, ((const ConditionalExpr*)n)->thenExpr);
+        WalkInit(c, ((const ConditionalExpr*)n)->elseExpr);
+        break;
+    case NodeStructInit:
+    {
+        const StructInitExpr* e = (const StructInitExpr*)n;
+
+        for (size_t i = 0; i < e->fields.count; i++)
+        {
+            WalkInit(c, ((const StructInitField*)VecGet((Vec*)&e->fields, i))->value);
+        }
+
+        break;
+    }
+    case NodeArrayInit:
+    {
+        const ArrayInitExpr* e = (const ArrayInitExpr*)n;
+
+        for (size_t i = 0; i < e->elements.count; i++)
+        {
+            WalkInit(c, (const Node*)VecGet((Vec*)&e->elements, i));
+        }
+
+        WalkInit(c, e->repeatCount);
+        break;
+    }
+    case NodeCall:
+    {
+        const CallExpr* e = (const CallExpr*)n;
+
+        for (size_t i = 0; i < e->args.count; i++)
+        {
+            WalkInit(c, (const Node*)VecGet((Vec*)&e->args, i));
+        }
+
+        const FnWrites* w = FindWrites(c->ws, e->resolvedDecl);
+
+        for (size_t i = 0; w && i < w->readCount; i++)
+        {
+            TouchGlobal(c, w->reads[i], n->range, false);
+        }
+
+        for (size_t i = 0; w && i < w->count; i++)
+        {
+            Seg segs[MaxSegs];
+            char root[128];
+
+            if (SplitPlace(w->keys[i], segs) > 0 && segs[0].n < sizeof(root))
+            {
+                memcpy(root, segs[0].p, segs[0].n);
+                root[segs[0].n] = 0;
+                TouchGlobal(c, root, n->range, true);
+            }
+        }
+
+        break;
+    }
+    default:
+        break;
+    }
+}
+
 void MoveCheckModule(const Module* mod, const TypeRegistry* reg, const NodeTypes* types, DiagnosticEngine* diag,
                      Arena* arena)
 {
     WriteSets* ws = WriteSetsBuild(mod, reg, types, arena);
+
+    for (size_t i = 0; i < mod->globals.count; i++)
+    {
+        const GlobalDecl* gd = (const GlobalDecl*)VecGet((Vec*)&mod->globals, i);
+        InitCtx ctx = {mod, ws, diag, i};
+        WalkInit(&ctx, gd->init);
+    }
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
