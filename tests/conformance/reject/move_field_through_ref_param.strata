@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a field may not be moved out through a ref parameter, since the caller would see it moved
-// xfail: hole 2, take-without-refill through a ref param
 struct Pair { ^Res a; ^Res b; };
 void Take(^Res r) { printf("took %d\n", r.id); }
 void Steal(ref Pair p) { Take(p.a); }

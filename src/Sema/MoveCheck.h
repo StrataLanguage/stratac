@@ -19,6 +19,7 @@ typedef enum {
     MoveDiagGlobalLoan, /* an argument borrows a global place the callee writes */
     MoveDiagElement,    /* an Owning value is moved out of an indexed element (not reported yet) */
     MoveDiagDropField,  /* a field is moved out of a struct with a Drop method */
+    MoveDiagRefParam,   /* a ref parameter still has a part moved out when the function returns */
     MoveDiagDangle,     /* a `ref` is used after the place it refers to was written, moved or reallocated */
 } MoveDiagKind;
 

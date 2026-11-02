@@ -36,6 +36,7 @@ typedef struct {
     Locals locals;
     Locals named; /* every parameter and local, whatever its type; any other root is a global */
     const TypeName* fnReturn;
+    const FunctionDecl* fn;
     bool inDropMethod; /* a Drop method may take its own fields apart */
     const WriteSets* ws;
     const Node** copied; /* boxes handed to a bare `T`: the pointee is copied, the box stays */
@@ -276,6 +277,11 @@ static void CollectLocals(Env* env, const FunctionDecl* fn, const Cfg* g)
 
         if (p->mod == ModNone && !p->inferredBorrow && !fn->isExtern)
         {
+            AddLocal(env, p->name, TypeOwns(env, &p->type), &p->type);
+        }
+        else if (p->mod == ModRef && !p->type.isConst && !fn->isExtern)
+        {
+            /* Parts of a ref parameter may be taken, but only if they are put back before returning. */
             AddLocal(env, p->name, TypeOwns(env, &p->type), &p->type);
         }
     }
@@ -2283,7 +2289,20 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
 
         if (op->kind == CfgDeclare)
         {
-            SetPlace(env, state, ((const VarDeclStmt*)op->node)->name, StateLive);
+            const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
+
+            /* A ref sees the whole place, so it cannot be bound to one with a part moved out. */
+            if (found && vd->isRef && vd->init && TrackedPlace(env, vd->init, buf, sizeof(buf)))
+            {
+                int blocker = PlaceBlocker(env, state, buf, true);
+
+                if (blocker >= 0)
+                {
+                    ReportPlace(env, found, vd->init, blocker);
+                }
+            }
+
+            SetPlace(env, state, vd->name, StateLive);
             continue;
         }
 
@@ -2367,7 +2386,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
         return 0;
     }
 
-    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .ws = ws,
+    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .fn = fn, .ws = ws,
                .inDropMethod = IsDropMethod(fn)};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
@@ -2448,6 +2467,38 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
             }
         }
 
+        /* A ref parameter belongs to the caller: whatever was taken out of it has to be back by the time the
+           function returns. */
+        /* A `Drop` method is taking its value apart; nothing needs to be put back. */
+        if (g.blocks[g.exit].reachable && !env.inDropMethod)
+        {
+            for (size_t k = 0; k < pathCount; k++)
+            {
+                unsigned char st = in[g.exit * n + k];
+                char root[128];
+                const char* dot = strchr(env.paths[k], '.');
+                size_t len = dot ? (size_t)(dot - env.paths[k]) : strlen(env.paths[k]);
+
+                if (st == StateLive || st == StateUnvisited || len >= sizeof(root))
+                {
+                    continue;
+                }
+
+                memcpy(root, env.paths[k], len);
+                root[len] = 0;
+
+                for (size_t i = 0; i < fn->params.count; i++)
+                {
+                    const ParamDecl* prm = (const ParamDecl*)VecGet(&fn->params, i);
+
+                    if (prm->mod == ModRef && !prm->type.isConst && strcmp(prm->name, root) == 0)
+                    {
+                        ReportAs(&found, MoveDiagRefParam, fn->base.range, arena_strdup(arena, env.paths[k]));
+                    }
+                }
+            }
+        }
+
         free(in);
         free(cur);
         free(edge);
@@ -2512,6 +2563,11 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
         break;
     case MoveDiagGlobalLoan:
         DiagErrorFmt(diag, d->range, "'%s' is borrowed by this call, but the callee may write it", d->name);
+        break;
+    case MoveDiagRefParam:
+        DiagErrorFmt(diag, d->range,
+                     "'%s' was moved out of a ref parameter and not put back; the caller would see it moved",
+                     d->name);
         break;
     case MoveDiagDangle:
         DiagErrorFmt(diag, d->range,

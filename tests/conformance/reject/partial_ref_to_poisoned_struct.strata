@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a ref may not be bound to a struct whose field has been moved out (its moved field would be readable through the ref)
-// xfail: bug, binding a ref to a partially moved struct is allowed and reads the moved field
 struct Pair { ^Res a; ^Res b; };
 struct Outer { Pair inner; string name; };
 void Take(^Res r) { printf("took %d\n", r.id); }

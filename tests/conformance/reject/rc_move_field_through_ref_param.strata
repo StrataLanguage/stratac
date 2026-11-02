@@ -1,6 +1,5 @@
 // expect: reject
 // rule: an rc cell bound to a ref parameter may not have a field moved out through that parameter
-// xfail: hole 2, take-without-refill through a ref param bound to an rc
 struct Cell { ^Res r; string s; };
 void Take(^Res r) { printf("took %d\n", r.id); }
 void Steal(ref Cell c) { Take(c.r); }
