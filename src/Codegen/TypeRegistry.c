@@ -373,6 +373,35 @@ typedef struct
 
 static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx);
 
+static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out);
+
+bool TypeRegistryFieldMisaligned(const TypeRegistry* reg, const char* structName, const char* field)
+{
+    const StructType* st = TypeRegistryFind(reg, TypeRegistryResolveAlias(reg, structName));
+    int idx = TypeRegistryFieldIndex(reg, structName, field);
+
+    if (!st || !st->hasLayout || !st->packedLayout || idx < 0 || !st->fieldOffsets)
+    {
+        return false;
+    }
+
+    const FieldDecl* f = (const FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
+    long align = 1;
+    SizeAlign scalar = {0};
+
+    if (!f->type.isArray && !f->type.isBox && !f->type.isOptional && ScalarSizeAlign(f->type.primitiveType, &scalar))
+    {
+        align = scalar.align;
+    }
+    else if (!f->type.isArray && !f->type.isBox && !f->type.isOptional)
+    {
+        const StructType* inner = TypeRegistryFind(reg, TypeRegistryResolveAlias(reg, f->type.name));
+        align = inner && inner->hasLayout ? inner->alignBytes : 1;
+    }
+
+    return align > 1 && st->fieldOffsets[idx] % align != 0;
+}
+
 static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
 {
     // (name, size, align).

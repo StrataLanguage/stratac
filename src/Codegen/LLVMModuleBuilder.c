@@ -10244,6 +10244,38 @@ BuiltModule BuildLlvmModule(const Module* ast, DiagnosticEngine* diag, Arena* ar
     return BuildLlvmModuleEx(ast, diag, arena, jitMode, profile, NULL);
 }
 
+/* A packed struct places fields at offsets its types' natural alignment would not allow, so a load or store that
+   goes through one of its fields cannot assume the usual alignment: a `float4` at offset 5 read with an aligned
+   vector instruction faults. Marking those accesses align 1 makes the backend pick the unaligned forms. */
+static void MarkPackedFieldAccessesUnaligned(LLVMModuleRef mod)
+{
+    for (LLVMValueRef fn = LLVMGetFirstFunction(mod); fn; fn = LLVMGetNextFunction(fn))
+    {
+        for (LLVMBasicBlockRef bb = LLVMGetFirstBasicBlock(fn); bb; bb = LLVMGetNextBasicBlock(bb))
+        {
+            for (LLVMValueRef inst = LLVMGetFirstInstruction(bb); inst; inst = LLVMGetNextInstruction(inst))
+            {
+                bool isLoad = LLVMIsALoadInst(inst) != NULL;
+                bool isStore = LLVMIsAStoreInst(inst) != NULL;
+
+                if (!isLoad && !isStore)
+                {
+                    continue;
+                }
+
+                LLVMValueRef ptr = LLVMGetOperand(inst, isLoad ? 0 : 1);
+
+                if (ptr && LLVMIsAGetElementPtrInst(ptr)
+                    && LLVMGetTypeKind(LLVMGetGEPSourceElementType(ptr)) == LLVMStructTypeKind
+                    && LLVMIsPackedStruct(LLVMGetGEPSourceElementType(ptr)))
+                {
+                    LLVMSetAlignment(inst, 1);
+                }
+            }
+        }
+    }
+}
+
 BuiltModule BuildLlvmModuleEx(const Module* ast, DiagnosticEngine* diag, Arena* arena, bool jitMode,
                               const StrataProfile* profile, const char* symbolPrefix)
 {
@@ -10290,6 +10322,11 @@ BuiltModule BuildLlvmModuleEx(const Module* ast, DiagnosticEngine* diag, Arena* 
     TypeRegistryInit(&b.m_registry);
 
     BuiltModule module = BuilderBuild(&b, ast, diag, jitMode, profile);
+
+    if (module.mod)
+    {
+        MarkPackedFieldAccessesUnaligned(module.mod);
+    }
     StrMapFree(&b.m_structTypes);
     StrMapFree(&b.m_funcs);
     StrMapFree(&b.m_symbols);

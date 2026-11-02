@@ -1,6 +1,5 @@
 // expect: reject
 // rule: a ref cannot be taken to a field placed at a misaligned fieldoffset
-// xfail: hole 20, refs to misaligned fields are accepted
 extern struct M { byte pad; fieldoffset(1) int a; fieldoffset(5) float4 v; };
 float Sum(const ref float4 v) { return v.x + v.w; }
 int main()

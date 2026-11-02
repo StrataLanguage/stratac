@@ -84,6 +84,10 @@ bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
+/* Does the field sit at an offset its own type cannot be accessed at (a `fieldoffset` that breaks the type's
+   alignment)? Such a field can be read and written by value, but a ref to it would be a misaligned pointer. */
+bool TypeRegistryFieldMisaligned(const TypeRegistry* reg, const char* structName, const char* field);
+
 // Shape queries are structural (see TypeNameIs* in AST.h).
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 

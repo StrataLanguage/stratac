@@ -1,7 +1,6 @@
 // expect: run
 // expect-output: 4.000000 5
 // rule: a field placed at a misaligned fieldoffset can still be read and written by value
-// xfail: hole 20, misaligned vector fields are accessed with aligned instructions and crash
 extern struct M { byte pad; fieldoffset(1) int a; fieldoffset(5) float4 v; fieldoffset(21) long l; };
 int main()
 {

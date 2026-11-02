@@ -222,6 +222,17 @@ void LLVMAddIncoming(LLVMValueRef phiNode, LLVMValueRef* incomingValues, LLVMBas
 LLVMBasicBlockRef LLVMGetInsertBlock(LLVMBuilderRef b);
 void LLVMPositionBuilderBefore(LLVMBuilderRef b, LLVMValueRef inst);
 LLVMValueRef LLVMGetFirstInstruction(LLVMBasicBlockRef bb);
+LLVMValueRef LLVMGetNextInstruction(LLVMValueRef inst);
+LLVMValueRef LLVMGetFirstFunction(LLVMModuleRef m);
+LLVMValueRef LLVMGetNextFunction(LLVMValueRef fn);
+LLVMBasicBlockRef LLVMGetFirstBasicBlock(LLVMValueRef fn);
+LLVMBasicBlockRef LLVMGetNextBasicBlock(LLVMBasicBlockRef bb);
+LLVMValueRef LLVMGetOperand(LLVMValueRef inst, unsigned index);
+LLVMValueRef LLVMIsALoadInst(LLVMValueRef v);
+LLVMValueRef LLVMIsAStoreInst(LLVMValueRef v);
+LLVMValueRef LLVMIsAGetElementPtrInst(LLVMValueRef v);
+LLVMTypeRef LLVMGetGEPSourceElementType(LLVMValueRef gep);
+LLVMBool LLVMIsPackedStruct(LLVMTypeRef structTy);
 LLVMValueRef LLVMGetBasicBlockTerminator(LLVMBasicBlockRef bb);
 
 LLVMBool LLVMVerifyModule(LLVMModuleRef m, int verifierAction, char** outMessage);

@@ -4597,6 +4597,42 @@ static bool IsCVarargCompatible(Resolver* r, const TypeName* type)
 }
 
 // Move owned args into params; drop facts a real call could break.
+/* A ref is a pointer to the place, so it cannot point at a field whose `fieldoffset` breaks its alignment. */
+static void CheckMisalignedRef(Resolver* r, Node* arg, StrMap* scope)
+{
+    if (!arg || arg->kind != NodeMember)
+    {
+        return;
+    }
+
+    MemberExpr* m = (MemberExpr*)arg;
+    const TypeName* baseType = UnwrapBoxPtr(InferType(r, m->base_node, scope));
+
+    if (baseType && baseType->name && TypeRegistryFieldMisaligned(&r->m_registry, baseType->name, m->member))
+    {
+        DiagErrorFmt(r->m_diag, arg->range,
+                     "cannot take a ref to field '%s' of '%s': its fieldoffset is misaligned for its type; read or "
+                     "write it by value",
+                     m->member, baseType->name);
+    }
+}
+
+/* Arguments bound to `ref` / `const ref` parameters are passed by address. */
+static void CheckRefArgAlignment(Resolver* r, const FunctionDecl* best, CallExpr* c, StrMap* scope)
+{
+    size_t named = NamedParamCount(best);
+
+    for (size_t j = 0; j < c->args.count && j < named; j++)
+    {
+        const ParamDecl* p = (const ParamDecl*)VecGet(&best->params, j);
+
+        if (p->mod == ModRef)
+        {
+            CheckMisalignedRef(r, (Node*)VecGet(&c->args, j), scope);
+        }
+    }
+}
+
 static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
 {
     // Calls may rebind globals, so global facts never survive.
@@ -6140,6 +6176,7 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     CheckCallArgOptionalDerefs(r, c, scope);
     CheckConstRefArgs(r, instance, c, scope);
+    CheckRefArgAlignment(r, instance, c, scope);
     TrackCallArgMoves(r, instance, c);
 
     return true;
@@ -6401,6 +6438,7 @@ resolve_candidates:;
             /* Facts before moves. */
             CheckCallArgOptionalDerefs(r, c, scope);
             CheckConstRefArgs(r, best, c, scope);
+            CheckRefArgAlignment(r, best, c, scope);
             CheckGrowableArrayArgs(r, best, c, scope);
             TrackCallArgMoves(r, best, c);
             free(delegatePool.items);
@@ -6816,6 +6854,7 @@ resolve_candidates:;
 
     CheckCallArgOptionalDerefs(r, c, scope);
     CheckConstRefArgs(r, best, c, scope);
+    CheckRefArgAlignment(r, best, c, scope);
     CheckGrowableArrayArgs(r, best, c, scope);
     TrackCallArgMoves(r, best, c);
 }
