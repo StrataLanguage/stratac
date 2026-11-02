@@ -222,6 +222,12 @@ static inline const TypeName* TypeNameBoxInner(const TypeName* t)
         return t->inner;
 }
 
+// A named type that is not `^T`, `T?` or a dynamic array: `Foo`, or a fixed `Foo[N]`.
+static inline bool TypeNameIsBare(const TypeName* t)
+{
+    return t && !t->isBox && !t->isOptional && !TypeNameIsDynamicArray(t);
+}
+
 // Owning types: `string`, `^T`, `T?` and dynamic `T[]`. Fixed `T[N]` is plain inline storage, never owning.
 static inline bool TypeNameIsOwning(const TypeName* t)
 {

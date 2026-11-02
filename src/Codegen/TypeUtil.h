@@ -105,3 +105,24 @@ bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName*
    treatment wherever an owning-struct value can appear (notably as a `T[]`
    element, where `Rec[]` is legal inline storage). */
 bool TypeIsOwningValueResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);
+
+/* The four type properties of docs "Strata Language Foundations", computed once per resolved type.
+   New rules test these instead of `isBox`/`isOptional` or a spelling. */
+typedef struct {
+    bool trivial;   /* bitwise copy, no drop glue */
+    bool owning;    /* a by-value use moves; has drop glue (the complement of trivial) */
+    bool userDrop;  /* has a `Drop`, itself or in a field; no `copy()` */
+    bool zeroValid; /* all-zero bits are a valid value */
+} TypeProps;
+
+/* How a `T?` is laid out (Value optionals). Picked per type; `None` for a type that is not optional. */
+typedef enum {
+    OptLayoutNone,
+    OptLayoutNiche, /* the pointer itself, null means empty: `^U?`, `H?` */
+    OptLayoutInline, /* `{ T value; bool has; }` */
+    OptLayoutBox     /* nullable heap box, as `T?` is today and `^T?` stays */
+} OptionalLayout;
+
+OptionalLayout TypeOptionalLayout(const TypeRegistry* reg, Arena* arena, const TypeName* t);
+
+TypeProps TypeClassify(const TypeRegistry* reg, Arena* arena, const TypeName* t);

@@ -4111,8 +4111,7 @@ static void CheckDelegateDecl(Resolver* r, const FunctionDecl* f)
         const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
         const char* leaf = TypeRegistryResolveAlias(&r->m_registry, p->type.name);
 
-        if (p->mod == ModNone && !p->type.isBox && !p->type.isOptional && !TypeNameIsDynamicArray(&p->type)
-            && IsDefinedStruct(&r->m_registry, leaf))
+        if (p->mod == ModNone && TypeNameIsBare(&p->type) && IsDefinedStruct(&r->m_registry, leaf))
         {
             DiagErrorFmt(r->m_diag, p->base.range,
                          "delegate parameter '%s' can't take struct '%s' by value; declare it 'const ref %s'", p->name,
@@ -11573,8 +11572,7 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                declaration has to say so. */
             const char* paramLeaf = TypeRegistryResolveAlias(&r.m_registry, p->type.name);
 
-            if (functionDecl->isExtern && p->mod == ModNone && !p->type.isBox && !p->type.isOptional
-                && !TypeNameIsDynamicArray(&p->type)
+            if (functionDecl->isExtern && p->mod == ModNone && TypeNameIsBare(&p->type)
                 && (IsDefinedStruct(&r.m_registry, paramLeaf) || IsIncompleteStruct(&r.m_registry, paramLeaf)))
             {
                 DiagErrorFmt(diag, p->base.range,

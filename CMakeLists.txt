@@ -246,6 +246,7 @@ if(NOT STRATA_SHARED)
             tests/unit/SampleTests.c
             tests/unit/ExternStructTests.c
             tests/unit/TypeAliasTests.c
+            tests/unit/TypeClassifyTests.c
             tests/unit/EnumTests.c
             tests/unit/PrivateTests.c
             tests/unit/ScopeTests.c
@@ -264,6 +265,10 @@ if(NOT STRATA_SHARED)
     )
     strata_stage_dll(strata_tests)
     add_test(NAME strata_tests COMMAND strata_tests)
+    add_test(NAME type_flag_ratchet
+        COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/src
+                -DBASELINE=${CMAKE_CURRENT_SOURCE_DIR}/tests/typelayer/baseline.txt
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/typelayer/CheckTypeFlags.cmake)
     if(STRATA_ENABLE_LLVM)
         add_test(NAME stratac_cli_tests
             COMMAND ${CMAKE_COMMAND}

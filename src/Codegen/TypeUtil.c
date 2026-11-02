@@ -421,3 +421,98 @@ bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
 
     return false;
 }
+
+/* Follows alias chains to the type they stand for. */
+static const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const TypeName* t)
+{
+    size_t depth = 0;
+
+    while (t && t->name && !t->isBox && !t->isOptional && !t->isArray)
+    {
+        const char* leaf = TypeRegistryResolveAlias(reg, t->name);
+
+        if (!leaf || strcmp(leaf, t->name) == 0 || ++depth > reg->count)
+        {
+            break;
+        }
+
+        TypeName* next = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+        *next = TypeNameParse(arena, leaf);
+        t = next;
+    }
+
+    return t;
+}
+
+static bool TypeZeroValid(const TypeRegistry* reg, Arena* arena, const TypeName* t, size_t depth)
+{
+    t = ResolveAliasedType(reg, arena, t);
+
+    if (!t || !t->name || depth > reg->count + 8)
+    {
+        return true;
+    }
+
+    if (t->isOptional)
+    {
+        return true; /* the empty value is all zeros */
+    }
+
+    if (t->isBox)
+    {
+        return false; /* a `^T` always points at something */
+    }
+
+    if (t->isArray)
+    {
+        return TypeNameIsDynamicArray(t) || TypeZeroValid(reg, arena, t->elem, depth + 1);
+    }
+
+    const StructType* st = TypeRegistryFind(reg, t->name);
+
+    if (!st || st->opaque || st->isTypeAlias || st->isUnion)
+    {
+        return true;
+    }
+
+    for (size_t i = 0; i < st->fields.count; i++)
+    {
+        const FieldDecl* f = (const FieldDecl*)VecGet(&st->fields, i);
+
+        if (!TypeZeroValid(reg, arena, &f->type, depth + 1))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+TypeProps TypeClassify(const TypeRegistry* reg, Arena* arena, const TypeName* t)
+{
+    TypeProps p = {.trivial = true, .zeroValid = true};
+
+    if (!t || !t->name)
+    {
+        return p;
+    }
+
+    p.owning = TypeIsOwningValueResolved(reg, arena, t);
+    p.trivial = !p.owning;
+    p.userDrop = TypeNameHasDrop(reg, ResolveAliasedType(reg, arena, t));
+    p.zeroValid = TypeZeroValid(reg, arena, t, 0);
+    return p;
+}
+
+OptionalLayout TypeOptionalLayout(const TypeRegistry* reg, Arena* arena, const TypeName* t)
+{
+    if (!t || !t->isOptional || !t->inner)
+    {
+        return OptLayoutNone;
+    }
+
+    /* Today every `T?` is a heap box; the niche and inline layouts arrive with the value-optional codegen. */
+    (void)reg;
+    (void)arena;
+    return OptLayoutBox;
+}
