@@ -27,8 +27,8 @@ chicken-and-egg: the C compiler keeps working during the bootstrap.
 
 ## Phase 0 — `extern` array-decay (the only compiler change)
 
-Location: `src/Codegen/LLVMModuleBuilder.c`, the call-argument loop
-(`EmitCall`, ~lines 3122–3278), inside the `fd && fd->isExtern` branch.
+Location: `src/Codegen/Builder/Call.c`, the call-argument loop
+(`EmitCall`), inside the `fd && fd->isExtern` branch.
 
 **Scoped rule (as implemented & tested):**
 - A **by-value** (`mod == ModNone`), **non-owning-element** dynamic array
@@ -54,7 +54,7 @@ if (fd && fd->isExtern && k < fd->params.count)
         {
             LLVMValueRef arrAddr = ArgAddress(b, argNode);
             LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
-            args[k] = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataSlot, "arrptr");
+            args[k] = LLVMBuildLoad2(b->builder, b->ptrTy, dataSlot, "arrptr");
             continue;
         }
     }
