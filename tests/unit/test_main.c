@@ -35,10 +35,18 @@ void TestFailEq(const char* ea, const char* eb, long a, long b, const char* file
 int TestRunAll(void)
 {
     const char* filter = getenv("STRATA_TEST_FILTER");
+    // Comma-separated exact test names to skip.
+    const char* skip = getenv("STRATA_TEST_SKIP");
     int total = 0;
     for (size_t i = 0; i < g_testCount; i++)
     {
         if (filter && !strstr(g_tests[i].name, filter)) continue;
+        if (skip)
+        {
+            size_t nameLen = strlen(g_tests[i].name);
+            const char* hit = strstr(skip, g_tests[i].name);
+            if (hit && (hit == skip || hit[-1] == ',') && (hit[nameLen] == '\0' || hit[nameLen] == ',')) continue;
+        }
         int before = g_failures;
         printf("[ RUN      ] %s\n", g_tests[i].name);
         fflush(stdout);
