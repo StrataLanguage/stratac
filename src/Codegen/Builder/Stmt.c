@@ -86,7 +86,7 @@ void RunDefers(Builder* b, BlockScope* scope)
 
 /* Run deferred statements of every active scope in [fromIndex, count), innermost
    scope first (Zig exits inner blocks before outer ones), each scope LIFO. */
-static void RunDefersFrom(Builder* b, size_t fromIndex)
+static void RunDefersFrom(Builder* b, StackMark fromIndex)
 {
     for (size_t s = b->m_scopes.count; s-- > fromIndex;)
     {
@@ -98,7 +98,7 @@ static void RunDefersFrom(Builder* b, size_t fromIndex)
    borrowed (see BorrowTemp): a full statement is the temporaries' lifetime. */
 void EmitStmt(Builder* b, Node* n)
 {
-    size_t tempMark = b->m_temps.count;
+    StackMark tempMark = b->m_temps.count;
 
     EmitStmtInner(b, n);
     FlushTemps(b, tempMark);
@@ -262,7 +262,7 @@ static void EmitDeferStmt(Builder* b, DeferStmt* d)
 
 static void EmitBlockStmt(Builder* b, Block* blk)
 {
-    size_t mark = b->m_owningLocals.count;
+    StackMark mark = b->m_owningLocals.count;
 
     PushScope(b);
     SymPush(b);
@@ -384,7 +384,7 @@ static void EmitWhileStmt(Builder* b, WhileStmt* w)
 
 static void EmitForStmt(Builder* b, ForStmt* fs)
 {
-    size_t headerMark = b->m_owningLocals.count;
+    StackMark headerMark = b->m_owningLocals.count;
 
     SymPush(b);
 
@@ -443,7 +443,7 @@ static void EmitForStmt(Builder* b, ForStmt* fs)
 
     if (fs->update)
     {
-        size_t tempMark = b->m_temps.count;
+        StackMark tempMark = b->m_temps.count;
         EmitDiscardExpr(b, fs->update);
         FlushTemps(b, tempMark);
     }

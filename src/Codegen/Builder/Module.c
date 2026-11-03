@@ -74,7 +74,7 @@ static void DefineStructBody(Builder* b, StructType* st)
 
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
     size_t nextPad = 0;
-    unsigned m = 0;
+    FieldIndex m = 0;
 
     if (st->isUnion && st->hasLayout)
     {
@@ -140,7 +140,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
        and __strata_context_destroy drops them. */
     if (BuilderIsOwningType(b, &gd->type))
     {
-        unsigned index = (unsigned)(*ctxFieldCount);
+        FieldIndex index = (FieldIndex)(*ctxFieldCount);
         ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
         StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
@@ -173,7 +173,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
 
     if (typeDesc.isCString && (!gd->init || gd->init->kind == NodeStrLiteral || csCopyInit))
     {
-        unsigned index = (unsigned)(*ctxFieldCount);
+        FieldIndex index = (FieldIndex)(*ctxFieldCount);
         ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
         StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
@@ -224,7 +224,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
     /* Mutable scalar/struct/handle/alias global (or a const one whose
        initializer failed to fold — already diagnosed above): instanced
        field, initial value stored at runtime by __strata_context_create. */
-    unsigned index = (unsigned)(*ctxFieldCount);
+    FieldIndex index = (FieldIndex)(*ctxFieldCount);
     ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
     StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 

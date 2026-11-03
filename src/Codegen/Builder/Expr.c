@@ -244,7 +244,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
     TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
-    unsigned physIdx = PhysicalFieldIndex(st, idx);
+    FieldIndex physIdx = PhysicalFieldIndex(st, idx);
 
     LLVMValueRef idxs[2] = {0};
     idxs[0] = IdxConst(b, 0);
@@ -414,7 +414,7 @@ Value EmitArrayDataMember(Builder* b, Value base)
 /* array.length / array.cap on a non-lvalue array (e.g. MakeArr().length). */
 Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
 {
-    unsigned field = strcmp(n->member, "length") == 0 ? 1 : 2;
+    FieldIndex field = strcmp(n->member, "length") == 0 ? 1 : 2;
     LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
     TypeDesc lenTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
     BorrowTemp(b, base, lenTd);
@@ -495,7 +495,7 @@ bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
     {
         TypeDesc dsTd = TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL);
         size_t comps = strlen(n->member);
-        dsTd.simdLanes = comps > 1 ? (int)comps : 0;
+        dsTd.simdLanes = comps > 1 ? (LaneCount)comps : 0;
         *out = (Value){dsValue, dsTd};
         return true;
     }
@@ -519,7 +519,7 @@ bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
         if (TypeDescIsOwning(b, &fieldTypeDesc))
         {
             BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, NULL, base.typeDesc.type,
-                           (int)PhysicalFieldIndex(st, idx));
+                           PhysicalFieldIndex(st, idx));
         }
         else
         {
@@ -750,7 +750,7 @@ LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
 /* One branch of `?:`, converted to the result type; its temporaries die inside the branch. */
 static LLVMValueRef EmitConditionalBranch(Builder* b, Node* n, TypeDesc td)
 {
-    size_t tempMark = b->m_temps.count;
+    StackMark tempMark = b->m_temps.count;
     LLVMValueRef v;
 
     if (td.isCString && n->kind == NodeStrLiteral)
@@ -894,7 +894,7 @@ void EmitDiscardExpr(Builder* b, Node* expr)
    through like `&&`/`!` operands; an optional tests presence. */
 LLVMValueRef EmitConditionI1(Builder* b, Node* cond)
 {
-    size_t tempMark = b->m_temps.count;
+    StackMark tempMark = b->m_temps.count;
     LLVMValueRef v = ToI1(b, EmitCondOperand(b, cond));
 
     FlushTemps(b, tempMark);

@@ -54,7 +54,7 @@ Value EmitVectorConstruct(Builder* b, CallExpr* n)
     TypeName tn = MakeTypeName(b, n->callee);
     TypeDesc typeDesc = Resolve(b, &tn);
 
-    int numVectorLanes = IsNameSimdVector(n->callee);
+    LaneCount numVectorLanes = IsNameSimdVector(n->callee);
 
     Value v;
 
@@ -105,7 +105,7 @@ Value EmitVectorDot(Builder* b, CallExpr* n)
     Value vB = EmitExpr(b, (Node*)VecGet(&n->args, 1));
 
     /* Only the logical lanes contribute (float3 ignores lane 3). */
-    unsigned lanes = (unsigned)(vA.typeDesc.simdLanes ? vA.typeDesc.simdLanes : vB.typeDesc.simdLanes);
+    LaneCount lanes = vA.typeDesc.simdLanes ? vA.typeDesc.simdLanes : vB.typeDesc.simdLanes;
 
     return ValueMake(LSimdVectorDot(b, vA.value, vB.value, lanes), ResolveByName(b, "float"));
 }

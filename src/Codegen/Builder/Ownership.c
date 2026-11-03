@@ -284,7 +284,7 @@ void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td)
 
 /* Drops the owning locals declared from `fromIndex` on, the last declared first, so a local can rely on every
    local declared before it still being alive when it is dropped. */
-void EmitDrops(Builder* b, size_t fromIndex)
+void EmitDrops(Builder* b, StackMark fromIndex)
 {
     for (size_t i = b->m_owningLocals.count; i-- > fromIndex;)
     {
@@ -336,7 +336,7 @@ const TempPart* FindTempPart(Builder* b, const Node* node)
     return NULL;
 }
 
-static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDesc td, size_t tempIdx)
+static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDesc td, StackMark tempIdx)
 {
     TempPart* tp = (TempPart*)arena_alloc(b->m_arena, sizeof(TempPart));
     tp->node = node;
@@ -354,11 +354,11 @@ static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDes
    in the parent piece). Otherwise nothing is recorded and the temporary is
    left alone (a leak, never a double free). */
 void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* node, TypeDesc pieceTd,
-                    LLVMValueRef heapAddr, LLVMTypeRef structTy, int fieldIdx)
+                    LLVMValueRef heapAddr, LLVMTypeRef structTy, FieldIndex fieldIdx)
 {
     const TempPart* parent = FindTempPart(b, baseNode);
     LLVMValueRef baseAddr = parent ? parent->addr : NULL;
-    size_t tempIdx = parent ? parent->tempIdx : b->m_temps.count;
+    StackMark tempIdx = parent ? parent->tempIdx : b->m_temps.count;
 
     if (!parent)
     {
@@ -375,7 +375,7 @@ void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* no
     if (!addr)
     {
         /* Field of a by-value struct: address it inside the parked copy. */
-        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, (unsigned)fieldIdx)};
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, fieldIdx)};
         addr = LLVMBuildGEP2(b->m_builder, structTy, baseAddr, idxs, 2, "tmpf");
     }
 
@@ -454,7 +454,7 @@ LLVMValueRef ParkTemp(Builder* b, Value v)
 /* Drops the temporaries registered since `mark` (end of a full statement or
    of a branch condition) and forgets unclaimed fresh results: past this point
    they were either moved or dropped by their consumer. */
-void FlushTemps(Builder* b, size_t mark)
+void FlushTemps(Builder* b, StackMark mark)
 {
     if (!b->m_terminated)
     {
