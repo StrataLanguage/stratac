@@ -3,7 +3,9 @@
 # -DSRC=<src dir>.
 set(type_layer
     AST/AST.h
-    Parse/Parser.c
+    Parse/ParseType.c
+    Parse/ParseDecl.c
+    Parse/ParseStmt.c
     Codegen/TypeUtil.c
     Codegen/TypeRegistry.c
     Codegen/TypeMetadata.c

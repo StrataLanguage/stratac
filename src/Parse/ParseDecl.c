@@ -1,0 +1,971 @@
+#include "Parse/ParserInternal.h"
+
+#include "Codegen/TypeRegistry.h"
+
+#include <limits.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+HandleDecl* ParseHandleDecl(Parser* p)
+{
+    if (!AtHandleDecl(p))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected 'handle' and a handle name");
+        return NULL;
+    }
+
+    Advance(p);
+
+    Token nameTok = p->m_cur;
+    CheckTypeNameNotHandle(p, nameTok);
+    Advance(p);
+
+    HandleDecl* node = AST_NEW(p->m_arena, HandleDecl);
+    node->base.kind = NodeHandle;
+    node->base.range = nameTok.range;
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->extendsName = NULL;
+
+    if (ParserConsume(p, TokColon))
+    {
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a base handle name after ':'");
+        }
+        else
+        {
+            Token baseTok = p->m_cur;
+            Advance(p);
+            node->extendsName = ToOwned(p->m_arena, ParserIdentText(p, baseTok));
+        }
+    }
+    else if (p->m_cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->m_cur), "extends"))
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "'extends' was removed; write 'handle %s : Base'", node->name);
+        Advance(p);
+
+        if (p->m_cur.kind == TokIdent)
+        {
+            Advance(p);
+        }
+    }
+
+    if (ParserConsume(p, TokLBrace))
+    {
+        DiagError(p->m_diag, nameTok.range, "opaque handles cannot have a body");
+        Synchronize(p);
+    }
+
+    ParserExpect(p, TokSemicolon, "';'");
+
+    return node;
+}
+
+StructDecl* ParseStructDecl(Parser* p, bool isExtern)
+{
+    bool isUnion = p->m_cur.kind == TokKwUnion;
+
+    if (!ParserConsume(p, TokKwStruct) && !ParserConsume(p, TokKwUnion))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected 'struct'");
+        return NULL;
+    }
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a struct name");
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    CheckTypeNameNotHandle(p, nameTok);
+    Advance(p);
+
+    /* Type alias: `struct Foo = type;` */
+    if (ParserConsume(p, TokAssign))
+    {
+        TypeName underlying = {0};
+        if (!ParserTryParseType(p, &underlying) || !underlying.name)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type after '='");
+            Synchronize(p);
+            return NULL;
+        }
+
+        ParserExpect(p, TokSemicolon, "';'");
+
+        StructDecl* node = AST_NEW(p->m_arena, StructDecl);
+        node->base.kind = NodeStruct;
+        node->base.range = nameTok.range;
+        node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+        VecInit(&node->fields);
+        node->isExtern = false;
+        node->isTypeAlias = true;
+        node->underlyingType = underlying.name;
+
+        return node;
+    }
+
+    StructDecl* node = AST_NEW(p->m_arena, StructDecl);
+    node->base.kind = NodeStruct;
+    node->base.range = nameTok.range;
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    VecInit(&node->fields);
+    node->isExtern = isExtern;
+    node->isUnion = isUnion;
+    node->moduleName = p->m_moduleName;
+
+    if (ParserConsume(p, TokLBrace))
+    {
+        while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+        {
+            long offset = -1;
+
+            if (p->m_cur.kind == TokKwFieldoffset)
+            {
+                Token foTok = p->m_cur;
+                Advance(p);
+
+                if (!ParserConsume(p, TokLParen))
+                {
+                    DiagError(p->m_diag, p->m_cur.range, "expected '(' after 'fieldoffset'");
+                    break;
+                }
+
+                if (p->m_cur.kind != TokIntLit)
+                {
+                    DiagError(p->m_diag, p->m_cur.range, "expected a byte offset inside 'fieldoffset(...)'");
+                    break;
+                }
+
+                Token lenTok = p->m_cur;
+                Advance(p);
+
+                if (!ParserConsume(p, TokRParen))
+                {
+                    DiagError(p->m_diag, p->m_cur.range, "expected ')' to close 'fieldoffset(...)'");
+                    break;
+                }
+
+                if (!isExtern || isUnion)
+                {
+                    DiagError(p->m_diag, foTok.range, "'fieldoffset' is only allowed inside an 'extern struct'");
+                }
+
+                uint64_t value = IntLiteralValue(p, lenTok, NULL);
+
+                if (value > (uint64_t)LONG_MAX)
+                {
+                    DiagError(p->m_diag, lenTok.range, "field offset is too large");
+                    value = 0;
+                }
+
+                offset = (long)value;
+            }
+
+            TypeName ft = {0};
+            if (!ParserTryParseType(p, &ft))
+            {
+                DiagError(p->m_diag, p->m_cur.range, "expected a field type");
+                break;
+            }
+
+            if (p->m_cur.kind != TokIdent)
+            {
+                DiagError(p->m_diag, p->m_cur.range, "expected a field name");
+                break;
+            }
+
+            Token fieldTok = p->m_cur;
+            Advance(p);
+
+            FieldDecl* field = AST_NEW(p->m_arena, FieldDecl);
+            field->type = ft;
+            field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldTok));
+            field->offset = offset;
+            field->nameRange = fieldTok.range;
+            VecPush(&node->fields, field);
+
+            /* `T name = expr;` — a default value, folded to a constant by sema. */
+            if (ParserConsume(p, TokAssign))
+            {
+                field->defaultValue = ParseExpr(p);
+
+                if (isUnion)
+                {
+                    DiagError(p->m_diag, fieldTok.range, "union fields cannot have default values");
+                }
+            }
+
+            Token semi = ParserExpect(p, TokSemicolon, "';'");
+
+            if (semi.kind != TokSemicolon)
+            {
+                break;
+            }
+        }
+
+        ParserExpect(p, TokRBrace, "'}'");
+    }
+    else
+    {
+        if (isExtern)
+        {
+            DiagError(p->m_diag, nameTok.range, "extern struct must have a body");
+        }
+
+        node->incomplete = true;
+    }
+
+    if (node->incomplete)
+    {
+        /* Forward declaration: `struct Foo;` still needs the ';'. */
+        ParserExpect(p, TokSemicolon, "';'");
+    }
+    else
+    {
+        /* The ';' after a struct body is optional (`struct S { ... }`). */
+        ParserConsume(p, TokSemicolon);
+    }
+
+    return node;
+}
+
+/* Parses the constant expression for an explicit enum member value (`A = expr`).
+   Expression parsing stops before the `,`/`}` that ends the member; sema folds
+   the result. */
+static Node* ParseEnumMemberValue(Parser* p)
+{
+    return ParseBinary(p, 0);
+}
+
+EnumDecl* ParseEnumDecl(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p); /* 'enum' */
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an enum name after 'enum'");
+        Synchronize(p);
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    CheckTypeNameNotHandle(p, nameTok);
+    Advance(p);
+
+    EnumDecl* node = AST_NEW(p->m_arena, EnumDecl);
+    node->base.kind = NodeEnum;
+    node->base.range = SpanFrom(kw, nameTok);
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->underlyingType = NULL;
+    node->isFlags = false;
+    VecInit(&node->members);
+
+    /* `: UnderlyingType` — optional; defaults to `int`. */
+    if (ParserConsume(p, TokColon))
+    {
+        TypeName underlying = {0};
+
+        if (!ParserTryParseType(p, &underlying) || !underlying.name)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an underlying type after ':'");
+            Synchronize(p);
+            return NULL;
+        }
+
+        node->underlyingType = underlying.name;
+    }
+
+    ParserExpect(p, TokLBrace, "'{'");
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "expected an enum member name");
+            break;
+        }
+
+        Token memberTok = p->m_cur;
+        Advance(p);
+
+        EnumMemberDecl* member = AST_NEW(p->m_arena, EnumMemberDecl);
+        member->base.kind = NodeEnumMember;
+        member->base.range = memberTok.range;
+        member->name = ToOwned(p->m_arena, ParserIdentText(p, memberTok));
+        member->hasExplicitValue = false;
+        member->isNegative = false;
+        member->value = 0;
+
+        if (ParserConsume(p, TokAssign))
+        {
+            member->valueExpr = ParseEnumMemberValue(p);
+
+            if (!member->valueExpr)
+            {
+                break;
+            }
+
+            member->hasExplicitValue = true;
+        }
+
+        VecPush(&node->members, member);
+
+        if (ParserConsume(p, TokComma))
+        {
+            continue;
+        }
+
+        break;
+    }
+
+    Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
+    node->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : p->m_cur);
+
+    /* The ';' after an enum body is optional (`enum Color { Red }`). */
+    ParserConsume(p, TokSemicolon);
+
+    return node;
+}
+
+static ParamDecl* ParseParam(Parser* p)
+{
+    SourceRange start = p->m_cur.range;
+    ParamMod mod = ModNone;
+    bool isConst = false;
+    bool isReturn = false;
+
+    // 'const', 'ref' and 'return' may appear together in either order, each at most once.
+    for (int i = 0; i < 3; i++)
+    {
+        if (ParserConsume(p, TokKwRef))
+        {
+            mod = ModRef;
+            continue;
+        }
+
+        if (ParserConsume(p, TokKwConst))
+        {
+            isConst = true;
+            continue;
+        }
+
+        if (ParserConsume(p, TokKwReturn))
+        {
+            mod = ModRef;
+            isReturn = true;
+            continue;
+        }
+
+        break;
+    }
+
+    TypeName type = {0};
+
+    if (!ParserTryParseType(p, &type))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a parameter type");
+        return NULL;
+    }
+
+    bool isVarargRest = false;
+
+    if (ParserConsume(p, TokDotDotDot))
+    {
+        isVarargRest = true;
+
+        // `ref`/`const` rest params borrow the stack array.
+        type = TypeNameArrayWrap(p->m_arena, type);
+    }
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a parameter name");
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    ParamDecl* node = AST_NEW(p->m_arena, ParamDecl);
+    node->base.kind = NodeParam;
+    node->base.range
+        = (SourceRange){start.start, (uint32_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
+    node->mod = mod;
+    type.isConst = isConst || type.isConst;
+    node->type = type;
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->isVarargRest = isVarargRest;
+    node->isReturn = isReturn;
+
+    return node;
+}
+
+/* Collects a run of `@name` attributes; whatever they precede decides which are valid. */
+void ParseAttributes(Parser* p, Vec* outAttributes)
+{
+    while (p->m_cur.kind == TokAt)
+    {
+        Token atTok = p->m_cur;
+        Advance(p);
+
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected an attribute name after '@'");
+            continue;
+        }
+
+        Attribute* attribute = AST_NEW(p->m_arena, Attribute);
+        attribute->name = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+        attribute->range = SpanFrom(atTok, p->m_cur);
+        VecPush(outAttributes, attribute);
+
+        Advance(p);
+    }
+}
+
+/* Function attributes: @private, @export, @noreturn. */
+static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outIsPrivate, bool* outIsExport,
+                                    bool* outIsNoReturn)
+{
+    bool isPrivate = false;
+    bool isExport = false;
+    bool isNoReturn = false;
+
+    for (size_t i = 0; i < attributes->count; i++)
+    {
+        const Attribute* attribute = (const Attribute*)VecGet(attributes, i);
+
+        if (strcmp(attribute->name, "private") == 0)
+        {
+            isPrivate = true;
+        }
+        else if (strcmp(attribute->name, "export") == 0)
+        {
+            isExport = true;
+        }
+        else if (strcmp(attribute->name, "noreturn") == 0)
+        {
+            isNoReturn = true;
+        }
+        else
+        {
+            DiagErrorFmt(p->m_diag, attribute->range, "unknown attribute '@%s'", attribute->name);
+        }
+    }
+
+    *outIsPrivate = isPrivate;
+    *outIsExport = isExport;
+    *outIsNoReturn = isNoReturn;
+
+    return attributes->count > 0;
+}
+
+/* Struct attributes, e.g. @component. The struct takes ownership of the list. */
+void ApplyStructAttributes(Parser* p, StructDecl* sd, Vec* attributes)
+{
+    for (size_t i = 0; i < attributes->count; i++)
+    {
+        const Attribute* attribute = (const Attribute*)VecGet(attributes, i);
+
+        if (strcmp(attribute->name, "component") != 0)
+        {
+            DiagErrorFmt(p->m_diag, attribute->range, "unknown struct attribute '@%s'", attribute->name);
+            continue;
+        }
+
+        if (sd->isTypeAlias || sd->incomplete || sd->isExtern)
+        {
+            DiagErrorFmt(p->m_diag, attribute->range,
+                         "'@component' requires a struct definition with a body (not an alias, forward "
+                         "declaration or extern struct)");
+            continue;
+        }
+
+        sd->isComponent = true;
+    }
+
+    sd->attributes = *attributes;
+    VecInit(attributes);
+}
+
+Node* ParseFunction(Parser* p)
+{
+    Vec attributes;
+    VecInit(&attributes);
+    ParseAttributes(p, &attributes);
+
+    Node* node = ParseFunctionWithAttributes(p, &attributes);
+
+    free(attributes.items);
+
+    return node;
+}
+
+Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
+{
+    bool isPrivate = false;
+    bool isExport = false;
+    bool isNoReturn = false;
+    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate, &isExport, &isNoReturn);
+    SourceRange firstAttributeRange = hasAttrs ? ((const Attribute*)VecGet(attributes, 0))->range : SRC_INVALID;
+
+    bool isExtern = ParserConsume(p, TokKwExtern);
+
+    /* `extern delegate R Name(params);` — a C function-pointer type. */
+    bool isDelegate = isExtern && ParserConsume(p, TokKwDelegate);
+
+    /* `extern<T>`: one host function serving every type T (see strata.h). */
+    char* typeParam = NULL;
+
+    if (isExtern && p->m_cur.kind == TokLt)
+    {
+        Advance(p);
+
+        if (p->m_cur.kind == TokIdent)
+        {
+            typeParam = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+            Advance(p);
+        }
+        else
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type parameter name after 'extern<'");
+        }
+
+        ParserExpect(p, TokGt, "'>'");
+    }
+
+    if (hasAttrs
+        && (p->m_cur.kind == TokKwStruct || AtHandleDecl(p) || p->m_cur.kind == TokKwEnum
+            || p->m_cur.kind == TokKwImport || p->m_cur.kind == TokKwImpl))
+    {
+        DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
+        return NULL;
+    }
+
+    TypeName returnType = {0};
+    if (!ParserTryParseType(p, &returnType))
+    {
+        if (p->m_cur.kind != TokEof)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected a type to declare a function");
+        }
+
+        return NULL;
+    }
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a name");
+
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    if (p->m_cur.kind != TokLParen)
+    {
+        if (isExtern)
+        {
+            DiagError(p->m_diag, nameTok.range, "extern cannot be used with a global variable");
+            Synchronize(p);
+
+            return NULL;
+        }
+
+        GlobalDecl* gd = AST_NEW(p->m_arena, GlobalDecl);
+        gd->base.kind = NodeGlobal;
+        gd->base.range = nameTok.range;
+        gd->type = returnType;
+        gd->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+        gd->init = NULL;
+
+        if (hasAttrs)
+        {
+            DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
+        }
+
+        if (ParserConsume(p, TokAssign))
+        {
+            if (p->m_cur.kind == TokLBrace && returnType.isArray)
+            {
+                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem);
+            }
+            else if (p->m_cur.kind == TokLBrace && returnType.isOptional && returnType.inner
+                     && returnType.inner->isArray)
+            {
+                // `T[]? g = { ... };` - a braced literal initializes the inner dynamic array.
+                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.inner->elem);
+            }
+            else
+            {
+                gd->init = ParseExpr(p);
+            }
+        }
+
+        ParserExpect(p, TokSemicolon, "';'");
+
+        return (Node*)gd;
+    }
+
+    FunctionDecl* node = AST_NEW(p->m_arena, FunctionDecl);
+    node->base.kind = NodeFunction;
+    node->base.range = SpanFrom((Token){TokIdent, returnType.range}, nameTok);
+    node->returnType = returnType;
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    node->mangledName = arena_strdup(p->m_arena, node->name);
+    node->isExtern = isExtern;
+    node->isPrivate = isPrivate;
+    node->isExport = isExport;
+    node->isNoReturn = isNoReturn;
+    node->isDelegate = isDelegate;
+    node->hasReturnStmt = false;
+
+    if (isDelegate)
+    {
+        node->mangledName = arena_format(p->m_arena, "__delegate_%s", node->name);
+
+        if (hasAttrs || typeParam)
+        {
+            DiagError(p->m_diag, node->base.range, "a delegate takes no attributes or type parameter");
+        }
+    }
+    node->typeParam = typeParam;
+    VecInit(&node->params);
+
+    if (hasAttrs)
+    {
+        node->base.range = SpanFrom((Token){TokAt, firstAttributeRange}, nameTok);
+    }
+
+    if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
+    {
+        return (Node*)node;
+    }
+
+    if (p->m_cur.kind == TokDotDotDot)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "bare '...' requires at least one named parameter");
+    }
+
+    if (p->m_cur.kind != TokRParen)
+    {
+        while (true)
+        {
+            ParamDecl* param = ParseParam(p);
+
+            if (param)
+            {
+                VecPush(&node->params, param);
+            }
+            else
+            {
+                break;
+            }
+
+            if (ParserConsume(p, TokComma))
+            {
+                /* Bare '...' (extern C-style varargs): must end the list. */
+                if (p->m_cur.kind == TokDotDotDot)
+                {
+                    Advance(p);
+                    node->isVariadic = true;
+                    node->isCVararg = true;
+                    break;
+                }
+
+                continue;
+            }
+
+            break;
+        }
+    }
+
+    for (size_t i = 0; i < node->params.count; i++)
+    {
+        ParamDecl* param = (ParamDecl*)VecGet(&node->params, i);
+
+        if (param->isVarargRest)
+        {
+            node->isVariadic = true;
+
+            if (i + 1 != node->params.count)
+            {
+                DiagError(p->m_diag, param->base.range, "rest parameter must be the last parameter");
+            }
+        }
+
+        if (param->isReturn)
+        {
+            if (!isExtern)
+            {
+                DiagError(p->m_diag, param->base.range, "'return' parameter is only allowed on extern functions");
+                continue;
+            }
+
+            if (i + 1 != node->params.count)
+            {
+                DiagError(p->m_diag, param->base.range, "'return' parameter must be the last parameter");
+                continue;
+            }
+
+            if (node->returnType.primitiveType != PrimVoid)
+            {
+                DiagErrorFmt(p->m_diag, node->base.range,
+                             "extern function with a 'return' parameter must declare 'void' return; found '%s'",
+                             node->returnType.name);
+                continue;
+            }
+
+            /* The Strata-level signature returns the `return` param's type;
+               at the ABI the C function is void ret + out-pointer (codegen). */
+            node->hasReturnParam = true;
+            node->returnType = param->type;
+            node->returnType.isConst = false;
+        }
+    }
+
+    if (node->isCVararg && !isExtern)
+    {
+        DiagError(p->m_diag, node->base.range, "bare '...' is only allowed on extern functions");
+    }
+
+    ParserExpect(p, TokRParen, "')'");
+
+    if (ParserConsume(p, TokSemicolon))
+    {
+        return (Node*)node;
+    }
+
+    if (isExtern)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "extern function cannot have a body");
+
+        if (p->m_cur.kind == TokLBrace)
+        {
+            Advance(p);
+            Synchronize(p);
+        }
+
+        return (Node*)node;
+    }
+
+    if (p->m_cur.kind != TokLBrace)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected function body '{...}' or ';'");
+
+        return (Node*)node;
+    }
+
+    p->m_hasReturnStmt = false;
+
+    /* `return { ... };` infers its struct type from the return type: for ^T
+       and string it is the inner T, for T[] the whole array is kept so the
+       braced return parses as an array literal. */
+    p->m_returnType
+        = node->returnType.isArray
+              ? &node->returnType
+              : (node->returnType.isBox ? node->returnType.inner
+                                        : (node->returnType.primitiveType == PrimString ? NULL : &node->returnType));
+
+    node->body = ParseBlock(p);
+
+    p->m_returnType = NULL;
+    node->hasReturnStmt = p->m_hasReturnStmt;
+
+    p->m_hasReturnStmt = false;
+
+    return (Node*)node;
+}
+
+static bool ImplHasMethod(const ImplDecl* impl, const char* methodName)
+{
+    for (size_t i = 0; i < impl->methods.count; i++)
+    {
+        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&impl->methods, i);
+
+        if (fn->methodName && strcmp(fn->methodName, methodName) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/* `property ReturnType Name { get = Symbol; set = Symbol; }` — `get`/`set` are
+   contextual (identifier spellings), so user code may still use them as names. */
+static PropertyDecl* ParsePropertyDecl(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p);
+
+    TypeName retType = {0};
+    if (!ParserTryParseType(p, &retType) || !retType.name)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a property type");
+        return NULL;
+    }
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a property name");
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    ParserExpect(p, TokLBrace, "'{'");
+
+    char* getter = NULL;
+    char* setter = NULL;
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        Str word = ParserIdentText(p, p->m_cur);
+        bool isGet = p->m_cur.kind == TokIdent && StrEqC(word, "get");
+        bool isSet = p->m_cur.kind == TokIdent && StrEqC(word, "set");
+
+        if (!isGet && !isSet)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected 'get' or 'set' inside property block");
+            break;
+        }
+
+        Advance(p);
+        ParserExpect(p, TokAssign, "'='");
+
+        if (p->m_cur.kind != TokIdent)
+        {
+            DiagError(p->m_diag, p->m_cur.range, "expected an extern symbol name after '='");
+            break;
+        }
+
+        char** slot = isGet ? &getter : &setter;
+
+        if (*slot)
+        {
+            DiagError(p->m_diag, p->m_cur.range, isGet ? "duplicate 'get' accessor" : "duplicate 'set' accessor");
+        }
+
+        *slot = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+        Advance(p);
+
+        if (ParserExpect(p, TokSemicolon, "';'").kind != TokSemicolon)
+        {
+            break;
+        }
+    }
+
+    ParserExpect(p, TokRBrace, "'}'");
+
+    PropertyDecl* prop = AST_NEW(p->m_arena, PropertyDecl);
+    prop->returnType = retType;
+    prop->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    prop->getterSymbol = getter;
+    prop->setterSymbol = setter;
+    prop->range = kw.range;
+
+    return prop;
+}
+
+/* `impl HandleName { extern R Method(...); property T P { get = ...; set = ...; } }`
+   Extern methods are parsed by ParseFunction (extern-only enforced here), then
+   renamed to their extern symbol `HandleName_MethodName` and collected in
+   impl->methods; ParserParseModule hoists them into Module::functions. */
+ImplDecl* ParseImplDecl(Parser* p)
+{
+    Token kw = p->m_cur;
+    Advance(p);
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a handle name after 'impl'");
+        return NULL;
+    }
+
+    Token nameTok = p->m_cur;
+    Advance(p);
+
+    ImplDecl* impl = AST_NEW(p->m_arena, ImplDecl);
+    impl->base.kind = NodeImpl;
+    impl->base.range = nameTok.range;
+    impl->handleName = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    VecInit(&impl->methods);
+    VecInit(&impl->properties);
+
+    Token openBrace = ParserExpect(p, TokLBrace, "'{'");
+
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        if (p->m_cur.kind == TokKwProperty)
+        {
+            PropertyDecl* prop = ParsePropertyDecl(p);
+
+            if (prop)
+            {
+                VecPush(&impl->properties, prop);
+            }
+            else
+            {
+                Synchronize(p);
+            }
+
+            continue;
+        }
+
+        /* Methods may be extern declarations (host-provided) or defined
+           inline with a body (Strata-implemented). ParseFunction consumes an
+           optional `extern` and returns a GlobalDecl when there is no `(`. */
+        Node* fnNode = ParseFunction(p);
+
+        if (fnNode && fnNode->kind == NodeGlobal)
+        {
+            DiagError(p->m_diag, fnNode->range,
+                      "impl blocks may only contain methods or properties, not global variables");
+            AstDispose(fnNode);
+            Synchronize(p);
+            continue;
+        }
+
+        FunctionDecl* fn = (fnNode && fnNode->kind == NodeFunction) ? (FunctionDecl*)fnNode : NULL;
+
+        if (!fn)
+        {
+            /* ParseFunction already diagnosed the malformed declaration. */
+            Synchronize(p);
+            continue;
+        }
+
+        if (ImplHasMethod(impl, fn->name))
+        {
+            DiagErrorFmt(p->m_diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
+                         impl->handleName);
+            AstDispose(fnNode); // never reaches impl->methods or Module::functions
+            continue;
+        }
+
+        if (fn->isPrivate || fn->isExport)
+        {
+            DiagError(p->m_diag, fn->base.range, "attributes are not supported on impl methods");
+            fn->isPrivate = false;
+            fn->isExport = false;
+        }
+
+        fn->methodName = fn->name;
+        fn->name = arena_format(p->m_arena, "%s_%s", impl->handleName, fn->methodName);
+        fn->mangledName = arena_strdup(p->m_arena, fn->name);
+        fn->fromImpl = true;
+        VecPush(&impl->methods, fn);
+    }
+
+    Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
+    impl->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : openBrace);
+
+    return impl;
+}

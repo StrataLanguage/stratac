@@ -32,6 +32,11 @@ set(STRATA_COMMON_SOURCES
     src/Lex/Token.c
     src/Lex/Lexer.c
     src/Parse/Parser.c
+    src/Parse/ParseLiteral.c
+    src/Parse/ParseType.c
+    src/Parse/ParseDecl.c
+    src/Parse/ParseStmt.c
+    src/Parse/ParseExpr.c
     src/Sema/ResolveOverloads.c
     src/Sema/ConstFold.c
     src/Sema/Cfg.c
