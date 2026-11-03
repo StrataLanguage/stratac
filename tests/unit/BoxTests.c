@@ -91,7 +91,7 @@ STRATA_TEST(box_ref_param_passed_to_owned_param_is_an_error)
        since move-tracking is per-function: the caller still thinks its box
        is live after the call returns, and dereferencing it crashes. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -108,7 +108,7 @@ STRATA_TEST(box_ref_param_passed_to_owned_param_is_an_error)
     STRATA_CHECK(Contains(d, "'inBox' cannot be moved"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_ref_param_moved_into_local_is_an_error)
@@ -117,7 +117,7 @@ STRATA_TEST(box_ref_param_moved_into_local_is_an_error)
        fresh local also isn't a real move - the callee still doesn't own
        the source. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -133,7 +133,7 @@ STRATA_TEST(box_ref_param_moved_into_local_is_an_error)
     STRATA_CHECK(Contains(d, "'inBox' cannot be moved"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_ref_param_returned_is_an_error)
@@ -141,7 +141,7 @@ STRATA_TEST(box_ref_param_returned_is_an_error)
     /* Same rule again: returning a ref ^T param as ^T would move
        the caller's box out through the return value. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -157,7 +157,7 @@ STRATA_TEST(box_ref_param_returned_is_an_error)
     STRATA_CHECK(Contains(d, "'inBox' cannot be moved"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
@@ -169,7 +169,7 @@ STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
        variable out from under it via the shared slot, invisibly to the
        caller's own move-tracking. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Vec3 { float x; };\n"
@@ -186,7 +186,7 @@ STRATA_TEST(box_ref_param_rebind_via_box_value_is_an_error)
     STRATA_CHECK(Contains(d, "'inBox' cannot be reassigned"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(string_box_is_rejected)
@@ -194,7 +194,7 @@ STRATA_TEST(string_box_is_rejected)
     /* `^string` is banned — `string?` is already the maybe-empty string,
        so a box that is never empty but holds a string is redundant. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
@@ -209,7 +209,7 @@ STRATA_TEST(string_box_is_rejected)
     STRATA_CHECK(Contains(d, "redundant boxing of type 'string'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(string_assign_moves_owned_source)
@@ -217,7 +217,7 @@ STRATA_TEST(string_assign_moves_owned_source)
     /* string is move-on-assign: assigning a string to another local
        consumes the source, so using it afterward is an error. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
@@ -225,7 +225,7 @@ STRATA_TEST(string_assign_moves_owned_source)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_ref_param_inner_value_assign_mutates_in_place)
@@ -311,7 +311,7 @@ STRATA_TEST(box_value_assigned_into_mismatched_ref_target_is_an_error)
        inner types don't match, so this is a genuine mismatch and must
        still be rejected, not silently passed through like before. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pistol { int ammo; };\n"
@@ -329,7 +329,7 @@ STRATA_TEST(box_value_assigned_into_mismatched_ref_target_is_an_error)
     STRATA_CHECK(Contains(d, "cannot assign"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_ref_param_reborrow_still_allowed)
@@ -750,19 +750,19 @@ STRATA_TEST(box_global_ref_param_borrows)
 STRATA_TEST(box_global_uninitialized_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n^V g;\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_global_move_init_from_another_global_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -771,13 +771,13 @@ STRATA_TEST(box_global_move_init_from_another_global_is_an_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_global_reassignment_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -793,13 +793,13 @@ STRATA_TEST(box_global_reassignment_is_an_error)
     STRATA_CHECK(Contains(d, "cannot be reassigned"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_global_moved_into_local_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -814,13 +814,13 @@ STRATA_TEST(box_global_moved_into_local_is_an_error)
     STRATA_CHECK(Contains(d, "g' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_global_passed_to_owned_param_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -836,13 +836,13 @@ STRATA_TEST(box_global_passed_to_owned_param_is_an_error)
     STRATA_CHECK(Contains(d, "g' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_global_returned_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -857,7 +857,7 @@ STRATA_TEST(box_global_returned_is_an_error)
     STRATA_CHECK(Contains(d, "g' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(string_array_global_element_moved_to_local_is_an_error)
@@ -866,7 +866,7 @@ STRATA_TEST(string_array_global_element_moved_to_local_is_an_error)
        exercises the transitive global-root check across globals + arrays +
        the string element type. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("string[] boxStrings = { \"\" };\n"
@@ -880,7 +880,7 @@ STRATA_TEST(string_array_global_element_moved_to_local_is_an_error)
     STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(owning_field_of_global_struct_moved_out_is_an_error)
@@ -888,7 +888,7 @@ STRATA_TEST(owning_field_of_global_struct_moved_out_is_an_error)
     /* A global struct is not itself a box, but its owning fields still belong to no function: reading
        one by value would empty it for every other function (string, array and optional alike). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Dev { int n; };\n"
@@ -912,13 +912,13 @@ STRATA_TEST(owning_field_of_global_struct_moved_out_is_an_error)
     STRATA_CHECK(first && strstr(first + 1, "'gHost.dir' cannot be moved")); /* the local and the return */
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(owning_field_of_global_struct_borrowed_or_copied_is_fine)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Dev { int n; };\n"
@@ -936,7 +936,7 @@ STRATA_TEST(owning_field_of_global_struct_borrowed_or_copied_is_fine)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_owning_field_linked_list)
@@ -993,7 +993,7 @@ STRATA_TEST(box_use_after_struct_field_move_is_an_error)
        now owns it, and codegen nulls the source) - using the source
        variable afterward must be a compile error, not a runtime crash. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pistol { int ammo; };\n"
@@ -1012,7 +1012,7 @@ STRATA_TEST(box_use_after_struct_field_move_is_an_error)
     STRATA_CHECK(Contains(d, "'p' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_anonymous_struct_literal_infers_box_inner_type)
@@ -1050,7 +1050,7 @@ STRATA_TEST(box_field_wrong_box_inner_type_is_an_error)
 {
     /* ^Any and ^Pistol are unrelated - field types weren't checked before. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pistol { int ammo; };\n"
@@ -1070,7 +1070,7 @@ STRATA_TEST(box_field_wrong_box_inner_type_is_an_error)
     STRATA_CHECK(Contains(d, "field 'gun'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_cast_via_opaque_marker_round_trips)
@@ -1111,7 +1111,7 @@ STRATA_TEST(box_cast_between_unrelated_concrete_structs_is_an_error)
 {
     /* Neither side is opaque, so this stays rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pistol { int ammo; };\n"
@@ -1130,14 +1130,14 @@ STRATA_TEST(box_cast_between_unrelated_concrete_structs_is_an_error)
     STRATA_CHECK(Contains(d, "invalid cast"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_field_extracted_twice_is_an_error)
 {
     /* Extracting a box moves it out of the field; reading it again is an error. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pistol { int ammo; };\n"
@@ -1159,14 +1159,14 @@ STRATA_TEST(box_field_extracted_twice_is_an_error)
     STRATA_CHECK(Contains(d, "'holder.gun' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(struct_field_wrong_scalar_type_is_an_error)
 {
     /* Same gap, no box involved. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Inner { int x; };\n"
@@ -1185,20 +1185,20 @@ STRATA_TEST(struct_field_wrong_scalar_type_is_an_error)
     STRATA_CHECK(Contains(d, "field 'i'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_owning_struct_field_allowed)
 {
     /* ^T fields are now allowed (the struct becomes owning). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\nstruct W { ^V v; };\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_factory_returns_and_caller_owns)
@@ -1294,7 +1294,7 @@ STRATA_TEST(box_moved_unconditionally_every_loop_iteration_is_error)
 {
     /* Moving the box every iteration is only valid on iteration 1. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -1313,7 +1313,7 @@ STRATA_TEST(box_moved_unconditionally_every_loop_iteration_is_error)
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_fresh_local_per_iteration_moved_in_loop_is_allowed)
@@ -1389,7 +1389,7 @@ STRATA_TEST(box_moved_in_one_if_branch_used_unconditionally_after_is_error)
 {
     /* Moved in one branch, used unconditionally after - unsound. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -1409,7 +1409,7 @@ STRATA_TEST(box_moved_in_one_if_branch_used_unconditionally_after_is_error)
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_return_in_if_branch_does_not_poison_fall_through)
@@ -1495,7 +1495,7 @@ STRATA_TEST(box_move_in_falling_through_else_is_still_an_error)
     /* A branch that moves AND falls through still poisons the join - only
        branches that definitely return are exempt from the merge. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -1517,13 +1517,13 @@ STRATA_TEST(box_move_in_falling_through_else_is_still_an_error)
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_owned_param_use_after_call_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -1540,7 +1540,7 @@ STRATA_TEST(box_owned_param_use_after_call_is_error)
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "'a' used after move"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_reassign_moves_ownership)
@@ -1577,19 +1577,19 @@ STRATA_TEST(box_reassign_moves_ownership)
 STRATA_TEST(box_uninitialized_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\nint entry() { ^V v; return 0; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_use_after_vardecl_move_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -1607,13 +1607,13 @@ STRATA_TEST(box_use_after_vardecl_move_is_an_error)
     STRATA_CHECK(Contains(d, "'a' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_use_after_assign_move_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { int x; };\n"
@@ -1632,7 +1632,7 @@ STRATA_TEST(box_use_after_assign_move_is_an_error)
     STRATA_CHECK(Contains(d, "'b' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_reassign_after_move_revalidates)
@@ -1747,7 +1747,7 @@ STRATA_TEST(box_same_variable_passed_to_two_owned_params_in_one_call_is_an_error
        uniform `T**` ABI happens to alias both parameters onto one slot, but that is an accident of the
        ABI, not a rule to rely on (ownership spec O6). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Stage { int fuel; };\n"
@@ -1761,7 +1761,7 @@ STRATA_TEST(box_same_variable_passed_to_two_owned_params_in_one_call_is_an_error
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_struct_field_extracted_twice_via_separate_calls_is_an_error)
@@ -1772,7 +1772,7 @@ STRATA_TEST(box_struct_field_extracted_twice_via_separate_calls_is_an_error)
        separate statements, must be caught: the second call would
        otherwise receive a null pointer and crash on first dereference. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Sensor { int reading; };\n"
@@ -1793,7 +1793,7 @@ STRATA_TEST(box_struct_field_extracted_twice_via_separate_calls_is_an_error)
     STRATA_CHECK(Contains(d, "'fc.primary' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_moved_in_one_branch_of_three_way_if_chain_used_after_is_error)
@@ -1803,7 +1803,7 @@ STRATA_TEST(box_moved_in_one_branch_of_three_way_if_chain_used_after_is_error)
        conservative: since the middle branch is reachable and moves the
        box, an unconditional use after the whole chain must be rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Stage { int fuel; };\n"
@@ -1829,7 +1829,7 @@ STRATA_TEST(box_moved_in_one_branch_of_three_way_if_chain_used_after_is_error)
     STRATA_CHECK(Contains(d, "'booster' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_moved_inside_loop_guarded_by_break_then_used_after_loop_is_error)
@@ -1839,7 +1839,7 @@ STRATA_TEST(box_moved_inside_loop_guarded_by_break_then_used_after_loop_is_error
        the compiler can't prove i==3 never happens, the move must still
        poison any unconditional use after the loop. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Stage { int fuel; };\n"
@@ -1863,7 +1863,7 @@ STRATA_TEST(box_moved_inside_loop_guarded_by_break_then_used_after_loop_is_error
     STRATA_CHECK(Contains(d, "'booster' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_ref_chain_three_levels_deep_mutates_original_stage)
@@ -1976,7 +1976,7 @@ STRATA_TEST(box_extracted_field_reused_after_move_is_error_sibling_unaffected)
     /* The negative counterpart: re-extracting the SAME field a second time
        must still be rejected even though its sibling field is fine. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Sensor { int reading; };\n"
@@ -2000,7 +2000,7 @@ STRATA_TEST(box_extracted_field_reused_after_move_is_error_sibling_unaffected)
     STRATA_CHECK(Contains(d, "'fc.primary' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_soak_test_many_iterations_through_ref_no_crash)
@@ -2177,7 +2177,7 @@ STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
 {
     /* After p.name is moved, p is partially moved: can't pass it whole. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Person { string name; int age; };\n"
@@ -2197,14 +2197,14 @@ STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
     STRATA_CHECK(Contains(d, "poisoned"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(partial_move_poisoned_diagnostic_names_the_moved_field_path)
 {
     /* The detail is the moved place's path; it must outlive the analysis that produced it. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Person { string name; int age; };\n"
@@ -2224,14 +2224,14 @@ STRATA_TEST(partial_move_poisoned_diagnostic_names_the_moved_field_path)
     STRATA_CHECK(Contains(d, "'p' is poisoned: 'p.name' was moved out of it; put a value back first"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(partial_move_field_then_return_whole_is_error)
 {
     /* After p.name is moved, can't return p whole. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Person { string name; int age; };\n"
@@ -2244,14 +2244,14 @@ STRATA_TEST(partial_move_field_then_return_whole_is_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(partial_move_field_then_move_whole_to_var_is_error)
 {
     /* After p.name is moved, can't move p into another var. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Person { string name; int age; };\n"
@@ -2265,7 +2265,7 @@ STRATA_TEST(partial_move_field_then_move_whole_to_var_is_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(partial_move_reassign_re_lives)
@@ -2304,7 +2304,7 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
     /* Moving a.b.c poisons a.b and a. Using a.b.d (sibling of c) is fine,
        using a.x (sibling of b) is fine, but moving a.b as a whole is error. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Leaf { string tag; };\n"
@@ -2350,7 +2350,7 @@ STRATA_TEST(partial_move_nested_field_poisons_chain)
     STRATA_CHECK(Contains(d, "poisoned"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(partial_move_whole_field_then_access_descendant_is_error)
@@ -2358,7 +2358,7 @@ STRATA_TEST(partial_move_whole_field_then_access_descendant_is_error)
     /* Moving a.b as a whole, then accessing a.b.c — the base is fully
        moved, so descending into it must be rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Leaf { string tag; };\n"
@@ -2373,14 +2373,14 @@ STRATA_TEST(partial_move_whole_field_then_access_descendant_is_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(partial_move_two_fields_both_moved)
 {
     /* Moving two different fields: both are individually tracked. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pair { string a; string b; };\n"
@@ -2394,13 +2394,13 @@ STRATA_TEST(partial_move_two_fields_both_moved)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(drop_box_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Cell { int v; };\n"
@@ -2412,13 +2412,13 @@ STRATA_TEST(drop_box_invalidates)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(drop_string_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2429,13 +2429,13 @@ STRATA_TEST(drop_string_invalidates)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(drop_array_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int entry() {\n"
@@ -2446,13 +2446,13 @@ STRATA_TEST(drop_array_invalidates)
                                   &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(drop_use_after_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Cell { int v; };\n"
@@ -2465,13 +2465,13 @@ STRATA_TEST(drop_use_after_is_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(drop_wrong_arg_count)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2481,13 +2481,13 @@ STRATA_TEST(drop_wrong_arg_count)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(drop_non_owning_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2498,7 +2498,7 @@ STRATA_TEST(drop_non_owning_is_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- drop() must really destroy: alloc/free balance ---- */
@@ -2678,7 +2678,7 @@ STRATA_TEST(box_array_equality_after_element_move_is_rejected)
        optional-slot move) poisons the WHOLE array: a later `a == b` — which
        derefs each element — is a compile error, never a null deref. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -2699,7 +2699,7 @@ STRATA_TEST(box_array_equality_after_element_move_is_rejected)
     STRATA_CHECK(Contains(d, "cannot move out of 'a[0]'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_array_equality_after_element_drop_is_rejected)
@@ -2707,7 +2707,7 @@ STRATA_TEST(box_array_equality_after_element_drop_is_rejected)
     /* Same protection for drop(): the dropped slot is nulled, and the whole
        array is poisoned so element-derefing comparisons can't reach it. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -2727,7 +2727,7 @@ STRATA_TEST(box_array_equality_after_element_drop_is_rejected)
     STRATA_CHECK(Contains(d, "cannot move out of 'a[0]'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_array_equality_after_optional_element_move_is_allowed)
@@ -2736,7 +2736,7 @@ STRATA_TEST(box_array_equality_after_optional_element_move_is_allowed)
        the array: moving one out just leaves that slot empty, which is a
        valid optional state, so comparing the arrays afterwards is fine. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -2751,7 +2751,7 @@ STRATA_TEST(box_array_equality_after_optional_element_move_is_allowed)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_array_element_move_through_ref_param_is_rejected)
@@ -2759,7 +2759,7 @@ STRATA_TEST(box_array_element_move_through_ref_param_is_rejected)
     /* A ref-bound array's elements can't be moved out at all, so poisoning
        can't be laundered through an aliased parameter name. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -2781,7 +2781,7 @@ STRATA_TEST(box_array_element_move_through_ref_param_is_rejected)
     STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is bound as a ref"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static int g_handleSentinel;
@@ -2845,7 +2845,7 @@ STRATA_TEST(box_array_push_empty_literal_missing_owning_field_is_rejected)
        without that, no field check runs, codegen zero-fills the owning
        field, and the first deref of the null `^T` crashes at runtime. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Vec3 { float x; float y; float z; };\n"
@@ -2864,7 +2864,7 @@ STRATA_TEST(box_array_push_empty_literal_missing_owning_field_is_rejected)
     STRATA_CHECK(Contains(d, "owning field 'owned_value' of struct 'Owned' must be initialized"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_call_arg_empty_literal_missing_owning_field_is_rejected)
@@ -2872,7 +2872,7 @@ STRATA_TEST(box_call_arg_empty_literal_missing_owning_field_is_rejected)
     /* Same gap on plain calls: a braced arg typed from its parameter must
        still report uninitialized owning fields. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Vec3 { float x; float y; float z; };\n"
@@ -2891,7 +2891,7 @@ STRATA_TEST(box_call_arg_empty_literal_missing_owning_field_is_rejected)
     STRATA_CHECK(Contains(d, "owning field 'owned_value' of struct 'Owned' must be initialized"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(box_array_push_braced_literal_initializes_owning_field)
@@ -2935,7 +2935,7 @@ STRATA_TEST(box_array_push_braced_literal_initializes_owning_field)
     /* Empty `{}` into a `T?` field of a nested literal is legal (empty
        optional), even though `Link` has an owning `string` field. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Vec3 { float x; float y; float z; };\n"
@@ -2950,7 +2950,7 @@ STRATA_TEST(box_array_push_braced_literal_initializes_owning_field)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Loop move-state soundness ---------------------------------------------

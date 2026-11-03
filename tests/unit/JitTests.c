@@ -99,7 +99,7 @@ STRATA_TEST(jit_runs_float_function)
 STRATA_TEST(aot_emits_native_object_file)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int add(int a, int b) { return a + b; }", &diag, &arena);
@@ -129,13 +129,13 @@ STRATA_TEST(aot_emits_native_object_file)
 
     BuiltModuleDispose(&bm);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(aot_emits_assembly_file)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int forty_two() { return 42; }", &diag, &arena);
@@ -165,7 +165,7 @@ STRATA_TEST(aot_emits_assembly_file)
 
     BuiltModuleDispose(&bm);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 #endif
 

@@ -193,7 +193,7 @@ static bool FieldTypeIsOwning(const TypeRegistry* reg, Arena* scratch, const Typ
         }
 
         TypeName parsed = TypeNameParse(scratch, ft->underlyingType);
-        TypeName* next = (TypeName*)arena_alloc(scratch, sizeof(TypeName));
+        TypeName* next = (TypeName*)ArenaAlloc(scratch, sizeof(TypeName));
         *next = parsed;
         t = next;
     }
@@ -336,7 +336,7 @@ static void TypeRegistryAddBuiltinHandles(TypeRegistry* reg)
 static void TypeRegistryComputeOwning(TypeRegistry* reg)
 {
     Arena scratch;
-    arena_init(&scratch, 1024);
+    ArenaInit(&scratch, 1024);
 
     bool changed = true;
 
@@ -367,7 +367,7 @@ static void TypeRegistryComputeOwning(TypeRegistry* reg)
         }
     }
 
-    arena_free(&scratch);
+    ArenaFree(&scratch);
 }
 
 void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
@@ -814,7 +814,7 @@ void ComputeAllLayouts(TypeRegistry* reg)
 {
     unsigned char* state = (unsigned char*)calloc(reg->count ? reg->count : 1, 1);
     Arena scratch;
-    arena_init(&scratch, 1024);
+    ArenaInit(&scratch, 1024);
 
     for (size_t i = 0; i < reg->count; i++)
     {
@@ -824,7 +824,7 @@ void ComputeAllLayouts(TypeRegistry* reg)
         }
     }
 
-    arena_free(&scratch);
+    ArenaFree(&scratch);
     free(state);
 }
 

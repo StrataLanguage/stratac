@@ -13,7 +13,7 @@
 STRATA_TEST(parser_extern_struct_with_fieldoffset_and_fixed_arrays)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("extern struct Header {\n"
@@ -44,13 +44,13 @@ STRATA_TEST(parser_extern_struct_with_fieldoffset_and_fixed_arrays)
     STRATA_CHECK(strcmp(f3->type.name, "float[4]") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_fixed_array_dimension_order_matches_c)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct M { int[2][6] grid; };\n", &diag, &arena);
@@ -68,33 +68,33 @@ STRATA_TEST(parser_fixed_array_dimension_order_matches_c)
     STRATA_CHECK(strcmp(f->type.elem->name, "int[6]") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_fieldoffset_only_in_extern_struct)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseModule("struct S { fieldoffset(4) int x; };", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_extern_struct_requires_body)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseModule("extern struct Ghost;", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* -- Sema restrictions -------------------------------------------------- */
@@ -237,7 +237,7 @@ STRATA_TEST(sema_whole_fixed_field_assignment_rejected)
 STRATA_TEST(registry_layout_offsets_pads_and_size)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("extern struct L2 {\n"
@@ -287,7 +287,7 @@ STRATA_TEST(registry_layout_offsets_pads_and_size)
 
     TypeRegistryFree(&reg);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* -- Emitted layout (IR + C text) ---------------------------------------- */
@@ -505,7 +505,7 @@ typedef struct
 STRATA_TEST(registry_layout_alias_enum_and_tail_padding)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule(LAYOUT_DECLS, &diag, &arena);
@@ -561,7 +561,7 @@ STRATA_TEST(registry_layout_alias_enum_and_tail_padding)
 
     TypeRegistryFree(&reg);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(emit_ir_layout_alias_enum_and_tail_pad)

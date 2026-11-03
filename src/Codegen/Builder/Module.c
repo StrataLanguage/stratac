@@ -28,12 +28,12 @@ static void DeclareImplProperties(Builder* b, const Module* module)
         for (size_t j = 0; j < impl->properties.count; j++)
         {
             PropertyDecl* prop = (PropertyDecl*)VecGet(&impl->properties, j);
-            ImplPropEntry* entry = (ImplPropEntry*)arena_alloc(b->m_arena, sizeof(ImplPropEntry));
+            ImplPropEntry* entry = (ImplPropEntry*)ArenaAlloc(b->m_arena, sizeof(ImplPropEntry));
             entry->decl = prop;
             entry->getter = FindModuleFunction(module, prop->getterSymbol);
             entry->setter = FindModuleFunction(module, prop->setterSymbol);
 
-            StrMapPut(&b->m_implProps, arena_format(b->m_arena, "%s.%s", impl->handleName, prop->name), entry);
+            StrMapPut(&b->m_implProps, ArenaFormat(b->m_arena, "%s.%s", impl->handleName, prop->name), entry);
         }
     }
 }
@@ -52,7 +52,7 @@ static void DeclareStructTypes(Builder* b)
         }
         else
         {
-            char* irName = arena_format(b->m_arena, "struct.%s", st->name);
+            char* irName = ArenaFormat(b->m_arena, "struct.%s", st->name);
             LLVMTypeRef ty = LLVMStructCreateNamed(b->m_ctx, irName);
             StrMapPut(&b->m_structTypes, st->name, (void*)ty);
         }
@@ -69,7 +69,7 @@ static void DefineStructBody(Builder* b, StructType* st)
 
     if (memberCount > 0)
     {
-        members = (LLVMTypeRef*)arena_alloc(b->m_arena, memberCount * sizeof(LLVMTypeRef));
+        members = (LLVMTypeRef*)ArenaAlloc(b->m_arena, memberCount * sizeof(LLVMTypeRef));
     }
 
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
@@ -144,7 +144,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
         ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
         StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
-        Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+        Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
         sym->value = NULL; /* no static address any more; see GlobalFieldPtr */
         sym->typeDesc = typeDesc;
         StrMapPut(&b->m_globals, gd->name, sym);
@@ -177,7 +177,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
         ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
         StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
-        Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+        Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
         sym->value = NULL;
         sym->typeDesc = typeDesc;
         StrMapPut(&b->m_globals, gd->name, sym);
@@ -213,7 +213,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
         LLVMValueRef constant = TypeDescIsFloat(&typeDesc) ? LLVMConstReal(typeDesc.type, castVal.f)
                                                            : ConstIntTrunc(typeDesc.type, castVal.i);
 
-        ConstValueSlot* cs = (ConstValueSlot*)arena_alloc(b->m_arena, sizeof(ConstValueSlot));
+        ConstValueSlot* cs = (ConstValueSlot*)ArenaAlloc(b->m_arena, sizeof(ConstValueSlot));
         cs->civ = castVal;
         cs->td = typeDesc;
         cs->constant = constant;
@@ -228,7 +228,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
     ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
     StrMapPut(&b->m_globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
-    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
     sym->value = NULL;
     sym->typeDesc = typeDesc;
     StrMapPut(&b->m_globals, gd->name, sym);
@@ -246,7 +246,7 @@ static void DeclareGlobals(Builder* b, const Module* module)
 
     if (module->globals.count > 0)
     {
-        ctxFieldTypes = (LLVMTypeRef*)arena_alloc(b->m_arena, module->globals.count * sizeof(LLVMTypeRef));
+        ctxFieldTypes = (LLVMTypeRef*)ArenaAlloc(b->m_arena, module->globals.count * sizeof(LLVMTypeRef));
     }
 
     for (size_t i = 0; i < module->globals.count; i++)

@@ -434,7 +434,7 @@ static const TypeName* InferArrayInitType(Resolver* r, Node* n, StrMap* scope)
 {
     const ArrayInitExpr* ai = (const ArrayInitExpr*)n;
 
-    return ai->elementType ? InternTypeName(r, arena_format(r->m_arena, "%s[]", ai->elementType->name)) : NULL;
+    return ai->elementType ? InternTypeName(r, ArenaFormat(r->m_arena, "%s[]", ai->elementType->name)) : NULL;
 }
 
 static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)

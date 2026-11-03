@@ -12,7 +12,7 @@
 STRATA_TEST(scope_sibling_if_blocks_do_not_share_locals)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -35,13 +35,13 @@ STRATA_TEST(scope_sibling_if_blocks_do_not_share_locals)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_then_local_not_visible_in_else)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -61,13 +61,13 @@ STRATA_TEST(scope_then_local_not_visible_in_else)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_block_local_not_visible_after_block)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -84,14 +84,14 @@ STRATA_TEST(scope_block_local_not_visible_after_block)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_inner_block_can_read_outer_local)
 {
     // Sanity: nesting must still work - inner blocks see outer locals.
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -110,7 +110,7 @@ STRATA_TEST(scope_inner_block_can_read_outer_local)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_sibling_blocks_may_reuse_a_name)
@@ -118,7 +118,7 @@ STRATA_TEST(scope_sibling_blocks_may_reuse_a_name)
     // Same name in adjacent blocks is fine: the first is gone when the
     // second is declared.
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -139,14 +139,14 @@ STRATA_TEST(scope_sibling_blocks_may_reuse_a_name)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_shadowing_outer_is_an_error)
 {
     // No shadowing: redeclaring a visible outer name is a redefinition.
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -162,13 +162,13 @@ STRATA_TEST(scope_shadowing_outer_is_an_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_same_block_redeclare_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry()\n"
@@ -180,13 +180,13 @@ STRATA_TEST(scope_same_block_redeclare_is_an_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_for_header_var_does_not_leak)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry()\n"
@@ -199,13 +199,13 @@ STRATA_TEST(scope_for_header_var_does_not_leak)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_while_body_var_does_not_leak)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(int c)\n"
@@ -223,7 +223,7 @@ STRATA_TEST(scope_while_body_var_does_not_leak)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_sibling_reuse_runs_correctly)
@@ -267,7 +267,7 @@ STRATA_TEST(scope_sibling_reuse_runs_correctly)
 STRATA_TEST(scope_param_shadowing_global_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int g = 1;\n"
@@ -275,17 +275,17 @@ STRATA_TEST(scope_param_shadowing_global_is_an_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scope_duplicate_params_are_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int h(int x, int x) { return x; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

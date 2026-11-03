@@ -33,7 +33,7 @@ extern "C"
     // resolver (if any) so `import` directives are routed to it.
     void InitModuleLoader(Arena* arena, DiagnosticEngine* diag, ModuleLoader* loader, StrataCompiler* c)
     {
-        arena_init(arena, 0);
+        ArenaInit(arena, 0);
         DiagnosticEngineInit(diag);
         ModuleLoaderInit(loader, arena, diag);
         ModuleLoaderSetResolver(loader, c->importResolver, c->importResolverUserData);
@@ -46,7 +46,7 @@ extern "C"
         AstDispose((Node*)mod);
         ModuleLoaderDispose(loader);
         DiagnosticEngineFree(diag);
-        arena_free(arena);
+        ArenaFree(arena);
     }
 
     /* Symbols the runtime (or the generated module itself) defines. A user

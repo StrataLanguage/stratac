@@ -81,17 +81,17 @@ static const char* EqHelperKey(Builder* b, const TypeDesc* td)
     if (TypeDescIsFixedArray(td))
     {
         TypeDesc elemTd = Resolve(b, td->arrayInner);
-        return arena_format(b->m_arena, "%s[%ld]", EqHelperKey(b, &elemTd), td->fixedLength);
+        return ArenaFormat(b->m_arena, "%s[%ld]", EqHelperKey(b, &elemTd), td->fixedLength);
     }
 
     if (TypeDescHasArrayShape(td))
     {
         TypeDesc elemTd = Resolve(b, td->arrayInner);
-        return arena_format(b->m_arena, "%s[]", EqHelperKey(b, &elemTd));
+        return ArenaFormat(b->m_arena, "%s[]", EqHelperKey(b, &elemTd));
     }
 
     char* printed = LLVMPrintTypeToString(td->type);
-    char* key = arena_strdup(b->m_arena, printed);
+    char* key = ArenaStrdup(b->m_arena, printed);
     LLVMDisposeMessage(printed);
     return key;
 }
@@ -102,7 +102,7 @@ static const char* EqHelperKey(Builder* b, const TypeDesc* td)
 static const char* EqHelperName(Builder* b, const char* key)
 {
     size_t n = strlen(key);
-    char* out = (char*)arena_alloc(b->m_arena, n + 1);
+    char* out = (char*)ArenaAlloc(b->m_arena, n + 1);
 
     for (size_t i = 0; i < n; i++)
     {
@@ -112,7 +112,7 @@ static const char* EqHelperName(Builder* b, const char* key)
     }
 
     out[n] = '\0';
-    return arena_format(b->m_arena, "strata_eq_%s", out);
+    return ArenaFormat(b->m_arena, "strata_eq_%s", out);
 }
 
 /* Compares `byteLen` bytes at aPtr/bPtr (memcmp semantics); branches to
@@ -436,7 +436,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
 LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td, bool externBoxCtx)
 {
     const char* baseKey = EqHelperKey(b, td);
-    const char* key = externBoxCtx ? arena_format(b->m_arena, "%s!x", baseKey) : baseKey;
+    const char* key = externBoxCtx ? ArenaFormat(b->m_arena, "%s!x", baseKey) : baseKey;
 
     LLVMValueRef fn = (LLVMValueRef)StrMapGet(&b->m_eqHelpers, key);
 

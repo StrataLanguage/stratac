@@ -265,13 +265,13 @@ void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
         LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
     }
 
-    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
     sym->value = slot;
     sym->typeDesc = typeDesc;
 
     SymDeclare(b, varDecl->name, sym);
 
-    OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+    OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
     ol->slot = slot;
     ol->td = typeDesc;
     VecPush(&b->m_owningLocals, ol);

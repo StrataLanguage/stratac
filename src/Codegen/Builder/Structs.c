@@ -188,7 +188,7 @@ LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
 
     LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy}; /* (value, context) */
     LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 2, 0);
-    char* fnName = arena_format(b->m_arena, "__strata_drop_%s", structName);
+    char* fnName = ArenaFormat(b->m_arena, "__strata_drop_%s", structName);
     LLVMValueRef fn = LLVMAddFunction(b->m_mod, fnName, fnTy);
     LLVMSetLinkage(fn, LLVMInternalLinkage);
 
@@ -303,7 +303,7 @@ LLVMValueRef GetOrCreateStructCopyFn(Builder* b, const char* structName)
 
     LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
     LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 2, 0);
-    char* fnName = arena_format(b->m_arena, "__strata_copy_%s", structName);
+    char* fnName = ArenaFormat(b->m_arena, "__strata_copy_%s", structName);
     LLVMValueRef fn = LLVMAddFunction(b->m_mod, fnName, fnTy);
     LLVMSetLinkage(fn, LLVMInternalLinkage);
 

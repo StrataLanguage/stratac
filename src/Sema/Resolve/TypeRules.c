@@ -42,7 +42,7 @@ const TypeName* InternTypeName(Resolver* r, const char* name)
         return cached;
     }
 
-    TypeName* t = (TypeName*)arena_alloc(r->m_arena, sizeof(TypeName));
+    TypeName* t = (TypeName*)ArenaAlloc(r->m_arena, sizeof(TypeName));
     *t = TypeNameParse(r->m_arena, name);
     StrMapPut(&r->m_typeCache, t->name, t);
 

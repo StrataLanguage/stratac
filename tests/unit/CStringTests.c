@@ -30,12 +30,12 @@ static bool Rejects(const char* src)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     ParseAndResolve(src, &diag, &arena);
 
     bool bad = DiagHasErrors(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     DiagnosticEngineFree(&diag);
     return bad;
 }

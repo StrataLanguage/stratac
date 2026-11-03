@@ -424,7 +424,7 @@ static const char* PlaceKey(const Env* env, const Node* n)
 {
     char buf[256];
     const char* root;
-    return FactPlaceOf(n, buf, sizeof(buf), &root) ? arena_strdup(env->arena, buf) : "<expression>";
+    return FactPlaceOf(n, buf, sizeof(buf), &root) ? ArenaStrdup(env->arena, buf) : "<expression>";
 }
 
 /* Reports a read of the optional `value` that lacks the proof. `k` is its fact, if it has one. */
@@ -439,7 +439,7 @@ static void ReportUnproven(const Env* env, const unsigned char* f, Found* found,
 
     if (strict)
     {
-        name = arena_strdup(env->arena, buf);
+        name = ArenaStrdup(env->arena, buf);
     }
     else if (PlaceKeyImpl(value, buf, sizeof(buf), &root, true))
     {
@@ -452,7 +452,7 @@ static void ReportUnproven(const Env* env, const unsigned char* f, Found* found,
             q = strstr(q, "[?]");
         }
 
-        name = arena_strdup(env->arena, buf);
+        name = ArenaStrdup(env->arena, buf);
     }
 
     MoveDiag* d = ReportAs(found, MoveDiagNarrow, range, name);

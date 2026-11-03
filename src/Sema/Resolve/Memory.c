@@ -402,7 +402,7 @@ static bool ResolveStoreBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!c->typeArg)
     {
-        c->typeArg = (TypeName*)arena_dup(r->m_arena, valueType, sizeof(TypeName));
+        c->typeArg = (TypeName*)ArenaDup(r->m_arena, valueType, sizeof(TypeName));
     }
 
     c->isIntrinsicCall = true;

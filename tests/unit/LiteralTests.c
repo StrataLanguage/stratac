@@ -52,9 +52,9 @@ STRATA_TEST(literal_string_longer_than_64k)
     SbPuts(&sb, "\"; return (int)s.length - 69990; }\n");
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     STRATA_CHECK_EQ(RunEntry(SbFinish(&sb, &arena)), 10);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(literal_leading_zero_is_decimal_at_runtime)
@@ -86,7 +86,7 @@ static char* Diagnose(const char* src, Arena* arena)
 
     SourceManager sm;
     SourceManagerInit(&sm);
-    char* d = DiagHasErrors(&diag) ? DiagFormat(&diag, &sm, 1, arena) : arena_strdup(arena, "");
+    char* d = DiagHasErrors(&diag) ? DiagFormat(&diag, &sm, 1, arena) : ArenaStrdup(arena, "");
     DiagnosticEngineFree(&diag);
 
     return d;
@@ -113,7 +113,7 @@ STRATA_TEST(literal_char_is_a_byte_constant)
 STRATA_TEST(literal_char_malformed_is_one_error_each)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(Contains(Diagnose("int entry() { byte a = ''; return 0; }\n", &arena), "empty character literal"));
     STRATA_CHECK(Contains(Diagnose("int entry() { byte a = 'ab'; return 0; }\n", &arena), "holds one byte"));
@@ -123,7 +123,7 @@ STRATA_TEST(literal_char_malformed_is_one_error_each)
         Contains(Diagnose("int entry() { byte a = 'x\n; return 0; }\n", &arena), "unterminated character literal"));
     STRATA_CHECK(!Contains(Diagnose("int entry() { byte a = 'ab'; return 0; }\n", &arena), "expected an expression"));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(handle_is_a_keyword_only_where_a_handle_declaration_starts)
@@ -138,10 +138,10 @@ STRATA_TEST(handle_is_a_keyword_only_where_a_handle_declaration_starts)
         13);
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     STRATA_CHECK(Contains(Diagnose("struct handle { int x; };\nint entry() { return 0; }\n", &arena),
                           "'handle' cannot name a type"));
     STRATA_CHECK(
         Contains(Diagnose("handle handle;\nint entry() { return 0; }\n", &arena), "'handle' cannot name a type"));
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

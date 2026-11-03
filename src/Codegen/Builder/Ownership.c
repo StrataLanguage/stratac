@@ -6,7 +6,7 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
 
 LLVMValueRef SharedDummyAddr(Builder* b, TypeDesc td)
 {
-    char* gName = arena_format(b->m_arena, ".oob.zero.%d", b->m_strLitCount++);
+    char* gName = ArenaFormat(b->m_arena, ".oob.zero.%d", b->m_strLitCount++);
     LLVMValueRef g = LLVMAddGlobal(b->m_mod, td.type, gName);
     LLVMSetInitializer(g, LLVMConstNull(td.type));
     LLVMSetLinkage(g, LLVMPrivateLinkage);
@@ -338,7 +338,7 @@ const TempPart* FindTempPart(Builder* b, const Node* node)
 
 static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDesc td, StackMark tempIdx)
 {
-    TempPart* tp = (TempPart*)arena_alloc(b->m_arena, sizeof(TempPart));
+    TempPart* tp = (TempPart*)ArenaAlloc(b->m_arena, sizeof(TempPart));
     tp->node = node;
     tp->addr = addr;
     tp->td = td;
@@ -418,7 +418,7 @@ LLVMValueRef ClaimTemp(Builder* b, Value src)
         LLVMValueRef slot = EntryAllocaZeroed(b, src.typeDesc.type, "tmp");
         LLVMBuildStore(b->m_builder, src.value, slot);
 
-        OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+        OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
         ol->slot = slot;
         ol->td = src.typeDesc;
         ol->stackBuffer = false;
@@ -443,7 +443,7 @@ LLVMValueRef ParkTemp(Builder* b, Value v)
     LLVMValueRef slot = EntryAllocaZeroed(b, v.typeDesc.type, "tmp");
     LLVMBuildStore(b->m_builder, v.value, slot);
 
-    OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+    OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
     ol->slot = slot;
     ol->td = v.typeDesc;
     ol->stackBuffer = false;

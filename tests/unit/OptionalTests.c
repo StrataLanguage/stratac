@@ -103,7 +103,7 @@ STRATA_TEST(optional_extern_param_and_return_abi)
 STRATA_TEST(optional_plain_owning_struct_local_is_illegal)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Weapon { string name; };\n"
@@ -117,13 +117,13 @@ STRATA_TEST(optional_plain_owning_struct_local_is_illegal)
     STRATA_CHECK(Contains(d, "instances of 'Weapon' must be boxed (i.e, '^Weapon')."));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_empty_literal_with_string_field_is_illegal)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Weapon { string name; };\n"
@@ -137,7 +137,7 @@ STRATA_TEST(optional_empty_literal_with_string_field_is_illegal)
     STRATA_CHECK(Contains(d, "owning field 'name' of struct 'Weapon' must be initialized"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_empty_string_field_init_runs_and_owns)
@@ -179,7 +179,7 @@ STRATA_TEST(optional_empty_string_field_init_runs_and_owns)
 STRATA_TEST(optional_missing_box_field_init_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Weapon { string? name; int dmg; };\n"
@@ -194,13 +194,13 @@ STRATA_TEST(optional_missing_box_field_init_is_an_error)
     STRATA_CHECK(Contains(d, "owning field 'w' of struct 'Inv' must be initialized"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_field_may_be_omitted_in_init)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Model { string name; };\n"
@@ -210,13 +210,13 @@ STRATA_TEST(optional_field_may_be_omitted_in_init)
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_local_need_not_be_initialized)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Model { string name; };\n"
@@ -226,7 +226,7 @@ STRATA_TEST(optional_local_need_not_be_initialized)
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Sema: null test operator ------------------------------------------ */
@@ -234,7 +234,7 @@ STRATA_TEST(optional_local_need_not_be_initialized)
 STRATA_TEST(optional_null_test_on_non_optional_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() { int x = 5; if (x?) { } return 0; }\n", &diag, &arena);
@@ -246,13 +246,13 @@ STRATA_TEST(optional_null_test_on_non_optional_is_an_error)
     STRATA_CHECK(Contains(d, "'?' test requires a nullable type"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_read_without_narrowing_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Model { string name; };\n"
@@ -267,7 +267,7 @@ STRATA_TEST(optional_read_without_narrowing_is_an_error)
     STRATA_CHECK(Contains(d, "has not been blessed"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_nested_test_requires_parent_fact)
@@ -275,7 +275,7 @@ STRATA_TEST(optional_nested_test_requires_parent_fact)
     /* Testing `w.model?` on an unproven optional `w` is rejected: the test
        itself would dereference an empty box to reach the field. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Model { string name; };\n"
@@ -290,13 +290,13 @@ STRATA_TEST(optional_nested_test_requires_parent_fact)
     STRATA_CHECK(Contains(d, "'w' has not been blessed"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_write_through_unproven_path_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Model { string name; };\n"
@@ -311,13 +311,13 @@ STRATA_TEST(optional_write_through_unproven_path_is_an_error)
     STRATA_CHECK(Contains(d, "has not been blessed"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_narrowed_inside_if_and_dead_after)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -333,10 +333,10 @@ STRATA_TEST(optional_narrowed_inside_if_and_dead_after)
     STRATA_CHECK(ok != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* ...but the fact does not survive past a conservative join. */
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Model { string name; };\n"
                     "struct Weapon { Model? model; };\n"
@@ -348,13 +348,13 @@ STRATA_TEST(optional_narrowed_inside_if_and_dead_after)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_definite_reassignment_establishes_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Model { string name; int v; };\n"
@@ -372,7 +372,7 @@ STRATA_TEST(optional_definite_reassignment_establishes_fact)
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Definitely-empty facts (else branch) ------------------------------- */
@@ -382,7 +382,7 @@ STRATA_TEST(optional_else_branch_reports_definitely_empty)
     /* Inside the else of `if (w?)`, reading through `w` gets the sharper
        "is definitely empty" diagnostic rather than "has not been blessed". */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Model { int v; };\n"
@@ -402,7 +402,7 @@ STRATA_TEST(optional_else_branch_reports_definitely_empty)
     STRATA_CHECK(Contains(d, "'w' is definitely empty"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_initialized_declaration_establishes_fact)
@@ -410,7 +410,7 @@ STRATA_TEST(optional_initialized_declaration_establishes_fact)
     /* `Weapon? w = Weapon {};` proves `w` non-empty for everything after -
        testing a field through it needs no outer `if (w?)`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Model { int v; };\n"
@@ -424,7 +424,7 @@ STRATA_TEST(optional_initialized_declaration_establishes_fact)
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_assignment_inside_else_clears_empty_fact)
@@ -432,7 +432,7 @@ STRATA_TEST(optional_assignment_inside_else_clears_empty_fact)
     /* Assigning in the else block re-proves the path: reads after the
        assignment are legal even though we entered via "definitely empty". */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Model { int v; };\n"
@@ -451,7 +451,7 @@ STRATA_TEST(optional_assignment_inside_else_clears_empty_fact)
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_empty_fact_does_not_escape_else)
@@ -459,7 +459,7 @@ STRATA_TEST(optional_empty_fact_does_not_escape_else)
     /* Past the if/else join the path is merely unproven again - assigning
        in the OTHER branch is what makes the lazy-init join work. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -475,11 +475,11 @@ STRATA_TEST(optional_empty_fact_does_not_escape_else)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* ...but with an assignment in the else, BOTH branches prove it and
        the lazy-init idiom joins to a non-empty fact. */
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Model { int v; };\n"
                                   "struct Weapon { Model? model; };\n"
@@ -493,7 +493,7 @@ STRATA_TEST(optional_empty_fact_does_not_escape_else)
     STRATA_CHECK(mod != NULL);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_jit_lazy_init_join_runs)
@@ -655,19 +655,19 @@ static bool OptDerefRejected(const char* src, const char* needle, Arena* arena)
 STRATA_TEST(optional_deref_as_extern_string_arg_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("extern int puts(string s);\n"
                                   "int entry() { string? s; puts(s); return 0; }\n",
                                   "'s' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_as_plain_param_arg_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
@@ -684,77 +684,77 @@ STRATA_TEST(optional_deref_as_plain_param_arg_requires_fact)
 
     DiagnosticEngineFree(&diag);
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_in_c_vararg_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("extern int printf(string fmt, ...);\n"
                                   "int entry() { string? s; printf(\"%s\", s); return 0; }\n",
                                   "'s' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_on_return_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("string f() { string? s; return s; }\n", "'s' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_on_assignment_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* plain string target */
     STRATA_CHECK(OptDerefRejected("int entry() { string? s; string t = \"x\"; t = s; return 0; }\n",
                                   "'s' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_content_assign_into_box_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "int entry() { Weapon? w; ^Weapon b = Weapon { .dmg = 1 }; b = w; return 0; }\n",
                                   "'w' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_array_push_element_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "int entry() { Weapon[] arr; Weapon? v; array_push(arr, v); return 0; }\n",
                                   "'v' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_deref_struct_field_requires_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Holder { string name; };\n"
                                   "int entry() { string? s; Holder h = Holder { .name = s }; return 0; }\n",
                                   "'s' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_narrowed_derefs_are_legal)
@@ -802,7 +802,7 @@ STRATA_TEST(optional_negated_test_else_proves_non_empty)
 {
     /* The exact idiom: else of `if (!s?)` may read through the optional. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
@@ -816,19 +816,19 @@ STRATA_TEST(optional_negated_test_else_proves_non_empty)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_negated_test_then_is_definitely_empty)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("extern int puts(string s);\n"
                                   "int entry() { string? s; if (!s?) { puts(s); } return 0; }\n",
                                   "'s' is definitely empty", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_negated_implicit_else_lazy_init)
@@ -898,7 +898,7 @@ STRATA_TEST(optional_else_return_keeps_then_fact_at_join)
     /* The else arm terminates: only the (blessed) then path reaches the
        join, so the fact survives without intersecting with the dead else. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
@@ -913,7 +913,7 @@ STRATA_TEST(optional_else_return_keeps_then_fact_at_join)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Facts across loops and `ref` borrows ---------------------------------
@@ -984,7 +984,7 @@ STRATA_TEST(optional_ref_slot_param_still_kills_fact)
     /* A `ref T?` param crosses the slot itself: the callee may rebind it,
        so the blessing dies at the call. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct E { int v; };\n"
                                   "extern void Rebind(ref E? slot);\n"
@@ -995,7 +995,7 @@ STRATA_TEST(optional_ref_slot_param_still_kills_fact)
                                   "}\n",
                                   "'e' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_positive_while_cond_is_empty_after_loop)
@@ -1003,7 +1003,7 @@ STRATA_TEST(optional_positive_while_cond_is_empty_after_loop)
     /* `while (e?)` exits when e is empty: reading through it afterwards
        must still be rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct E { int v; };\n"
                                   "int entry() {\n"
@@ -1013,7 +1013,7 @@ STRATA_TEST(optional_positive_while_cond_is_empty_after_loop)
                                   "}\n",
                                   "'e'", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_loop_reassign_from_unprovable_kills_fact)
@@ -1021,7 +1021,7 @@ STRATA_TEST(optional_loop_reassign_from_unprovable_kills_fact)
     /* Reassigning the slot inside the loop (maybe-empty result) invalidates
        the pre-loop blessing at the exit. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct E { int v; };\n"
                                   "E? Make() { E? r = E { .v = 1 }; return r; }\n"
@@ -1034,7 +1034,7 @@ STRATA_TEST(optional_loop_reassign_from_unprovable_kills_fact)
                                   "}\n",
                                   "'e' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_return_braced_init_boxes_inner_struct)
@@ -1078,19 +1078,19 @@ STRATA_TEST(optional_return_braced_init_boxes_inner_struct)
 STRATA_TEST(optional_negated_while_body_sees_empty)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("extern int puts(string s);\n"
                                   "int entry() { string? s = \"x\"; while (!s?) { puts(s); s = \"y\"; } return 0; }\n",
                                   "'s' is definitely empty", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_double_negation_matches_positive)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
@@ -1103,7 +1103,7 @@ STRATA_TEST(optional_double_negation_matches_positive)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- copy() with optionals ------------------------------------------------
@@ -1307,7 +1307,7 @@ STRATA_TEST(copy_of_array_of_optionals)
 STRATA_TEST(copy_of_non_owning_value_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() { int x = 42; int y = copy(x); return y; }\n", &diag, &arena);
@@ -1319,7 +1319,7 @@ STRATA_TEST(copy_of_non_owning_value_is_error)
     STRATA_CHECK(Contains(d, "'copy' expects an owning type"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Index-precise narrowing facts ----------------------------------------
@@ -1333,7 +1333,7 @@ STRATA_TEST(narrowed_element_fact_is_index_precise)
 {
     /* The motivating bug: proving arr[0] must NOT prove arr[9]. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("extern int puts(string s);\n"
                                   "struct Node { string str; Node? next; };\n"
@@ -1347,7 +1347,7 @@ STRATA_TEST(narrowed_element_fact_is_index_precise)
                                   "}\n",
                                   "'a[9].next' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_same_index_runs)
@@ -1426,7 +1426,7 @@ STRATA_TEST(narrowed_element_variable_index_runs)
 STRATA_TEST(narrowed_element_index_mutation_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "int entry() {\n"
@@ -1441,13 +1441,13 @@ STRATA_TEST(narrowed_element_index_mutation_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_index_ref_pass_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "void bump(ref uint n) { n = n + 1; }\n"
@@ -1463,7 +1463,7 @@ STRATA_TEST(narrowed_element_index_ref_pass_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_arithmetic_index_runs)
@@ -1513,7 +1513,7 @@ STRATA_TEST(narrowed_element_arithmetic_index_runs)
 STRATA_TEST(narrowed_element_arithmetic_index_mutation_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Same test, then the index variable moves: the fact must die. */
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
@@ -1529,13 +1529,13 @@ STRATA_TEST(narrowed_element_arithmetic_index_mutation_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_index_spelling_mismatch_is_unproven)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Equally-VALUED but differently-SPELLED indices are distinct keys:
        proving one must not prove the other (the compiler does not fold). */
@@ -1551,13 +1551,13 @@ STRATA_TEST(narrowed_element_index_spelling_mismatch_is_unproven)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_parenthesization_is_unambiguous)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* "(i+1)*2" and "i+1*2" evaluate differently; their spellings must
        differ so one can never prove the other. */
@@ -1573,7 +1573,7 @@ STRATA_TEST(narrowed_element_parenthesization_is_unambiguous)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_length_index_runs_and_push_invalidates)
@@ -1612,7 +1612,7 @@ STRATA_TEST(narrowed_element_length_index_runs_and_push_invalidates)
 STRATA_TEST(narrowed_element_length_index_push_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* push grows the length: "[rack.length - 1]" now names a different
        element, so the fact must die even though push preserves values. */
@@ -1628,13 +1628,13 @@ STRATA_TEST(narrowed_element_length_index_push_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_call_index_is_refused)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Calls have side effects and no stable spelling: never provable. This
        includes calls with arguments (`foo[some_call(5)]`) - the two
@@ -1663,7 +1663,7 @@ STRATA_TEST(narrowed_element_call_index_is_refused)
                                   "}\n",
                                   "not a constant or a trackable variable", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_call_index_materializes_into_local)
@@ -1754,7 +1754,7 @@ STRATA_TEST(nested_dependent_array_indexing_runs)
 STRATA_TEST(nested_dependent_array_index_precise_at_both_levels)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Proving items[0].nested[0] proves neither the other ITEM... */
     STRATA_CHECK(OptDerefRejected("struct Cell { int v; };\n"
@@ -1790,13 +1790,13 @@ STRATA_TEST(nested_dependent_array_index_precise_at_both_levels)
                                   "}\n",
                                   "'foo.items[0].nested[2]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(nested_dependent_array_index_var_mutation_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Mutating the OUTER index variable kills the fact... */
     STRATA_CHECK(OptDerefRejected("struct Cell { int v; };\n"
@@ -1836,7 +1836,7 @@ STRATA_TEST(nested_dependent_array_index_var_mutation_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(nested_dependent_array_variable_indices_run)
@@ -1928,7 +1928,7 @@ STRATA_TEST(nested_index_as_index_runs)
 STRATA_TEST(nested_index_as_index_source_write_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Writing an element of the INDEX SOURCE array changes what
         foo[other[bar]] evaluates to: the fact must die. */
@@ -1946,13 +1946,13 @@ STRATA_TEST(nested_index_as_index_source_write_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(nested_index_as_index_var_mutation_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "int entry() {\n"
@@ -1968,13 +1968,13 @@ STRATA_TEST(nested_index_as_index_var_mutation_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(nested_index_as_index_ref_source_pass_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Handing the index source to a callee by ref lets it rewrite the
         mapping: dependent facts die. */
@@ -1993,7 +1993,7 @@ STRATA_TEST(nested_index_as_index_ref_source_pass_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(two_d_optional_elements_narrow_per_element)
@@ -2037,7 +2037,7 @@ STRATA_TEST(two_d_optional_elements_narrow_per_element)
 STRATA_TEST(two_d_index_precision_at_both_levels)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     /* Proving grid[0][0] proves neither the other ROW... */
     STRATA_CHECK(OptDerefRejected("struct Cell { int v; };\n"
@@ -2065,13 +2065,13 @@ STRATA_TEST(two_d_index_precision_at_both_levels)
                                   "}\n",
                                   "'grid[0][2]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(two_d_index_var_mutation_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Cell { int v; };\n"
                                   "int entry() {\n"
@@ -2089,7 +2089,7 @@ STRATA_TEST(two_d_index_var_mutation_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(nested_dependent_array_element_move_poisons_source)
@@ -2099,7 +2099,7 @@ STRATA_TEST(nested_dependent_array_element_move_poisons_source)
        element type is inferred late, so this exercises the move marking
        that runs at inference time. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Cell { int v; };\n"
@@ -2119,7 +2119,7 @@ STRATA_TEST(nested_dependent_array_element_move_poisons_source)
     STRATA_CHECK(Contains(d, "'a' used after move"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(nested_member_through_optional_element_requires_proof)
@@ -2128,7 +2128,7 @@ STRATA_TEST(nested_member_through_optional_element_requires_proof)
        needs the element proven first - the `?` test's ancestor chain walks
        through index nodes. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Cell { int v; };\n"
                                   "struct Item { Cell?[] nested; };\n"
@@ -2144,7 +2144,7 @@ STRATA_TEST(nested_member_through_optional_element_requires_proof)
                                   "}\n",
                                   "'items[1]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* The mirror positive: prove the element, then the inner element. */
     {
@@ -2189,7 +2189,7 @@ STRATA_TEST(nested_member_through_optional_element_requires_proof)
 STRATA_TEST(narrowed_element_resize_invalidates)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "int entry() {\n"
@@ -2203,13 +2203,13 @@ STRATA_TEST(narrowed_element_resize_invalidates)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_global_fact_dies_across_call)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Weapon { int dmg; };\n"
                                   "Weapon? gw = Weapon { .dmg = 3 };\n"
@@ -2224,7 +2224,7 @@ STRATA_TEST(narrowed_global_fact_dies_across_call)
                                   "}\n",
                                   "has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(narrowed_element_survives_array_push)
@@ -2266,7 +2266,7 @@ STRATA_TEST(moving_out_of_an_element_is_an_error)
 {
     /* An element stays in its array: taking `rack[0]` by value is refused, whatever the index (decision 11). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Weapon { int dmg; };\n"
@@ -2287,7 +2287,7 @@ STRATA_TEST(moving_out_of_an_element_is_an_error)
     STRATA_CHECK(Contains(d, "cannot move out of 'rack[1]'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- `while (foo?)` condition narrowing -----------------------------------
@@ -2299,7 +2299,7 @@ STRATA_TEST(moving_out_of_an_element_is_an_error)
 STRATA_TEST(optional_while_condition_narrows_call_args)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int puts(string s);\n"
@@ -2317,19 +2317,19 @@ STRATA_TEST(optional_while_condition_narrows_call_args)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_while_fact_does_not_survive_loop)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("extern int puts(string s);\n"
                                   "int entry() { string? s = \"x\"; while (s?) { puts(s); } puts(s); return 0; }\n",
                                   "'s' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_jit_while_walk_passes_narrowed_arg)
@@ -2383,7 +2383,7 @@ STRATA_TEST(optional_rebind_from_unblessed_drops_fact)
     /* The readme_demo walkthrough: after `cur = cur.next` the condition's
        blessing is gone - reads through `cur` are rejected again. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct Cell { int n; Cell? next; };\n"
                                   "int entry() {\n"
@@ -2398,13 +2398,13 @@ STRATA_TEST(optional_rebind_from_unblessed_drops_fact)
                                   "}\n",
                                   "'cur' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_decl_from_unblessed_source_is_not_blessed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct W { int d; };\n"
                                   "int entry() {\n"
@@ -2414,13 +2414,13 @@ STRATA_TEST(optional_decl_from_unblessed_source_is_not_blessed)
                                   "}\n",
                                   "'b' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_field_rebind_from_unblessed_drops_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct M { int v; };\n"
                                   "struct W { M? m; };\n"
@@ -2432,7 +2432,7 @@ STRATA_TEST(optional_field_rebind_from_unblessed_drops_fact)
                                   "}\n",
                                   "'w.m' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_rebind_from_blessed_source_keeps_fact)
@@ -2530,7 +2530,7 @@ STRATA_TEST(optional_loop_read_before_in_body_bless_is_an_error)
     /* The early return blesses `e` for the rest of the body only; the read
        at the top of the FIRST iteration sees the unblessed entry state. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_FLOW_PRELUDE "int entry() {\n"
                                                    "  E? e = Make(0); int s = 0; int i = 0;\n"
@@ -2539,14 +2539,14 @@ STRATA_TEST(optional_loop_read_before_in_body_bless_is_an_error)
                                                    "}\n",
                                   "'e' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_loop_break_state_reaches_exit)
 {
     /* `break` leaves with `e` possibly empty: the post-loop read must see it. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_FLOW_PRELUDE "int entry(bool c, bool d) {\n"
                                                    "  E? e = E { .v = 1 };\n"
@@ -2555,14 +2555,14 @@ STRATA_TEST(optional_loop_break_state_reaches_exit)
                                                    "}\n",
                                   "'e' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_loop_condition_rechecked_every_iteration)
 {
     /* The condition runs again after the body emptied `e`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_FLOW_PRELUDE "int entry() {\n"
                                                    "  E? e = E { .v = 1 };\n"
@@ -2571,28 +2571,28 @@ STRATA_TEST(optional_loop_condition_rechecked_every_iteration)
                                                    "}\n",
                                   "'e' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_facts_do_not_leak_between_functions)
 {
     /* `a` blesses its own `e`; `b`'s unrelated `e` param is unproven. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("struct E { int v; };\n"
                                   "int a(E? e) { if (!e?) { return 0; } return e.v; }\n"
                                   "int b(E? e) { return e.v; }\n",
                                   "'e' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_loop_break_on_empty_keeps_body_fact)
 {
     /* `if (!e?) { break; }` leaves the loop: the rest of the body is blessed. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted(OPT_FLOW_PRELUDE "int entry(bool c) {\n"
                                                   "  E? e = Make(1); int s = 0;\n"
@@ -2601,14 +2601,14 @@ STRATA_TEST(optional_loop_break_on_empty_keeps_body_fact)
                                                   "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_negated_while_exit_proves_non_empty)
 {
     /* `while (!e?)` only exits once `e` is non-empty. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted(OPT_FLOW_PRELUDE "int entry() {\n"
                                                   "  E? e = Make(0);\n"
@@ -2617,7 +2617,7 @@ STRATA_TEST(optional_negated_while_exit_proves_non_empty)
                                                   "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_infinite_loop_exits_only_through_break)
@@ -2665,7 +2665,7 @@ STRATA_TEST(optional_infinite_loop_exits_only_through_break)
 STRATA_TEST(optional_element_write_clears_element_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "int entry() {\n"
                                                    "  E?[] a; array_push(a, Make(1));\n"
@@ -2674,14 +2674,14 @@ STRATA_TEST(optional_element_write_clears_element_fact)
                                                    "}\n",
                                   "'a[0]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_element_write_then_retest_is_accepted)
 {
     /* A plain (non-optional) value re-proves the element; a `T?` value needs a re-test. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted(OPT_PATH_PRELUDE "int entry() {\n"
                                                   "  E?[] a; array_push(a, Make(1)); array_push(a, Make(1));\n"
@@ -2692,13 +2692,13 @@ STRATA_TEST(optional_element_write_then_retest_is_accepted)
                                                   "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_box_contents_assign_clears_sub_path_facts)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "int entry() {\n"
                                                    "  ^H h = H { .f = Make(1) };\n"
@@ -2707,25 +2707,25 @@ STRATA_TEST(optional_box_contents_assign_clears_sub_path_facts)
                                                    "}\n",
                                   "'h.f' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_ref_struct_assign_clears_sub_path_facts)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE
                                   "int g(ref H h) { if (h.f?) { h = H{}; return h.f.v; } return 0; }\n",
                                   "'h.f' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_struct_replace_then_retest_is_accepted)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted(OPT_PATH_PRELUDE "int entry() {\n"
                                                   "  ^H h = H { .f = Make(1) };\n"
@@ -2735,14 +2735,14 @@ STRATA_TEST(optional_struct_replace_then_retest_is_accepted)
                                                   "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_mutable_ref_arg_clears_field_facts)
 {
     /* `ref H` is not itself optional, but the callee may empty `h.f`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "void clear(ref H h) { h.f = Make(0); }\n"
                                                    "int entry() {\n"
@@ -2752,13 +2752,13 @@ STRATA_TEST(optional_mutable_ref_arg_clears_field_facts)
                                                    "}\n",
                                   "'h.f' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_mutable_ref_array_arg_clears_element_facts)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "void clr(ref E?[] a) { a[0] = Make(0); }\n"
                                                    "int entry() {\n"
@@ -2768,13 +2768,13 @@ STRATA_TEST(optional_mutable_ref_array_arg_clears_element_facts)
                                                    "}\n",
                                   "'a[0]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_const_ref_arg_keeps_field_facts)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted(OPT_PATH_PRELUDE "int look(const ref H h) { return 0; }\n"
                                                   "int entry() {\n"
@@ -2784,14 +2784,14 @@ STRATA_TEST(optional_const_ref_arg_keeps_field_facts)
                                                   "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_move_through_unknown_index_clears_element_fact)
 {
     /* `E? x = a[pick()]` moves the element out (emptying it); pick() may be 0. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "int entry() {\n"
                                                    "  E?[] a; array_push(a, Make(1));\n"
@@ -2800,14 +2800,14 @@ STRATA_TEST(optional_move_through_unknown_index_clears_element_fact)
                                                    "}\n",
                                   "'a[0]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_move_through_other_index_var_clears_element_fact)
 {
     /* `i` and `j` may be equal at runtime: moving out of `a[j]` empties `a[i]`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "int entry(int i, int j) {\n"
                                                    "  E?[] a; array_push(a, Make(1));\n"
@@ -2816,13 +2816,13 @@ STRATA_TEST(optional_move_through_other_index_var_clears_element_fact)
                                                    "}\n",
                                   "'a[i]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_write_through_other_index_clears_element_fact)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected(OPT_PATH_PRELUDE "int entry(int j) {\n"
                                                    "  E?[] a; array_push(a, Make(1));\n"
@@ -2831,14 +2831,14 @@ STRATA_TEST(optional_write_through_other_index_clears_element_fact)
                                                    "}\n",
                                   "'a[0]' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_aliasing_index_read_or_distinct_write_keeps_fact)
 {
     /* Reading `a[j]` changes nothing, and `a[1]` can never be `a[0]`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted(OPT_PATH_PRELUDE "int entry(int i, int j) {\n"
                                                   "  E?[] a; array_push(a, Make(1)); array_push(a, Make(1));\n"
@@ -2849,7 +2849,7 @@ STRATA_TEST(optional_aliasing_index_read_or_distinct_write_keeps_fact)
                                                   "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Comparisons read through optionals ------------------------------------
@@ -2859,7 +2859,7 @@ STRATA_TEST(optional_aliasing_index_read_or_distinct_write_keeps_fact)
 STRATA_TEST(optional_compare_with_value_requires_blessing)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptDerefRejected("int entry() { int? p; if (p == 3) { return 1; } return 0; }\n",
                                   "'p' has not been blessed", &arena));
@@ -2870,13 +2870,13 @@ STRATA_TEST(optional_compare_with_value_requires_blessing)
     STRATA_CHECK(OptDerefRejected("int entry(int? p, int? q) { if (p < q) { return 1; } return 0; }\n",
                                   "'p' has not been blessed", &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_compare_blessed_or_null_aware_is_accepted)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted("int entry(int? p, int? q) {\n"
                                  "  int s = 0;\n"
@@ -2887,7 +2887,7 @@ STRATA_TEST(optional_compare_blessed_or_null_aware_is_accepted)
                                  "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(optional_compare_with_value_runs_when_blessed)
@@ -2925,7 +2925,7 @@ STRATA_TEST(optional_presence_operators_type_as_bool)
     /* `!o`, `o && k`, `o || k` and `if (o)` are presence tests (codegen);
        sema already types them as bool and needs no blessing for them. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     STRATA_CHECK(OptFlowAccepted("bool f(int? o, bool k) {\n"
                                  "  bool a = !o; bool b = o && k; bool c = o || k;\n"
@@ -2934,5 +2934,5 @@ STRATA_TEST(optional_presence_operators_type_as_bool)
                                  "}\n",
                                  &arena));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

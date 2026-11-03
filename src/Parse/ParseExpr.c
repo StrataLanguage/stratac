@@ -123,7 +123,7 @@ static bool IsAssignOp(TokKind k)
 
 char* ToOwned(Arena* arena, Str s)
 {
-    return arena_strndup(arena, s.data, s.len);
+    return ArenaStrndup(arena, s.data, s.len);
 }
 
 Node* ParseExpr(Parser* p)
@@ -570,7 +570,7 @@ Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName)
     StructInitExpr* init = AST_NEW(p->m_arena, StructInitExpr);
     init->base.kind = NodeStructInit;
     init->base.range = startTok.range;
-    init->typeName = typeName ? arena_strdup(p->m_arena, typeName) : NULL;
+    init->typeName = typeName ? ArenaStrdup(p->m_arena, typeName) : NULL;
     VecInit(&init->fields);
 
     Advance(p);
@@ -734,7 +734,7 @@ static Node* ParseFloatLiteral(Parser* p, Token token)
     }
 
     // Full spelling (no fixed-size buffer), so long literals are never truncated.
-    char* text = arena_strndup(p->m_arena, sv.data, sv.len);
+    char* text = ArenaStrndup(p->m_arena, sv.data, sv.len);
     double val = strtod(text, NULL);
 
     if (isinf(val))
@@ -825,13 +825,13 @@ static Node* ParseStrLiteral(Parser* p, Token token)
         StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
         node->base.kind = NodeStrLiteral;
         node->base.range = token.range;
-        node->value = arena_strndup(p->m_arena, "", 0);
+        node->value = ArenaStrndup(p->m_arena, "", 0);
         node->length = 0;
 
         return (Node*)node;
     }
 
-    char* raw = arena_strndup(p->m_arena, sv.data + 1, sv.len - 2);
+    char* raw = ArenaStrndup(p->m_arena, sv.data + 1, sv.len - 2);
 
     char* dst = raw;
     for (size_t i = 0; i < sv.len - 2; i++)
@@ -912,7 +912,7 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
                 call->base.range = token.range;
                 call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
                 call->isIntrinsicCall = false;
-                call->typeArg = (TypeName*)arena_dup(p->m_arena, &typeArg, sizeof(TypeName));
+                call->typeArg = (TypeName*)ArenaDup(p->m_arena, &typeArg, sizeof(TypeName));
                 VecInit(&call->args);
 
                 ParseCallArgs(p, call);

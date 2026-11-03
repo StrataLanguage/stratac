@@ -297,7 +297,7 @@ STRATA_TEST(missing_return_while_true_infinite_ok)
 static int DeferErrors(const char* src, const char* needle)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -312,7 +312,7 @@ static int DeferErrors(const char* src, const char* needle)
     }
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     return count > 0 && !hit ? -1 : count;
 }

@@ -10,7 +10,7 @@ LLVMValueRef EmitCStringLiteralPtr(Builder* b, const StrLiteral* literal)
     LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
     LLVMTypeRef strType = LLVMTypeOf(strConst);
 
-    char* gName = arena_format(b->m_arena, ".cstr.%d", b->m_strLitCount++);
+    char* gName = ArenaFormat(b->m_arena, ".cstr.%d", b->m_strLitCount++);
     LLVMValueRef global = LLVMAddGlobal(b->m_mod, strType, gName);
     LLVMSetInitializer(global, strConst);
     LLVMSetLinkage(global, LLVMPrivateLinkage);
@@ -241,7 +241,7 @@ LLVMValueRef EmptyStrConstant(Builder* b)
     char nul[1] = {0};
     LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, nul, 1, 0);
     LLVMTypeRef strType = LLVMTypeOf(strConst);
-    char* gName = arena_format(b->m_arena, ".oob.empty.%d", b->m_strLitCount++);
+    char* gName = ArenaFormat(b->m_arena, ".oob.empty.%d", b->m_strLitCount++);
     LLVMValueRef g = LLVMAddGlobal(b->m_mod, strType, gName);
     LLVMSetInitializer(g, strConst);
     LLVMSetLinkage(g, LLVMPrivateLinkage);
@@ -691,7 +691,7 @@ Value EmitStrLiteral(Builder* b, StrLiteral* literal)
     LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
     LLVMTypeRef strType = LLVMTypeOf(strConst);
 
-    char* gName = arena_format(b->m_arena, ".str.%d", b->m_strLitCount++);
+    char* gName = ArenaFormat(b->m_arena, ".str.%d", b->m_strLitCount++);
     LLVMValueRef global = LLVMAddGlobal(b->m_mod, strType, gName);
     LLVMSetInitializer(global, strConst);
     LLVMSetLinkage(global, LLVMPrivateLinkage);

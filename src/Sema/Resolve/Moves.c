@@ -12,14 +12,14 @@ bool IsBoxGlobalName(const Resolver* r, const char* name)
 static const char* KeyRoot(Arena* arena, const char* key)
 {
     const char* dot = strchr(key, '.');
-    const char* base = dot ? arena_strndup(arena, key, (size_t)(dot - key)) : key;
+    const char* base = dot ? ArenaStrndup(arena, key, (size_t)(dot - key)) : key;
 
     /* Drop the trailing bracket group (erased/var/literal). */
     const char* open = strrchr(base, '[');
 
     if (open)
     {
-        return arena_strndup(arena, base, (size_t)(open - base));
+        return ArenaStrndup(arena, base, (size_t)(open - base));
     }
 
     return base;
@@ -41,7 +41,7 @@ static const TypeName* KeyPathType(Resolver* r, const char* key)
         at++;
     }
 
-    const TypeName* t = (const TypeName*)StrMapGet(r->m_curScope, arena_strndup(r->m_arena, key, at));
+    const TypeName* t = (const TypeName*)StrMapGet(r->m_curScope, ArenaStrndup(r->m_arena, key, at));
 
     while (t && key[at])
     {
@@ -59,7 +59,7 @@ static const TypeName* KeyPathType(Resolver* r, const char* key)
                 at++;
             }
 
-            const char* field = arena_strndup(r->m_arena, key + start, at - start);
+            const char* field = ArenaStrndup(r->m_arena, key + start, at - start);
             const StructType* st = TypeRegistryFind(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name));
             int idx = st ? TypeRegistryFieldIndex(&r->m_registry, st->name, field) : -1;
             t = idx >= 0 ? &((const FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx))->type : NULL;
@@ -87,7 +87,7 @@ const char* CanonicalRefKey(Resolver* r, const char* key)
     const char* root = KeyRoot(r->m_arena, key);
     const char* aliased = (const char*)StrMapGet(&r->m_refLocals, root);
 
-    return aliased ? arena_format(r->m_arena, "%s%s", aliased, key + strlen(root)) : key;
+    return aliased ? ArenaFormat(r->m_arena, "%s%s", aliased, key + strlen(root)) : key;
 }
 
 /* True when the root of move key `key` is a module global (not a local of the same name): no function
@@ -246,14 +246,14 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        return arena_format(r->m_arena, "%llu", ((IntLiteral*)n)->value);
+        return ArenaFormat(r->m_arena, "%llu", ((IntLiteral*)n)->value);
 
     case NodeIdent:
     {
         const char* name = ((IdentExpr*)n)->name;
 
         // Globals have no visible mutation site: erase.
-        return IsModuleGlobalName(r, name) ? NULL : arena_format(r->m_arena, "%s", name);
+        return IsModuleGlobalName(r, name) ? NULL : ArenaFormat(r->m_arena, "%s", name);
     }
 
     case NodeMember:
@@ -264,7 +264,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
         if (strcmp(m->member, "length") == 0 && m->base_node->kind == NodeIdent
             && !IsModuleGlobalName(r, ((IdentExpr*)m->base_node)->name))
         {
-            return arena_format(r->m_arena, "%s.length", ((IdentExpr*)m->base_node)->name);
+            return ArenaFormat(r->m_arena, "%s.length", ((IdentExpr*)m->base_node)->name);
         }
 
         return NULL;
@@ -282,7 +282,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
             return NULL;
         }
 
-        return arena_format(r->m_arena, "%s[%s]", baseSpell, inner);
+        return ArenaFormat(r->m_arena, "%s[%s]", baseSpell, inner);
     }
 
     case NodeUnary:
@@ -298,11 +298,11 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
         switch (u->op)
         {
         case UnNeg:
-            return arena_format(r->m_arena, "-%s", inner);
+            return ArenaFormat(r->m_arena, "-%s", inner);
         case UnPos:
-            return arena_format(r->m_arena, "+%s", inner);
+            return ArenaFormat(r->m_arena, "+%s", inner);
         case UnBitNot:
-            return arena_format(r->m_arena, "~%s", inner);
+            return ArenaFormat(r->m_arena, "~%s", inner);
         default:
             return NULL; // `!` yields a boolean, never an index.
         }
@@ -357,7 +357,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
             return NULL; /* comparisons/logic yield bools, not indices */
         }
 
-        return arena_format(r->m_arena, "(%s %s %s)", lhs, op, rhs);
+        return ArenaFormat(r->m_arena, "(%s %s %s)", lhs, op, rhs);
     }
 
     default:
@@ -393,7 +393,7 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
         const MemberExpr* m = (const MemberExpr*)moved;
         const char* baseKey = MovableBoxSourceKey(r, m->base_node);
 
-        return baseKey ? arena_format(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
+        return baseKey ? ArenaFormat(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
     }
 
     if (moved->kind == NodeIndex)
@@ -411,10 +411,10 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
 
         if (idxSpell)
         {
-            return arena_format(r->m_arena, "%s[%s]", baseKey, idxSpell);
+            return ArenaFormat(r->m_arena, "%s[%s]", baseKey, idxSpell);
         }
 
-        return arena_format(r->m_arena, "%s[]", baseKey);
+        return ArenaFormat(r->m_arena, "%s[]", baseKey);
     }
 
     return NULL;

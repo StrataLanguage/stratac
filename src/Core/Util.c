@@ -33,7 +33,7 @@ Str StrNew(Arena* arena, const char* str, size_t len)
         return (Str){0};
     }
 
-    char* strDuped = arena_strndup(arena, str, len);
+    char* strDuped = ArenaStrndup(arena, str, len);
     return (Str){strDuped, len};
 }
 
@@ -64,7 +64,7 @@ static void ArenaGrow(Arena* a, size_t need)
     a->end = a->ptr + c->size;
 }
 
-void arena_init(Arena* a, size_t initial_chunk)
+void ArenaInit(Arena* a, size_t initial_chunk)
 {
     *a = (Arena){0};
     a->head = NULL;
@@ -73,7 +73,7 @@ void arena_init(Arena* a, size_t initial_chunk)
     a->end = NULL;
 }
 
-void arena_free(Arena* a)
+void ArenaFree(Arena* a)
 {
     if (!a)
     {
@@ -94,7 +94,7 @@ void arena_free(Arena* a)
     a->end = NULL;
 }
 
-void* arena_alloc_aligned(Arena* a, size_t size, size_t align)
+void* ArenaAllocAligned(Arena* a, size_t size, size_t align)
 {
     if (align == 0)
     {
@@ -122,45 +122,45 @@ void* arena_alloc_aligned(Arena* a, size_t size, size_t align)
     return result;
 }
 
-void* arena_alloc(Arena* a, size_t size)
+void* ArenaAlloc(Arena* a, size_t size)
 {
-    return arena_alloc_aligned(a, size, sizeof(void*));
+    return ArenaAllocAligned(a, size, sizeof(void*));
 }
 
-void* arena_dup(Arena* a, const void* src, size_t size)
+void* ArenaDup(Arena* a, const void* src, size_t size)
 {
-    void* dst = arena_alloc(a, size);
+    void* dst = ArenaAlloc(a, size);
     memcpy(dst, src, size);
 
     return dst;
 }
 
-char* arena_strdup(Arena* a, const char* s)
+char* ArenaStrdup(Arena* a, const char* s)
 {
     if (!s)
     {
-        char* dst = (char*)arena_alloc(a, 1);
+        char* dst = (char*)ArenaAlloc(a, 1);
         dst[0] = '\0';
         return dst;
     }
 
     size_t n = strlen(s) + 1;
-    char* dst = (char*)arena_alloc(a, n);
+    char* dst = (char*)ArenaAlloc(a, n);
     memcpy(dst, s, n);
 
     return dst;
 }
 
-char* arena_strndup(Arena* a, const char* s, size_t n)
+char* ArenaStrndup(Arena* a, const char* s, size_t n)
 {
-    char* dst = (char*)arena_alloc(a, n + 1);
+    char* dst = (char*)ArenaAlloc(a, n + 1);
     memcpy(dst, s, n);
     dst[n] = '\0';
 
     return dst;
 }
 
-char* arena_vformat(Arena* a, const char* fmt, va_list args)
+char* ArenaVFormat(Arena* a, const char* fmt, va_list args)
 {
     /* `args` belongs to the caller (who va_ends it): only ever read copies. */
     va_list sizeArgs;
@@ -177,18 +177,18 @@ char* arena_vformat(Arena* a, const char* fmt, va_list args)
     va_list writeArgs;
     va_copy(writeArgs, args);
 
-    char* buf = (char*)arena_alloc(a, (size_t)n + 1);
+    char* buf = (char*)ArenaAlloc(a, (size_t)n + 1);
     vsnprintf(buf, (size_t)n + 1, fmt, writeArgs);
     va_end(writeArgs);
 
     return buf;
 }
 
-char* arena_format(Arena* a, const char* fmt, ...)
+char* ArenaFormat(Arena* a, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    char* result = arena_vformat(a, fmt, args);
+    char* result = ArenaVFormat(a, fmt, args);
     va_end(args);
 
     return result;
@@ -196,21 +196,21 @@ char* arena_format(Arena* a, const char* fmt, ...)
 
 static THREAD_LOCAL Arena g_scratch;
 
-Arena* scratch_arena(void)
+Arena* ScratchArena(void)
 {
     if (!g_scratch.head)
     {
-        arena_init(&g_scratch, 0);
+        ArenaInit(&g_scratch, 0);
     }
     return &g_scratch;
 }
 
-void scratch_reset(void)
+void ScratchReset(void)
 {
     if (g_scratch.head)
     {
-        arena_free(&g_scratch);
-        arena_init(&g_scratch, 0);
+        ArenaFree(&g_scratch);
+        ArenaInit(&g_scratch, 0);
     }
 }
 
@@ -503,7 +503,7 @@ void SbFree(Sb* sb)
 
 char* SbFinish(Sb* sb, Arena* arena)
 {
-    char* result = (char*)arena_alloc(arena, sb->len + 1);
+    char* result = (char*)ArenaAlloc(arena, sb->len + 1);
 
     if (sb->data)
     {

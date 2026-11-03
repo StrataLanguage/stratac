@@ -130,7 +130,7 @@ STRATA_TEST(context_null_for_manifest_const_only_globals)
 STRATA_TEST(context_ir_has_no_global_ctors)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("string g = \"hi\";\n"
@@ -146,7 +146,7 @@ STRATA_TEST(context_ir_has_no_global_ctors)
 
     free((void*)res.output);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* Impl methods with an inline (non-extern) body also get the hidden

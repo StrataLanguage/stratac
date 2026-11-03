@@ -211,7 +211,7 @@ extern "C"
         }
 
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
 
         SourceManager src;
         SourceManagerInit(&src);
@@ -242,7 +242,7 @@ extern "C"
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
         SourceManagerFree(&src);
-        arena_free(&arena);
+        ArenaFree(&arena);
 
         return r;
     }

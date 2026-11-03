@@ -283,7 +283,7 @@ void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e)
         if (ArgMode(e, i) != LoanMove && NonTrivial(env, arg) && PlaceKeyImpl(arg, buf, sizeof(buf), &root, true)
             && IsGlobalPlace(env, buf) && CalleeWrites(env, d, buf))
         {
-            ReportAs(found, MoveDiagGlobalLoan, arg->range, arena_strdup(env->arena, buf));
+            ReportAs(found, MoveDiagGlobalLoan, arg->range, ArenaStrdup(env->arena, buf));
         }
     }
 }
