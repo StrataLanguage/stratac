@@ -1,6 +1,8 @@
 /* Compile-time constant evaluation, literal range checks and lossless-conversion checks. */
 #include "Sema/Resolve/ResolverInternal.h"
 
+#include <inttypes.h>
+
 /* The runtime integer type of a scalar. Anything that is not an integer carries no narrowing. */
 ConstIntType SemaConstIntType(PrimitiveType p)
 {
@@ -53,7 +55,7 @@ bool IsEnumUnderlyingType(const char* t)
 }
 
 /* Signed bounds for the enum underlying types. */
-void EnumSignedRange(const char* underlying, bool* isUnsigned, int64_t* minVal, uint64_t* maxVal)
+void EnumSignedRange(const char* underlying, bool* isUnsigned, ConstInt* minVal, ConstUInt* maxVal)
 {
     switch (GetPrimitiveType(underlying))
     {
@@ -80,17 +82,17 @@ void EnumSignedRange(const char* underlying, bool* isUnsigned, int64_t* minVal, 
     case PrimSByte:
         *isUnsigned = false;
         *minVal = SCHAR_MIN;
-        *maxVal = (uint64_t)SCHAR_MAX;
+        *maxVal = (ConstUInt)SCHAR_MAX;
         return;
     case PrimShort:
         *isUnsigned = false;
         *minVal = SHRT_MIN;
-        *maxVal = (uint64_t)SHRT_MAX;
+        *maxVal = (ConstUInt)SHRT_MAX;
         return;
     case PrimInt:
         *isUnsigned = false;
         *minVal = INT_MIN;
-        *maxVal = (uint64_t)INT_MAX;
+        *maxVal = (ConstUInt)INT_MAX;
         return;
     default:;
     }
@@ -98,12 +100,12 @@ void EnumSignedRange(const char* underlying, bool* isUnsigned, int64_t* minVal, 
     /* "long" (and any fallback) */
     *isUnsigned = false;
     *minVal = LLONG_MIN;
-    *maxVal = (uint64_t)LLONG_MAX;
+    *maxVal = (ConstUInt)LLONG_MAX;
 }
 
 /* Interprets `mag` (with sign) as a signed value; false when the magnitude
    cannot be represented in int64 (only reachable for `long` underlying). */
-bool EnumSignedValue(uint64_t mag, bool isNegative, int64_t* out)
+bool EnumSignedValue(ConstUInt mag, bool isNegative, ConstInt* out)
 {
     if (isNegative)
     {
@@ -113,27 +115,27 @@ bool EnumSignedValue(uint64_t mag, bool isNegative, int64_t* out)
             return true;
         }
 
-        if (mag > (uint64_t)INT64_MAX)
+        if (mag > (ConstUInt)INT64_MAX)
         {
             return false;
         }
 
-        *out = -(int64_t)mag;
+        *out = -(ConstInt)mag;
         return true;
     }
 
-    if (mag > (uint64_t)INT64_MAX)
+    if (mag > (ConstUInt)INT64_MAX)
     {
         return false;
     }
 
-    *out = (int64_t)mag;
+    *out = (ConstInt)mag;
     return true;
 }
 
 /* Extracts a compile-time integer value from a RESOLVED constant expression:
    an integer literal, a +/- literal, or an enum constant. */
-bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative)
+bool ResolvedConstIntValue(Node* n, ConstUInt* mag, bool* isNegative)
 {
     *mag = 0;
     *isNegative = false;
@@ -155,7 +157,7 @@ bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative)
     if (n->kind == NodeMember && ((MemberExpr*)n)->isScalarConst)
     {
         MemberExpr* m = (MemberExpr*)n;
-        uint64_t intVal = 0;
+        ConstUInt intVal = 0;
         bool isFloat = false;
 
         if (m->base_node->kind == NodeIdent
@@ -200,11 +202,11 @@ bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative)
 }
 
 /* Range-checks a constant value against a scalar integral type name. */
-bool EnumConstFits(const char* underlying, uint64_t mag, bool isNegative)
+bool EnumConstFits(const char* underlying, ConstUInt mag, bool isNegative)
 {
     bool isUnsigned = false;
-    int64_t minVal = 0;
-    uint64_t maxVal = 0;
+    ConstInt minVal = 0;
+    ConstUInt maxVal = 0;
     EnumSignedRange(underlying, &isUnsigned, &minVal, &maxVal);
 
     if (isUnsigned)
@@ -212,20 +214,20 @@ bool EnumConstFits(const char* underlying, uint64_t mag, bool isNegative)
         return !isNegative && mag <= maxVal;
     }
 
-    int64_t sv = 0;
-    return EnumSignedValue(mag, isNegative, &sv) && sv >= minVal && (uint64_t)sv <= maxVal;
+    ConstInt sv = 0;
+    return EnumSignedValue(mag, isNegative, &sv) && sv >= minVal && (ConstUInt)sv <= maxVal;
 }
 
 /* Does the constant (magnitude `mag`, sign `negative`) fit the integer type named `typeName`? */
-static bool IntegerConstFits(const char* typeName, uint64_t mag, bool negative)
+static bool IntegerConstFits(const char* typeName, ConstUInt mag, bool negative)
 {
     bool isUnsigned = false;
-    int64_t minVal = 0;
-    uint64_t maxVal = 0;
+    ConstInt minVal = 0;
+    ConstUInt maxVal = 0;
     EnumSignedRange(typeName, &isUnsigned, &minVal, &maxVal);
 
     /* A negative constant fits when its magnitude is within |min|; a positive one within max. */
-    return negative ? (!isUnsigned && mag <= (uint64_t)(-(minVal + 1)) + 1ULL) : mag <= maxVal;
+    return negative ? (!isUnsigned && mag <= (ConstUInt)(-(minVal + 1)) + 1ULL) : mag <= maxVal;
 }
 
 /* A literal that initializes a scalar must fit it: `byte b = 300`, `uint u = -1` and `float f = 1e40` are errors
@@ -240,7 +242,7 @@ void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName*
     PrimitiveType prim = GetPrimitiveType(target->name);
     bool integral = prim == PrimInt || prim == PrimUInt || prim == PrimLong || prim == PrimULong || prim == PrimSByte
                     || prim == PrimByte || prim == PrimShort || prim == PrimUShort;
-    uint64_t mag = 0;
+    ConstUInt mag = 0;
     bool negative = false;
     const Node* lit = value;
 
@@ -253,8 +255,8 @@ void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName*
     {
         if (!IntegerConstFits(target->name, mag, negative))
         {
-            DiagErrorFmt(diag, value->range, "integer constant %s%llu does not fit in '%s'", negative ? "-" : "",
-                         (unsigned long long)mag, target->name);
+            DiagErrorFmt(diag, value->range, "integer constant %s%" PRIu64 " does not fit in '%s'", negative ? "-" : "",
+                         mag, target->name);
         }
 
         return;
@@ -273,17 +275,17 @@ void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName*
 
 /* The value of a constant integer expression built from literals, negation, parentheses and + - *; false when
    it is anything else (or overflows 64 bits). */
-static bool EvalConstInt(const Node* n, long long* out)
+static bool EvalConstInt(const Node* n, ConstInt* out)
 {
     if (n->kind == NodeIntLiteral)
     {
-        *out = (long long)((const IntLiteral*)n)->value;
+        *out = (ConstInt)((const IntLiteral*)n)->value;
         return true;
     }
 
     if (n->kind == NodeUnary && ((const UnaryExpr*)n)->op == UnNeg)
     {
-        long long v = 0;
+        ConstInt v = 0;
 
         if (!EvalConstInt(((const UnaryExpr*)n)->operand, &v))
         {
@@ -297,8 +299,8 @@ static bool EvalConstInt(const Node* n, long long* out)
     if (n->kind == NodeBinary)
     {
         const BinaryExpr* b = (const BinaryExpr*)n;
-        long long l = 0;
-        long long r = 0;
+        ConstInt l = 0;
+        ConstInt r = 0;
 
         if ((b->op != BinAdd && b->op != BinSub && b->op != BinMul) || !EvalConstInt(b->lhs, &l)
             || !EvalConstInt(b->rhs, &r))
@@ -314,7 +316,7 @@ static bool EvalConstInt(const Node* n, long long* out)
 }
 
 /* Bit width of an integer scalar type, 0 for anything else. */
-static unsigned ScalarBitWidth(PrimitiveType p)
+static BitWidth ScalarBitWidth(PrimitiveType p)
 {
     switch (p)
     {
@@ -339,7 +341,7 @@ static unsigned ScalarBitWidth(PrimitiveType p)
    `INT_MIN / -1`. `lt` is the left operand's type. */
 void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName* lt)
 {
-    long long rv = 0;
+    ConstInt rv = 0;
 
     if (!EvalConstInt(b->rhs, &rv))
     {
@@ -348,8 +350,8 @@ void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName
 
     if (b->op == BinDiv || b->op == BinMod)
     {
-        long long lv = 0;
-        unsigned width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
+        ConstInt lv = 0;
+        BitWidth width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
         bool isUnsigned = lt
                           && (lt->primitiveType == PrimUInt || lt->primitiveType == PrimULong
                               || lt->primitiveType == PrimByte || lt->primitiveType == PrimUShort);
@@ -367,12 +369,12 @@ void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName
     }
     else if (b->op == BinShl || b->op == BinShr)
     {
-        unsigned width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
+        BitWidth width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
 
-        if (width && (rv < 0 || rv >= (long long)width))
+        if (width && (rv < 0 || rv >= (ConstInt)width))
         {
-            DiagErrorFmt(diag, b->base.range, "shift count %lld is not less than the %u-bit width of '%s'", rv, width,
-                         lt->name);
+            DiagErrorFmt(diag, b->base.range, "shift count %" PRId64 " is not less than the %u-bit width of '%s'", rv,
+                         width, lt->name);
         }
     }
 }
@@ -395,7 +397,7 @@ void CheckConstFloatToInt(DiagnosticEngine* diag, const CastExpr* cast)
     }
 
     PrimitiveType prim = GetPrimitiveType(cast->type.name);
-    unsigned width = ScalarBitWidth(prim);
+    BitWidth width = ScalarBitWidth(prim);
 
     if (!width)
     {
@@ -467,7 +469,7 @@ void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeN
     }
 
     /* Constants are judged by value, not by the type they were written in. */
-    long long ignored = 0;
+    ConstInt ignored = 0;
     const Node* lit = value;
 
     if (lit->kind == NodeUnary && ((const UnaryExpr*)lit)->op == UnNeg)
@@ -525,14 +527,14 @@ bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, const Type
 static bool SemaFoldIntBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r, ConstGlobalVal* out)
 {
     ConstIntType t = ConstIntTypeCommon(l.ity, r.ity);
-    uint64_t v;
+    ConstUInt v;
 
-    if (!ConstFoldIntAt(op, ConstIntNarrow((uint64_t)l.i, t), ConstIntNarrow((uint64_t)r.i, t), t, &v))
+    if (!ConstFoldIntAt(op, ConstIntNarrow((ConstUInt)l.i, t), ConstIntNarrow((ConstUInt)r.i, t), t, &v))
     {
         return false;
     }
 
-    out->i = (long long)v;
+    out->i = (ConstInt)v;
     out->f = 0.0;
     out->isFloat = false;
     out->ity = t;
@@ -634,7 +636,7 @@ static bool FoldIntLiteral(Node* n, ConstGlobalVal* out)
     /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
     const IntLiteral* lit = (const IntLiteral*)n;
 
-    out->i = (long long)lit->value;
+    out->i = (ConstInt)lit->value;
     out->f = 0.0;
     out->isFloat = false;
     out->ity = (ConstIntType){lit->isLong || lit->value > 0x7FFFFFFFULL ? 64u : 32u, lit->isUnsigned};
@@ -676,7 +678,7 @@ static bool FoldUnary(Resolver* r, Node* n, ConstGlobalVal* out)
         }
         else
         {
-            out->i = (long long)ConstIntNarrow((uint64_t)(-out->i), out->ity);
+            out->i = (ConstInt)ConstIntNarrow((ConstUInt)(-out->i), out->ity);
         }
 
         return true;
@@ -702,7 +704,7 @@ static bool FoldUnary(Resolver* r, Node* n, ConstGlobalVal* out)
             return false;
         }
 
-        out->i = (long long)ConstIntNarrow((uint64_t)~out->i, out->ity);
+        out->i = (ConstInt)ConstIntNarrow((ConstUInt)~out->i, out->ity);
         return true;
     }
 
@@ -751,13 +753,13 @@ static bool FoldCast(Resolver* r, Node* n, ConstGlobalVal* out)
     {
         if (out->isFloat)
         {
-            out->i = (long long)out->f;
+            out->i = (ConstInt)out->f;
             out->f = 0.0;
             out->isFloat = false;
         }
 
         out->ity = target;
-        out->i = (long long)ConstIntNarrow((uint64_t)out->i, target);
+        out->i = (ConstInt)ConstIntNarrow((ConstUInt)out->i, target);
     }
 
     return true;
@@ -789,14 +791,14 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
         return false;
     }
 
-    uint64_t intVal = 0;
+    ConstUInt intVal = 0;
     double floatVal = 0.0;
     bool isFloat = false;
 
     if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal, &isFloat))
     {
         bool wasInt = out->isInt;
-        out->i = (long long)intVal;
+        out->i = (ConstInt)intVal;
         out->f = floatVal;
         out->isFloat = isFloat;
         out->isInt = wasInt;
@@ -829,7 +831,7 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
             if (strcmp(member->name, m->member) == 0)
             {
                 bool wasInt = out->isInt;
-                out->i = (long long)member->value;
+                out->i = (ConstInt)member->value;
                 out->f = 0.0;
                 out->isFloat = false;
                 out->isInt = wasInt;
@@ -937,7 +939,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
             return false;
         }
 
-        t->length = (long)v->i;
+        t->length = (ArrayLength)v->i;
         char* dimName = t->lengthName;
         t->lengthName = NULL;
 
@@ -971,7 +973,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
 }
 
 /* Width of a constant expression: 32-bit if it bottoms out in a 32-bit literal. */
-unsigned ConstBitWidth(const Node* n)
+BitWidth ConstBitWidth(const Node* n)
 {
     while (n && n->kind == NodeCast)
     {

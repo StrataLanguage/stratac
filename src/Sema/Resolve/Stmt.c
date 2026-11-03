@@ -91,7 +91,7 @@ static void RunDeferFrame(Resolver* r, Vec* frame, StrMap* scope)
 }
 
 // Runs the deferred statements of scopes [fromIndex, top), innermost first.
-static void RunDefersFrom(Resolver* r, size_t fromIndex, StrMap* scope)
+static void RunDefersFrom(Resolver* r, StackMark fromIndex, StrMap* scope)
 {
     for (size_t f = r->m_deferFrames.count; f-- > fromIndex;)
     {
@@ -431,7 +431,7 @@ static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
 }
 
 /* Shape checks for a fixed-size array local. Reports and returns false on the first problem. */
-static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** leafOut, long* totalOut)
+static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** leafOut, ArrayLength* totalOut)
 {
     if (!(TypeNameHasArrayShape(&vd->type) && vd->type.length >= 0))
     {
@@ -450,7 +450,7 @@ static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** 
         return false;
     }
 
-    long total = 0;
+    ArrayLength total = 0;
     const TypeName* leaf = FixedArrayLeaf(&vd->type, &total);
 
     if (TypeNameHasArrayShape(leaf))
@@ -499,15 +499,15 @@ static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** 
 
 /* `{ value; N }`: every element (of every row) is the value; N must be the full length. */
 static void WalkFixedArrayRepeatInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* fixedInit, const TypeName* leaf,
-                                     long total, StrMap* scope)
+                                     ArrayLength total, StrMap* scope)
 {
     fixedInit->elementType = leaf;
     ResolveExpr(r, fixedInit->repeatCount, scope);
 
-    uint64_t repeat = 0;
+    ConstUInt repeat = 0;
     bool negative = false;
 
-    if (!ResolvedConstIntValue(fixedInit->repeatCount, &repeat, &negative) || negative || repeat != (uint64_t)total)
+    if (!ResolvedConstIntValue(fixedInit->repeatCount, &repeat, &negative) || negative || repeat != (ConstUInt)total)
     {
         DiagErrorFmt(r->m_diag, fixedInit->repeatCount->range,
                      "the count in '{ value; count }' for fixed-size array local '%s' must be the "
@@ -535,7 +535,7 @@ static void WalkFixedArrayRepeatInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
 }
 
 static bool FlattenFixedArrayInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* fixedInit, const TypeName* leaf,
-                                  long total)
+                                  ArrayLength total)
 {
     /* Loop bodies walk twice (muted warmup + real); a multidim init
        flattened by the first pass must not fail the shape check on
@@ -566,7 +566,7 @@ static bool FlattenFixedArrayInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* f
         Vec flat;
         VecInit(&flat);
 
-        for (long z = 0; z < total; z++)
+        for (ArrayLength z = 0; z < total; z++)
         {
             VecPush(&flat, NULL);
         }
@@ -630,7 +630,7 @@ static void WalkFixedArrayBracedInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
    returns and globals keep their bans (checked after all functions). */
 static void WalkFixedArrayLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
-    long total = 0;
+    ArrayLength total = 0;
     const TypeName* leaf = NULL;
 
     if (CheckFixedArrayLocal(r, vd, &leaf, &total))

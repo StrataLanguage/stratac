@@ -208,7 +208,7 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
         }
         else
         {
-            folded.intValue = value.isFloat ? (long long)value.f : value.i;
+            folded.intValue = value.isFloat ? (ConstInt)value.f : value.i;
         }
     }
 
@@ -453,7 +453,7 @@ static void FoldManifestConstants(Resolver* r)
 
             if (!v->isFloat)
             {
-                v->i = (long long)ConstIntNarrow((uint64_t)v->i, v->ity);
+                v->i = (ConstInt)ConstIntNarrow((ConstUInt)v->i, v->ity);
             }
 
             StrMapPut(&r->m_constGlobals, gd->name, v);
@@ -832,7 +832,7 @@ static void CheckStructFields(Resolver* r)
                                  "fixed-size array field '%s' must have a length of at least 1", field->name);
                 }
 
-                long total = 0;
+                ArrayLength total = 0;
                 const TypeName* leaf = FixedArrayLeaf(&field->type, &total);
 
                 if (TypeNameHasArrayShape(leaf))

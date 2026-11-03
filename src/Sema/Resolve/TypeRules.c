@@ -333,8 +333,8 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
     // - Source values that are numeric (but not vectors!) CAN be assigned to a vector type. They will be automatically
     // broadcasted to a vector of the destination's type. `bool` is not numeric here.
 
-    const int destLanes = IsNameSimdVector(resolvedTarget);
-    const int srcLanes = IsNameSimdVector(resolvedValue);
+    const LaneCount destLanes = IsNameSimdVector(resolvedTarget);
+    const LaneCount srcLanes = IsNameSimdVector(resolvedValue);
 
     // Check identical vector types
     if (destLanes && srcLanes && srcLanes == destLanes)

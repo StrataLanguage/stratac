@@ -1,6 +1,8 @@
 /* Enum member lookup and enum member value evaluation. */
 #include "Sema/Resolve/ResolverInternal.h"
 
+#include <inttypes.h>
+
 /* The enum an expression belongs to: its type, or the enum of a `Color.Red` constant. NULL for a non-enum. */
 const char* ExprEnumName(Resolver* r, const Node* n, const TypeName* t)
 {
@@ -108,25 +110,25 @@ static bool FindEnumMemberIndex(EnumDecl* ed, const char* memberName, size_t* ou
 }
 
 static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
-                                        uint64_t* out);
+                                        ConstUInt* out);
 
-static EnumEvalStatus EnumEvalIntLiteral(Node* n, uint64_t* out)
+static EnumEvalStatus EnumEvalIntLiteral(Node* n, ConstUInt* out)
 {
     *out = ((IntLiteral*)n)->value;
     return EnumEvalOk;
 }
 
-static EnumEvalStatus EnumEvalBoolLiteral(Node* n, uint64_t* out)
+static EnumEvalStatus EnumEvalBoolLiteral(Node* n, ConstUInt* out)
 {
     *out = ((BoolLiteral*)n)->value ? 1 : 0;
     return EnumEvalOk;
 }
 
 static EnumEvalStatus EnumEvalUnary(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
-                                    uint64_t* out)
+                                    ConstUInt* out)
 {
     UnaryExpr* u = (UnaryExpr*)n;
-    uint64_t inner = 0;
+    ConstUInt inner = 0;
     EnumEvalStatus st = EnumEvalConstExpr(u->operand, mod, enumIndex, memberIndex, isUnsigned, &inner);
 
     if (st != EnumEvalOk)
@@ -153,7 +155,7 @@ static EnumEvalStatus EnumEvalUnary(Node* n, Module* mod, size_t enumIndex, size
             return EnumEvalNegForUnsigned;
         }
 
-        *out = (uint64_t)(0 - inner);
+        *out = (ConstUInt)(0 - inner);
         return EnumEvalOk;
     case UnBitNot:
         *out = ConstBitWidth(u->operand) == 32 ? (~inner & 0xFFFFFFFFULL) : ~inner;
@@ -164,11 +166,11 @@ static EnumEvalStatus EnumEvalUnary(Node* n, Module* mod, size_t enumIndex, size
 }
 
 static EnumEvalStatus EnumEvalBinary(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
-                                     uint64_t* out)
+                                     ConstUInt* out)
 {
     BinaryExpr* e = (BinaryExpr*)n;
-    uint64_t l = 0;
-    uint64_t r = 0;
+    ConstUInt l = 0;
+    ConstUInt r = 0;
     EnumEvalStatus sl = EnumEvalConstExpr(e->lhs, mod, enumIndex, memberIndex, isUnsigned, &l);
 
     if (sl != EnumEvalOk)
@@ -200,7 +202,7 @@ static EnumEvalStatus EnumEvalBinary(Node* n, Module* mod, size_t enumIndex, siz
             return EnumEvalNotConst;
         }
 
-        *out = isUnsigned ? (l / r) : (uint64_t)((int64_t)l / (int64_t)r);
+        *out = isUnsigned ? (l / r) : (ConstUInt)((ConstInt)l / (ConstInt)r);
         return EnumEvalOk;
     case BinMod:
         if (r == 0)
@@ -208,7 +210,7 @@ static EnumEvalStatus EnumEvalBinary(Node* n, Module* mod, size_t enumIndex, siz
             return EnumEvalNotConst;
         }
 
-        *out = isUnsigned ? (l % r) : (uint64_t)((int64_t)l % (int64_t)r);
+        *out = isUnsigned ? (l % r) : (ConstUInt)((ConstInt)l % (ConstInt)r);
         return EnumEvalOk;
     case BinBitAnd:
         *out = l & r;
@@ -233,14 +235,14 @@ static EnumEvalStatus EnumEvalBinary(Node* n, Module* mod, size_t enumIndex, siz
             return EnumEvalNotConst;
         }
 
-        *out = isUnsigned ? (l >> r) : (uint64_t)((int64_t)l >> (int64_t)r);
+        *out = isUnsigned ? (l >> r) : (ConstUInt)((ConstInt)l >> (ConstInt)r);
         return EnumEvalOk;
     default:
         return EnumEvalNotConst; /* comparisons / && / || don't fold to an integer value */
     }
 }
 
-static EnumEvalStatus EnumEvalIdent(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, uint64_t* out)
+static EnumEvalStatus EnumEvalIdent(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, ConstUInt* out)
 {
     /* A bare name: a reference to an EARLIER member of this enum. */
     IdentExpr* id = (IdentExpr*)n;
@@ -261,7 +263,7 @@ static EnumEvalStatus EnumEvalIdent(Node* n, Module* mod, size_t enumIndex, size
     return EnumEvalOk;
 }
 
-static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, uint64_t* out)
+static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, ConstUInt* out)
 {
     /* `EnumName.Member` — a scoped constant from an already-resolved enum. */
     MemberExpr* me = (MemberExpr*)n;
@@ -270,7 +272,7 @@ static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, siz
        (integral only; enums never have float underlyings). */
     if (me->base_node->kind == NodeIdent)
     {
-        uint64_t intVal = 0;
+        ConstUInt intVal = 0;
         bool isFloat = false;
 
         if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)me->base_node)->name), me->member, &intVal, NULL, &isFloat))
@@ -322,7 +324,7 @@ static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, siz
 
 /* Folds an enum member value expression to a 64-bit value */
 static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
-                                        uint64_t* out)
+                                        ConstUInt* out)
 {
     if (!n)
     {
@@ -405,13 +407,13 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
         }
 
         bool isUnsigned = false;
-        int64_t minVal = 0;
-        uint64_t maxVal = 0;
+        ConstInt minVal = 0;
+        ConstUInt maxVal = 0;
         EnumSignedRange(resolved, &isUnsigned, &minVal, &maxVal);
 
         if (isUnsigned)
         {
-            uint64_t next = 0;
+            ConstUInt next = 0;
 
             for (size_t j = 0; j < ed->members.count; j++)
             {
@@ -419,7 +421,7 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
 
                 if (m->hasExplicitValue)
                 {
-                    uint64_t v = 0;
+                    ConstUInt v = 0;
                     EnumEvalStatus st = EnumEvalConstExpr(m->valueExpr, mod, i, j, true, &v);
 
                     if (st != EnumEvalOk)
@@ -446,8 +448,8 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
 
                     if (m->value > maxVal)
                     {
-                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'", m->name,
-                                     (unsigned long long)m->value, underlying);
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %" PRIu64 " does not fit in '%s'",
+                                     m->name, m->value, underlying);
                         continue;
                     }
 
@@ -457,8 +459,8 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
                 {
                     if (next > maxVal)
                     {
-                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %llu does not fit in '%s'", m->name,
-                                     (unsigned long long)next, underlying);
+                        DiagErrorFmt(diag, m->base.range, "enum member '%s' value %" PRIu64 " does not fit in '%s'",
+                                     m->name, next, underlying);
                         continue;
                     }
 
@@ -469,16 +471,16 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
         }
         else
         {
-            int64_t next = 0;
+            ConstInt next = 0;
 
             for (size_t j = 0; j < ed->members.count; j++)
             {
                 EnumMemberDecl* m = (EnumMemberDecl*)VecGet(&ed->members, j);
-                int64_t sv = next;
+                ConstInt sv = next;
 
                 if (m->hasExplicitValue)
                 {
-                    uint64_t v = 0;
+                    ConstUInt v = 0;
                     EnumEvalStatus st = EnumEvalConstExpr(m->valueExpr, mod, i, j, false, &v);
 
                     if (st != EnumEvalOk)
@@ -488,9 +490,9 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
                     }
                     else
                     {
-                        m->isNegative = (int64_t)v < 0;
+                        m->isNegative = (ConstInt)v < 0;
                         m->value = m->isNegative
-                                       ? ((v == (uint64_t)0x8000000000000000ULL) ? v : (uint64_t)(-(int64_t)v))
+                                       ? ((v == (ConstUInt)0x8000000000000000ULL) ? v : (ConstUInt)(-(ConstInt)v))
                                        : v;
                     }
                 }
@@ -507,14 +509,14 @@ void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* regis
                     next = sv;
                 }
 
-                if (sv < minVal || sv > (int64_t)maxVal)
+                if (sv < minVal || sv > (ConstInt)maxVal)
                 {
-                    DiagErrorFmt(diag, m->base.range, "enum member '%s' value %lld does not fit in '%s'", m->name,
-                                 (long long)sv, underlying);
+                    DiagErrorFmt(diag, m->base.range, "enum member '%s' value %" PRId64 " does not fit in '%s'",
+                                 m->name, sv, underlying);
                     continue;
                 }
 
-                m->value = (uint64_t)sv;
+                m->value = (ConstUInt)sv;
                 next = sv + 1;
             }
         }

@@ -1514,8 +1514,8 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
                           || HandleExtendsFrom(&r->m_registry, srcName, dstName));
 
     /* SIMD vector pair: same lane count (including through type aliases). */
-    const int srcLanes = IsNameSimdVector(resolvedSrc);
-    const int dstLanes = IsNameSimdVector(resolvedDst);
+    const LaneCount srcLanes = IsNameSimdVector(resolvedSrc);
+    const LaneCount dstLanes = IsNameSimdVector(resolvedDst);
     bool simdPair = src && srcLanes != 0 && dstLanes != 0 && srcLanes == dstLanes;
 
     /* ^T -> ^U only when T or U is opaque (erase/cast-back). */
@@ -1589,7 +1589,7 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
        enum's underlying range (`(Color)300` for a byte-based enum). */
     if (TypeRegistryIsEnum(&r->m_registry, dstName))
     {
-        uint64_t mag = 0;
+        ConstUInt mag = 0;
         bool neg = false;
 
         if (ResolvedConstIntValue(cast->operand, &mag, &neg) && !EnumConstFits(resolvedDst, mag, neg))
