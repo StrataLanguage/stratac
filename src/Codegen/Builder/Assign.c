@@ -26,30 +26,30 @@ static Value ApplyCompoundOp(Builder* b, AssignOp op, LLVMValueRef cur, Value rh
     switch (op)
     {
     case AssignAdd:
-        return ValueMake(flt ? LLVMBuildFAdd(b->m_builder, cur, rhs.value, "add")
-                             : LLVMBuildAdd(b->m_builder, cur, rhs.value, "add"),
+        return ValueMake(flt ? LLVMBuildFAdd(b->builder, cur, rhs.value, "add")
+                             : LLVMBuildAdd(b->builder, cur, rhs.value, "add"),
                          td);
 
     case AssignSub:
-        return ValueMake(flt ? LLVMBuildFSub(b->m_builder, cur, rhs.value, "sub")
-                             : LLVMBuildSub(b->m_builder, cur, rhs.value, "sub"),
+        return ValueMake(flt ? LLVMBuildFSub(b->builder, cur, rhs.value, "sub")
+                             : LLVMBuildSub(b->builder, cur, rhs.value, "sub"),
                          td);
 
     case AssignMul:
-        return ValueMake(flt ? LLVMBuildFMul(b->m_builder, cur, rhs.value, "mul")
-                             : LLVMBuildMul(b->m_builder, cur, rhs.value, "mul"),
+        return ValueMake(flt ? LLVMBuildFMul(b->builder, cur, rhs.value, "mul")
+                             : LLVMBuildMul(b->builder, cur, rhs.value, "mul"),
                          td);
 
     case AssignDiv:
-        return ValueMake(flt ? LLVMBuildFDiv(b->m_builder, cur, rhs.value, "div")
-                             : (TypeDescIsUnsigned(&td) ? LLVMBuildUDiv(b->m_builder, cur, rhs.value, "div")
-                                                        : LLVMBuildSDiv(b->m_builder, cur, rhs.value, "div")),
+        return ValueMake(flt ? LLVMBuildFDiv(b->builder, cur, rhs.value, "div")
+                             : (TypeDescIsUnsigned(&td) ? LLVMBuildUDiv(b->builder, cur, rhs.value, "div")
+                                                        : LLVMBuildSDiv(b->builder, cur, rhs.value, "div")),
                          td);
 
     case AssignMod:
-        return ValueMake(flt ? LLVMBuildFRem(b->m_builder, cur, rhs.value, "mod")
-                             : (TypeDescIsUnsigned(&td) ? LLVMBuildURem(b->m_builder, cur, rhs.value, "mod")
-                                                        : LLVMBuildSRem(b->m_builder, cur, rhs.value, "mod")),
+        return ValueMake(flt ? LLVMBuildFRem(b->builder, cur, rhs.value, "mod")
+                             : (TypeDescIsUnsigned(&td) ? LLVMBuildURem(b->builder, cur, rhs.value, "mod")
+                                                        : LLVMBuildSRem(b->builder, cur, rhs.value, "mod")),
                          td);
 
     default:
@@ -61,30 +61,30 @@ static Value ApplyCompoundOp(Builder* b, AssignOp op, LLVMValueRef cur, Value rh
    it back through the same slot. Lanes are floats, so compound operators are float-only. */
 static Value EmitVectorLaneAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
-    LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "lanev");
+    LLVMValueRef cur = LLVMBuildLoad2(b->builder, lvalue.vectorType, lvalue.ptr, "lanev");
     Value result = Coerce(b, rhs, lvalue.typeDesc);
 
     if (n->op != AssignSet)
     {
         LLVMValueRef laneVal
-            = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "lanecur");
+            = LLVMBuildExtractElement(b->builder, cur, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "lanecur");
 
         switch (n->op)
         {
         case AssignAdd:
-            result = ValueMake(LLVMBuildFAdd(b->m_builder, laneVal, result.value, "add"), lvalue.typeDesc);
+            result = ValueMake(LLVMBuildFAdd(b->builder, laneVal, result.value, "add"), lvalue.typeDesc);
             break;
         case AssignSub:
-            result = ValueMake(LLVMBuildFSub(b->m_builder, laneVal, result.value, "sub"), lvalue.typeDesc);
+            result = ValueMake(LLVMBuildFSub(b->builder, laneVal, result.value, "sub"), lvalue.typeDesc);
             break;
         case AssignMul:
-            result = ValueMake(LLVMBuildFMul(b->m_builder, laneVal, result.value, "mul"), lvalue.typeDesc);
+            result = ValueMake(LLVMBuildFMul(b->builder, laneVal, result.value, "mul"), lvalue.typeDesc);
             break;
         case AssignDiv:
-            result = ValueMake(LLVMBuildFDiv(b->m_builder, laneVal, result.value, "div"), lvalue.typeDesc);
+            result = ValueMake(LLVMBuildFDiv(b->builder, laneVal, result.value, "div"), lvalue.typeDesc);
             break;
         case AssignMod:
-            result = ValueMake(LLVMBuildFRem(b->m_builder, laneVal, result.value, "mod"), lvalue.typeDesc);
+            result = ValueMake(LLVMBuildFRem(b->builder, laneVal, result.value, "mod"), lvalue.typeDesc);
             break;
         default:
             break;
@@ -92,8 +92,8 @@ static Value EmitVectorLaneAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
     }
 
     LLVMValueRef newVec
-        = LLVMBuildInsertElement(b->m_builder, cur, result.value, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "laneins");
-    LLVMBuildStore(b->m_builder, newVec, lvalue.ptr);
+        = LLVMBuildInsertElement(b->builder, cur, result.value, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "laneins");
+    LLVMBuildStore(b->builder, newVec, lvalue.ptr);
 
     return result;
 }
@@ -109,13 +109,13 @@ static Value EmitArrayRebindAssign(Builder* b, AssignExpr* n, Value rhs, LValue 
     }
     else if (TypeDescIsString(&lvalue.typeDesc) && n->value->kind == NodeStrLiteral)
     {
-        LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rhs.value, 0, "aslit.p");
-        LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rhs.value, 1, "aslit.l");
+        LLVMValueRef sp = LLVMBuildExtractValue(b->builder, rhs.value, 0, "aslit.p");
+        LLVMValueRef sl = LLVMBuildExtractValue(b->builder, rhs.value, 1, "aslit.l");
         rhs = ValueMake(BuildOwnedStringFat(b, sp, sl), rhs.typeDesc);
     }
 
     LLVMValueRef oldArr = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
-    LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
+    LLVMBuildStore(b->builder, rhs.value, lvalue.ptr);
 
     Node* movedNode = MovedSource(n->value);
 
@@ -125,7 +125,7 @@ static Value EmitArrayRebindAssign(Builder* b, AssignExpr* n, Value rhs, LValue 
 
         if (src.valid && TypeDescHasArrayShape(&src.typeDesc))
         {
-            LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
+            LLVMBuildStore(b->builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
         }
     }
 
@@ -156,11 +156,11 @@ static Value EmitBoxMoveAssign(Builder* b, AssignExpr* n, Value rhs, LValue lval
 
     if (srcPre.valid)
     {
-        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), srcPre.ptr);
+        LLVMBuildStore(b->builder, LLVMConstNull(b->ptrTy), srcPre.ptr);
     }
 
     LLVMValueRef oldBox = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
-    LLVMBuildStore(b->m_builder, rhs.value, lvalue.ptr);
+    LLVMBuildStore(b->builder, rhs.value, lvalue.ptr);
     EmitDropOne(b, oldBox, lvalue.typeDesc);
 
     return rhs;
@@ -176,9 +176,9 @@ static Value EmitBoxFromLiteralAssign(Builder* b, AssignExpr* n, Value rhs, LVal
     LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
     LLVMValueRef args2[1] = {size};
     StrataAllocFn(b);
-    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args2, 1, "stra");
-    LLVMBuildStore(b->m_builder, heap, lvalue.ptr);
-    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+    LLVMValueRef heap = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, args2, 1, "stra");
+    LLVMBuildStore(b->builder, heap, lvalue.ptr);
+    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
     LLVMValueRef srcGep = rhs.value;
     LLVMValueRef dstGep = heap;
     for (size_t ci = 0; ci < copyLen; ci++)
@@ -187,8 +187,8 @@ static Value EmitBoxFromLiteralAssign(Builder* b, AssignExpr* n, Value rhs, LVal
         LLVMValueRef srcIdx[1] = {ciVal};
         LLVMValueRef dstIdx[1] = {ciVal};
         LLVMValueRef byteVal
-            = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, srcGep, srcIdx, 1, "srcas"), "bas");
-        LLVMBuildStore(b->m_builder, byteVal, LLVMBuildGEP2(b->m_builder, i8Ty, dstGep, dstIdx, 1, "dstas"));
+            = LLVMBuildLoad2(b->builder, i8Ty, LLVMBuildGEP2(b->builder, i8Ty, srcGep, srcIdx, 1, "srcas"), "bas");
+        LLVMBuildStore(b->builder, byteVal, LLVMBuildGEP2(b->builder, i8Ty, dstGep, dstIdx, 1, "dstas"));
     }
 
     return rhs;
@@ -211,8 +211,8 @@ static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LVal
            construct the owned value into it. */
         LLVMValueRef cell = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "optcell");
         LLVMValueRef inner = Coerce(b, rhs, innerTd).value;
-        LLVMBuildStore(b->m_builder, inner, cell);
-        LLVMBuildStore(b->m_builder, cell, lvalue.ptr);
+        LLVMBuildStore(b->builder, inner, cell);
+        LLVMBuildStore(b->builder, cell, lvalue.ptr);
         EmitDropOne(b, oldOpt, lvalue.typeDesc);
 
         return ValueMake(cell, lvalue.typeDesc);
@@ -224,12 +224,12 @@ static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LVal
        occur (optionals of dynamic arrays are rejected by sema). */
     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
 
-    LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
+    LLVMValueRef cellSz = SizeOfConst(b, b->ptrTy);
     LLVMValueRef cellArgs[1] = {cellSz};
     StrataAllocFn(b);
-    LLVMValueRef strCell = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1, "optstr");
-    LLVMBuildStore(b->m_builder, owned, strCell);
-    LLVMBuildStore(b->m_builder, strCell, lvalue.ptr);
+    LLVMValueRef strCell = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, cellArgs, 1, "optstr");
+    LLVMBuildStore(b->builder, owned, strCell);
+    LLVMBuildStore(b->builder, strCell, lvalue.ptr);
     EmitDropOne(b, oldOpt, lvalue.typeDesc);
 
     return ValueMake(strCell, lvalue.typeDesc);
@@ -240,7 +240,7 @@ static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LVal
    slot; load it, then read/write through. */
 static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
-    LLVMValueRef boxPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lvalue.ptr, "box");
+    LLVMValueRef boxPtr = LLVMBuildLoad2(b->builder, b->ptrTy, lvalue.ptr, "box");
     const TypeName* innerTn = lvalue.typeDesc.boxInner;
 
     if (!innerTn)
@@ -259,15 +259,15 @@ static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
             literal, move a movable source. */
         EmitDropOne(b, boxPtr, innerTd);
         LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
-        LLVMBuildStore(b->m_builder, owned, boxPtr);
+        LLVMBuildStore(b->builder, owned, boxPtr);
         return ValueMake(owned, innerTd);
     }
 
-    LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, innerTd.type, boxPtr, "boxval");
+    LLVMValueRef cur = LLVMBuildLoad2(b->builder, innerTd.type, boxPtr, "boxval");
     Value result = Coerce(b, rhs, innerTd);
     result = ApplyCompoundOp(b, n->op, cur, result, innerTd);
 
-    LLVMBuildStore(b->m_builder, result.value, boxPtr);
+    LLVMBuildStore(b->builder, result.value, boxPtr);
 
     return result;
 }
@@ -282,7 +282,7 @@ static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValu
         /* `holder.field = box;` with an inline owning field: the value moves out of its box. */
         EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
         Value moved = TakeBoxContents(b, rhs, n->value);
-        LLVMBuildStore(b->m_builder, moved.value, lvalue.ptr);
+        LLVMBuildStore(b->builder, moved.value, lvalue.ptr);
 
         return ValueMake(moved.value, lvalue.typeDesc);
     }
@@ -292,7 +292,7 @@ static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValu
     TypeName elemTn
         = TypeDescIsString(&lvalue.typeDesc) ? *StringTypeName(b) : TypeNameLeaf((char*)lvalue.typeDesc.structTypeName);
     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, &elemTn);
-    LLVMBuildStore(b->m_builder, owned, lvalue.ptr);
+    LLVMBuildStore(b->builder, owned, lvalue.ptr);
 
     return ValueMake(owned, lvalue.typeDesc);
 }
@@ -304,11 +304,11 @@ static Value EmitScalarStoreAssign(Builder* b, AssignExpr* n, Value rhs, LValue 
 
     if (n->op != AssignSet)
     {
-        LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "cur");
+        LLVMValueRef cur = LLVMBuildLoad2(b->builder, lvalue.typeDesc.type, lvalue.ptr, "cur");
         result = ApplyCompoundOp(b, n->op, cur, result, lvalue.typeDesc);
     }
 
-    LLVMBuildStore(b->m_builder, result.value, lvalue.ptr);
+    LLVMBuildStore(b->builder, result.value, lvalue.ptr);
 
     return result;
 }
@@ -352,7 +352,7 @@ static Value EmitLValueAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalu
     bool elemOwningSlot = n->op == AssignSet
                           && (TypeDescIsString(&lvalue.typeDesc)
                               || (lvalue.typeDesc.structTypeName
-                                  && TypeRegistryIsOwningStruct(&b->m_registry, lvalue.typeDesc.structTypeName)));
+                                  && TypeRegistryIsOwningStruct(&b->registry, lvalue.typeDesc.structTypeName)));
 
     if (elemOwningSlot)
     {
@@ -378,18 +378,18 @@ static bool DiagnoseVectorMemberAssign(Builder* b, AssignExpr* n)
         return false;
     }
 
-    if (b->m_diag)
+    if (b->diag)
     {
         if (mt->member[0] && mt->member[1] == '\0')
         {
-            DiagErrorFmt(b->m_diag, n->base.range, "lane '%s' is out of range for a vector with %d lane(s)", mt->member,
+            DiagErrorFmt(b->diag, n->base.range, "lane '%s' is out of range for a vector with %d lane(s)", mt->member,
                          TypeDescIsSimdVector(&baseLv.typeDesc)
                              ? (int)LLVMGetVectorSize(baseLv.typeDesc.type)
                              : (int)LLVMGetVectorSize(Resolve(b, baseLv.typeDesc.boxInner).type));
         }
         else
         {
-            DiagError(b->m_diag, n->base.range,
+            DiagError(b->diag, n->base.range,
                       "swizzle assignment is not supported; assign lanes individually or rebuild the whole vector");
         }
     }
@@ -428,9 +428,9 @@ Value EmitAssign(Builder* b, AssignExpr* n)
         return rhs;
     }
 
-    if (b->m_diag)
+    if (b->diag)
     {
-        DiagError(b->m_diag, n->base.range, "assignment to unsupported lvalue");
+        DiagError(b->diag, n->base.range, "assignment to unsupported lvalue");
     }
 
     return rhs;

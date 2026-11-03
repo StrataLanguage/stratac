@@ -57,7 +57,7 @@ static int BuildComponents(LSimdVecC* buffer, const char* memberAccess)
 
 LLVMValueRef LSimdVector2Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y)
 {
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
     LLVMValueRef maskV[] = {
         LLVMConstInt(intType, (x != VC_NULL) ? x : VC_X, 0),
@@ -66,13 +66,13 @@ LLVMValueRef LSimdVector2Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRe
 
     LLVMValueRef mask = LLVMConstVector(maskV, 2);
 
-    return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
+    return LLVMBuildShuffleVector(b->builder, v0, v1, mask, "shuf");
 }
 
 LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y,
                                  LSimdVecC z, LSimdVecC w)
 {
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
     LLVMValueRef maskV[] = {
         LLVMConstInt(intType, (x != VC_NULL) ? x : VC_X, 0),
@@ -83,7 +83,7 @@ LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRe
 
     LLVMValueRef mask = LLVMConstVector(maskV, 4);
 
-    return LLVMBuildShuffleVector(b->m_builder, v0, v1, mask, "shuf");
+    return LLVMBuildShuffleVector(b->builder, v0, v1, mask, "shuf");
 }
 
 LLVMValueRef LSimdVector2HAdd(struct Builder* b, LLVMValueRef v)
@@ -91,29 +91,29 @@ LLVMValueRef LSimdVector2HAdd(struct Builder* b, LLVMValueRef v)
     /* Horizontal add on a 2-lane vector: x + y. The 4-lane shuffle trick
        below cannot run on a <2 x float> — its mask lanes 2/3 would read the
        second operand and the fadd operands would not type-match. */
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
-    LLVMValueRef lo = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 0, 0), "lo");
-    LLVMValueRef hi = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 1, 0), "hi");
+    LLVMValueRef lo = LLVMBuildExtractElement(b->builder, v, LLVMConstInt(intType, 0, 0), "lo");
+    LLVMValueRef hi = LLVMBuildExtractElement(b->builder, v, LLVMConstInt(intType, 1, 0), "hi");
 
-    return LLVMBuildFAdd(b->m_builder, lo, hi, "hadd_scalar");
+    return LLVMBuildFAdd(b->builder, lo, hi, "hadd_scalar");
 }
 
 LLVMValueRef LSimdVector4HAdd(struct Builder* b, LLVMValueRef v)
 {
     // To do a horizontal add, we need to first add pairwise (x + y, x + y, z + w, z + w)
     LLVMValueRef swap = LSimdVector4Shuffle(b, v, v, VC_Y, VC_X, VC_W, VC_Z);
-    LLVMValueRef sum1 = LLVMBuildFAdd(b->m_builder, v, swap, "hadd1");
+    LLVMValueRef sum1 = LLVMBuildFAdd(b->builder, v, swap, "hadd1");
 
     // Extract lane 0 (x + y) and lane 2 (z + w) add as scalars
     LLVMValueRef lo
-        = LLVMBuildExtractElement(b->m_builder, sum1, LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), 0, 0), "lo");
+        = LLVMBuildExtractElement(b->builder, sum1, LLVMConstInt(LLVMInt32TypeInContext(b->ctx), 0, 0), "lo");
 
     LLVMValueRef hi
-        = LLVMBuildExtractElement(b->m_builder, sum1, LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), 2, 0), "hi");
+        = LLVMBuildExtractElement(b->builder, sum1, LLVMConstInt(LLVMInt32TypeInContext(b->ctx), 2, 0), "hi");
 
     // Finally, add and return scalar value
-    return LLVMBuildFAdd(b->m_builder, lo, hi, "hadd_scalar");
+    return LLVMBuildFAdd(b->builder, lo, hi, "hadd_scalar");
 }
 
 LLVMValueRef LSimdVector3HAdd(struct Builder* b, LLVMValueRef v)
@@ -121,19 +121,19 @@ LLVMValueRef LSimdVector3HAdd(struct Builder* b, LLVMValueRef v)
     /* float3: x + y + z. Lane 3 is padding (a `.xyz` swizzle or a 0/0
        division can leave any value there, NaN included) and must not leak
        into the sum. */
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
-    LLVMValueRef x = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 0, 0), "x");
-    LLVMValueRef y = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 1, 0), "y");
-    LLVMValueRef z = LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(intType, 2, 0), "z");
+    LLVMValueRef x = LLVMBuildExtractElement(b->builder, v, LLVMConstInt(intType, 0, 0), "x");
+    LLVMValueRef y = LLVMBuildExtractElement(b->builder, v, LLVMConstInt(intType, 1, 0), "y");
+    LLVMValueRef z = LLVMBuildExtractElement(b->builder, v, LLVMConstInt(intType, 2, 0), "z");
 
-    return LLVMBuildFAdd(b->m_builder, LLVMBuildFAdd(b->m_builder, x, y, "hadd_xy"), z, "hadd_scalar");
+    return LLVMBuildFAdd(b->builder, LLVMBuildFAdd(b->builder, x, y, "hadd_xy"), z, "hadd_scalar");
 }
 
 LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
 {
-    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
     LLVMTypeRef vecType = LLVMVectorType(scalarType, 2);
 
@@ -141,7 +141,7 @@ LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
 
     /* Insert scalar into first lane */
     LLVMValueRef singleComp
-        = LLVMBuildInsertElement(b->m_builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
+        = LLVMBuildInsertElement(b->builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
 
     /* Reorder to XXXX */
     return LSimdVector2Shuffle(b, singleComp, poisonVec, VC_X, VC_X);
@@ -149,8 +149,8 @@ LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar)
 
 LLVMValueRef LSimdVector4Broadcast(struct Builder* b, LLVMValueRef scalar)
 {
-    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
     LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
 
@@ -158,7 +158,7 @@ LLVMValueRef LSimdVector4Broadcast(struct Builder* b, LLVMValueRef scalar)
 
     /* Insert scalar into first lane */
     LLVMValueRef singleComp
-        = LLVMBuildInsertElement(b->m_builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
+        = LLVMBuildInsertElement(b->builder, poisonVec, scalar, LLVMConstInt(intType, 0, 0), "vecinit");
 
     /* Reorder to XXXX */
     return LSimdVector4Shuffle(b, singleComp, poisonVec, VC_X, VC_X, VC_X, VC_X);
@@ -166,8 +166,8 @@ LLVMValueRef LSimdVector4Broadcast(struct Builder* b, LLVMValueRef scalar)
 
 LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
 {
-    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
     LLVMTypeRef vecType = LLVMVectorType(scalarType, 2);
 
@@ -186,14 +186,14 @@ LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
 
         LLVMValueRef vec = LLVMGetPoison(vecType);
 
-        vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
 
         return vec;
     }
     else
     {
-        DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector2 construct");
+        DiagErrorFmt(b->diag, n->base.range, "invalid call to vector2 construct");
     }
 
     return NULL;
@@ -207,8 +207,8 @@ LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
 
 static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
 {
-    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
     LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
 
     Value x = EmitExpr(b, (Node*)n->args.items[0]);
@@ -221,13 +221,13 @@ static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
     if (destLanes == 3 && IS_VECTOR(x) && IS_SCALAR(y))
     {
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
             LLVMConstInt(intType, 0, 0), "vecinit");
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
             LLVMConstInt(intType, 1, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 2, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
+        vec = LLVMBuildInsertElement(b->builder, vec, y.value, LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
                                      "vecinit");
         return vec;
     }
@@ -238,11 +238,10 @@ static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
         for (unsigned i = 0; i < 3; i++)
         {
             vec = LLVMBuildInsertElement(
-                b->m_builder, vec,
-                LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, i, 0), "vecext"),
+                b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, i, 0), "vecext"),
                 LLVMConstInt(intType, i, 0), "vecinit");
         }
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 3, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, y.value, LLVMConstInt(intType, 3, 0), "vecinit");
         return vec;
     }
 
@@ -250,29 +249,29 @@ static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
     if (destLanes == 4 && IS_VECTOR(x) && IS_VECTOR(y))
     {
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
             LLVMConstInt(intType, 0, 0), "vecinit");
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
             LLVMConstInt(intType, 1, 0), "vecinit");
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, y.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, y.value, LLVMConstInt(intType, 0, 0), "vecext"),
             LLVMConstInt(intType, 2, 0), "vecinit");
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, y.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, y.value, LLVMConstInt(intType, 1, 0), "vecext"),
             LLVMConstInt(intType, 3, 0), "vecinit");
         return vec;
     }
 
-    DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector construct");
+    DiagErrorFmt(b->diag, n->base.range, "invalid call to vector construct");
     return NULL;
 }
 
 /* Helper to construct a float4/float3 from 3 arguments */
 static LLVMValueRef Vector4Construct3Args(struct Builder* b, CallExpr* n)
 {
-    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
     LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
 
     Value x = EmitExpr(b, (Node*)n->args.items[0]);
@@ -285,11 +284,11 @@ static LLVMValueRef Vector4Construct3Args(struct Builder* b, CallExpr* n)
     /* float3(1.0, 2.0, 3.0) all scalars, implicit w = 0. */
     if (destLanes == 3 && IS_SCALAR(x) && IS_SCALAR(y) && IS_SCALAR(z))
     {
-        vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, z.value, LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, z.value, LLVMConstInt(intType, 2, 0), "vecinit");
         /* Zero the final component */
-        vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
+        vec = LLVMBuildInsertElement(b->builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
                                      "vecinit");
 
         return vec;
@@ -299,18 +298,18 @@ static LLVMValueRef Vector4Construct3Args(struct Builder* b, CallExpr* n)
     if (destLanes == 4 && IS_VECTOR(x) && IS_SCALAR(y) && IS_SCALAR(z))
     {
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, 0, 0), "vecext"),
             LLVMConstInt(intType, 0, 0), "vecinit");
         vec = LLVMBuildInsertElement(
-            b->m_builder, vec, LLVMBuildExtractElement(b->m_builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
+            b->builder, vec, LLVMBuildExtractElement(b->builder, x.value, LLVMConstInt(intType, 1, 0), "vecext"),
             LLVMConstInt(intType, 1, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 2, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, z.value, LLVMConstInt(intType, 3, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, y.value, LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, z.value, LLVMConstInt(intType, 3, 0), "vecinit");
 
         return vec;
     }
 
-    DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector construct");
+    DiagErrorFmt(b->diag, n->base.range, "invalid call to vector construct");
     return NULL;
 }
 
@@ -329,10 +328,10 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         {
             if (IsNameSimdVector(n->callee) == 3)
             {
-                LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-                LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+                LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+                LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
-                return LLVMBuildInsertElement(b->m_builder, x.value, LLVMConstReal(scalarType, 0.0),
+                return LLVMBuildInsertElement(b->builder, x.value, LLVMConstReal(scalarType, 0.0),
                                               LLVMConstInt(intType, 3, 0), "vecinit");
             }
 
@@ -345,10 +344,10 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
         /* The output vector is going to be 3 lanes. Zero out the W component. */
         if (IsNameSimdVector(n->callee) == 3)
         {
-            LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-            LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+            LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+            LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
-            vec = LLVMBuildInsertElement(b->m_builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
+            vec = LLVMBuildInsertElement(b->builder, vec, LLVMConstReal(scalarType, 0.0), LLVMConstInt(intType, 3, 0),
                                          "vecinit");
         }
 
@@ -367,8 +366,8 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
 
     else if (n->args.count == 4)
     {
-        LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-        LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+        LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+        LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
         LLVMTypeRef vecType = LLVMVectorType(scalarType, 4);
 
         Value x = EmitExpr(b, (Node*)n->args.items[0]);
@@ -380,16 +379,16 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
 
         /* float4(1.0, 2.0, 3.0, 4.0) */
 
-        vec = LLVMBuildInsertElement(b->m_builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, z.value, LLVMConstInt(intType, 2, 0), "vecinit");
-        vec = LLVMBuildInsertElement(b->m_builder, vec, w.value, LLVMConstInt(intType, 3, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, x.value, LLVMConstInt(intType, 0, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, y.value, LLVMConstInt(intType, 1, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, z.value, LLVMConstInt(intType, 2, 0), "vecinit");
+        vec = LLVMBuildInsertElement(b->builder, vec, w.value, LLVMConstInt(intType, 3, 0), "vecinit");
 
         return vec;
     }
     else
     {
-        DiagErrorFmt(b->m_diag, n->base.range, "invalid call to vector construct");
+        DiagErrorFmt(b->diag, n->base.range, "invalid call to vector construct");
     }
 
     return NULL;
@@ -397,8 +396,8 @@ LLVMValueRef LSimdVector4Construct(struct Builder* b, CallExpr* n)
 
 LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, const struct BinaryExpr* binexp)
 {
-    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->m_ctx);
-    LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
+    LLVMTypeRef scalarType = LLVMFloatTypeInContext(b->ctx);
+    LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
 
     unsigned laneCount = LLVMGetVectorSize(LLVMTypeOf(vec));
     LLVMTypeRef vecType = LLVMVectorType(scalarType, laneCount);
@@ -408,7 +407,7 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
     if (LLVMGetTypeKind(LLVMTypeOf(rhs)) != LLVMVectorTypeKind)
     {
         LLVMValueRef single
-            = LLVMBuildInsertElement(b->m_builder, LLVMGetPoison(vecType), rhs, LLVMConstInt(intType, 0, 0), "splat");
+            = LLVMBuildInsertElement(b->builder, LLVMGetPoison(vecType), rhs, LLVMConstInt(intType, 0, 0), "splat");
 
         LLVMValueRef maskV[4];
         for (unsigned i = 0; i < laneCount; i++)
@@ -416,32 +415,32 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
             maskV[i] = LLVMConstInt(intType, i, 0);
         }
         LLVMValueRef mask = LLVMConstVector(maskV, laneCount);
-        rhsVec = LLVMBuildShuffleVector(b->m_builder, single, single, mask, "shuf");
+        rhsVec = LLVMBuildShuffleVector(b->builder, single, single, mask, "shuf");
     }
 
     switch (binexp->op)
     {
     case BinAdd:
-        return LLVMBuildFAdd(b->m_builder, vec, rhsVec, "");
+        return LLVMBuildFAdd(b->builder, vec, rhsVec, "");
 
     case BinSub:
-        return LLVMBuildFSub(b->m_builder, vec, rhsVec, "");
+        return LLVMBuildFSub(b->builder, vec, rhsVec, "");
 
     case BinMul:
-        return LLVMBuildFMul(b->m_builder, vec, rhsVec, "");
+        return LLVMBuildFMul(b->builder, vec, rhsVec, "");
 
     case BinDiv:
-        return LLVMBuildFDiv(b->m_builder, vec, rhsVec, "");
+        return LLVMBuildFDiv(b->builder, vec, rhsVec, "");
 
     case BinBitOr:
     {
         /* Bitcast LHS and RHS to int vectors, OR, then bitcast back to floats */
         LLVMTypeRef intVecTy = LLVMVectorType(intType, laneCount);
 
-        LLVMValueRef lhsInt = LLVMBuildBitCast(b->m_builder, vec, intVecTy, "or.lhs.bc");
-        LLVMValueRef rhsInt = LLVMBuildBitCast(b->m_builder, rhsVec, intVecTy, "or.rhs.bc");
-        LLVMValueRef orInt = LLVMBuildOr(b->m_builder, lhsInt, rhsInt, "or.tmp");
-        return LLVMBuildBitCast(b->m_builder, orInt, vecType, "");
+        LLVMValueRef lhsInt = LLVMBuildBitCast(b->builder, vec, intVecTy, "or.lhs.bc");
+        LLVMValueRef rhsInt = LLVMBuildBitCast(b->builder, rhsVec, intVecTy, "or.rhs.bc");
+        LLVMValueRef orInt = LLVMBuildOr(b->builder, lhsInt, rhsInt, "or.tmp");
+        return LLVMBuildBitCast(b->builder, orInt, vecType, "");
     }
     case BinShl:
     case BinShr:
@@ -455,7 +454,7 @@ LLVMValueRef LSimdVectorBinExpr(Builder* b, LLVMValueRef vec, LLVMValueRef rhs, 
     case BinLogicOr:
     case BinMod:
     default:;
-        DiagErrorFmt(b->m_diag, binexp->base.range, "unsupported operation for vector data type");
+        DiagErrorFmt(b->diag, binexp->base.range, "unsupported operation for vector data type");
         break;
     }
 
@@ -469,7 +468,7 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
 
     if (numComponents == ER_MALFORMED)
     {
-        DiagError(b->m_diag, expr->base.range, "malformed components in vector destructure");
+        DiagError(b->diag, expr->base.range, "malformed components in vector destructure");
         return NULL;
     }
 
@@ -481,8 +480,8 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
         /* numComponents should be ER_MALFORMED or 0 if there are no valid components */
         assert(index != VC_NULL);
 
-        LLVMValueRef idx = LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), index, 0);
-        return LLVMBuildExtractElement(b->m_builder, vec, idx, "vecext");
+        LLVMValueRef idx = LLVMConstInt(LLVMInt32TypeInContext(b->ctx), index, 0);
+        return LLVMBuildExtractElement(b->builder, vec, idx, "vecext");
     }
 
     if (numComponents == 2)
@@ -495,8 +494,8 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
         /* A 3-component swizzle is a float3: take the padding lane from a
            zero vector (shuffle index 4 = lane 0 of the second operand)
            instead of carrying the source's w along. */
-        LLVMTypeRef intType = LLVMInt32TypeInContext(b->m_ctx);
-        LLVMValueRef zeroVec = LLVMConstNull(LLVMVectorType(LLVMFloatTypeInContext(b->m_ctx), 4));
+        LLVMTypeRef intType = LLVMInt32TypeInContext(b->ctx);
+        LLVMValueRef zeroVec = LLVMConstNull(LLVMVectorType(LLVMFloatTypeInContext(b->ctx), 4));
         LLVMValueRef maskV[] = {
             LLVMConstInt(intType, c[0], 0),
             LLVMConstInt(intType, c[1], 0),
@@ -509,11 +508,11 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
             /* A float2 source (`v.xyx`): widen it through the generic 4-lane
                shuffle, then zero the padding lane. */
             LLVMValueRef wide = LSimdVector4Shuffle(b, vec, vec, c[0], c[1], c[2], VC_X);
-            return LLVMBuildInsertElement(b->m_builder, wide, LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 0.0),
+            return LLVMBuildInsertElement(b->builder, wide, LLVMConstReal(LLVMFloatTypeInContext(b->ctx), 0.0),
                                           LLVMConstInt(intType, 3, 0), "swz.pad");
         }
 
-        return LLVMBuildShuffleVector(b->m_builder, vec, zeroVec, LLVMConstVector(maskV, 4), "swz3");
+        return LLVMBuildShuffleVector(b->builder, vec, zeroVec, LLVMConstVector(maskV, 4), "swz3");
     }
 
     if (numComponents == 4)
@@ -521,26 +520,26 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
         return LSimdVector4Shuffle(b, vec, vec, c[0], c[1], c[2], c[3]);
     }
 
-    DiagError(b->m_diag, expr->base.range, "malformed components in vector destructure");
+    DiagError(b->diag, expr->base.range, "malformed components in vector destructure");
     return NULL;
 }
 
 /* Extracts lane `i` of `v` as a scalar. */
 static LLVMValueRef SimdExtract(struct Builder* b, LLVMValueRef v, unsigned i)
 {
-    return LLVMBuildExtractElement(b->m_builder, v, LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), i, 0), "vecext");
+    return LLVMBuildExtractElement(b->builder, v, LLVMConstInt(LLVMInt32TypeInContext(b->ctx), i, 0), "vecext");
 }
 
 /* Builds an `N`-lane vector from `count` scalar components. */
 static LLVMValueRef SimdBuildVector(struct Builder* b, LLVMValueRef* comps, unsigned count)
 {
-    LLVMTypeRef vecType = LLVMVectorType(LLVMFloatTypeInContext(b->m_ctx), count);
+    LLVMTypeRef vecType = LLVMVectorType(LLVMFloatTypeInContext(b->ctx), count);
     LLVMValueRef result = LLVMGetPoison(vecType);
 
     for (unsigned i = 0; i < count; i++)
     {
-        result = LLVMBuildInsertElement(b->m_builder, result, comps[i],
-                                        LLVMConstInt(LLVMInt32TypeInContext(b->m_ctx), i, 0), "vecins");
+        result = LLVMBuildInsertElement(b->builder, result, comps[i],
+                                        LLVMConstInt(LLVMInt32TypeInContext(b->ctx), i, 0), "vecins");
     }
 
     return result;
@@ -548,7 +547,7 @@ static LLVMValueRef SimdBuildVector(struct Builder* b, LLVMValueRef* comps, unsi
 
 LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, LaneCount lanes)
 {
-    LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
+    LLVMTypeRef floatType = LLVMFloatTypeInContext(b->ctx);
     unsigned physLanes = LLVMGetVectorSize(LLVMTypeOf(vecA));
 
     if (lanes == 0 || lanes > (LaneCount)physLanes)
@@ -558,13 +557,13 @@ LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef v
 
     /* Element-wise product, then horizontal (lane-wise) sum of the logical
        lanes only (float3's padding lane 3 is excluded). */
-    LLVMValueRef vecMul = LLVMBuildFMul(b->m_builder, vecA, vecB, "dot_mul");
+    LLVMValueRef vecMul = LLVMBuildFMul(b->builder, vecA, vecB, "dot_mul");
 
     LLVMValueRef acc = LLVMConstReal(floatType, 0.0);
 
     for (LaneCount i = 0; i < lanes; i++)
     {
-        acc = LLVMBuildFAdd(b->m_builder, acc, SimdExtract(b, vecMul, i), "dot_acc");
+        acc = LLVMBuildFAdd(b->builder, acc, SimdExtract(b, vecMul, i), "dot_acc");
     }
 
     return acc;
@@ -582,22 +581,22 @@ LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef
     /* float2 cross is the scalar z-component: ax*by - ay*bx. */
     if (lanes == 2)
     {
-        return LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, ax, by, ""),
-                             LLVMBuildFMul(b->m_builder, ay, bx, ""), "cross_z");
+        return LLVMBuildFSub(b->builder, LLVMBuildFMul(b->builder, ax, by, ""), LLVMBuildFMul(b->builder, ay, bx, ""),
+                             "cross_z");
     }
 
     LLVMValueRef az = SimdExtract(b, vecA, 2);
     LLVMValueRef bz = SimdExtract(b, vecB, 2);
 
-    LLVMValueRef x = LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, ay, bz, ""),
-                                   LLVMBuildFMul(b->m_builder, az, by, ""), "cross_x");
-    LLVMValueRef y = LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, az, bx, ""),
-                                   LLVMBuildFMul(b->m_builder, ax, bz, ""), "cross_y");
-    LLVMValueRef z = LLVMBuildFSub(b->m_builder, LLVMBuildFMul(b->m_builder, ax, by, ""),
-                                   LLVMBuildFMul(b->m_builder, ay, bx, ""), "cross_z");
+    LLVMValueRef x = LLVMBuildFSub(b->builder, LLVMBuildFMul(b->builder, ay, bz, ""),
+                                   LLVMBuildFMul(b->builder, az, by, ""), "cross_x");
+    LLVMValueRef y = LLVMBuildFSub(b->builder, LLVMBuildFMul(b->builder, az, bx, ""),
+                                   LLVMBuildFMul(b->builder, ax, bz, ""), "cross_y");
+    LLVMValueRef z = LLVMBuildFSub(b->builder, LLVMBuildFMul(b->builder, ax, by, ""),
+                                   LLVMBuildFMul(b->builder, ay, bx, ""), "cross_z");
 
     /* float3 is stored as a 4-lane vector with lane 3 zeroed; float4 w = 0. */
-    LLVMValueRef zero = LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 0.0);
+    LLVMValueRef zero = LLVMConstReal(LLVMFloatTypeInContext(b->ctx), 0.0);
     LLVMValueRef comps[4] = {x, y, z, zero};
 
     return SimdBuildVector(b, comps, 4);

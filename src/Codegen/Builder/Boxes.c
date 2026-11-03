@@ -21,13 +21,13 @@ Value DerefBoxValue(Builder* b, Value value)
        dereferencing again would read whatever the pointer points at as a
        pointer. Handles are NOT identity: the cell holds the handle VALUE
        (a box of a handle allocates like any other), so unwrap loads. */
-    if (innerTd.structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd.structTypeName)
-        && !IsHandleType(&b->m_registry, innerTd.structTypeName))
+    if (innerTd.structTypeName && TypeRegistryIsOpaque(&b->registry, innerTd.structTypeName)
+        && !IsHandleType(&b->registry, innerTd.structTypeName))
     {
         return ValueMake(value.value, innerTd);
     }
 
-    LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, innerTd.type, value.value, "boxval");
+    LLVMValueRef loaded = LLVMBuildLoad2(b->builder, innerTd.type, value.value, "boxval");
 
     /* `int v = mkb();`: the box itself is a temporary once its value is read. */
     BorrowTemp(b, value, innerTd);
@@ -67,9 +67,9 @@ LValue EmitLValueForNullStore(Builder* b, Node* n)
         return part;
     }
 
-    b->m_nullStoreLValue = true;
+    b->nullStoreLValue = true;
     LValue src = EmitLValue(b, n);
-    b->m_nullStoreLValue = false;
+    b->nullStoreLValue = false;
     return src;
 }
 
@@ -87,15 +87,15 @@ void NullOwningSlot(Builder* b, LValue src)
     if (TypeDescHasArrayShape(&src.typeDesc))
     {
         /* Array / string slots rebind wholesale: zero the whole fat. */
-        LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
+        LLVMBuildStore(b->builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
     }
-    else if (src.typeDesc.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, src.typeDesc.structTypeName))
+    else if (src.typeDesc.structTypeName && TypeRegistryIsOwningStruct(&b->registry, src.typeDesc.structTypeName))
     {
-        LLVMBuildStore(b->m_builder, LLVMConstNull(src.typeDesc.type), src.ptr);
+        LLVMBuildStore(b->builder, LLVMConstNull(src.typeDesc.type), src.ptr);
     }
     else
     {
-        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+        LLVMBuildStore(b->builder, LLVMConstNull(b->ptrTy), src.ptr);
     }
 }
 
@@ -107,7 +107,7 @@ LLVMValueRef EmitBoxCell(Builder* b, const TypeName* innerTn, Value src, Node* s
     LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), name);
 
     LLVMValueRef inner = EmitOwnedValue(b, src, srcNode, innerTn);
-    LLVMBuildStore(b->m_builder, inner, heap);
+    LLVMBuildStore(b->builder, inner, heap);
     return heap;
 }
 
@@ -119,30 +119,30 @@ LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
     LLVMValueRef sz = SizeOfConst(b, innerTd.type);
     LLVMValueRef args[1] = {sz};
     StrataAllocFn(b);
-    LLVMValueRef heap = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, "cpbox");
+    LLVMValueRef heap = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, args, 1, "cpbox");
 
-    const StructType* st = TypeRegistryFind(&b->m_registry, td.boxInner->name);
-    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, td.boxInner->name) : NULL;
+    const StructType* st = TypeRegistryFind(&b->registry, td.boxInner->name);
+    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->structTypes, td.boxInner->name) : NULL;
 
     if (st && structTy)
     {
         /* Field copies go through the cached per-struct copy fn: a REAL
            call, so a self-referential inner (`Node? next`) recurses at
            runtime (bounded by the null slots) instead of hanging IR-gen. */
-        LLVMTypeRef copyParamTys[2] = {b->m_ptrTy, b->m_ptrTy};
-        LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), copyParamTys, 2, 0);
+        LLVMTypeRef copyParamTys[2] = {b->ptrTy, b->ptrTy};
+        LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), copyParamTys, 2, 0);
         LLVMValueRef copyFn = GetOrCreateStructCopyFn(b, td.boxInner->name);
         LLVMValueRef copyArgs[2] = {heap, src.value};
-        LLVMBuildCall2(b->m_builder, copyFnTy, copyFn, copyArgs, 2, "");
+        LLVMBuildCall2(b->builder, copyFnTy, copyFn, copyArgs, 2, "");
     }
     else
     {
         /* Inner is not a registered struct: a scalar, or a bare owning
             value such as string (^string), another box, or an array.
             Deep-copy it. */
-        Value innerVal = ValueMake(LLVMBuildLoad2(b->m_builder, innerTd.type, src.value, "cv"), innerTd);
+        Value innerVal = ValueMake(LLVMBuildLoad2(b->builder, innerTd.type, src.value, "cv"), innerTd);
         Value copied = EmitCopyValue(b, innerVal, innerTd);
-        LLVMBuildStore(b->m_builder, copied.value, heap);
+        LLVMBuildStore(b->builder, copied.value, heap);
     }
 
     return heap;
@@ -157,7 +157,7 @@ LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
 bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd)
 {
     return !TypeDescIsBox(&targetTd) && !TypeDescHasArrayShape(&targetTd) && targetTd.structTypeName
-           && TypeRegistryIsOwningStruct(&b->m_registry, targetTd.structTypeName) && TypeDescIsBox(&valueTd)
+           && TypeRegistryIsOwningStruct(&b->registry, targetTd.structTypeName) && TypeDescIsBox(&valueTd)
            && valueTd.boxInner && strcmp(valueTd.boxInner->name, targetTd.structTypeName) == 0;
 }
 
@@ -175,13 +175,13 @@ Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
 
         if (src.valid && !src.vectorLane)
         {
-            LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), src.ptr);
+            LLVMBuildStore(b->builder, LLVMConstNull(b->ptrTy), src.ptr);
         }
     }
 
     LLVMValueRef freeArgs[1] = {box.value};
     StrataFreeFn(b);
-    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+    LLVMBuildCall2(b->builder, b->freeFnType, b->freeFn, freeArgs, 1, "");
     return inner;
 }
 
@@ -195,13 +195,13 @@ Value EmitNullTest(Builder* b, NullTestExpr* nt)
 
     if (lv.valid && TypeDescHasArrayShape(&lv.typeDesc))
     {
-        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "oad");
-        LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, lv.ptr), "oal");
+        LLVMValueRef data = LLVMBuildLoad2(b->builder, b->ptrTy, lv.ptr, "oad");
+        LLVMValueRef len = LLVMBuildLoad2(b->builder, I32Ty(b), ArrayLenPtr(b, lv.ptr), "oal");
 
-        LLVMValueRef dataNonNull = LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "nn");
-        LLVMValueRef lenNonZero = LLVMBuildICmp(b->m_builder, LLVMIntNE, len, LLVMConstInt(I32Ty(b), 0, 0), "nz");
+        LLVMValueRef dataNonNull = LLVMBuildICmp(b->builder, LLVMIntNE, data, LLVMConstNull(b->ptrTy), "nn");
+        LLVMValueRef lenNonZero = LLVMBuildICmp(b->builder, LLVMIntNE, len, LLVMConstInt(I32Ty(b), 0, 0), "nz");
 
-        return ValueMake(LLVMBuildOr(b->m_builder, dataNonNull, lenNonZero, "opt"), TypeDescMake(I1Ty(b), 0, NULL));
+        return ValueMake(LLVMBuildOr(b->builder, dataNonNull, lenNonZero, "opt"), TypeDescMake(I1Ty(b), 0, NULL));
     }
 
     /* Testing a temporary (`Make()?`) only reads it: the end of the statement drops it. */
@@ -214,16 +214,16 @@ Value EmitNullTest(Builder* b, NullTestExpr* nt)
     }
 
     LLVMValueRef slotPtr = lv.valid ? lv.ptr : tested.value;
-    LLVMValueRef boxPtr = lv.valid ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slotPtr, "opt") : slotPtr;
+    LLVMValueRef boxPtr = lv.valid ? LLVMBuildLoad2(b->builder, b->ptrTy, slotPtr, "opt") : slotPtr;
 
-    LLVMValueRef isNonNull = LLVMBuildICmp(b->m_builder, LLVMIntNE, boxPtr, LLVMConstNull(b->m_ptrTy), "nn");
+    LLVMValueRef isNonNull = LLVMBuildICmp(b->builder, LLVMIntNE, boxPtr, LLVMConstNull(b->ptrTy), "nn");
 
     return ValueMake(isNonNull, TypeDescMake(I1Ty(b), 0, NULL));
 }
 
 void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
 {
-    LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "box");
+    LLVMValueRef slot = EntryAlloca(b, b->ptrTy, "box");
 
     if (varDecl->init)
     {
@@ -240,7 +240,7 @@ void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
 
         if (sameOwningType)
         {
-            LLVMBuildStore(b->m_builder, value.value, slot);
+            LLVMBuildStore(b->builder, value.value, slot);
             NullMovedSource(b, varDecl->init);
         }
         else if (typeDesc.boxInner)
@@ -250,29 +250,29 @@ void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
                literal / move source), then box it up - identical to ^int
                but the inner happens to be owning. */
             LLVMValueRef heap = EmitBoxCell(b, typeDesc.boxInner, value, varDecl->init, "heap");
-            LLVMBuildStore(b->m_builder, heap, slot);
+            LLVMBuildStore(b->builder, heap, slot);
         }
         else
         {
             /* string (owning primitive, no box inner): construct the
                 owned value directly into the slot. */
             LLVMValueRef owned = EmitOwnedValue(b, value, varDecl->init, StringTypeName(b));
-            LLVMBuildStore(b->m_builder, owned, slot);
+            LLVMBuildStore(b->builder, owned, slot);
         }
     }
     else
     {
-        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
+        LLVMBuildStore(b->builder, LLVMConstNull(b->ptrTy), slot);
     }
 
-    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
     sym->value = slot;
     sym->typeDesc = typeDesc;
 
     SymDeclare(b, varDecl->name, sym);
 
-    OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
+    OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->arena, sizeof(OwnLocal));
     ol->slot = slot;
     ol->td = typeDesc;
-    VecPush(&b->m_owningLocals, ol);
+    VecPush(&b->owningLocals, ol);
 }

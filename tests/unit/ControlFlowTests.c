@@ -306,9 +306,9 @@ static int DeferErrors(const char* src, const char* needle)
     int count = (int)DiagErrorCount(&diag);
     bool hit = false;
 
-    for (size_t i = 0; i < diag.m_count; i++)
+    for (size_t i = 0; i < diag.count; i++)
     {
-        hit = hit || strstr(diag.m_diagnostics[i].message, needle) != NULL;
+        hit = hit || strstr(diag.diagnostics[i].message, needle) != NULL;
     }
 
     DiagnosticEngineFree(&diag);

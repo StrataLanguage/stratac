@@ -746,7 +746,7 @@ static bool FoldCast(Resolver* r, Node* n, ConstGlobalVal* out)
 
     if (castName)
     {
-        target = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->m_registry, castName)));
+        target = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->registry, castName)));
     }
 
     if (target.bits != 0)
@@ -767,7 +767,7 @@ static bool FoldCast(Resolver* r, Node* n, ConstGlobalVal* out)
 
 static bool FoldIdent(Resolver* r, Node* n, ConstGlobalVal* out)
 {
-    ConstGlobalVal* prev = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, ((IdentExpr*)n)->name);
+    ConstGlobalVal* prev = (ConstGlobalVal*)StrMapGet(&r->constGlobals, ((IdentExpr*)n)->name);
 
     if (!prev)
     {
@@ -808,16 +808,16 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
 
     /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
        BEFORE the main resolution marks members, so scan the module. */
-    if (!TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->baseNode)->name))
+    if (!TypeRegistryIsEnum(&r->registry, ((IdentExpr*)m->baseNode)->name))
     {
         return false;
     }
 
     const char* baseName = ((IdentExpr*)m->baseNode)->name;
 
-    for (size_t i = 0; i < r->m_mod->enums.count; i++)
+    for (size_t i = 0; i < r->mod->enums.count; i++)
     {
-        EnumDecl* ed = (EnumDecl*)VecGet(&r->m_mod->enums, i);
+        EnumDecl* ed = (EnumDecl*)VecGet(&r->mod->enums, i);
 
         if (strcmp(ed->name, baseName) != 0)
         {
@@ -837,7 +837,7 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
                 out->isInt = wasInt;
                 /* An enum member is typed by its underlying integer type (`int` when none is spelled). */
                 out->ity = SemaConstIntType(GetPrimitiveType(
-                    TypeRegistryResolveAlias(&r->m_registry, ed->underlyingType ? ed->underlyingType : "int")));
+                    TypeRegistryResolveAlias(&r->registry, ed->underlyingType ? ed->underlyingType : "int")));
                 return true;
             }
         }
@@ -928,11 +928,11 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
 
     if (t->lengthName)
     {
-        ConstGlobalVal* v = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, t->lengthName);
+        ConstGlobalVal* v = (ConstGlobalVal*)StrMapGet(&r->constGlobals, t->lengthName);
 
         if (!v || !v->isInt)
         {
-            DiagErrorFmt(r->m_diag, t->range,
+            DiagErrorFmt(r->diag, t->range,
                          "array dimension '%s' is not a compile-time integer constant "
                          "(declare it 'const int %s = ...;')",
                          t->lengthName, t->lengthName);
@@ -945,7 +945,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
 
         if (t->length < 1)
         {
-            DiagErrorFmt(r->m_diag, t->range, "array dimension '%s' must be at least 1 (got %ld)",
+            DiagErrorFmt(r->diag, t->range, "array dimension '%s' must be at least 1 (got %ld)",
                          dimName ? dimName : "?", t->length);
             return false;
         }
@@ -959,7 +959,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
 
             if (close)
             {
-                t->name = ArenaFormat(r->m_arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length, close + 1);
+                t->name = ArenaFormat(r->arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length, close + 1);
             }
         }
     }

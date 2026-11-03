@@ -11,8 +11,8 @@ LLVMValueRef BuildFloatToIntSaturating(Builder* b, LLVMValueRef value, LLVMTypeR
     if (LLVMGetTypeKind(target) != LLVMIntegerTypeKind
         || (srcKind != LLVMFloatTypeKind && srcKind != LLVMDoubleTypeKind))
     {
-        return isUnsigned ? LLVMBuildFPToUI(b->m_builder, value, target, "c")
-                          : LLVMBuildFPToSI(b->m_builder, value, target, "c");
+        return isUnsigned ? LLVMBuildFPToUI(b->builder, value, target, "c")
+                          : LLVMBuildFPToSI(b->builder, value, target, "c");
     }
 
     char name[64];
@@ -21,15 +21,15 @@ LLVMValueRef BuildFloatToIntSaturating(Builder* b, LLVMValueRef value, LLVMTypeR
 
     LLVMTypeRef params[1] = {src};
     LLVMTypeRef fnTy = LLVMFunctionType(target, params, 1, 0);
-    LLVMValueRef fn = LLVMGetNamedFunction(b->m_mod, name);
+    LLVMValueRef fn = LLVMGetNamedFunction(b->mod, name);
 
     if (!fn)
     {
-        fn = LLVMAddFunction(b->m_mod, name, fnTy);
+        fn = LLVMAddFunction(b->mod, name, fnTy);
     }
 
     LLVMValueRef args[1] = {value};
-    return LLVMBuildCall2(b->m_builder, fnTy, fn, args, 1, "sat");
+    return LLVMBuildCall2(b->builder, fnTy, fn, args, 1, "sat");
 }
 
 /* A vector comparison yields one bool per lane; `==` holds when every lane does. Scalars pass through. */
@@ -41,12 +41,12 @@ static LLVMValueRef AllLanesTrue(Builder* b, LLVMValueRef cmp)
     }
 
     unsigned lanes = LLVMGetVectorSize(LLVMTypeOf(cmp));
-    LLVMValueRef all = LLVMBuildExtractElement(b->m_builder, cmp, LLVMConstInt(I32Ty(b), 0, 0), "lane");
+    LLVMValueRef all = LLVMBuildExtractElement(b->builder, cmp, LLVMConstInt(I32Ty(b), 0, 0), "lane");
 
     for (unsigned i = 1; i < lanes; i++)
     {
-        LLVMValueRef lane = LLVMBuildExtractElement(b->m_builder, cmp, LLVMConstInt(I32Ty(b), i, 0), "lane");
-        all = LLVMBuildAnd(b->m_builder, all, lane, "lanes");
+        LLVMValueRef lane = LLVMBuildExtractElement(b->builder, cmp, LLVMConstInt(I32Ty(b), i, 0), "lane");
+        all = LLVMBuildAnd(b->builder, all, lane, "lanes");
     }
 
     return all;
@@ -63,15 +63,15 @@ static void EmitDivisionChecks(Builder* b, TypeDesc td, LLVMValueRef lhs, LLVMVa
         return;
     }
 
-    EmitPanicIf(b, LLVMBuildICmp(b->m_builder, LLVMIntEQ, divisor, LLVMConstInt(ty, 0, 0), "div.zero"), zeroMessage);
+    EmitPanicIf(b, LLVMBuildICmp(b->builder, LLVMIntEQ, divisor, LLVMConstInt(ty, 0, 0), "div.zero"), zeroMessage);
 
     if (!TypeDescIsUnsigned(&td))
     {
         unsigned width = LLVMGetIntTypeWidth(ty);
         LLVMValueRef minVal = LLVMConstInt(ty, 1ULL << (width - 1), 0);
-        LLVMValueRef isMin = LLVMBuildICmp(b->m_builder, LLVMIntEQ, lhs, minVal, "div.min");
-        LLVMValueRef isNeg1 = LLVMBuildICmp(b->m_builder, LLVMIntEQ, divisor, LLVMConstInt(ty, ~0ULL, 1), "div.neg1");
-        EmitPanicIf(b, LLVMBuildAnd(b->m_builder, isMin, isNeg1, "div.ovf"), overflowMessage);
+        LLVMValueRef isMin = LLVMBuildICmp(b->builder, LLVMIntEQ, lhs, minVal, "div.min");
+        LLVMValueRef isNeg1 = LLVMBuildICmp(b->builder, LLVMIntEQ, divisor, LLVMConstInt(ty, ~0ULL, 1), "div.neg1");
+        EmitPanicIf(b, LLVMBuildAnd(b->builder, isMin, isNeg1, "div.ovf"), overflowMessage);
     }
 }
 
@@ -88,7 +88,7 @@ static void EmitShiftCheck(Builder* b, LLVMValueRef value, LLVMValueRef count)
     unsigned width = LLVMGetIntTypeWidth(LLVMTypeOf(value));
     LLVMValueRef limit = LLVMConstInt(ty, width, 0);
     /* Unsigned compare: a negative count is a huge one. */
-    EmitPanicIf(b, LLVMBuildICmp(b->m_builder, LLVMIntUGE, count, limit, "shift.big"), "shift count out of range");
+    EmitPanicIf(b, LLVMBuildICmp(b->builder, LLVMIntUGE, count, limit, "shift.big"), "shift count out of range");
 }
 
 static bool IsComparisonOp(BinaryOp op)
@@ -102,7 +102,7 @@ static bool IsComparisonOp(BinaryOp op)
    becoming a value no `switch`/comparison anticipates. Constants were checked by sema. */
 void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc target)
 {
-    const EnumDecl* ed = ModuleFindEnum(b->m_module, cast->type.name);
+    const EnumDecl* ed = ModuleFindEnum(b->module, cast->type.name);
 
     if (!ed || ed->members.count == 0 || !operand.value || TypeDescIsFloat(&operand.typeDesc)
         || TypeDescIsFloat(&target) || !target.type || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind
@@ -120,11 +120,11 @@ void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc targe
         const EnumMemberDecl* member = (const EnumMemberDecl*)VecGet((Vec*)&ed->members, i);
         uint64_t raw = member->isNegative ? (uint64_t)(-(int64_t)member->value) : member->value;
         LLVMValueRef want = LLVMConstInt(target.type, raw, 0);
-        isMember = LLVMBuildOr(b->m_builder, isMember,
-                               LLVMBuildICmp(b->m_builder, LLVMIntEQ, converted.value, want, "enum.is"), "enum.any");
+        isMember = LLVMBuildOr(b->builder, isMember,
+                               LLVMBuildICmp(b->builder, LLVMIntEQ, converted.value, want, "enum.is"), "enum.any");
     }
 
-    EmitPanicIf(b, LLVMBuildNot(b->m_builder, isMember, "enum.bad"), "enum cast: value is not a member");
+    EmitPanicIf(b, LLVMBuildNot(b->builder, isMember, "enum.bad"), "enum cast: value is not a member");
 }
 
 static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
@@ -132,8 +132,8 @@ static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
     bool leftSigned = !TypeDescIsUnsigned(&l.typeDesc);
     Value sv = leftSigned ? l : r;
     Value uv = leftSigned ? r : l;
-    LLVMValueRef s64 = LLVMBuildSExt(b->m_builder, sv.value, I64Ty(b), "mix.s");
-    LLVMValueRef u64 = LLVMBuildZExt(b->m_builder, uv.value, I64Ty(b), "mix.u");
+    LLVMValueRef s64 = LLVMBuildSExt(b->builder, sv.value, I64Ty(b), "mix.s");
+    LLVMValueRef u64 = LLVMBuildZExt(b->builder, uv.value, I64Ty(b), "mix.u");
 
     if (LLVMGetIntTypeWidth(sv.typeDesc.type) == 64)
     {
@@ -145,7 +145,7 @@ static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
         u64 = uv.value;
     }
 
-    LLVMValueRef neg = LLVMBuildICmp(b->m_builder, LLVMIntSLT, s64, LLVMConstInt(I64Ty(b), 0, 0), "mix.neg");
+    LLVMValueRef neg = LLVMBuildICmp(b->builder, LLVMIntSLT, s64, LLVMConstInt(I64Ty(b), 0, 0), "mix.neg");
 
     /* Put the comparison in terms of (signed, unsigned): `u < s` is `s > u`. */
     BinaryOp sop = op;
@@ -161,25 +161,25 @@ static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
     switch (sop)
     {
     case BinLt:
-        out = LLVMBuildOr(b->m_builder, neg, LLVMBuildICmp(b->m_builder, LLVMIntULT, s64, u64, "mix.c"), "mix.lt");
+        out = LLVMBuildOr(b->builder, neg, LLVMBuildICmp(b->builder, LLVMIntULT, s64, u64, "mix.c"), "mix.lt");
         break;
     case BinLtEq:
-        out = LLVMBuildOr(b->m_builder, neg, LLVMBuildICmp(b->m_builder, LLVMIntULE, s64, u64, "mix.c"), "mix.le");
+        out = LLVMBuildOr(b->builder, neg, LLVMBuildICmp(b->builder, LLVMIntULE, s64, u64, "mix.c"), "mix.le");
         break;
     case BinGt:
-        out = LLVMBuildAnd(b->m_builder, LLVMBuildNot(b->m_builder, neg, "mix.pos"),
-                           LLVMBuildICmp(b->m_builder, LLVMIntUGT, s64, u64, "mix.c"), "mix.gt");
+        out = LLVMBuildAnd(b->builder, LLVMBuildNot(b->builder, neg, "mix.pos"),
+                           LLVMBuildICmp(b->builder, LLVMIntUGT, s64, u64, "mix.c"), "mix.gt");
         break;
     case BinGtEq:
-        out = LLVMBuildAnd(b->m_builder, LLVMBuildNot(b->m_builder, neg, "mix.pos"),
-                           LLVMBuildICmp(b->m_builder, LLVMIntUGE, s64, u64, "mix.c"), "mix.ge");
+        out = LLVMBuildAnd(b->builder, LLVMBuildNot(b->builder, neg, "mix.pos"),
+                           LLVMBuildICmp(b->builder, LLVMIntUGE, s64, u64, "mix.c"), "mix.ge");
         break;
     case BinEqEq:
-        out = LLVMBuildAnd(b->m_builder, LLVMBuildNot(b->m_builder, neg, "mix.pos"),
-                           LLVMBuildICmp(b->m_builder, LLVMIntEQ, s64, u64, "mix.c"), "mix.eq");
+        out = LLVMBuildAnd(b->builder, LLVMBuildNot(b->builder, neg, "mix.pos"),
+                           LLVMBuildICmp(b->builder, LLVMIntEQ, s64, u64, "mix.c"), "mix.eq");
         break;
     default:
-        out = LLVMBuildOr(b->m_builder, neg, LLVMBuildICmp(b->m_builder, LLVMIntNE, s64, u64, "mix.c"), "mix.ne");
+        out = LLVMBuildOr(b->builder, neg, LLVMBuildICmp(b->builder, LLVMIntNE, s64, u64, "mix.c"), "mix.ne");
         break;
     }
 
@@ -193,27 +193,27 @@ static Value EmitLogicalBinary(Builder* b, BinaryExpr* n)
 
     LLVMValueRef cond = ToI1(b, EmitCondOperand(b, n->lhs));
 
-    LLVMBasicBlockRef lhsEnd = LLVMGetInsertBlock(b->m_builder);
-    LLVMBasicBlockRef rhsBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.rhs");
-    LLVMBasicBlockRef mergeBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.end");
+    LLVMBasicBlockRef lhsEnd = LLVMGetInsertBlock(b->builder);
+    LLVMBasicBlockRef rhsBlock = LLVMAppendBasicBlockInContext(b->ctx, b->curFn, "logic.rhs");
+    LLVMBasicBlockRef mergeBlock = LLVMAppendBasicBlockInContext(b->ctx, b->curFn, "logic.end");
 
     if (isAnd)
     {
-        LLVMBuildCondBr(b->m_builder, cond, rhsBlock, mergeBlock);
+        LLVMBuildCondBr(b->builder, cond, rhsBlock, mergeBlock);
     }
     else
     {
-        LLVMBuildCondBr(b->m_builder, cond, mergeBlock, rhsBlock);
+        LLVMBuildCondBr(b->builder, cond, mergeBlock, rhsBlock);
     }
 
-    LLVMPositionBuilderAtEnd(b->m_builder, rhsBlock);
+    LLVMPositionBuilderAtEnd(b->builder, rhsBlock);
     LLVMValueRef rhsCond = ToI1(b, EmitCondOperand(b, n->rhs));
 
-    LLVMBasicBlockRef rhsEnd = LLVMGetInsertBlock(b->m_builder);
-    LLVMBuildBr(b->m_builder, mergeBlock);
+    LLVMBasicBlockRef rhsEnd = LLVMGetInsertBlock(b->builder);
+    LLVMBuildBr(b->builder, mergeBlock);
 
-    LLVMPositionBuilderAtEnd(b->m_builder, mergeBlock);
-    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, I1Ty(b), "logic");
+    LLVMPositionBuilderAtEnd(b->builder, mergeBlock);
+    LLVMValueRef phi = LLVMBuildPhi(b->builder, I1Ty(b), "logic");
 
     LLVMValueRef shortCircuit = isAnd ? LLVMConstNull(I1Ty(b)) : LLVMConstInt(I1Ty(b), 1, 0);
 
@@ -239,28 +239,27 @@ static Value EmitBoxEquality(Builder* b, BinaryExpr* n, Value l, Value r)
     if (l.typeDesc.boxInner)
     {
         TypeDesc innerTd = Resolve(b, l.typeDesc.boxInner);
-        eqEnd = EmitBoxCellEq(b, b->m_curFn, l.value, r.value, &innerTd, TypeDescIsOptional(&l.typeDesc), falseBB);
-        LLVMBuildBr(b->m_builder, trueBB);
+        eqEnd = EmitBoxCellEq(b, b->curFn, l.value, r.value, &innerTd, TypeDescIsOptional(&l.typeDesc), falseBB);
+        LLVMBuildBr(b->builder, trueBB);
     }
     else
     {
         /* ^string (degenerate: the cell IS a char*): identity. */
-        LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, l.value, r.value, "boxeq"), trueBB,
-                        falseBB);
-        eqEnd = LLVMGetInsertBlock(b->m_builder);
+        LLVMBuildCondBr(b->builder, LLVMBuildICmp(b->builder, LLVMIntEQ, l.value, r.value, "boxeq"), trueBB, falseBB);
+        eqEnd = LLVMGetInsertBlock(b->builder);
     }
 
-    LLVMPositionBuilderAtEnd(b->m_builder, falseBB);
-    LLVMBuildBr(b->m_builder, trueBB);
-    LLVMPositionBuilderAtEnd(b->m_builder, trueBB);
-    LLVMValueRef cmp = LLVMBuildPhi(b->m_builder, I1Ty(b), "boxeq");
+    LLVMPositionBuilderAtEnd(b->builder, falseBB);
+    LLVMBuildBr(b->builder, trueBB);
+    LLVMPositionBuilderAtEnd(b->builder, trueBB);
+    LLVMValueRef cmp = LLVMBuildPhi(b->builder, I1Ty(b), "boxeq");
     LLVMValueRef inVals[2] = {LLVMConstInt(I1Ty(b), 1, 0), LLVMConstInt(I1Ty(b), 0, 0)};
     LLVMBasicBlockRef inBlocks[2] = {eqEnd, falseBB};
     LLVMAddIncoming(cmp, inVals, inBlocks, 2);
 
     if (n->op == BinNotEq)
     {
-        cmp = LLVMBuildNot(b->m_builder, cmp, "boxne");
+        cmp = LLVMBuildNot(b->builder, cmp, "boxne");
     }
 
     return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
@@ -287,8 +286,8 @@ static Value EmitStringEquality(Builder* b, BinaryExpr* n, Value l, Value r)
     }
     else
     {
-        lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
-        ll = WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll"));
+        lp = LLVMBuildExtractValue(b->builder, l.value, 0, "seq.l");
+        ll = WidenLen(b, LLVMBuildExtractValue(b->builder, l.value, 1, "seq.ll"));
     }
 
     if (TypeDescIsCString(&r.typeDesc))
@@ -298,18 +297,18 @@ static Value EmitStringEquality(Builder* b, BinaryExpr* n, Value l, Value r)
     }
     else
     {
-        rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
-        rl = WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl"));
+        rp = LLVMBuildExtractValue(b->builder, r.value, 0, "seq.r");
+        rl = WidenLen(b, LLVMBuildExtractValue(b->builder, r.value, 1, "seq.rl"));
     }
 
     LLVMValueRef args[4] = {lp, ll, rp, rl};
     StrataStrEqFn(b);
-    LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
-    LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
+    LLVMValueRef wide = LLVMBuildCall2(b->builder, b->strEqFnType, b->strEqFn, args, 4, "seq");
+    LLVMValueRef cmp = LLVMBuildICmp(b->builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
 
     if (n->op == BinNotEq)
     {
-        cmp = LLVMBuildNot(b->m_builder, cmp, "sne");
+        cmp = LLVMBuildNot(b->builder, cmp, "sne");
     }
 
     return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
@@ -322,16 +321,14 @@ static Value EmitStringConcat(Builder* b, Value l, Value r)
     ClaimTemp(b, l);
     ClaimTemp(b, r);
 
-    LLVMValueRef lp
-        = TypeDescIsCString(&l.typeDesc) ? l.value : LLVMBuildExtractValue(b->m_builder, l.value, 0, "cat.l");
+    LLVMValueRef lp = TypeDescIsCString(&l.typeDesc) ? l.value : LLVMBuildExtractValue(b->builder, l.value, 0, "cat.l");
     LLVMValueRef ll = TypeDescIsCString(&l.typeDesc)
                           ? BuildStrLen(b, l.value)
-                          : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
-    LLVMValueRef rp
-        = TypeDescIsCString(&r.typeDesc) ? r.value : LLVMBuildExtractValue(b->m_builder, r.value, 0, "cat.r");
+                          : WidenLen(b, LLVMBuildExtractValue(b->builder, l.value, 1, "cat.ll"));
+    LLVMValueRef rp = TypeDescIsCString(&r.typeDesc) ? r.value : LLVMBuildExtractValue(b->builder, r.value, 0, "cat.r");
     LLVMValueRef rl = TypeDescIsCString(&r.typeDesc)
                           ? BuildStrLen(b, r.value)
-                          : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
+                          : WidenLen(b, LLVMBuildExtractValue(b->builder, r.value, 1, "cat.rl"));
 
     Value result = ValueMake(BuildConcatStringFat(b, lp, ll, rp, rl), StringFatDesc(b));
     NoteFreshOwned(b, result);
@@ -352,7 +349,7 @@ static Value EmitStringBinary(Builder* b, BinaryExpr* n, Value l, Value r)
         return EmitStringConcat(b, l, r);
     }
 
-    DiagError(b->m_diag, n->base.range, "strings only support '==' and '!=' comparisons");
+    DiagError(b->diag, n->base.range, "strings only support '==' and '!=' comparisons");
 
     return ValueMake(LLVMConstNull(I1Ty(b)), TypeDescMake(I1Ty(b), 0, NULL));
 }
@@ -361,7 +358,7 @@ static Value EmitStringBinary(Builder* b, BinaryExpr* n, Value l, Value r)
    operands of `==`/`!=`. */
 static bool IsAggregateEqOperand(Builder* b, TypeDesc* td)
 {
-    return (td->structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, td->structTypeName))
+    return (td->structTypeName != NULL && !TypeRegistryIsOpaque(&b->registry, td->structTypeName))
            || ((TypeDescHasArrayShape(td) || TypeDescIsFixedArray(td)) && !TypeDescIsString(td));
 }
 
@@ -375,14 +372,14 @@ static Value EmitAggregateEquality(Builder* b, BinaryExpr* n, Value l, Value r)
 {
     LLVMValueRef la = SpillEqOperand(b, l);
     LLVMValueRef ra = SpillEqOperand(b, r);
-    LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
+    LLVMTypeRef eqParams[2] = {b->ptrTy, b->ptrTy};
     LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
     LLVMValueRef eqArgs[2] = {la, ra};
-    LLVMValueRef eq = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2, "eq");
+    LLVMValueRef eq = LLVMBuildCall2(b->builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2, "eq");
 
     if (n->op == BinNotEq)
     {
-        eq = LLVMBuildNot(b->m_builder, eq, "eqne");
+        eq = LLVMBuildNot(b->builder, eq, "eqne");
     }
 
     return ValueMake(eq, TypeDescMake(I1Ty(b), 0, NULL));
@@ -420,7 +417,7 @@ static TypeDesc NormalizeNumericOperands(Builder* b, Value* l, Value* r)
         /* float mixed with double: compute in the wider type (fpext the float
            side) - the old code left the operands at mismatched widths, which
            emitted invalid IR like `fmul float X, double Y`. */
-        LLVMTypeRef d = LLVMDoubleTypeInContext(b->m_ctx);
+        LLVMTypeRef d = LLVMDoubleTypeInContext(b->ctx);
 
         if (l->typeDesc.type == d)
         {
@@ -462,7 +459,7 @@ static TypeDesc NormalizeNumericOperands(Builder* b, Value* l, Value* r)
    both operands to i64 so that icmp works correctly. */
 static void PromotePointerComparison(Builder* b, BinaryOp op, Value* l, Value* r, TypeDesc* typeDesc, bool* flt)
 {
-    if (!(typeDesc->type == b->m_ptrTy || r->typeDesc.type == b->m_ptrTy))
+    if (!(typeDesc->type == b->ptrTy || r->typeDesc.type == b->ptrTy))
     {
         return;
     }
@@ -477,18 +474,18 @@ static void PromotePointerComparison(Builder* b, BinaryOp op, Value* l, Value* r
     case BinGtEq:
         *typeDesc = TypeDescMake(I64Ty(b), TDF_UNSIGNED, NULL);
         *flt = false;
-        if (l->typeDesc.type == b->m_ptrTy)
+        if (l->typeDesc.type == b->ptrTy)
         {
-            l->value = LLVMBuildPtrToInt(b->m_builder, l->value, I64Ty(b), "picmp");
+            l->value = LLVMBuildPtrToInt(b->builder, l->value, I64Ty(b), "picmp");
             l->typeDesc = *typeDesc;
         }
         else
         {
             *l = Coerce(b, *l, *typeDesc);
         }
-        if (r->typeDesc.type == b->m_ptrTy)
+        if (r->typeDesc.type == b->ptrTy)
         {
-            r->value = LLVMBuildPtrToInt(b->m_builder, r->value, I64Ty(b), "picmp");
+            r->value = LLVMBuildPtrToInt(b->builder, r->value, I64Ty(b), "picmp");
             r->typeDesc = *typeDesc;
         }
         else
@@ -510,20 +507,20 @@ static Value EmitNumericBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
     switch (op)
     {
     case BinAdd:
-        out = flt ? LLVMBuildFAdd(b->m_builder, l.value, r.value, "add")
-                  : LLVMBuildAdd(b->m_builder, l.value, r.value, "add");
+        out = flt ? LLVMBuildFAdd(b->builder, l.value, r.value, "add")
+                  : LLVMBuildAdd(b->builder, l.value, r.value, "add");
 
         return ValueMake(out, typeDesc);
 
     case BinSub:
-        out = flt ? LLVMBuildFSub(b->m_builder, l.value, r.value, "sub")
-                  : LLVMBuildSub(b->m_builder, l.value, r.value, "sub");
+        out = flt ? LLVMBuildFSub(b->builder, l.value, r.value, "sub")
+                  : LLVMBuildSub(b->builder, l.value, r.value, "sub");
 
         return ValueMake(out, typeDesc);
 
     case BinMul:
-        out = flt ? LLVMBuildFMul(b->m_builder, l.value, r.value, "mul")
-                  : LLVMBuildMul(b->m_builder, l.value, r.value, "mul");
+        out = flt ? LLVMBuildFMul(b->builder, l.value, r.value, "mul")
+                  : LLVMBuildMul(b->builder, l.value, r.value, "mul");
 
         return ValueMake(out, typeDesc);
 
@@ -533,9 +530,9 @@ static Value EmitNumericBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
             EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer division by zero", "integer division overflows");
         }
 
-        out = flt ? LLVMBuildFDiv(b->m_builder, l.value, r.value, "div")
-                  : (TypeDescIsUnsigned(&typeDesc) ? LLVMBuildUDiv(b->m_builder, l.value, r.value, "div")
-                                                   : LLVMBuildSDiv(b->m_builder, l.value, r.value, "div"));
+        out = flt ? LLVMBuildFDiv(b->builder, l.value, r.value, "div")
+                  : (TypeDescIsUnsigned(&typeDesc) ? LLVMBuildUDiv(b->builder, l.value, r.value, "div")
+                                                   : LLVMBuildSDiv(b->builder, l.value, r.value, "div"));
 
         return ValueMake(out, typeDesc);
 
@@ -545,9 +542,9 @@ static Value EmitNumericBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
             EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer modulo by zero", "integer modulo overflows");
         }
 
-        out = flt ? LLVMBuildFRem(b->m_builder, l.value, r.value, "mod")
-                  : (TypeDescIsUnsigned(&typeDesc) ? LLVMBuildURem(b->m_builder, l.value, r.value, "mod")
-                                                   : LLVMBuildSRem(b->m_builder, l.value, r.value, "mod"));
+        out = flt ? LLVMBuildFRem(b->builder, l.value, r.value, "mod")
+                  : (TypeDescIsUnsigned(&typeDesc) ? LLVMBuildURem(b->builder, l.value, r.value, "mod")
+                                                   : LLVMBuildSRem(b->builder, l.value, r.value, "mod"));
 
         return ValueMake(out, typeDesc);
 
@@ -566,30 +563,30 @@ static Value EmitBitwiseBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
     switch (op)
     {
     case BinBitAnd:
-        out = LLVMBuildAnd(b->m_builder, l.value, r.value, "and");
+        out = LLVMBuildAnd(b->builder, l.value, r.value, "and");
 
         return ValueMake(out, typeDesc);
 
     case BinBitOr:
-        out = LLVMBuildOr(b->m_builder, l.value, r.value, "or");
+        out = LLVMBuildOr(b->builder, l.value, r.value, "or");
 
         return ValueMake(out, typeDesc);
 
     case BinBitXor:
-        out = LLVMBuildXor(b->m_builder, l.value, r.value, "xor");
+        out = LLVMBuildXor(b->builder, l.value, r.value, "xor");
 
         return ValueMake(out, typeDesc);
 
     case BinShl:
         EmitShiftCheck(b, l.value, r.value);
-        out = LLVMBuildShl(b->m_builder, l.value, r.value, "shl");
+        out = LLVMBuildShl(b->builder, l.value, r.value, "shl");
 
         return ValueMake(out, typeDesc);
 
     case BinShr:
         EmitShiftCheck(b, l.value, r.value);
-        out = TypeDescIsUnsigned(&typeDesc) ? LLVMBuildLShr(b->m_builder, l.value, r.value, "shr")
-                                            : LLVMBuildAShr(b->m_builder, l.value, r.value, "shr");
+        out = TypeDescIsUnsigned(&typeDesc) ? LLVMBuildLShr(b->builder, l.value, r.value, "shr")
+                                            : LLVMBuildAShr(b->builder, l.value, r.value, "shr");
 
         return ValueMake(out, typeDesc);
 
@@ -609,8 +606,8 @@ static Value EmitComparisonBinary(Builder* b, BinaryOp op, Value l, Value r, Typ
     switch (op)
     {
     case BinEqEq:
-        out = flt ? FcmpByName(b->m_builder, "oeq", l.value, r.value)
-                  : IcmpByName(b->m_builder, "eq", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
+        out = flt ? FcmpByName(b->builder, "oeq", l.value, r.value)
+                  : IcmpByName(b->builder, "eq", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(AllLanesTrue(b, out), boolTypeDesc);
 
@@ -618,37 +615,37 @@ static Value EmitComparisonBinary(Builder* b, BinaryOp op, Value l, Value r, Typ
         /* Vectors differ when they are not all-equal; scalars keep the ordered `one`. */
         if (flt && LLVMGetTypeKind(LLVMTypeOf(l.value)) == LLVMVectorTypeKind)
         {
-            out = LLVMBuildNot(b->m_builder, AllLanesTrue(b, FcmpByName(b->m_builder, "oeq", l.value, r.value)), "vne");
+            out = LLVMBuildNot(b->builder, AllLanesTrue(b, FcmpByName(b->builder, "oeq", l.value, r.value)), "vne");
 
             return ValueMake(out, boolTypeDesc);
         }
 
-        out = flt ? FcmpByName(b->m_builder, "one", l.value, r.value)
-                  : IcmpByName(b->m_builder, "ne", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
+        out = flt ? FcmpByName(b->builder, "one", l.value, r.value)
+                  : IcmpByName(b->builder, "ne", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(AllLanesTrue(b, out), boolTypeDesc);
 
     case BinLt:
-        out = flt ? FcmpByName(b->m_builder, "olt", l.value, r.value)
-                  : IcmpByName(b->m_builder, "lt", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
+        out = flt ? FcmpByName(b->builder, "olt", l.value, r.value)
+                  : IcmpByName(b->builder, "lt", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
     case BinLtEq:
-        out = flt ? FcmpByName(b->m_builder, "ole", l.value, r.value)
-                  : IcmpByName(b->m_builder, "le", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
+        out = flt ? FcmpByName(b->builder, "ole", l.value, r.value)
+                  : IcmpByName(b->builder, "le", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
     case BinGt:
-        out = flt ? FcmpByName(b->m_builder, "ogt", l.value, r.value)
-                  : IcmpByName(b->m_builder, "gt", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
+        out = flt ? FcmpByName(b->builder, "ogt", l.value, r.value)
+                  : IcmpByName(b->builder, "gt", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
     case BinGtEq:
-        out = flt ? FcmpByName(b->m_builder, "oge", l.value, r.value)
-                  : IcmpByName(b->m_builder, "ge", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
+        out = flt ? FcmpByName(b->builder, "oge", l.value, r.value)
+                  : IcmpByName(b->builder, "ge", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
@@ -747,7 +744,7 @@ Value EmitIntLiteral(Builder* b, IntLiteral* literal)
 
 Value EmitFloatLiteral(Builder* b, FloatLiteral* literal)
 {
-    LLVMTypeRef fty = LLVMFloatTypeInContext(b->m_ctx);
+    LLVMTypeRef fty = LLVMFloatTypeInContext(b->ctx);
     TypeDesc typeDesc = TypeDescMake(fty, TDF_FLOAT, NULL);
 
     return ValueMake(LLVMConstReal(fty, literal->value), typeDesc);
@@ -766,9 +763,9 @@ Value EmitIncDec(Builder* b, IncDecExpr* inc)
 
     if (!lv.valid)
     {
-        if (b->m_diag)
+        if (b->diag)
         {
-            DiagError(b->m_diag, inc->base.range, "increment/decrement of non-lvalue");
+            DiagError(b->diag, inc->base.range, "increment/decrement of non-lvalue");
         }
 
         return ValueMake(NULL, TypeDescMake(NULL, TDF_VOID, NULL));
@@ -777,15 +774,14 @@ Value EmitIncDec(Builder* b, IncDecExpr* inc)
     if (lv.vectorLane)
     {
         /* SIMD lane ++/--: load the vector, adjust the lane, store back. */
-        LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lv.vectorType, lv.ptr, "lanev");
-        LLVMValueRef laneVal
-            = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lv.lane, 0), "lanecur");
-        LLVMValueRef one = LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 1.0);
-        LLVMValueRef newVal = inc->isDec ? LLVMBuildFSub(b->m_builder, laneVal, one, "dec")
-                                         : LLVMBuildFAdd(b->m_builder, laneVal, one, "inc");
+        LLVMValueRef cur = LLVMBuildLoad2(b->builder, lv.vectorType, lv.ptr, "lanev");
+        LLVMValueRef laneVal = LLVMBuildExtractElement(b->builder, cur, LLVMConstInt(I32Ty(b), lv.lane, 0), "lanecur");
+        LLVMValueRef one = LLVMConstReal(LLVMFloatTypeInContext(b->ctx), 1.0);
+        LLVMValueRef newVal = inc->isDec ? LLVMBuildFSub(b->builder, laneVal, one, "dec")
+                                         : LLVMBuildFAdd(b->builder, laneVal, one, "inc");
         LLVMValueRef newVec
-            = LLVMBuildInsertElement(b->m_builder, cur, newVal, LLVMConstInt(I32Ty(b), lv.lane, 0), "laneins");
-        LLVMBuildStore(b->m_builder, newVec, lv.ptr);
+            = LLVMBuildInsertElement(b->builder, cur, newVal, LLVMConstInt(I32Ty(b), lv.lane, 0), "laneins");
+        LLVMBuildStore(b->builder, newVec, lv.ptr);
 
         return ValueMake(inc->isPrefix ? newVal : laneVal, lv.typeDesc);
     }
@@ -799,19 +795,19 @@ Value EmitIncDec(Builder* b, IncDecExpr* inc)
            already by EmitLValue); load through it to get the box
            pointer, then read/write the boxed value through that -
            same pattern as the box branch in EmitAssign. */
-        valPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "box");
+        valPtr = LLVMBuildLoad2(b->builder, b->ptrTy, lv.ptr, "box");
         valTd = Resolve(b, lv.typeDesc.boxInner);
     }
 
-    LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, valTd.type, valPtr, "inc");
+    LLVMValueRef cur = LLVMBuildLoad2(b->builder, valTd.type, valPtr, "inc");
     LLVMValueRef one = TypeDescIsFloat(&valTd) ? LLVMConstReal(valTd.type, 1.0) : LLVMConstInt(valTd.type, 1, 0);
 
-    LLVMValueRef newVal = inc->isDec ? (TypeDescIsFloat(&valTd) ? LLVMBuildFSub(b->m_builder, cur, one, "dec")
-                                                                : LLVMBuildSub(b->m_builder, cur, one, "dec"))
-                                     : (TypeDescIsFloat(&valTd) ? LLVMBuildFAdd(b->m_builder, cur, one, "inc")
-                                                                : LLVMBuildAdd(b->m_builder, cur, one, "inc"));
+    LLVMValueRef newVal = inc->isDec ? (TypeDescIsFloat(&valTd) ? LLVMBuildFSub(b->builder, cur, one, "dec")
+                                                                : LLVMBuildSub(b->builder, cur, one, "dec"))
+                                     : (TypeDescIsFloat(&valTd) ? LLVMBuildFAdd(b->builder, cur, one, "inc")
+                                                                : LLVMBuildAdd(b->builder, cur, one, "inc"));
 
-    LLVMBuildStore(b->m_builder, newVal, valPtr);
+    LLVMBuildStore(b->builder, newVal, valPtr);
 
     return ValueMake(inc->isPrefix ? newVal : cur, valTd);
 }
@@ -834,8 +830,8 @@ Value EmitCast(Builder* b, CastExpr* cast)
        nulls the source, exactly like `string t = s;`. */
     if (TypeDescIsString(&target) && cast->operand->kind == NodeStrLiteral)
     {
-        LLVMValueRef srcPtr = LLVMBuildExtractValue(b->m_builder, operand.value, 0, "clit.p");
-        LLVMValueRef lenVal = LLVMBuildExtractValue(b->m_builder, operand.value, 1, "clit.l");
+        LLVMValueRef srcPtr = LLVMBuildExtractValue(b->builder, operand.value, 0, "clit.p");
+        LLVMValueRef lenVal = LLVMBuildExtractValue(b->builder, operand.value, 1, "clit.l");
         LLVMValueRef owned = BuildOwnedStringFat(b, srcPtr, lenVal);
 
         return ValueMake(owned, target);

@@ -19,15 +19,15 @@ LLVMValueRef InsertStructField(Builder* b, const StructType* st, LLVMValueRef ag
 {
     if (!st || !st->isUnion)
     {
-        return LLVMBuildInsertValue(b->m_builder, agg, value, PhysicalFieldIndex(st, idx), "ins");
+        return LLVMBuildInsertValue(b->builder, agg, value, PhysicalFieldIndex(st, idx), "ins");
     }
 
     LLVMTypeRef aggTy = LLVMTypeOf(agg);
     LLVMValueRef slot = EntryAlloca(b, aggTy, "union");
-    LLVMBuildStore(b->m_builder, agg, slot);
-    LLVMBuildStore(b->m_builder, value, slot);
+    LLVMBuildStore(b->builder, agg, slot);
+    LLVMBuildStore(b->builder, value, slot);
 
-    return LLVMBuildLoad2(b->m_builder, aggTy, slot, "union.v");
+    return LLVMBuildLoad2(b->builder, aggTy, slot, "union.v");
 }
 
 /* Logical field `idx` (of LLVM type `fieldTy`) read out of the aggregate value `agg`. */
@@ -35,28 +35,28 @@ LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef a
 {
     if (!st || !st->isUnion)
     {
-        return LLVMBuildExtractValue(b->m_builder, agg, PhysicalFieldIndex(st, idx), "m");
+        return LLVMBuildExtractValue(b->builder, agg, PhysicalFieldIndex(st, idx), "m");
     }
 
     LLVMValueRef slot = EntryAlloca(b, LLVMTypeOf(agg), "union");
-    LLVMBuildStore(b->m_builder, agg, slot);
+    LLVMBuildStore(b->builder, agg, slot);
 
-    return LLVMBuildLoad2(b->m_builder, fieldTy, slot, "m");
+    return LLVMBuildLoad2(b->builder, fieldTy, slot, "m");
 }
 
 /* Drops the owning fields of a struct at `structPtr`. */
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName)
 {
     /* A field typed as an alias (`struct RA = Res;`) is dropped as the struct it names. */
-    structName = TypeRegistryResolveAlias(&b->m_registry, structName);
-    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+    structName = TypeRegistryResolveAlias(&b->registry, structName);
+    const StructType* st = TypeRegistryFind(&b->registry, structName);
 
     if (!st)
     {
         return;
     }
 
-    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, structName);
+    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->structTypes, structName);
 
     if (!structTy)
     {
@@ -64,26 +64,26 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
     }
 
     /* The struct's Drop method, while the value is alive: cleared first, so a re-drop is a no-op. */
-    FuncInfo* dropInfo = st->dropFunction ? (FuncInfo*)StrMapGet(&b->m_funcs, st->dropFunction->mangledName) : NULL;
-    int aliveIndex = TypeRegistryFieldIndex(&b->m_registry, structName, STRATA_ALIVE_FIELD);
+    FuncInfo* dropInfo = st->dropFunction ? (FuncInfo*)StrMapGet(&b->funcs, st->dropFunction->mangledName) : NULL;
+    int aliveIndex = TypeRegistryFieldIndex(&b->registry, structName, STRATA_ALIVE_FIELD);
 
     if (dropInfo && dropInfo->function && aliveIndex >= 0)
     {
-        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
         LLVMValueRef aliveIdx[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, aliveIndex))};
-        LLVMValueRef aliveAddr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, aliveIdx, 2, "alive");
-        LLVMValueRef alive = LLVMBuildLoad2(b->m_builder, i8Ty, aliveAddr, "isalive");
-        LLVMValueRef live = LLVMBuildICmp(b->m_builder, LLVMIntNE, alive, LLVMConstInt(i8Ty, 0, 0), "live");
+        LLVMValueRef aliveAddr = LLVMBuildGEP2(b->builder, structTy, structPtr, aliveIdx, 2, "alive");
+        LLVMValueRef alive = LLVMBuildLoad2(b->builder, i8Ty, aliveAddr, "isalive");
+        LLVMValueRef live = LLVMBuildICmp(b->builder, LLVMIntNE, alive, LLVMConstInt(i8Ty, 0, 0), "live");
 
         LLVMBasicBlockRef callBB = NewBb(b, "udrop.call");
         LLVMBasicBlockRef doneBB = NewBb(b, "udrop.done");
-        LLVMBuildCondBr(b->m_builder, live, callBB, doneBB);
-        b->m_terminated = true;
+        LLVMBuildCondBr(b->builder, live, callBB, doneBB);
+        b->terminated = true;
 
         PositionAtEnd(b, callBB);
-        LLVMBuildStore(b->m_builder, LLVMConstInt(i8Ty, 0, 0), aliveAddr);
+        LLVMBuildStore(b->builder, LLVMConstInt(i8Ty, 0, 0), aliveAddr);
         LLVMValueRef dropArgs[2] = {CurrentContext(b), structPtr};
-        LLVMBuildCall2(b->m_builder, dropInfo->type, dropInfo->function, dropArgs, 2, "");
+        LLVMBuildCall2(b->builder, dropInfo->type, dropInfo->function, dropArgs, 2, "");
         Br(b, doneBB);
 
         PositionAtEnd(b, doneBB);
@@ -96,7 +96,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
 
         /* A plain owning struct held by value is normally rejected (must be
            boxed), but handle it defensively for completeness. */
-        bool fieldOwningStruct = TypeRegistryIsOwningStruct(&b->m_registry, f->type.name);
+        bool fieldOwningStruct = TypeRegistryIsOwningStruct(&b->registry, f->type.name);
 
         if (!fieldOwning && !fieldOwningStruct)
         {
@@ -104,7 +104,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
         }
 
         LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-        LLVMValueRef fieldAddr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "fd");
+        LLVMValueRef fieldAddr = LLVMBuildGEP2(b->builder, structTy, structPtr, idxs, 2, "fd");
 
         if (fieldOwning)
         {
@@ -123,53 +123,53 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
    so the enclosing build context is saved and restored around it. */
 static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* structName)
 {
-    LLVMValueRef savedCurFn = b->m_curFn;
-    LLVMBasicBlockRef savedEntryBlock = b->m_entryBlock;
-    LLVMValueRef savedEntryAllocaPt = b->m_entryAllocaPt;
-    LLVMValueRef savedGlobalsPtr = b->m_curGlobalsPtr;
-    bool savedTerminated = b->m_terminated;
-    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->m_builder);
+    LLVMValueRef savedCurFn = b->curFn;
+    LLVMBasicBlockRef savedEntryBlock = b->entryBlock;
+    LLVMValueRef savedEntryAllocaPt = b->entryAllocaPt;
+    LLVMValueRef savedGlobalsPtr = b->curGlobalsPtr;
+    bool savedTerminated = b->terminated;
+    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->builder);
 
-    b->m_curFn = fn;
-    b->m_curGlobalsPtr = LLVMGetParam(fn, 1); /* the dropping function's context, for Drop methods */
+    b->curFn = fn;
+    b->curGlobalsPtr = LLVMGetParam(fn, 1); /* the dropping function's context, for Drop methods */
 
-    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "entry");
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->ctx, fn, "entry");
     PositionAtEnd(b, entry);
-    b->m_entryBlock = entry;
-    b->m_entryAllocaPt = NULL;
+    b->entryBlock = entry;
+    b->entryAllocaPt = NULL;
 
     LLVMValueRef p = LLVMGetParam(fn, 0);
 
     LLVMBasicBlockRef nullBB = NewBb(b, "sdrop.null");
     LLVMBasicBlockRef doBB = NewBb(b, "sdrop.do");
 
-    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, p, LLVMConstNull(b->m_ptrTy), "isnull");
-    LLVMBuildCondBr(b->m_builder, isNull, nullBB, doBB);
-    b->m_terminated = true;
+    LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, p, LLVMConstNull(b->ptrTy), "isnull");
+    LLVMBuildCondBr(b->builder, isNull, nullBB, doBB);
+    b->terminated = true;
 
     PositionAtEnd(b, nullBB);
-    LLVMBuildRetVoid(b->m_builder);
-    b->m_terminated = true;
+    LLVMBuildRetVoid(b->builder);
+    b->terminated = true;
 
     PositionAtEnd(b, doBB);
 
     EmitDropStructFields(b, p, structName);
 
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
-        LLVMBuildRetVoid(b->m_builder);
-        b->m_terminated = true;
+        LLVMBuildRetVoid(b->builder);
+        b->terminated = true;
     }
 
-    b->m_curFn = savedCurFn;
-    b->m_entryBlock = savedEntryBlock;
-    b->m_entryAllocaPt = savedEntryAllocaPt;
-    b->m_curGlobalsPtr = savedGlobalsPtr;
-    b->m_terminated = savedTerminated;
+    b->curFn = savedCurFn;
+    b->entryBlock = savedEntryBlock;
+    b->entryAllocaPt = savedEntryAllocaPt;
+    b->curGlobalsPtr = savedGlobalsPtr;
+    b->terminated = savedTerminated;
 
     if (savedInsertBlock)
     {
-        LLVMPositionBuilderAtEnd(b->m_builder, savedInsertBlock);
+        LLVMPositionBuilderAtEnd(b->builder, savedInsertBlock);
     }
 }
 
@@ -179,23 +179,23 @@ static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* struct
    IR-gen time; a real call terminates via the callee's null check. */
 LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
 {
-    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->m_dropFns, structName);
+    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->dropFns, structName);
 
     if (existing)
     {
         return existing;
     }
 
-    LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy}; /* (value, context) */
-    LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 2, 0);
-    char* fnName = ArenaFormat(b->m_arena, "__strata_drop_%s", structName);
-    LLVMValueRef fn = LLVMAddFunction(b->m_mod, fnName, fnTy);
+    LLVMTypeRef params[2] = {b->ptrTy, b->ptrTy}; /* (value, context) */
+    LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), params, 2, 0);
+    char* fnName = ArenaFormat(b->arena, "__strata_drop_%s", structName);
+    LLVMValueRef fn = LLVMAddFunction(b->mod, fnName, fnTy);
     LLVMSetLinkage(fn, LLVMInternalLinkage);
 
     /* Register before emitting the body: a self-referential or mutually
        recursive struct's own drop body will look this function back up
        (cache hit) instead of triggering another EmitStructDropFnBody call. */
-    StrMapPut(&b->m_dropFns, structName, (void*)fn);
+    StrMapPut(&b->dropFns, structName, (void*)fn);
 
     EmitStructDropFnBody(b, fn, structName);
 
@@ -205,22 +205,22 @@ LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
 /* GEP to a module global's field inside the current function's per-instance
    globals struct (see BuilderBuild's "instanced globals" pass). Only
    reachable when `name` is a storage-backed global, which implies
-   b->m_hasInstancedGlobals and therefore a bound b->m_curGlobalsPtr in any
+   b->hasInstancedGlobals and therefore a bound b->curGlobalsPtr in any
    function whose body can reference it (extern functions have no body). */
 LLVMValueRef GlobalFieldPtr(Builder* b, const char* name)
 {
-    void* raw = StrMapGet(&b->m_globalFieldIndex, name);
+    void* raw = StrMapGet(&b->globalFieldIndex, name);
     FieldIndex index = (FieldIndex)((uintptr_t)raw - 1);
     LLVMValueRef idx[2] = {IdxConst(b, 0), IdxConst(b, index)};
-    return LLVMBuildGEP2(b->m_builder, b->m_globalsStructTy, b->m_curGlobalsPtr, idx, 2, "gfld");
+    return LLVMBuildGEP2(b->builder, b->globalsStructTy, b->curGlobalsPtr, idx, 2, "gfld");
 }
 
 /* Deep-copies an owning-struct VALUE field-by-field: owning fields recurse
    through EmitCopyValue, plain fields bitwise. */
 Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
 {
-    const StructType* st = TypeRegistryFind(&b->m_registry, td.structTypeName);
-    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, td.structTypeName) : NULL;
+    const StructType* st = TypeRegistryFind(&b->registry, td.structTypeName);
+    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->structTypes, td.structTypeName) : NULL;
 
     if (!st || !structTy)
     {
@@ -228,18 +228,18 @@ Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
     }
 
     LLVMValueRef srcSlot = EntryAlloca(b, td.type, "cpss");
-    LLVMBuildStore(b->m_builder, src.value, srcSlot);
+    LLVMBuildStore(b->builder, src.value, srcSlot);
     LLVMValueRef dstSlot = EntryAlloca(b, td.type, "cpsd");
 
     /* The cached copy fn is a real call: self-referential owning structs
        (a `Node? next` field) recurse at runtime, not at IR-gen time. */
-    LLVMTypeRef copyParamTys[2] = {b->m_ptrTy, b->m_ptrTy};
-    LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), copyParamTys, 2, 0);
+    LLVMTypeRef copyParamTys[2] = {b->ptrTy, b->ptrTy};
+    LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), copyParamTys, 2, 0);
     LLVMValueRef copyFn = GetOrCreateStructCopyFn(b, td.structTypeName);
     LLVMValueRef copyArgs[2] = {dstSlot, srcSlot};
-    LLVMBuildCall2(b->m_builder, copyFnTy, copyFn, copyArgs, 2, "");
+    LLVMBuildCall2(b->builder, copyFnTy, copyFn, copyArgs, 2, "");
 
-    return ValueMake(LLVMBuildLoad2(b->m_builder, td.type, dstSlot, "cpS"), td);
+    return ValueMake(LLVMBuildLoad2(b->builder, td.type, dstSlot, "cpS"), td);
 }
 
 /* Copies an owning struct value field-by-field from srcPtr into dstPtr.
@@ -252,8 +252,8 @@ Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
    copy fn — a real call), plain fields bitwise. */
 static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef srcPtr, const char* structName)
 {
-    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
-    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->m_structTypes, structName) : NULL;
+    const StructType* st = TypeRegistryFind(&b->registry, structName);
+    LLVMTypeRef structTy = st ? (LLVMTypeRef)StrMapGet(&b->structTypes, structName) : NULL;
 
     if (!st || !structTy)
     {
@@ -265,19 +265,19 @@ static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef src
         FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
         TypeDesc fieldTd = Resolve(b, &f->type);
         LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, (int)j))};
-        LLVMValueRef srcField = LLVMBuildGEP2(b->m_builder, structTy, srcPtr, idxs, 2, "csf");
-        LLVMValueRef dstField = LLVMBuildGEP2(b->m_builder, structTy, dstPtr, idxs, 2, "cdf");
+        LLVMValueRef srcField = LLVMBuildGEP2(b->builder, structTy, srcPtr, idxs, 2, "csf");
+        LLVMValueRef dstField = LLVMBuildGEP2(b->builder, structTy, dstPtr, idxs, 2, "cdf");
 
         if (BuilderIsOwningValue(b, &f->type))
         {
-            Value fv = ValueMake(LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv"), fieldTd);
+            Value fv = ValueMake(LLVMBuildLoad2(b->builder, fieldTd.type, srcField, "fv"), fieldTd);
             Value copied = EmitCopyValue(b, fv, fieldTd);
-            LLVMBuildStore(b->m_builder, copied.value, dstField);
+            LLVMBuildStore(b->builder, copied.value, dstField);
         }
         else
         {
-            LLVMValueRef loaded = LLVMBuildLoad2(b->m_builder, fieldTd.type, srcField, "fv");
-            LLVMBuildStore(b->m_builder, loaded, dstField);
+            LLVMValueRef loaded = LLVMBuildLoad2(b->builder, fieldTd.type, srcField, "fv");
+            LLVMBuildStore(b->builder, loaded, dstField);
         }
     }
 }
@@ -294,47 +294,47 @@ static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef src
    function, so the enclosing build context is saved and restored. */
 LLVMValueRef GetOrCreateStructCopyFn(Builder* b, const char* structName)
 {
-    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->m_copyFns, structName);
+    LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->copyFns, structName);
 
     if (existing)
     {
         return existing;
     }
 
-    LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
-    LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 2, 0);
-    char* fnName = ArenaFormat(b->m_arena, "__strata_copy_%s", structName);
-    LLVMValueRef fn = LLVMAddFunction(b->m_mod, fnName, fnTy);
+    LLVMTypeRef params[2] = {b->ptrTy, b->ptrTy};
+    LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), params, 2, 0);
+    char* fnName = ArenaFormat(b->arena, "__strata_copy_%s", structName);
+    LLVMValueRef fn = LLVMAddFunction(b->mod, fnName, fnTy);
     LLVMSetLinkage(fn, LLVMInternalLinkage);
 
-    StrMapPut(&b->m_copyFns, structName, (void*)fn);
+    StrMapPut(&b->copyFns, structName, (void*)fn);
 
-    LLVMValueRef savedCurFn = b->m_curFn;
-    LLVMBasicBlockRef savedEntryBlock = b->m_entryBlock;
-    LLVMValueRef savedEntryAllocaPt = b->m_entryAllocaPt;
-    bool savedTerminated = b->m_terminated;
-    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->m_builder);
+    LLVMValueRef savedCurFn = b->curFn;
+    LLVMBasicBlockRef savedEntryBlock = b->entryBlock;
+    LLVMValueRef savedEntryAllocaPt = b->entryAllocaPt;
+    bool savedTerminated = b->terminated;
+    LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->builder);
 
-    b->m_curFn = fn;
+    b->curFn = fn;
 
-    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "entry");
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->ctx, fn, "entry");
     PositionAtEnd(b, entry);
-    b->m_entryBlock = entry;
-    b->m_entryAllocaPt = NULL;
+    b->entryBlock = entry;
+    b->entryAllocaPt = NULL;
 
     EmitStructCopyInto(b, LLVMGetParam(fn, 0), LLVMGetParam(fn, 1), structName);
 
-    LLVMBuildRetVoid(b->m_builder);
-    b->m_terminated = true;
+    LLVMBuildRetVoid(b->builder);
+    b->terminated = true;
 
-    b->m_curFn = savedCurFn;
-    b->m_entryBlock = savedEntryBlock;
-    b->m_entryAllocaPt = savedEntryAllocaPt;
-    b->m_terminated = savedTerminated;
+    b->curFn = savedCurFn;
+    b->entryBlock = savedEntryBlock;
+    b->entryAllocaPt = savedEntryAllocaPt;
+    b->terminated = savedTerminated;
 
     if (savedInsertBlock)
     {
-        LLVMPositionBuilderAtEnd(b->m_builder, savedInsertBlock);
+        LLVMPositionBuilderAtEnd(b->builder, savedInsertBlock);
     }
 
     return fn;
@@ -350,7 +350,7 @@ bool FieldInitMovesSource(Builder* b, TypeDesc fieldTd, TypeDesc valueTd, const 
     return ((TypeDescIsBox(&fieldTd) || TypeDescIsString(&fieldTd))
             && (TypeDescIsBox(&valueTd) || TypeDescIsString(&valueTd)))
            || (TypeDescHasArrayShape(&fieldTd) && TypeDescHasArrayShape(&valueTd))
-           || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, fieldTd.structTypeName)
+           || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->registry, fieldTd.structTypeName)
                && valueTd.structTypeName && strcmp(fieldTd.structTypeName, valueTd.structTypeName) == 0);
 }
 
@@ -359,7 +359,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
     TypeName tn = MakeTypeName(b, n->typeName);
     TypeDesc typeDesc = Resolve(b, &tn);
 
-    const StructType* st = TypeRegistryFind(&b->m_registry, n->typeName);
+    const StructType* st = TypeRegistryFind(&b->registry, n->typeName);
 
     /* Fields the literal leaves out keep their declared defaults. */
     LLVMValueRef agg = DefaultValueOf(b, &tn, typeDesc);
@@ -378,7 +378,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
         }
         else
         {
-            int named = TypeRegistryFieldIndex(&b->m_registry, n->typeName, field->name);
+            int named = TypeRegistryFieldIndex(&b->registry, n->typeName, field->name);
 
             if (named < 0)
             {
@@ -429,8 +429,8 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
         if (TypeDescIsString(&fieldTd) && field->value->kind == NodeStrLiteral)
         {
             /* string field from a literal -> heap copy (safe to free). */
-            LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawField.value, 0, "fslit.p");
-            LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawField.value, 1, "fslit.l");
+            LLVMValueRef sp = LLVMBuildExtractValue(b->builder, rawField.value, 0, "fslit.p");
+            LLVMValueRef sl = LLVMBuildExtractValue(b->builder, rawField.value, 1, "fslit.l");
             fieldValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
         }
         else if (TypeDescIsBox(&fieldTd) && fieldTd.boxInner

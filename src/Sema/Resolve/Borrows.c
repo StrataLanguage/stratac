@@ -196,10 +196,10 @@ static bool BorrowCandidateType(Resolver* r, const TypeName* t)
         return false;
     }
 
-    const char* name = TypeRegistryResolveAlias(&r->m_registry, t->name);
+    const char* name = TypeRegistryResolveAlias(&r->registry, t->name);
 
-    return TypeIsString(&r->m_registry, t->name) || TypeNameIsDynamicArray(t)
-           || (name && TypeRegistryIsOwningStruct(&r->m_registry, name) && !TypeNameHasDrop(&r->m_registry, t));
+    return TypeIsString(&r->registry, t->name) || TypeNameIsDynamicArray(t)
+           || (name && TypeRegistryIsOwningStruct(&r->registry, name) && !TypeNameHasDrop(&r->registry, t));
 }
 
 /* The candidate parameter at the root of a path (`p`, `p.a[i].b`), or NULL. */
@@ -270,8 +270,8 @@ static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
     }
 
     const char* member = ((MemberExpr*)n)->member;
-    const char* name = t ? TypeRegistryResolveAlias(&r->m_registry, t->name) : NULL;
-    const StructType* st = name ? TypeRegistryFind(&r->m_registry, name) : NULL;
+    const char* name = t ? TypeRegistryResolveAlias(&r->registry, t->name) : NULL;
+    const StructType* st = name ? TypeRegistryFind(&r->registry, name) : NULL;
 
     if (!st)
     {
@@ -329,9 +329,9 @@ static void ScanBorrowArg(Resolver* r, FunctionDecl* f, CallExpr* c, Node* arg, 
 
     bool found = false;
 
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; i < r->mod->functions.count; i++)
     {
-        const FunctionDecl* g = (const FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        const FunctionDecl* g = (const FunctionDecl*)VecGet(&r->mod->functions, i);
         const char* name = isMethod ? g->methodName : g->name;
 
         if (!name || strcmp(name, c->callee) != 0)
@@ -616,7 +616,7 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
 
 void InferBorrowedParams(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
@@ -687,7 +687,7 @@ void MarkGrowableArrayParams(Module* mod)
 
 bool IsGrowableArrayParam(const Resolver* r, const char* name)
 {
-    const ParamDecl* p = RefArrayParamNamed(r->m_currentFunction, name);
+    const ParamDecl* p = RefArrayParamNamed(r->currentFunction, name);
 
     return p && p->growsArray;
 }
@@ -716,11 +716,11 @@ void CheckGrowableArrayArgs(Resolver* r, const FunctionDecl* best, CallExpr* c, 
         {
             why = "a fixed-size array";
         }
-        else if (arg->kind == NodeIdent && r->m_currentFunction)
+        else if (arg->kind == NodeIdent && r->currentFunction)
         {
-            for (size_t j = 0; j < r->m_currentFunction->params.count; j++)
+            for (size_t j = 0; j < r->currentFunction->params.count; j++)
             {
-                const ParamDecl* own = (const ParamDecl*)VecGet((Vec*)&r->m_currentFunction->params, j);
+                const ParamDecl* own = (const ParamDecl*)VecGet((Vec*)&r->currentFunction->params, j);
 
                 if (own->isVarargRest && strcmp(own->name, ((IdentExpr*)arg)->name) == 0)
                 {
@@ -731,7 +731,7 @@ void CheckGrowableArrayArgs(Resolver* r, const FunctionDecl* best, CallExpr* c, 
 
         if (why)
         {
-            DiagErrorFmt(r->m_diag, arg->range,
+            DiagErrorFmt(r->diag, arg->range,
                          "'%s' grows or rebinds its parameter '%s', so it needs a dynamic array variable, not %s",
                          best->methodName ? best->methodName : best->name, p->name, why);
         }

@@ -110,7 +110,7 @@ typedef struct TempPart
     const Node* node;
     LLVMValueRef addr;
     TypeDesc td;
-    StackMark tempIdx; /* index in m_temps of the owning temporary */
+    StackMark tempIdx; /* index in temps of the owning temporary */
 } TempPart;
 
 typedef struct PseudoCallDefinition

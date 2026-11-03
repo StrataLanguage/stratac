@@ -42,7 +42,7 @@ LValue MakeVectorLaneLValue(Builder* b, LValue none, const MemberExpr* m, LLVMVa
     none.valid = true;
     none.vectorLane = true;
     none.ptr = vecAddr;
-    none.typeDesc = TypeDescMake(LLVMFloatTypeInContext(b->m_ctx), TDF_FLOAT, NULL);
+    none.typeDesc = TypeDescMake(LLVMFloatTypeInContext(b->ctx), TDF_FLOAT, NULL);
     none.vectorType = vectorTd.type;
     none.lane = lane;
 

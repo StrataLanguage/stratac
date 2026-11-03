@@ -5,7 +5,7 @@ static const TypeName* KeyPathType(Resolver* r, const char* key);
 
 bool IsBoxGlobalName(const Resolver* r, const char* name)
 {
-    return StrMapGet(&r->m_boxGlobals, name) != NULL;
+    return StrMapGet(&r->boxGlobals, name) != NULL;
 }
 
 // Root binding of a move key ("holder.gun" -> "holder").
@@ -29,7 +29,7 @@ static const char* KeyRoot(Arena* arena, const char* key)
 /* The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it). NULL when it cannot be typed. */
 static const TypeName* KeyPathType(Resolver* r, const char* key)
 {
-    if (!r->m_curScope || !key)
+    if (!r->curScope || !key)
     {
         return NULL;
     }
@@ -41,7 +41,7 @@ static const TypeName* KeyPathType(Resolver* r, const char* key)
         at++;
     }
 
-    const TypeName* t = (const TypeName*)StrMapGet(r->m_curScope, ArenaStrndup(r->m_arena, key, at));
+    const TypeName* t = (const TypeName*)StrMapGet(r->curScope, ArenaStrndup(r->arena, key, at));
 
     while (t && key[at])
     {
@@ -59,9 +59,9 @@ static const TypeName* KeyPathType(Resolver* r, const char* key)
                 at++;
             }
 
-            const char* field = ArenaStrndup(r->m_arena, key + start, at - start);
-            const StructType* st = TypeRegistryFind(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name));
-            int idx = st ? TypeRegistryFieldIndex(&r->m_registry, st->name, field) : -1;
+            const char* field = ArenaStrndup(r->arena, key + start, at - start);
+            const StructType* st = TypeRegistryFind(&r->registry, TypeRegistryResolveAlias(&r->registry, t->name));
+            int idx = st ? TypeRegistryFieldIndex(&r->registry, st->name, field) : -1;
             t = idx >= 0 ? &((const FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx))->type : NULL;
         }
         else
@@ -84,25 +84,25 @@ static const TypeName* KeyPathType(Resolver* r, const char* key)
 /* `key` with a `ref` local at its root replaced by the path the local aliases. */
 const char* CanonicalRefKey(Resolver* r, const char* key)
 {
-    const char* root = KeyRoot(r->m_arena, key);
-    const char* aliased = (const char*)StrMapGet(&r->m_refLocals, root);
+    const char* root = KeyRoot(r->arena, key);
+    const char* aliased = (const char*)StrMapGet(&r->refLocals, root);
 
-    return aliased ? ArenaFormat(r->m_arena, "%s%s", aliased, key + strlen(root)) : key;
+    return aliased ? ArenaFormat(r->arena, "%s%s", aliased, key + strlen(root)) : key;
 }
 
 /* True when the root of move key `key` is a module global (not a local of the same name): no function
    owns a global, so nothing may be moved out of any path into it — a field of a global struct included. */
 static bool IsGlobalRootKey(Resolver* r, const char* key)
 {
-    const char* root = KeyRoot(r->m_arena, key);
+    const char* root = KeyRoot(r->arena, key);
 
-    for (size_t i = 0; i < r->m_mod->globals.count; i++)
+    for (size_t i = 0; i < r->mod->globals.count; i++)
     {
-        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, i);
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->mod->globals, i);
 
         if (strcmp(gd->name, root) == 0)
         {
-            return !r->m_curScope || StrMapGet(r->m_curScope, root) == (void*)&gd->type;
+            return !r->curScope || StrMapGet(r->curScope, root) == (void*)&gd->type;
         }
     }
 
@@ -111,7 +111,7 @@ static bool IsGlobalRootKey(Resolver* r, const char* key)
 
 static void DiagMoveFromGlobal(Resolver* r, SourceRange range, const char* name)
 {
-    DiagErrorFmt(r->m_diag, range,
+    DiagErrorFmt(r->diag, range,
                  "'%s' cannot be moved as it is not owned because it is global. (use a `[const] ref ^T`, copy() "
                  "it, or pass `T` by value)",
                  name);
@@ -121,22 +121,22 @@ static void DiagMoveFromGlobal(Resolver* r, SourceRange range, const char* name)
    and nothing can be put back through it, so nothing may be moved out of any path into it. */
 static bool IsConstRefRootKey(Resolver* r, const char* key)
 {
-    const char* root = KeyRoot(r->m_arena, key);
-    const TypeName* t = r->m_curScope ? (const TypeName*)StrMapGet(r->m_curScope, root) : NULL;
+    const char* root = KeyRoot(r->arena, key);
+    const TypeName* t = r->curScope ? (const TypeName*)StrMapGet(r->curScope, root) : NULL;
 
     if (!t || !t->isConst)
     {
         return false;
     }
 
-    if (StrMapGet(&r->m_refLocals, root))
+    if (StrMapGet(&r->refLocals, root))
     {
         return true;
     }
 
-    for (size_t i = 0; r->m_currentFunction && i < r->m_currentFunction->params.count; i++)
+    for (size_t i = 0; r->currentFunction && i < r->currentFunction->params.count; i++)
     {
-        ParamDecl* p = (ParamDecl*)VecGet(&r->m_currentFunction->params, i);
+        ParamDecl* p = (ParamDecl*)VecGet(&r->currentFunction->params, i);
 
         if (&p->type == t && p->mod == ModRef)
         {
@@ -149,16 +149,16 @@ static bool IsConstRefRootKey(Resolver* r, const char* key)
 
 static void DiagMoveFromConstRef(Resolver* r, SourceRange range, const char* name)
 {
-    DiagErrorFmt(r->m_diag, range,
+    DiagErrorFmt(r->diag, range,
                  "'%s' cannot be moved as it is not owned because '%s' is a const ref. (copy() it, or bind it "
                  "with `const ref`)",
-                 name, KeyRoot(r->m_arena, name));
+                 name, KeyRoot(r->arena, name));
 }
 
 void MarkMoved(Resolver* r, const char* name, SourceRange range)
 {
 
-    const char* root = KeyRoot(r->m_arena, name);
+    const char* root = KeyRoot(r->arena, name);
 
     if (IsBoxGlobalName(r, root) || IsGlobalRootKey(r, name))
     {
@@ -174,9 +174,9 @@ void MarkMoved(Resolver* r, const char* name, SourceRange range)
         return;
     }
 
-    if (StrMapGet(&r->m_refBoxParams, root))
+    if (StrMapGet(&r->refBoxParams, root))
     {
-        DiagErrorFmt(r->m_diag, range, "'%s' cannot be moved as it is not owned because it is bound as a ref.", name);
+        DiagErrorFmt(r->diag, range, "'%s' cannot be moved as it is not owned because it is bound as a ref.", name);
 
         return;
     }
@@ -222,9 +222,9 @@ void EmptyOptionalSource(Resolver* r, const char* name)
 
 static bool IsModuleGlobalName(const Resolver* r, const char* name)
 {
-    for (size_t i = 0; i < r->m_mod->globals.count; i++)
+    for (size_t i = 0; i < r->mod->globals.count; i++)
     {
-        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, i);
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->mod->globals, i);
 
         if (strcmp(gd->name, name) == 0)
         {
@@ -246,14 +246,14 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        return ArenaFormat(r->m_arena, "%llu", ((IntLiteral*)n)->value);
+        return ArenaFormat(r->arena, "%llu", ((IntLiteral*)n)->value);
 
     case NodeIdent:
     {
         const char* name = ((IdentExpr*)n)->name;
 
         // Globals have no visible mutation site: erase.
-        return IsModuleGlobalName(r, name) ? NULL : ArenaFormat(r->m_arena, "%s", name);
+        return IsModuleGlobalName(r, name) ? NULL : ArenaFormat(r->arena, "%s", name);
     }
 
     case NodeMember:
@@ -264,7 +264,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
         if (strcmp(m->member, "length") == 0 && m->baseNode->kind == NodeIdent
             && !IsModuleGlobalName(r, ((IdentExpr*)m->baseNode)->name))
         {
-            return ArenaFormat(r->m_arena, "%s.length", ((IdentExpr*)m->baseNode)->name);
+            return ArenaFormat(r->arena, "%s.length", ((IdentExpr*)m->baseNode)->name);
         }
 
         return NULL;
@@ -282,7 +282,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
             return NULL;
         }
 
-        return ArenaFormat(r->m_arena, "%s[%s]", baseSpell, inner);
+        return ArenaFormat(r->arena, "%s[%s]", baseSpell, inner);
     }
 
     case NodeUnary:
@@ -298,11 +298,11 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
         switch (u->op)
         {
         case UnNeg:
-            return ArenaFormat(r->m_arena, "-%s", inner);
+            return ArenaFormat(r->arena, "-%s", inner);
         case UnPos:
-            return ArenaFormat(r->m_arena, "+%s", inner);
+            return ArenaFormat(r->arena, "+%s", inner);
         case UnBitNot:
-            return ArenaFormat(r->m_arena, "~%s", inner);
+            return ArenaFormat(r->arena, "~%s", inner);
         default:
             return NULL; // `!` yields a boolean, never an index.
         }
@@ -357,7 +357,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
             return NULL; /* comparisons/logic yield bools, not indices */
         }
 
-        return ArenaFormat(r->m_arena, "(%s %s %s)", lhs, op, rhs);
+        return ArenaFormat(r->arena, "(%s %s %s)", lhs, op, rhs);
     }
 
     default:
@@ -393,7 +393,7 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
         const MemberExpr* m = (const MemberExpr*)moved;
         const char* baseKey = MovableBoxSourceKey(r, m->baseNode);
 
-        return baseKey ? ArenaFormat(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
+        return baseKey ? ArenaFormat(r->arena, "%s.%s", baseKey, m->member) : NULL;
     }
 
     if (moved->kind == NodeIndex)
@@ -411,10 +411,10 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
 
         if (idxSpell)
         {
-            return ArenaFormat(r->m_arena, "%s[%s]", baseKey, idxSpell);
+            return ArenaFormat(r->arena, "%s[%s]", baseKey, idxSpell);
         }
 
-        return ArenaFormat(r->m_arena, "%s[]", baseKey);
+        return ArenaFormat(r->arena, "%s[]", baseKey);
     }
 
     return NULL;
@@ -422,49 +422,49 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
 
 void FlowInit(FlowState* s)
 {
-    s->m_live = false;
+    s->live = false;
 }
 
 void FlowFree(FlowState* s)
 {
-    s->m_live = false;
+    s->live = false;
 }
 
 /* Snapshots the current state (dead paths are captured as not live). */
 void FlowCapture(const Resolver* r, FlowState* s)
 {
-    s->m_live = !r->m_unreachable;
+    s->live = !r->unreachable;
 }
 
 /* Makes `s` the current state. */
 void FlowApply(Resolver* r, const FlowState* s)
 {
-    r->m_unreachable = !s->m_live;
+    r->unreachable = !s->live;
 }
 
 // Control-flow join: reachable if any path in is.
 void FlowJoin(FlowState* dst, const FlowState* src)
 {
-    dst->m_live |= src->m_live;
+    dst->live |= src->live;
 }
 
 // Joins the current path into `dst` (a dead path contributes nothing).
 void FlowJoinCurrent(const Resolver* r, FlowState* dst)
 {
-    dst->m_live |= !r->m_unreachable;
+    dst->live |= !r->unreachable;
 }
 
 bool FlowSame(const FlowState* a, const FlowState* b)
 {
-    return a->m_live == b->m_live;
+    return a->live == b->live;
 }
 
 void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
 {
     // Calls may rebind globals, so global facts never survive.
-    for (size_t g = 0; g < r->m_mod->globals.count; g++)
+    for (size_t g = 0; g < r->mod->globals.count; g++)
     {
-        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, g);
+        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->mod->globals, g);
 
         // ...and refs into globals may dangle after any call that could reach them.
         if (!best->isExtern)

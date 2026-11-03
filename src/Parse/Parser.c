@@ -17,17 +17,17 @@ SourceRange SpanFrom(Token begin, Token end)
 
 SourceRange SpanToCur(Parser* p, SourceRange from)
 {
-    return (SourceRange){from.start, (uint32_t)(p->m_cur.range.start - from.start), from.fileId};
+    return (SourceRange){from.start, (uint32_t)(p->cur.range.start - from.start), from.fileId};
 }
 
 LexerCheckpoint SaveLexerState(Parser* p)
 {
     LexerCheckpoint c;
-    c.pos = LexerPosition(p->m_lex);
-    c.hasPeek = p->m_lex->m_hasPeek;
-    c.peeked = p->m_lex->m_peeked;
-    c.cur = p->m_cur;
-    c.diagCount = DiagCount(p->m_diag);
+    c.pos = LexerPosition(p->lex);
+    c.hasPeek = p->lex->hasPeek;
+    c.peeked = p->lex->peeked;
+    c.cur = p->cur;
+    c.diagCount = DiagCount(p->diag);
     return c;
 }
 
@@ -36,27 +36,27 @@ LexerCheckpoint SaveLexerState(Parser* p)
    tokens reports lexer errors again, so each one ends up reported exactly once. */
 void RestoreLexerState(Parser* p, LexerCheckpoint c)
 {
-    p->m_lex->m_pos = c.pos;
-    p->m_lex->m_hasPeek = c.hasPeek;
-    p->m_lex->m_peeked = c.peeked;
-    p->m_cur = c.cur;
-    DiagTruncate(p->m_diag, c.diagCount);
+    p->lex->pos = c.pos;
+    p->lex->hasPeek = c.hasPeek;
+    p->lex->peeked = c.peeked;
+    p->cur = c.cur;
+    DiagTruncate(p->diag, c.diagCount);
 }
 
 void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, const char* moduleName)
 {
-    p->m_lex = lex;
-    p->m_diag = diag;
-    p->m_arena = arena;
-    p->m_moduleName = ArenaStrdup(arena, moduleName ? moduleName : "strata_module");
-    p->m_cur = LexerNextToken(lex);
-    p->m_returnType = NULL;
-    p->m_hasReturnStmt = false;
+    p->lex = lex;
+    p->diag = diag;
+    p->arena = arena;
+    p->moduleName = ArenaStrdup(arena, moduleName ? moduleName : "strata_module");
+    p->cur = LexerNextToken(lex);
+    p->returnType = NULL;
+    p->hasReturnStmt = false;
 }
 
 Str ParserIdentText(const Parser* p, Token t)
 {
-    Str src = LexerSourceText(p->m_lex);
+    Str src = LexerSourceText(p->lex);
 
     if (t.range.start >= src.len)
     {
@@ -74,12 +74,12 @@ Str ParserIdentText(const Parser* p, Token t)
 
 void Advance(Parser* p)
 {
-    p->m_cur = LexerNextToken(p->m_lex);
+    p->cur = LexerNextToken(p->lex);
 }
 
 bool ParserConsume(Parser* p, TokKind k)
 {
-    if (p->m_cur.kind == k)
+    if (p->cur.kind == k)
     {
         Advance(p);
 
@@ -91,30 +91,30 @@ bool ParserConsume(Parser* p, TokKind k)
 
 Token ParserExpect(Parser* p, TokKind k, const char* what)
 {
-    if (p->m_cur.kind == k)
+    if (p->cur.kind == k)
     {
-        Token token = p->m_cur;
+        Token token = p->cur;
         Advance(p);
 
         return token;
     }
 
-    DiagErrorFmt(p->m_diag, p->m_cur.range, "expected %s but found '%s'", what, TokSpelling(p->m_cur.kind));
+    DiagErrorFmt(p->diag, p->cur.range, "expected %s but found '%s'", what, TokSpelling(p->cur.kind));
 
     return (Token){TokEof, SRC_INVALID};
 }
 
 void Synchronize(Parser* p)
 {
-    while (p->m_cur.kind != TokEof)
+    while (p->cur.kind != TokEof)
     {
-        if (p->m_cur.kind == TokSemicolon)
+        if (p->cur.kind == TokSemicolon)
         {
             Advance(p);
             return;
         }
 
-        if (p->m_cur.kind == TokRBrace)
+        if (p->cur.kind == TokRBrace)
         {
             return;
         }
@@ -125,23 +125,23 @@ void Synchronize(Parser* p)
 
 static ImportDecl* ParseImport(Parser* p)
 {
-    Token kw = p->m_cur;
+    Token kw = p->cur;
     Advance(p);
 
-    if (p->m_cur.kind != TokIdent && p->m_cur.kind != TokDot)
+    if (p->cur.kind != TokIdent && p->cur.kind != TokDot)
     {
-        DiagErrorFmt(p->m_diag, p->m_cur.range, "expected module path after 'import' but found '%s'",
-                     TokSpelling(p->m_cur.kind));
+        DiagErrorFmt(p->diag, p->cur.range, "expected module path after 'import' but found '%s'",
+                     TokSpelling(p->cur.kind));
         Synchronize(p);
         return NULL;
     }
 
-    Token first = p->m_cur;
+    Token first = p->cur;
     Token last = first;
 
-    while (p->m_cur.kind == TokIdent || p->m_cur.kind == TokSlash || p->m_cur.kind == TokDot)
+    while (p->cur.kind == TokIdent || p->cur.kind == TokSlash || p->cur.kind == TokDot)
     {
-        last = p->m_cur;
+        last = p->cur;
         Advance(p);
     }
 
@@ -149,19 +149,19 @@ static ImportDecl* ParseImport(Parser* p)
 
     ParserExpect(p, TokSemicolon, "';'");
 
-    ImportDecl* imp = AST_NEW(p->m_arena, ImportDecl);
+    ImportDecl* imp = AST_NEW(p->arena, ImportDecl);
     imp->base.kind = NodeImport;
     imp->base.range = SpanFrom(kw, last);
     imp->pathRange = pathRange;
 
-    Str src = LexerSourceText(p->m_lex);
+    Str src = LexerSourceText(p->lex);
     uint32_t pend = SourceRangeEnd(pathRange);
     if (pend > (uint32_t)src.len)
     {
         pend = (uint32_t)src.len;
     }
     Str pathStr = {src.data + pathRange.start, pend - pathRange.start};
-    imp->importPath = ToOwned(p->m_arena, pathStr);
+    imp->importPath = ToOwned(p->arena, pathStr);
 
     return imp;
 }
@@ -206,7 +206,7 @@ static void ParseAttributedEnum(Parser* p, Module* mod, const Vec* attributes)
         }
         else
         {
-            DiagError(p->m_diag, attribute->range, "the only attribute an enum takes is @flags");
+            DiagError(p->diag, attribute->range, "the only attribute an enum takes is @flags");
         }
     }
 
@@ -248,14 +248,14 @@ static void ParseAttributedDecl(Parser* p, Module* mod)
     VecInit(&attributes);
     ParseAttributes(p, &attributes);
 
-    TokKind afterExtern = LexerPeekToken(p->m_lex).kind;
-    bool isExternStruct = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
+    TokKind afterExtern = LexerPeekToken(p->lex).kind;
+    bool isExternStruct = p->cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
 
-    if (p->m_cur.kind == TokKwEnum)
+    if (p->cur.kind == TokKwEnum)
     {
         ParseAttributedEnum(p, mod, &attributes);
     }
-    else if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion || isExternStruct)
+    else if (p->cur.kind == TokKwStruct || p->cur.kind == TokKwUnion || isExternStruct)
     {
         ParseAttributedStruct(p, mod, &attributes, isExternStruct);
     }
@@ -359,10 +359,10 @@ static void ParseTopLevelImpl(Parser* p, Module* mod)
 
 Module* ParserParseModule(Parser* p)
 {
-    Module* mod = AST_NEW(p->m_arena, Module);
+    Module* mod = AST_NEW(p->arena, Module);
     mod->base.kind = NodeModule;
     mod->base.range = SRC_INVALID;
-    mod->name = p->m_moduleName;
+    mod->name = p->moduleName;
     VecInit(&mod->structs);
     VecInit(&mod->handles);
     VecInit(&mod->enums);
@@ -372,21 +372,21 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->impls);
     VecInit(&mod->delegates);
 
-    while (p->m_cur.kind != TokEof)
+    while (p->cur.kind != TokEof)
     {
-        if (p->m_cur.kind == TokSemicolon || p->m_cur.kind == TokRBrace)
+        if (p->cur.kind == TokSemicolon || p->cur.kind == TokRBrace)
         {
             Advance(p);
             continue;
         }
 
-        if (p->m_cur.kind == TokAt)
+        if (p->cur.kind == TokAt)
         {
             ParseAttributedDecl(p, mod);
             continue;
         }
 
-        if (p->m_cur.kind == TokKwImport)
+        if (p->cur.kind == TokKwImport)
         {
             ParseTopLevelImport(p, mod);
             continue;
@@ -398,26 +398,26 @@ Module* ParserParseModule(Parser* p)
             continue;
         }
 
-        if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion)
+        if (p->cur.kind == TokKwStruct || p->cur.kind == TokKwUnion)
         {
             ParseTopLevelStruct(p, mod);
             continue;
         }
 
-        if (p->m_cur.kind == TokKwEnum)
+        if (p->cur.kind == TokKwEnum)
         {
             ParseTopLevelEnum(p, mod);
             continue;
         }
 
-        if (p->m_cur.kind == TokKwImpl)
+        if (p->cur.kind == TokKwImpl)
         {
             ParseTopLevelImpl(p, mod);
             continue;
         }
 
-        if (p->m_cur.kind == TokKwExtern
-            && (LexerPeekToken(p->m_lex).kind == TokKwStruct || LexerPeekToken(p->m_lex).kind == TokKwUnion))
+        if (p->cur.kind == TokKwExtern
+            && (LexerPeekToken(p->lex).kind == TokKwStruct || LexerPeekToken(p->lex).kind == TokKwUnion))
         {
             ParseTopLevelExternStruct(p, mod);
             continue;

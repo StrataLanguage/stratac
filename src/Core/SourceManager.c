@@ -7,117 +7,117 @@
 void SourceManagerInit(SourceManager* sm)
 {
     *sm = (SourceManager){0};
-    sm->m_text = NULL;
-    sm->m_textLen = 0;
-    sm->m_name = "<string>";
-    sm->m_lineStarts = (uint32_t*)malloc(sizeof(uint32_t));
-    if (!sm->m_lineStarts)
+    sm->text = NULL;
+    sm->textLen = 0;
+    sm->name = "<string>";
+    sm->lineStarts = (uint32_t*)malloc(sizeof(uint32_t));
+    if (!sm->lineStarts)
     {
         STRATA_OOM();
     }
-    sm->m_lineStarts[0] = 0;
-    sm->m_lineCount = 1;
-    sm->m_lineCap = 1;
+    sm->lineStarts[0] = 0;
+    sm->lineCount = 1;
+    sm->lineCap = 1;
 }
 
 void SourceManagerFree(SourceManager* sm)
 {
-    free(sm->m_lineStarts);
-    sm->m_lineStarts = NULL;
-    sm->m_lineCount = 0;
-    sm->m_lineCap = 0;
+    free(sm->lineStarts);
+    sm->lineStarts = NULL;
+    sm->lineCount = 0;
+    sm->lineCap = 0;
 }
 
 static void ComputeLineStarts(SourceManager* sm)
 {
-    sm->m_lineCount = 0;
+    sm->lineCount = 0;
 
-    if (!sm->m_text)
+    if (!sm->text)
     {
-        sm->m_lineStarts[0] = 0;
-        sm->m_lineCount = 1;
+        sm->lineStarts[0] = 0;
+        sm->lineCount = 1;
         return;
     }
 
-    if (sm->m_lineCap == 0)
+    if (sm->lineCap == 0)
     {
-        sm->m_lineCap = 64;
-        sm->m_lineStarts = (uint32_t*)malloc(sm->m_lineCap * sizeof(uint32_t));
-        if (!sm->m_lineStarts)
+        sm->lineCap = 64;
+        sm->lineStarts = (uint32_t*)malloc(sm->lineCap * sizeof(uint32_t));
+        if (!sm->lineStarts)
         {
             STRATA_OOM();
         }
     }
 
-    sm->m_lineStarts[sm->m_lineCount++] = 0;
+    sm->lineStarts[sm->lineCount++] = 0;
 
-    for (size_t i = 0; i < sm->m_textLen; ++i)
+    for (size_t i = 0; i < sm->textLen; ++i)
     {
-        char c = sm->m_text[i];
+        char c = sm->text[i];
 
         if (c == '\n')
         {
-            if (sm->m_lineCount >= sm->m_lineCap)
+            if (sm->lineCount >= sm->lineCap)
             {
-                sm->m_lineCap *= 2;
-                uint32_t* grown = (uint32_t*)realloc(sm->m_lineStarts, sm->m_lineCap * sizeof(uint32_t));
+                sm->lineCap *= 2;
+                uint32_t* grown = (uint32_t*)realloc(sm->lineStarts, sm->lineCap * sizeof(uint32_t));
                 if (!grown)
                 {
                     STRATA_OOM();
                 }
-                sm->m_lineStarts = grown;
+                sm->lineStarts = grown;
             }
-            sm->m_lineStarts[sm->m_lineCount++] = (uint32_t)(i + 1);
+            sm->lineStarts[sm->lineCount++] = (uint32_t)(i + 1);
         }
         else if (c == '\r')
         {
-            if (i + 1 < sm->m_textLen && sm->m_text[i + 1] == '\n')
+            if (i + 1 < sm->textLen && sm->text[i + 1] == '\n')
             {
                 continue;
             }
 
-            if (sm->m_lineCount >= sm->m_lineCap)
+            if (sm->lineCount >= sm->lineCap)
             {
-                sm->m_lineCap *= 2;
-                uint32_t* grown = (uint32_t*)realloc(sm->m_lineStarts, sm->m_lineCap * sizeof(uint32_t));
+                sm->lineCap *= 2;
+                uint32_t* grown = (uint32_t*)realloc(sm->lineStarts, sm->lineCap * sizeof(uint32_t));
                 if (!grown)
                 {
                     STRATA_OOM();
                 }
-                sm->m_lineStarts = grown;
+                sm->lineStarts = grown;
             }
-            sm->m_lineStarts[sm->m_lineCount++] = (uint32_t)(i + 1);
+            sm->lineStarts[sm->lineCount++] = (uint32_t)(i + 1);
         }
     }
 }
 
 void SourceManagerSetSource(SourceManager* sm, const char* text, size_t len, const char* name)
 {
-    sm->m_text = text;
-    sm->m_textLen = len;
-    sm->m_name = name ? name : "<string>";
+    sm->text = text;
+    sm->textLen = len;
+    sm->name = name ? name : "<string>";
     ComputeLineStarts(sm);
 }
 
 Str SourceManagerSlice(const SourceManager* sm, SourceRange r)
 {
-    if (r.start >= sm->m_textLen)
+    if (r.start >= sm->textLen)
     {
         return STR_EMPTY;
     }
 
     uint32_t end = SourceRangeEnd(r);
-    if (end > sm->m_textLen)
+    if (end > sm->textLen)
     {
-        end = (uint32_t)sm->m_textLen;
+        end = (uint32_t)sm->textLen;
     }
 
-    return (Str){sm->m_text + r.start, end - r.start};
+    return (Str){sm->text + r.start, end - r.start};
 }
 
 LineCol SourceManagerLineCol(const SourceManager* sm, uint32_t offset)
 {
-    size_t idx = UpperBound(sm->m_lineStarts, sm->m_lineCount, offset);
+    size_t idx = UpperBound(sm->lineStarts, sm->lineCount, offset);
 
     if (idx == 0)
     {
@@ -126,28 +126,28 @@ LineCol SourceManagerLineCol(const SourceManager* sm, uint32_t offset)
 
     uint32_t lineIdx = (uint32_t)idx - 1;
 
-    return (LineCol){.line = lineIdx + 1, .column = offset - sm->m_lineStarts[lineIdx] + 1};
+    return (LineCol){.line = lineIdx + 1, .column = offset - sm->lineStarts[lineIdx] + 1};
 }
 
 Str SourceManagerLineText(const SourceManager* sm, uint32_t line)
 {
-    if (line == 0 || line > sm->m_lineCount)
+    if (line == 0 || line > sm->lineCount)
     {
         return STR_EMPTY;
     }
 
-    size_t start = sm->m_lineStarts[line - 1];
-    size_t end = (line < sm->m_lineCount) ? sm->m_lineStarts[line] : sm->m_textLen;
+    size_t start = sm->lineStarts[line - 1];
+    size_t end = (line < sm->lineCount) ? sm->lineStarts[line] : sm->textLen;
 
-    while (end > start && (sm->m_text[end - 1] == '\n' || sm->m_text[end - 1] == '\r'))
+    while (end > start && (sm->text[end - 1] == '\n' || sm->text[end - 1] == '\r'))
     {
         --end;
     }
 
-    return (Str){sm->m_text + start, end - start};
+    return (Str){sm->text + start, end - start};
 }
 
 uint32_t SourceManagerLineCount(const SourceManager* sm)
 {
-    return (uint32_t)sm->m_lineCount;
+    return (uint32_t)sm->lineCount;
 }

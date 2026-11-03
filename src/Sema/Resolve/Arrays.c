@@ -53,7 +53,7 @@ bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* me
     /* `.data`: the element buffer of a dynamic array or string, as a `ptr` (for FFI). */
     if (isData)
     {
-        return TypeNameIsDynamicArray(base) || TypeIsString(&r->m_registry, base->name);
+        return TypeNameIsDynamicArray(base) || TypeIsString(&r->registry, base->name);
     }
 
     if (TypeNameHasArrayShape(base) && base->length >= 0)
@@ -61,12 +61,12 @@ bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* me
         return strcmp(member, "length") == 0;
     }
 
-    if (TypeIsCString(&r->m_registry, base->name))
+    if (TypeIsCString(&r->registry, base->name))
     {
         return strcmp(member, "length") == 0;
     }
 
-    return TypeNameIsDynamicArray(base) || TypeIsString(&r->m_registry, base->name);
+    return TypeNameIsDynamicArray(base) || TypeIsString(&r->registry, base->name);
 }
 
 // Fill `flat` with fixed-array init leaves in row-major order.
@@ -112,8 +112,8 @@ bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai,
                               const char* kind)
 {
     bool multidim = t->elem && TypeNameHasArrayShape(t->elem) && t->elem->length >= 0;
-    bool leafIsStruct = leaf && TypeRegistryIsUserType(&r->m_registry, leaf->name)
-                        && !TypeRegistryIsOpaque(&r->m_registry, leaf->name);
+    bool leafIsStruct
+        = leaf && TypeRegistryIsUserType(&r->registry, leaf->name) && !TypeRegistryIsOpaque(&r->registry, leaf->name);
 
     for (size_t k = 0; k < ai->elements.count; k++)
     {
@@ -121,7 +121,7 @@ bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai,
 
         if (multidim && elem->kind != NodeArrayInit)
         {
-            DiagErrorFmt(r->m_diag, elem->range,
+            DiagErrorFmt(r->diag, elem->range,
                          "multidimensional fixed-size array %s '%s' requires nested rows "
                          "('{ { ... }, { ... } }'), not a flat element list",
                          kind, name);
@@ -130,7 +130,7 @@ bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai,
 
         if (!multidim && elem->kind == NodeArrayInit && !leafIsStruct)
         {
-            DiagErrorFmt(r->m_diag, elem->range,
+            DiagErrorFmt(r->diag, elem->range,
                          "fixed-size array %s '%s' has a single dimension - write its elements as a flat list", kind,
                          name);
             return false;
@@ -182,7 +182,7 @@ void DecayFixedArgsToPtr(Resolver* r, CallExpr* c, StrMap* scope)
     for (size_t i = 0; i < c->args.count && i < fd->params.count; i++)
     {
         const ParamDecl* param = (const ParamDecl*)VecGet(&fd->params, i);
-        const char* paramType = TypeRegistryResolveAlias(&r->m_registry, param->type.name);
+        const char* paramType = TypeRegistryResolveAlias(&r->registry, param->type.name);
 
         if (param->mod != ModNone || !paramType || strcmp(paramType, STRATA_PTR_TYPE) != 0)
         {
@@ -197,7 +197,7 @@ void DecayFixedArgsToPtr(Resolver* r, CallExpr* c, StrMap* scope)
             continue;
         }
 
-        CastExpr* cast = AST_NEW(r->m_arena, CastExpr);
+        CastExpr* cast = AST_NEW(r->arena, CastExpr);
         cast->base.kind = NodeCast;
         cast->base.range = arg->range;
         cast->type = *InternTypeName(r, STRATA_PTR_TYPE);
@@ -281,7 +281,7 @@ static void CheckArrayIndexArg(Resolver* r, CallExpr* c, StrMap* scope, const ch
 
     if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
     {
-        DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee, what, sizeType->name);
+        DiagErrorFmt(r->diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee, what, sizeType->name);
     }
 }
 
@@ -332,7 +332,7 @@ static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const Ty
 
         if (!narrowedOptIntoBox)
         {
-            DiagErrorFmt(r->m_diag, arg1->range, "cannot %s a value of type '%s' into '%s' (element type '%s')",
+            DiagErrorFmt(r->diag, arg1->range, "cannot %s a value of type '%s' into '%s' (element type '%s')",
                          isReplace ? "store" : "push", valueType->name, arrType->name, elemType->name);
         }
     }
@@ -340,7 +340,7 @@ static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const Ty
     /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
     if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
     {
-        DiagErrorFmt(r->m_diag, arg1->range,
+        DiagErrorFmt(r->diag, arg1->range,
                      "cannot push '%s' read from an array element - it would be owned by two arrays; "
                      "move it into a variable first, or push a copy() of it",
                      valueType->name);
@@ -392,7 +392,7 @@ static void ResolveArrayResize(Resolver* r, CallExpr* c, StrMap* scope, const Ty
 
         if (elemType && !ZeroIsValid(r, elemType, 0))
         {
-            DiagErrorFmt(r->m_diag, c->base.range,
+            DiagErrorFmt(r->diag, c->base.range,
                          "'array_resize' fills new elements with their zero value, which is not a valid '%s' (a box "
                          "has no zero value; make the element type optional)",
                          elemType->name);
@@ -418,10 +418,10 @@ static void ResolveArrayTake(Resolver* r, CallExpr* c, StrMap* scope, const Type
 
     /* Only a string, an array or an optional has a value that means "nothing here". */
     if (elemType
-        && !(TypeIsString(&r->m_registry, elemType->name) || TypeNameIsDynamicArray(elemType)
+        && !(TypeIsString(&r->registry, elemType->name) || TypeNameIsDynamicArray(elemType)
              || TypeNameIsOptional(elemType)))
     {
-        DiagErrorFmt(r->m_diag, c->base.range,
+        DiagErrorFmt(r->diag, c->base.range,
                      "'array_take' leaves an empty value in the slot, and '%s' has none; use array_remove, "
                      "array_swap_remove or array_replace",
                      elemType->name);
@@ -457,7 +457,7 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->args.count != wantArgs)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects %zu argument(s) but got %zu", c->callee, wantArgs,
+        DiagErrorFmt(r->diag, c->base.range, "'%s' expects %zu argument(s) but got %zu", c->callee, wantArgs,
                      c->args.count);
         return true;
     }
@@ -471,7 +471,7 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!TypeNameIsDynamicArray(unwrapped))
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "'%s' expects an array argument, not '%s'", c->callee,
+        DiagErrorFmt(r->diag, arg0->range, "'%s' expects an array argument, not '%s'", c->callee,
                      arrType ? arrType->name : "");
         return true;
     }
@@ -479,7 +479,7 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     // The array is mutated, so it must be an lvalue.
     if (arg0->kind != NodeIdent && arg0->kind != NodeMember && arg0->kind != NodeIndex)
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "'%s' array argument must be an lvalue", c->callee);
+        DiagErrorFmt(r->diag, arg0->range, "'%s' array argument must be an lvalue", c->callee);
         return true;
     }
 
@@ -488,16 +488,16 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (constName)
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "'%s' cannot modify '%s'; it is immutable", c->callee, constName);
+        DiagErrorFmt(r->diag, arg0->range, "'%s' cannot modify '%s'; it is immutable", c->callee, constName);
         return true;
     }
 
     // A `ref T[]` param may be a borrowed stack view (fixed-array slice):
     // growing/shrinking can reallocate, which would free the caller's storage.
-    if ((isPush || isResize) && arg0->kind == NodeIdent && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)arg0)->name)
+    if ((isPush || isResize) && arg0->kind == NodeIdent && StrMapGet(&r->refArrayParams, ((IdentExpr*)arg0)->name)
         && !IsGrowableArrayParam(r, ((IdentExpr*)arg0)->name))
     {
-        DiagErrorFmt(r->m_diag, arg0->range,
+        DiagErrorFmt(r->diag, arg0->range,
                      "'%s' cannot grow '%s' (a ref array param may borrow the caller's stack storage); "
                      "copy it into a local array first",
                      c->callee, ((IdentExpr*)arg0)->name);
@@ -568,9 +568,9 @@ bool OverloadTakesFixedView(Resolver* r, const char* name, const TypeName* fixed
         return false;
     }
 
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; i < r->mod->functions.count; i++)
     {
-        const FunctionDecl* f = (const FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        const FunctionDecl* f = (const FunctionDecl*)VecGet(&r->mod->functions, i);
 
         if (strcmp(f->name, name) != 0 || !FunctionVisibleTo(f, fileId))
         {
@@ -650,7 +650,7 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
         && (!IsNumeric(countType->primitiveType) || countType->primitiveType == PrimBool
             || countType->primitiveType == PrimFloat || countType->primitiveType == PrimDouble))
     {
-        DiagErrorFmt(r->m_diag, ai->repeatCount->range, "the count in '{ value; count }' must be an integer, not '%s'",
+        DiagErrorFmt(r->diag, ai->repeatCount->range, "the count in '{ value; count }' must be an integer, not '%s'",
                      countType->name);
     }
 
@@ -662,7 +662,7 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
     {
         if (elem && !ZeroIsValid(r, elem, 0))
         {
-            DiagErrorFmt(r->m_diag, value->range,
+            DiagErrorFmt(r->diag, value->range,
                          "'{ {}; count }' fills each element with its zero value, which is not a valid '%s' (a "
                          "'^T' in it must point at something); give a value to copy instead",
                          elem->name);
@@ -688,12 +688,12 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
     if (valueType && !IsAssignableType(r, elem, valueType) && !IsStrLiteralForCString(r, elem, value)
         && !IsEmptyBraced(value))
     {
-        DiagErrorFmt(r->m_diag, value->range, "a '%s' cannot fill an array of '%s'", valueType->name, elem->name);
+        DiagErrorFmt(r->diag, value->range, "a '%s' cannot fill an array of '%s'", valueType->name, elem->name);
     }
 
-    if (!IsEmptyBraced(value) && AliasIsOwningValue(r, elem) && TypeNameHasDrop(&r->m_registry, elem))
+    if (!IsEmptyBraced(value) && AliasIsOwningValue(r, elem) && TypeNameHasDrop(&r->registry, elem))
     {
-        DiagErrorFmt(r->m_diag, value->range,
+        DiagErrorFmt(r->diag, value->range,
                      "'%s' has a Drop method, so it cannot be copied into each element; write '{ {}; count }' "
                      "to default-construct them instead",
                      elem->name);

@@ -22,7 +22,7 @@ const TypeName* SubstringBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
         argType = argType->inner;
     }
 
-    if (!argType || !TypeIsString(&r->m_registry, argType->name))
+    if (!argType || !TypeIsString(&r->registry, argType->name))
     {
         return NULL;
     }
@@ -36,9 +36,9 @@ static bool SubstringIndexTypeOk(Resolver* r, const TypeName* t)
         return false;
     }
 
-    const char* resolved = TypeRegistryResolveAlias(&r->m_registry, t->name);
+    const char* resolved = TypeRegistryResolveAlias(&r->registry, t->name);
 
-    return IsNameNumeric(resolved) && !IsNameFloatType(resolved) && !IsBoolType(&r->m_registry, t);
+    return IsNameNumeric(resolved) && !IsNameFloatType(resolved) && !IsBoolType(&r->registry, t);
 }
 
 bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
@@ -50,7 +50,7 @@ bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->args.count != 3)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'substring' expects 3 arguments (string, start, len), got %zu",
+        DiagErrorFmt(r->diag, c->base.range, "'substring' expects 3 arguments (string, start, len), got %zu",
                      c->args.count);
         return true;
     }
@@ -59,9 +59,9 @@ bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     const TypeName* argType = InferType(r, arg0, scope);
     const TypeName* unwrapped = argType && TypeNameIsOptional(argType) ? argType->inner : argType;
 
-    if (!unwrapped || !TypeIsString(&r->m_registry, unwrapped->name))
+    if (!unwrapped || !TypeIsString(&r->registry, unwrapped->name))
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "'substring' expects a string argument, not '%s'",
+        DiagErrorFmt(r->diag, arg0->range, "'substring' expects a string argument, not '%s'",
                      argType ? argType->name : "");
         return true;
     }
@@ -78,7 +78,7 @@ bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (!SubstringIndexTypeOk(r, indexType))
         {
-            DiagErrorFmt(r->m_diag, arg->range, "'substring' %s must be an integer, not '%s'", indexNames[i - 1],
+            DiagErrorFmt(r->diag, arg->range, "'substring' %s must be an integer, not '%s'", indexNames[i - 1],
                          indexType ? indexType->name : "");
             return true;
         }
@@ -96,8 +96,8 @@ bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName
         return false;
     }
 
-    bool lStr = TypeIsString(&r->m_registry, lt->name) || TypeIsCString(&r->m_registry, lt->name);
-    bool rStr = TypeIsString(&r->m_registry, rt->name) || TypeIsCString(&r->m_registry, rt->name);
+    bool lStr = TypeIsString(&r->registry, lt->name) || TypeIsCString(&r->registry, lt->name);
+    bool rStr = TypeIsString(&r->registry, rt->name) || TypeIsCString(&r->registry, rt->name);
 
     return lStr && rStr;
 }
@@ -107,5 +107,5 @@ bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName
 bool IsStrLiteralForCString(const Resolver* r, const TypeName* targetType, const Node* valueNode)
 {
     return targetType && valueNode && valueNode->kind == NodeStrLiteral
-           && TypeIsCString(&r->m_registry, targetType->name);
+           && TypeIsCString(&r->registry, targetType->name);
 }

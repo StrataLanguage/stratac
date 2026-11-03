@@ -219,7 +219,7 @@ extern "C"
         DiagnosticEngineInit(&diag);
 
         Lexer lex;
-        LexerInit(&lex, src.m_text, src.m_textLen, &diag, 0);
+        LexerInit(&lex, src.text, src.textLen, &diag, 0);
 
         Parser parser;
         ParserInit(&parser, &lex, &diag, &arena, moduleName);

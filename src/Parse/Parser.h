@@ -8,13 +8,13 @@
 
 typedef struct
 {
-    Lexer* m_lex;
-    DiagnosticEngine* m_diag;
-    char* m_moduleName;
-    Arena* m_arena;
-    Token m_cur;
-    bool m_hasReturnStmt;
-    const TypeName* m_returnType;
+    Lexer* lex;
+    DiagnosticEngine* diag;
+    char* moduleName;
+    Arena* arena;
+    Token cur;
+    bool hasReturnStmt;
+    const TypeName* returnType;
 } Parser;
 
 void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, const char* moduleName);

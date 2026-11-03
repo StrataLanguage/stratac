@@ -20,9 +20,9 @@ extern "C"
     {
         unsigned count = 0;
 
-        for (size_t i = 0; i < diag->m_count; i++)
+        for (size_t i = 0; i < diag->count; i++)
         {
-            if (diag->m_diagnostics[i].severity == SevWarning)
+            if (diag->diagnostics[i].severity == SevWarning)
             {
                 count++;
             }
@@ -221,7 +221,7 @@ extern "C"
         DiagnosticEngineInit(&diag);
 
         Lexer lex;
-        LexerInit(&lex, src.m_text, src.m_textLen, &diag, 0);
+        LexerInit(&lex, src.text, src.textLen, &diag, 0);
 
         Parser parser;
         ParserInit(&parser, &lex, &diag, &arena, moduleName);

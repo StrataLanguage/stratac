@@ -35,13 +35,13 @@ typedef struct
 
 typedef struct
 {
-    const char* m_text;
-    size_t m_textLen;
-    const char* m_name;
+    const char* text;
+    size_t textLen;
+    const char* name;
 
-    uint32_t* m_lineStarts;
-    size_t m_lineCount;
-    size_t m_lineCap;
+    uint32_t* lineStarts;
+    size_t lineCount;
+    size_t lineCap;
 } SourceManager;
 
 void SourceManagerInit(SourceManager* sm);
