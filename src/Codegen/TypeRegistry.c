@@ -566,97 +566,88 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
     return true;
 }
 
-static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx)
+/* Union layout: every field overlays byte 0; the backend lays out one representative member plus a tail pad. */
+static bool ComputeUnionStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx, long* offsets,
+                                     int* physical, StructPad* pads)
 {
     StructType* st = &reg->types[idx];
-
-    if (st->opaque || st->incomplete || st->isTypeAlias || st->fields.count == 0)
-    {
-        st->sizeBytes = 0;
-        st->alignBytes = 1;
-        state[idx] = 2;
-        return true;
-    }
-
-    state[idx] = 1;
-
     size_t n = st->fields.count;
-    long* offsets = (long*)malloc(n * sizeof(long));
-    int* physical = (int*)malloc(n * sizeof(int));
-    StructPad* pads = (StructPad*)malloc((n + 1) * sizeof(StructPad));
     size_t padCount = 0;
     bool ok = true;
 
-    if (st->isUnion)
+    /* Every field overlays byte 0; the backend lays out one representative member plus a
+       tail pad, so all fields share physical index 0. */
+    long maxSize = 0;
+    long maxAlign = 1;
+    long repSize = 0;
+    long repAlign = 0;
+    int rep = 0;
+
+    for (size_t i = 0; i < n; i++)
     {
-        /* Every field overlays byte 0; the backend lays out one representative member plus a
-           tail pad, so all fields share physical index 0. */
-        long maxSize = 0;
-        long maxAlign = 1;
-        long repSize = 0;
-        long repAlign = 0;
-        int rep = 0;
+        FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
+        SizeAlign sa;
 
-        for (size_t i = 0; i < n; i++)
+        if (!FieldSizeAlign(reg, state, scratch, &f->type, &sa, 0))
         {
-            FieldDecl* f = (FieldDecl*)VecGet(&st->fields, i);
-            SizeAlign sa;
-
-            if (!FieldSizeAlign(reg, state, scratch, &f->type, &sa, 0))
-            {
-                SetLayoutError(st, "field '%s' has type '%s' with no computable size", f->name, f->type.name);
-                ok = false;
-                break;
-            }
-
-            offsets[i] = 0;
-            physical[i] = 0;
-            maxSize = sa.size > maxSize ? sa.size : maxSize;
-            maxAlign = sa.align > maxAlign ? sa.align : maxAlign;
-
-            if (sa.align > repAlign || (sa.align == repAlign && sa.size > repSize))
-            {
-                rep = (int)i;
-                repAlign = sa.align;
-                repSize = sa.size;
-            }
+            SetLayoutError(st, "field '%s' has type '%s' with no computable size", f->name, f->type.name);
+            ok = false;
+            break;
         }
 
-        if (!ok)
+        offsets[i] = 0;
+        physical[i] = 0;
+        maxSize = sa.size > maxSize ? sa.size : maxSize;
+        maxAlign = sa.align > maxAlign ? sa.align : maxAlign;
+
+        if (sa.align > repAlign || (sa.align == repAlign && sa.size > repSize))
         {
-            free(offsets);
-            free(physical);
-            free(pads);
-            state[idx] = 3;
-            return false;
+            rep = (int)i;
+            repAlign = sa.align;
+            repSize = sa.size;
         }
-
-        long size = AlignUp(maxSize, maxAlign);
-
-        if (size > repSize)
-        {
-            pads[padCount].beforeField = n;
-            pads[padCount].bytes = size - repSize;
-            padCount++;
-        }
-
-        st->unionMember = rep;
-        st->sizeBytes = size;
-        st->alignBytes = maxAlign;
-        st->packedLayout = false;
-        st->fieldOffsets = offsets;
-        st->physicalIndex = physical;
-        st->pads = pads;
-        st->padCount = padCount;
-        st->physicalCount = 1 + padCount;
-        st->hasLayout = true;
-        state[idx] = 2;
-        return true;
     }
 
-    long cursor = 0;
-    long maxAlign = 1;
-    bool packed = false;
+    if (!ok)
+    {
+        free(offsets);
+        free(physical);
+        free(pads);
+        state[idx] = 3;
+        return false;
+    }
+
+    long size = AlignUp(maxSize, maxAlign);
+
+    if (size > repSize)
+    {
+        pads[padCount].beforeField = n;
+        pads[padCount].bytes = size - repSize;
+        padCount++;
+    }
+
+    st->unionMember = rep;
+    st->sizeBytes = size;
+    st->alignBytes = maxAlign;
+    st->packedLayout = false;
+    st->fieldOffsets = offsets;
+    st->physicalIndex = physical;
+    st->pads = pads;
+    st->padCount = padCount;
+    st->physicalCount = 1 + padCount;
+    st->hasLayout = true;
+    state[idx] = 2;
+    return true;
+}
+
+/* Places each field of a struct (non-union) at its offset, recording the pads. Returns false, with the layout error
+ * set, when a field has no size or an explicit offset overlaps. */
+static bool LayoutStructFields(TypeRegistry* reg, unsigned char* state, Arena* scratch, StructType* st, long* offsets,
+                               int* physical, StructPad* pads, size_t* padCount, long* cursor, long* maxAlign,
+                               bool* packed)
+{
+    size_t n = st->fields.count;
+    bool ok = true;
     int nextPhysical = 0;
 
     for (size_t i = 0; i < n && ok; i++)
@@ -677,21 +668,21 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* 
 
         if (f->offset >= 0)
         {
-            packed = true;
+            (*packed) = true;
             off = f->offset;
 
-            if (off < cursor)
+            if (off < (*cursor))
             {
                 SetLayoutError(st,
                                "fieldoffset(%ld) for field '%s' overlaps the previous field (data ends at byte %ld)",
-                               off, f->name, cursor);
+                               off, f->name, (*cursor));
                 ok = false;
                 break;
             }
         }
         else
         {
-            off = AlignUp(cursor, sa.align);
+            off = AlignUp((*cursor), sa.align);
         }
 
         /* A member the backend emits packed (alignment 1) would not be
@@ -699,14 +690,14 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* 
            enclosing struct needs explicit pads as well. */
         if (sa.packed)
         {
-            packed = true;
+            (*packed) = true;
         }
 
-        if (off > cursor)
+        if (off > (*cursor))
         {
-            pads[padCount].beforeField = i;
-            pads[padCount].bytes = off - cursor;
-            padCount++;
+            pads[(*padCount)].beforeField = i;
+            pads[(*padCount)].bytes = off - (*cursor);
+            (*padCount)++;
             nextPhysical++;
         }
 
@@ -714,56 +705,99 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* 
         physical[i] = nextPhysical;
         nextPhysical++;
 
-        if (sa.align > maxAlign)
+        if (sa.align > (*maxAlign))
         {
-            maxAlign = sa.align;
+            (*maxAlign) = sa.align;
         }
 
-        cursor = off + sa.size;
+        (*cursor) = off + sa.size;
     }
+
+    return ok;
+}
+
+/* Finishes a laid-out struct: packed layouts keep the explicit pads, natural layouts drop them. */
+static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx, long* offsets, int* physical,
+                               StructPad* pads, size_t padCount, long cursor, long maxAlign, bool packed)
+{
+    size_t n = st->fields.count;
+
+    if (packed)
+    {
+        /* Explicit offsets: pads encode the full layout, so backends emit
+           packed. Size and alignment still match C for the same
+           declaration: natural alignment is the max field alignment and
+           a tail pad rounds the size up to it (so T[N] strides agree). */
+        long size = AlignUp(cursor, maxAlign);
+
+        if (size > cursor)
+        {
+            pads[padCount].beforeField = n;
+            pads[padCount].bytes = size - cursor;
+            padCount++;
+        }
+
+        st->sizeBytes = size;
+        st->alignBytes = maxAlign;
+    }
+    else
+    {
+        /* Natural layout: backend padding yields the same offsets, so drop
+           the bookkeeping pads and use identity member indices. */
+        st->sizeBytes = AlignUp(cursor, maxAlign);
+        st->alignBytes = maxAlign;
+        padCount = 0;
+
+        for (size_t i = 0; i < n; i++)
+        {
+            physical[i] = (int)i;
+        }
+    }
+
+    st->packedLayout = packed;
+    st->fieldOffsets = offsets;
+    st->physicalIndex = physical;
+    st->pads = pads;
+    st->padCount = padCount;
+    st->physicalCount = n + padCount;
+    st->hasLayout = true;
+    state[idx] = 2;
+}
+
+static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx)
+{
+    StructType* st = &reg->types[idx];
+
+    if (st->opaque || st->incomplete || st->isTypeAlias || st->fields.count == 0)
+    {
+        st->sizeBytes = 0;
+        st->alignBytes = 1;
+        state[idx] = 2;
+        return true;
+    }
+
+    state[idx] = 1;
+
+    size_t n = st->fields.count;
+    long* offsets = (long*)malloc(n * sizeof(long));
+    int* physical = (int*)malloc(n * sizeof(int));
+    StructPad* pads = (StructPad*)malloc((n + 1) * sizeof(StructPad));
+
+    if (st->isUnion)
+    {
+        return ComputeUnionStructLayout(reg, state, scratch, idx, offsets, physical, pads);
+    }
+
+    long cursor = 0;
+    long maxAlign = 1;
+    bool packed = false;
+    size_t padCount = 0;
+    bool ok
+        = LayoutStructFields(reg, state, scratch, st, offsets, physical, pads, &padCount, &cursor, &maxAlign, &packed);
 
     if (ok)
     {
-        if (packed)
-        {
-            /* Explicit offsets: pads encode the full layout, so backends emit
-               packed. Size and alignment still match C for the same
-               declaration: natural alignment is the max field alignment and
-               a tail pad rounds the size up to it (so T[N] strides agree). */
-            long size = AlignUp(cursor, maxAlign);
-
-            if (size > cursor)
-            {
-                pads[padCount].beforeField = n;
-                pads[padCount].bytes = size - cursor;
-                padCount++;
-            }
-
-            st->sizeBytes = size;
-            st->alignBytes = maxAlign;
-        }
-        else
-        {
-            /* Natural layout: backend padding yields the same offsets, so drop
-               the bookkeeping pads and use identity member indices. */
-            st->sizeBytes = AlignUp(cursor, maxAlign);
-            st->alignBytes = maxAlign;
-            padCount = 0;
-
-            for (size_t i = 0; i < n; i++)
-            {
-                physical[i] = (int)i;
-            }
-        }
-
-        st->packedLayout = packed;
-        st->fieldOffsets = offsets;
-        st->physicalIndex = physical;
-        st->pads = pads;
-        st->padCount = padCount;
-        st->physicalCount = n + padCount;
-        st->hasLayout = true;
-        state[idx] = 2;
+        FinishStructLayout(st, state, idx, offsets, physical, pads, padCount, cursor, maxAlign, packed);
     }
     else
     {
