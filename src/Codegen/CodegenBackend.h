@@ -5,7 +5,8 @@
 
 #include <strata/strata.h>
 
-typedef struct {
+typedef struct
+{
     bool ok;
     char* output;
     char* moduleName;

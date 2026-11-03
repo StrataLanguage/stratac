@@ -1,12 +1,13 @@
 #pragma once
 
-#include <stdint.h>
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "Core/Util.h"
 
-typedef struct {
+typedef struct
+{
     uint32_t start;
     uint32_t length;
     uint16_t fileId;
@@ -26,12 +27,14 @@ static inline bool SourceRangeValid(SourceRange r)
 #define SRC_INVALID ((SourceRange){0, 0, 0})
 #define SRC_POS(pos, len) ((SourceRange){(uint32_t)(pos), (uint32_t)(len), 0})
 
-typedef struct {
+typedef struct
+{
     uint32_t line;   // 1-based
     uint32_t column; // 1-based
 } LineCol;
 
-typedef struct {
+typedef struct
+{
     const char* m_text;
     size_t m_textLen;
     const char* m_name;

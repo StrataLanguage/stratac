@@ -4,7 +4,8 @@
 
 #include <stdbool.h>
 
-typedef struct {
+typedef struct
+{
     bool valid;
     bool isVoid;
     bool isFloat;
@@ -28,15 +29,12 @@ MappedType MapType(const TypeName* t);
 bool IsNumeric(PrimitiveType primType);
 bool IsNameNumeric(const char* t);
 
-
 int IsSimdVector(PrimitiveType prim);
-
-
 
 /**
  * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
- * Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the user.
- * Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
+ * Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the
+ * user. Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
  */
 int IsNameSimdVector(const char* t);
 
@@ -66,9 +64,8 @@ bool IsNameScalarPseudoType(const char* t);
    "min" (float/double only). When valid, fills the constant value: `outInt`
    gets the integer bit pattern (ints), `outFloat` the double (floats),
    `outIsFloat` distinguishes them. Any output may be NULL. */
-bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* outInt, double* outFloat, bool* outIsFloat);
-
-
+bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* outInt, double* outFloat,
+                       bool* outIsFloat);
 
 // Alias-aware scalar check; NULL registry means builtins only.
 bool IsScalarLikeType(const TypeRegistry* reg, const char* t);
@@ -111,7 +108,8 @@ const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const 
 
 /* The four type properties of docs "Strata Language Foundations", computed once per resolved type.
    New rules test these instead of `isBox`/`isOptional` or a spelling. */
-typedef struct {
+typedef struct
+{
     bool trivial;   /* bitwise copy, no drop glue */
     bool owning;    /* a by-value use moves; has drop glue (the complement of trivial) */
     bool userDrop;  /* has a `Drop`, itself or in a field; no `copy()` */
@@ -119,9 +117,10 @@ typedef struct {
 } TypeProps;
 
 /* How a `T?` is laid out (Value optionals). Picked per type; `None` for a type that is not optional. */
-typedef enum {
+typedef enum
+{
     OptLayoutNone,
-    OptLayoutNiche, /* the pointer itself, null means empty: `^U?`, `H?` */
+    OptLayoutNiche,  /* the pointer itself, null means empty: `^U?`, `H?` */
     OptLayoutInline, /* `{ T value; bool has; }` */
     OptLayoutBox     /* nullable heap box, as `T?` is today and `^T?` stays */
 } OptionalLayout;

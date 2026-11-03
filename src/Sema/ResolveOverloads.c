@@ -385,8 +385,9 @@ static void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const T
     {
         long long lv = 0;
         unsigned width = lt ? ScalarBitWidth(lt->primitiveType) : 0;
-        bool isUnsigned = lt && (lt->primitiveType == PrimUInt || lt->primitiveType == PrimULong
-                                 || lt->primitiveType == PrimByte || lt->primitiveType == PrimUShort);
+        bool isUnsigned = lt
+                          && (lt->primitiveType == PrimUInt || lt->primitiveType == PrimULong
+                              || lt->primitiveType == PrimByte || lt->primitiveType == PrimUShort);
 
         if (rv == 0)
         {
@@ -514,8 +515,8 @@ static void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, cons
         return;
     }
 
-    DiagErrorFmt(diag, range, "implicit conversion from '%s' to '%s' may lose information; use a cast",
-                 srcType->name, target->name);
+    DiagErrorFmt(diag, range, "implicit conversion from '%s' to '%s' may lose information; use a cast", srcType->name,
+                 target->name);
 }
 
 /* An argument converts to a scalar parameter silently only if nothing is lost: a widening conversion, or a
@@ -525,7 +526,8 @@ static bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, con
     PrimitiveType src = argType->primitiveType;
     PrimitiveType dst = paramType->primitiveType;
 
-    if (!IsNumeric(src) || !IsNumeric(dst) || src == PrimBool || dst == PrimBool || NumericConversionIsLossless(src, dst))
+    if (!IsNumeric(src) || !IsNumeric(dst) || src == PrimBool || dst == PrimBool
+        || NumericConversionIsLossless(src, dst))
     {
         return true;
     }
@@ -1576,7 +1578,6 @@ static void ClearSubtreeByPath(StrMap* m, const char* key)
     }
 }
 
-
 static bool IsBoxGlobalName(const Resolver* r, const char* name)
 {
     return StrMapGet(&r->m_boxGlobals, name) != NULL;
@@ -1598,7 +1599,6 @@ static const char* KeyRoot(Arena* arena, const char* key)
 
     return base;
 }
-
 
 // True when `key` uses the erased "a[]" form (a moved element that may be any index).
 static bool PathKeyIsErased(const char* key)
@@ -1854,7 +1854,6 @@ static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 
         return;
     }
-
 }
 
 // Moving a `T?` empties the source instead of poisoning it.
@@ -1893,7 +1892,6 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 /* `drop(x)` of an optional: x is now definitely empty. */
 static void EmptyOptionalSource(Resolver* r, const char* name)
 {
-
 
     /* The source is now definitely empty. later `path?` tests resolve to
        "definitely empty" rather than an unproven read. */
@@ -3155,7 +3153,6 @@ static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* change
     }
 }
 
-
 //-- Read-only by-value parameters borrow.
 //
 // A by-value `string`, `T[]` or owning-struct parameter would take its argument (move it out of
@@ -3293,9 +3290,9 @@ static void ConsumeIfTaken(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
 
 static bool IsArrayMutator(const char* callee)
 {
-    return strcmp(callee, "array_push") == 0 || strcmp(callee, "array_resize") == 0
-           || strcmp(callee, "array_pop") == 0 || strcmp(callee, "array_remove") == 0
-           || strcmp(callee, "array_swap_remove") == 0 || strcmp(callee, "array_reserve") == 0;
+    return strcmp(callee, "array_push") == 0 || strcmp(callee, "array_resize") == 0 || strcmp(callee, "array_pop") == 0
+           || strcmp(callee, "array_remove") == 0 || strcmp(callee, "array_swap_remove") == 0
+           || strcmp(callee, "array_reserve") == 0;
 }
 
 static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed);
@@ -3493,8 +3490,8 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
 
         Node* arg0 = c->args.count > 0 ? (Node*)VecGet(&c->args, 0) : NULL;
 
-        if (!isMethod && (IsArrayMutator(c->callee) || strcmp(c->callee, "drop") == 0
-                          || strcmp(c->callee, "addressof") == 0))
+        if (!isMethod
+            && (IsArrayMutator(c->callee) || strcmp(c->callee, "drop") == 0 || strcmp(c->callee, "addressof") == 0))
         {
             ConsumeParam(BorrowRoot(f, arg0), changed);
 
@@ -3505,9 +3502,9 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
             return;
         }
 
-        if (!isMethod && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0
-                          || strcmp(c->callee, "alignof") == 0 || strcmp(c->callee, "load") == 0
-                          || strcmp(c->callee, "substring") == 0))
+        if (!isMethod
+            && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0 || strcmp(c->callee, "alignof") == 0
+                || strcmp(c->callee, "load") == 0 || strcmp(c->callee, "substring") == 0))
         {
             return; /* only read */
         }
@@ -3540,8 +3537,8 @@ static void InferBorrowedParams(Resolver* r)
         for (size_t j = 0; j < f->params.count; j++)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&f->params, j);
-            p->borrowCandidate = eligible && p->mod == ModNone && !p->isVarargRest && !p->isReturn
-                                 && BorrowCandidateType(r, &p->type);
+            p->borrowCandidate
+                = eligible && p->mod == ModNone && !p->isVarargRest && !p->isReturn && BorrowCandidateType(r, &p->type);
         }
     }
 
@@ -3661,17 +3658,28 @@ static int NumericRank(PrimitiveType p)
 {
     switch (p)
     {
-    case PrimDouble: return 9;
-    case PrimFloat: return 8;
-    case PrimULong: return 7;
-    case PrimLong: return 6;
-    case PrimUInt: return 5;
-    case PrimInt: return 4;
-    case PrimUShort: return 3;
-    case PrimShort: return 2;
-    case PrimByte: return 1;
-    case PrimSByte: return 1;
-    default: return 0;
+    case PrimDouble:
+        return 9;
+    case PrimFloat:
+        return 8;
+    case PrimULong:
+        return 7;
+    case PrimLong:
+        return 6;
+    case PrimUInt:
+        return 5;
+    case PrimInt:
+        return 4;
+    case PrimUShort:
+        return 3;
+    case PrimShort:
+        return 2;
+    case PrimByte:
+        return 1;
+    case PrimSByte:
+        return 1;
+    default:
+        return 0;
     }
 }
 
@@ -3766,7 +3774,8 @@ static void CheckDelegateDecl(Resolver* r, const FunctionDecl* f)
 
     const char* ret = TypeRegistryResolveAlias(&r->m_registry, f->returnType.name);
 
-    if (IsDefinedStruct(&r->m_registry, ret) || TypeNameIsDynamicArray(&f->returnType) || TypeNameIsOptional(&f->returnType))
+    if (IsDefinedStruct(&r->m_registry, ret) || TypeNameIsDynamicArray(&f->returnType)
+        || TypeNameIsOptional(&f->returnType))
     {
         DiagErrorFmt(r->m_diag, f->base.range, "delegate '%s' cannot return '%s' by value", f->name,
                      f->returnType.name);
@@ -3799,8 +3808,8 @@ static void CheckExportDecl(Resolver* r, const FunctionDecl* f)
 {
     if (f->isExtern || !f->body)
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "'@export' function '%s' needs a body (it is defined here, not by the host)",
-                     f->name);
+        DiagErrorFmt(r->m_diag, f->base.range,
+                     "'@export' function '%s' needs a body (it is defined here, not by the host)", f->name);
         return;
     }
 
@@ -3894,7 +3903,8 @@ static bool CheckPlainDataTypeArg(Resolver* r, const CallExpr* c, const TypeName
         return false;
     }
 
-    if (AliasIsOwningValue(r, t) || TypeRegistryIsOwningStruct(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name)))
+    if (AliasIsOwningValue(r, t)
+        || TypeRegistryIsOwningStruct(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name)))
     {
         DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot move owning type '%s' as raw memory", c->callee, t->name);
         return false;
@@ -4018,8 +4028,8 @@ static bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
             return true;
         }
 
-        if (arg0->kind == NodeMember && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->base_node, scope),
-                                                             ((MemberExpr*)arg0)->member))
+        if (arg0->kind == NodeMember
+            && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->base_node, scope), ((MemberExpr*)arg0)->member))
         {
             DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
             return true;
@@ -4050,8 +4060,8 @@ static bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
 
         const TypeName* t = c->typeArg;
-        bool known = t->primitiveType != PrimNone || TypeNameHasArrayShape(t) || TypeNameIsBox(t) || TypeNameIsOptional(t)
-                     || TypeRegistryIsUserType(&r->m_registry, t->name);
+        bool known = t->primitiveType != PrimNone || TypeNameHasArrayShape(t) || TypeNameIsBox(t)
+                     || TypeNameIsOptional(t) || TypeRegistryIsUserType(&r->m_registry, t->name);
 
         if (t->primitiveType == PrimVoid || !known)
         {
@@ -4373,8 +4383,9 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         const TypeName* elemType = TypeNameArrayElem(unwrapped);
 
         /* Only a string, an array or an optional has a value that means "nothing here". */
-        if (elemType && !(TypeIsString(&r->m_registry, elemType->name) || TypeNameIsDynamicArray(elemType)
-                          || TypeNameIsOptional(elemType)))
+        if (elemType
+            && !(TypeIsString(&r->m_registry, elemType->name) || TypeNameIsDynamicArray(elemType)
+                 || TypeNameIsOptional(elemType)))
         {
             DiagErrorFmt(r->m_diag, c->base.range,
                          "'array_take' leaves an empty value in the slot, and '%s' has none; use array_remove, "
@@ -4392,7 +4403,9 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
         {
             DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee,
-                         isRemove || isReplace || isTake ? "index" : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
+                         isRemove || isReplace || isTake
+                             ? "index"
+                             : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
                          sizeType->name);
         }
     }
@@ -4583,7 +4596,6 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&r->m_mod->globals, g);
 
-
         // ...and refs into globals may dangle after any call that could reach them.
         if (!best->isExtern)
         {
@@ -4761,7 +4773,6 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
             {
                 target = TypeNameBoxInner(at);
             }
-
         }
 
         return;
@@ -4776,7 +4787,6 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
         {
             FieldDecl* fd2 = (FieldDecl*)VecGet(&st->fields, j);
             Node* arg = (Node*)VecGet(&c->args, j);
-
         }
 
         return;
@@ -4790,11 +4800,9 @@ static void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
             = arrType && TypeNameIsOptional(arrType) ? TypeNameArrayElem(arrType->inner) : TypeNameArrayElem(arrType);
         Node* valArg = (Node*)VecGet(&c->args, 1);
 
-
         if (arrType && TypeNameIsOptional(arrType))
         {
             Node* arrArg = (Node*)VecGet(&c->args, 0);
-
         }
     }
 }
@@ -4899,7 +4907,8 @@ static void CheckStructInitFields(Resolver* r, Node* n)
 
             if (field->value->kind == NodeStructInit && ((StructInitExpr*)field->value)->typeName)
             {
-                bool emptyOptional = fd && TypeNameIsOptional(&fd->type) && ((StructInitExpr*)field->value)->fields.count == 0;
+                bool emptyOptional
+                    = fd && TypeNameIsOptional(&fd->type) && ((StructInitExpr*)field->value)->fields.count == 0;
 
                 if (!emptyOptional)
                 {
@@ -5159,7 +5168,6 @@ static bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         {
             /* Reading through a `T?` receiver needs a narrowing fact. */
             const char* key = MovableBoxSourceKey(r, base);
-
         }
 
         const TypeName* inner = UnwrapBoxPtr(raw);
@@ -5831,8 +5839,8 @@ static void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, cons
 
             if (prop->setterSymbol)
             {
-                SynthesizeAccessor(mod, arena, prop->setterSymbol, &prop->returnType, impl->handleName, selfByRef,
-                                   true, prop->range, diag);
+                SynthesizeAccessor(mod, arena, prop->setterSymbol, &prop->returnType, impl->handleName, selfByRef, true,
+                                   prop->range, diag);
             }
         }
     }
@@ -5919,7 +5927,8 @@ static bool IsTypeParamName(const FunctionDecl* generic, const TypeName* type)
 // True when T appears in `type`, directly or inside ^T / T? / T[] / T[N].
 static bool TypeMentionsParam(const FunctionDecl* generic, const TypeName* type)
 {
-    for (const TypeName* at = type; at; at = (TypeNameIsBox(at) || TypeNameIsOptional(at)) ? at->inner : (TypeNameHasArrayShape(at) ? at->elem : NULL))
+    for (const TypeName* at = type; at;
+         at = (TypeNameIsBox(at) || TypeNameIsOptional(at)) ? at->inner : (TypeNameHasArrayShape(at) ? at->elem : NULL))
     {
         if (IsTypeParamName(generic, at))
         {
@@ -6068,9 +6077,10 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     const char* leaf = TypeRegistryResolveAlias(&r->m_registry, typeArg->name);
-    const StructType* structType = (TypeNameHasArrayShape(typeArg) || TypeNameIsBox(typeArg) || TypeNameIsOptional(typeArg))
-                                       ? NULL
-                                       : TypeRegistryFind(&r->m_registry, leaf);
+    const StructType* structType
+        = (TypeNameHasArrayShape(typeArg) || TypeNameIsBox(typeArg) || TypeNameIsOptional(typeArg))
+              ? NULL
+              : TypeRegistryFind(&r->m_registry, leaf);
 
     if (!structType || structType->opaque || structType->isTypeAlias)
     {
@@ -6107,8 +6117,9 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (param->mod == ModRef && !param->type.isConst && !IsLValueNode(arg))
         {
-            DiagErrorFmt(r->m_diag, arg->range, "argument %zu of '%s' is passed by non-const 'ref' and must be a variable",
-                         i + 1, generic->name);
+            DiagErrorFmt(r->m_diag, arg->range,
+                         "argument %zu of '%s' is passed by non-const 'ref' and must be a variable", i + 1,
+                         generic->name);
         }
         else if (argType && !IsAssignableType(r, &param->type, argType))
         {
@@ -6505,7 +6516,8 @@ resolve_candidates:;
             {
             }
             else if (mutableRef && !SameResolvedType(r, argType->name, paramType->name)
-                     && !(TypeNameIsOwning(argType) && !TypeNameIsOptional(paramType)) && !TypeNameIsFixedArray(argType))
+                     && !(TypeNameIsOwning(argType) && !TypeNameIsOptional(paramType))
+                     && !TypeNameIsFixedArray(argType))
             {
                 viable = false;
                 break;
@@ -6826,35 +6838,35 @@ typedef struct IntrinsicTypeDefinition
 // LLVMModuleBuilder.c.
 static const IntrinsicTypeDefinition intrinsics[] = {
     /* Array calls */
-    {"array_push",   ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_pop",    ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_resize", ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_remove", ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_reserve", ArrayBuiltinType,          ResolveArrayBuiltin    },
-    {"array_swap_remove", ArrayBuiltinType,      ResolveArrayBuiltin    },
-    {"array_replace", ArrayBuiltinType,          ResolveArrayBuiltin    },
-    {"array_take", ArrayBuiltinType,             ResolveArrayBuiltin    },
+    {"array_push",        ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_pop",         ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_resize",      ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_remove",      ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_reserve",     ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_swap_remove", ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_replace",     ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_take",        ArrayBuiltinType,           ResolveArrayBuiltin    },
 
     /* Memory */
-    {"copy",         CopyBuiltinType,            ResolveCopyBuiltin     },
-    {"drop",         DropBuiltinType,            ResolveDropBuiltin     },
-    {"addressof",    MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"sizeof",       MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"alignof",      MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"load",         MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"store",        MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"copy",              CopyBuiltinType,            ResolveCopyBuiltin     },
+    {"drop",              DropBuiltinType,            ResolveDropBuiltin     },
+    {"addressof",         MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"sizeof",            MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"alignof",           MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"load",              MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"store",             MemoryBuiltinType,          ResolveMemoryBuiltin   },
 
     /* Strings */
-    {"substring",    SubstringBuiltinType,       ResolveSubstringBuiltin},
+    {"substring",         SubstringBuiltinType,       ResolveSubstringBuiltin},
 
     /* Vectors */
-    {"float2",       VectorConstructBuiltinType, ResolveVectorConstruct },
-    {"float3",       VectorConstructBuiltinType, ResolveVectorConstruct },
-    {"float4",       VectorConstructBuiltinType, ResolveVectorConstruct },
+    {"float2",            VectorConstructBuiltinType, ResolveVectorConstruct },
+    {"float3",            VectorConstructBuiltinType, ResolveVectorConstruct },
+    {"float4",            VectorConstructBuiltinType, ResolveVectorConstruct },
 
-    {"dot",          VectorDotBuiltinType,       ResolveVector2Arg      },
-    {"cross",        VectorCrossBuiltinType,     ResolveVector2Arg      },
-    {"reduce",       VectorReduceBuiltinType,    ResolveVector1Arg      },
+    {"dot",               VectorDotBuiltinType,       ResolveVector2Arg      },
+    {"cross",             VectorCrossBuiltinType,     ResolveVector2Arg      },
+    {"reduce",            VectorReduceBuiltinType,    ResolveVector1Arg      },
 };
 
 static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)
@@ -7291,7 +7303,8 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
 
         /* Smart cast: a `T?` goes where `^T` is wanted once flow typing
            proves it non-empty; CheckOptionalDeref demands the proof at each use site. */
-        if (!TypeNameIsOptional(targetType) && TypeNameIsBox(targetType) && TypeNameIsOptional(valueType) && inner && valueInner)
+        if (!TypeNameIsOptional(targetType) && TypeNameIsBox(targetType) && TypeNameIsOptional(valueType) && inner
+            && valueInner)
         {
             return strcmp(inner->name, valueInner->name) == 0;
         }
@@ -7354,8 +7367,9 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
 
     const TypeName* countType = InferType(r, ai->repeatCount, scope);
 
-    if (countType && (!IsNumeric(countType->primitiveType) || countType->primitiveType == PrimBool
-                      || countType->primitiveType == PrimFloat || countType->primitiveType == PrimDouble))
+    if (countType
+        && (!IsNumeric(countType->primitiveType) || countType->primitiveType == PrimBool
+            || countType->primitiveType == PrimFloat || countType->primitiveType == PrimDouble))
     {
         DiagErrorFmt(r->m_diag, ai->repeatCount->range, "the count in '{ value; count }' must be an integer, not '%s'",
                      countType->name);
@@ -7405,7 +7419,6 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
                      "to default-construct them instead",
                      elem->name);
     }
-
 }
 
 /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
@@ -7420,7 +7433,8 @@ static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     if (!vd->init)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "ref local '%s' must be bound to a variable, field or element", vd->name);
+        DiagErrorFmt(r->m_diag, vd->base.range, "ref local '%s' must be bound to a variable, field or element",
+                     vd->name);
         return;
     }
 
@@ -7442,7 +7456,8 @@ static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
         return;
     }
 
-    const TypeName* inner = (TypeNameIsBox(initType) || TypeNameIsOptional(initType)) ? TypeNameBoxInner(initType) : NULL;
+    const TypeName* inner
+        = (TypeNameIsBox(initType) || TypeNameIsOptional(initType)) ? TypeNameBoxInner(initType) : NULL;
     bool exact = SameResolvedType(r, initType->name, vd->type.name);
     bool through = !exact && !TypeNameIsBox(&vd->type) && !TypeNameIsOptional(&vd->type) && inner
                    && SameResolvedType(r, inner->name, vd->type.name);
@@ -7717,15 +7732,14 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 bool rOpt = rt && TypeNameIsOptional(rt) && !TypeIsComparableAggregate(&r->m_registry, rt);
                 bool lNullAware = eqOp && lOpt && rt && (TypeNameIsOptional(rt) || TypeNameIsBox(rt));
                 bool rNullAware = eqOp && lOpt;
-
             }
 
             /* `flag == 1` would compare through an implicit numeric <-> bool
                conversion; both sides of a bool comparison must be bool. */
             const TypeName* lScalar = TypeNameBoxInner(lt) ? TypeNameBoxInner(lt) : lt;
             const TypeName* rScalar = TypeNameBoxInner(rt) ? TypeNameBoxInner(rt) : rt;
-            bool mixedBool = lScalar && rScalar
-                             && IsBoolType(&r->m_registry, lScalar) != IsBoolType(&r->m_registry, rScalar);
+            bool mixedBool
+                = lScalar && rScalar && IsBoolType(&r->m_registry, lScalar) != IsBoolType(&r->m_registry, rScalar);
 
             if ((boolOperand && !eqOp) || mixedBool)
             {
@@ -7889,7 +7903,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 if (rawBase && TypeNameIsOptional(rawBase))
                 {
                     const char* baseKey = MovableBoxSourceKey(r, tm->base_node);
-
                 }
 
                 ResolveExpr(r, tm->base_node, scope);
@@ -8074,8 +8087,8 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 /* A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`
                    (or a string) is the caller's slot: `=` drops what it held and
                    stores the new value there, so out-params work. */
-                bool slotRef = TypeNameIsOptional(tt) || TypeIsString(&r->m_registry, tt->name)
-                               || TypeNameIsDynamicArray(tt);
+                bool slotRef
+                    = TypeNameIsOptional(tt) || TypeIsString(&r->m_registry, tt->name) || TypeNameIsDynamicArray(tt);
 
                 if (StrMapGet(&r->m_refBoxParams, targetName) && !slotRef)
                 {
@@ -8088,7 +8101,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
 
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
-
 
                 if (movedValueKey)
                 {
@@ -8260,7 +8272,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                                      vt->name);
                     }
 
-
                     const char* movedValueKey
                         = vt && AliasIsOwningValue(r, vt) ? MovableBoxSourceKey(r, a->value) : NULL;
 
@@ -8295,7 +8306,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     type is the unwrap target. */
                 const TypeName* mt = InferType(r, a->target, scope);
                 const TypeName* vt = InferType(r, a->value, scope);
-
             }
 
             /* The written path holds a new value: every fact at, under, or
@@ -8305,7 +8315,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             {
 
                 const TypeName* writtenType = InferType(r, a->target, scope);
-
             }
         }
 
@@ -8458,13 +8467,15 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                       && srcPrim != PrimBool));
 
         /* `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` the reverse. */
-        bool cstringPtrPair = src
-                              && ((TypeIsCString(&r->m_registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
-                                  || (TypeIsCString(&r->m_registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
+        bool cstringPtrPair
+            = src
+              && ((TypeIsCString(&r->m_registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
+                  || (TypeIsCString(&r->m_registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
 
         /* Text views: a NUL-terminated `byte[N]` buffer as a `cstring` (borrowed) or a `string`
            (copied, up to the first NUL or all N bytes); a `string` as a `cstring` (borrowed). */
-        bool bufferSrc = src && TypeNameHasArrayShape(src) && src->length >= 0 && src->elem && !TypeNameHasArrayShape(src->elem)
+        bool bufferSrc = src && TypeNameHasArrayShape(src) && src->length >= 0 && src->elem
+                         && !TypeNameHasArrayShape(src->elem)
                          && (strcmp(src->elem->name, "byte") == 0 || strcmp(src->elem->name, "sbyte") == 0);
         cast->textKind = CastTextNone;
 
@@ -8540,7 +8551,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         if (rawBaseType && TypeNameIsOptional(rawBaseType))
         {
             const char* baseKey = MovableBoxSourceKey(r, m->base_node);
-
         }
 
         const TypeName* baseType = UnwrapBoxPtr(rawBaseType);
@@ -8897,7 +8907,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
             if (baseType && TypeNameIsOptional(baseType))
             {
                 const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
-
             }
         }
 
@@ -9225,7 +9234,6 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
         FlowInit(&afterCond);
         FlowCapture(r, &afterCond);
 
-
         FlowJoinCurrent(r, exit);
         FlowApply(r, &afterCond);
         FlowFree(&afterCond);
@@ -9467,8 +9475,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
             if (innerResolved && TypeNameIsOptional(innerResolved))
             {
-                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' is an optional of an optional ('%s' already may be empty)",
-                             vd->name, vd->type.inner->name);
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "'%s' is an optional of an optional ('%s' already may be empty)", vd->name,
+                             vd->type.inner->name);
             }
         }
 
@@ -9480,8 +9489,9 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             if (el && !TypeNameHasArrayShape(el) && !TypeNameIsBox(el) && !TypeNameIsOptional(el)
                 && IsIncompleteStruct(&r->m_registry, el->name))
             {
-                DiagErrorFmt(r->m_diag, vd->base.range, "'%s' is an array of incomplete type '%s'; its element size is unknown",
-                             vd->name, el->name);
+                DiagErrorFmt(r->m_diag, vd->base.range,
+                             "'%s' is an array of incomplete type '%s'; its element size is unknown", vd->name,
+                             el->name);
                 break;
             }
         }
@@ -10300,8 +10310,9 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
 
     if (valueType && !IsAssignableType(r, type, valueType))
     {
-        DiagErrorFmt(r->m_diag, field->defaultValue->range, "default value for field '%s' of type '%s' can't be of type '%s'",
-                     field->name, type->name, valueType->name);
+        DiagErrorFmt(r->m_diag, field->defaultValue->range,
+                     "default value for field '%s' of type '%s' can't be of type '%s'", field->name, type->name,
+                     valueType->name);
         return;
     }
 
@@ -10989,18 +11000,19 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 else if (!TypeClassify(&r.m_registry, r.m_arena, &gd->type).zeroValid)
                 {
                     /* A global starts as zeroes, and a zeroed box is a null pointer waiting to be read. */
-                    DiagErrorFmt(diag, gd->base.range,
-                                 "global '%s' of type '%s' must be initialized: it holds a box, which has no zero value",
-                                 gd->name, gd->type.name);
+                    DiagErrorFmt(
+                        diag, gd->base.range,
+                        "global '%s' of type '%s' must be initialized: it holds a box, which has no zero value",
+                        gd->name, gd->type.name);
                 }
 
                 continue;
             }
 
             // String globals default to empty, like arrays.
-            bool stringLike
-                = TypeIsString(&r.m_registry, gd->type.name)
-                  || (TypeNameIsOptional(&gd->type) && gd->type.inner && TypeIsString(&r.m_registry, gd->type.inner->name));
+            bool stringLike = TypeIsString(&r.m_registry, gd->type.name)
+                              || (TypeNameIsOptional(&gd->type) && gd->type.inner
+                                  && TypeIsString(&r.m_registry, gd->type.inner->name));
 
             if (!gd->init)
             {
@@ -11061,12 +11073,14 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             }
 
             /* By value, an owning struct argument is deep-copied for the callee: never for a destructor. */
-            if (!functionDecl->isExtern && p->mod == ModNone && !TypeNameIsBox(&p->type) && !TypeNameIsOptional(&p->type)
-                && !TypeNameHasArrayShape(&p->type) && TypeNameHasDrop(&r.m_registry, &p->type))
+            if (!functionDecl->isExtern && p->mod == ModNone && !TypeNameIsBox(&p->type)
+                && !TypeNameIsOptional(&p->type) && !TypeNameHasArrayShape(&p->type)
+                && TypeNameHasDrop(&r.m_registry, &p->type))
             {
-                DiagErrorFmt(diag, p->base.range,
-                             "parameter '%s' cannot take '%s' by value: it has a Drop method; pass 'ref %s' or a box '^%s'",
-                             p->name, p->type.name, p->type.name, p->type.name);
+                DiagErrorFmt(
+                    diag, p->base.range,
+                    "parameter '%s' cannot take '%s' by value: it has a Drop method; pass 'ref %s' or a box '^%s'",
+                    p->name, p->type.name, p->type.name, p->type.name);
             }
 
             /* Structs (forward-declared ones included) cross to the host as pointers, so the
@@ -11110,8 +11124,9 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
             TypeName parsed = TypeNameParse(r.m_arena, leaf);
 
             const TypeName* unwrapped = TypeNameIsOptional(&parsed) ? parsed.inner : &parsed;
-            bool isFat = (unwrapped && TypeNameIsDynamicArray(unwrapped))
-                         || (TypeNameIsOptional(&parsed) && TypeIsString(&r.m_registry, unwrapped ? unwrapped->name : NULL));
+            bool isFat
+                = (unwrapped && TypeNameIsDynamicArray(unwrapped))
+                  || (TypeNameIsOptional(&parsed) && TypeIsString(&r.m_registry, unwrapped ? unwrapped->name : NULL));
 
             if (isFat)
             {

@@ -1886,7 +1886,8 @@ Module* ParserParseModule(Parser* p)
             ParseAttributes(p, &attributes);
 
             TokKind afterExtern = LexerPeekToken(p->m_lex).kind;
-            bool isExternStruct = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
+            bool isExternStruct
+                = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
 
             if (p->m_cur.kind == TokKwEnum)
             {
@@ -2681,15 +2682,14 @@ static Node* ParseUnary(Parser* p)
                     bool startsOperand = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
                                          || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
                                          || afterRparen.kind == TokStrLit || afterRparen.kind == TokCharLit
-                                         || afterRparen.kind == TokLParen
-                                         || afterRparen.kind == TokBang || afterRparen.kind == TokTilde
-                                         || afterRparen.kind == TokKwInt || afterRparen.kind == TokKwUint
-                                         || afterRparen.kind == TokKwLong || afterRparen.kind == TokKwUlong
-                                         || afterRparen.kind == TokKwByte || afterRparen.kind == TokKwSbyte
-                                         || afterRparen.kind == TokKwShort || afterRparen.kind == TokKwUshort
-                                         || afterRparen.kind == TokKwFloat || afterRparen.kind == TokKwDouble
-                                         || afterRparen.kind == TokKwFloat2 || afterRparen.kind == TokKwFloat3
-                                         || afterRparen.kind == TokKwFloat4;
+                                         || afterRparen.kind == TokLParen || afterRparen.kind == TokBang
+                                         || afterRparen.kind == TokTilde || afterRparen.kind == TokKwInt
+                                         || afterRparen.kind == TokKwUint || afterRparen.kind == TokKwLong
+                                         || afterRparen.kind == TokKwUlong || afterRparen.kind == TokKwByte
+                                         || afterRparen.kind == TokKwSbyte || afterRparen.kind == TokKwShort
+                                         || afterRparen.kind == TokKwUshort || afterRparen.kind == TokKwFloat
+                                         || afterRparen.kind == TokKwDouble || afterRparen.kind == TokKwFloat2
+                                         || afterRparen.kind == TokKwFloat3 || afterRparen.kind == TokKwFloat4;
 
                     if (startsOperand || isScalarCast || isBoxCast)
                     {
@@ -3108,11 +3108,21 @@ static Node* ParsePrimary(Parser* p)
         {
             switch (sv.data[2])
             {
-            case 'n': value = '\n'; break;
-            case 't': value = '\t'; break;
-            case 'r': value = '\r'; break;
-            case '0': value = '\0'; break;
-            default: value = (unsigned char)sv.data[2]; break; /* \\ \' \" */
+            case 'n':
+                value = '\n';
+                break;
+            case 't':
+                value = '\t';
+                break;
+            case 'r':
+                value = '\r';
+                break;
+            case '0':
+                value = '\0';
+                break;
+            default:
+                value = (unsigned char)sv.data[2];
+                break; /* \\ \' \" */
             }
         }
 

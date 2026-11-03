@@ -3,19 +3,22 @@
 #include "Core/SourceLocation.h"
 #include "Core/Util.h"
 
-typedef enum {
+typedef enum
+{
     SevError,
     SevWarning,
     SevNote,
 } DiagSeverity;
 
-typedef struct {
+typedef struct
+{
     DiagSeverity severity;
     SourceRange range;
     const char* message;
 } Diagnostic;
 
-typedef struct {
+typedef struct
+{
     Arena m_arena;
     Diagnostic* m_diagnostics;
     size_t m_count;

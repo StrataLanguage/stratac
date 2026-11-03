@@ -138,7 +138,8 @@ extern "C"
         return (uint64_t)strataTypesReadU32_(p) | ((uint64_t)strataTypesReadU32_(p + 4) << 32);
     }
 
-    static inline int strataTypesTableValid_(const StrataTypesTable* table, uint32_t minimumRecordSize, uint32_t totalSize)
+    static inline int strataTypesTableValid_(const StrataTypesTable* table, uint32_t minimumRecordSize,
+                                             uint32_t totalSize)
     {
         if (table->count == 0)
         {

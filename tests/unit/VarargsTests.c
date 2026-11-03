@@ -357,7 +357,7 @@ STRATA_TEST(varargs_typed_rest_box_elements_parity)
                 "{\n"
                 "    ^Foo a = Foo{.v = 10};\n"
                 "    ^Foo b = Foo{.v = 20};\n"
-                "    return sum_box(a, b);\n"   /* 30 */
+                "    return sum_box(a, b);\n" /* 30 */
                 "}\n",
                 30);
 }
@@ -391,7 +391,7 @@ STRATA_TEST(varargs_typed_rest_box_arg_coerces_to_scalar_parity)
                 "    ^int x = 5;\n"
                 "    ^int y = 7;\n"
                 "    int s = sum_int(1, x, y);\n"
-                "    return s + x;\n"          /* 13 + 5 = 18 */
+                "    return s + x;\n" /* 13 + 5 = 18 */
                 "}\n",
                 18);
 }
@@ -411,7 +411,7 @@ STRATA_TEST(varargs_typed_rest_box_arg_not_moved_for_nonowning_element_parity)
                 "{\n"
                 "    ^Pt p = Pt{.x = 10};\n"
                 "    int s = sum_pts(p, Pt{.x = 20});\n"
-                "    return s + p.x;\n"        /* 30 + 10 = 40 */
+                "    return s + p.x;\n" /* 30 + 10 = 40 */
                 "}\n",
                 40);
 }
@@ -435,7 +435,7 @@ STRATA_TEST(varargs_typed_rest_box_move_then_reassign_parity)
                 "    ^Foo b = Foo{.v = 20};\n"
                 "    int s = sum_box(a, b);\n"
                 "    a = make_box();\n"
-                "    return s + a.v;\n"            /* 30 + 5 = 35 */
+                "    return s + a.v;\n" /* 30 + 5 = 35 */
                 "}\n",
                 35);
 }
@@ -453,7 +453,7 @@ STRATA_TEST(varargs_typed_rest_ref_scalar_mutates_parity)
                 "    }\n"
                 "    return total;\n"
                 "}\n"
-                "int entry() { return bump(1, 2, 3); }\n",   /* {2,3,4} -> 9 */
+                "int entry() { return bump(1, 2, 3); }\n", /* {2,3,4} -> 9 */
                 9);
 }
 
@@ -466,7 +466,7 @@ STRATA_TEST(varargs_typed_rest_const_scalar_readonly_parity)
                 "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i]; }\n"
                 "    return total;\n"
                 "}\n"
-                "int entry() { return sum_const(10, 20, 30); }\n",   /* 60 */
+                "int entry() { return sum_const(10, 20, 30); }\n", /* 60 */
                 60);
 }
 
@@ -487,7 +487,7 @@ STRATA_TEST(varargs_typed_rest_ref_reassign_elements_parity)
                 "    }\n"
                 "    return total;\n"
                 "}\n"
-                "int entry() { return overwrite(1, 2, 3); }\n",   /* {1,11,21} -> 33 */
+                "int entry() { return overwrite(1, 2, 3); }\n", /* {1,11,21} -> 33 */
                 33);
 }
 
@@ -502,7 +502,7 @@ STRATA_TEST(varargs_typed_rest_ref_reassign_mixed_rw_parity)
                 "    rest[2] = rest[0] + rest[1];\n"
                 "    return rest[0] + rest[1] + rest[2] + a;\n"
                 "}\n"
-                "int entry() { return mix(1, 2, 3); }\n",   /* {101,2,103}, a=2 -> 101+2+103+2 = 208 */
+                "int entry() { return mix(1, 2, 3); }\n", /* {101,2,103}, a=2 -> 101+2+103+2 = 208 */
                 208);
 }
 
@@ -519,10 +519,10 @@ STRATA_TEST(varargs_typed_rest_ref_aliases_scalars_parity)
                 "    int x = 1;\n"
                 "    int y = 2;\n"
                 "    set_all(x, y);\n"
-                "    int s = x + y;\n"      /* 198 */
+                "    int s = x + y;\n" /* 198 */
                 "    set_all(x, y);\n"
-                "    int t = x + y;\n"      /* 198 */
-                "    return s + t;\n"       /* 396 */
+                "    int t = x + y;\n" /* 198 */
+                "    return s + t;\n"  /* 396 */
                 "}\n",
                 396);
 }
@@ -537,7 +537,7 @@ STRATA_TEST(varargs_typed_rest_ref_aliases_box_parity)
                 "    ^Foo a = Foo{.v = 1};\n"
                 "    Foo b = Foo{.v = 2};\n"
                 "    set_first(a, b);\n"
-                "    return a.v + b.v;\n"   /* 99 + 2 = 101 */
+                "    return a.v + b.v;\n" /* 99 + 2 = 101 */
                 "}\n",
                 101);
 }
@@ -584,7 +584,7 @@ STRATA_TEST(varargs_typed_rest_ref_box_borrow_parity)
                 "    ^Foo a = Foo{.v = 5};\n"
                 "    ^Foo b = Foo{.v = 7};\n"
                 "    int s = read_boxes(a, b);\n"
-                "    return s + a.v + b.v;\n"     /* 12 + 5 + 7 = 24 */
+                "    return s + a.v + b.v;\n" /* 12 + 5 + 7 = 24 */
                 "}\n",
                 24);
 }
@@ -599,7 +599,7 @@ STRATA_TEST(varargs_typed_rest_struct_stack_buffer_parity)
                 "    for (ulong i = 0; i < rest.length; i = i + 1) { total = total + rest[i].x; }\n"
                 "    return total;\n"
                 "}\n"
-                "int entry() { return sum_pts(Pt{.x = 1}, Pt{.x = 2}, Pt{.x = 3}); }\n",   /* 6 */
+                "int entry() { return sum_pts(Pt{.x = 1}, Pt{.x = 2}, Pt{.x = 3}); }\n", /* 6 */
                 6);
 }
 
@@ -692,7 +692,7 @@ STRATA_TEST(varargs_typed_rest_ref_scalar_copies_parity)
                 "    return total;\n"
                 "}\n"
                 "int via_ref(ref int x, ref int y) { return sum_int(1, x, y); }\n"
-                "int entry() { int a = 5; int b = 7; return via_ref(a, b); }\n",   /* 13 */
+                "int entry() { int a = 5; int b = 7; return via_ref(a, b); }\n", /* 13 */
                 13);
 }
 
@@ -707,7 +707,7 @@ STRATA_TEST(varargs_typed_rest_ref_struct_copies_parity)
                 "    return total;\n"
                 "}\n"
                 "int via_ref(ref Pt p, ref Pt q) { return sum_pts(0, p, q); }\n"
-                "int entry() { Pt a = {.x = 5}; Pt b = {.x = 7}; return via_ref(a, b); }\n",   /* 12 */
+                "int entry() { Pt a = {.x = 5}; Pt b = {.x = 7}; return via_ref(a, b); }\n", /* 12 */
                 12);
 }
 
@@ -796,7 +796,7 @@ STRATA_TEST(string_global_reads_correctly_via_printf)
     /* A string global initialized from a literal reads correctly. */
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "string g = \"Hello!\";\n"
-                      "int entry() { return printf(\"g=%s\\n\", g); }\n",   /* 9 */
+                      "int entry() { return printf(\"g=%s\\n\", g); }\n", /* 9 */
                       "printf", (void*)&printf, 9);
 }
 
@@ -820,7 +820,7 @@ STRATA_TEST(string_to_extern_cvararg_parity)
                       "int entry() {\n"
                       "  string a = \"alpha\";\n"
                       "  string b = \"beta\";\n"
-                      "  return printf(\"%s %s\", a, b);\n"   /* 10 */
+                      "  return printf(\"%s %s\", a, b);\n" /* 10 */
                       "}\n",
                       "printf", (void*)&printf, 10);
 }
@@ -833,7 +833,7 @@ STRATA_TEST(string_from_return_to_extern_parity)
                       "string make(string s) { string b = s; return b; }\n"
                       "int entry() {\n"
                       "  string g = make(\"gamma\");\n"
-                      "  return printf(\"%s\", g);\n"         /* 5 */
+                      "  return printf(\"%s\", g);\n" /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
@@ -859,7 +859,7 @@ STRATA_TEST(box_int_to_extern_int_param_parity)
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
                       "  ^int b = 42;\n"
-                      "  return printf(\"%d\", b);\n"        /* 2 */
+                      "  return printf(\"%d\", b);\n" /* 2 */
                       "}\n",
                       "printf", (void*)&printf, 2);
 }
@@ -888,7 +888,7 @@ STRATA_TEST(string_array_element_to_printf_parity)
                       "int entry() {\n"
                       "  string[] arr;\n"
                       "  array_push(arr, \"world\");\n"
-                      "  return printf(\"%s\", arr[0]);\n"   /* 5 */
+                      "  return printf(\"%s\", arr[0]);\n" /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
@@ -902,7 +902,7 @@ STRATA_TEST(string_array_multiple_elements_to_printf_parity)
                       "  array_push(arr, \"ab\");\n"
                       "  array_push(arr, \"cd\");\n"
                       "  array_push(arr, \"ef\");\n"
-                      "  return printf(\"%s%s%s\", arr[0], arr[1], arr[2]);\n"  /* 6 */
+                      "  return printf(\"%s%s%s\", arr[0], arr[1], arr[2]);\n" /* 6 */
                       "}\n",
                       "printf", (void*)&printf, 6);
 }
@@ -914,7 +914,7 @@ STRATA_TEST(string_array_literal_element_to_printf_parity)
     CheckVarargExtern("extern int printf(string fmt, ...);\n"
                       "int entry() {\n"
                       "  string[] arr = { \"hi\" };\n"
-                      "  return printf(\"%s\", arr[0]);\n"   /* 2 */
+                      "  return printf(\"%s\", arr[0]);\n" /* 2 */
                       "}\n",
                       "printf", (void*)&printf, 2);
 }
@@ -927,7 +927,7 @@ STRATA_TEST(string_array_push_var_then_read_parity)
                       "  string[] arr;\n"
                       "  string a = \"moved\";\n"
                       "  array_push(arr, a);\n"
-                      "  return printf(\"%s\", arr[0]);\n"   /* 5 */
+                      "  return printf(\"%s\", arr[0]);\n" /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
@@ -941,7 +941,7 @@ STRATA_TEST(string_in_struct_array_to_printf_parity)
                       "int entry() {\n"
                       "  ^Holder[] arr;\n"
                       "  array_push(arr, Holder { .name = \"nested\" });\n"
-                      "  return printf(\"%s\", arr[0].name);\n"   /* 6 */
+                      "  return printf(\"%s\", arr[0].name);\n" /* 6 */
                       "}\n",
                       "printf", (void*)&printf, 6);
 }
@@ -957,7 +957,7 @@ STRATA_TEST(string_member_passed_to_extern_via_printf_parity)
                       "struct Person { string name; };\n"
                       "int entry() {\n"
                       "  ^Person p = Person { .name = \"Alice\" };\n"
-                      "  return printf(\"%s\", p.name);\n"     /* 5 */
+                      "  return printf(\"%s\", p.name);\n" /* 5 */
                       "}\n",
                       "printf", (void*)&printf, 5);
 }
@@ -972,7 +972,7 @@ STRATA_TEST(string_member_passed_to_owned_string_param_parity)
                       "int take(string s) { return printf(\"%s\", s); }\n"
                       "int entry() {\n"
                       "  ^Person p = Person { .name = \"Bob\" };\n"
-                      "  return take(p.name);\n"              /* 3 */
+                      "  return take(p.name);\n" /* 3 */
                       "}\n",
                       "printf", (void*)&printf, 3);
 }
@@ -987,7 +987,7 @@ STRATA_TEST(string_member_passed_to_ref_string_param_parity)
                       "int entry() {\n"
                       "  ^Person p = Person { .name = \"Carol\" };\n"
                       "  int n = read(p.name);\n"
-                      "  return n + printf(\" again\", p.name);\n"  /* 5 + 6 = 11 */
+                      "  return n + printf(\" again\", p.name);\n" /* 5 + 6 = 11 */
                       "}\n",
                       "printf", (void*)&printf, 11);
 }
@@ -1001,7 +1001,7 @@ STRATA_TEST(string_member_reassigned_then_read_parity)
                       "int entry() {\n"
                       "  ^Person p = Person { .name = \"old\" };\n"
                       "  p.name = \"new\";\n"
-                      "  return printf(\"%s\", p.name);\n"    /* 3 */
+                      "  return printf(\"%s\", p.name);\n" /* 3 */
                       "}\n",
                       "printf", (void*)&printf, 3);
 }
@@ -1014,7 +1014,7 @@ STRATA_TEST(two_string_members_both_readable_parity)
                       "struct Pair { string a; string b; };\n"
                       "int entry() {\n"
                       "  ^Pair p = Pair { .a = \"first\", .b = \"second\" };\n"
-                      "  return printf(\"%s %s\", p.a, p.b);\n"  /* 12 */
+                      "  return printf(\"%s %s\", p.a, p.b);\n" /* 12 */
                       "}\n",
                       "printf", (void*)&printf, 12);
 }
@@ -1030,7 +1030,7 @@ STRATA_TEST(string_member_passed_to_user_function_parity)
                 "}\n"
                 "int entry() {\n"
                 "  ^Item item = Item { .label = \"widget\", .qty = 10 };\n"
-                "  return process(item.label, item.qty);\n"  /* 10 */
+                "  return process(item.label, item.qty);\n" /* 10 */
                 "}\n",
                 10);
 }

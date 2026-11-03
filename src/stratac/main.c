@@ -10,10 +10,10 @@
 #define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, NULL}
 #define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, label_}
 #define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
-#define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                              \
+#define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                                 \
     {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
 #define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, MF_NONE, desc_}
-#define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                             \
+#define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                                \
     {short_cmd_, long_cmd_, follower_, func_, CF_NONE, MF_NONE, desc_}
 
 typedef enum ResultCode
@@ -482,7 +482,10 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
         fprintf(stderr, "wrote assembly: %s\n", asmFilename);
     }
 
-    if (owned) free((void*)asmFilename);
+    if (owned)
+    {
+        free((void*)asmFilename);
+    }
 
     return asmOk ? RCSuccess : RCCompileError;
 }

@@ -1,5 +1,5 @@
-#include "Util.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 
 #include <stdarg.h>
@@ -274,7 +274,7 @@ STRATA_TEST(jit_or_result_value)
                                 "  int c = (int)(false || false);\n"
                                 "  int d = (int)(false || b != 0);\n"
                                 "  int e = (int)(a || (b > 3));\n"
-                                "  return c + d + e;\n"   // 0 + 1 + 1 = 2
+                                "  return c + d + e;\n" // 0 + 1 + 1 = 2
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -390,7 +390,8 @@ STRATA_TEST(jit_double_values_are_not_zero)
 {
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(c,
+    StrataJit* jit = strataJitCompileString(
+        c,
         "extern int host_is_pi_half(double x);\n"
         "double g_pi = 3.141592653589793;\n"
         "int entry() {\n"
@@ -453,7 +454,7 @@ STRATA_TEST(jit_cast_to_bool_compares_to_zero)
                                 "  int c = (int)(bool)0;\n"
                                 "  float f = 3.0;\n"
                                 "  int d = (int)(bool)f;\n"
-                                "  return a + b + c + d;\n"   // 1 + 1 + 0 + 1 = 3
+                                "  return a + b + c + d;\n" // 1 + 1 + 0 + 1 = 3
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -478,7 +479,7 @@ STRATA_TEST(jit_not_bool_literal)
                                 "  int x = 5;\n"
                                 "  bool d = !(x == 5);\n"
                                 "  bool e = !(x > 10);\n"
-                                "  return (int)a + (int)b + (int)c + (int)d + (int)e;\n"  // 0+1+1+0+1 = 3
+                                "  return (int)a + (int)b + (int)c + (int)d + (int)e;\n" // 0+1+1+0+1 = 3
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -499,7 +500,7 @@ STRATA_TEST(jit_bool_to_int_cast)
     StrataJit* jit = CompileJit("int entry() {\n"
                                 "  bool t = true;\n"
                                 "  bool f = false;\n"
-                                "  return (int)t * 10 + (int)f;\n"   // 10 + 0 = 10
+                                "  return (int)t * 10 + (int)f;\n" // 10 + 0 = 10
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -523,7 +524,7 @@ STRATA_TEST(jit_bool_equality)
                                 "  bool b = true == false;\n"
                                 "  bool c = true != false;\n"
                                 "  bool d = false != false;\n"
-                                "  return (int)a + (int)b + (int)c + (int)d;\n"  // 1+0+1+0 = 2
+                                "  return (int)a + (int)b + (int)c + (int)d;\n" // 1+0+1+0 = 2
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -546,7 +547,7 @@ STRATA_TEST(jit_bool_function_params_and_returns)
                                 "int entry() {\n"
                                 "  bool x = flip(false);\n"
                                 "  bool y = flip(true);\n"
-                                "  return (int)x * 100 + (int)y * 10 + both(true, false);\n"  // 100 + 0 + 1 = 101
+                                "  return (int)x * 100 + (int)y * 10 + both(true, false);\n" // 100 + 0 + 1 = 101
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -570,7 +571,7 @@ STRATA_TEST(jit_bool_struct_field)
                                 "  int a = (int)f.on;\n"
                                 "  f.on = false;\n"
                                 "  int b = (int)f.on;\n"
-                                "  return a * 10 + b + f.val;\n"   // 10 + 0 + 7 = 17
+                                "  return a * 10 + b + f.val;\n" // 10 + 0 + 7 = 17
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -595,7 +596,7 @@ STRATA_TEST(jit_bool_array)
                                 "  array_push(arr, true);\n"
                                 "  int s = 0;\n"
                                 "  for (int i = 0; i < 3; i++) { s = s + (int)arr[i]; }\n"
-                                "  return s;\n"   // 1 + 0 + 1 = 2
+                                "  return s;\n" // 1 + 0 + 1 = 2
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -618,7 +619,7 @@ STRATA_TEST(jit_bool_global)
                                 "  int a = (int)g_flag;\n"
                                 "  g_flag = false;\n"
                                 "  int b = (int)g_flag;\n"
-                                "  return a * 10 + b;\n"   // 10 + 0 = 10
+                                "  return a * 10 + b;\n" // 10 + 0 = 10
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -669,7 +670,7 @@ STRATA_TEST(jit_bool_cast_from_float_and_negative)
                                 "  bool b = (bool)0.0;\n"
                                 "  int n = -3;\n"
                                 "  bool c = (bool)n;\n"
-                                "  return (int)a + (int)b + (int)c;\n"   // 1 + 0 + 1 = 2
+                                "  return (int)a + (int)b + (int)c;\n" // 1 + 0 + 1 = 2
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -695,7 +696,7 @@ STRATA_TEST(jit_bool_from_comparison_in_loop_condition)
                                 "    i++;\n"
                                 "    keepGoing = (i < 5) || false;\n"
                                 "  }\n"
-                                "  return sum;\n"   // 0+1+2+3+4 = 10
+                                "  return sum;\n" // 0+1+2+3+4 = 10
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -710,8 +711,14 @@ STRATA_TEST(jit_bool_from_comparison_in_loop_condition)
     }
 }
 
-static int HostBoolAnd(bool a, bool b) { return a && b ? 1 : 0; }
-static bool HostBoolNot(bool x) { return !x; }
+static int HostBoolAnd(bool a, bool b)
+{
+    return a && b ? 1 : 0;
+}
+static bool HostBoolNot(bool x)
+{
+    return !x;
+}
 
 static int HostVarargSum(int count, ...)
 {
@@ -736,7 +743,7 @@ STRATA_TEST(jit_bool_extern_boundary)
                                 "  int a = host_and(true, true);\n"
                                 "  int b = host_and(true, false);\n"
                                 "  bool c = host_not(true);\n"
-                                "  return a * 100 + b * 10 + (int)c;\n"   // 100 + 0 + 0 = 100
+                                "  return a * 100 + b * 10 + (int)c;\n" // 100 + 0 + 0 = 100
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -760,7 +767,7 @@ STRATA_TEST(jit_bool_vararg_promotion)
 {
     StrataJit* jit = CompileJit("extern int host_sum(int count, ...);\n"
                                 "int entry() {\n"
-                                "  return host_sum(2, true, false);\n"   // 1 + 0 = 1
+                                "  return host_sum(2, true, false);\n" // 1 + 0 = 1
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -789,7 +796,10 @@ STRATA_TEST(bool_arithmetic_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* Every arithmetic/bitwise operator is rejected on bools. */
@@ -808,7 +818,10 @@ STRATA_TEST(bool_bitwise_and_shift_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* numeric <-> bool never converts implicitly: each of these used to compile
@@ -819,8 +832,14 @@ static void CheckRejected(const char* src, const char* expect)
     StrataJit* jit = CompileJitErr(src, &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, expect));
-    if (jit) strataJitDestroy(jit);
-    if (err) strataFree((char*)err);
+    if (jit)
+    {
+        strataJitDestroy(jit);
+    }
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 STRATA_TEST(numeric_to_bool_is_not_implicit)
@@ -846,7 +865,8 @@ STRATA_TEST(bool_to_numeric_is_not_implicit)
 
 STRATA_TEST(numeric_condition_is_an_error)
 {
-    CheckRejected("int entry() { float f = 0.5; if (f) { return 1; } return 0; }\n", "condition must be of type 'bool'");
+    CheckRejected("int entry() { float f = 0.5; if (f) { return 1; } return 0; }\n",
+                  "condition must be of type 'bool'");
     CheckRejected("int entry() { int i = 1; if (i) { return 1; } return 0; }\n", "condition must be of type 'bool'");
     CheckRejected("int entry() { int n = 3; while (n) { n--; } return 0; }\n", "condition must be of type 'bool'");
     CheckRejected("int entry() { for (int i = 3; i; i--) { } return 0; }\n", "condition must be of type 'bool'");
@@ -874,7 +894,7 @@ STRATA_TEST(jit_explicit_bool_conversions)
                                 "  ^bool bx = false;\n"
                                 "  if (bx) { r = r + 4; }\n"
                                 "  while (bx) { r = r + 8; break; }\n"
-                                "  return r + (int)true * 16;\n"   // 1 + 2 + 16 = 19
+                                "  return r + (int)true * 16;\n" // 1 + 2 + 16 = 19
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -903,7 +923,10 @@ STRATA_TEST(bool_ordering_comparison_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 STRATA_TEST(bool_unary_minus_and_bitnot_is_an_error)
@@ -918,7 +941,10 @@ STRATA_TEST(bool_unary_minus_and_bitnot_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "invalid operand to unary operator"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 STRATA_TEST(bool_incdec_is_an_error)
@@ -932,7 +958,10 @@ STRATA_TEST(bool_incdec_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "cannot increment a value of type 'bool'"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* An alias of bool (`struct Flag = bool;`) is caught too, now that the
@@ -951,7 +980,10 @@ STRATA_TEST(bool_alias_arithmetic_and_ordering_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "invalid operands to binary operator"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* bool `==`/`!=` stays legal — covered by jit_bool_equality above; this
@@ -993,7 +1025,10 @@ STRATA_TEST(array_length_assign_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "cannot assign to 'length' (a read-only pseudo-member"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* Compound assignment into `.length` is rejected too. */
@@ -1008,7 +1043,10 @@ STRATA_TEST(array_length_compound_assign_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "cannot assign to 'length'"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* `++`/`--` on `.length` is rejected too. */
@@ -1023,7 +1061,10 @@ STRATA_TEST(array_length_incdec_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "cannot increment '.length' (read-only"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* `string.length` is the same read-only fat slot. */
@@ -1038,7 +1079,10 @@ STRATA_TEST(string_length_assign_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "cannot assign to 'length'"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* `array_resize` remains the sanctioned way to grow/shrink, and reading
@@ -1050,7 +1094,7 @@ STRATA_TEST(array_resize_still_works)
                                 "  array_resize(arr, 3);\n"
                                 "  arr[0] = 5;\n"
                                 "  arr[2] = 7;\n"
-                                "  return (int)arr.length + arr[0] + arr[2];\n"   // 3 + 5 + 7 = 15
+                                "  return (int)arr.length + arr[0] + arr[2];\n" // 3 + 5 + 7 = 15
                                 "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
@@ -1564,11 +1608,26 @@ STRATA_TEST(jit_cast_int_to_byte)
     }
 }
 
-static int handle_get_int(void* e) { return (int)(intptr_t)e; }
-static void* handle_spawn_1234(void) { return (void*)(intptr_t)0x1234; }
-static void* handle_spawn_42(void) { return (void*)(intptr_t)42; }
-static void* handle_spawn_99(void) { return (void*)(intptr_t)99; }
-static void* handle_spawn_777(void) { return (void*)(intptr_t)777; }
+static int handle_get_int(void* e)
+{
+    return (int)(intptr_t)e;
+}
+static void* handle_spawn_1234(void)
+{
+    return (void*)(intptr_t)0x1234;
+}
+static void* handle_spawn_42(void)
+{
+    return (void*)(intptr_t)42;
+}
+static void* handle_spawn_99(void)
+{
+    return (void*)(intptr_t)99;
+}
+static void* handle_spawn_777(void)
+{
+    return (void*)(intptr_t)777;
+}
 
 STRATA_TEST(jit_handle_base_pass_as_base)
 {
@@ -1679,15 +1738,17 @@ STRATA_TEST(jit_handle_base_multi_level)
 
 STRATA_TEST(jit_float_remainder)
 {
-    StrataJit* jit = CompileJit(
-        "float rem(float x, float y) { return x % y; }\n"
-        "int entry() { float x = 7.5; x %= 2.0; return (int)(x * 10.0 + rem(5.5, 2.0)); }\n");
+    StrataJit* jit = CompileJit("float rem(float x, float y) { return x % y; }\n"
+                                "int entry() { float x = 7.5; x %= 2.0; return (int)(x * 10.0 + rem(5.5, 2.0)); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
         int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(NULL), 16);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 16);
+        }
         strataJitDestroy(jit);
     }
 }
@@ -1697,26 +1758,29 @@ STRATA_TEST(jit_float_remainder)
    base scalar itself. */
 STRATA_TEST(jit_scalar_max_integer_constants)
 {
-    StrataJit* jit = CompileJit(
-        "int entry() {\n"
-        "  int a = int.max;\n"
-        "  uint b = uint.max;\n"
-        "  long c = long.max;\n"
-        "  ulong d = ulong.max;\n"
-        "  byte e = byte.max;\n"
-        "  sbyte f = sbyte.max;\n"
-        "  short g = short.max;\n"
-        "  ushort h = ushort.max;\n"
-        "  return (int)(a == 2147483647) + (int)(b == 4294967295u) + (int)(c == 9223372036854775807)\n"
-        "       + (int)(d == 18446744073709551615u) + (int)(e == 255) + (int)(f == 127)\n"
-        "       + (int)(g == 32767) + (int)(h == 65535);\n"
-        "}\n");
+    StrataJit* jit
+        = CompileJit("int entry() {\n"
+                     "  int a = int.max;\n"
+                     "  uint b = uint.max;\n"
+                     "  long c = long.max;\n"
+                     "  ulong d = ulong.max;\n"
+                     "  byte e = byte.max;\n"
+                     "  sbyte f = sbyte.max;\n"
+                     "  short g = short.max;\n"
+                     "  ushort h = ushort.max;\n"
+                     "  return (int)(a == 2147483647) + (int)(b == 4294967295u) + (int)(c == 9223372036854775807)\n"
+                     "       + (int)(d == 18446744073709551615u) + (int)(e == 255) + (int)(f == 127)\n"
+                     "       + (int)(g == 32767) + (int)(h == 65535);\n"
+                     "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
         int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(NULL), 8);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 8);
+        }
         strataJitDestroy(jit);
     }
 }
@@ -1727,27 +1791,29 @@ STRATA_TEST(jit_scalar_max_integer_constants)
    float range by the literal typing). */
 STRATA_TEST(jit_scalar_max_min_float_double)
 {
-    StrataJit* jit = CompileJit(
-        "int entry() {\n"
-        "  float fmax = float.max;\n"
-        "  float fmin = float.min;\n"
-        "  double dmax = double.max;\n"
-        "  double dmin = double.min;\n"
-        "  int r = 0;\n"
-        "  if (fmax > 3.0e38f) { r = r + 1; }\n"          /* FLT_MAX 3.40e38 */
-        "  if (fmin < 1.2e-38f) { r = r + 1; }\n"         /* FLT_MIN 1.17e-38 */
-        "  if (dmax == double.max) { r = r + 1; }\n"      /* DBL_MAX 1.79e308 */
-        "  if (dmin == double.min) { r = r + 1; }\n"      /* DBL_MIN 2.2e-308 */
-        "  if (dmax > (double)9000000000) { r = r + 1; }\n" /* far above the float range */
-        "  if (dmin < (double)1) { r = r + 1; }\n"          /* far below */
-        "  return r;\n"
-        "}\n");
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  float fmax = float.max;\n"
+                                "  float fmin = float.min;\n"
+                                "  double dmax = double.max;\n"
+                                "  double dmin = double.min;\n"
+                                "  int r = 0;\n"
+                                "  if (fmax > 3.0e38f) { r = r + 1; }\n"            /* FLT_MAX 3.40e38 */
+                                "  if (fmin < 1.2e-38f) { r = r + 1; }\n"           /* FLT_MIN 1.17e-38 */
+                                "  if (dmax == double.max) { r = r + 1; }\n"        /* DBL_MAX 1.79e308 */
+                                "  if (dmin == double.min) { r = r + 1; }\n"        /* DBL_MIN 2.2e-308 */
+                                "  if (dmax > (double)9000000000) { r = r + 1; }\n" /* far above the float range */
+                                "  if (dmin < (double)1) { r = r + 1; }\n"          /* far below */
+                                "  return r;\n"
+                                "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
         int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(NULL), 6);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 6);
+        }
         strataJitDestroy(jit);
     }
 }
@@ -1756,18 +1822,20 @@ STRATA_TEST(jit_scalar_max_min_float_double)
    arithmetic (including 64-bit wraparound) like any literal. */
 STRATA_TEST(jit_scalar_max_in_arithmetic)
 {
-    StrataJit* jit = CompileJit(
-        "int entry() {\n"
-        "  int a = int.max - 2147483647;      /* 0 */\n"
-        "  int b = (int)(ulong.max + 1 == 0); /* wraps to 0 */\n"
-        "  return a + b;\n"
-        "}\n");
+    StrataJit* jit = CompileJit("int entry() {\n"
+                                "  int a = int.max - 2147483647;      /* 0 */\n"
+                                "  int b = (int)(ulong.max + 1 == 0); /* wraps to 0 */\n"
+                                "  return a + b;\n"
+                                "}\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
         int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(NULL), 1);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 1);
+        }
         strataJitDestroy(jit);
     }
 }
@@ -1775,16 +1843,18 @@ STRATA_TEST(jit_scalar_max_in_arithmetic)
 /* `const` manifest globals fold the pseudo-property (sema + codegen). */
 STRATA_TEST(jit_scalar_max_in_const_global)
 {
-    StrataJit* jit = CompileJit(
-        "const ulong G = ulong.max;\n"
-        "const byte B = byte.max;\n"
-        "int entry() { return (int)(G == ulong.max) + (int)(B == 255); }\n");
+    StrataJit* jit = CompileJit("const ulong G = ulong.max;\n"
+                                "const byte B = byte.max;\n"
+                                "int entry() { return (int)(G == ulong.max) + (int)(B == 255); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
         int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(NULL), 2);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 2);
+        }
         strataJitDestroy(jit);
     }
 }
@@ -1792,9 +1862,8 @@ STRATA_TEST(jit_scalar_max_in_const_global)
 /* Plain (non-const) global initializers fold too. */
 STRATA_TEST(jit_scalar_max_in_global_init)
 {
-    StrataJit* jit = CompileJit(
-        "ulong g = ulong.max;\n"
-        "int entry() { return (int)(g == ulong.max); }\n");
+    StrataJit* jit = CompileJit("ulong g = ulong.max;\n"
+                                "int entry() { return (int)(g == ulong.max); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -1815,15 +1884,17 @@ STRATA_TEST(jit_scalar_max_in_global_init)
 /* Enum member values may reference a scalar pseudo-property. */
 STRATA_TEST(jit_scalar_max_in_enum_value)
 {
-    StrataJit* jit = CompileJit(
-        "enum E : ulong { A = ulong.max };\n"
-        "int entry() { ulong v = (ulong)E.A; return (int)(v == ulong.max); }\n");
+    StrataJit* jit = CompileJit("enum E : ulong { A = ulong.max };\n"
+                                "int entry() { ulong v = (ulong)E.A; return (int)(v == ulong.max); }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
         int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
         STRATA_CHECK(entry != NULL);
-        if (entry) STRATA_CHECK_EQ(entry(NULL), 1);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 1);
+        }
         strataJitDestroy(jit);
     }
 }
@@ -1831,8 +1902,10 @@ STRATA_TEST(jit_scalar_max_in_enum_value)
 /* `min` is float-only: `int.min` is not a member. */
 STRATA_TEST(scalar_max_int_min_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
                     "  int x = int.min;\n"
                     "  return x;\n"
@@ -1848,8 +1921,10 @@ STRATA_TEST(scalar_max_int_min_is_an_error)
 /* Unknown members on a scalar type name are diagnosed directly. */
 STRATA_TEST(scalar_max_unknown_member_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
                     "  int x = float.foo;\n"
                     "  return x;\n"
@@ -1865,8 +1940,10 @@ STRATA_TEST(scalar_max_unknown_member_is_an_error)
 /* Type aliases carry no pseudo-properties: `Meter.max` is left off. */
 STRATA_TEST(scalar_max_alias_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Meter = int;\n"
                     "int entry() {\n"
                     "  Meter m = Meter.max;\n"
@@ -1892,14 +1969,19 @@ STRATA_TEST(scalar_max_value_base_is_an_error)
                                    &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err && Contains(err, "cannot access member 'max'"));
-    if (err) strataFree((char*)err);
+    if (err)
+    {
+        strataFree((char*)err);
+    }
 }
 
 /* Pseudo-properties are read-only constants. */
 STRATA_TEST(scalar_max_assign_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
                     "  int x = (int.max = 5);\n"
                     "  return x;\n"
@@ -1914,8 +1996,10 @@ STRATA_TEST(scalar_max_assign_is_an_error)
 
 STRATA_TEST(scalar_max_compound_assign_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
                     "  int x = 0;\n"
                     "  x = (int.max += 1);\n"
@@ -1931,8 +2015,10 @@ STRATA_TEST(scalar_max_compound_assign_is_an_error)
 
 STRATA_TEST(scalar_max_incdec_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
                     "  int x = (int.max++);\n"
                     "  return x;\n"

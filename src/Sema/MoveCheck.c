@@ -10,26 +10,30 @@
 
 /* State of one place (`a`, `a.b`, `a.b.c`) at a program point. A place is unusable when it or an
    ancestor is Moved or Maybe; using it whole is also unusable when a part of it is. */
-enum {
+enum
+{
     StateUnvisited = 0, /* no path has reached this block yet */
     StateLive = 1,
     StateMoved = 2,
     StateMaybe = 3,
 };
 
-typedef struct {
+typedef struct
+{
     const char* name;
     bool owning;
     const TypeName* type;
 } Local;
 
-typedef struct {
+typedef struct
+{
     Local* locals;
     size_t count;
     size_t cap;
 } Locals;
 
-typedef struct {
+typedef struct
+{
     const TypeRegistry* reg;
     const NodeTypes* types;
     Arena* arena;
@@ -344,7 +348,8 @@ static void CollectPaths(Env* env, const Cfg* g)
     }
 }
 
-typedef struct {
+typedef struct
+{
     MoveDiag* items;
     size_t count;
     size_t cap;
@@ -534,7 +539,8 @@ static void CollectCopies(Env* env, const Cfg* g)
 
                 for (size_t i = 0; d && d->params.count > 0 && i < e->args.count; i++)
                 {
-                    const ParamDecl* p = (const ParamDecl*)VecGet(&d->params, i < d->params.count ? i : d->params.count - 1);
+                    const ParamDecl* p
+                        = (const ParamDecl*)VecGet(&d->params, i < d->params.count ? i : d->params.count - 1);
 
                     if (i >= d->params.count && !p->isVarargRest)
                     {
@@ -553,7 +559,8 @@ static void CollectCopies(Env* env, const Cfg* g)
                 for (size_t i = 0; i < e->fields.count; i++)
                 {
                     const StructInitField* fld = (const StructInitField*)VecGet(&e->fields, i);
-                    NoteIfCopied(env, fld->value, fld->name ? FieldType(env, NodeTypesGet(env->types, op->node), fld->name) : NULL);
+                    NoteIfCopied(env, fld->value,
+                                 fld->name ? FieldType(env, NodeTypesGet(env->types, op->node), fld->name) : NULL);
                 }
             }
         }
@@ -631,7 +638,8 @@ static void BuildAliases(Env* env, const Cfg* g)
 /* Write sets: the global places each function may write, directly or through the functions it calls. A
    call changes only those, so it ends narrowing only for them, and an argument that borrows one of them
    conflicts with a callee that writes it. `all` is for a callee nothing is known about. */
-typedef struct {
+typedef struct
+{
     const FunctionDecl* fn;
     char** keys;
     size_t count;
@@ -645,7 +653,8 @@ typedef struct {
     bool all;
 } FnWrites;
 
-struct WriteSets {
+struct WriteSets
+{
     FnWrites* fns;
     size_t count;
 };
@@ -669,7 +678,8 @@ static const FnWrites* FindWrites(const WriteSets* ws, const FunctionDecl* d)
 /* What a value is handed to when only "not an optional" matters: a C vararg, a `substring` operand. */
 static const TypeName kPlainTarget = {.name = "?"};
 
-enum {
+enum
+{
     FactNone = 1,
     FactNonEmpty = 2,
     FactEmpty = 4, /* known to be empty: tested and found null, or moved out of */
@@ -852,12 +862,16 @@ static void AddFact(Env* env, const char* path)
 }
 
 /* A place split into segments: names (`a`, `b`) and index groups (`[i]`, `[0]`). */
-typedef struct {
+typedef struct
+{
     const char* p;
     size_t n;
 } Seg;
 
-enum { MaxSegs = 24 };
+enum
+{
+    MaxSegs = 24
+};
 
 static size_t SplitPlace(const char* path, Seg* segs)
 {
@@ -1239,7 +1253,8 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
         char moved[256];
         const char* movedRoot;
 
-        if (move && vt && !IsCopied(env, value) && TypeOwns(env, vt) && PlaceKeyImpl(value, moved, sizeof(moved), &movedRoot, true))
+        if (move && vt && !IsCopied(env, value) && TypeOwns(env, vt)
+            && PlaceKeyImpl(value, moved, sizeof(moved), &movedRoot, true))
         {
             KillFacts(env, f, moved, true);
         }
@@ -1277,8 +1292,8 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 
 static bool IsArrayMutator(const char* callee)
 {
-    static const char* const names[] = {"array_pop",     "array_push",   "array_remove",
-                                        "array_reserve", "array_resize", "array_swap_remove", "array_replace", "array_take"};
+    static const char* const names[] = {"array_pop",    "array_push",        "array_remove",  "array_reserve",
+                                        "array_resize", "array_swap_remove", "array_replace", "array_take"};
 
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
     {
@@ -1408,7 +1423,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
             /* Pushing or reserving moves no element: only a place indexed by the array's length goes. The
                others change what the elements are. The array itself stays set either way. */
             bool keepsElements = strcmp(e->callee, "array_push") == 0 || strcmp(e->callee, "array_reserve") == 0;
-            const char* name = arg0->kind == NodeIdent ? ((const IdentExpr*)arg0)->name
+            const char* name = arg0->kind == NodeIdent    ? ((const IdentExpr*)arg0)->name
                                : arg0->kind == NodeMember ? ((const MemberExpr*)arg0)->member
                                                           : NULL;
 
@@ -1444,7 +1459,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
     {
         const Node* arg = (const Node*)VecGet(&e->args, i);
         const ParamDecl* last = d->params.count ? (const ParamDecl*)VecGet(&d->params, d->params.count - 1) : NULL;
-        const ParamDecl* p = i < d->params.count ? (const ParamDecl*)VecGet(&d->params, i)
+        const ParamDecl* p = i < d->params.count          ? (const ParamDecl*)VecGet(&d->params, i)
                              : last && last->isVarargRest ? last
                                                           : NULL;
         bool byValue = p && !d->isExtern && p->mod == ModNone && !p->inferredBorrow;
@@ -1499,8 +1514,7 @@ static void DanglingCheck(const Env* env, const unsigned char* f, Found* found, 
 
     for (size_t i = 0; id && i < env->aliasCount; i++)
     {
-        if (strcmp(env->aliasName[i], id->name) == 0 && env->aliasTarget[i][0]
-            && f[env->factCount + i] != StateLive)
+        if (strcmp(env->aliasName[i], id->name) == 0 && env->aliasTarget[i][0] && f[env->factCount + i] != StateLive)
         {
             ReportAs(found, MoveDiagDangle, id->base.range, id->name);
         }
@@ -1676,8 +1690,8 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
                     continue;
                 }
 
-                ConsumeValue(env, f, found, fld->value, fld->name ? FieldType(env, st, fld->name) : NULL, fld->value->range,
-                             true);
+                ConsumeValue(env, f, found, fld->value, fld->name ? FieldType(env, st, fld->name) : NULL,
+                             fld->value->range, true);
             }
 
             break;
@@ -1709,19 +1723,22 @@ static void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* f
    overlaps a shared loan, nor touch one that overlaps a mutable loan. A move needs no loan of its own:
    using the place afterwards is the move checker's error. Trivial values are copied at once, so they
    hold no loan. */
-typedef enum {
+typedef enum
+{
     LoanShared,
     LoanMut,
     LoanMove,
 } LoanMode;
 
-typedef struct {
+typedef struct
+{
     char key[160];
     LoanMode mode;
     const Node* node;
 } Access;
 
-typedef struct {
+typedef struct
+{
     Access* items;
     size_t count;
     size_t cap;
@@ -1960,8 +1977,8 @@ static bool Operands(const Node* n, const Node** ops, LoanMode* modes, size_t* c
     return false;
 }
 
-static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, LoanMode earlierMode,
-                             const Node* later, LoanMode laterMode)
+static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, LoanMode earlierMode, const Node* later,
+                             LoanMode laterMode)
 {
     Accesses loans = {0};
     Accesses effects = {0};
@@ -1981,7 +1998,8 @@ static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, 
 
             if (conflict && PlacesOverlap(loans.items[i].key, effects.items[j].key))
             {
-                ReportAs(found, MoveDiagLoan, effects.items[j].node->range, arena_strdup(env->arena, effects.items[j].key));
+                ReportAs(found, MoveDiagLoan, effects.items[j].node->range,
+                         arena_strdup(env->arena, effects.items[j].key));
             }
         }
     }
@@ -2350,7 +2368,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
             }
 
             ReportAs(found, MoveDiagElement, n->range,
-                   PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<element>");
+                     PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<element>");
             return;
         }
 
@@ -2393,7 +2411,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
             char buf[256];
             const char* root;
             ReportAs(found, MoveDiagDropField, n->range,
-                   PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<field>");
+                     PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<field>");
             return;
         }
     }
@@ -2575,8 +2593,8 @@ static bool IsDropMethod(const FunctionDecl* fn)
     return n >= 4 && strcmp(fn->name + n - 4, "Drop") == 0;
 }
 
-size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types,
-                         const WriteSets* ws, Arena* arena, MoveDiag** out)
+size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types, const WriteSets* ws,
+                         Arena* arena, MoveDiag** out)
 {
     *out = NULL;
 
@@ -2585,7 +2603,12 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
         return 0;
     }
 
-    Env env = {.reg = reg, .types = types, .arena = arena, .fnReturn = &fn->returnType, .fn = fn, .ws = ws,
+    Env env = {.reg = reg,
+               .types = types,
+               .arena = arena,
+               .fnReturn = &fn->returnType,
+               .fn = fn,
+               .ws = ws,
                .inDropMethod = IsDropMethod(fn)};
     Cfg g = CfgBuild(fn);
     CollectLocals(&env, fn, &g);
@@ -2750,8 +2773,8 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
         }
         else
         {
-            DiagErrorFmt(diag, d->range, "'%s' has not been blessed ('%s'); test it first: if (%s?) { ... }",
-                         d->name, d->type, d->name);
+            DiagErrorFmt(diag, d->range, "'%s' has not been blessed ('%s'); test it first: if (%s?) { ... }", d->name,
+                         d->type, d->name);
         }
 
         break;
@@ -2765,8 +2788,7 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
         break;
     case MoveDiagRefParam:
         DiagErrorFmt(diag, d->range,
-                     "'%s' was moved out of a ref parameter and not put back; the caller would see it moved",
-                     d->name);
+                     "'%s' was moved out of a ref parameter and not put back; the caller would see it moved", d->name);
         break;
     case MoveDiagDangle:
         DiagErrorFmt(diag, d->range,
@@ -2787,7 +2809,8 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
     }
 }
 
-typedef struct {
+typedef struct
+{
     const Module* mod;
     const WriteSets* ws;
     DiagnosticEngine* diag;

@@ -335,7 +335,7 @@ STRATA_TEST(owning_call_temporaries_are_dropped)
                                     "  int m = mk()[2];\n" /* 3 */
                                     "  int w = 0;\n"
                                     "  while (w < (int)mk().length) { w = w + 1; }\n" /* 3 */
-                                    "  int u = unbox() + mkb() - 41;\n"              /* 41 */
+                                    "  int u = unbox() + mkb() - 41;\n"               /* 41 */
                                     "  int[] kept = mk();\n"
                                     "  ^int kb = mkb();\n"
                                     "  int moved = total(mk());\n" /* owned arg: 6 */
@@ -351,13 +351,14 @@ STRATA_TEST(owning_call_temporaries_are_dropped)
    the shared drop helper. (`^R?` is not a valid type; `R?` is the box.) */
 STRATA_TEST(box_of_owning_box_drops_all_levels)
 {
-    STRATA_CHECK_EQ(RunEntryCounted("struct R { string name; int[] xs; };\n"
-                                    "int entry() {\n"
-                                    "  R?[] arr = { R { .name = \"abc\", .xs = {1, 2} }, R { .name = \"d\", .xs = {3} } };\n"
-                                    "  R? o = arr[1];\n"
-                                    "  return 1;\n"
-                                    "}\n"),
-                    1);
+    STRATA_CHECK_EQ(
+        RunEntryCounted("struct R { string name; int[] xs; };\n"
+                        "int entry() {\n"
+                        "  R?[] arr = { R { .name = \"abc\", .xs = {1, 2} }, R { .name = \"d\", .xs = {3} } };\n"
+                        "  R? o = arr[1];\n"
+                        "  return 1;\n"
+                        "}\n"),
+        1);
     STRATA_CHECK(g_cgAllocs > 0);
     STRATA_CHECK_EQ(g_cgFrees, g_cgAllocs);
 }
@@ -384,19 +385,19 @@ STRATA_TEST(defer_reads_variable_after_return_reads_it)
    moved out. Now a move nulls the piece inside the temporary and the
    temporary is dropped at the end of the statement; a piece that is only
    read is dropped along with it. Every case must balance allocs and frees. */
-#define TEMP_PART_PRELUDE \
-    "struct R { string name; int[] xs; };\n" \
-    "struct E { int v; };\n" \
-    "struct H { string name; };\n" \
-    "string[] mkArr() { string[] a = {\"ab\", \"cde\"}; return a; }\n" \
-    "R mkR() { return R { .name = \"rname\", .xs = {1, 2} }; }\n" \
-    "^R mkBR() { return R { .name = \"boxed\", .xs = {3} }; }\n" \
-    "R[] mkRs() { R[] a = { R { .name = \"r0\", .xs = {1} }, R { .name = \"r11\", .xs = {2, 3} } }; return a; }\n" \
-    "^E[] mkEs() { ^E[] a = { E { .v = 4 }, E { .v = 9 } }; return a; }\n" \
-    "int[][] mkNested() { int[][] a = { {1, 2}, {3, 4, 5} }; return a; }\n" \
-    "string first() { return mkArr()[0]; }\n" \
-    "int slen(string s) { return (int)s.length; }\n" \
-    "int takeE(^E e) { return e.v; }\n" \
+#define TEMP_PART_PRELUDE                                                                                              \
+    "struct R { string name; int[] xs; };\n"                                                                           \
+    "struct E { int v; };\n"                                                                                           \
+    "struct H { string name; };\n"                                                                                     \
+    "string[] mkArr() { string[] a = {\"ab\", \"cde\"}; return a; }\n"                                                 \
+    "R mkR() { return R { .name = \"rname\", .xs = {1, 2} }; }\n"                                                      \
+    "^R mkBR() { return R { .name = \"boxed\", .xs = {3} }; }\n"                                                       \
+    "R[] mkRs() { R[] a = { R { .name = \"r0\", .xs = {1} }, R { .name = \"r11\", .xs = {2, 3} } }; return a; }\n"     \
+    "^E[] mkEs() { ^E[] a = { E { .v = 4 }, E { .v = 9 } }; return a; }\n"                                             \
+    "int[][] mkNested() { int[][] a = { {1, 2}, {3, 4, 5} }; return a; }\n"                                            \
+    "string first() { return mkArr()[0]; }\n"                                                                          \
+    "int slen(string s) { return (int)s.length; }\n"                                                                   \
+    "int takeE(^E e) { return e.v; }\n"                                                                                \
     "int sum(int[] a) { int t = 0; for (uint i = 0; i < a.length; i++) { t = t + a[i]; } return t; }\n"
 
 typedef struct
@@ -409,38 +410,37 @@ STRATA_TEST(owning_pieces_of_temporaries_are_dropped)
 {
     static const TempPartCase cases[] = {
         /* moved into a local */
-        {"int entry() { int[][] a = mkNested(); return a[1][2]; }", 5},
-        {"int entry() { int[][] a = { {1, 2}, {3, 4, 5} }; return a[1][2]; }", 5},
-        {"int entry() { int[] x = {7, 8}; int[][] a = { x, {1} }; return a[0][1]; }", 8},
-        {"int entry() { string s = mkArr()[0]; return (int)s.length; }", 2},
-        {"int entry() { string s = mkR().name; return (int)s.length; }", 5},
-        {"int entry() { string s = mkBR().name; return (int)s.length; }", 5},
-        {"int entry() { int[] x = mkR().xs; return x[1]; }", 2},
-        {"int entry() { ^R r = mkRs()[1]; return (int)r.name.length + r.xs[1]; }", 6},
-        {"int entry() { ^E e = mkEs()[0]; return e.v + mkEs()[1].v; }", 13},
-        {"int entry() { int[] x = mkNested()[1]; return x[2]; }", 5},
+        {"int entry() { int[][] a = mkNested(); return a[1][2]; }",                                 5 },
+        {"int entry() { int[][] a = { {1, 2}, {3, 4, 5} }; return a[1][2]; }",                      5 },
+        {"int entry() { int[] x = {7, 8}; int[][] a = { x, {1} }; return a[0][1]; }",               8 },
+        {"int entry() { string s = mkArr()[0]; return (int)s.length; }",                            2 },
+        {"int entry() { string s = mkR().name; return (int)s.length; }",                            5 },
+        {"int entry() { string s = mkBR().name; return (int)s.length; }",                           5 },
+        {"int entry() { int[] x = mkR().xs; return x[1]; }",                                        2 },
+        {"int entry() { ^R r = mkRs()[1]; return (int)r.name.length + r.xs[1]; }",                  6 },
+        {"int entry() { ^E e = mkEs()[0]; return e.v + mkEs()[1].v; }",                             13},
+        {"int entry() { int[] x = mkNested()[1]; return x[2]; }",                                   5 },
         /* nested: a piece of a piece */
-        {"int entry() { string s = mkRs()[1].name; return (int)s.length; }", 3},
-        {"int entry() { int[] x = mkRs()[1].xs; return x[0] + x[1]; }", 5},
+        {"int entry() { string s = mkRs()[1].name; return (int)s.length; }",                        3 },
+        {"int entry() { int[] x = mkRs()[1].xs; return x[0] + x[1]; }",                             5 },
         /* only read: the whole temporary is dropped */
-        {"int entry() { return (int)mkArr()[1].length; }", 3},
-        {"int entry() { return (int)mkRs()[1].name.length + mkR().xs[0]; }", 4},
+        {"int entry() { return (int)mkArr()[1].length; }",                                          3 },
+        {"int entry() { return (int)mkRs()[1].name.length + mkR().xs[0]; }",                        4 },
         {"int entry() { string s = mkBR().name; return (int)s.length + (int)mkBR().name.length; }", 10},
         /* passed to a parameter that takes ownership */
-        {"int entry() { return slen(mkArr()[1]); }", 3},
-        {"int entry() { return takeE(mkEs()[1]); }", 9},
-        {"int entry() { return sum(mkNested()[1]); }", 12},
-        {"int entry() { return sum(mkR().xs); }", 3},
+        {"int entry() { return slen(mkArr()[1]); }",                                                3 },
+        {"int entry() { return takeE(mkEs()[1]); }",                                                9 },
+        {"int entry() { return sum(mkNested()[1]); }",                                              12},
+        {"int entry() { return sum(mkR().xs); }",                                                   3 },
         /* moved into a struct field */
-        {"int entry() { ^H h = H { .name = mkArr()[1] }; return (int)h.name.length; }", 3},
-        {"int entry() { ^H h = H(mkArr()[0]); return (int)h.name.length; }", 2},
+        {"int entry() { ^H h = H { .name = mkArr()[1] }; return (int)h.name.length; }",             3 },
+        {"int entry() { ^H h = H(mkArr()[0]); return (int)h.name.length; }",                        2 },
         /* assigned, returned */
-        {"int entry() { string s = \"x\"; s = mkArr()[1]; return (int)s.length; }", 3},
-        {"int entry() { string s = first(); return (int)s.length; }", 2},
+        {"int entry() { string s = \"x\"; s = mkArr()[1]; return (int)s.length; }",                 3 },
+        {"int entry() { string s = first(); return (int)s.length; }",                               2 },
         /* repeated in a loop: one temporary per iteration */
         {"int entry() { int t = 0; for (int i = 0; i < 4; i++) { string s = mkArr()[1]; t = t + (int)s.length; } "
-         "return t; }",
-         12},
+         "return t; }",                                                                    12},
     };
 
     char src[4096];

@@ -66,8 +66,9 @@ STRATA_TEST(literal_leading_zero_is_decimal_at_runtime)
 
 STRATA_TEST(literal_paren_variable_minus_is_subtraction)
 {
-    STRATA_CHECK_EQ(RunEntry("int entry() { int x = 5; int y = (x) - 1; int z = (x) + 2; (x)++; return y * 100 + z * 10 + x; }\n"),
-                    476);
+    STRATA_CHECK_EQ(
+        RunEntry("int entry() { int x = 5; int y = (x) - 1; int z = (x) + 2; (x)++; return y * 100 + z * 10 + x; }\n"),
+        476);
     STRATA_CHECK_EQ(RunEntry("int entry() { int x = 5; long y = (long)-x; return (int)y; }\n"), -5);
 }
 
@@ -96,8 +97,9 @@ STRATA_TEST(literal_char_is_a_byte_constant)
     STRATA_CHECK_EQ(RunEntry("int entry() { byte c = 'a'; return c; }\n"), 97);
     STRATA_CHECK_EQ(RunEntry("int entry() { int k = 'A'; return k + ('a' - 'A'); }\n"), 97);
     /* Widened to int first: arithmetic between bytes stays byte (and wraps), as with `(byte)92`. */
-    STRATA_CHECK_EQ(RunEntry("int entry() { int b = '\\\\'; return b * 1000 + '\\'' + '\"' + '\\0' + '\\n' + '\\t' + '\\r'; }\n"),
-                    92000 + 39 + 34 + 0 + 10 + 9 + 13);
+    STRATA_CHECK_EQ(
+        RunEntry("int entry() { int b = '\\\\'; return b * 1000 + '\\'' + '\"' + '\\0' + '\\n' + '\\t' + '\\r'; }\n"),
+        92000 + 39 + 34 + 0 + 10 + 9 + 13);
     STRATA_CHECK_EQ(RunEntry("int entry() { string p = \"a\\\\b/c\"; int n = 0;\n"
                              "  for (uint i = 0u; i < p.length; i++) { if (p[i] == '/' || p[i] == '\\\\') { n++; } }\n"
                              "  p[1] = p[1] == '\\\\' ? '/' : p[1]; return n * 100 + p[1]; }\n"),
@@ -117,7 +119,8 @@ STRATA_TEST(literal_char_malformed_is_one_error_each)
     STRATA_CHECK(Contains(Diagnose("int entry() { byte a = 'ab'; return 0; }\n", &arena), "holds one byte"));
     STRATA_CHECK(Contains(Diagnose("int entry() { byte a = '\\q'; return 0; }\n", &arena), "unknown escape '\\q'"));
     STRATA_CHECK(Contains(Diagnose("int entry() { byte a = '\xC3\xA9'; return 0; }\n", &arena), "non-ASCII"));
-    STRATA_CHECK(Contains(Diagnose("int entry() { byte a = 'x\n; return 0; }\n", &arena), "unterminated character literal"));
+    STRATA_CHECK(
+        Contains(Diagnose("int entry() { byte a = 'x\n; return 0; }\n", &arena), "unterminated character literal"));
     STRATA_CHECK(!Contains(Diagnose("int entry() { byte a = 'ab'; return 0; }\n", &arena), "expected an expression"));
 
     arena_free(&arena);
@@ -125,18 +128,20 @@ STRATA_TEST(literal_char_malformed_is_one_error_each)
 
 STRATA_TEST(handle_is_a_keyword_only_where_a_handle_declaration_starts)
 {
-    STRATA_CHECK_EQ(RunEntry("handle Base;\nhandle Derived : Base;\n"
-                             "struct S { int handle; Base? owner; };\n"
-                             "int twice(int handle) { return handle * 2; }\n"
-                             "impl S { int Handle(ref S self) { return self.handle; } }\n"
-                             "int entry() { ^S s = S { .handle = 4 }; int handle = twice(s.handle); handle = handle + 1;\n"
-                             "  return handle + s.Handle(); }\n"),
-                    13);
+    STRATA_CHECK_EQ(
+        RunEntry("handle Base;\nhandle Derived : Base;\n"
+                 "struct S { int handle; Base? owner; };\n"
+                 "int twice(int handle) { return handle * 2; }\n"
+                 "impl S { int Handle(ref S self) { return self.handle; } }\n"
+                 "int entry() { ^S s = S { .handle = 4 }; int handle = twice(s.handle); handle = handle + 1;\n"
+                 "  return handle + s.Handle(); }\n"),
+        13);
 
     Arena arena;
     arena_init(&arena, 0);
     STRATA_CHECK(Contains(Diagnose("struct handle { int x; };\nint entry() { return 0; }\n", &arena),
                           "'handle' cannot name a type"));
-    STRATA_CHECK(Contains(Diagnose("handle handle;\nint entry() { return 0; }\n", &arena), "'handle' cannot name a type"));
+    STRATA_CHECK(
+        Contains(Diagnose("handle handle;\nint entry() { return 0; }\n", &arena), "'handle' cannot name a type"));
     arena_free(&arena);
 }

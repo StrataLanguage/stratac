@@ -2,8 +2,8 @@
 #include "Util.h"
 #include "strata/strata.h"
 
-#include <string.h>
 #include <stdio.h>
+#include <string.h>
 
 /* ================= Lexer ================= */
 
@@ -23,8 +23,10 @@ STRATA_TEST(private_at_lexes_as_at_token)
 
 STRATA_TEST(private_function_prototype_parsed)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nvoid dosomething(int x, int y);", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->functions.count == 1);
@@ -40,8 +42,10 @@ STRATA_TEST(private_function_prototype_parsed)
 
 STRATA_TEST(private_function_with_body_parsed)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nint secret() { return 7; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -55,8 +59,10 @@ STRATA_TEST(private_function_with_body_parsed)
 
 STRATA_TEST(plain_function_is_not_private)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { return 1; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -69,8 +75,10 @@ STRATA_TEST(plain_function_is_not_private)
 
 STRATA_TEST(private_stacked_duplicate_ok)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\n@private\nint f() { return 1; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -83,8 +91,10 @@ STRATA_TEST(private_stacked_duplicate_ok)
 
 STRATA_TEST(unknown_attribute_rejected)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@nope\nint f() { return 1; }", &diag, &arena);
     (void)mod;
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -95,8 +105,10 @@ STRATA_TEST(unknown_attribute_rejected)
 
 STRATA_TEST(private_on_global_rejected)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nint g;", &diag, &arena);
     (void)mod;
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -107,8 +119,10 @@ STRATA_TEST(private_on_global_rejected)
 
 STRATA_TEST(private_on_struct_rejected)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nstruct S { int x; };", &diag, &arena);
     (void)mod;
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -119,8 +133,10 @@ STRATA_TEST(private_on_struct_rejected)
 
 STRATA_TEST(private_on_impl_method_rejected)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle H;\nimpl H {\n@private\nextern void M(H self);\n}", &diag, &arena);
     (void)mod;
     STRATA_CHECK(DiagHasErrors(&diag));
@@ -158,9 +174,9 @@ STRATA_TEST(private_same_file_call_runs)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import lib;\n"
-        "int entry() { return helper(); }\n",
-        "main", &err);
+                                            "import lib;\n"
+                                            "int entry() { return helper(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -189,9 +205,9 @@ STRATA_TEST(private_cross_file_call_hidden)
     strataSetImportResolver(c, &ResolverPrivateLib, NULL);
 
     StrataResult r = strataCompileString(c,
-        "import lib;\n"
-        "int entry() { return secret(); }\n",
-        "main", STRATA_EMIT_LLVM_IR, 0);
+                                         "import lib;\n"
+                                         "int entry() { return secret(); }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);
@@ -208,10 +224,10 @@ STRATA_TEST(private_single_file_program_runs)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "@private\n"
-        "int secret() { return 9; }\n"
-        "int entry() { return secret(); }\n",
-        "main", &err);
+                                            "@private\n"
+                                            "int secret() { return 9; }\n"
+                                            "int entry() { return secret(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -260,9 +276,9 @@ STRATA_TEST(private_overload_hidden_public_overload_visible)
     /* Public 2-arg overload callable cross-file. */
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import lib;\n"
-        "int entry() { return pick(3, 4); }\n",
-        "main", &err);
+                                            "import lib;\n"
+                                            "int entry() { return pick(3, 4); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -286,9 +302,9 @@ STRATA_TEST(private_overload_hidden_public_overload_visible)
     strataSetImportResolver(c, &ResolverPrivateOverloads, NULL);
 
     StrataResult r = strataCompileString(c,
-        "import lib;\n"
-        "int entry() { return pick(3); }\n",
-        "main", STRATA_EMIT_LLVM_IR, 0);
+                                         "import lib;\n"
+                                         "int entry() { return pick(3); }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);

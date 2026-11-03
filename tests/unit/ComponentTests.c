@@ -1,8 +1,8 @@
 /* ComponentTests.c — `@component` structs, field default values, type metadata
  * (strata_types.h) and symbol prefixes. */
 
-#include "Util.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 #include "strata/strata_types.h"
 
@@ -472,8 +472,8 @@ STRATA_TEST(type_metadata_reports_compile_errors)
     size_t size = 0;
     const char* err = NULL;
 
-    STRATA_CHECK(!strataCompileTypeMetadataString(c, "@component struct Bad { string name; };\n", "bad", &bytes, &size,
-                                                  &err));
+    STRATA_CHECK(
+        !strataCompileTypeMetadataString(c, "@component struct Bad { string name; };\n", "bad", &bytes, &size, &err));
     STRATA_CHECK(err != NULL && strstr(err, "components may only hold plain data") != NULL);
     STRATA_CHECK(bytes == NULL);
 
@@ -597,39 +597,40 @@ static bool HostHasComponent(void* entity, const StrataTypeDesc* type)
     return s_hostHasValue != 0;
 }
 
-static const char* kGenericExternSource = "handle Entity;\n"
-                                          "@component struct Health { float current = 100.0; float maximum = 150.0; };\n"
-                                          "@component struct Armor { int value = 7; };\n"
-                                          "extern<T> bool GetComponent(Entity entity, ref T value);\n"
-                                          "extern<T> void SetComponent(Entity entity, const ref T value);\n"
-                                          "extern<T> bool HasComponent(Entity entity);\n"
-                                          "float roundtrip(Entity e)\n"
-                                          "{\n"
-                                          "    Health h;\n"
-                                          "    h.current = 42.0;\n"
-                                          "    SetComponent(e, h);\n"
-                                          "    Health read;\n"
-                                          "    read.current = 0.0;\n"
-                                          "    if (!GetComponent(e, read)) { return -1.0; }\n"
-                                          "    if (!HasComponent<Health>(e)) { return -2.0; }\n"
-                                          "    return read.current + read.maximum;\n"
-                                          "}\n"
-                                          "int armor_value(Entity e)\n"
-                                          "{\n"
-                                          "    Armor a;\n"
-                                          "    SetComponent<Armor>(e, a);\n"
-                                          "    Armor b;\n"
-                                          "    b.value = 0;\n"
-                                          "    GetComponent(e, b);\n"
-                                          "    return b.value;\n"
-                                          "}\n"
-                                          "float from_literal(Entity e)\n"
-                                          "{\n"
-                                          "    SetComponent(e, Health { .current = 5.0 });\n"
-                                          "    Health h;\n"
-                                          "    GetComponent(e, h);\n"
-                                          "    return h.current + h.maximum;\n"
-                                          "}\n";
+static const char* kGenericExternSource
+    = "handle Entity;\n"
+      "@component struct Health { float current = 100.0; float maximum = 150.0; };\n"
+      "@component struct Armor { int value = 7; };\n"
+      "extern<T> bool GetComponent(Entity entity, ref T value);\n"
+      "extern<T> void SetComponent(Entity entity, const ref T value);\n"
+      "extern<T> bool HasComponent(Entity entity);\n"
+      "float roundtrip(Entity e)\n"
+      "{\n"
+      "    Health h;\n"
+      "    h.current = 42.0;\n"
+      "    SetComponent(e, h);\n"
+      "    Health read;\n"
+      "    read.current = 0.0;\n"
+      "    if (!GetComponent(e, read)) { return -1.0; }\n"
+      "    if (!HasComponent<Health>(e)) { return -2.0; }\n"
+      "    return read.current + read.maximum;\n"
+      "}\n"
+      "int armor_value(Entity e)\n"
+      "{\n"
+      "    Armor a;\n"
+      "    SetComponent<Armor>(e, a);\n"
+      "    Armor b;\n"
+      "    b.value = 0;\n"
+      "    GetComponent(e, b);\n"
+      "    return b.value;\n"
+      "}\n"
+      "float from_literal(Entity e)\n"
+      "{\n"
+      "    SetComponent(e, Health { .current = 5.0 });\n"
+      "    Health h;\n"
+      "    GetComponent(e, h);\n"
+      "    return h.current + h.maximum;\n"
+      "}\n";
 
 STRATA_TEST(generic_extern_calls_reach_one_host_function)
 {
@@ -797,8 +798,9 @@ STRATA_TEST(symbol_prefix_jit_lookups_use_bare_names)
     STRATA_CHECK(strataSetSymbolPrefix(c, "Mod_"));
 
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(c, "int g_bonus = 4;\n"
-                                               "int answer() { return 38 + g_bonus; }\n",
+    StrataJit* jit = strataJitCompileString(c,
+                                            "int g_bonus = 4;\n"
+                                            "int answer() { return 38 + g_bonus; }\n",
                                             "prefixed", &err);
     STRATA_CHECK(jit != NULL);
 

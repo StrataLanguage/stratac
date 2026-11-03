@@ -30,7 +30,6 @@ typedef enum PrimitiveType
     PrimFloat4,
 } PrimitiveType;
 
-
 /* NOTE: These are prebaked to be guaranteed to match `HashStr64` and ONLY `HashStr64`.
    Do not mix with another FNV1-A algorithm. */
 
@@ -58,7 +57,7 @@ static inline PrimitiveType GetPrimitiveType(const char* name)
 
     switch (nameHash)
     {
-	case PRIM_NAME_VOID:
+    case PRIM_NAME_VOID:
         return PrimVoid;
 
     case PRIM_NAME_BOOL:
@@ -70,7 +69,7 @@ static inline PrimitiveType GetPrimitiveType(const char* name)
     case PRIM_NAME_UINT:
         return PrimUInt;
 
-         /* */
+        /* */
     case PRIM_NAME_LONG:
         return PrimLong;
     case PRIM_NAME_ULONG:
@@ -102,7 +101,6 @@ static inline PrimitiveType GetPrimitiveType(const char* name)
         return PrimCString;
 
         /* */
-
 
     case PRIM_NAME_FLOAT2:
         return PrimFloat2;

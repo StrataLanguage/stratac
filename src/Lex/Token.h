@@ -5,7 +5,8 @@
 
 #include <stdint.h>
 
-typedef enum {
+typedef enum
+{
     TokEof,
     TokUnknown,
 
@@ -106,7 +107,8 @@ const char* TokSpelling(TokKind kind);
 const char* TokName(TokKind kind);
 TokKind ClassifyKeyword(Str ident);
 
-typedef struct {
+typedef struct
+{
     TokKind kind;
     SourceRange range;
 } Token;

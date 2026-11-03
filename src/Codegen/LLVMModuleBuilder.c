@@ -589,8 +589,8 @@ static LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)
 
     PositionAtEnd(b, cond);
     LLVMValueRef i = LLVMBuildLoad2(b->m_builder, I64Ty(b), iSlot, "cstrlen.i");
-    LLVMValueRef c = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, s, &i, 1, "cstrlen.p"),
-                                    "cstrlen.c");
+    LLVMValueRef c
+        = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, s, &i, 1, "cstrlen.p"), "cstrlen.c");
     LLVMValueRef isNul = LLVMBuildICmp(b->m_builder, LLVMIntEQ, c, LLVMConstNull(i8Ty), "cstrlen.nul");
     LLVMBuildCondBr(b->m_builder, isNul, done, body);
     b->m_terminated = true;
@@ -717,7 +717,8 @@ static LLVMValueRef BuildFloatToIntSaturating(Builder* b, LLVMValueRef value, LL
     LLVMTypeRef src = LLVMTypeOf(value);
     LLVMTypeKind srcKind = LLVMGetTypeKind(src);
 
-    if (LLVMGetTypeKind(target) != LLVMIntegerTypeKind || (srcKind != LLVMFloatTypeKind && srcKind != LLVMDoubleTypeKind))
+    if (LLVMGetTypeKind(target) != LLVMIntegerTypeKind
+        || (srcKind != LLVMFloatTypeKind && srcKind != LLVMDoubleTypeKind))
     {
         return isUnsigned ? LLVMBuildFPToUI(b->m_builder, value, target, "c")
                           : LLVMBuildFPToSI(b->m_builder, value, target, "c");
@@ -948,7 +949,8 @@ static const char* StaticExprTypeName(Builder* b, Node* n)
 
         const StructType* st = TypeRegistryFind(&b->m_registry, baseName);
         FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
-        const TypeName* inner = (TypeNameIsBox(&field->type) || TypeNameIsOptional(&field->type)) ? field->type.inner : &field->type;
+        const TypeName* inner
+            = (TypeNameIsBox(&field->type) || TypeNameIsOptional(&field->type)) ? field->type.inner : &field->type;
 
         return (inner && TypeRegistryIsOpaque(&b->m_registry, inner->name)) ? inner->name : NULL;
     }
@@ -1412,8 +1414,8 @@ static Value Coerce(Builder* b, Value value, TypeDesc target)
     if (targetIsHandle && LLVMGetTypeKind(value.typeDesc.type) == LLVMIntegerTypeKind)
     {
         bool srcIsBool = value.typeDesc.type == I1Ty(b);
-        LLVMValueRef wide = LLVMBuildIntCast2(b->m_builder, value.value, I64Ty(b),
-                                              !value.typeDesc.isUnsigned && !srcIsBool, "i64");
+        LLVMValueRef wide
+            = LLVMBuildIntCast2(b->m_builder, value.value, I64Ty(b), !value.typeDesc.isUnsigned && !srcIsBool, "i64");
         return ValueMake(LLVMBuildIntToPtr(b->m_builder, wide, b->m_ptrTy, "i2p"), target);
     }
 
@@ -2759,7 +2761,8 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         bool byPtr = p->mod != ModNone || BuilderIsOwningType(b, &p->type);
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
-        bool optionalString = TypeNameIsOptional(&p->type) && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
+        bool optionalString
+            = TypeNameIsOptional(&p->type) && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
         bool externStringParam = f->isExtern && (TypeIsString(&b->m_registry, p->type.name) || optionalString);
 
         if (byPtr && externStringParam)
@@ -2788,8 +2791,8 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         params[pcount + ctxOffset] = b->m_ptrTy;
     }
 
-    info->type = LLVMFunctionType(abiRetType, params, (unsigned)(pcount + ctxOffset + typeDescCount),
-                                  f->isCVararg ? 1 : 0);
+    info->type
+        = LLVMFunctionType(abiRetType, params, (unsigned)(pcount + ctxOffset + typeDescCount), f->isCVararg ? 1 : 0);
 
     /* A delegate is a call signature, not a symbol: calls go through a pointer value. */
     if (f->isDelegate)
@@ -2822,8 +2825,8 @@ static void DeclareFunction(Builder* b, const FunctionDecl* f)
         /* Externs and `@export`s keep their C names; the AOT entry point is renamed so the
            synthesized C `main` (EmitAotEntryPoint) can wrap it. */
         const char* symbol = (f->isExtern || f->isExport) ? f->mangledName
-                             : IsAotEntryPoint(b, f)       ? ExportedSymbolName(b, STRATA_AOT_MAIN_SYMBOL)
-                                                           : ExportedSymbolName(b, f->mangledName);
+                             : IsAotEntryPoint(b, f)      ? ExportedSymbolName(b, STRATA_AOT_MAIN_SYMBOL)
+                                                          : ExportedSymbolName(b, f->mangledName);
         info->function = LLVMAddFunction(b->m_mod, symbol, info->type);
     }
 
@@ -2878,8 +2881,7 @@ static void DefineFunction(Builder* b, const FunctionDecl* f)
         bool boxParam = BuilderIsOwningType(b, &p->type);
         /* An owning struct passed BY VALUE (non-ref, non-extern): the callee
            owns its copy's fields and drops them at return. */
-        bool owningStructParam
-            = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->m_registry, leafName);
+        bool owningStructParam = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->m_registry, leafName);
 
         Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
 
@@ -3290,7 +3292,8 @@ static LValue EmitLValue(Builder* b, Node* n)
 
         /* array.length / array.cap — readable slots; typed uint (the fat's
            u32 fields). Assignment is rejected in sema. */
-        if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
+        if (TypeDescHasArrayShape(&base.typeDesc)
+            && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
         {
             none.valid = true;
             none.ptr = strcmp(m->member, "length") == 0 ? ArrayLenPtr(b, base.ptr) : ArrayCapPtr(b, base.ptr);
@@ -3777,8 +3780,8 @@ static void EmitPanicIf(Builder* b, LLVMValueRef bad, const char* message)
 }
 
 /* Integer `/` and `%` trap in hardware on a zero divisor and on MIN / -1; both are panics instead. */
-static void EmitDivisionChecks(Builder* b, TypeDesc td, LLVMValueRef lhs, LLVMValueRef divisor,
-                               const char* zeroMessage, const char* overflowMessage)
+static void EmitDivisionChecks(Builder* b, TypeDesc td, LLVMValueRef lhs, LLVMValueRef divisor, const char* zeroMessage,
+                               const char* overflowMessage)
 {
     LLVMTypeRef ty = LLVMTypeOf(divisor);
 
@@ -3844,8 +3847,8 @@ static void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDes
 {
     const EnumDecl* ed = FindEnumDecl(b, cast->type.name);
 
-    if (!ed || ed->members.count == 0 || !operand.value || operand.typeDesc.isFloat || target.isFloat
-        || !target.type || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind
+    if (!ed || ed->members.count == 0 || !operand.value || operand.typeDesc.isFloat || target.isFloat || !target.type
+        || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind
         || LLVMGetTypeKind(LLVMTypeOf(operand.value)) != LLVMIntegerTypeKind || cast->operand->kind == NodeIntLiteral
         || (cast->operand->kind == NodeMember && ((MemberExpr*)cast->operand)->isEnumConst))
     {
@@ -4077,11 +4080,13 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
             ClaimTemp(b, r);
 
             LLVMValueRef lp = l.typeDesc.isCString ? l.value : LLVMBuildExtractValue(b->m_builder, l.value, 0, "cat.l");
-            LLVMValueRef ll = l.typeDesc.isCString ? BuildStrLen(b, l.value)
-                                                   : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
+            LLVMValueRef ll = l.typeDesc.isCString
+                                  ? BuildStrLen(b, l.value)
+                                  : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
             LLVMValueRef rp = r.typeDesc.isCString ? r.value : LLVMBuildExtractValue(b->m_builder, r.value, 0, "cat.r");
-            LLVMValueRef rl = r.typeDesc.isCString ? BuildStrLen(b, r.value)
-                                                   : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
+            LLVMValueRef rl = r.typeDesc.isCString
+                                  ? BuildStrLen(b, r.value)
+                                  : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
 
             Value result = ValueMake(BuildConcatStringFat(b, lp, ll, rp, rl), StringFatDesc(b));
             NoteFreshOwned(b, result);
@@ -4102,10 +4107,12 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     if (n->op == BinEqEq || n->op == BinNotEq)
     {
         /* Handles (opaque) are pointers: they compare by address below, never member-wise. */
-        bool lAgg = (l.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, l.typeDesc.structTypeName))
-                    || ((TypeDescHasArrayShape(&l.typeDesc) || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
-        bool rAgg = (r.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, r.typeDesc.structTypeName))
-                    || ((TypeDescHasArrayShape(&r.typeDesc) || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
+        bool lAgg
+            = (l.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, l.typeDesc.structTypeName))
+              || ((TypeDescHasArrayShape(&l.typeDesc) || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
+        bool rAgg
+            = (r.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, r.typeDesc.structTypeName))
+              || ((TypeDescHasArrayShape(&r.typeDesc) || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
 
         if (lAgg && rAgg)
         {
@@ -4252,8 +4259,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     case BinDiv:
         if (!flt)
         {
-            EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer division by zero",
-                               "integer division overflows");
+            EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer division by zero", "integer division overflows");
         }
 
         out = flt ? LLVMBuildFDiv(b->m_builder, l.value, r.value, "div")
@@ -4265,8 +4271,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
     case BinMod:
         if (!flt)
         {
-            EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer modulo by zero",
-                               "integer modulo overflows");
+            EmitDivisionChecks(b, typeDesc, l.value, r.value, "integer modulo by zero", "integer modulo overflows");
         }
 
         out = flt ? LLVMBuildFRem(b->m_builder, l.value, r.value, "mod")
@@ -4313,8 +4318,7 @@ static Value EmitBinary(Builder* b, BinaryExpr* n)
         /* Vectors differ when they are not all-equal; scalars keep the ordered `one`. */
         if (flt && LLVMGetTypeKind(LLVMTypeOf(l.value)) == LLVMVectorTypeKind)
         {
-            out = LLVMBuildNot(b->m_builder, AllLanesTrue(b, FcmpByName(b->m_builder, "oeq", l.value, r.value)),
-                               "vne");
+            out = LLVMBuildNot(b->m_builder, AllLanesTrue(b, FcmpByName(b->m_builder, "oeq", l.value, r.value)), "vne");
 
             return ValueMake(out, boolTypeDesc);
         }
@@ -4544,8 +4548,7 @@ static Value EmitAssign(Builder* b, AssignExpr* n)
                 {
                     /* Scalar / struct / handle inner: allocate a cell and
                        construct the owned value into it. */
-                    LLVMValueRef cell
-                        = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "optcell");
+                    LLVMValueRef cell = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "optcell");
                     LLVMValueRef inner = Coerce(b, rhs, innerTd).value;
                     LLVMBuildStore(b->m_builder, inner, cell);
                     LLVMBuildStore(b->m_builder, cell, lvalue.ptr);
@@ -4895,7 +4898,8 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
 
     bool stringMove = elemTd.isString && v.typeDesc.isString && valNode->kind != NodeStrLiteral;
     /* An array pushed into an array of arrays moves: the source is emptied, or both would free it. */
-    bool arrayMove = TypeDescHasArrayShape(&elemTd) && !elemTd.isString && TypeDescHasArrayShape(&v.typeDesc) && !v.typeDesc.isString;
+    bool arrayMove = TypeDescHasArrayShape(&elemTd) && !elemTd.isString && TypeDescHasArrayShape(&v.typeDesc)
+                     && !v.typeDesc.isString;
 
     if (sameOwningType || stringMove || arrayMove)
     {
@@ -6355,7 +6359,8 @@ static Value EmitDropBuiltin(Builder* b, CallExpr* n)
     }
 
     Value v = EmitExpr(b, arg0);
-    LLVMValueRef slot = EntryAlloca(b, TypeDescHasArrayShape(&v.typeDesc) ? ArrayStructType(b) : b->m_ptrTy, "drop.tmp");
+    LLVMValueRef slot
+        = EntryAlloca(b, TypeDescHasArrayShape(&v.typeDesc) ? ArrayStructType(b) : b->m_ptrTy, "drop.tmp");
     LLVMBuildStore(b->m_builder, v.value, slot);
     EmitDropOne(b, slot, v.typeDesc);
 
@@ -6675,38 +6680,38 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
 {
     static const IntrinsicDefinition intrinsics[] = {
         /* Array calls */
-        {"array_push",   EmitArrayBuiltin    },
-        {"array_pop",    EmitArrayBuiltin    },
-        {"array_resize", EmitArrayBuiltin    },
-        {"array_remove", EmitArrayBuiltin    },
-        {"array_reserve", EmitArrayBuiltin   },
-        {"array_swap_remove", EmitArrayBuiltin },
-        {"array_replace", EmitArrayBuiltin },
-        {"array_take", EmitArrayBuiltin },
+        {"array_push",        EmitArrayBuiltin    },
+        {"array_pop",         EmitArrayBuiltin    },
+        {"array_resize",      EmitArrayBuiltin    },
+        {"array_remove",      EmitArrayBuiltin    },
+        {"array_reserve",     EmitArrayBuiltin    },
+        {"array_swap_remove", EmitArrayBuiltin    },
+        {"array_replace",     EmitArrayBuiltin    },
+        {"array_take",        EmitArrayBuiltin    },
 
         /* Misc */
-        {"copy",         EmitCopyBuiltin     },
-        {"drop",         EmitDropBuiltin     },
+        {"copy",              EmitCopyBuiltin     },
+        {"drop",              EmitDropBuiltin     },
 
         /* Raw memory */
-        {"addressof",    EmitAddressofBuiltin},
-        {"sizeof",       EmitSizeofBuiltin   },
-        {"alignof",      EmitSizeofBuiltin   },
-        {"load",         EmitLoadBuiltin     },
-        {"store",        EmitStoreBuiltin    },
+        {"addressof",         EmitAddressofBuiltin},
+        {"sizeof",            EmitSizeofBuiltin   },
+        {"alignof",           EmitSizeofBuiltin   },
+        {"load",              EmitLoadBuiltin     },
+        {"store",             EmitStoreBuiltin    },
 
         /* Strings */
-        {"substring",    EmitSubstringBuiltin},
+        {"substring",         EmitSubstringBuiltin},
 
         /* Vectors */
-        {"float2",       EmitVectorConstruct },
-        {"float3",       EmitVectorConstruct },
-        {"float4",       EmitVectorConstruct },
+        {"float2",            EmitVectorConstruct },
+        {"float3",            EmitVectorConstruct },
+        {"float4",            EmitVectorConstruct },
 
-        {"dot",          EmitVectorDot       },
-        {"cross",        EmitVectorCross     },
+        {"dot",               EmitVectorDot       },
+        {"cross",             EmitVectorCross     },
 
-        {"reduce",       EmitVectorReduce    },
+        {"reduce",            EmitVectorReduce    },
     };
 
     for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
@@ -7149,7 +7154,8 @@ static Value EmitCall(Builder* b, CallExpr* n)
                drops the value, so materialize an owned fat into a fresh
                temp slot instead of handing out the borrowed constant. */
             Value litVal = EmitExpr(b, argNode);
-            const ParamDecl* litParam = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
+            const ParamDecl* litParam
+                = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
             LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "stslot");
 
             if (litParam && litParam->mod == ModRef)
@@ -7290,8 +7296,7 @@ static Value EmitCall(Builder* b, CallExpr* n)
                     /* An owned temporary lent to a `ref` param: dropped when the statement ends. */
                     args[k] = ParkTemp(b, v);
                 }
-                else if (shouldPassByPtr
-                         && argNode->kind == NodeCall)
+                else if (shouldPassByPtr && argNode->kind == NodeCall)
                 {
                     /* A call result has no address: spill the value already
                        computed above. ArgAddress would evaluate the call a
@@ -7303,13 +7308,12 @@ static Value EmitCall(Builder* b, CallExpr* n)
                 }
                 else if (shouldPassByPtr)
                 {
-                                        {
+                    {
                         /* A box-typed field or element (`h.buffer.Method()`, `ref T` param from a `^T`
                            / `T?` slot): the callee wants the boxed value, not the slot. */
                         LValue slot = {0};
 
-                        if (!paramIsBoxType && !argIsBox
-                            && (argNode->kind == NodeMember || argNode->kind == NodeIndex))
+                        if (!paramIsBoxType && !argIsBox && (argNode->kind == NodeMember || argNode->kind == NodeIndex))
                         {
                             slot = EmitLValue(b, argNode);
                         }
@@ -7760,7 +7764,8 @@ static LLVMValueRef BuildBoundedStrLen(Builder* b, LLVMValueRef data, long capac
 
     PositionAtEnd(b, body);
     LLVMValueRef at[1] = {i};
-    LLVMValueRef c = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, data, at, 1, "bsl.p"), "bsl.c");
+    LLVMValueRef c
+        = LLVMBuildLoad2(b->m_builder, i8Ty, LLVMBuildGEP2(b->m_builder, i8Ty, data, at, 1, "bsl.p"), "bsl.c");
     LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, c, LLVMConstInt(i8Ty, 0, 0), "bsl.nul"), done,
                     next);
     b->m_terminated = true;
@@ -8405,7 +8410,8 @@ Value EmitExpr(Builder* b, Node* n)
             return ValueMake(owned, target);
         }
 
-        if ((TypeDescIsBox(&operand.typeDesc) && TypeDescIsBox(&target)) || (operand.typeDesc.isString && target.isString))
+        if ((TypeDescIsBox(&operand.typeDesc) && TypeDescIsBox(&target))
+            || (operand.typeDesc.isString && target.isString))
         {
             /* Retag with the destination type; Coerce would keep the source's. */
             return ValueMake(operand.value, target);
@@ -8414,7 +8420,8 @@ Value EmitExpr(Builder* b, Node* n)
         /* Pointer to pointer (handle <-> handle, ptr <-> cstring): same bits, the destination's type. */
         bool operandIsPointer = operand.typeDesc.type && LLVMGetTypeKind(operand.typeDesc.type) == LLVMPointerTypeKind
                                 && !TypeDescIsBox(&operand.typeDesc);
-        bool targetIsPointer = target.type && LLVMGetTypeKind(target.type) == LLVMPointerTypeKind && !TypeDescIsBox(&target);
+        bool targetIsPointer
+            = target.type && LLVMGetTypeKind(target.type) == LLVMPointerTypeKind && !TypeDescIsBox(&target);
 
         if (operandIsPointer && targetIsPointer)
         {
@@ -9426,7 +9433,8 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
         CastExpr* c = AsNode(CastExpr, n);
         TypeDesc innerTd = Resolve(b, &c->type);
 
-        if (innerTd.isVoid || innerTd.structTypeName || TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd) || innerTd.isSimdVector)
+        if (innerTd.isVoid || innerTd.structTypeName || TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd)
+            || innerTd.isSimdVector)
         {
             return false;
         }
@@ -9518,8 +9526,8 @@ static void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry)
 
     LLVMValueRef callArgs[1] = {ctx};
     LLVMValueRef result = LLVMBuildCall2(builder, info->type, info->function, callArgs, 1, "");
-    LLVMValueRef exitCode = GetPrimitiveType(entry->returnType.name) == PrimVoid ? LLVMConstInt(I32Ty(b), 0, 0)
-                                                                                : result;
+    LLVMValueRef exitCode
+        = GetPrimitiveType(entry->returnType.name) == PrimVoid ? LLVMConstInt(I32Ty(b), 0, 0) : result;
 
     LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
     LLVMTypeRef destroyTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), destroyParams, 1, 0);
@@ -9739,7 +9747,7 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         {
             ConstInitVal castVal = CastConstVal(b, foldedVal, typeDesc);
             LLVMValueRef constant = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, castVal.f)
-                                                      : LLVMConstInt(typeDesc.type, castVal.i, 0);
+                                                     : LLVMConstInt(typeDesc.type, castVal.i, 0);
 
             ConstValueSlot* cs = (ConstValueSlot*)arena_alloc(b->m_arena, sizeof(ConstValueSlot));
             cs->civ = castVal;
@@ -9817,7 +9825,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 
         LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
         LLVMTypeRef destroyTy = LLVMFunctionType(voidTy, destroyParams, 1, 0);
-        LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
+        LLVMValueRef destroyFn
+            = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
         LLVMPositionBuilderAtEnd(b->m_builder, LLVMAppendBasicBlockInContext(b->m_ctx, destroyFn, "entry"));
         LLVMBuildRetVoid(b->m_builder);
     }
@@ -9986,7 +9995,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         /* ---- __strata_context_destroy ---- */
         LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
         LLVMTypeRef destroyTy = LLVMFunctionType(voidTy, destroyParams, 1, 0);
-        LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
+        LLVMValueRef destroyFn
+            = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
         b->m_curFn = destroyFn;
         StrMapClear(&b->m_symbols);
         b->m_terminated = false;
@@ -10025,7 +10035,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
         /* Destroying the `@export` context unbinds it. */
         LLVMValueRef boundCtx = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, b->m_exportCtxGlobal, "boundctx");
         LLVMValueRef isBound = LLVMBuildICmp(b->m_builder, LLVMIntEQ, boundCtx, b->m_curGlobalsPtr, "isbound");
-        LLVMBuildStore(b->m_builder, LLVMBuildSelect(b->m_builder, isBound, LLVMConstNull(b->m_ptrTy), boundCtx, "unbind"),
+        LLVMBuildStore(b->m_builder,
+                       LLVMBuildSelect(b->m_builder, isBound, LLVMConstNull(b->m_ptrTy), boundCtx, "unbind"),
                        b->m_exportCtxGlobal);
 
         LLVMValueRef freeArgs[1] = {b->m_curGlobalsPtr};
@@ -10068,7 +10079,8 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
        find in an AOT object (the JIT hands out the copy kept on the BuiltModule). */
     if (TypeMetadataBuild(&b->m_registry, module, &typeMetadata, &typeMetadataSize))
     {
-        LLVMValueRef bytes = LLVMConstStringInContext(b->m_ctx, (const char*)typeMetadata, (unsigned)typeMetadataSize, 1);
+        LLVMValueRef bytes
+            = LLVMConstStringInContext(b->m_ctx, (const char*)typeMetadata, (unsigned)typeMetadataSize, 1);
         LLVMValueRef global = LLVMAddGlobal(b->m_mod, LLVMTypeOf(bytes), ExportedSymbolName(b, STRATA_TYPES_SYMBOL));
         LLVMSetInitializer(global, bytes);
         LLVMSetGlobalConstant(global, 1);

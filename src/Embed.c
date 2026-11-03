@@ -31,12 +31,12 @@ extern "C"
     struct StrataCompiler
     {
         StrataArch arch;
-        void* allocFn;   // optional host allocator for JIT mode
-        void* freeFn;    // optional host deallocator for JIT mode
+        void* allocFn; // optional host allocator for JIT mode
+        void* freeFn;  // optional host deallocator for JIT mode
         StrataJitBackend jitBackend;
         StrataProfile profile; // JIT runtime checks (default: all on)
 
-        StrataImportResolverFn importResolver;      // optional import resolver
+        StrataImportResolverFn importResolver; // optional import resolver
         void* importResolverUserData;
 
         char* symbolPrefix; // prepended to exported symbols (strataSetSymbolPrefix), NULL = none
@@ -104,7 +104,7 @@ extern "C"
     static bool IsReservedRuntimeName(const char* name)
     {
         static const char* const kReserved[] = {
-            "strata_alloc", "strata_free", "strata_panic", "strata_oob",
+            "strata_alloc",  "strata_free",   "strata_panic",   "strata_oob",
             "strata_strdup", "strata_str_eq", "strata_cstrlen",
         };
 
@@ -363,8 +363,9 @@ extern "C"
             /* SIMD vector types always lower to native LLVM vectors; there is
                no scalarizing backend, so refuse rather than silently emit
                SIMD code. */
-            DiagError(diag, SRC_INVALID, "STRATA_EMIT_NO_SIMD is not supported: SIMD types always lower to native "
-                                         "vector instructions");
+            DiagError(diag, SRC_INVALID,
+                      "STRATA_EMIT_NO_SIMD is not supported: SIMD types always lower to native "
+                      "vector instructions");
         }
 
         if (!DiagHasErrors(diag) && mod)
@@ -384,7 +385,7 @@ extern "C"
                     DiagError(diag, SRC_INVALID, "code generation failed");
                 }
 #else
-                DiagError(diag, SRC_INVALID, "LLVM backend not built");
+            DiagError(diag, SRC_INVALID, "LLVM backend not built");
 #endif
             }
             else
@@ -503,13 +504,13 @@ extern "C"
         (void)c;
 
 #if !STRATA_HAS_LLVM
-    (void)inputPath;
-    (void)outputPath;
-    (void)assembly;
+        (void)inputPath;
+        (void)outputPath;
+        (void)assembly;
 
-    SetErrOut(errOut, "LLVM backend not built", "");
+        SetErrOut(errOut, "LLVM backend not built", "");
 
-    return 0;
+        return 0;
 #else
 
     if (!inputPath || !outputPath)
@@ -594,7 +595,7 @@ extern "C"
 
         return buf;
 #else
-        return "disabled";
+    return "disabled";
 #endif
     }
 
@@ -616,10 +617,10 @@ extern "C"
     struct StrataJit
     {
         StrataJitKind kind;
-        void* backend;   // LLVMJit*, per kind; NULL if kind == NONE
+        void* backend; // LLVMJit*, per kind; NULL if kind == NONE
         char* diagnostics;
-        char* symbolPrefix;     // exported symbols carry this prefix; lookups add it
-        uint8_t* typeMetadata;  // strata_types.h blob, NULL without components
+        char* symbolPrefix;    // exported symbols carry this prefix; lookups add it
+        uint8_t* typeMetadata; // strata_types.h blob, NULL without components
         size_t typeMetadataSize;
 #if STRATA_HAS_LLVM
         Vec llvmExports; // LlvmJitExport*, only populated when kind == STRATA_JIT_KIND_LLVM
@@ -664,7 +665,7 @@ extern "C"
             return STRATA_JIT_KIND_LLVM;
         }
 #else
-        (void)want;
+    (void)want;
 #endif
         return STRATA_JIT_KIND_NONE;
     }
@@ -772,8 +773,8 @@ extern "C"
         {
 #if STRATA_HAS_LLVM
         case STRATA_JIT_KIND_LLVM:
-            return JitFromModuleLlvm(mod, diag, arena, sources, sourceCount, diagText, errOut, allocFn, freeFn,
-                                     profile, symbolPrefix);
+            return JitFromModuleLlvm(mod, diag, arena, sources, sourceCount, diagText, errOut, allocFn, freeFn, profile,
+                                     symbolPrefix);
 #endif
         default:
             return UnavailableJit(errOut);
@@ -830,9 +831,8 @@ extern "C"
 
         AnalyzeModule(mod, &diag, &arena);
 
-        StrataJit* handle
-            = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn, c->jitBackend,
-                            &c->profile, c->symbolPrefix);
+        StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn,
+                                          c->jitBackend, &c->profile, c->symbolPrefix);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -1086,16 +1086,16 @@ extern "C"
         InitModuleLoader(&arena, &diag, &loader, c);
 
         Module* mod = ModuleLoaderLoad(&loader, path);
-        int ok = TypeMetadataFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, outBytes, outSize,
-                                        errOut);
+        int ok
+            = TypeMetadataFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, outBytes, outSize, errOut);
 
         TeardownCompile(mod, &loader, &diag, &arena);
 
         return ok;
     }
 
-    int strataCompileTypeMetadataString(StrataCompiler* c, const char* source, const char* moduleName,
-                                        void** outBytes, size_t* outSize, const char** errOut)
+    int strataCompileTypeMetadataString(StrataCompiler* c, const char* source, const char* moduleName, void** outBytes,
+                                        size_t* outSize, const char** errOut)
     {
         if (errOut)
         {

@@ -1,11 +1,11 @@
 #pragma once
 
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
 #include <stdio.h>
-#include <stdarg.h>
+#include <string.h>
 
 // -- Macros
 
@@ -15,7 +15,6 @@
         fputs("Strata compiler crashed: " msg, stderr);                                                                \
         abort();                                                                                                       \
     } while (0)
-
 
 #define STRATA_OOM() STRATA_CRASH("OOM")
 
@@ -49,20 +48,22 @@
 
 // -- Arena
 
-typedef struct ArenaChunk {
+typedef struct ArenaChunk
+{
     struct ArenaChunk* next;
     size_t size;
 } ArenaChunk;
 
-typedef struct Arena {
+typedef struct Arena
+{
     ArenaChunk* head;
     size_t default_chunk;
     char* ptr;
     char* end;
 } Arena;
 
-void  arena_init(Arena* a, size_t initial_chunk);
-void  arena_free(Arena* a);
+void arena_init(Arena* a, size_t initial_chunk);
+void arena_free(Arena* a);
 void* arena_alloc(Arena* a, size_t size);
 void* arena_alloc_aligned(Arena* a, size_t size, size_t align);
 void* arena_dup(Arena* a, const void* src, size_t size);
@@ -72,7 +73,7 @@ char* arena_format(Arena* a, const char* fmt, ...);
 char* arena_vformat(Arena* a, const char* fmt, va_list args);
 
 Arena* scratch_arena(void);
-void   scratch_reset(void);
+void scratch_reset(void);
 
 // -- C string
 
@@ -83,7 +84,8 @@ char* ReplaceExt(const char* path, const char* ext);
 
 // -- Str
 
-typedef struct {
+typedef struct
+{
     const char* data;
     size_t len;
 } Str;
@@ -105,8 +107,14 @@ static inline bool StrEqC(Str a, const char* b)
 
 static inline Str StrSlice(Str s, size_t start, size_t end)
 {
-    if (end > s.len) end = s.len;
-    if (start > end) start = end;
+    if (end > s.len)
+    {
+        end = s.len;
+    }
+    if (start > end)
+    {
+        start = end;
+    }
     return (Str){s.data + start, end - start};
 }
 
@@ -128,8 +136,8 @@ static inline void VecInit(Vec* v)
     v->cap = 0;
 }
 
-void  VecReserve(Vec* v, size_t n);
-void  VecPush(Vec* v, void* item);
+void VecReserve(Vec* v, size_t n);
+void VecPush(Vec* v, void* item);
 void* VecPop(Vec* v);
 
 static inline void* VecGet(const Vec* v, size_t i)
@@ -147,7 +155,8 @@ static inline void VecSet(Vec* v, size_t i, void* item)
 
 // -- StrMap
 
-typedef struct {
+typedef struct
+{
     const char** keys;
     void** values;
     size_t count;
@@ -162,14 +171,15 @@ static inline void StrMapInit(StrMap* m)
     m->cap = 0;
 }
 
-void  StrMapPut(StrMap* m, const char* key, void* value);
+void StrMapPut(StrMap* m, const char* key, void* value);
 void* StrMapGet(const StrMap* m, const char* key);
-void  StrMapFree(StrMap* m);
+void StrMapFree(StrMap* m);
 void StrMapClear(StrMap* m);
 
 // -- String Buffer
 
-typedef struct {
+typedef struct
+{
     char* data;
     size_t len;
     size_t cap;

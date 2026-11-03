@@ -1611,13 +1611,14 @@ STRATA_TEST(type_alias_string_extern_return_crosses_as_char_star)
 {
     /* An alias of `string` returns exactly like `string`: a NUL-terminated
        char* the caller copies into an owned buffer. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "struct Name = string;\n"
-        "extern Name host_make();\n"
-        "Name test() { return host_make(); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Name = string;\n"
+                                  "extern Name host_make();\n"
+                                  "Name test() { return host_make(); }\n",
+                                  &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     CodegenResult res = GenerateLlvmIr(mod);

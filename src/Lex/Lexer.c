@@ -239,7 +239,7 @@ static Token LexTokenImpl(Lexer* lex)
         if (LexerPeek(lex, 0) == '-')
         {
             ++lex->m_pos;
-            
+
             return Make(lex, TokDec, start);
         }
 
@@ -443,7 +443,7 @@ static Token LexNumber(Lexer* lex)
     if (lex->m_source[lex->m_pos] == '.')
     {
         isFloat = true;
-        
+
         ++lex->m_pos;
 
         while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
@@ -491,8 +491,7 @@ static Token LexNumber(Lexer* lex)
 
         if (lex->m_pos == digitsStart)
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
-                      "exponent has no digits");
+            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "exponent has no digits");
         }
     }
 
@@ -538,9 +537,9 @@ static Token LexStringLiteral(Lexer* lex)
             return Make(lex, TokStrLit, start);
         }
 
-        if (c == '\\' && (LexerPeek(lex, 1) == '\\' || LexerPeek(lex, 1) == '"'
-            || LexerPeek(lex, 1) == 'n' || LexerPeek(lex, 1) == 't'
-            || LexerPeek(lex, 1) == 'r' || LexerPeek(lex, 1) == '0'))
+        if (c == '\\'
+            && (LexerPeek(lex, 1) == '\\' || LexerPeek(lex, 1) == '"' || LexerPeek(lex, 1) == 'n'
+                || LexerPeek(lex, 1) == 't' || LexerPeek(lex, 1) == 'r' || LexerPeek(lex, 1) == '0'))
         {
             lex->m_pos += 2;
             continue;
@@ -548,7 +547,8 @@ static Token LexStringLiteral(Lexer* lex)
 
         if (c == '\n')
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start + 1)), "unterminated string literal");
+            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start + 1)),
+                      "unterminated string literal");
             return Make(lex, TokStrLit, start);
         }
 
