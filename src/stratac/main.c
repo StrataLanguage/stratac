@@ -221,7 +221,7 @@ const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count
 // Runs every requested mode.
 void ExecuteCommands(State* state, StrataCompiler* compiler)
 {
-    for (int toggleIndex = 0; toggleIndex < ARRAY_COUNT(modeImpls); toggleIndex++)
+    for (size_t toggleIndex = 0; toggleIndex < ARRAY_COUNT(modeImpls); toggleIndex++)
     {
         const ModeImpl* impl = &modeImpls[toggleIndex];
         if (HAS_TOGGLE(state->toggleCommands, impl->toggle))
