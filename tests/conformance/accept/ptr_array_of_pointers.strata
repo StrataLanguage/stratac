@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: all null
+// rule: an array of `*T` fills with `null` and a pointer element is assigned like any other element
+int main()
+{
+    *int[] list = { null; 3u };
+    int x = 2;
+    list[1] = (*int)addressof(x);
+    list[1] = null;
+    if (list[0] == null && list[1] == null && list[2] == null) { printf("all null\n"); }
+    Report();
+    return 0;
+}

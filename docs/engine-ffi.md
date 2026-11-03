@@ -9,7 +9,8 @@ written in it with almost no C glue. Each feature has a sample run by `ctest`:
 | Feature | Example |
 |---|---|
 | Raw pointers | `ptr p = ptr.null;` — every handle converts to `ptr`; `(ulong)p`, `(ptr)addr`, `(cstring)p` |
-| The null pointer | `ptr.null` converts to `ptr`, any handle and any delegate: `vkCreateDevice(gpu, info, ptr.null, device)`, `if (f == ptr.null)`. There is no bare `null`; an empty optional is one never assigned |
+| Typed pointers | `*int p = null;` — a nullable, non-owning address of a `T`, usable as a field, parameter, return type or array element (`*T[]`). Compares with `null` and the same `*T`; converts to `ptr` implicitly; `(*T)ptrOrAddress`, `(ulong)p` cast. `&x` takes the address of a variable, field or element; `*p` reads and writes the pointee; `p.field` follows the pointer. A null dereference panics. Only non-owning pointees (no `string`, `T[]`, `^T`, `T?`) |
+| The null pointer | `ptr.null` converts to `ptr`, any handle and any delegate: `vkCreateDevice(gpu, info, ptr.null, device)`, `if (f == ptr.null)`. A bare `null` names the same constant (unless a variable called `null` is in scope); an empty optional is one never assigned |
 | Memory intrinsics | `addressof(x)`, `addressof(fn)`, `sizeof<T>()`, `alignof<T>()`, `load<T>(p)`, `store(p, v)` |
 | Buffer of an array or string | `values.data`, `name.data` |
 | Functions C can call | `@export uint Callback(ptr data) { ... }` — plain C ABI, no hidden context; the body sees the module's newest context |

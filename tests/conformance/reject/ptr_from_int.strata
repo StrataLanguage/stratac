@@ -1,0 +1,7 @@
+// expect: reject "cannot be initialized by expression of type 'int'"
+// rule: a `*T` is not initialized from a number; that takes a cast
+int main()
+{
+    *int p = 5;
+    return 0;
+}

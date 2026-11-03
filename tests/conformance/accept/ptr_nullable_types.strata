@@ -1,0 +1,39 @@
+// expect: run
+// expect-output: field null
+// expect-output: local null
+// expect-output: same
+// expect-output: set
+// rule: a `*T` is a nullable pointer: it starts null, compares with `null` and with another `*T`, and passes through calls
+struct Counter { uint n; }
+struct Holder { *int value; *Counter rc; }
+
+*int Pick(*int a, *int b, bool first)
+{
+    if (first) { return a; }
+    return b;
+}
+
+bool IsNull(*Counter c)
+{
+    return c == null;
+}
+
+int main()
+{
+    Holder h;
+    if (h.value == null && IsNull(h.rc)) { printf("field null\n"); }
+
+    *int p = null;
+    if (p == null) { printf("local null\n"); }
+
+    int x = 5;
+    p = (*int)addressof(x);
+    *int q = Pick(p, null, true);
+    if (q == p) { printf("same\n"); }
+    if (Pick(p, null, false) == null && p != null) { printf("set\n"); }
+
+    h.rc = (*Counter)p;
+    if (!IsNull(h.rc)) { h.rc = null; }
+    Report();
+    return 0;
+}

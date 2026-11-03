@@ -170,6 +170,19 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
         return Resolve(b, &resolved);
     }
 
+    // *T: a bare address, whatever T is.
+    if (TypeNameIsPointer(t))
+    {
+        // Resolved for the diagnostic on an unknown pointee; the pointer itself needs no layout.
+        (void)Resolve(b, t->inner);
+
+        TypeDesc td = TypeDescMake(b->ptrTy, 0, NULL);
+        TypeDescSetPointer(&td, true);
+        td.pointee = t->inner;
+
+        return td;
+    }
+
     LLVMTypeRef found = (LLVMTypeRef)StrMapGet(&b->structTypes, t->name);
 
     if (found)
@@ -419,8 +432,11 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
     }
 
     // Handle <-> integer (sema allows these only as explicit casts): a handle is its address.
-    bool valueIsHandle = value.typeDesc.structTypeName && IsHandleType(&b->registry, value.typeDesc.structTypeName);
-    bool targetIsHandle = target.structTypeName && IsHandleType(&b->registry, target.structTypeName);
+    bool valueIsHandle
+        = TypeDescIsPointer(&value.typeDesc)
+          || (value.typeDesc.structTypeName && IsHandleType(&b->registry, value.typeDesc.structTypeName));
+    bool targetIsHandle
+        = TypeDescIsPointer(&target) || (target.structTypeName && IsHandleType(&b->registry, target.structTypeName));
 
     if (valueIsHandle && LLVMGetTypeKind(target.type) == LLVMIntegerTypeKind)
     {

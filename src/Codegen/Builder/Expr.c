@@ -197,7 +197,21 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     LLVMTypeRef structTy;
     const char* structName;
 
-    if (TypeDescIsBox(&base.typeDesc))
+    if (TypeDescIsPointer(&base.typeDesc))
+    {
+        // `p.field` follows the pointer: load the address held in the slot, then index the pointee's struct.
+        if (!base.typeDesc.pointee)
+        {
+            return none;
+        }
+
+        structPtr = LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "pp");
+        EmitPanicIf(b, LLVMBuildICmp(b->builder, LLVMIntEQ, structPtr, LLVMConstNull(b->ptrTy), "isnull"),
+                    "null pointer dereference");
+        structName = base.typeDesc.pointee->name;
+        structTy = Resolve(b, base.typeDesc.pointee).type;
+    }
+    else if (TypeDescIsBox(&base.typeDesc))
     {
         if (!base.typeDesc.boxInner)
         {
@@ -318,6 +332,28 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
     return none;
 }
 
+// Lvalue of `*ptr`: the address the pointer holds, typed as its pointee.
+static LValue EmitDerefLValue(Builder* b, UnaryExpr* u)
+{
+    LValue none = {0};
+
+    if (u->op != UnDeref || !u->pointee)
+    {
+        return none;
+    }
+
+    Value ptr = EmitExpr(b, u->operand);
+
+    EmitPanicIf(b, LLVMBuildICmp(b->builder, LLVMIntEQ, ptr.value, LLVMConstNull(b->ptrTy), "isnull"),
+                "null pointer dereference");
+
+    none.valid = true;
+    none.ptr = ptr.value;
+    none.typeDesc = Resolve(b, u->pointee);
+
+    return none;
+}
+
 LValue EmitLValue(Builder* b, Node* n)
 {
     LValue none = {0};
@@ -335,6 +371,8 @@ LValue EmitLValue(Builder* b, Node* n)
         return EmitMemberLValue(b, (MemberExpr*)n);
     case NodeIndex:
         return EmitIndexLValue(b, (IndexExpr*)n);
+    case NodeUnary:
+        return EmitDerefLValue(b, (UnaryExpr*)n);
     default:
         return none;
     }
@@ -697,8 +735,42 @@ Value EmitCondOperand(Builder* b, Node* n)
     return TypeDescIsOptional(&v.typeDesc) ? v : DerefBoxValue(b, v);
 }
 
+// `&place`: the place's address as a `*T`.
+static Value EmitAddrOf(Builder* b, UnaryExpr* n)
+{
+    TypeDesc ptrTd = TypeDescMake(b->ptrTy, 0, NULL);
+    TypeDescSetPointer(&ptrTd, true);
+    ptrTd.pointee = n->pointee;
+
+    LValue lv = EmitLValue(b, n->operand);
+
+    if (!lv.valid || lv.vectorLane)
+    {
+        if (b->diag)
+        {
+            DiagError(b->diag, n->operand->range, "cannot take the address of this expression");
+        }
+
+        return ValueMake(LLVMConstNull(b->ptrTy), ptrTd);
+    }
+
+    return ValueMake(lv.ptr, ptrTd);
+}
+
 static Value EmitUnary(Builder* b, UnaryExpr* n)
 {
+    if (n->op == UnAddrOf)
+    {
+        return EmitAddrOf(b, n);
+    }
+
+    if (n->op == UnDeref)
+    {
+        LValue lv = EmitDerefLValue(b, n);
+
+        return EmitMemberLValueRead(b, lv);
+    }
+
     Value e = n->op == UnNot ? EmitCondOperand(b, n->operand) : DerefBoxValue(b, EmitExpr(b, n->operand));
 
     switch (n->op)
@@ -728,6 +800,10 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
         return ValueMake(ref, e.typeDesc);
     }
+
+    case UnAddrOf:
+    case UnDeref:
+        break;
     }
 
     return e;

@@ -153,7 +153,7 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     ArenaFree(&arena3);
 }
 
-STRATA_TEST(null_pointer_is_ptr_null)
+STRATA_TEST(null_pointer_is_null)
 {
     /* `ptr.null` is the null pointer, for ptr, handles and delegates alike. */
     Arena arena;
@@ -174,14 +174,22 @@ STRATA_TEST(null_pointer_is_ptr_null)
     DiagnosticEngineFree(&diag);
     ArenaFree(&arena);
 
-    /* A bare `null` is not a thing, and says what to write instead. */
+    /* A bare `null` is the same constant, wherever no variable named `null` is in scope. */
     Arena arena2;
     ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
-    ParseAndResolve("void Use() { ptr p = null; }\n", &diag2, &arena2);
-    STRATA_CHECK(DiagHasErrors(&diag2));
-    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "'ptr.null'"));
+    ParseAndResolve("handle Window;\n"
+                    "struct Counter { uint n; };\n"
+                    "bool Use(*Counter c) {\n"
+                    "    ptr p = null;\n"
+                    "    Window w = null;\n"
+                    "    *int ip = null;\n"
+                    "    c = null;\n"
+                    "    return p == null && w == null && ip == null && c == null;\n"
+                    "}\n",
+                    &diag2, &arena2);
+    STRATA_CHECK(!DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
     ArenaFree(&arena2);
 }

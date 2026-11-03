@@ -371,12 +371,12 @@ void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, S
 static bool CheckLocalTypeKnown(Resolver* r, VarDeclStmt* vd)
 {
     const TypeName* t = &vd->type;
-    while (t && (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameHasArrayShape(t)))
+    while (t && (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameIsPointer(t) || TypeNameHasArrayShape(t)))
     {
-        t = (TypeNameIsBox(t) || TypeNameIsOptional(t)) ? t->inner : t->elem;
+        t = (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameIsPointer(t)) ? t->inner : t->elem;
     }
-    if (t && t->name && !IsStringType(t->primitiveType) && !IsCStringType(t->primitiveType)
-        && !IsScalarType(t->primitiveType) && !IsSimdVector(t->primitiveType)
+    if (t && t->name && t->primitiveType != PrimVoid && !IsStringType(t->primitiveType)
+        && !IsCStringType(t->primitiveType) && !IsScalarType(t->primitiveType) && !IsSimdVector(t->primitiveType)
         && !TypeRegistryIsUserType(&r->registry, t->name))
     {
         DiagErrorFmt(r->diag, vd->base.range, "unknown type '%s'", t->name);

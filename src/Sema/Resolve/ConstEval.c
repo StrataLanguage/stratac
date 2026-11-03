@@ -706,6 +706,9 @@ static bool FoldUnary(Resolver* r, Node* n, ConstGlobalVal* out)
 
         out->i = (ConstInt)ConstIntNarrow((ConstUInt)~out->i, out->ity);
         return true;
+    case UnAddrOf:
+    case UnDeref:
+        return false;
     }
 
     return false;
