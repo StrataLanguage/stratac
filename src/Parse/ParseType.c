@@ -200,119 +200,12 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
     out->range = SpanToCur(p, constRange);
 }
 
-/* `bare` parses only the base type (`const`, `^`, a keyword or a name) and
-   leaves any trailing `?` / `[]` for the caller: the box branch uses it so
-   that `^` binds tighter than those suffixes. */
-static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
+static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare);
+
+/* The name of a builtin type keyword or of an identifier. The token is left for the caller to
+   consume. Returns NULL when the token starts no type. */
+static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constRange, bool* isVector)
 {
-    bool isConst = false;
-    bool isVector = false;
-    SourceRange constRange = p->m_cur.range;
-
-    if (p->m_cur.kind == TokKwConst)
-    {
-        isConst = true;
-        Advance(p);
-    }
-
-    if (p->m_cur.kind == TokCaret)
-    {
-        /* `^T` — boxed type. `^` binds tighter than a trailing `[]` or `?`, so
-           `^S[]` is an array of boxed S and `^S[]?` an optional array of boxed
-           S. The inner type is parsed bare so the suffixes are seen here. */
-        SourceRange caretRange = p->m_cur.range;
-        Advance(p);
-
-        TypeName base = {0};
-
-        if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
-        {
-            DiagError(p->m_diag, p->m_cur.range, "expected a type after '^'");
-            return false;
-        }
-
-        TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
-
-        /* `^string` is redundant: `string?` is already the maybe-empty
-           string, so a box that can never be empty but holds a string has
-           no distinct meaning. */
-        if (base.primitiveType == PrimString)
-        {
-            DiagError(p->m_diag, caretRange, "redundant boxing of type 'string'");
-        }
-
-        /* `^cstring` is not supported: a constant string is already a
-           plain pointer with no ownership to box. */
-        if (base.primitiveType == PrimCString)
-        {
-            DiagError(p->m_diag, caretRange, "type 'cstring' cannot be boxed");
-        }
-
-        wrapped.range
-            = (SourceRange){caretRange.start, (uint32_t)(p->m_cur.range.start - caretRange.start), caretRange.fileId};
-        *out = wrapped;
-
-        if (bare)
-        {
-            out->isConst = isConst;
-
-            return true;
-        }
-
-        /* `^S?` would wrap the box, which is never empty. Report it and keep
-           going as `^S`, so a following `[]` still reads as an array of boxes. */
-        if (p->m_cur.kind == TokQuestion)
-        {
-            DiagErrorFmt(p->m_diag, p->m_cur.range,
-                         "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
-                         base.name, base.name);
-            Advance(p);
-        }
-
-        ApplyArrayBrackets(p, out, constRange);
-
-        /* A trailing `?` after brackets wraps the ARRAY in an optional
-           (`^S[]?` = optional array of boxes). Fixed dims have no empty state. */
-        if (p->m_cur.kind == TokQuestion)
-        {
-            bool anyFixed = false;
-
-            for (const TypeName* t = out; t && t->isArray; t = t->elem)
-            {
-                anyFixed = anyFixed || t->length >= 0;
-            }
-
-            if (!out->isArray)
-            {
-                DiagErrorFmt(
-                    p->m_diag, p->m_cur.range,
-                    "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
-                    base.name, base.name);
-                Advance(p);
-            }
-            else if (anyFixed)
-            {
-                DiagErrorFmt(p->m_diag, p->m_cur.range, "fixed-size array '%s' cannot be optional; it is never empty",
-                             out->name);
-                Advance(p);
-            }
-            else
-            {
-                SourceRange qRange = p->m_cur.range;
-                Advance(p);
-
-                TypeName arr = *out;
-                TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
-                optWrapped.range = qRange;
-                *out = optWrapped;
-            }
-        }
-
-        out->isConst = isConst;
-
-        return true;
-    }
-
     const char* name = NULL;
 
     switch (p->m_cur.kind)
@@ -355,15 +248,15 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
         break;
     case TokKwFloat2:
         name = "float2";
-        isVector = true;
+        *isVector = true;
         break;
     case TokKwFloat3:
         name = "float3";
-        isVector = true;
+        *isVector = true;
         break;
     case TokKwFloat4:
         name = "float4";
-        isVector = true;
+        *isVector = true;
         break;
     case TokKwString:
         name = "string";
@@ -380,25 +273,16 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
             DiagError(p->m_diag, constRange, "'const' must be followed by a type");
         }
 
-        return false;
+        return NULL;
     }
 
-    Advance(p);
+    return name;
+}
 
-    out->name = (char*)name;
-    out->primitiveType = GetPrimitiveType(name);
-    out->range = SpanToCur(p, constRange);
-
-    if (bare)
-    {
-        out->isConst = isConst;
-        out->isVector = isVector;
-
-        return true;
-    }
-
-    /* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
-       so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
+/* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
+   so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
+static void ParseOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange)
+{
     if (p->m_cur.kind == TokQuestion)
     {
         /* At this point the type is always bare (boxes and array brackets
@@ -420,12 +304,13 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
             *out = wrapped;
         }
     }
+}
 
-    ApplyArrayBrackets(p, out, constRange);
-
-    /* A trailing `?` after brackets wraps the whole array in an optional:
-       `int[]?` (maybe-empty dynamic array) differs from `int?[]` (array of
-       optionals). Fixed-size arrays have no empty state, so cannot be optional. */
+/* A trailing `?` after brackets wraps the whole array in an optional:
+   `int[]?` (maybe-empty dynamic array) differs from `int?[]` (array of
+   optionals). Fixed-size arrays have no empty state, so cannot be optional. */
+static void ParseArrayOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange)
+{
     if (p->m_cur.kind == TokQuestion)
     {
         SourceRange qRange = p->m_cur.range;
@@ -451,6 +336,156 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
             Advance(p);
         }
     }
+}
+
+/* The suffixes after `^T`, which bind to the box: a `?` right after the box is reported, `[]`
+   brackets make an array of boxes, and a `?` after those wraps the array. */
+static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, SourceRange constRange)
+{
+    /* `^S?` would wrap the box, which is never empty. Report it and keep
+       going as `^S`, so a following `[]` still reads as an array of boxes. */
+    if (p->m_cur.kind == TokQuestion)
+    {
+        DiagErrorFmt(p->m_diag, p->m_cur.range,
+                     "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
+                     baseName, baseName);
+        Advance(p);
+    }
+
+    ApplyArrayBrackets(p, out, constRange);
+
+    /* A trailing `?` after brackets wraps the ARRAY in an optional
+       (`^S[]?` = optional array of boxes). Fixed dims have no empty state. */
+    if (p->m_cur.kind == TokQuestion)
+    {
+        bool anyFixed = false;
+
+        for (const TypeName* t = out; t && t->isArray; t = t->elem)
+        {
+            anyFixed = anyFixed || t->length >= 0;
+        }
+
+        if (!out->isArray)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range,
+                         "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
+                         baseName, baseName);
+            Advance(p);
+        }
+        else if (anyFixed)
+        {
+            DiagErrorFmt(p->m_diag, p->m_cur.range, "fixed-size array '%s' cannot be optional; it is never empty",
+                         out->name);
+            Advance(p);
+        }
+        else
+        {
+            SourceRange qRange = p->m_cur.range;
+            Advance(p);
+
+            TypeName arr = *out;
+            TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
+            optWrapped.range = qRange;
+            *out = optWrapped;
+        }
+    }
+}
+
+/* `^T` — boxed type. `^` binds tighter than a trailing `[]` or `?`, so
+   `^S[]` is an array of boxed S and `^S[]?` an optional array of boxed
+   S. The inner type is parsed bare so the suffixes are seen here. */
+static bool ParseBoxedType(Parser* p, TypeName* out, bool isConst, SourceRange constRange, bool bare)
+{
+    SourceRange caretRange = p->m_cur.range;
+    Advance(p);
+
+    TypeName base = {0};
+
+    if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a type after '^'");
+        return false;
+    }
+
+    TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
+
+    /* `^string` is redundant: `string?` is already the maybe-empty
+       string, so a box that can never be empty but holds a string has
+       no distinct meaning. */
+    if (base.primitiveType == PrimString)
+    {
+        DiagError(p->m_diag, caretRange, "redundant boxing of type 'string'");
+    }
+
+    /* `^cstring` is not supported: a constant string is already a
+       plain pointer with no ownership to box. */
+    if (base.primitiveType == PrimCString)
+    {
+        DiagError(p->m_diag, caretRange, "type 'cstring' cannot be boxed");
+    }
+
+    wrapped.range
+        = (SourceRange){caretRange.start, (uint32_t)(p->m_cur.range.start - caretRange.start), caretRange.fileId};
+    *out = wrapped;
+
+    if (bare)
+    {
+        out->isConst = isConst;
+
+        return true;
+    }
+
+    ParseBoxSuffixes(p, out, base.name, constRange);
+
+    out->isConst = isConst;
+
+    return true;
+}
+
+/* `bare` parses only the base type (`const`, `^`, a keyword or a name) and
+   leaves any trailing `?` / `[]` for the caller: the box branch uses it so
+   that `^` binds tighter than those suffixes. */
+static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
+{
+    bool isConst = false;
+    bool isVector = false;
+    SourceRange constRange = p->m_cur.range;
+
+    if (p->m_cur.kind == TokKwConst)
+    {
+        isConst = true;
+        Advance(p);
+    }
+
+    if (p->m_cur.kind == TokCaret)
+    {
+        return ParseBoxedType(p, out, isConst, constRange, bare);
+    }
+
+    const char* name = ParseBaseTypeName(p, isConst, constRange, &isVector);
+
+    if (!name)
+    {
+        return false;
+    }
+
+    Advance(p);
+
+    out->name = (char*)name;
+    out->primitiveType = GetPrimitiveType(name);
+    out->range = SpanToCur(p, constRange);
+
+    if (bare)
+    {
+        out->isConst = isConst;
+        out->isVector = isVector;
+
+        return true;
+    }
+
+    ParseOptionalSuffix(p, out, constRange);
+    ApplyArrayBrackets(p, out, constRange);
+    ParseArrayOptionalSuffix(p, out, constRange);
 
     out->isConst = isConst;
     out->isVector = isVector;
