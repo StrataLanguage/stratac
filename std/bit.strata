@@ -1,0 +1,18 @@
+/*
+	Bitwise helpers and helpers for manipulating values
+*/
+
+
+union __bitcastimpl<TSrc, TDst>
+{
+	TSrc src;
+	TDst dst;
+}
+
+/** Casts one types' representation to another type without modifying the underlying value. */
+TDst bitcast<TSrc, TDst>(TSrc src)
+{
+	__bitcastimpl<TSrc, TDst> bci;
+	bci.src = src;
+	return bci.dst;
+}

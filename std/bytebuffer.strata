@@ -18,6 +18,15 @@ ulong bb_min(ulong x, ulong y)
 	return y;
 }
 
+@private
+ulong bb_max(ulong x, ulong y)
+{
+	if (x >= y) {
+		return x;
+	}
+	return y;
+}
+
 impl bytebuffer
 {
 	// TODO: init should act as a constructor without needing to be called manually.
@@ -48,6 +57,11 @@ impl bytebuffer
 			self.capacity *= 2;
 			self.pbuffer = (*byte)realloc((*void)self.pbuffer, self.capacity);
 		}
+	}
+
+	void rewind(ref bytebuffer self, ulong by)
+	{
+
 	}
 
 	// Writes a string to the bytebuffer

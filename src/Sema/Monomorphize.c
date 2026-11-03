@@ -1783,6 +1783,25 @@ static size_t RewriteType(Mono* m, TypeName* t)
     return useDepth;
 }
 
+// `holder<int>(args)`: a constructor call on the instance `holder<int>`, which is named by its canonical spelling
+// like any other use of the struct.
+static void RewriteGenericStructCall(Mono* m, CallExpr* call)
+{
+    TypeName use = {0};
+    use.name = call->callee;
+    use.genericBase = call->callee;
+    use.typeArgs = call->typeArgs;
+    use.typeArgCount = call->typeArgCount;
+    use.range = call->base.range;
+
+    RewriteType(m, &use);
+
+    call->callee = use.name;
+    call->typeArg = NULL;
+    call->typeArgs = NULL;
+    call->typeArgCount = 0;
+}
+
 // A call to a generic function becomes a call to its instance, named by the canonical spelling. Other
 // calls are left for sema (generic externs; methods, found through their impl).
 static void RewriteCall(Mono* m, CallExpr* call)
@@ -1806,7 +1825,11 @@ static void RewriteCall(Mono* m, CallExpr* call)
 
     if (!tmpl)
     {
-        if (StrMapGet(&m->structTemplates, call->callee))
+        if (StrMapGet(&m->structTemplates, call->callee) && call->typeArgCount > 0)
+        {
+            RewriteGenericStructCall(m, call);
+        }
+        else if (StrMapGet(&m->structTemplates, call->callee))
         {
             DiagErrorFmt(m->diag, call->base.range, "generic struct '%s' needs type arguments: write '%s<...> { ... }'",
                          call->callee, call->callee);
