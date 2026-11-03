@@ -397,6 +397,150 @@ static void LowerBlock(Builder* b, const Block* blk)
     PopScope(b);
 }
 
+static void LowerVarDecl(Builder* b, const Node* n)
+{
+    LowerExprC(b, ((const VarDeclStmt*)n)->init, !((const VarDeclStmt*)n)->isRef);
+    Emit(b, CfgDeclare, n);
+}
+
+static void LowerExprStmt(Builder* b, const Node* n)
+{
+    LowerExpr(b, ((const ExprStmt*)n)->expr);
+
+    /* A `@noreturn` call never continues: nothing runs after it, not even the defers. */
+    if (StmtIsNoReturnCall(n))
+    {
+        StartDeadBlock(b);
+    }
+}
+
+static void LowerDefer(Builder* b, const Node* n)
+{
+    if (b->scopeCount > 0)
+    {
+        VecPush(&b->scopes[b->scopeCount - 1].defers, ((DeferStmt*)n)->stmt);
+    }
+}
+
+static void LowerReturn(Builder* b, const Node* n)
+{
+    LowerExprC(b, ((const ReturnStmt*)n)->value, true);
+    Emit(b, CfgReturn, n);
+    RunDefers(b, 0);
+    Goto(b, b->cfg->exit);
+    StartDeadBlock(b);
+}
+
+static void LowerBreakContinue(Builder* b, const Node* n)
+{
+    if (b->loopCount > 0)
+    {
+        LoopFrame* lf = &b->loops[b->loopCount - 1];
+        RunDefers(b, lf->scopeDepth);
+        Goto(b, n->kind == NodeBreak ? lf->breakTarget : lf->continueTarget);
+        StartDeadBlock(b);
+    }
+}
+
+static void LowerIf(Builder* b, const Node* n)
+{
+    const IfStmt* s = (const IfStmt*)n;
+    size_t thenBlock = NewBlock(b);
+    size_t elseBlock = s->elseBranch ? NewBlock(b) : 0;
+    size_t join = NewBlock(b);
+
+    Branch(b, s->condition, thenBlock, s->elseBranch ? elseBlock : join);
+    b->cur = thenBlock;
+    LowerStmt(b, s->thenBranch);
+    Goto(b, join);
+
+    if (s->elseBranch)
+    {
+        b->cur = elseBlock;
+        LowerStmt(b, s->elseBranch);
+        Goto(b, join);
+    }
+
+    b->cur = join;
+}
+
+static void LowerWhile(Builder* b, const Node* n)
+{
+    const WhileStmt* s = (const WhileStmt*)n;
+    size_t head = NewBlock(b);
+    size_t body = NewBlock(b);
+    size_t after = NewBlock(b);
+
+    Goto(b, head);
+    b->cur = head;
+
+    /* `while (true)` has no way out but `break` and `return`. */
+    if (s->condition->kind == NodeBoolLiteral && ((const BoolLiteral*)s->condition)->value)
+    {
+        Goto(b, body);
+    }
+    else
+    {
+        size_t ended = Branch(b, s->condition, body, after);
+        b->cfg->blocks[ended].loopCond = true;
+    }
+
+    if (b->loopCount == b->loopCap)
+    {
+        b->loopCap = b->loopCap ? b->loopCap * 2 : 4;
+        b->loops = (LoopFrame*)realloc(b->loops, b->loopCap * sizeof(LoopFrame));
+    }
+
+    b->loops[b->loopCount++] = (LoopFrame){after, head, b->scopeCount};
+    b->cur = body;
+    LowerStmt(b, s->body);
+    Goto(b, head);
+    b->loopCount--;
+    b->cur = after;
+}
+
+static void LowerFor(Builder* b, const Node* n)
+{
+    const ForStmt* s = (const ForStmt*)n;
+    PushScope(b, NULL); /* the init's variable lives for the whole loop */
+    LowerStmt(b, s->init);
+
+    size_t head = NewBlock(b);
+    size_t body = NewBlock(b);
+    size_t step = NewBlock(b);
+    size_t after = NewBlock(b);
+
+    Goto(b, head);
+    b->cur = head;
+
+    if (s->condition)
+    {
+        size_t ended = Branch(b, s->condition, body, after);
+        b->cfg->blocks[ended].loopCond = true;
+    }
+    else
+    {
+        Goto(b, body);
+    }
+
+    if (b->loopCount == b->loopCap)
+    {
+        b->loopCap = b->loopCap ? b->loopCap * 2 : 4;
+        b->loops = (LoopFrame*)realloc(b->loops, b->loopCap * sizeof(LoopFrame));
+    }
+
+    b->loops[b->loopCount++] = (LoopFrame){after, step, b->scopeCount};
+    b->cur = body;
+    LowerStmt(b, s->body);
+    Goto(b, step);
+    b->loopCount--;
+    b->cur = step;
+    LowerExpr(b, s->update);
+    Goto(b, head);
+    b->cur = after;
+    PopScope(b);
+}
+
 static void LowerStmt(Builder* b, const Node* n)
 {
     if (!n)
@@ -410,143 +554,30 @@ static void LowerStmt(Builder* b, const Node* n)
         LowerBlock(b, (const Block*)n);
         break;
     case NodeVarDecl:
-        LowerExprC(b, ((const VarDeclStmt*)n)->init, !((const VarDeclStmt*)n)->isRef);
-        Emit(b, CfgDeclare, n);
+        LowerVarDecl(b, n);
         break;
     case NodeExprStmt:
-        LowerExpr(b, ((const ExprStmt*)n)->expr);
-
-        /* A `@noreturn` call never continues: nothing runs after it, not even the defers. */
-        if (StmtIsNoReturnCall(n))
-        {
-            StartDeadBlock(b);
-        }
-
+        LowerExprStmt(b, n);
         break;
     case NodeDefer:
-        if (b->scopeCount > 0)
-        {
-            VecPush(&b->scopes[b->scopeCount - 1].defers, ((DeferStmt*)n)->stmt);
-        }
-
+        LowerDefer(b, n);
         break;
     case NodeReturn:
-        LowerExprC(b, ((const ReturnStmt*)n)->value, true);
-        Emit(b, CfgReturn, n);
-        RunDefers(b, 0);
-        Goto(b, b->cfg->exit);
-        StartDeadBlock(b);
+        LowerReturn(b, n);
         break;
     case NodeBreak:
     case NodeContinue:
-        if (b->loopCount > 0)
-        {
-            LoopFrame* lf = &b->loops[b->loopCount - 1];
-            RunDefers(b, lf->scopeDepth);
-            Goto(b, n->kind == NodeBreak ? lf->breakTarget : lf->continueTarget);
-            StartDeadBlock(b);
-        }
-
+        LowerBreakContinue(b, n);
         break;
     case NodeIf:
-    {
-        const IfStmt* s = (const IfStmt*)n;
-        size_t thenBlock = NewBlock(b);
-        size_t elseBlock = s->elseBranch ? NewBlock(b) : 0;
-        size_t join = NewBlock(b);
-
-        Branch(b, s->condition, thenBlock, s->elseBranch ? elseBlock : join);
-        b->cur = thenBlock;
-        LowerStmt(b, s->thenBranch);
-        Goto(b, join);
-
-        if (s->elseBranch)
-        {
-            b->cur = elseBlock;
-            LowerStmt(b, s->elseBranch);
-            Goto(b, join);
-        }
-
-        b->cur = join;
+        LowerIf(b, n);
         break;
-    }
     case NodeWhile:
-    {
-        const WhileStmt* s = (const WhileStmt*)n;
-        size_t head = NewBlock(b);
-        size_t body = NewBlock(b);
-        size_t after = NewBlock(b);
-
-        Goto(b, head);
-        b->cur = head;
-
-        /* `while (true)` has no way out but `break` and `return`. */
-        if (s->condition->kind == NodeBoolLiteral && ((const BoolLiteral*)s->condition)->value)
-        {
-            Goto(b, body);
-        }
-        else
-        {
-            size_t ended = Branch(b, s->condition, body, after);
-            b->cfg->blocks[ended].loopCond = true;
-        }
-
-        if (b->loopCount == b->loopCap)
-        {
-            b->loopCap = b->loopCap ? b->loopCap * 2 : 4;
-            b->loops = (LoopFrame*)realloc(b->loops, b->loopCap * sizeof(LoopFrame));
-        }
-
-        b->loops[b->loopCount++] = (LoopFrame){after, head, b->scopeCount};
-        b->cur = body;
-        LowerStmt(b, s->body);
-        Goto(b, head);
-        b->loopCount--;
-        b->cur = after;
+        LowerWhile(b, n);
         break;
-    }
     case NodeFor:
-    {
-        const ForStmt* s = (const ForStmt*)n;
-        PushScope(b, NULL); /* the init's variable lives for the whole loop */
-        LowerStmt(b, s->init);
-
-        size_t head = NewBlock(b);
-        size_t body = NewBlock(b);
-        size_t step = NewBlock(b);
-        size_t after = NewBlock(b);
-
-        Goto(b, head);
-        b->cur = head;
-
-        if (s->condition)
-        {
-            size_t ended = Branch(b, s->condition, body, after);
-            b->cfg->blocks[ended].loopCond = true;
-        }
-        else
-        {
-            Goto(b, body);
-        }
-
-        if (b->loopCount == b->loopCap)
-        {
-            b->loopCap = b->loopCap ? b->loopCap * 2 : 4;
-            b->loops = (LoopFrame*)realloc(b->loops, b->loopCap * sizeof(LoopFrame));
-        }
-
-        b->loops[b->loopCount++] = (LoopFrame){after, step, b->scopeCount};
-        b->cur = body;
-        LowerStmt(b, s->body);
-        Goto(b, step);
-        b->loopCount--;
-        b->cur = step;
-        LowerExpr(b, s->update);
-        Goto(b, head);
-        b->cur = after;
-        PopScope(b);
+        LowerFor(b, n);
         break;
-    }
     default:
         break;
     }
