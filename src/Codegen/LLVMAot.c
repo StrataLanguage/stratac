@@ -1,29 +1,10 @@
 #include "LLVMAot.h"
 #include "Codegen/LLVMCApi.h"
+#include "LLVMTargets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static void EnsureTargetsInitialized(void)
-{
-    static bool initialized = false;
-
-    if (!initialized)
-    {
-        LLVMInitializeX86TargetInfo();
-        LLVMInitializeX86Target();
-        LLVMInitializeX86TargetMC();
-        LLVMInitializeX86AsmPrinter();
-
-        LLVMInitializeAArch64TargetInfo();
-        LLVMInitializeAArch64Target();
-        LLVMInitializeAArch64TargetMC();
-        LLVMInitializeAArch64AsmPrinter();
-
-        initialized = true;
-    }
-}
 
 /* STRATA_ASAN=1: marks every defined function `sanitize_address` and runs LLVM's AddressSanitizer over the module,
    so the program links against clang's ASan runtime and reports use after free, overflow and double free in the

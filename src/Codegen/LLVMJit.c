@@ -1,5 +1,6 @@
 #include "LLVMJit.h"
 #include "Codegen/LLVMCApi.h"
+#include "LLVMTargets.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,26 +21,6 @@ static void strata_free_impl(void* p)
 
 extern void strata_panic(const char* msg);
 extern void strata_oob(const char* msg);
-
-static void EnsureTargetsInitialized(void)
-{
-    static bool initialized = false;
-
-    if (!initialized)
-    {
-        LLVMInitializeX86TargetInfo();
-        LLVMInitializeX86Target();
-        LLVMInitializeX86TargetMC();
-        LLVMInitializeX86AsmPrinter();
-
-        LLVMInitializeAArch64TargetInfo();
-        LLVMInitializeAArch64Target();
-        LLVMInitializeAArch64TargetMC();
-        LLVMInitializeAArch64AsmPrinter();
-
-        initialized = true;
-    }
-}
 
 /* Converts an LLVMErrorRef into a malloc-owned string (freed by the caller
    with free(), matching this file's errorMessage out-param convention),

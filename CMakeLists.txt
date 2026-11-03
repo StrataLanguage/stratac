@@ -50,6 +50,7 @@ set(STRATA_LLVM_SOURCES
     src/Codegen/LLVMModuleBuilder.c
     src/Codegen/LLVMAot.c
     src/Codegen/LLVMJit.c
+    src/Codegen/LLVMTargets.c
 )
 
 set(STRATA_SOURCES ${STRATA_COMMON_SOURCES})
