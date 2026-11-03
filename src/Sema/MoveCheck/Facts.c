@@ -419,13 +419,6 @@ void ApplyCond(const Env* env, unsigned char* f, const Node* c, bool whenTrue, b
     }
 }
 
-static const char* PlaceKey(const Env* env, const Node* n)
-{
-    char buf[256];
-    const char* root;
-    return FactPlaceOf(n, buf, sizeof(buf), &root) ? ArenaStrdup(env->arena, buf) : "<expression>";
-}
-
 // Reports a read of the optional `value` that lacks the proof. `k` is its fact, if it has one.
 static void ReportUnproven(const Env* env, const unsigned char* f, Found* found, const Node* value, SourceRange range,
                            int k)

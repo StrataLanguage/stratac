@@ -309,7 +309,6 @@ static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const Ty
 
     if (!bracedValue && elemType)
     {
-        typedArg = typedArg;
         VecSet(&c->args, valueIdx, typedArg);
     }
 
@@ -499,27 +498,6 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    // The buffer may be reallocated or elements shifted: refs to elements die.
-
-    // Length may change: drop `[recv.length]` facts (resize/pop also drop below).
-    {
-        const char* lenRecvKey = MovableBoxSourceKey(r, arg0);
-
-        if (lenRecvKey)
-        {
-        }
-    }
-
-    // Resize/pop/remove drop element facts (removal moves elements between slots); push keeps them.
-    if (isResize || isPop || isRemove)
-    {
-        const char* recvKey = MovableBoxSourceKey(r, arg0);
-
-        if (recvKey)
-        {
-        }
-    }
-
     // array_pop needs nothing beyond the receiver checks above.
     if (isPush)
     {
@@ -699,19 +677,10 @@ void ResolveIndexExpr(Resolver* r, Node* n, StrMap* scope)
 {
     IndexExpr* ix = (IndexExpr*)n;
 
-    ResolveExprImpl(r, ix->baseNode, scope, true);
-    ResolveExprImpl(r, ix->index, scope, false);
+    ResolveExprImpl(r, ix->baseNode, scope);
+    ResolveExprImpl(r, ix->index, scope);
 
-    // Indexing an optional array (`opt[i]`) reads its contents - the
-    // same narrowing rule as a member read through a `T?`.
-    {
-        const TypeName* baseType = InferType(r, ix->baseNode, scope);
-
-        if (baseType && TypeNameIsOptional(baseType))
-        {
-            const char* baseKey = MovableBoxSourceKey(r, ix->baseNode);
-        }
-    }
+    InferType(r, ix->baseNode, scope);
 
     return;
 }
@@ -753,7 +722,6 @@ void ResolveArrayInitExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (ai->elementType)
         {
-            elem = elem;
             VecSet(&ai->elements, i, elem);
         }
 

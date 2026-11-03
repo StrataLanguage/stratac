@@ -20,8 +20,6 @@ size_t NamedParamCount(const FunctionDecl* f)
 
 static Str GenerateCallSignatureString(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    int emittedLength = 0;
-
     Sb b;
     SbInit(&b);
 
@@ -317,60 +315,22 @@ void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (fd)
     {
-        bool typedRest = fd->isVariadic && !fd->isCVararg;
-        size_t namedCount = NamedParamCount(fd);
-
         for (size_t j = 0; j < c->args.count; j++)
         {
-            Node* arg = (Node*)VecGet(&c->args, j);
-            const TypeName* at = InferType(r, arg, scope);
-
-            const TypeName* target = NULL;
-
-            if (j < namedCount)
-            {
-                target = &((ParamDecl*)VecGet(&fd->params, j))->type;
-            }
-            else if (typedRest)
-            {
-                const ParamDecl* restParam = (ParamDecl*)VecGet(&fd->params, fd->params.count - 1);
-                target = TypeNameArrayElem(&restParam->type);
-            }
-            else if (fd->isCVararg)
-            {
-                target = TypeNameBoxInner(at);
-            }
+            InferType(r, (Node*)VecGet(&c->args, j), scope);
         }
 
         return;
     }
 
-    // Struct constructor: field slots are the targets.
     if (TypeRegistryIsUserType(&r->registry, c->callee))
     {
-        const StructType* st = TypeRegistryFind(&r->registry, c->callee);
-
-        for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
-        {
-            FieldDecl* fd2 = (FieldDecl*)VecGet(&st->fields, j);
-            Node* arg = (Node*)VecGet(&c->args, j);
-        }
-
         return;
     }
 
-    // array_push: the element slot is the target.
     if (c->callee && strcmp(c->callee, "array_push") == 0 && c->args.count == 2)
     {
-        const TypeName* arrType = InferType(r, (Node*)VecGet(&c->args, 0), scope);
-        const TypeName* elem
-            = arrType && TypeNameIsOptional(arrType) ? TypeNameArrayElem(arrType->inner) : TypeNameArrayElem(arrType);
-        Node* valArg = (Node*)VecGet(&c->args, 1);
-
-        if (arrType && TypeNameIsOptional(arrType))
-        {
-            Node* arrArg = (Node*)VecGet(&c->args, 0);
-        }
+        InferType(r, (Node*)VecGet(&c->args, 0), scope);
     }
 }
 
@@ -1081,77 +1041,78 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
     // fixed-array views bind.
     bool mutableRef = !isTail && param->mod == ModRef && !paramType->isConst;
 
-    if (strcmp(argType->name, paramType->name) == 0)
+    if (strcmp(argType->name, paramType->name) != 0)
     {
-    }
-    else if (mutableRef && !SameResolvedType(r, argType->name, paramType->name)
-             && !(TypeNameIsOwning(argType) && !TypeNameIsOptional(paramType)) && !TypeNameIsFixedArray(argType))
-    {
-        return false;
-    }
-    else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->registry, paramType->name))
-    {
-        // String literal contextually coerces to `cstring`.
-        *score += 1;
-    }
-    else if (TypeIsCString(&r->registry, argType->name) && TypeIsString(&r->registry, paramType->name))
-    {
-        // `cstring` copies into a `string` param (heap copy).
-        *score += 1;
-    }
-    else if (!mutableRef && IsImplicitScalarConversion(paramType->primitiveType, argType->primitiveType)
-             && ArgConvertsWithoutLoss(arg, argType, paramType))
-    {
-        *score += 1;
-    }
-    else if (IsSimdVector(argType->primitiveType) && IsSimdVector(paramType->primitiveType))
-    {
-        // Same rule as assignment: no implicit lane-count or element-type change.
-        if (IsVectorAssignableType(r, paramType, argType, TypeRegistryResolveAlias(&r->registry, paramType->name),
-                                   TypeRegistryResolveAlias(&r->registry, argType->name)))
-        {
-            *score += 1;
-        }
-        else
+        if (mutableRef && !SameResolvedType(r, argType->name, paramType->name)
+            && !(TypeNameIsOwning(argType) && !TypeNameIsOptional(paramType)) && !TypeNameIsFixedArray(argType))
         {
             return false;
         }
-    }
-    else if (HandleExtendsFrom(&r->registry, argType->name, paramType->name))
-    {
-        *score += 1;
-    }
-    else if (TypeNameIsOptional(paramType))
-    {
-        // `T` and `^T` coerce into `T?` when inners match.
-        const char* paramInner = TypeNameBoxInner(paramType) ? TypeNameBoxInner(paramType)->name : NULL;
-
-        bool optMatch = false;
-
-        if (paramInner && (TypeNameIsBox(argType) || TypeNameIsOptional(argType)))
+        else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->registry, paramType->name))
         {
-            const TypeName* argInner = TypeNameBoxInner(argType);
-
-            optMatch = argInner != NULL ? strcmp(argInner->name, paramInner) == 0
-                                        : strcmp("string", paramInner) == 0; // bare ^string
+            // String literal contextually coerces to `cstring`.
+            *score += 1;
         }
-        else if (paramInner)
+        else if (TypeIsCString(&r->registry, argType->name) && TypeIsString(&r->registry, paramType->name))
         {
-            optMatch = strcmp(argType->name, paramInner) == 0;
+            // `cstring` copies into a `string` param (heap copy).
+            *score += 1;
         }
-
-        if (optMatch)
+        else if (!mutableRef && IsImplicitScalarConversion(paramType->primitiveType, argType->primitiveType)
+                 && ArgConvertsWithoutLoss(arg, argType, paramType))
         {
             *score += 1;
         }
+        else if (IsSimdVector(argType->primitiveType) && IsSimdVector(paramType->primitiveType))
+        {
+            // Same rule as assignment: no implicit lane-count or element-type change.
+            if (IsVectorAssignableType(r, paramType, argType, TypeRegistryResolveAlias(&r->registry, paramType->name),
+                                       TypeRegistryResolveAlias(&r->registry, argType->name)))
+            {
+                *score += 1;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        else if (HandleExtendsFrom(&r->registry, argType->name, paramType->name))
+        {
+            *score += 1;
+        }
+        else if (TypeNameIsOptional(paramType))
+        {
+            // `T` and `^T` coerce into `T?` when inners match.
+            const char* paramInner = TypeNameBoxInner(paramType) ? TypeNameBoxInner(paramType)->name : NULL;
+
+            bool optMatch = false;
+
+            if (paramInner && (TypeNameIsBox(argType) || TypeNameIsOptional(argType)))
+            {
+                const TypeName* argInner = TypeNameBoxInner(argType);
+
+                optMatch = argInner != NULL ? strcmp(argInner->name, paramInner) == 0
+                                            : strcmp("string", paramInner) == 0; // bare ^string
+            }
+            else if (paramInner)
+            {
+                optMatch = strcmp(argType->name, paramInner) == 0;
+            }
+
+            if (optMatch)
+            {
+                *score += 1;
+            }
+            else
+            {
+                return false;
+            }
+        }
         else
         {
-            return false;
+            return ScoreOwnedOrViewArgument(argType, paramType, param, isTail, mutableRef, functionDecl->isExtern,
+                                            score);
         }
-    }
-    else
-    {
-        return ScoreOwnedOrViewArgument(argType, paramType, param, isTail, mutableRef, functionDecl->isExtern, score);
     }
 
     return true;

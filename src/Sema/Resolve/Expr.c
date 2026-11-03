@@ -160,7 +160,7 @@ const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     return t;
 }
 
-static const TypeName* InferIntLiteralType(Resolver* r, Node* n, StrMap* scope)
+static const TypeName* InferIntLiteralType(Resolver* r, Node* n)
 {
     const IntLiteral* lit = (const IntLiteral*)n;
 
@@ -429,7 +429,7 @@ static const TypeName* InferIndexType(Resolver* r, Node* n, StrMap* scope)
     return baseType ? TypeNameArrayElem(baseType) : NULL;
 }
 
-static const TypeName* InferArrayInitType(Resolver* r, Node* n, StrMap* scope)
+static const TypeName* InferArrayInitType(Resolver* r, Node* n)
 {
     const ArrayInitExpr* ai = (const ArrayInitExpr*)n;
 
@@ -446,7 +446,7 @@ static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        return InferIntLiteralType(r, n, scope);
+        return InferIntLiteralType(r, n);
     case NodeFloatLiteral:
         return InternTypeName(r, "float");
     case NodeBoolLiteral:
@@ -478,7 +478,7 @@ static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
     case NodeIndex:
         return InferIndexType(r, n, scope);
     case NodeArrayInit:
-        return InferArrayInitType(r, n, scope);
+        return InferArrayInitType(r, n);
     default:
         return NULL;
     }
@@ -554,7 +554,7 @@ void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
 void ResolveExpr(Resolver* r, Node* n, StrMap* scope)
 {
-    ResolveExprImpl(r, n, scope, false);
+    ResolveExprImpl(r, n, scope);
 }
 
 static void ResolveIdentExpr(Resolver* r, Node* n, StrMap* scope)
@@ -730,18 +730,6 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     // are defined for bools.
     bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
     bool boolOperand = (lt && IsBoolType(&r->registry, lt)) || (rt && IsBoolType(&r->registry, rt));
-
-    // Comparing a `T?` reads through it. Only `==`/`!=` with an
-    // optional LEFT side and a box/optional right side is
-    // null-aware (empty == empty); every other comparison derefs the
-    // optional, so it must be proven non-empty first. `T[]?`
-    // compares as the array it wraps (empty is a zero-length fat).
-    {
-        bool lOpt = lt && TypeNameIsOptional(lt) && !TypeIsComparableAggregate(&r->registry, lt);
-        bool rOpt = rt && TypeNameIsOptional(rt) && !TypeIsComparableAggregate(&r->registry, rt);
-        bool lNullAware = eqOp && lOpt && rt && (TypeNameIsOptional(rt) || TypeNameIsBox(rt));
-        bool rNullAware = eqOp && lOpt;
-    }
 
     // `flag == 1` would compare through an implicit numeric <-> bool
     // conversion; both sides of a bool comparison must be bool.
@@ -932,12 +920,7 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
 
         if (prop)
         {
-            const TypeName* rawBase = InferType(r, tm->baseNode, scope);
-
-            if (rawBase && TypeNameIsOptional(rawBase))
-            {
-                const char* baseKey = MovableBoxSourceKey(r, tm->baseNode);
-            }
+            InferType(r, tm->baseNode, scope);
 
             ResolveExpr(r, tm->baseNode, scope);
             ResolveExpr(r, a->value, scope);
@@ -986,7 +969,6 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
 static bool AssignTargetIsOwningField(Resolver* r, AssignExpr* a, StrMap* scope)
 {
     // An owning field target is reassigned, not read - re-life it instead of tripping use-after-move.
-    const char* fieldKey = NULL;
     bool targetIsOwningField = false;
 
     if (a->target->kind == NodeMember)
@@ -996,13 +978,12 @@ static bool AssignTargetIsOwningField(Resolver* r, AssignExpr* a, StrMap* scope)
         if (ft && AliasIsOwning(r, ft))
         {
             targetIsOwningField = true;
-            fieldKey = MovableBoxSourceKey(r, a->target);
         }
 
         // Writing through an optional needs proven ancestors.
         for (Node* anc = ((MemberExpr*)a->target)->baseNode; anc;)
         {
-            const TypeName* at2 = InferType(r, anc, scope);
+            InferType(r, anc, scope);
 
             if (anc->kind == NodeMember)
             {
@@ -1064,11 +1045,6 @@ static void ResolveAssignBracedRhs(Resolver* r, AssignExpr* a, StrMap* scope, co
 static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, const TypeName* tt)
 {
     ResolveExpr(r, a->value, scope);
-
-    if (a->op == AssignSet)
-    {
-        a->value = a->value;
-    }
 
     const TypeName* vt = InferType(r, a->value, scope);
 
@@ -1171,7 +1147,7 @@ static void ResolveAssignOwningFieldTarget(Resolver* r, AssignExpr* a, StrMap* s
 
     if (root->kind == NodeIdent)
     {
-        ResolveExprImpl(r, root, scope, true);
+        ResolveExprImpl(r, root, scope);
     }
 
     if (a->op == AssignSet)
@@ -1188,7 +1164,6 @@ static void ResolveAssignOwningFieldTarget(Resolver* r, AssignExpr* a, StrMap* s
 
     if (a->op == AssignSet)
     {
-        a->value = a->value;
         const TypeName* vt = InferType(r, a->value, scope);
         const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
@@ -1211,11 +1186,6 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
 {
     ResolveExpr(r, a->target, scope);
     ResolveExpr(r, a->value, scope);
-
-    if (a->op == AssignSet)
-    {
-        a->value = a->value;
-    }
 
     const char* writtenKey = MovableBoxSourceKey(r, a->target);
 
@@ -1314,8 +1284,8 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     {
         // Non-owning field target (`bob.plain = opt;`) - the field
         // type is the unwrap target.
-        const TypeName* mt = InferType(r, a->target, scope);
-        const TypeName* vt = InferType(r, a->value, scope);
+        InferType(r, a->target, scope);
+        InferType(r, a->value, scope);
     }
 
     // The written path holds a new value: every fact at, under, or
@@ -1324,7 +1294,7 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     if (writtenKey)
     {
 
-        const TypeName* writtenType = InferType(r, a->target, scope);
+        InferType(r, a->target, scope);
     }
 }
 
@@ -1347,20 +1317,6 @@ static void ResolveAssignExpr(Resolver* r, Node* n, StrMap* scope)
     if (ResolveAssignProperty(r, a, scope))
     {
         return;
-    }
-
-    // Reassigning a scalar local invalidates its index spellings' facts.
-    if (a->target->kind == NodeIdent)
-    {
-    }
-    else if (a->target->kind == NodeIndex)
-    {
-        // Writing an array element kills nested-index/length facts of the array root.
-        const char* targetKey = MovableBoxSourceKey(r, a->target);
-
-        if (targetKey)
-        {
-        }
     }
 
     const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
@@ -1467,20 +1423,6 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
         DiagErrorFmt(r->diag, inc->base.range, "cannot %s '%s.%s' (a constant)", inc->isDec ? "decrement" : "increment",
                      ((IdentExpr*)sm->baseNode)->name, sm->member);
         return;
-    }
-
-    // ++/-- invalidates index spellings of the operand.
-    if (inc->operand->kind == NodeIdent)
-    {
-    }
-    else if (inc->operand->kind == NodeIndex)
-    {
-        // ++/-- on an array element feeds nested-index spellings too.
-        const char* operandKey = MovableBoxSourceKey(r, inc->operand);
-
-        if (operandKey)
-        {
-        }
     }
 
     return;
@@ -1627,7 +1569,7 @@ static void ResolveNullTestExpr(Resolver* r, Node* n, StrMap* scope)
 
     for (; anc;)
     {
-        const TypeName* at = InferType(r, anc, scope);
+        InferType(r, anc, scope);
 
         if (anc->kind == NodeMember)
         {
@@ -1656,7 +1598,7 @@ static void ResolveNullTestExpr(Resolver* r, Node* n, StrMap* scope)
     return;
 }
 
-void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase)
+void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope)
 {
     if (!n)
     {
