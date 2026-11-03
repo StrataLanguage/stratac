@@ -56,7 +56,7 @@ int main()
     char buffer[256];
     char* bufferCopy = buffer;
 
-    for (int i = 0; i < sizeof(primNames) / sizeof(primNames[0]); i++)
+    for (size_t i = 0; i < sizeof(primNames) / sizeof(primNames[0]); i++)
     {
         const char* typeName = primNames[i];
         const char* tmpName = typeName;
