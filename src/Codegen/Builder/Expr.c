@@ -28,7 +28,7 @@ Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
     }
 
     ImplPropEntry* entry
-        = (ImplPropEntry*)StrMapGet(&b->m_implProps, arena_format(b->m_arena, "%s.%s", handleName, m->member));
+        = (ImplPropEntry*)StrMapGet(&b->m_implProps, ArenaFormat(b->m_arena, "%s.%s", handleName, m->member));
 
     if (!entry)
     {

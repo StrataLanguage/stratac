@@ -14,7 +14,7 @@
 STRATA_TEST(const_ref_scalar_parses_and_resolves)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int read(const ref int x) { return x; }\n"
@@ -32,14 +32,14 @@ STRATA_TEST(const_ref_scalar_parses_and_resolves)
     STRATA_CHECK(p->type.isConst);  /* read-only */
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(const_ref_and_ref_const_both_accepted)
 {
     /* Either token order should parse to the same (by-ref, immutable) param. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int a(const ref int x) { return x; }\n"
@@ -57,7 +57,7 @@ STRATA_TEST(const_ref_and_ref_const_both_accepted)
     STRATA_CHECK(pb->mod == ModRef && pb->type.isConst);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(const_ref_struct_is_allowed)
@@ -65,7 +65,7 @@ STRATA_TEST(const_ref_struct_is_allowed)
     /* Structs pass by value by default, so `const ref` is the explicit
        read-only VIEW spelling - it must not be rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct V { float x; float y; };\n"
@@ -75,13 +75,13 @@ STRATA_TEST(const_ref_struct_is_allowed)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(assign_to_const_ref_scalar_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     (void)ParseAndResolve("int bad(const ref int x) { x = 5; return x; }\n", &diag, &arena);
@@ -89,13 +89,13 @@ STRATA_TEST(assign_to_const_ref_scalar_is_error)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(compound_assign_to_const_ref_scalar_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     (void)ParseAndResolve("int bad(const ref int x) { x += 5; return x; }\n", &diag, &arena);
@@ -103,13 +103,13 @@ STRATA_TEST(compound_assign_to_const_ref_scalar_is_error)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(assign_to_const_ref_struct_member_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     (void)ParseAndResolve("struct V { float x; float y; };\n"
@@ -119,7 +119,7 @@ STRATA_TEST(assign_to_const_ref_struct_member_is_error)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Const locals and const bypasses ---- */
@@ -128,7 +128,7 @@ STRATA_TEST(assign_to_const_ref_struct_member_is_error)
 static bool ConstRejected(const char* src, const char* needle)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     (void)ParseAndResolve(src, &diag, &arena);
@@ -138,7 +138,7 @@ static bool ConstRejected(const char* src, const char* needle)
     bool hit = DiagHasErrors(&diag) && strstr(DiagFormat(&diag, &sm, 1, &arena), needle) != NULL;
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     return hit;
 }
@@ -146,7 +146,7 @@ static bool ConstRejected(const char* src, const char* needle)
 static bool ConstAccepted(const char* src)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     (void)ParseAndResolve(src, &diag, &arena);
@@ -154,7 +154,7 @@ static bool ConstAccepted(const char* src)
     bool ok = !DiagHasErrors(&diag);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     return ok;
 }
@@ -228,9 +228,9 @@ static const char* HOLDER = "struct Box { int v; };\n"
 static bool HolderRejected(const char* body, const char* needle)
 {
     Arena arena;
-    arena_init(&arena, 0);
-    bool hit = ConstRejected(arena_format(&arena, "%s%s", HOLDER, body), needle);
-    arena_free(&arena);
+    ArenaInit(&arena, 0);
+    bool hit = ConstRejected(ArenaFormat(&arena, "%s%s", HOLDER, body), needle);
+    ArenaFree(&arena);
 
     return hit;
 }
@@ -238,9 +238,9 @@ static bool HolderRejected(const char* body, const char* needle)
 static bool HolderAccepted(const char* body)
 {
     Arena arena;
-    arena_init(&arena, 0);
-    bool ok = ConstAccepted(arena_format(&arena, "%s%s", HOLDER, body));
-    arena_free(&arena);
+    ArenaInit(&arena, 0);
+    bool ok = ConstAccepted(ArenaFormat(&arena, "%s%s", HOLDER, body));
+    ArenaFree(&arena);
 
     return ok;
 }

@@ -35,7 +35,7 @@ static const char* CanonicalizePath(Arena* arena, const char* path)
 
     if (rp)
     {
-        const char* result = arena_strdup(arena, rp);
+        const char* result = ArenaStrdup(arena, rp);
 
 #ifndef STRATA_PLATFORM_WINDOWS
         free(rp);
@@ -44,7 +44,7 @@ static const char* CanonicalizePath(Arena* arena, const char* path)
         return result;
     }
 
-    return arena_strdup(arena, path);
+    return ArenaStrdup(arena, path);
 }
 
 /* Dedup key for an on-disk module. Elsewhere this is the canonical path. On
@@ -70,7 +70,7 @@ static const char* DiskModuleKey(Arena* arena, const char* canonPath)
         }
 
         size_t n = wcslen(folded);
-        wchar_t* lower = (wchar_t*)arena_alloc(arena, (n + 1) * sizeof(wchar_t));
+        wchar_t* lower = (wchar_t*)ArenaAlloc(arena, (n + 1) * sizeof(wchar_t));
         memcpy(lower, folded, (n + 1) * sizeof(wchar_t));
         CharLowerBuffW(lower, (DWORD)n);
 
@@ -78,7 +78,7 @@ static const char* DiskModuleKey(Arena* arena, const char* canonPath)
 
         if (utf8Len > 0)
         {
-            char* key = (char*)arena_alloc(arena, (size_t)utf8Len);
+            char* key = (char*)ArenaAlloc(arena, (size_t)utf8Len);
             WideCharToMultiByte(CP_UTF8, 0, lower, -1, key, utf8Len, NULL, NULL);
             return key;
         }
@@ -98,10 +98,10 @@ static char* ResolveImportPath(Arena* arena, const char* importerPath, const cha
     size_t dirLen = BasePathLength(importerPath);
     if (dirLen > 0)
     {
-        return arena_format(arena, "%.*s/%s%s", (int)dirLen, importerPath, importPath, ext);
+        return ArenaFormat(arena, "%.*s/%s%s", (int)dirLen, importerPath, importPath, ext);
     }
 
-    return arena_format(arena, "%s%s", importPath, ext);
+    return ArenaFormat(arena, "%s%s", importPath, ext);
 }
 
 static bool FileExists(const char* path)
@@ -325,9 +325,9 @@ static void LoadStrataModule(ModuleLoader* loader, const char* key, const char* 
         return;
     }
 
-    PushVisited(loader, arena_strdup(loader->arena, key));
+    PushVisited(loader, ArenaStrdup(loader->arena, key));
 
-    const char* nameKey = arena_strdup(loader->arena, name);
+    const char* nameKey = ArenaStrdup(loader->arena, name);
 
     if (loader->sourceCount >= loader->sourceCap)
     {
@@ -409,7 +409,7 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
         const char* dir = loader->importDirs[i];
         size_t impLen = strlen(importPath);
         bool hasExt = impLen >= 7 && strcmp(importPath + impLen - 7, ".strata") == 0;
-        const char* candidate = arena_format(loader->arena, "%s/%s%s", dir, importPath, hasExt ? "" : ".strata");
+        const char* candidate = ArenaFormat(loader->arena, "%s/%s%s", dir, importPath, hasExt ? "" : ".strata");
         const char* canonCandidate = CanonicalizePath(loader->arena, candidate);
 
         if (FileExists(canonCandidate))
@@ -443,7 +443,7 @@ static Module* NewRootModule(Arena* arena, const char* name)
     Module* root = AST_NEW(arena, Module);
     root->base.kind = NodeModule;
     root->base.range = SRC_INVALID;
-    root->name = arena_strdup(arena, name);
+    root->name = ArenaStrdup(arena, name);
     VecInit(&root->structs);
     VecInit(&root->handles);
     VecInit(&root->enums);

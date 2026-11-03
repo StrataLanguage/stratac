@@ -20,7 +20,7 @@ static const char* SeverityName(DiagSeverity s)
 
 void DiagnosticEngineInit(DiagnosticEngine* diag)
 {
-    arena_init(&diag->m_arena, 0);
+    ArenaInit(&diag->m_arena, 0);
     diag->m_diagnostics = NULL;
     diag->m_count = 0;
     diag->m_cap = 0;
@@ -29,7 +29,7 @@ void DiagnosticEngineInit(DiagnosticEngine* diag)
 
 void DiagnosticEngineFree(DiagnosticEngine* diag)
 {
-    arena_free(&diag->m_arena);
+    ArenaFree(&diag->m_arena);
     free(diag->m_diagnostics);
     diag->m_diagnostics = NULL;
     diag->m_count = 0;
@@ -65,7 +65,7 @@ void DiagReport(DiagnosticEngine* diag, DiagSeverity severity, SourceRange range
     DiagPushBack(diag, (Diagnostic){
                            .severity = severity,
                            .range = range,
-                           .message = arena_strdup(&diag->m_arena, message),
+                           .message = ArenaStrdup(&diag->m_arena, message),
                        });
 }
 
@@ -73,7 +73,7 @@ void DiagReportFmt(DiagnosticEngine* diag, DiagSeverity severity, SourceRange ra
 {
     va_list args;
     va_start(args, fmt);
-    char* msg = arena_vformat(&diag->m_arena, fmt, args);
+    char* msg = ArenaVFormat(&diag->m_arena, fmt, args);
     va_end(args);
 
     if (severity == SevError)
@@ -108,7 +108,7 @@ void DiagErrorFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ..
     va_list args;
     va_start(args, fmt);
 
-    char* msg = arena_vformat(&diag->m_arena, fmt, args);
+    char* msg = ArenaVFormat(&diag->m_arena, fmt, args);
 
     va_end(args);
 
@@ -120,7 +120,7 @@ void DiagNoteFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...
     va_list args;
     va_start(args, fmt);
 
-    char* msg = arena_vformat(&diag->m_arena, fmt, args);
+    char* msg = ArenaVFormat(&diag->m_arena, fmt, args);
 
     va_end(args);
 

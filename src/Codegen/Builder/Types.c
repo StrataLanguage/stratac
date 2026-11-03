@@ -38,7 +38,7 @@ TypeDesc ResolveByName(Builder* b, const char* name)
 
 const TypeName* StringTypeName(Builder* b)
 {
-    TypeName* t = (TypeName*)arena_alloc(b->m_arena, sizeof(TypeName));
+    TypeName* t = (TypeName*)ArenaAlloc(b->m_arena, sizeof(TypeName));
     *t = TypeNameLeaf((char*)"string");
     return t;
 }
@@ -322,7 +322,7 @@ static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
     }
 
     unsigned memberCount = LLVMCountStructElementTypes(structTy);
-    LLVMValueRef* members = (LLVMValueRef*)arena_alloc(b->m_arena, memberCount * sizeof(LLVMValueRef));
+    LLVMValueRef* members = (LLVMValueRef*)ArenaAlloc(b->m_arena, memberCount * sizeof(LLVMValueRef));
 
     for (unsigned i = 0; i < memberCount; i++)
     {
@@ -379,7 +379,7 @@ static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type)
             return NULL;
         }
 
-        LLVMValueRef* elements = (LLVMValueRef*)arena_alloc(b->m_arena, (size_t)type->length * sizeof(LLVMValueRef));
+        LLVMValueRef* elements = (LLVMValueRef*)ArenaAlloc(b->m_arena, (size_t)type->length * sizeof(LLVMValueRef));
 
         for (ArrayLength i = 0; i < type->length; i++)
         {
@@ -540,7 +540,7 @@ LLVMValueRef TypeDescConstant(Builder* b, const char* structName)
     };
 
     LLVMTypeRef descTy = LLVMStructTypeInContext(b->m_ctx, memberTypes, 5, 0);
-    LLVMValueRef desc = LLVMAddGlobal(b->m_mod, descTy, arena_format(b->m_arena, ".typedesc.%s", structName));
+    LLVMValueRef desc = LLVMAddGlobal(b->m_mod, descTy, ArenaFormat(b->m_arena, ".typedesc.%s", structName));
     LLVMSetInitializer(desc, LLVMConstStructInContext(b->m_ctx, members, 5, 0));
     LLVMSetLinkage(desc, LLVMPrivateLinkage);
     LLVMSetGlobalConstant(desc, 1);

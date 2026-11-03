@@ -430,8 +430,8 @@ static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic
     *instance = *generic;
     instance->typeParam = NULL;
     instance->genericOf = generic;
-    instance->typeArg = arena_strdup(r->m_arena, structName);
-    instance->mangledName = arena_format(r->m_arena, "%s<%s>", generic->name, structName);
+    instance->typeArg = ArenaStrdup(r->m_arena, structName);
+    instance->mangledName = ArenaFormat(r->m_arena, "%s<%s>", generic->name, structName);
     VecInit(&instance->params);
 
     for (size_t i = 0; i < generic->params.count; i++)

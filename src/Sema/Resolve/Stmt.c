@@ -108,7 +108,7 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
         return;
     }
 
-    DeferEntry* e = (DeferEntry*)arena_alloc(r->m_arena, sizeof(DeferEntry));
+    DeferEntry* e = (DeferEntry*)ArenaAlloc(r->m_arena, sizeof(DeferEntry));
     e->m_stmt = d->stmt;
     e->m_frame = r->m_scopeDecls.count - 1;
     e->m_declMark = ((Vec*)VecGet(&r->m_scopeDecls, e->m_frame))->count;
@@ -304,11 +304,11 @@ static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, boo
  */
 static void ScopePush(Resolver* r)
 {
-    Vec* frame = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
+    Vec* frame = (Vec*)ArenaAlloc(r->m_arena, sizeof(Vec));
     VecInit(frame);
     VecPush(&r->m_scopeDecls, frame);
 
-    Vec* defers = (Vec*)arena_alloc(r->m_arena, sizeof(Vec));
+    Vec* defers = (Vec*)ArenaAlloc(r->m_arena, sizeof(Vec));
     VecInit(defers);
     VecPush(&r->m_deferFrames, defers);
 }

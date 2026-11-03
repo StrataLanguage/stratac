@@ -45,7 +45,7 @@ static const char* ErrText(DiagnosticEngine* diag, Arena* arena)
 STRATA_TEST(impl_parses_methods_and_properties)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle Camera;\n"
@@ -89,7 +89,7 @@ STRATA_TEST(impl_parses_methods_and_properties)
     STRATA_CHECK(FindFunction(mod, "Camera_SetFOV") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
@@ -97,7 +97,7 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     /* An impl method may be DEFINED inline (non-extern, with a body) - it
        hoists to the qualified symbol like any other method. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle Camera;\n"
@@ -121,11 +121,11 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
         STRATA_CHECK(FindFunction(mod, "Camera_GetFOV") != NULL);
     }
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Duplicate methods (extern or inline) are still rejected. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseModule("handle Camera;\n"
@@ -136,10 +136,10 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
                 &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 
     Arena arena3;
-    arena_init(&arena3, 0);
+    ArenaInit(&arena3, 0);
     DiagnosticEngine diag3;
     DiagnosticEngineInit(&diag3);
     ParseModule("handle Camera;\n"
@@ -150,14 +150,14 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
                 &diag3, &arena3);
     STRATA_CHECK(DiagHasErrors(&diag3));
     DiagnosticEngineFree(&diag3);
-    arena_free(&arena3);
+    ArenaFree(&arena3);
 }
 
 STRATA_TEST(null_pointer_is_ptr_null)
 {
     /* `ptr.null` is the null pointer, for ptr, handles and delegates alike. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Window;\n"
@@ -172,25 +172,25 @@ STRATA_TEST(null_pointer_is_ptr_null)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* A bare `null` is not a thing, and says what to write instead. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("void Use() { ptr p = null; }\n", &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "'ptr.null'"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(function_named_like_struct_is_rejected)
 {
     /* `Stamp(a, b)` would construct the struct, so a function of the same name is an error. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Stamp { int a; int b; };\n"
@@ -200,11 +200,11 @@ STRATA_TEST(function_named_like_struct_is_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "has the name of a struct"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* A method may share a struct's name: it is only reached through its receiver. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("struct Stamp { int a; };\n"
@@ -213,7 +213,7 @@ STRATA_TEST(function_named_like_struct_is_rejected)
                     &diag2, &arena2);
     STRATA_CHECK(!DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_requires_handle_or_struct_target)
@@ -222,7 +222,7 @@ STRATA_TEST(impl_requires_handle_or_struct_target)
        forward-declared structs, and type aliases). Only undeclared types are
        rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("impl Ghost {\n"
@@ -232,10 +232,10 @@ STRATA_TEST(impl_requires_handle_or_struct_target)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "not a declared struct or handle"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("struct Meter = int;\n"
@@ -245,13 +245,13 @@ STRATA_TEST(impl_requires_handle_or_struct_target)
                     &diag2, &arena2);
     STRATA_CHECK(!DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_on_forward_declared_struct_parses)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct TheType;\n"
@@ -261,13 +261,13 @@ STRATA_TEST(impl_on_forward_declared_struct_parses)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(handle_base_uses_colon_and_extends_is_removed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle Entity;\n"
@@ -283,10 +283,10 @@ STRATA_TEST(handle_base_uses_colon_and_extends_is_removed)
     }
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseModule("handle Entity;\n"
@@ -295,13 +295,13 @@ STRATA_TEST(handle_base_uses_colon_and_extends_is_removed)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "'extends' was removed; write 'handle Player : Base'"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(struct_property_accessors_take_self_by_ref)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct P { int x; }\n"
@@ -324,7 +324,7 @@ STRATA_TEST(struct_property_accessors_take_self_by_ref)
     }
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_on_type_alias_scalar_method_rewrites)
@@ -333,7 +333,7 @@ STRATA_TEST(impl_on_type_alias_scalar_method_rewrites)
        qualified extern `Meter_Get` with self prepended, exactly like a handle
        or struct impl. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Meter = int;\n"
@@ -358,7 +358,7 @@ STRATA_TEST(impl_on_type_alias_scalar_method_rewrites)
     STRATA_CHECK(((Node*)VecGet(&call->args, 0))->kind == NodeIdent);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_on_type_alias_struct_method_rewrites)
@@ -366,7 +366,7 @@ STRATA_TEST(impl_on_type_alias_struct_method_rewrites)
     /* `impl` on a strong alias of a struct: the alias is a distinct impl
        target from its underlying (no method leaks across). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Foo { int x; };\n"
@@ -391,14 +391,14 @@ STRATA_TEST(impl_on_type_alias_struct_method_rewrites)
     STRATA_CHECK_EQ(call->args.count, 1);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_on_type_alias_static_factory_has_no_self)
 {
     /* Parameterless impl methods on an alias resolve as static calls. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Meter = int;\n"
@@ -421,7 +421,7 @@ STRATA_TEST(impl_on_type_alias_static_factory_has_no_self)
     STRATA_CHECK_EQ(call->args.count, 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_on_type_alias_distinct_from_underlying)
@@ -430,7 +430,7 @@ STRATA_TEST(impl_on_type_alias_distinct_from_underlying)
        type does not see the method, and calls on the underlying are rejected
        (no implicit conversion between an alias and its underlying). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Meter = int;\n"
@@ -443,13 +443,13 @@ STRATA_TEST(impl_on_type_alias_distinct_from_underlying)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "no method 'Get'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_method_call_rewrites_to_extern)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("handle Camera;\n"
@@ -474,13 +474,13 @@ STRATA_TEST(impl_method_call_rewrites_to_extern)
     STRATA_CHECK(((Node*)VecGet(&call->args, 0))->kind == NodeIdent);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_method_with_args_prepends_self)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("handle Camera;\n"
@@ -501,13 +501,13 @@ STRATA_TEST(impl_method_with_args_prepends_self)
     STRATA_CHECK_EQ(call->args.count, 3);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_static_factory_call_has_no_self)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("handle Camera;\n"
@@ -527,13 +527,13 @@ STRATA_TEST(impl_static_factory_call_has_no_self)
     STRATA_CHECK_EQ(call->args.count, 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_inherited_method_visible_on_derived)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("handle Entity;\n"
@@ -554,13 +554,13 @@ STRATA_TEST(impl_inherited_method_visible_on_derived)
     STRATA_CHECK_EQ(call->args.count, 2);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_property_read_and_write)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("handle Camera;\n"
@@ -597,11 +597,11 @@ STRATA_TEST(impl_property_read_and_write)
     STRATA_CHECK_EQ(setFovCount, 1);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Write path: type-checked against the property type. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     Module* mod2 = ParseAndResolve("handle Camera;\n"
@@ -626,13 +626,13 @@ STRATA_TEST(impl_property_read_and_write)
     STRATA_CHECK(strcmp(valueParam->type.name, "float") == 0);
 
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_property_type_mismatch_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -643,7 +643,7 @@ STRATA_TEST(impl_property_type_mismatch_rejected)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_property_overloaded_accessor_rejected)
@@ -652,7 +652,7 @@ STRATA_TEST(impl_property_overloaded_accessor_rejected)
        the accessor must be a unique function, regardless of which overload's
        shape happens to appear first in the module. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -667,11 +667,11 @@ STRATA_TEST(impl_property_overloaded_accessor_rejected)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "is ambiguous"));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "Camera_GetFOV"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Same rule applies to the setter symbol. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("handle Camera;\n"
@@ -685,11 +685,11 @@ STRATA_TEST(impl_property_overloaded_accessor_rejected)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "is ambiguous"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 
     /* A unique accessor symbol still compiles (no ambiguity). */
     Arena arena3;
-    arena_init(&arena3, 0);
+    ArenaInit(&arena3, 0);
     DiagnosticEngine diag3;
     DiagnosticEngineInit(&diag3);
     ParseAndResolve("handle Camera;\n"
@@ -703,14 +703,14 @@ STRATA_TEST(impl_property_overloaded_accessor_rejected)
                     &diag3, &arena3);
     STRATA_CHECK(!DiagHasErrors(&diag3));
     DiagnosticEngineFree(&diag3);
-    arena_free(&arena3);
+    ArenaFree(&arena3);
 }
 
 STRATA_TEST(impl_property_accessor_shape_mismatch_rejected)
 {
     /* Setter value param must be the property's type, not just any (self, T). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -723,11 +723,11 @@ STRATA_TEST(impl_property_accessor_shape_mismatch_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "must take 'int' as its value parameter"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Getter with a `return` out-param whose type is not the property type. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("handle Camera;\n"
@@ -740,13 +740,13 @@ STRATA_TEST(impl_property_accessor_shape_mismatch_rejected)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "must return 'int'; found 'float'"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_readonly_write_and_writeonly_read_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -759,10 +759,10 @@ STRATA_TEST(impl_readonly_write_and_writeonly_read_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "read-only"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("handle Camera;\n"
@@ -775,13 +775,13 @@ STRATA_TEST(impl_readonly_write_and_writeonly_read_rejected)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "write-only"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_compound_and_incdec_on_property_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -792,10 +792,10 @@ STRATA_TEST(impl_compound_and_incdec_on_property_rejected)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("handle Camera;\n"
@@ -806,13 +806,13 @@ STRATA_TEST(impl_compound_and_incdec_on_property_rejected)
                     &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_unknown_members_diagnosed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -824,10 +824,10 @@ STRATA_TEST(impl_unknown_members_diagnosed)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "no member"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("handle Camera;\n"
@@ -839,11 +839,11 @@ STRATA_TEST(impl_unknown_members_diagnosed)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "no method"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 
     /* Bare method access (no call) is diagnosed too. */
     Arena arena3;
-    arena_init(&arena3, 0);
+    ArenaInit(&arena3, 0);
     DiagnosticEngine diag3;
     DiagnosticEngineInit(&diag3);
     ParseAndResolve("handle Camera;\n"
@@ -855,13 +855,13 @@ STRATA_TEST(impl_unknown_members_diagnosed)
     STRATA_CHECK(DiagHasErrors(&diag3));
     STRATA_CHECK(Contains(ErrText(&diag3, &arena3), "must be called"));
     DiagnosticEngineFree(&diag3);
-    arena_free(&arena3);
+    ArenaFree(&arena3);
 }
 
 STRATA_TEST(impl_property_call_syntax_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -873,13 +873,13 @@ STRATA_TEST(impl_property_call_syntax_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "is a property"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(impl_optional_receiver_needs_blessing)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Camera;\n"
@@ -891,11 +891,11 @@ STRATA_TEST(impl_optional_receiver_needs_blessing)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "bless"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Blessed receiver (via `if (c?)`) is fine. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("handle Camera;\n"
@@ -913,13 +913,13 @@ STRATA_TEST(impl_optional_receiver_needs_blessing)
                     &diag2, &arena2);
     STRATA_CHECK(!DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(impl_astdump_shows_impl_block)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle Camera;\n"
@@ -938,7 +938,7 @@ STRATA_TEST(impl_astdump_shows_impl_block)
     STRATA_CHECK(!Contains(dump, "Camera_GetFOV("));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 #if STRATA_TEST_HAS_LLVM
@@ -1194,7 +1194,7 @@ STRATA_TEST(impl_property_setter_return_param_rejected)
     /* A setter must take (self, value); a `return` out-param in that slot
        leaves no value param, so it is rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Widget;\n"
@@ -1206,7 +1206,7 @@ STRATA_TEST(impl_property_setter_return_param_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "must take (Widget self, value)"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static float Camera_GetFOVThunk(void* self)

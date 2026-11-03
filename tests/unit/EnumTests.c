@@ -59,7 +59,7 @@ static const EnumDecl* FindEnum(const Module* mod, const char* name)
 STRATA_TEST(enum_parses_and_assigns_values)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("enum Color : int { Red, Green = 5, Blue };\n"
@@ -94,13 +94,13 @@ STRATA_TEST(enum_parses_and_assigns_values)
     STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&neg->members, 2))->value, 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(enum_value_expression_folds)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -128,7 +128,7 @@ STRATA_TEST(enum_value_expression_folds)
     {
         printf("  sema failed: %s\n", ErrText(&diag, &arena));
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
         return;
     }
 
@@ -167,13 +167,13 @@ STRATA_TEST(enum_value_expression_folds)
     STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&wide->members, 0))->value, (uint64_t)1 << 40);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(enum_value_expression_member_and_cross_enum_reference)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -188,7 +188,7 @@ STRATA_TEST(enum_value_expression_member_and_cross_enum_reference)
     {
         printf("  sema failed: %s\n", ErrText(&diag, &arena));
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
         return;
     }
 
@@ -201,83 +201,83 @@ STRATA_TEST(enum_value_expression_member_and_cross_enum_reference)
     STRATA_CHECK_EQ(((EnumMemberDecl*)VecGet((Vec*)&derived->members, 0))->value, 5);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(enum_value_expression_errors)
 {
     /* Non-constant expression. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int f();\nenum Foo { A = f() };\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "must be a constant expression"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Division by zero folds to "not a constant". */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("enum Foo { A = 1 / 0 };\n", &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "must be a constant expression"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 
     /* Forward reference to a later member. */
     Arena arena3;
-    arena_init(&arena3, 0);
+    ArenaInit(&arena3, 0);
     DiagnosticEngine diag3;
     DiagnosticEngineInit(&diag3);
     ParseAndResolve("enum Foo { A = B | 1, B = 2 };\n", &diag3, &arena3);
     STRATA_CHECK(DiagHasErrors(&diag3));
     STRATA_CHECK(Contains(ErrText(&diag3, &arena3), "forward-references"));
     DiagnosticEngineFree(&diag3);
-    arena_free(&arena3);
+    ArenaFree(&arena3);
 
     /* Unary minus inside an expression is still rejected for unsigned. */
     Arena arena4;
-    arena_init(&arena4, 0);
+    ArenaInit(&arena4, 0);
     DiagnosticEngine diag4;
     DiagnosticEngineInit(&diag4);
     ParseAndResolve("enum Foo : uint { A = -1 | 0 };\n", &diag4, &arena4);
     STRATA_CHECK(DiagHasErrors(&diag4));
     STRATA_CHECK(Contains(ErrText(&diag4, &arena4), "may not be negative"));
     DiagnosticEngineFree(&diag4);
-    arena_free(&arena4);
+    ArenaFree(&arena4);
 
     /* A folded result is still range-checked against the underlying type. */
     Arena arena5;
-    arena_init(&arena5, 0);
+    ArenaInit(&arena5, 0);
     DiagnosticEngine diag5;
     DiagnosticEngineInit(&diag5);
     ParseAndResolve("enum Foo : byte { A = 200 + 100 };\n", &diag5, &arena5);
     STRATA_CHECK(DiagHasErrors(&diag5));
     STRATA_CHECK(Contains(ErrText(&diag5, &arena5), "does not fit in 'byte'"));
     DiagnosticEngineFree(&diag5);
-    arena_free(&arena5);
+    ArenaFree(&arena5);
 
     /* A plain `~0` folds to the 64-bit pattern; a uint underlying wants the
        suffixed form `~0u`. */
     Arena arena6;
-    arena_init(&arena6, 0);
+    ArenaInit(&arena6, 0);
     DiagnosticEngine diag6;
     DiagnosticEngineInit(&diag6);
     ParseAndResolve("enum Foo : uint { A = ~0 };\n", &diag6, &arena6);
     STRATA_CHECK(DiagHasErrors(&diag6));
     STRATA_CHECK(Contains(ErrText(&diag6, &arena6), "does not fit in 'uint'"));
     DiagnosticEngineFree(&diag6);
-    arena_free(&arena6);
+    ArenaFree(&arena6);
 }
 
 STRATA_TEST(enum_scoped_member_access)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("enum Color { Red, Green, Blue };\n"
@@ -286,13 +286,13 @@ STRATA_TEST(enum_scoped_member_access)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(enum_member_value_is_enum_typed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -302,11 +302,11 @@ STRATA_TEST(enum_member_value_is_enum_typed)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* But an enum constant is NOT implicitly convertible to the underlying. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("enum Color { Red, Green };\n"
@@ -314,23 +314,23 @@ STRATA_TEST(enum_member_value_is_enum_typed)
                     &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(enum_underlying_type_must_be_scalar_integral)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("enum Foo : float { A };\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "must be a scalar integral type"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("struct S { int x; };\n"
@@ -339,59 +339,59 @@ STRATA_TEST(enum_underlying_type_must_be_scalar_integral)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "must be a scalar integral type"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 STRATA_TEST(enum_explicit_value_range_checked)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("enum Foo : byte { A = 300 };\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "does not fit in 'byte'"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     /* Sequential continuation overflows too: A=255 forces B=256. */
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("enum Foo : byte { A = 255, B };\n", &diag2, &arena2);
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "does not fit in 'byte'"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 
     /* Negative is rejected for unsigned underlying types. */
     Arena arena3;
-    arena_init(&arena3, 0);
+    ArenaInit(&arena3, 0);
     DiagnosticEngine diag3;
     DiagnosticEngineInit(&diag3);
     ParseAndResolve("enum Foo : uint { A = -1 };\n", &diag3, &arena3);
     STRATA_CHECK(DiagHasErrors(&diag3));
     STRATA_CHECK(Contains(ErrText(&diag3, &arena3), "may not be negative"));
     DiagnosticEngineFree(&diag3);
-    arena_free(&arena3);
+    ArenaFree(&arena3);
 
     /* A negative value out of the signed range is also rejected. */
     Arena arena4;
-    arena_init(&arena4, 0);
+    ArenaInit(&arena4, 0);
     DiagnosticEngine diag4;
     DiagnosticEngineInit(&diag4);
     ParseAndResolve("enum Foo : sbyte { A = -129 };\n", &diag4, &arena4);
     STRATA_CHECK(DiagHasErrors(&diag4));
     STRATA_CHECK(Contains(ErrText(&diag4, &arena4), "does not fit in 'sbyte'"));
     DiagnosticEngineFree(&diag4);
-    arena_free(&arena4);
+    ArenaFree(&arena4);
 }
 
 STRATA_TEST(enum_cast_range_checked)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("enum Color : byte { Red, Green };\n"
@@ -400,26 +400,26 @@ STRATA_TEST(enum_cast_range_checked)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "does not fit"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(enum_duplicate_member_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("enum Foo { A, A };\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "duplicate enum member"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(enum_unknown_member_and_assignment_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("enum Foo { A };\n"
@@ -428,10 +428,10 @@ STRATA_TEST(enum_unknown_member_and_assignment_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "has no member 'Nope'"));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     ParseAndResolve("enum Foo { A };\n"
@@ -440,7 +440,7 @@ STRATA_TEST(enum_unknown_member_and_assignment_rejected)
     STRATA_CHECK(DiagHasErrors(&diag2));
     STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "cannot assign to enum constant"));
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 
 #if STRATA_TEST_HAS_LLVM
@@ -454,7 +454,7 @@ typedef struct
 static void CheckEnumImpl(const char* source, const EnumHostSymbol* hosts, size_t hostCount, int expected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(source, &diag, &arena);
@@ -463,7 +463,7 @@ static void CheckEnumImpl(const char* source, const EnumHostSymbol* hosts, size_
     {
         printf("  sema failed: %s\n", ErrText(&diag, &arena));
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
         return;
     }
 
@@ -503,7 +503,7 @@ static void CheckEnumImpl(const char* source, const EnumHostSymbol* hosts, size_
     LLVMJitDestroy(&llvm);
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static int EnumNameLenThunk(int self)

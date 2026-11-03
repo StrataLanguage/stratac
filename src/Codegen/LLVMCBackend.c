@@ -15,7 +15,7 @@ CodegenResult GenerateLlvmIr(const Module* mod)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
-    BuiltModule bm = BuildLlvmModule(mod, &diag, scratch_arena(), false, NULL);
+    BuiltModule bm = BuildLlvmModule(mod, &diag, ScratchArena(), false, NULL);
 
     if (DiagHasErrors(&diag))
     {
@@ -31,7 +31,7 @@ CodegenResult GenerateLlvmIr(const Module* mod)
         /* The caller free()s `output`, so it must be heap-owned — NOT an
            arena/scratch pointer (a free() on scratch memory corrupts the
            heap and crashes at teardown). */
-        res.output = DupString(SbFinish(&sb, scratch_arena()));
+        res.output = DupString(SbFinish(&sb, ScratchArena()));
         res.ok = false;
 
         DiagnosticEngineFree(&diag);

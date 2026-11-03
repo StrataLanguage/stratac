@@ -48,7 +48,7 @@ void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, con
     p->m_lex = lex;
     p->m_diag = diag;
     p->m_arena = arena;
-    p->m_moduleName = arena_strdup(arena, moduleName ? moduleName : "strata_module");
+    p->m_moduleName = ArenaStrdup(arena, moduleName ? moduleName : "strata_module");
     p->m_cur = LexerNextToken(lex);
     p->m_returnType = NULL;
     p->m_hasReturnStmt = false;

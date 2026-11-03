@@ -18,7 +18,7 @@
 STRATA_TEST(type_name_parse_round_trips)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     struct
     {
@@ -89,7 +89,7 @@ STRATA_TEST(type_name_parse_round_trips)
     STRATA_CHECK(TypeNameArrayElem(&arrOfOpt) != NULL);
     STRATA_CHECK(TypeNameArrayElem(&arrOfOpt)->isOptional);
 
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static StrataJit* CompileArr(const char* src, const char** err)
@@ -538,7 +538,7 @@ STRATA_TEST(string_array_field_omitted_starts_empty)
 STRATA_TEST(box_field_omitted_still_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Inner { int x; };\n"
@@ -554,7 +554,7 @@ STRATA_TEST(box_field_omitted_still_an_error)
     STRATA_CHECK(strstr(d, "'Inner?'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* A braced list is valid in expression position: positional constructor
@@ -716,7 +716,7 @@ STRATA_TEST(push_narrowed_optional_into_box_array)
 STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Node { int v; Node? next; };\n"
@@ -735,7 +735,7 @@ STRATA_TEST(push_unnarrowed_optional_into_box_array_is_error)
     STRATA_CHECK(strstr(d, "'a.next' has not been blessed ('Node?')") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- 2D arrays -------------------------------------------------------------
@@ -818,7 +818,7 @@ STRATA_TEST(two_d_fixed_array_flat_list_for_multidim_is_error)
     /* A flat list for a multidimensional field is a shape violation - the
        initializer must mirror the dimensions. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Grid { int[2][3] cells; };\n"
@@ -835,14 +835,14 @@ STRATA_TEST(two_d_fixed_array_flat_list_for_multidim_is_error)
     STRATA_CHECK(strstr(d, "requires nested rows") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(one_d_fixed_array_nested_row_is_error)
 {
     /* The mirror rule: a single-dimension field takes a flat list only. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Buf { byte[4] data; };\n"
@@ -859,7 +859,7 @@ STRATA_TEST(one_d_fixed_array_nested_row_is_error)
     STRATA_CHECK(strstr(d, "single dimension - write its elements as a flat list") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Stack-allocated local fixed arrays (`float[10] values = {...}`) -----
@@ -1083,7 +1083,7 @@ STRATA_TEST(fixed_local_array_init_rules)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
@@ -1095,7 +1095,7 @@ STRATA_TEST(fixed_local_array_init_rules)
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -1361,7 +1361,7 @@ STRATA_TEST(ref_array_param_growth_rejected)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
@@ -1373,7 +1373,7 @@ STRATA_TEST(ref_array_param_growth_rejected)
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -1398,7 +1398,7 @@ STRATA_TEST(array_take_and_replace_own_by_value_params)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
@@ -1410,7 +1410,7 @@ STRATA_TEST(array_take_and_replace_own_by_value_params)
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -1440,7 +1440,7 @@ STRATA_TEST(array_take_and_replace_index_args_are_reads)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
@@ -1455,7 +1455,7 @@ STRATA_TEST(array_take_and_replace_index_args_are_reads)
         STRATA_CHECK(!DiagHasErrors(&diag));
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -1503,7 +1503,7 @@ STRATA_TEST(fixed_array_to_non_ref_array_param_rejected)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
@@ -1515,7 +1515,7 @@ STRATA_TEST(fixed_array_to_non_ref_array_param_rejected)
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -1709,7 +1709,7 @@ STRATA_TEST(ref_array_literal_arg_rejections)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseAndResolve(cases[i].src, &diag, &arena);
@@ -1721,7 +1721,7 @@ STRATA_TEST(ref_array_literal_arg_rejections)
         STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -1983,7 +1983,7 @@ STRATA_TEST(optional_array_field_narrows_and_runs)
 STRATA_TEST(optional_array_use_without_narrowing_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Bag { int[]? items; };\n"
@@ -2003,13 +2003,13 @@ STRATA_TEST(optional_array_use_without_narrowing_is_error)
     STRATA_CHECK(strstr(d, "'b.items' has not been blessed") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(fixed_array_cannot_be_optional)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct S { int[2] ints; };\n"
@@ -2018,7 +2018,7 @@ STRATA_TEST(fixed_array_cannot_be_optional)
     STRATA_CHECK(!DiagHasErrors(&diag)); /* sanity: plain fixed array still fine */
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
@@ -2033,7 +2033,7 @@ STRATA_TEST(fixed_array_cannot_be_optional)
     STRATA_CHECK(strstr(d2, "cannot be optional") != NULL);
 
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(global_array_uninitialized_is_empty)
@@ -2508,7 +2508,7 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
        owns the buffer until scope exit, and every buffer is freed exactly
        once (null frees are not counted). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int[] build(int n) {\n"
@@ -2563,7 +2563,7 @@ STRATA_TEST(array_return_cleans_up_memory_llvm)
     LLVMJitDestroy(&jit);
     BuiltModuleDispose(&bm);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(dynamic_array_ordering_is_rejected)
@@ -2572,7 +2572,7 @@ STRATA_TEST(dynamic_array_ordering_is_rejected)
        comparisons remain meaningless for aggregates and are compile errors
        (sema rejects them alongside the mixed-type cases). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2591,7 +2591,7 @@ STRATA_TEST(dynamic_array_ordering_is_rejected)
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int[]')") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(dynamic_array_equality_is_elementwise)
@@ -2747,7 +2747,7 @@ STRATA_TEST(array_equality_mixed_element_types_rejected)
 {
     /* Same-shape but different element types never compare. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2765,14 +2765,14 @@ STRATA_TEST(array_equality_mixed_element_types_rejected)
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'uint[]')") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(dynamic_array_vs_scalar_comparison_is_rejected)
 {
     /* A mixed array/scalar comparison is rejected too. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2789,7 +2789,7 @@ STRATA_TEST(dynamic_array_vs_scalar_comparison_is_rejected)
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('int[]' and 'int')") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(string_vs_array_comparison_is_rejected)
@@ -2797,7 +2797,7 @@ STRATA_TEST(string_vs_array_comparison_is_rejected)
     /* String equality is CONTENT equality; comparing a string against a
        dynamic array is a type mismatch, not a fat-pointer poke. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2815,7 +2815,7 @@ STRATA_TEST(string_vs_array_comparison_is_rejected)
     STRATA_CHECK(strstr(d, "cannot compare 'string' with 'int[]'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* `.length` and `.cap` are uint views of the fat's u32 fields; array_push
@@ -2988,7 +2988,7 @@ STRATA_TEST(string_cap_counts_nul_slot)
 STRATA_TEST(array_length_and_cap_are_read_only)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -3005,12 +3005,12 @@ STRATA_TEST(array_length_and_cap_are_read_only)
     STRATA_CHECK(strstr(d, "cannot assign to '.length'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     DiagnosticEngine diag2;
     DiagnosticEngineInit(&diag2);
     Arena arena2;
-    arena_init(&arena2, 0);
+    ArenaInit(&arena2, 0);
     ParseAndResolve("int entry() {\n"
                     "  int[] a = {1, 2};\n"
                     "  a.cap++;\n"
@@ -3025,6 +3025,6 @@ STRATA_TEST(array_length_and_cap_are_read_only)
     STRATA_CHECK(strstr(d2, "cannot increment '.cap'") != NULL);
 
     DiagnosticEngineFree(&diag2);
-    arena_free(&arena2);
+    ArenaFree(&arena2);
 }
 #endif

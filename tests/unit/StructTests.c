@@ -9,7 +9,7 @@
 STRATA_TEST(parser_struct_declaration)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Vec3 { float x; float y; float z; };\n", &diag, &arena);
@@ -25,13 +25,13 @@ STRATA_TEST(parser_struct_declaration)
     STRATA_CHECK(strcmp(f0->type.name, "float") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_opaque_struct)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle Entity;\n", &diag, &arena);
@@ -42,13 +42,13 @@ STRATA_TEST(parser_opaque_struct)
     STRATA_CHECK(strcmp(h->name, "Entity") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_forward_struct_declaration)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Foo;\n", &diag, &arena);
@@ -61,13 +61,13 @@ STRATA_TEST(parser_forward_struct_declaration)
     STRATA_CHECK_EQ((long)s->fields.count, 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(forward_struct_is_completed_by_later_body)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Foo;\n"
@@ -89,7 +89,7 @@ STRATA_TEST(forward_struct_is_completed_by_later_body)
     TypeRegistryFree(&reg);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(jit_forward_decl_completed_and_used)
@@ -125,7 +125,7 @@ STRATA_TEST(jit_forward_decl_completed_and_used)
 STRATA_TEST(parser_struct_typed_params_and_members)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Vec3 { float x; float y; float z; };\n"
@@ -139,7 +139,7 @@ STRATA_TEST(parser_struct_typed_params_and_members)
     STRATA_CHECK(strcmp(p0->type.name, "Vec3") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static StrataJit* CompileJit(const char* src)
@@ -486,7 +486,7 @@ STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
 STRATA_TEST(aot_emits_struct_object)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Vec3 { float x; float y; float z; };\n"
@@ -511,7 +511,7 @@ STRATA_TEST(aot_emits_struct_object)
 
     BuiltModuleDispose(&bm);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 #endif
 
@@ -1012,7 +1012,7 @@ STRATA_TEST(struct_equality_mixed_types_rejected)
 {
     /* Distinct struct types, and structs against scalars, never compare. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct A { int x; };\n"
@@ -1034,14 +1034,14 @@ STRATA_TEST(struct_equality_mixed_types_rejected)
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'int')") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(struct_equality_ordering_rejected)
 {
     /* Only ==/!= exist for structs; ordering is a compile error. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct A { int x; };\n"
@@ -1060,5 +1060,5 @@ STRATA_TEST(struct_equality_ordering_rejected)
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'A')") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

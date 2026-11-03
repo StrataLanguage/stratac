@@ -2050,7 +2050,7 @@ STRATA_TEST(jit_scalar_max_in_enum_value)
 STRATA_TEST(scalar_max_int_min_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2062,14 +2062,14 @@ STRATA_TEST(scalar_max_int_min_is_an_error)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "type 'int' has no member 'min'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* Unknown members on a scalar type name are diagnosed directly. */
 STRATA_TEST(scalar_max_unknown_member_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2081,14 +2081,14 @@ STRATA_TEST(scalar_max_unknown_member_is_an_error)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "type 'float' has no member 'foo'"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* Type aliases carry no pseudo-properties: `Meter.max` is left off. */
 STRATA_TEST(scalar_max_alias_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Meter = int;\n"
@@ -2100,7 +2100,7 @@ STRATA_TEST(scalar_max_alias_is_an_error)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* A value base is not a pseudo-property read: `x.max` has no member
@@ -2126,7 +2126,7 @@ STRATA_TEST(scalar_max_value_base_is_an_error)
 STRATA_TEST(scalar_max_assign_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2138,13 +2138,13 @@ STRATA_TEST(scalar_max_assign_is_an_error)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "cannot assign to 'int.max' (a constant)"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scalar_max_compound_assign_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2157,13 +2157,13 @@ STRATA_TEST(scalar_max_compound_assign_is_an_error)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "cannot assign to 'int.max' (a constant)"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(scalar_max_incdec_is_an_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -2175,5 +2175,5 @@ STRATA_TEST(scalar_max_incdec_is_an_error)
     STRATA_CHECK(Contains(ErrText(&diag, &arena), "cannot increment 'int.max' (a constant)"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

@@ -30,7 +30,7 @@ static ReturnStmt* SingleReturn(Module* m)
 STRATA_TEST(parser_simple_function)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { return 7; }", &diag, &arena);
@@ -47,13 +47,13 @@ STRATA_TEST(parser_simple_function)
     STRATA_CHECK_EQ((long)((IntLiteral*)ret->value)->value, 7);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_out_parameter)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("void g(ref int x) {}", &diag, &arena);
@@ -68,13 +68,13 @@ STRATA_TEST(parser_out_parameter)
     STRATA_CHECK(strcmp(p->name, "x") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_inout_parameter)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("void h(ref float t) {}", &diag, &arena);
@@ -86,13 +86,13 @@ STRATA_TEST(parser_inout_parameter)
     STRATA_CHECK(strcmp(p->type.name, "float") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_struct_body_semicolon_optional)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct NoSemi { int x; }\n"
@@ -111,26 +111,26 @@ STRATA_TEST(parser_struct_body_semicolon_optional)
     STRATA_CHECK_EQ((long)((EnumDecl*)VecGet(&mod->enums, 1))->members.count, 2);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_forward_decl_still_needs_semicolon)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseModule("struct Foo\nstruct Bar { int x; };", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_extern_return_param)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Name { int x; };\n"
@@ -156,7 +156,7 @@ STRATA_TEST(parser_extern_return_param)
     STRATA_CHECK(!constGetter->returnType.isConst);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_extern_return_param_errors)
@@ -174,20 +174,20 @@ STRATA_TEST(parser_extern_return_param_errors)
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         ParseModule(cases[i].src, &diag, &arena);
         STRATA_CHECK(DiagHasErrors(&diag));
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
 STRATA_TEST(parser_binary_precedence)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { return 1 + 2 * 3; }", &diag, &arena);
@@ -205,13 +205,13 @@ STRATA_TEST(parser_binary_precedence)
     STRATA_CHECK(mul->op == BinMul);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_var_decl)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { int x = 5; return x; }", &diag, &arena);
@@ -227,13 +227,13 @@ STRATA_TEST(parser_var_decl)
     STRATA_CHECK(vd->init->kind == NodeIntLiteral);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_call_and_member)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { return add(1, 2); }", &diag, &arena);
@@ -247,26 +247,26 @@ STRATA_TEST(parser_call_and_member)
     STRATA_CHECK_EQ((long)call->args.count, 2);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_recovers_from_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f( { }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     STRATA_CHECK(DiagErrorCount(&diag) >= 1);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_if_else)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f(int a) { if (a) { return 1; } else { return 2; } }", &diag, &arena);
@@ -281,7 +281,7 @@ STRATA_TEST(parser_if_else)
     STRATA_CHECK(ifn->elseBranch != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static size_t CountDiagsContaining(const DiagnosticEngine* diag, const char* needle)
@@ -327,7 +327,7 @@ STRATA_TEST(parser_long_string_literal_is_not_truncated)
     SbPuts(&sb, "\"; return 0; }");
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     char* src = SbFinish(&sb, &arena);
@@ -345,13 +345,13 @@ STRATA_TEST(parser_long_string_literal_is_not_truncated)
     }
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_string_literal_keeps_embedded_nul)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { string s = \"ab\\0cd\"; string e = \"\"; return 0; }", &diag, &arena);
@@ -367,7 +367,7 @@ STRATA_TEST(parser_string_literal_keeps_embedded_nul)
     STRATA_CHECK_EQ((long)((StrLiteral*)empty->init)->length, 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_paren_ident_before_binary_op_is_an_expression)
@@ -381,7 +381,7 @@ STRATA_TEST(parser_paren_ident_before_binary_op_is_an_expression)
         snprintf(src, sizeof(src), "int f(int x) { return (x) %s 1; }", ops[i]);
 
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         Module* mod = ParseModule(src, &diag, &arena);
@@ -395,12 +395,12 @@ STRATA_TEST(parser_paren_ident_before_binary_op_is_an_expression)
         }
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 
     /* `(x)++` is a postfix increment of x, not a cast of `++...`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("void f(int x) { (x)++; (x)--; }", &diag, &arena);
@@ -414,7 +414,7 @@ STRATA_TEST(parser_paren_ident_before_binary_op_is_an_expression)
     }
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_unambiguous_casts_still_parse_as_casts)
@@ -428,7 +428,7 @@ STRATA_TEST(parser_unambiguous_casts_still_parse_as_casts)
         snprintf(src, sizeof(src), "int f(int y) { return %s; }", exprs[i]);
 
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         Module* mod = ParseModule(src, &diag, &arena);
@@ -442,7 +442,7 @@ STRATA_TEST(parser_unambiguous_casts_still_parse_as_casts)
         }
 
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -451,7 +451,7 @@ STRATA_TEST(parser_int_literals_are_decimal_everywhere)
     /* Array sizes and fieldoffset used strtoull base 0: `010` was 8 there
        (but 10 in expressions) and `09` was 0. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("extern struct E { fieldoffset(010) int a; }\n"
@@ -472,13 +472,13 @@ STRATA_TEST(parser_int_literals_are_decimal_everywhere)
     STRATA_CHECK_EQ((long)((IntLiteral*)ret->value)->value, 10);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_int_literal_range_and_long_spellings)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -496,39 +496,39 @@ STRATA_TEST(parser_int_literal_range_and_long_spellings)
     STRATA_CHECK(((IntLiteral*)((ReturnStmt*)StatementAt(mod, 2, 0))->value)->value == UINT64_MAX);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
     const char* bad[] = {"ulong f() { return 18446744073709551616; }", "ulong f() { return 0x10000000000000000; }",
                          "int f() { int[99999999999999999999] a = {}; return 0; }"};
 
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
     {
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngineInit(&diag);
         ParseModule(bad[i], &diag, &arena);
         STRATA_CHECK_EQ(CountDiagsContaining(&diag, "too large to fit in 64 bits"), 1);
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
 STRATA_TEST(parser_float_literal_out_of_range_is_diagnosed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseModule("double f() { return 1e999; }", &diag, &arena);
     STRATA_CHECK_EQ(CountDiagsContaining(&diag, "out of range"), 1);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_box_cannot_be_optional)
 {
     /* The inner type parse used to swallow the `?`, so `^S?` was accepted silently. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct S { int v; }\nstruct T { ^S? f; }", &diag, &arena);
@@ -542,13 +542,13 @@ STRATA_TEST(parser_box_cannot_be_optional)
     STRATA_CHECK(f->type.isBox && !f->type.isOptional);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_box_array_optional_shapes)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { ^S[]? a; ^S[] b = {}; ^S[4] c = {}; return 0; }", &diag, &arena);
@@ -570,21 +570,21 @@ STRATA_TEST(parser_box_array_optional_shapes)
     STRATA_CHECK(strcmp(c->name, "^S[4]") == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngineInit(&diag);
     ParseModule("int f() { ^S[4]? a; return 0; }", &diag, &arena);
     STRATA_CHECK_EQ(CountDiagsContaining(&diag, "fixed-size array '^S[4]' cannot be optional"), 1);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_trial_parse_diagnostics_are_rolled_back)
 {
     /* The cast trial parse read `arr[0]?` as a type and left an error behind. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod
@@ -596,25 +596,25 @@ STRATA_TEST(parser_trial_parse_diagnostics_are_rolled_back)
     STRATA_CHECK(vd->init && vd->init->kind == NodeNullTest);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_lexer_error_is_reported_once_after_backtracking)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseModule("int f() { foo $; return 0; }", &diag, &arena);
     STRATA_CHECK_EQ(CountDiagsContaining(&diag, "unexpected character '$'"), 1);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_dispose_frees_array_literal_and_enum_value_lists)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("enum E { A = g(1, 2), B }\nint f() { int[] a = {1, 2, 3}; return 0; }", &diag, &arena);
@@ -636,7 +636,7 @@ STRATA_TEST(parser_dispose_frees_array_literal_and_enum_value_lists)
     STRATA_CHECK(call->args.items == NULL && call->args.count == 0);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_error_paths_dispose_partial_nodes)
@@ -648,14 +648,14 @@ STRATA_TEST(parser_error_paths_dispose_partial_nodes)
     for (size_t i = 0; i < sizeof(srcs) / sizeof(srcs[0]); i++)
     {
         Arena arena;
-        arena_init(&arena, 0);
+        ArenaInit(&arena, 0);
         DiagnosticEngine diag;
         DiagnosticEngineInit(&diag);
         Module* mod = ParseModule(srcs[i], &diag, &arena);
         STRATA_CHECK(DiagHasErrors(&diag));
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
     }
 }
 
@@ -674,8 +674,8 @@ static char* FormatTwice(Arena* a, char** second, const char* fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    char* first = arena_vformat(a, fmt, args);
-    *second = arena_vformat(a, fmt, args);
+    char* first = ArenaVFormat(a, fmt, args);
+    *second = ArenaVFormat(a, fmt, args);
     va_end(args);
     return first;
 }
@@ -683,10 +683,10 @@ static char* FormatTwice(Arena* a, char** second, const char* fmt, ...)
 STRATA_TEST(util_arena_vformat_leaves_callers_va_list_alone)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     char* second = NULL;
     char* first = FormatTwice(&arena, &second, "%s-%d", "x", 42);
     STRATA_CHECK(strcmp(first, "x-42") == 0);
     STRATA_CHECK(strcmp(second, "x-42") == 0);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

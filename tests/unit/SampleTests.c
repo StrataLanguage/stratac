@@ -37,7 +37,7 @@ STRATA_TEST(sample_hello_compiles_to_llvm_ir)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -50,7 +50,7 @@ STRATA_TEST(sample_hello_compiles_to_llvm_ir)
     STRATA_CHECK(strstr(res.output, "call i32") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -61,7 +61,7 @@ STRATA_TEST(sample_structs_compile_with_native_backend)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -74,7 +74,7 @@ STRATA_TEST(sample_structs_compile_with_native_backend)
     STRATA_CHECK(strstr(res.output, "%struct.Particle") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -85,7 +85,7 @@ STRATA_TEST(sample_control_flow_lowers_in_llvm_backend)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -97,7 +97,7 @@ STRATA_TEST(sample_control_flow_lowers_in_llvm_backend)
     STRATA_CHECK(strstr(res.output, "call i32 @fibonacci") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -108,7 +108,7 @@ STRATA_TEST(sample_strings_compiles_to_llvm_ir)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -120,7 +120,7 @@ STRATA_TEST(sample_strings_compiles_to_llvm_ir)
     STRATA_CHECK(strstr(res.output, "define i32 @run") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -131,7 +131,7 @@ STRATA_TEST(sample_arrays_lower_in_llvm_backend)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -147,7 +147,7 @@ STRATA_TEST(sample_arrays_lower_in_llvm_backend)
     STRATA_CHECK(strstr(res.output, "strata_alloc") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -158,7 +158,7 @@ STRATA_TEST(sample_simd_compiles)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -169,7 +169,7 @@ STRATA_TEST(sample_simd_compiles)
     STRATA_CHECK(res.ok);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -180,7 +180,7 @@ STRATA_TEST(array_indexing_emits_bounds_check)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -192,7 +192,7 @@ STRATA_TEST(array_indexing_emits_bounds_check)
     STRATA_CHECK(strstr(ires.output, "strata_panic") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }
 
@@ -203,7 +203,7 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
     STRATA_CHECK(src[0] != '\0');
 
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
@@ -222,6 +222,6 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
     STRATA_CHECK(strstr(res.output, "__strata_drop_Owned") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     free(src);
 }

@@ -250,7 +250,7 @@ STRATA_TEST(vector_assign_lane_count_mismatch_is_error)
        moves (float3 <-> float4) are rejected; only a scalar may splat into
        a vector. A non-vector never lands in a vector slot. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Vec3 { float x; float y; float z; };\n"
@@ -273,13 +273,13 @@ STRATA_TEST(vector_assign_lane_count_mismatch_is_error)
     STRATA_CHECK(strstr(d, "type 'Vec3'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(vector_assign_same_lane_and_scalar_splat_ok)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -292,7 +292,7 @@ STRATA_TEST(vector_assign_same_lane_and_scalar_splat_ok)
                     &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(vector_dot3)
@@ -428,7 +428,7 @@ STRATA_TEST(vector_dot_cross_lane_mismatch_is_error)
 {
     /* Both operands of dot/cross must be SIMD vectors with matching lanes. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -449,7 +449,7 @@ STRATA_TEST(vector_dot_cross_lane_mismatch_is_error)
     STRATA_CHECK(strstr(d, "SIMD vector arguments") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(vector_lane_writes_on_struct_field)
@@ -506,7 +506,7 @@ STRATA_TEST(vector_swizzle_write_is_error)
 {
     /* Multi-component swizzle writes are rejected with a clear message. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("struct Sprite { float2 pos; };\n"
@@ -528,14 +528,14 @@ STRATA_TEST(vector_swizzle_write_is_error)
 
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(vector_lane_out_of_range_write_is_error)
 {
     /* `v.z` on a float2 has no lane 2; sema refuses it before codegen runs. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -552,6 +552,6 @@ STRATA_TEST(vector_lane_out_of_range_write_is_error)
     STRATA_CHECK(strstr(d, "has no lane 'z'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 #endif

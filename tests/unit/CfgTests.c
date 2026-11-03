@@ -9,7 +9,7 @@
 static char* DumpFunction(const char* source, const char* name)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule(source, &diag, &arena);
@@ -31,7 +31,7 @@ static char* DumpFunction(const char* source, const char* name)
     }
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     return out;
 }
 

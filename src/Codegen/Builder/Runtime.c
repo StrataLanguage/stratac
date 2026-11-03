@@ -14,7 +14,7 @@ const char* ExportedSymbolName(Builder* b, const char* name)
         return name;
     }
 
-    return arena_format(b->m_arena, "%s%s", b->m_symbolPrefix, name);
+    return ArenaFormat(b->m_arena, "%s%s", b->m_symbolPrefix, name);
 }
 
 /* With a symbol prefix, module-emitted runtime helpers become module-local so several objects
@@ -98,7 +98,7 @@ LLVMValueRef MsgGlobalPtr(Builder* b, const char* prefix, const char* message)
     size_t len = strlen(message);
     LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, message, (unsigned)len, 0);
     LLVMTypeRef strType = LLVMTypeOf(strConst);
-    char* gName = arena_format(b->m_arena, "%s.%d", prefix, b->m_strLitCount++);
+    char* gName = ArenaFormat(b->m_arena, "%s.%d", prefix, b->m_strLitCount++);
     LLVMValueRef g = LLVMAddGlobal(b->m_mod, strType, gName);
     LLVMSetInitializer(g, strConst);
     LLVMSetLinkage(g, LLVMPrivateLinkage);

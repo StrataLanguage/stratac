@@ -64,18 +64,18 @@ typedef struct Arena
     char* end;
 } Arena;
 
-void arena_init(Arena* a, size_t initial_chunk);
-void arena_free(Arena* a);
-void* arena_alloc(Arena* a, size_t size);
-void* arena_alloc_aligned(Arena* a, size_t size, size_t align);
-void* arena_dup(Arena* a, const void* src, size_t size);
-char* arena_strdup(Arena* a, const char* s);
-char* arena_strndup(Arena* a, const char* s, size_t n);
-char* arena_format(Arena* a, const char* fmt, ...);
-char* arena_vformat(Arena* a, const char* fmt, va_list args);
+void ArenaInit(Arena* a, size_t initial_chunk);
+void ArenaFree(Arena* a);
+void* ArenaAlloc(Arena* a, size_t size);
+void* ArenaAllocAligned(Arena* a, size_t size, size_t align);
+void* ArenaDup(Arena* a, const void* src, size_t size);
+char* ArenaStrdup(Arena* a, const char* s);
+char* ArenaStrndup(Arena* a, const char* s, size_t n);
+char* ArenaFormat(Arena* a, const char* fmt, ...);
+char* ArenaVFormat(Arena* a, const char* fmt, va_list args);
 
-Arena* scratch_arena(void);
-void scratch_reset(void);
+Arena* ScratchArena(void);
+void ScratchReset(void);
 
 // -- C string
 

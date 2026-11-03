@@ -82,7 +82,7 @@ static int NearlyEqual(float a, float b)
 STRATA_TEST(component_attribute_parses)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -107,13 +107,13 @@ STRATA_TEST(component_attribute_parses)
     STRATA_CHECK(!plain->isComponent);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(component_attribute_misuse_is_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -129,13 +129,13 @@ STRATA_TEST(component_attribute_misuse_is_rejected)
     STRATA_CHECK(strstr(d, "attributes are only allowed on function and struct definitions") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(function_attributes_still_work)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -151,7 +151,7 @@ STRATA_TEST(function_attributes_still_work)
     STRATA_CHECK(strstr(d, "unknown attribute '@component'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* -- Component field rules ---------------------------------------------------------------- */
@@ -159,7 +159,7 @@ STRATA_TEST(function_attributes_still_work)
 STRATA_TEST(component_accepts_plain_data)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -167,13 +167,13 @@ STRATA_TEST(component_accepts_plain_data)
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(component_rejects_owning_and_cstring_fields)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -197,7 +197,7 @@ STRATA_TEST(component_rejects_owning_and_cstring_fields)
     STRATA_CHECK(strstr(d, "field 'nested' has type 'Named', which contains 'string' (a string)") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* -- Field defaults ----------------------------------------------------------------------- */
@@ -205,7 +205,7 @@ STRATA_TEST(component_rejects_owning_and_cstring_fields)
 STRATA_TEST(field_default_must_be_constant_and_typed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -228,7 +228,7 @@ STRATA_TEST(field_default_must_be_constant_and_typed)
     STRATA_CHECK(strstr(d, "default value for field 'v' must be a compile-time constant 'float3(...)'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static StrataJit* CompileJit(const char* src)
@@ -720,7 +720,7 @@ STRATA_TEST(generic_extern_calls_reach_one_host_function)
 STRATA_TEST(generic_extern_rules)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
 
@@ -753,7 +753,7 @@ STRATA_TEST(generic_extern_rules)
     STRATA_CHECK(strstr(d, "argument 2 of 'Get' is passed by non-const 'ref' and must be a variable") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(less_than_still_parses_as_comparison)

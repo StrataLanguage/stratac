@@ -14,13 +14,13 @@ static bool Contains(const char* hay, const char* needle)
 static CodegenResult GenLlvm(const char* src)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     CodegenResult res = GenerateLlvmIr(mod);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
     return res;
 }
 

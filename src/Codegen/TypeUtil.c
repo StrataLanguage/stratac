@@ -436,7 +436,7 @@ const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const 
             break;
         }
 
-        TypeName* next = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+        TypeName* next = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
         *next = TypeNameParse(arena, leaf);
         t = next;
     }

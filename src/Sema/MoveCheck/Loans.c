@@ -255,7 +255,7 @@ static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, 
             if (conflict && PlacesOverlap(loans.items[i].key, effects.items[j].key))
             {
                 ReportAs(found, MoveDiagLoan, effects.items[j].node->range,
-                         arena_strdup(env->arena, effects.items[j].key));
+                         ArenaStrdup(env->arena, effects.items[j].key));
             }
         }
     }

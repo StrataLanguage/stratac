@@ -32,7 +32,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
         return;
     }
 
-    FuncInfo* info = (FuncInfo*)arena_alloc(b->m_arena, sizeof(FuncInfo));
+    FuncInfo* info = (FuncInfo*)ArenaAlloc(b->m_arena, sizeof(FuncInfo));
 
     bool hasReturnParam = FunctionHasReturnParam(f);
 
@@ -51,7 +51,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
                                && TypeIsString(&b->m_registry, f->returnType.name);
 
     size_t pcount = f->params.count;
-    info->paramByPtr = (bool*)arena_alloc(b->m_arena, pcount * sizeof(bool));
+    info->paramByPtr = (bool*)ArenaAlloc(b->m_arena, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
 
     /* Every non-extern function gets ONE hidden leading LLVM parameter (a
@@ -70,7 +70,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
 
     if (pcount + ctxOffset + typeDescCount > 0)
     {
-        params = (LLVMTypeRef*)arena_alloc(b->m_arena, (pcount + ctxOffset + typeDescCount) * sizeof(LLVMTypeRef));
+        params = (LLVMTypeRef*)ArenaAlloc(b->m_arena, (pcount + ctxOffset + typeDescCount) * sizeof(LLVMTypeRef));
     }
 
     if (info->hasHiddenCtxParam)
@@ -210,7 +210,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
            owns its copy's fields and drops them at return. */
         bool owningStructParam = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->m_registry, leafName);
 
-        Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+        Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
 
         if (p->mod != ModNone || (f->isExtern && structVal) || boxParam)
         {
@@ -234,7 +234,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
                dropped, but the caller's stack buffer is not freed. */
             if (boxParam && p->mod == ModNone)
             {
-                OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+                OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
                 ol->slot = sym->value;
                 ol->td = typeDesc;
                 ol->stackBuffer = p->isVarargRest;
@@ -251,7 +251,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
 
             if (owningStructParam)
             {
-                OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+                OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
                 ol->slot = slot;
                 ol->td = typeDesc;
                 ol->stackBuffer = false;

@@ -959,7 +959,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
 
             if (close)
             {
-                t->name = arena_format(r->m_arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length, close + 1);
+                t->name = ArenaFormat(r->m_arena, "%.*s[%ld]%s", (int)(open - t->name), t->name, t->length, close + 1);
             }
         }
     }

@@ -51,7 +51,7 @@ STRATA_TEST(string_lex_and_parse_basics)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     Module* mod = ParseAndResolve("string greeting(string name) {\n"
                                   "  string s = \"Hello, \";\n"
@@ -67,7 +67,7 @@ STRATA_TEST(string_lex_and_parse_basics)
     STRATA_CHECK(strcmp(f->name, "greeting") == 0);
     STRATA_CHECK(strcmp(f->returnType.name, "string") == 0);
 
-    arena_free(&arena);
+    ArenaFree(&arena);
     DiagnosticEngineFree(&diag);
 }
 
@@ -177,7 +177,7 @@ STRATA_TEST(string_type_check_rejects_int_init)
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
 
     ParseAndResolve("int f() {\n"
                     "  string s = 42;\n"
@@ -187,7 +187,7 @@ STRATA_TEST(string_type_check_rejects_int_init)
 
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    arena_free(&arena);
+    ArenaFree(&arena);
     DiagnosticEngineFree(&diag);
 }
 
@@ -198,7 +198,7 @@ STRATA_TEST(global_string_array_element_move_is_an_error)
        teardown). Reject it with the same transitive global-move error as a
        whole-global move. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("string[] g = {\"hi\"};\n"
@@ -217,7 +217,7 @@ STRATA_TEST(global_string_array_element_move_is_an_error)
     STRATA_CHECK(Contains(d, "g[0]' cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(global_owning_field_move_is_an_error)
@@ -225,7 +225,7 @@ STRATA_TEST(global_owning_field_move_is_an_error)
     /* Transitive through a struct field: moving an owning field out of a
        global struct is rejected with the same error. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Cell { string name; };\n"
@@ -243,7 +243,7 @@ STRATA_TEST(global_owning_field_move_is_an_error)
     STRATA_CHECK(Contains(d, "cannot be moved as it is not owned because it is global"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(global_string_array_element_copy_is_allowed)
@@ -332,7 +332,7 @@ STRATA_TEST(string_vs_non_string_comparison_is_rejected)
     /* string ==/!= is content equality; comparing a string with a scalar
        is a compile error (never a fat-pointer compare). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -349,7 +349,7 @@ STRATA_TEST(string_vs_non_string_comparison_is_rejected)
     STRATA_CHECK(strstr(d, "cannot compare 'string' with 'int'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(substring_slices_are_owned_copies)
@@ -491,7 +491,7 @@ STRATA_TEST(substring_out_of_range_yields_empty_in_jit)
 STRATA_TEST(substring_wrong_arg_count_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -507,13 +507,13 @@ STRATA_TEST(substring_wrong_arg_count_is_error)
     STRATA_CHECK(Contains(d, "'substring' expects 3 arguments"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(substring_non_string_source_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -529,13 +529,13 @@ STRATA_TEST(substring_non_string_source_is_error)
     STRATA_CHECK(Contains(d, "'substring' expects a string argument"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(substring_float_index_is_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() {\n"
@@ -551,7 +551,7 @@ STRATA_TEST(substring_float_index_is_error)
     STRATA_CHECK(Contains(d, "'substring' start must be an integer"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(substring_unblessed_optional_is_error)
@@ -559,7 +559,7 @@ STRATA_TEST(substring_unblessed_optional_is_error)
     /* An unproven `string?` (here, a parameter with no narrowing fact)
        reads through substring like any other optional read. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry(string? s) {\n"
@@ -575,5 +575,5 @@ STRATA_TEST(substring_unblessed_optional_is_error)
     STRATA_CHECK(Contains(d, "has not been blessed"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

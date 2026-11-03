@@ -442,7 +442,7 @@ static void FoldManifestConstants(Resolver* r)
             continue;
         }
 
-        ConstGlobalVal* v = (ConstGlobalVal*)arena_alloc(arena, sizeof(ConstGlobalVal));
+        ConstGlobalVal* v = (ConstGlobalVal*)ArenaAlloc(arena, sizeof(ConstGlobalVal));
         v->isInt = IsConstDimType(&r->m_registry, gd->type.name);
 
         if (SemaFoldConstInit(r, gd->init, v))

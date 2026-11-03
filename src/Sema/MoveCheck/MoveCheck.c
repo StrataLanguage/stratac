@@ -36,11 +36,11 @@ static void ReportPlace(const Env* env, Found* found, const Node* node, int bloc
 
     /* A use after move names the moved place; a poisoned whole names itself. */
     MoveDiag* d = ReportAs(found, partMoved ? MoveDiagPoisoned : MoveDiagUse, node->range,
-                           arena_strdup(env->arena, partMoved ? buf : blocked));
+                           ArenaStrdup(env->arena, partMoved ? buf : blocked));
 
     if (d && partMoved)
     {
-        d->detail = arena_strdup(env->arena, blocked);
+        d->detail = ArenaStrdup(env->arena, blocked);
     }
 }
 
@@ -76,7 +76,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
             }
 
             ReportAs(found, MoveDiagElement, n->range,
-                     PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<element>");
+                     PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? ArenaStrdup(env->arena, buf) : "<element>");
             return;
         }
 
@@ -119,7 +119,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
             char buf[256];
             const char* root;
             ReportAs(found, MoveDiagDropField, n->range,
-                     PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? arena_strdup(env->arena, buf) : "<field>");
+                     PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? ArenaStrdup(env->arena, buf) : "<field>");
             return;
         }
     }
@@ -419,7 +419,7 @@ static void CheckRefParamsRestored(Env* env, const FunctionDecl* fn, const Cfg* 
 
                 if (prm->mod == ModRef && !prm->type.isConst && strcmp(prm->name, root) == 0)
                 {
-                    ReportAs(found, MoveDiagRefParam, fn->base.range, arena_strdup(env->arena, env->paths[k]));
+                    ReportAs(found, MoveDiagRefParam, fn->base.range, ArenaStrdup(env->arena, env->paths[k]));
                 }
             }
         }

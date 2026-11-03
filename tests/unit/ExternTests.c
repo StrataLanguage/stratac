@@ -303,7 +303,7 @@ typedef struct
 static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(source, &diag, &arena);
@@ -311,7 +311,7 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
     if (DiagHasErrors(&diag))
     {
         DiagnosticEngineFree(&diag);
-        arena_free(&arena);
+        ArenaFree(&arena);
         return;
     }
 
@@ -351,7 +351,7 @@ static void CheckExternImpl(const char* source, const HostSymbol* hosts, size_t 
     LLVMJitDestroy(&llvm);
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 static void CheckLlvmOnlyExtern(const char* source, const HostSymbol* hosts, size_t hostCount, int expected)
@@ -883,7 +883,7 @@ STRATA_TEST(extern_fat_return_is_rejected)
        return elsewhere), so the call site would read garbage. The `return`
        out-param is the supported crossing. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern byte[] bad_bytes();\n"
@@ -903,7 +903,7 @@ STRATA_TEST(extern_fat_return_is_rejected)
     STRATA_CHECK(strstr(d, "return") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ================= Box params ================= */
@@ -963,7 +963,7 @@ STRATA_TEST(extern_string_box_is_rejected)
     /* `^string` is banned everywhere, extern params included — a plain
        `string` param already crosses as `const char*`. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int host_str_box_len(^string b);\n"
@@ -977,7 +977,7 @@ STRATA_TEST(extern_string_box_is_rejected)
     STRATA_CHECK(strstr(d, "redundant boxing of type 'string'") != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(extern_box_struct_array_param)

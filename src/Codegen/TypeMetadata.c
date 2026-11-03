@@ -318,7 +318,7 @@ static bool ResolveFieldShape(Writer* w, const TypeName* type, FieldShape* out)
 
         if (registered->isTypeAlias)
         {
-            TypeName* underlying = (TypeName*)arena_alloc(&w->scratch, sizeof(TypeName));
+            TypeName* underlying = (TypeName*)ArenaAlloc(&w->scratch, sizeof(TypeName));
             *underlying = TypeNameParse(&w->scratch, registered->underlyingType);
             current = underlying;
             continue;
@@ -373,7 +373,7 @@ static void AddEnum(Writer* w, const char* name)
         return;
     }
 
-    EnumEntry* entry = (EnumEntry*)arena_alloc(&w->scratch, sizeof(EnumEntry));
+    EnumEntry* entry = (EnumEntry*)ArenaAlloc(&w->scratch, sizeof(EnumEntry));
     entry->decl = decl;
     entry->underlyingKind = KindForPrimitive(GetPrimitiveType(decl->underlyingType ? decl->underlyingType : "int"));
     VecPush(&w->enums, entry);
@@ -428,7 +428,7 @@ static bool VisitStruct(Writer* w, const StructType* type)
 
     if (ok)
     {
-        StructEntry* entry = (StructEntry*)arena_alloc(&w->scratch, sizeof(StructEntry));
+        StructEntry* entry = (StructEntry*)ArenaAlloc(&w->scratch, sizeof(StructEntry));
         entry->type = type;
         VecPush(&w->structs, entry);
     }
@@ -600,7 +600,7 @@ static void WriterInit(Writer* w, const TypeRegistry* reg, const Module* mod)
     *w = (Writer){0};
     w->reg = reg;
     w->mod = mod;
-    arena_init(&w->scratch, 1024);
+    ArenaInit(&w->scratch, 1024);
     VecInit(&w->structs);
     VecInit(&w->visiting);
     VecInit(&w->enums);
@@ -617,7 +617,7 @@ static void WriterFree(Writer* w)
     free(w->structs.items);
     free(w->visiting.items);
     free(w->enums.items);
-    arena_free(&w->scratch);
+    ArenaFree(&w->scratch);
 }
 
 uint64_t TypeMetadataNameHash(const char* name)

@@ -22,7 +22,7 @@ static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structNam
 {
     ArrayInitExpr* ai = AsNode(ArrayInitExpr, braced);
 
-    StructInitExpr* init = (StructInitExpr*)arena_alloc(r->m_arena, sizeof(StructInitExpr));
+    StructInitExpr* init = (StructInitExpr*)ArenaAlloc(r->m_arena, sizeof(StructInitExpr));
     memset(init, 0, sizeof(StructInitExpr));
     init->base.kind = NodeStructInit;
     init->base.range = ai->base.range;
@@ -31,7 +31,7 @@ static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structNam
 
     for (size_t i = 0; i < ai->elements.count; i++)
     {
-        StructInitField* field = (StructInitField*)arena_alloc(r->m_arena, sizeof(StructInitField));
+        StructInitField* field = (StructInitField*)ArenaAlloc(r->m_arena, sizeof(StructInitField));
         field->name = NULL;
         field->value = (Node*)VecGet(&ai->elements, i);
         VecPush(&init->fields, field);
@@ -76,7 +76,7 @@ void CheckStructInitFields(Resolver* r, Node* n)
     }
 
     size_t fieldCount = structType->fields.count;
-    bool* covered = (bool*)arena_alloc(r->m_arena, fieldCount * sizeof(bool));
+    bool* covered = (bool*)ArenaAlloc(r->m_arena, fieldCount * sizeof(bool));
     size_t positionalSeen = 0;
 
     for (size_t i = 0; i < init->fields.count; i++)
@@ -444,7 +444,7 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
     FunctionDecl* fn = AST_NEW(arena, FunctionDecl);
     fn->base.kind = NodeFunction;
     fn->base.range = range;
-    fn->name = arena_strdup(arena, symbol);
+    fn->name = ArenaStrdup(arena, symbol);
     fn->mangledName = fn->name;
     fn->isExtern = true;
     fn->fromImpl = true;
@@ -452,7 +452,7 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
     if (isSetter)
     {
-        fn->returnType.name = arena_strdup(arena, "void");
+        fn->returnType.name = ArenaStrdup(arena, "void");
     }
     else
     {
@@ -464,9 +464,9 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
     self->base.kind = NodeParam;
     self->base.range = range;
     self->mod = selfByRef ? ModRef : ModNone;
-    self->type = TypeNameLeaf(arena_strdup(arena, handleName));
+    self->type = TypeNameLeaf(ArenaStrdup(arena, handleName));
     self->type.isConst = selfByRef && !isSetter;
-    self->name = arena_strdup(arena, "self");
+    self->name = ArenaStrdup(arena, "self");
     VecPush(&fn->params, self);
 
     if (isSetter)
@@ -476,7 +476,7 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
         value->base.range = range;
         value->mod = ModNone;
         value->type = *propType;
-        value->name = arena_strdup(arena, "value");
+        value->name = ArenaStrdup(arena, "value");
         VecPush(&fn->params, value);
     }
 

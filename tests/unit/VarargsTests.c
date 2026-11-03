@@ -21,7 +21,7 @@ static bool Contains(const char* hay, const char* needle)
 static void CheckParity(const char* source, int expected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(source, &diag, &arena);
@@ -65,7 +65,7 @@ static void CheckParity(const char* source, int expected)
     LLVMJitDestroy(&llvm);
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Host functions for bare extern `...` calls ---- */
@@ -101,7 +101,7 @@ static int HostVMean10(int count, ...)
 static void CheckVarargExtern(const char* source, const char* symbol, void* hostFn, int expected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(source, &diag, &arena);
@@ -149,7 +149,7 @@ static void CheckVarargExtern(const char* source, const char* symbol, void* host
     LLVMJitDestroy(&llvm);
     BuiltModuleDispose(&llvmModule);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Parser / sema ---- */
@@ -157,7 +157,7 @@ static void CheckVarargExtern(const char* source, const char* symbol, void* host
 STRATA_TEST(parser_typed_rest_param)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int sum(int first, int... rest) { return first; }", &diag, &arena);
@@ -174,13 +174,13 @@ STRATA_TEST(parser_typed_rest_param)
         STRATA_CHECK(strcmp(rest->type.name, "int[]") == 0);
     }
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_bare_cvararg_extern)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("extern int printf(string fmt, ...);", &diag, &arena);
@@ -194,49 +194,49 @@ STRATA_TEST(parser_bare_cvararg_extern)
         STRATA_CHECK(fn->isCVararg);
     }
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_rest_param_must_be_last)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int f(int... rest, int b) { return 1; }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_bare_cvararg_requires_extern)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int f(int a, ...) { return 1; }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_bare_cvararg_requires_named_param)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int f(...);", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(parser_rest_param_accepts_modifiers)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int f(ref int... rest) { return 1; }", &diag, &arena);
@@ -250,37 +250,37 @@ STRATA_TEST(parser_rest_param_accepts_modifiers)
         STRATA_CHECK(rest->mod == ModRef);
     }
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_rest_element_type_mismatch_errors)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int sum(int... rest) { return 0; } int entry() { return sum(1, \"oops\"); }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_variadic_too_few_args_errors)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int sum(int first, int... rest) { return 0; } int entry() { return sum(); }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_struct_in_cvararg_position_errors)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Pt { int x; };\n"
@@ -289,7 +289,7 @@ STRATA_TEST(sema_struct_in_cvararg_position_errors)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ---- Typed rest: execution on both backends ---- */
@@ -547,26 +547,26 @@ STRATA_TEST(sema_typed_rest_ref_rebind_rejected)
     /* A ref rest borrows the caller's stack array; the binding itself can't
        be reassigned (assign its inner value instead). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int f(ref int... rest) { int[] local = {9, 9}; rest = local; return 0; }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_typed_rest_const_element_write_rejected)
 {
     /* Writing through a const rest's elements is rejected. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("int f(const int... rest) { rest[0] = 5; return rest[0]; }", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(varargs_typed_rest_ref_box_borrow_parity)
@@ -621,7 +621,7 @@ STRATA_TEST(sema_ref_rest_rejects_implicit_boxing)
     /* A ref ^T... rest borrows; a bare T can't be boxed inline (it would
        be an owned heap box nobody drops). */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -630,13 +630,13 @@ STRATA_TEST(sema_ref_rest_rejects_implicit_boxing)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_typed_rest_box_used_after_move_error)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -645,14 +645,14 @@ STRATA_TEST(sema_typed_rest_box_used_after_move_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_typed_rest_ref_box_move_error)
 {
     /* A ref ^T can't be moved into a ^T... rest. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -662,14 +662,14 @@ STRATA_TEST(sema_typed_rest_ref_box_move_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(sema_typed_rest_global_box_move_error)
 {
     /* A global ^T can't be moved into a ^T... rest. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -679,7 +679,7 @@ STRATA_TEST(sema_typed_rest_global_box_move_error)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(varargs_typed_rest_ref_scalar_copies_parity)
@@ -715,7 +715,7 @@ STRATA_TEST(sema_cvararg_box_struct_rejected)
 {
     /* A boxed struct can't cross a bare extern `...` by value. */
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo { int v; };\n"
@@ -724,7 +724,7 @@ STRATA_TEST(sema_cvararg_box_struct_rejected)
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(varargs_typed_rest_string_owns_elements_parity)
@@ -1065,7 +1065,7 @@ STRATA_TEST(varargs_extern_cvararg_box_scalar_derefs_parity)
 STRATA_TEST(llvm_vararg_extern_declared_variadic)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("extern int printf(string fmt, ...);", &diag, &arena);
@@ -1077,13 +1077,13 @@ STRATA_TEST(llvm_vararg_extern_declared_variadic)
     STRATA_CHECK(Contains(res.output, ", ...)"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(ast_dump_shows_ellipsis)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("extern int printf(string fmt, ...);\n"
@@ -1096,5 +1096,5 @@ STRATA_TEST(ast_dump_shows_ellipsis)
     STRATA_CHECK(Contains(dump, "int... rest"));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

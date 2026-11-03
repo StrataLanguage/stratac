@@ -55,7 +55,7 @@ typedef struct
     SourceRange range;
 } Node;
 
-#define AST_NEW(arena, type) ((type*)arena_alloc((arena), sizeof(type)))
+#define AST_NEW(arena, type) ((type*)ArenaAlloc((arena), sizeof(type)))
 #define AsNode(type, node) ((type*)(node))
 
 /* Types are structural: `^T` (box), `T?` (optional), and `T[]`/`T[N]` (array)
@@ -86,7 +86,7 @@ static inline bool TypeNameValid(const TypeName* t)
 // Arena copy of `inner` that a wrapper type points at.
 static inline TypeName* TypeNameWrapInner(Arena* arena, TypeName inner)
 {
-    TypeName* copy = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    TypeName* copy = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
     *copy = inner;
     return copy;
 }
@@ -99,7 +99,7 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     TypeName t = {0};
     t.isBox = true;
     t.inner = i;
-    t.name = arena_format(arena, "^%s", i->name);
+    t.name = ArenaFormat(arena, "^%s", i->name);
     t.range = i->range;
     return t;
 }
@@ -113,7 +113,7 @@ static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
     TypeName t = {0};
     t.isOptional = true;
     t.inner = i;
-    t.name = arena_format(arena, "%s?", i->name);
+    t.name = ArenaFormat(arena, "%s?", i->name);
     t.isConst = inner.isConst;
     t.range = inner.range;
     return t;
@@ -128,7 +128,7 @@ static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
     t.isArray = true;
     t.length = -1;
     t.elem = e;
-    t.name = arena_format(arena, "%s[]", e->name);
+    t.name = ArenaFormat(arena, "%s[]", e->name);
     t.isConst = e->isConst;
     t.range = e->range;
     return t;
@@ -143,7 +143,7 @@ static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, Array
     t.isArray = true;
     t.length = length;
     t.elem = e;
-    t.name = arena_format(arena, "%s[%ld]", e->name, length);
+    t.name = ArenaFormat(arena, "%s[%ld]", e->name, length);
     t.isConst = e->isConst;
     t.range = e->range;
     return t;
@@ -251,13 +251,13 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
     {
         TypeName inner = TypeNameParseGroups(arena, base, baseLen, groups, groupsLen - 1);
 
-        TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+        TypeName* i = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
         *i = inner;
 
         TypeName t = {0};
         t.isOptional = true;
         t.inner = i;
-        t.name = arena_format(arena, "%s?", i->name);
+        t.name = ArenaFormat(arena, "%s?", i->name);
         return t;
     }
 
@@ -268,29 +268,29 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
         {
             TypeName inner = TypeNameParseGroups(arena, base, baseLen - 1, NULL, 0);
 
-            TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+            TypeName* i = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
             *i = inner;
 
             TypeName t = {0};
             t.isOptional = true;
             t.inner = i;
-            t.name = arena_strndup(arena, base, baseLen);
+            t.name = ArenaStrndup(arena, base, baseLen);
             return t;
         }
 
         if (baseLen >= 2 && base[0] == '^')
         {
-            TypeName* inner = (TypeName*)arena_alloc(arena, sizeof(TypeName));
-            *inner = TypeNameLeaf(arena_strndup(arena, base + 1, baseLen - 1));
+            TypeName* inner = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
+            *inner = TypeNameLeaf(ArenaStrndup(arena, base + 1, baseLen - 1));
 
             TypeName t = {0};
             t.isBox = true;
             t.inner = inner;
-            t.name = arena_strndup(arena, base, baseLen);
+            t.name = ArenaStrndup(arena, base, baseLen);
             return t;
         }
 
-        return TypeNameLeaf(arena_strndup(arena, base, baseLen));
+        return TypeNameLeaf(ArenaStrndup(arena, base, baseLen));
     }
 
     // First bracket group is the outermost dim; wrap inner groups first.
@@ -299,7 +299,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
 
     TypeName elem = TypeNameParseGroups(arena, base, baseLen, groups + groupLen, groupsLen - groupLen);
 
-    TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    TypeName* e = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
     *e = elem;
 
     TypeName t = {0};

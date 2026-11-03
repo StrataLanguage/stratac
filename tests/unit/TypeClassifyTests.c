@@ -22,7 +22,7 @@ static TypeProps Classify(const TypeRegistry* reg, Arena* arena, const char* spe
 STRATA_TEST(type_classify_properties)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule(kClassifySource, &diag, &arena);
@@ -70,5 +70,5 @@ STRATA_TEST(type_classify_properties)
 
     TypeRegistryFree(&reg);
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }

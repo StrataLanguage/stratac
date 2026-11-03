@@ -667,7 +667,7 @@ static FunctionDecl* NewFunctionDecl(Parser* p, TypeName returnType, Token nameT
     node->base.range = SpanFrom((Token){TokIdent, returnType.range}, nameTok);
     node->returnType = returnType;
     node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
-    node->mangledName = arena_strdup(p->m_arena, node->name);
+    node->mangledName = ArenaStrdup(p->m_arena, node->name);
     node->isExtern = isExtern;
     node->isPrivate = isPrivate;
     node->isExport = isExport;
@@ -677,7 +677,7 @@ static FunctionDecl* NewFunctionDecl(Parser* p, TypeName returnType, Token nameT
 
     if (isDelegate)
     {
-        node->mangledName = arena_format(p->m_arena, "__delegate_%s", node->name);
+        node->mangledName = ArenaFormat(p->m_arena, "__delegate_%s", node->name);
 
         if (hasAttrs || typeParam)
         {
@@ -1059,8 +1059,8 @@ ImplDecl* ParseImplDecl(Parser* p)
         }
 
         fn->methodName = fn->name;
-        fn->name = arena_format(p->m_arena, "%s_%s", impl->handleName, fn->methodName);
-        fn->mangledName = arena_strdup(p->m_arena, fn->name);
+        fn->name = ArenaFormat(p->m_arena, "%s_%s", impl->handleName, fn->methodName);
+        fn->mangledName = ArenaStrdup(p->m_arena, fn->name);
         fn->fromImpl = true;
         VecPush(&impl->methods, fn);
     }

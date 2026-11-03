@@ -24,7 +24,7 @@ STRATA_TEST(private_at_lexes_as_at_token)
 STRATA_TEST(private_function_prototype_parsed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nvoid dosomething(int x, int y);", &diag, &arena);
@@ -37,13 +37,13 @@ STRATA_TEST(private_function_prototype_parsed)
     STRATA_CHECK_EQ((long)fn->params.count, 2);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(private_function_with_body_parsed)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nint secret() { return 7; }", &diag, &arena);
@@ -54,13 +54,13 @@ STRATA_TEST(private_function_with_body_parsed)
     STRATA_CHECK(fn->body != NULL);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(plain_function_is_not_private)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int f() { return 1; }", &diag, &arena);
@@ -70,13 +70,13 @@ STRATA_TEST(plain_function_is_not_private)
     STRATA_CHECK(!fn->isPrivate);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(private_stacked_duplicate_ok)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\n@private\nint f() { return 1; }", &diag, &arena);
@@ -86,13 +86,13 @@ STRATA_TEST(private_stacked_duplicate_ok)
     STRATA_CHECK(fn->isPrivate);
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(unknown_attribute_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@nope\nint f() { return 1; }", &diag, &arena);
@@ -100,13 +100,13 @@ STRATA_TEST(unknown_attribute_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(private_on_global_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nint g;", &diag, &arena);
@@ -114,13 +114,13 @@ STRATA_TEST(private_on_global_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(private_on_struct_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("@private\nstruct S { int x; };", &diag, &arena);
@@ -128,13 +128,13 @@ STRATA_TEST(private_on_struct_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 STRATA_TEST(private_on_impl_method_rejected)
 {
     Arena arena;
-    arena_init(&arena, 0);
+    ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle H;\nimpl H {\n@private\nextern void M(H self);\n}", &diag, &arena);
@@ -142,7 +142,7 @@ STRATA_TEST(private_on_impl_method_rejected)
     STRATA_CHECK(DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
-    arena_free(&arena);
+    ArenaFree(&arena);
 }
 
 /* ================= Cross-file visibility (virtual modules) ================= */

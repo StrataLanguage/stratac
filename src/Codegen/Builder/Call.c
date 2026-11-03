@@ -130,7 +130,7 @@ const char* StaticExprTypeName(Builder* b, Node* n)
         {
             /* Member of a handle: only an impl property continues the chain. */
             ImplPropEntry* e
-                = (ImplPropEntry*)StrMapGet(&b->m_implProps, arena_format(b->m_arena, "%s.%s", baseName, m->member));
+                = (ImplPropEntry*)StrMapGet(&b->m_implProps, ArenaFormat(b->m_arena, "%s.%s", baseName, m->member));
 
             return (e && TypeRegistryIsOpaque(&b->m_registry, e->decl->returnType.name)) ? e->decl->returnType.name
                                                                                          : NULL;
@@ -163,7 +163,7 @@ LLVMValueRef ExternSlot(Builder* b, const char* name)
 
     if (!slot)
     {
-        slot = LLVMAddGlobal(b->m_mod, b->m_ptrTy, arena_format(b->m_arena, "__strata_ext_%s", name));
+        slot = LLVMAddGlobal(b->m_mod, b->m_ptrTy, ArenaFormat(b->m_arena, "__strata_ext_%s", name));
         LLVMSetInitializer(slot, LLVMConstNull(b->m_ptrTy));
         StrMapPut(&b->m_externSlots, name, (void*)slot);
     }
@@ -457,7 +457,7 @@ static LLVMValueRef EmitTypedRestArg(Builder* b, CallExpr* n, const FunctionDecl
     if (!elemType)
     {
         TypeName empty = MakeTypeName(b, "");
-        elemType = (const TypeName*)arena_dup(b->m_arena, &empty, sizeof(TypeName));
+        elemType = (const TypeName*)ArenaDup(b->m_arena, &empty, sizeof(TypeName));
     }
 
     Vec tail;
@@ -545,7 +545,7 @@ static LLVMValueRef LowerArrayLiteralArg(Builder* b, const FunctionDecl* fd, siz
 
     if (litParam->mod == ModRef)
     {
-        OwnedArgTemp* temp = (OwnedArgTemp*)arena_alloc(b->m_arena, sizeof(OwnedArgTemp));
+        OwnedArgTemp* temp = (OwnedArgTemp*)ArenaAlloc(b->m_arena, sizeof(OwnedArgTemp));
         temp->slot = litSlot;
         temp->td = arr.typeDesc;
         temp->stackOnly = true;
@@ -1039,7 +1039,7 @@ static LLVMValueRef* PrependHiddenCtxArg(Builder* b, FuncInfo* info, LLVMValueRe
     }
 
     size_t nargs = *count;
-    LLVMValueRef* finalArgs = (LLVMValueRef*)arena_alloc(b->m_arena, (nargs + 1) * sizeof(LLVMValueRef));
+    LLVMValueRef* finalArgs = (LLVMValueRef*)ArenaAlloc(b->m_arena, (nargs + 1) * sizeof(LLVMValueRef));
     finalArgs[0] = b->m_curGlobalsPtr;
 
     if (nargs > 0)
@@ -1062,7 +1062,7 @@ static LLVMValueRef* AppendTypeDescArg(Builder* b, FuncInfo* info, const Functio
     }
 
     unsigned finalCount = *count;
-    LLVMValueRef* withTypeDesc = (LLVMValueRef*)arena_alloc(b->m_arena, (finalCount + 1) * sizeof(LLVMValueRef));
+    LLVMValueRef* withTypeDesc = (LLVMValueRef*)ArenaAlloc(b->m_arena, (finalCount + 1) * sizeof(LLVMValueRef));
 
     if (finalCount > 0)
     {
@@ -1087,7 +1087,7 @@ static LLVMValueRef EmitDelegateCallee(Builder* b, CallExpr* n)
 
     PositionAtEnd(b, nullBB);
     LLVMValueRef panicArgs[1] = {
-        MsgGlobalPtr(b, ".pmsg", arena_format(b->m_arena, "call through a null '%s' delegate", n->delegateDecl->name))};
+        MsgGlobalPtr(b, ".pmsg", ArenaFormat(b->m_arena, "call through a null '%s' delegate", n->delegateDecl->name))};
     StrataPanicFn(b);
     LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, panicArgs, 1, "");
     LLVMBuildUnreachable(b->m_builder);
@@ -1132,7 +1132,7 @@ static void EmitNullExternGuard(Builder* b, CallExpr* n, LLVMValueRef callee)
     PositionAtEnd(b, nullBB);
     {
         LLVMValueRef args2[1]
-            = {MsgGlobalPtr(b, ".pmsg", arena_format(b->m_arena, "call to null extern function '%s'", n->callee))};
+            = {MsgGlobalPtr(b, ".pmsg", ArenaFormat(b->m_arena, "call to null extern function '%s'", n->callee))};
         StrataPanicFn(b);
         LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args2, 1, "");
 
@@ -1281,7 +1281,7 @@ static Value EmitFunctionCall(Builder* b, CallExpr* n, FuncInfo* info, bool disc
 
     if (nargs > 0)
     {
-        args = (LLVMValueRef*)arena_alloc(b->m_arena, nargs * sizeof(LLVMValueRef));
+        args = (LLVMValueRef*)ArenaAlloc(b->m_arena, nargs * sizeof(LLVMValueRef));
     }
 
     LLVMValueRef returnParamSlot = NULL;

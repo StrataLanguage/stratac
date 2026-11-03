@@ -7,7 +7,7 @@ static void EmitStmtInner(Builder* b, Node* n);
 /* A `defer` scope: deferred statements queued for the enclosing block's exit. */
 void PushScope(Builder* b)
 {
-    BlockScope* bs = (BlockScope*)arena_alloc(b->m_arena, sizeof(BlockScope));
+    BlockScope* bs = (BlockScope*)ArenaAlloc(b->m_arena, sizeof(BlockScope));
     VecInit(&bs->defers);
     VecPush(&b->m_scopes, bs);
 }
@@ -34,7 +34,7 @@ BlockScope* TopScope(Builder* b)
    diagnostics clean, and valid ones never collide). */
 void SymPush(Builder* b)
 {
-    Vec* frame = (Vec*)arena_alloc(b->m_arena, sizeof(Vec));
+    Vec* frame = (Vec*)ArenaAlloc(b->m_arena, sizeof(Vec));
     VecInit(frame);
     VecPush(&b->m_symDecls, frame);
 }
@@ -188,7 +188,7 @@ static void EmitRefVarDecl(Builder* b, VarDeclStmt* varDecl)
         addr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "ref.box");
     }
 
-    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
     sym->value = addr;
     sym->typeDesc = refTd;
     SymDeclare(b, varDecl->name, sym);
@@ -212,7 +212,7 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
                        slot);
     }
 
-    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
     sym->value = slot;
     sym->typeDesc = typeDesc;
 
@@ -356,7 +356,7 @@ static void EmitWhileStmt(Builder* b, WhileStmt* w)
 
     PositionAtEnd(b, bodyBB);
 
-    Loop* loop = (Loop*)arena_alloc(b->m_arena, sizeof(Loop));
+    Loop* loop = (Loop*)ArenaAlloc(b->m_arena, sizeof(Loop));
     loop->cont = condBB;
     loop->end = endBB;
     loop->bodyMark = b->m_owningLocals.count;
@@ -416,7 +416,7 @@ static void EmitForStmt(Builder* b, ForStmt* fs)
 
     PositionAtEnd(b, bodyBB);
 
-    Loop* loop = (Loop*)arena_alloc(b->m_arena, sizeof(Loop));
+    Loop* loop = (Loop*)ArenaAlloc(b->m_arena, sizeof(Loop));
     loop->cont = updBB;
     loop->end = endBB;
     loop->bodyMark = b->m_owningLocals.count;
