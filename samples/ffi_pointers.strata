@@ -14,8 +14,7 @@ extern void qsort(ptr base, ulong count, ulong size, ptr compare);
 extern ptr  memset(ptr dst, int value, ulong size);
 extern int  fflush(ptr file);
 extern int  abs(int x);
-extern ptr  GetModuleHandleA(cstring name);
-extern ptr  GetProcAddress(ptr module, cstring name);
+extern ulong strlen(cstring s);
 
 // -- runtime --------------------------------------------------------------
 
@@ -49,7 +48,7 @@ int gCompares = 0;
 // -- C function pointers: extern delegates ------------------------------------
 
 extern delegate int UnaryFn(int x);
-extern delegate int LengthFn(cstring s);
+extern delegate ulong LengthFn(cstring s);
 
 // A COM-style table of function pointers.
 extern struct MathTable
@@ -143,10 +142,10 @@ int main()
     MathTable table = {
         .negate = (UnaryFn)addressof(Negate),
         .absolute = (UnaryFn)addressof(abs),
-        .length = (LengthFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "lstrlenA")
+        .length = (LengthFn)addressof(strlen)
     };
     UnaryFn none = ptr.null;
-    printf("delegates: %d %d %d %d null=%d\n", table.negate(4), table.absolute(-6), table.length("strafe"),
+    printf("delegates: %d %d %d %d null=%d\n", table.negate(4), table.absolute(-6), (int)table.length("strafe"),
            Twice(table.negate, 7), (int)(none == ptr.null));
 
     return values[0] + values[4];  // 1 + 9
