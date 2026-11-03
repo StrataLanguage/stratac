@@ -374,3 +374,13 @@ bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out);
 Value EmitBoxedVectorDeref(Builder* b, Value base);
 bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out);
 bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out);
+
+// ConstInit.c dispatch (FoldConstInit cases)
+bool FoldIntLiteralInit(Node* n, ConstInitVal* out);
+bool FoldFloatLiteralInit(Node* n, ConstInitVal* out);
+bool FoldBoolLiteralInit(Node* n, ConstInitVal* out);
+bool FoldUnaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out);
+bool FoldBinaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out);
+bool FoldCastInit(Builder* b, Node* n, ConstInitVal* out);
+bool FoldIdentInit(Builder* b, Node* n, ConstInitVal* out);
+bool FoldMemberInit(Builder* b, Node* n, ConstInitVal* out);
