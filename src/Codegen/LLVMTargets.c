@@ -1,3 +1,4 @@
+// Target setup for the LLVM backends.
 #include "LLVMTargets.h"
 #include "Codegen/LLVMCApi.h"
 

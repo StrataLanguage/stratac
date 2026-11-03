@@ -1,4 +1,5 @@
 #pragma once
+// LLVM ORC JIT: the host-facing JIT state and entry points.
 
 #include "LLVMModuleBuilder.h"
 
@@ -6,14 +7,14 @@ typedef struct
 {
     LLVMOrcLLJITRef jit;
     Vec externs;
-    void* allocFn; /* host-provided allocator (NULL = malloc) */
-    void* freeFn;  /* host-provided deallocator (NULL = free) */
+    void* allocFn; // host-provided allocator (NULL = malloc)
+    void* freeFn;  // host-provided deallocator (NULL = free)
 } LLVMJit;
 
 void LLVMJitInit(LLVMJit* jit);
 void LLVMJitDestroy(LLVMJit* jit);
 
-/* Optionally override the JIT runtime allocator (NULL restores malloc/free). */
+// Optionally override the JIT runtime allocator (NULL restores malloc/free).
 void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn);
 
 bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage);

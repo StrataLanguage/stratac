@@ -1,9 +1,10 @@
 #pragma once
+// TypeDesc shape-flag predicates.
 
 #include "Codegen/LLVMModuleBuilder.h"
 
-/* Roadmap phase 3: the shape flags of a TypeDesc are read through these predicates, so code outside the
-   type layer never tests `isBox`, `isOptional` or `isArray` itself. */
+// The shape flags of a TypeDesc are read through these predicates, so code outside the type layer never
+// tests `isBox`, `isOptional` or `isArray` itself.
 
 static inline void TypeDescSetFlag(TypeDesc* t, TypeDescFlags flag, bool v)
 {

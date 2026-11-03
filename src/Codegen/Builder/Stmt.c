@@ -1,10 +1,9 @@
-/* Builder: Statements, block scopes and defers. */
+// Builder: Statements, block scopes and defers.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* Forward declarations for functions used before their definition in this file. */
 static void EmitStmtInner(Builder* b, Node* n);
 
-/* A `defer` scope: deferred statements queued for the enclosing block's exit. */
+// A `defer` scope: deferred statements queued for the enclosing block's exit.
 void PushScope(Builder* b)
 {
     BlockScope* bs = (BlockScope*)ArenaAlloc(b->arena, sizeof(BlockScope));
@@ -27,11 +26,11 @@ BlockScope* TopScope(Builder* b)
     return (BlockScope*)VecGet(&b->scopes, b->scopes.count - 1);
 }
 
-/* ---- Lexical symbol scopes ----
-   `symbols` is flat, so each lexical block records the locals it declares;
-   SymPop removes exactly those again. Sema already rejects redefinitions, so
-   codegen silently overwrites (invalid programs never reach emission with
-   diagnostics clean, and valid ones never collide). */
+// -- Lexical symbol scopes
+// `symbols` is flat, so each lexical block records the locals it declares;
+// SymPop removes exactly those again. Sema already rejects redefinitions, so
+// codegen silently overwrites (invalid programs never reach emission with
+// diagnostics clean, and valid ones never collide).
 void SymPush(Builder* b)
 {
     Vec* frame = (Vec*)ArenaAlloc(b->arena, sizeof(Vec));
@@ -65,7 +64,7 @@ void SymDeclare(Builder* b, const char* name, Value* sym)
     }
 }
 
-/* Run one scope's deferred statements, LIFO (last `defer` first), Zig-style. */
+// Run one scope's deferred statements, LIFO (last `defer` first), Zig-style.
 void RunDefers(Builder* b, BlockScope* scope)
 {
     if (!scope)
@@ -84,8 +83,8 @@ void RunDefers(Builder* b, BlockScope* scope)
     }
 }
 
-/* Run deferred statements of every active scope in [fromIndex, count), innermost
-   scope first (Zig exits inner blocks before outer ones), each scope LIFO. */
+// Run deferred statements of every active scope in [fromIndex, count), innermost
+// scope first (Zig exits inner blocks before outer ones), each scope LIFO.
 static void RunDefersFrom(Builder* b, StackMark fromIndex)
 {
     for (size_t s = b->scopes.count; s-- > fromIndex;)
@@ -94,8 +93,8 @@ static void RunDefersFrom(Builder* b, StackMark fromIndex)
     }
 }
 
-/* Emits one statement, then drops the owning temporaries its expressions
-   borrowed (see BorrowTemp): a full statement is the temporaries' lifetime. */
+// Emits one statement, then drops the owning temporaries its expressions
+// borrowed (see BorrowTemp): a full statement is the temporaries' lifetime.
 void EmitStmt(Builder* b, Node* n)
 {
     StackMark tempMark = b->temps.count;
@@ -114,7 +113,7 @@ static void EmitReturnStmt(Builder* b, ReturnStmt* r)
 
         if (TypeDescIsBox(&b->curRet) && !TypeDescIsBox(&raw.typeDesc))
         {
-            /* Returns ^T but expr is a plain T: box it, like a local. */
+            // Returns ^T but expr is a plain T: box it, like a local.
             TypeDesc innerTd = Resolve(b, b->curRet.boxInner);
             LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "heap");
             LLVMBuildStore(b->builder, Coerce(b, raw, innerTd).value, heap);
@@ -126,8 +125,8 @@ static void EmitReturnStmt(Builder* b, ReturnStmt* r)
 
             if (TypeDescIsString(&v.typeDesc))
             {
-                /* Returning a string: construct the owned value
-                   (heap-copy literal, move source). */
+                // Returning a string: construct the owned value
+                // (heap-copy literal, move source).
                 LLVMValueRef owned = EmitOwnedValue(b, v, r->value, StringTypeName(b));
                 v = ValueMake(owned, b->curRet);
             }
@@ -145,8 +144,8 @@ static void EmitReturnStmt(Builder* b, ReturnStmt* r)
         }
     }
 
-    /* The return value is computed: temporaries it borrowed die now,
-       before the defers run (a defer is a statement of its own). */
+    // The return value is computed: temporaries it borrowed die now,
+    // before the defers run (a defer is a statement of its own).
     FlushTemps(b, 0);
 
     RunDefersFrom(b, 0);
@@ -169,7 +168,7 @@ static void EmitExprStmt(Builder* b, Node* n)
     ExprStmt* e = (ExprStmt*)n;
     EmitDiscardExpr(b, e->expr);
 
-    /* Past a `@noreturn` call nothing runs: no drops, no defers, no fall-through return. */
+    // Past a `@noreturn` call nothing runs: no drops, no defers, no fall-through return.
     if (StmtIsNoReturnCall(n))
     {
         LLVMBuildUnreachable(b->builder);
@@ -205,8 +204,8 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
     }
     else
     {
-        /* A bare `cstring` defaults to the static empty buffer (never
-           NULL), mirroring the extern-boundary invariant. */
+        // A bare `cstring` defaults to the static empty buffer (never
+        // NULL), mirroring the extern-boundary invariant.
         LLVMBuildStore(b->builder,
                        TypeDescIsCString(&typeDesc) ? EmptyNulString(b) : DefaultValueOf(b, &varDecl->type, typeDesc),
                        slot);
@@ -221,7 +220,7 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
 
 static void EmitVarDecl(Builder* b, VarDeclStmt* varDecl)
 {
-    /* `ref T x = path;`: the symbol is the address of the storage itself, never dropped here. */
+    // `ref T x = path;`: the symbol is the address of the storage itself, never dropped here.
     if (varDecl->isRef)
     {
         EmitRefVarDecl(b, varDecl);
@@ -449,16 +448,16 @@ static void EmitForStmt(Builder* b, ForStmt* fs)
         FlushTemps(b, tempMark);
     }
 
-    /* for.update is always reachable via `continue` (or is simply dead
-       when the body never falls through); either way it needs a
-       terminator, so don't key this on whether the body terminated. */
+    // for.update is always reachable via `continue` (or is simply dead
+    // when the body never falls through); either way it needs a
+    // terminator, so don't key this on whether the body terminated.
     Br(b, condBB);
 
     PositionAtEnd(b, endBB);
 
-    /* The init's owning locals (`for (^int k = ...; ...)`) live for the
-       whole loop and die here, on normal exit and on `break` alike (break
-       only drops the body's locals, then branches here). */
+    // The init's owning locals (`for (^int k = ...; ...)`) live for the
+    // whole loop and die here, on normal exit and on `break` alike (break
+    // only drops the body's locals, then branches here).
     EmitDrops(b, headerMark);
     b->owningLocals.count = headerMark;
 
@@ -471,9 +470,9 @@ static void EmitBreakStmt(Builder* b, Node* n)
     {
         Loop* loop = (Loop*)VecGet(&b->loops, b->loops.count - 1);
         RunDefersFrom(b, loop->scopeDepth);
-        /* Drops only on this edge: the locals stay registered for the
-           code that follows (an unbraced `if (c) break;` falls through
-           to the rest of the body, which must still drop them). */
+        // Drops only on this edge: the locals stay registered for the
+        // code that follows (an unbraced `if (c) break;` falls through
+        // to the rest of the body, which must still drop them).
         EmitDrops(b, loop->bodyMark);
         Br(b, loop->end);
     }
@@ -489,7 +488,7 @@ static void EmitContinueStmt(Builder* b, Node* n)
     {
         Loop* loop = (Loop*)VecGet(&b->loops, b->loops.count - 1);
         RunDefersFrom(b, loop->scopeDepth);
-        /* Edge-only drops, as for break. */
+        // Edge-only drops, as for break.
         EmitDrops(b, loop->bodyMark);
         Br(b, loop->cont);
     }

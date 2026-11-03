@@ -1,7 +1,6 @@
-/* Builder: Ownership: drops, temporaries, scopes of owned values, dummies, copies. */
+// Builder: Ownership: drops, temporaries, scopes of owned values, dummies, copies.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* Forward declarations for functions used before their definition in this file. */
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain);
 
 LLVMValueRef SharedDummyAddr(Builder* b, TypeDesc td)
@@ -27,9 +26,9 @@ static bool ChainContains(const Vec* chain, const char* name)
     return false;
 }
 
-/* True when an out-of-bounds element needs private, re-initialized scratch
-   instead of the shared zeroed global: the slot can be freed through, moved
-   out of, or re-bound, so each OOB event must install a fresh dummy. */
+// True when an out-of-bounds element needs private, re-initialized scratch
+// instead of the shared zeroed global: the slot can be freed through, moved
+// out of, or re-bound, so each OOB event must install a fresh dummy.
 bool ElemNeedsScratchDummy(Builder* b, TypeDesc td)
 {
     if (TypeDescHasArrayShape(&td) || TypeDescIsBox(&td))
@@ -40,12 +39,8 @@ bool ElemNeedsScratchDummy(Builder* b, TypeDesc td)
     return td.structTypeName && TypeRegistryIsOwningStruct(&b->registry, td.structTypeName);
 }
 
-/* Stores a fresh dummy of `td` into `slot` (assumed already dropped):
-   string -> heap "", ^T -> new T, owning struct -> field-wise construct,
-   T[] -> {NULL,0}. `chain` guards compile-time recursion: a field whose
-   struct type is already under construction gets a zero value. */
-/* Iterates the fields of an owning struct, dummy-storing owning fields
-   recursively and zeroing the rest, into `base`. */
+// Iterates the fields of an owning struct, dummy-storing owning fields
+// recursively and zeroing the rest, into `base`.
 static void EmitDummyStoreStructFields(Builder* b, LLVMValueRef base, const StructType* st, LLVMTypeRef structTy,
                                        Vec* chain, const char* structName)
 {
@@ -71,6 +66,10 @@ static void EmitDummyStoreStructFields(Builder* b, LLVMValueRef base, const Stru
     VecPop(chain);
 }
 
+// Stores a fresh dummy of `td` into `slot` (assumed already dropped):
+// string -> heap "", ^T -> new T, owning struct -> field-wise construct,
+// T[] -> {NULL,0}. `chain` guards compile-time recursion: a field whose
+// struct type is already under construction gets a zero value.
 static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chain)
 {
     if (!td.type)
@@ -114,8 +113,8 @@ static void EmitDummyStore(Builder* b, LLVMValueRef slot, TypeDesc td, Vec* chai
             return;
         }
 
-        /* Inner is a scalar, string, another box, or an array: allocate and
-           initialize the single inner value. */
+        // Inner is a scalar, string, another box, or an array: allocate and
+        // initialize the single inner value.
         LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "dbox");
 
         if (TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd))
@@ -163,12 +162,12 @@ void EmitDummyInit(Builder* b, LLVMValueRef slot, TypeDesc td)
     free(chain.items);
 }
 
-/* Drops the owning value in `slot`, typed `td`: ^T/string free the pointer
-   (and a boxed owning struct's fields first); T[] frees the backing buffer and
-   drops owning elements via a loop (owning-struct elements included); an
-   owning-struct slot drops its fields in place (no load, no free of the slot
-   itself). freeArrayBuffer=false (vararg rest) drops elements but not the
-   caller's stack buffer. */
+// Drops the owning value in `slot`, typed `td`: ^T/string free the pointer
+// (and a boxed owning struct's fields first); T[] frees the backing buffer and
+// drops owning elements via a loop (owning-struct elements included); an
+// owning-struct slot drops its fields in place (no load, no free of the slot
+// itself). freeArrayBuffer=false (vararg rest) drops elements but not the
+// caller's stack buffer.
 static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool freeArrayBuffer)
 {
     if (TypeDescHasArrayShape(&td))
@@ -219,10 +218,10 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
         return;
     }
 
-    /* An owning struct held BY VALUE (an inline `Rec[]` element, a `Rec`
-        field): drop its fields in place through the type's drop fn. The slot
-        itself is inline storage — never loaded, never freed — and is zeroed
-        so a later re-drop (element write, resize shrink) is a no-op. */
+    // An owning struct held BY VALUE (an inline `Rec[]` element, a `Rec`
+    // field): drop its fields in place through the type's drop fn. The slot
+    // itself is inline storage — never loaded, never freed — and is zeroed
+    // so a later re-drop (element write, resize shrink) is a no-op.
     if (td.structTypeName && TypeRegistryIsOwningStruct(&b->registry, td.structTypeName))
     {
         LLVMValueRef dropFn = GetOrCreateStructDropFn(b, td.structTypeName);
@@ -235,11 +234,11 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
         return;
     }
 
-    /* box / string */
+    // box / string
     LLVMValueRef ptr = LLVMBuildLoad2(b->builder, b->ptrTy, slot, "box");
 
-    /* Skip if null (e.g. moved-out binding). Mirrors the C backend's
-       `if (v) { ... }` guard. */
+    // Skip if null (e.g. moved-out binding). Mirrors the C backend's
+    // `if (v) { ... }` guard.
     LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, ptr, LLVMConstNull(b->ptrTy), "null");
     LLVMBasicBlockRef skipBB = NewBb(b, "drop.skip");
     LLVMBasicBlockRef doBB = NewBb(b, "drop.do");
@@ -249,11 +248,11 @@ static void EmitDropOneInternal(Builder* b, LLVMValueRef slot, TypeDesc td, bool
 
     PositionAtEnd(b, doBB);
 
-    /* A box of an owning inner owns that inner too: the cell at `ptr` is the
-       inner's slot, so drop it through the same helper (an owning struct
-       drops its fields, a string/T[] its buffer and owning elements, a nested
-       box its own cell - all the way down). A plain value (int) needs no
-       inner drop. */
+    // A box of an owning inner owns that inner too: the cell at `ptr` is the
+    // inner's slot, so drop it through the same helper (an owning struct
+    // drops its fields, a string/T[] its buffer and owning elements, a nested
+    // box its own cell - all the way down). A plain value (int) needs no
+    // inner drop.
     if (td.boxInner && BuilderIsOwningValue(b, td.boxInner))
     {
         EmitDropOneInternal(b, ptr, Resolve(b, td.boxInner), true);
@@ -276,14 +275,14 @@ void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td)
     EmitDropOneInternal(b, slot, td, true);
 }
 
-/* Drops owning ELEMENTS of a stack-backed T[] (vararg rest) without freeing the buffer. */
+// Drops owning ELEMENTS of a stack-backed T[] (vararg rest) without freeing the buffer.
 void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td)
 {
     EmitDropOneInternal(b, slot, td, false);
 }
 
-/* Drops the owning locals declared from `fromIndex` on, the last declared first, so a local can rely on every
-   local declared before it still being alive when it is dropped. */
+// Drops the owning locals declared from `fromIndex` on, the last declared first, so a local can rely on every
+// local declared before it still being alive when it is dropped.
 void EmitDrops(Builder* b, StackMark fromIndex)
 {
     for (size_t i = b->owningLocals.count; i-- > fromIndex;)
@@ -301,18 +300,18 @@ void EmitDrops(Builder* b, StackMark fromIndex)
     }
 }
 
-/* ---- Owning temporaries ----
-   A fresh owning call result that is only BORROWED inside a larger expression
-   (`mk().length`, `int v = mkb();`, `substring(mks(), 0, 1)`) has no binding
-   to drop it. EmitCall records such results in freshOwned; a borrow site
-   that reads a value out of one parks it in a zeroed entry slot on temps,
-   and the enclosing full statement (or condition) drops it via FlushTemps.
-   When the value read out is itself OWNING (`mkArr()[0]`, `mkS().name`), the
-   borrow site also records where that piece lives (tempParts); moving the
-   piece nulls it there (EmitLValueForNullStore, ArgAddress), so the drop
-   frees the rest of the temporary but not the moved piece. A fresh result
-   that is moved whole (bound, returned, stored, passed as an owned argument)
-   never reaches a borrow site, so it is never registered. */
+// -- Owning temporaries
+// A fresh owning call result that is only BORROWED inside a larger expression
+// (`mk().length`, `int v = mkb();`, `substring(mks(), 0, 1)`) has no binding
+// to drop it. EmitCall records such results in freshOwned; a borrow site
+// that reads a value out of one parks it in a zeroed entry slot on temps,
+// and the enclosing full statement (or condition) drops it via FlushTemps.
+// When the value read out is itself OWNING (`mkArr()[0]`, `mkS().name`), the
+// borrow site also records where that piece lives (tempParts); moving the
+// piece nulls it there (EmitLValueForNullStore, ArgAddress), so the drop
+// frees the rest of the temporary but not the moved piece. A fresh result
+// that is moved whole (bound, returned, stored, passed as an owned argument)
+// never reaches a borrow site, so it is never registered.
 void NoteFreshOwned(Builder* b, Value v)
 {
     if (v.value && TypeDescIsOwning(b, &v.typeDesc))
@@ -346,13 +345,13 @@ static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDes
     VecPush(&b->tempParts, tp);
 }
 
-/* `node` read an owning piece out of `base` (evaluated from `baseNode`). If
-   `base` is a fresh owning temporary (or itself a piece of one), claim it and
-   record the piece so a move can null it. The piece lives at `heapAddr`
-   (array element buffer, box cell) or, when that is NULL, at field
-   `fieldIdx` of the by-value struct `structTy` parked in the temporary (or
-   in the parent piece). Otherwise nothing is recorded and the temporary is
-   left alone (a leak, never a double free). */
+// `node` read an owning piece out of `base` (evaluated from `baseNode`). If
+// `base` is a fresh owning temporary (or itself a piece of one), claim it and
+// record the piece so a move can null it. The piece lives at `heapAddr`
+// (array element buffer, box cell) or, when that is NULL, at field
+// `fieldIdx` of the by-value struct `structTy` parked in the temporary (or
+// in the parent piece). Otherwise nothing is recorded and the temporary is
+// left alone (a leak, never a double free).
 void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* node, TypeDesc pieceTd,
                     LLVMValueRef heapAddr, LLVMTypeRef structTy, FieldIndex fieldIdx)
 {
@@ -374,7 +373,7 @@ void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* no
 
     if (!addr)
     {
-        /* Field of a by-value struct: address it inside the parked copy. */
+        // Field of a by-value struct: address it inside the parked copy.
         LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, fieldIdx)};
         addr = LLVMBuildGEP2(b->builder, structTy, baseAddr, idxs, 2, "tmpf");
     }
@@ -382,10 +381,10 @@ void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* no
     AddTempPart(b, node, addr, pieceTd, tempIdx);
 }
 
-/* `src` is borrowed to produce a value of type `resultTd`: if `src` is a fresh
-   owning call result and the result owns nothing, schedule `src`'s drop at
-   the end of the current statement. Owning results go through
-   BorrowTempPart instead, which also records where the piece lives. */
+// `src` is borrowed to produce a value of type `resultTd`: if `src` is a fresh
+// owning call result and the result owns nothing, schedule `src`'s drop at
+// the end of the current statement. Owning results go through
+// BorrowTempPart instead, which also records where the piece lives.
 void BorrowTemp(Builder* b, Value src, TypeDesc resultTd)
 {
     if (TypeDescIsOwning(b, &resultTd))
@@ -396,9 +395,9 @@ void BorrowTemp(Builder* b, Value src, TypeDesc resultTd)
     ClaimTemp(b, src);
 }
 
-/* If `src` is a fresh owning call result, park it in a zeroed slot scheduled
-   for drop at the end of the current statement and return that slot;
-   otherwise return NULL. */
+// If `src` is a fresh owning call result, park it in a zeroed slot scheduled
+// for drop at the end of the current statement and return that slot;
+// otherwise return NULL.
 LLVMValueRef ClaimTemp(Builder* b, Value src)
 {
     for (size_t i = 0; i < b->freshOwned.count; i++)
@@ -408,13 +407,13 @@ LLVMValueRef ClaimTemp(Builder* b, Value src)
             continue;
         }
 
-        /* Claimed once: swap-remove so a second borrow cannot register it again. */
+        // Claimed once: swap-remove so a second borrow cannot register it again.
         b->freshOwned.items[i] = b->freshOwned.items[b->freshOwned.count - 1];
         b->freshOwned.count--;
 
-        /* Zeroed at function entry: a temp created on a conditional path
-           (`a && mk().length > 0`) is null wherever it was not created, and
-           each drop re-nulls it for the next loop iteration. */
+        // Zeroed at function entry: a temp created on a conditional path
+        // (`a && mk().length > 0`) is null wherever it was not created, and
+        // each drop re-nulls it for the next loop iteration.
         LLVMValueRef slot = EntryAllocaZeroed(b, src.typeDesc.type, "tmp");
         LLVMBuildStore(b->builder, src.value, slot);
 
@@ -429,8 +428,8 @@ LLVMValueRef ClaimTemp(Builder* b, Value src)
     return NULL;
 }
 
-/* Parks an owned value that nothing else will drop in a slot dropped at the end of the statement:
-   an owned temporary handed to a `ref` parameter, which only borrows it. */
+// Parks an owned value that nothing else will drop in a slot dropped at the end of the statement:
+// an owned temporary handed to a `ref` parameter, which only borrows it.
 LLVMValueRef ParkTemp(Builder* b, Value v)
 {
     LLVMValueRef claimed = ClaimTemp(b, v);
@@ -451,9 +450,9 @@ LLVMValueRef ParkTemp(Builder* b, Value v)
     return slot;
 }
 
-/* Drops the temporaries registered since `mark` (end of a full statement or
-   of a branch condition) and forgets unclaimed fresh results: past this point
-   they were either moved or dropped by their consumer. */
+// Drops the temporaries registered since `mark` (end of a full statement or
+// of a branch condition) and forgets unclaimed fresh results: past this point
+// they were either moved or dropped by their consumer.
 void FlushTemps(Builder* b, StackMark mark)
 {
     if (!b->terminated)
@@ -468,7 +467,7 @@ void FlushTemps(Builder* b, StackMark mark)
     b->temps.count = mark;
     b->freshOwned.count = 0;
 
-    /* Pieces of the dropped temporaries are gone too. */
+    // Pieces of the dropped temporaries are gone too.
     size_t kept = 0;
 
     for (size_t i = 0; i < b->tempParts.count; i++)
@@ -484,7 +483,7 @@ void FlushTemps(Builder* b, StackMark mark)
     b->tempParts.count = kept;
 }
 
-/* Resets the per-function temporary state (a new function body begins). */
+// Resets the per-function temporary state (a new function body begins).
 void ResetTemps(Builder* b)
 {
     b->temps.count = 0;
@@ -492,7 +491,7 @@ void ResetTemps(Builder* b)
     b->tempParts.count = 0;
 }
 
-/* What the checker decided about a use of this place; UseUnknown for anything it does not annotate. */
+// What the checker decided about a use of this place; UseUnknown for anything it does not annotate.
 static UseKind CheckerUseOf(const Node* n)
 {
     switch (n->kind)
@@ -508,9 +507,9 @@ static UseKind CheckerUseOf(const Node* n)
     }
 }
 
-/* The place a consuming use empties, or NULL. The checker decides what every use does (UseKind): only a move
-   empties the place. A read or a copy leaves it alone,
-   and so does a node the checker never reached (nothing of that kind exists in a program that compiles). */
+// The place a consuming use empties, or NULL. The checker decides what every use does (UseKind): only a move
+// empties the place. A read or a copy leaves it alone,
+// and so does a node the checker never reached (nothing of that kind exists in a program that compiles).
 Node* MovedSource(Node* n)
 {
     Node* moved = (Node*)MovableBoxSourceNode(n);
@@ -539,11 +538,11 @@ void NullMovedSource(Builder* b, Node* n)
     NullOwningSlot(b, src);
 }
 
-/* Produces an owned value of `innerType` from an evaluated expr - the single
-   point encapsulating ownership construction. Non-owning inner returned as-is;
-   owning literal heap-copied, movable source taken + nulled, non-movable taken
-   as-is. Used for vars, ^T inners, fields, returns. An owning-struct inner
-   (a `Rec` value boxed into `^Rec` or moved into a cell) moves too. */
+// Produces an owned value of `innerType` from an evaluated expr - the single
+// point encapsulating ownership construction. Non-owning inner returned as-is;
+// owning literal heap-copied, movable source taken + nulled, non-movable taken
+// as-is. Used for vars, ^T inners, fields, returns. An owning-struct inner
+// (a `Rec` value boxed into `^Rec` or moved into a cell) moves too.
 LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeName* innerType)
 {
     if (!BuilderIsOwningValue(b, innerType))
@@ -553,15 +552,15 @@ LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeN
 
     if (TypeDescIsCString(&evaluated.typeDesc))
     {
-        /* A `cstring` value is borrowed bytes (a bare `const char*`): the
-           owning destination gets its own heap copy (NUL at [len]). */
+        // A `cstring` value is borrowed bytes (a bare `const char*`): the
+        // owning destination gets its own heap copy (NUL at [len]).
         return BuildOwnedStringFromCStr(b, evaluated.value);
     }
 
     if (init->kind == NodeStrLiteral)
     {
-        /* A string literal evaluates to a borrowed constant fat {ptr, len, cap};
-           an owning destination gets its own heap copy (NUL at [len]). */
+        // A string literal evaluates to a borrowed constant fat {ptr, len, cap};
+        // an owning destination gets its own heap copy (NUL at [len]).
         LLVMValueRef srcPtr = LLVMBuildExtractValue(b->builder, evaluated.value, 0, "slit.p");
         LLVMValueRef lenVal = LLVMBuildExtractValue(b->builder, evaluated.value, 1, "slit.l");
 
@@ -576,12 +575,12 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 {
     if (TypeDescIsString(&td))
     {
-        /* Deep copy: fresh buffer with the NUL terminator at [len]. */
+        // Deep copy: fresh buffer with the NUL terminator at [len].
         LLVMValueRef sp = LLVMBuildExtractValue(b->builder, src.value, 0, "cp.p");
         LLVMValueRef sl = LLVMBuildExtractValue(b->builder, src.value, 1, "cp.l");
 
-        /* An empty `string?` has no buffer (null data): its copy is empty too, not an allocated empty string that
-           would test as set. */
+        // An empty `string?` has no buffer (null data): its copy is empty too, not an allocated empty string that
+        // would test as set.
         if (TypeDescIsOptional(&td))
         {
             LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, sp, LLVMConstNull(b->ptrTy), "osn");
@@ -616,7 +615,7 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
     {
         StrataStrdupFn(b);
 
-        /* An empty `string?` (null) copies as empty, not as a set optional holding a fresh empty string. */
+        // An empty `string?` (null) copies as empty, not as a set optional holding a fresh empty string.
         if (TypeDescIsOptional(&td))
         {
             LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, src.value, LLVMConstNull(b->ptrTy), "scn");
@@ -648,8 +647,8 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 
     if (TypeDescIsBox(&td) && td.boxInner)
     {
-        /* An optional source may be EMPTY (null): copy null as null instead
-           of dereferencing it. */
+        // An optional source may be EMPTY (null): copy null as null instead
+        // of dereferencing it.
         if (TypeDescIsOptional(&td))
         {
             LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, src.value, LLVMConstNull(b->ptrTy), "ocn");
@@ -683,8 +682,8 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
         LLVMValueRef oldLen = LLVMBuildExtractValue(b->builder, src.value, 1, "cln");
         LLVMValueRef oldData = LLVMBuildExtractValue(b->builder, src.value, 0, "cdt");
 
-        /* Copying an EMPTY optional array yields the canonical empty
-         {null, 0} - never a {malloc(0), 0} that would test non-empty. */
+        // Copying an EMPTY optional array yields the canonical empty
+        // {null, 0} - never a {malloc(0), 0} that would test non-empty.
         if (TypeDescIsOptional(&td))
         {
             LLVMValueRef isEmpty = LLVMBuildICmp(b->builder, LLVMIntEQ, oldLen, LLVMConstInt(I32Ty(b), 0, 0), "oae");
@@ -714,7 +713,7 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
     return src;
 }
 
-/* Emits copy(arg) returning a deep copy of an owning value. */
+// Emits copy(arg) returning a deep copy of an owning value.
 Value EmitCopyBuiltin(Builder* b, CallExpr* n)
 {
     Node* arg0 = (Node*)VecGet(&n->args, 0);
@@ -723,15 +722,14 @@ Value EmitCopyBuiltin(Builder* b, CallExpr* n)
     return EmitCopyValue(b, v, v.typeDesc);
 }
 
-/* Emits drop(arg) — destroys the owning argument immediately, as if it were
-   moved into an empty `void drop(^T v) {}` whose owned param is dropped at
-   scope exit. Although it works for un-blessed optionals too */
+// Emits drop(arg): destroys the owning argument immediately, as if it were moved into an empty
+// `void drop(^T v) {}` whose owned param is dropped at scope exit.
 Value EmitDropBuiltin(Builder* b, CallExpr* n)
 {
     Node* arg0 = (Node*)VecGet(&n->args, 0);
     LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->ctx);
 
-    /* Drop the owning lvalue in place (frees recursively, then nulls the slot). */
+    // Drop the owning lvalue in place (frees recursively, then nulls the slot).
     Node* moved = MovedSource(arg0);
 
     if (moved)
@@ -744,15 +742,15 @@ Value EmitDropBuiltin(Builder* b, CallExpr* n)
         }
         else
         {
-            EmitExpr(b, arg0); /* error recovery: keep any side effects */
+            EmitExpr(b, arg0); // error recovery: keep any side effects
         }
 
         return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TDF_VOID, NULL));
     }
 
-    /* Temporary (non-lvalue) owning value. A string literal is a static
-       global with nothing to free; anything else (call result, array
-       literal) is freshly owned — park it in a temp slot and drop it. */
+    // Temporary (non-lvalue) owning value. A string literal is a static
+    // global with nothing to free; anything else (call result, array
+    // literal) is freshly owned — park it in a temp slot and drop it.
     if (arg0->kind == NodeStrLiteral)
     {
         return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TDF_VOID, NULL));

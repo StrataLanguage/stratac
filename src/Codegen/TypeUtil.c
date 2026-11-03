@@ -1,3 +1,4 @@
+// Type predicates and helpers shared across the codegen.
 #include "Codegen/TypeUtil.h"
 #include "Codegen/TypeRegistry.h"
 #include "Core/Util.h"
@@ -78,7 +79,6 @@ MappedType MapType(const TypeName* t)
     static const struct
     {
         PrimitiveType primitive;
-        // const char* name;
         bool isFloat;
         bool isUnsigned;
         BitWidth bits;
@@ -222,8 +222,8 @@ bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* ou
         return false;
     }
 
-    /* `min` is a float-only property (FLT_MIN/DBL_MIN); integers just get
-       `max` (mirroring the C limit macros). */
+    // `min` is a float-only property (FLT_MIN/DBL_MIN); integers just get
+    // `max` (mirroring the C limit macros).
     if (isMin && !IsFloatType(primitive))
     {
         return false;
@@ -232,7 +232,6 @@ bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* ou
     static const struct
     {
         PrimitiveType primitive;
-        // const char* name;
         uint64_t maxInt;
     } kIntMax[] = {
         {PrimInt,    0x7FFFFFFFULL        },
@@ -266,7 +265,7 @@ bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* ou
         return false;
     }
 
-    /* float/double: FLT_MAX/FLT_MIN, DBL_MAX/DBL_MIN. */
+    // float/double: FLT_MAX/FLT_MIN, DBL_MAX/DBL_MIN.
     double value;
     if (primitive == PrimDouble)
     {
@@ -317,8 +316,8 @@ bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t)
         return false;
     }
 
-    /* `T[]?` compares like the array it wraps (the fat {ptr, len, cap}; null ptr
-       with len 0 is the canonical empty). */
+    // `T[]?` compares like the array it wraps (the fat {ptr, len, cap}; null ptr
+    // with len 0 is the canonical empty).
     if (t->isOptional && t->inner && TypeNameIsArray(t->inner))
     {
         return true;
@@ -329,8 +328,8 @@ bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t)
         return true;
     }
 
-    /* Defined structs (plain or extern). Handles/forward decls are opaque,
-       aliases/enums are scalar-like — all excluded. */
+    // Defined structs (plain or extern). Handles/forward decls are opaque,
+    // aliases/enums are scalar-like — all excluded.
     const StructType* st = reg ? TypeRegistryFind(reg, t->name) : NULL;
 
     return st && !st->isTypeAlias && !st->isEnum && !st->opaque && !st->incomplete;
@@ -343,16 +342,16 @@ bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t)
         return false;
     }
 
-    /* Arrays and structs are aggregates: they take the structural-equality
-       path (TypeIsComparableAggregate), never this value-compare fallback. */
+    // Arrays and structs are aggregates: they take the structural-equality
+    // path (TypeIsComparableAggregate), never this value-compare fallback.
     if (TypeIsComparableAggregate(reg, t))
     {
         return false;
     }
 
-    /* Strings compare by CONTENT (codegen strata_str_eq with a length
-       fast-out), never by raw fat-pointer comparison. `cstring` likewise
-       compares by content (NUL-terminated, lengths via strlen). */
+    // Strings compare by CONTENT (codegen strata_str_eq with a length
+    // fast-out), never by raw fat-pointer comparison. `cstring` likewise
+    // compares by content (NUL-terminated, lengths via strlen).
     if (TypeIsString(reg, t->name) || TypeIsCString(reg, t->name))
     {
         return false;
@@ -422,7 +421,7 @@ bool IsScalarLikeType(const TypeRegistry* reg, const char* t)
     return false;
 }
 
-/* Follows alias chains to the type they stand for. */
+// Follows alias chains to the type they stand for.
 const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const TypeName* t)
 {
     size_t depth = 0;
@@ -455,12 +454,12 @@ static bool TypeZeroValid(const TypeRegistry* reg, Arena* arena, const TypeName*
 
     if (t->isOptional)
     {
-        return true; /* the empty value is all zeros */
+        return true; // the empty value is all zeros
     }
 
     if (t->isBox)
     {
-        return false; /* a `^T` always points at something */
+        return false; // a `^T` always points at something
     }
 
     if (t->isArray)
@@ -511,7 +510,7 @@ OptionalLayout TypeOptionalLayout(const TypeRegistry* reg, Arena* arena, const T
         return OptLayoutNone;
     }
 
-    /* Today every `T?` is a heap box; the niche and inline layouts arrive with the value-optional codegen. */
+    // Every `T?` is a heap box for now; the niche and inline layouts are not generated yet.
     (void)reg;
     (void)arena;
     return OptLayoutBox;

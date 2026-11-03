@@ -1,8 +1,8 @@
-/* Builder: Assignment. */
+// Builder: Assignment.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* Impl property write (`cam.FOV = v`): lower to the setter extern call. Returns
-   false when the member is not a property, leaving the normal lvalue path to run. */
+// Impl property write (`cam.FOV = v`): lower to the setter extern call. Returns
+// false when the member is not a property, leaving the normal lvalue path to run.
 static bool TryEmitImplPropertyAssign(Builder* b, AssignExpr* n, Value* out)
 {
     bool isProp = false;
@@ -16,9 +16,9 @@ static bool TryEmitImplPropertyAssign(Builder* b, AssignExpr* n, Value* out)
     return isProp;
 }
 
-/* A compound assignment (`+=`, `-=`, ...) combines the current value `cur` with the already-coerced
-   right-hand side `rhs` in td's arithmetic. Plain `=` (and any other operator) leaves `rhs` as the
-   value to store. */
+// A compound assignment (`+=`, `-=`, ...) combines the current value `cur` with the already-coerced
+// right-hand side `rhs` in td's arithmetic. Plain `=` (and any other operator) leaves `rhs` as the
+// value to store.
 static Value ApplyCompoundOp(Builder* b, AssignOp op, LLVMValueRef cur, Value rhs, TypeDesc td)
 {
     bool flt = TypeDescIsFloat(&td);
@@ -57,8 +57,8 @@ static Value ApplyCompoundOp(Builder* b, AssignOp op, LLVMValueRef cur, Value rh
     }
 }
 
-/* SIMD lane write: `v.x = f` (or `+=` etc.) — load the vector, insert the lane, store
-   it back through the same slot. Lanes are floats, so compound operators are float-only. */
+// SIMD lane write: `v.x = f` (or `+=` etc.) — load the vector, insert the lane, store
+// it back through the same slot. Lanes are floats, so compound operators are float-only.
 static Value EmitVectorLaneAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     LLVMValueRef cur = LLVMBuildLoad2(b->builder, lvalue.vectorType, lvalue.ptr, "lanev");
@@ -98,9 +98,9 @@ static Value EmitVectorLaneAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
     return result;
 }
 
-/* Whole-array / string rebind: free the old buffer, take the new {ptr,len} struct, and null a moved
-   source. A string literal RHS is a borrowed constant, so it is heap-copied first; a `cstring` RHS
-   likewise (borrowed .rodata bytes — the slot owns a copy). */
+// Whole-array / string rebind: free the old buffer, take the new {ptr,len} struct, and null a moved
+// source. A string literal RHS is a borrowed constant, so it is heap-copied first; a `cstring` RHS
+// likewise (borrowed .rodata bytes — the slot owns a copy).
 static Value EmitArrayRebindAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     if (TypeDescIsCString(&rhs.typeDesc))
@@ -134,8 +134,8 @@ static Value EmitArrayRebindAssign(Builder* b, AssignExpr* n, Value rhs, LValue 
     return ValueMake(rhs.value, lvalue.typeDesc);
 }
 
-/* `=` rebinds the box only when RHS is a box of the SAME kind (string=string, ^T=^T); any other assign
-   into a ^T - a plain T value (`x = 5;`) or a string into ^string - mutates its contents instead. */
+// `=` rebinds the box only when RHS is a box of the SAME kind (string=string, ^T=^T); any other assign
+// into a ^T - a plain T value (`x = 5;`) or a string into ^string - mutates its contents instead.
 static bool IsSameKindBoxRebind(AssignExpr* n, Value rhs, LValue lvalue)
 {
     bool rhsIsSameBoxKind = TypeDescIsBox(&rhs.typeDesc)
@@ -146,9 +146,9 @@ static bool IsSameKindBoxRebind(AssignExpr* n, Value rhs, LValue lvalue)
     return TypeDescIsBox(&lvalue.typeDesc) && n->op == AssignSet && rhsIsSameBoxKind;
 }
 
-/* Box move: take the pointer, null the source, drop the old value, rebind. The SOURCE is detached BEFORE
-   the drop so the drop glue (and the store) never touch freed memory - for `cur = cur.next` the source
-   slot lives inside the freed object. */
+// Box move: take the pointer, null the source, drop the old value, rebind. The SOURCE is detached BEFORE
+// the drop so the drop glue (and the store) never touch freed memory - for `cur = cur.next` the source
+// slot lives inside the freed object.
 static Value EmitBoxMoveAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     Node* movedSourceNodePre = MovedSource(n->value);
@@ -166,8 +166,8 @@ static Value EmitBoxMoveAssign(Builder* b, AssignExpr* n, Value rhs, LValue lval
     return rhs;
 }
 
-/* A string literal assigned to a ^string: the old value is dropped, then the box gets a heap copy of the
-   literal's bytes, since a literal is a borrowed constant. */
+// A string literal assigned to a ^string: the old value is dropped, then the box gets a heap copy of the
+// literal's bytes, since a literal is a borrowed constant.
 static Value EmitBoxFromLiteralAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
@@ -194,12 +194,12 @@ static Value EmitBoxFromLiteralAssign(Builder* b, AssignExpr* n, Value rhs, LVal
     return rhs;
 }
 
-/* Optional (`T?`) slot receiving a NON-box value: whole-slot rebind. The old value is dropped (EmitDropOne
-   handles empty/NULL), then a fresh cell is allocated and the owned inner constructed into it. Same-kind box
-   RHS took the box-move path. */
+// Optional (`T?`) slot receiving a NON-box value: whole-slot rebind. The old value is dropped (EmitDropOne
+// handles empty/NULL), then a fresh cell is allocated and the owned inner constructed into it. Same-kind box
+// RHS took the box-move path.
 static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
-    /* Whatever the slot held is dropped once the new value is in (no-op when empty). */
+    // Whatever the slot held is dropped once the new value is in (no-op when empty).
     LLVMValueRef oldOpt = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
 
     const TypeName* innerTn = lvalue.typeDesc.boxInner ? lvalue.typeDesc.boxInner : StringTypeName(b);
@@ -207,8 +207,6 @@ static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LVal
 
     if (!TypeDescHasArrayShape(&innerTd) && !TypeDescIsBox(&innerTd))
     {
-        /* Scalar / struct / handle inner: allocate a cell and
-           construct the owned value into it. */
         LLVMValueRef cell = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "optcell");
         LLVMValueRef inner = Coerce(b, rhs, innerTd).value;
         LLVMBuildStore(b->builder, inner, cell);
@@ -218,10 +216,10 @@ static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LVal
         return ValueMake(cell, lvalue.typeDesc);
     }
 
-    /* String inner: construct the owned string (heap copy), then
-       wrap it in a cell - the boxed representation is slot -> cell
-       -> chars, as drop glue and reads expect. Array inner cannot
-       occur (optionals of dynamic arrays are rejected by sema). */
+    // String inner: construct the owned string (heap copy), then
+    // wrap it in a cell - the boxed representation is slot -> cell
+    // -> chars, as drop glue and reads expect. Array inner cannot
+    // occur (optionals of dynamic arrays are rejected by sema).
     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
 
     LLVMValueRef cellSz = SizeOfConst(b, b->ptrTy);
@@ -235,9 +233,9 @@ static Value EmitOptionalRebindAssign(Builder* b, AssignExpr* n, Value rhs, LVal
     return ValueMake(strCell, lvalue.typeDesc);
 }
 
-/* Assigning a plain T (or compound-assign) into a ^T mutates its contents in place, not a move - so
-   `x = 5;` and `val -= amt;` work even through a `ref ^T` param or box global. lvalue.ptr is the box
-   slot; load it, then read/write through. */
+// Assigning a plain T (or compound-assign) into a ^T mutates its contents in place, not a move - so
+// `x = 5;` and `val -= amt;` work even through a `ref ^T` param or box global. lvalue.ptr is the box
+// slot; load it, then read/write through.
 static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     LLVMValueRef boxPtr = LLVMBuildLoad2(b->builder, b->ptrTy, lvalue.ptr, "box");
@@ -252,11 +250,11 @@ static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
 
     if (BuilderIsOwningValue(b, innerTn))
     {
-        /* Content-assigning an OWNING inner (^string = "x",
-           ^Rec = arr[i]): drop only the old inner value (free it
-            in place, NOT the box allocation), then construct a
-            fresh owned inner into the existing box: heap-copy a
-            literal, move a movable source. */
+        // Content-assigning an OWNING inner (^string = "x",
+        // ^Rec = arr[i]): drop only the old inner value (free it
+        // in place, NOT the box allocation), then construct a
+        // fresh owned inner into the existing box: heap-copy a
+        // literal, move a movable source.
         EmitDropOne(b, boxPtr, innerTd);
         LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, innerTn);
         LLVMBuildStore(b->builder, owned, boxPtr);
@@ -272,14 +270,14 @@ static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
     return result;
 }
 
-/* Element write into an owning-element array (`Rec[]`, `string[]`) or an inline owning field: drop the old
-   element in place, then construct the owned value into the slot (heap-copy a string literal, move a
-   movable source, take a temporary bitwise). */
+// Element write into an owning-element array (`Rec[]`, `string[]`) or an inline owning field: drop the old
+// element in place, then construct the owned value into the slot (heap-copy a string literal, move a
+// movable source, take a temporary bitwise).
 static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     if (BoxIntoInlineOwning(b, lvalue.typeDesc, rhs.typeDesc))
     {
-        /* `holder.field = box;` with an inline owning field: the value moves out of its box. */
+        // `holder.field = box;` with an inline owning field: the value moves out of its box.
         EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
         Value moved = TakeBoxContents(b, rhs, n->value);
         LLVMBuildStore(b->builder, moved.value, lvalue.ptr);
@@ -297,7 +295,6 @@ static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValu
     return ValueMake(owned, lvalue.typeDesc);
 }
 
-/* A plain store, or a compound assignment read-modify-written through the slot. */
 static Value EmitScalarStoreAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     Value result = Coerce(b, rhs, lvalue.typeDesc);
@@ -313,7 +310,7 @@ static Value EmitScalarStoreAssign(Builder* b, AssignExpr* n, Value rhs, LValue 
     return result;
 }
 
-/* Assignment into a resolved lvalue, dispatched by what the target holds. */
+// Assignment into a resolved lvalue, dispatched by what the target holds.
 static Value EmitLValueAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     if (lvalue.vectorLane)
@@ -362,9 +359,9 @@ static Value EmitLValueAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalu
     return EmitScalarStoreAssign(b, n, rhs, lvalue);
 }
 
-/* A vector member write that made it here is either a multi-component swizzle (`v.xy = w`) or an
-   out-of-range single lane (`v.z` on a float2) — single lanes in range are handled above. Diagnoses
-   it and returns true; returns false when the target is not a vector member. */
+// A vector member write that made it here is either a multi-component swizzle (`v.xy = w`) or an
+// out-of-range single lane (`v.z` on a float2) — single lanes in range are handled above. Diagnoses
+// it and returns true; returns false when the target is not a vector member.
 static bool DiagnoseVectorMemberAssign(Builder* b, AssignExpr* n)
 {
     MemberExpr* mt = (MemberExpr*)n->target;
@@ -399,8 +396,8 @@ static bool DiagnoseVectorMemberAssign(Builder* b, AssignExpr* n)
 
 Value EmitAssign(Builder* b, AssignExpr* n)
 {
-    /* Impl property write (`cam.FOV = v`): lower to the setter extern call
-       (compound assigns are rejected in sema). */
+    // Impl property write (`cam.FOV = v`): lower to the setter extern call
+    // (compound assigns are rejected in sema).
     if (n->target->kind == NodeMember && n->op == AssignSet)
     {
         Value prop;

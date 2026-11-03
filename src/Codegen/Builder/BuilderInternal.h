@@ -1,4 +1,5 @@
 #pragma once
+// Builder-internal state and the prototypes shared across the Builder/ sources.
 
 #include "AST/AST.h"
 #include "Codegen/LLVMCApi.h"
@@ -21,17 +22,17 @@ typedef struct
     LLVMValueRef function;
     LLVMTypeRef type;
     TypeDesc returnType;
-    /* Pre-widening return type when WidenRetType applied: C hosts only
-       define the low part of the register, so extern call results must be
-       narrowed back before use. */
+    // Pre-widening return type when WidenRetType applied: C hosts only
+    // define the low part of the register, so extern call results must be
+    // narrowed back before use.
     LLVMTypeRef retSemanticTy;
     bool retSemanticUnsigned;
-    bool externStringReturn; /* extern `string` (or alias) return: ABI is char*, copied into an owned fat */
+    bool externStringReturn; // extern `string` (or alias) return: ABI is char*, copied into an owned fat
     bool* paramByPtr;
     size_t paramByPtrCount;
-    bool hasHiddenCtxParam; /* every non-extern fn: LLVM param 0 is the hidden context pointer, invisible
-                                at the Strata source level (see DeclareFunction / EmitCall) */
-    bool hasTypeDescParam;  /* `extern<T>` instantiation: a trailing `const StrataTypeDesc*` for T */
+    bool hasHiddenCtxParam; // every non-extern fn: LLVM param 0 is the hidden context pointer, invisible
+                            // at the Strata source level (see DeclareFunction / EmitCall)
+    bool hasTypeDescParam;  // `extern<T>` instantiation: a trailing `const StrataTypeDesc*` for T
 } FuncInfo;
 
 // Folded constant init (host-side values; LLVM-C lacks Const*Cast).
@@ -61,35 +62,35 @@ typedef struct
 typedef struct
 {
     bool valid;
-    bool vectorLane;        /* single-lane vector lvalue: ptr addresses the vector value */
-    LLVMValueRef ptr;       /* memory holding the vector (field slot, array elem, box cell) */
-    TypeDesc typeDesc;      /* lane scalar type when vectorLane (float) */
-    LLVMTypeRef vectorType; /* LLVM vector type when vectorLane */
-    unsigned lane;          /* lane index 0..3 when vectorLane */
+    bool vectorLane;        // single-lane vector lvalue: ptr addresses the vector value
+    LLVMValueRef ptr;       // memory holding the vector (field slot, array elem, box cell)
+    TypeDesc typeDesc;      // lane scalar type when vectorLane (float)
+    LLVMTypeRef vectorType; // LLVM vector type when vectorLane
+    unsigned lane;          // lane index 0..3 when vectorLane
 } LValue;
 
-/* A slot dropped (freed) on scope exit; carries its type so the drop can
-   dispatch box/string vs array. */
+// A slot dropped (freed) on scope exit; carries its type so the drop can
+// dispatch box/string vs array.
 typedef struct
 {
     LLVMValueRef slot;
     TypeDesc td;
-    bool stackBuffer; /* array backing is caller's stack: drop elems, not buffer */
+    bool stackBuffer; // array backing is caller's stack: drop elems, not buffer
 } OwnLocal;
 
 typedef struct
 {
     LLVMBasicBlockRef cont;
     LLVMBasicBlockRef end;
-    StackMark bodyMark;   /* owning-locals count before the loop body (dropped on break/continue;
-                            a `for` header's own locals are dropped at for.end) */
-    StackMark scopeDepth; /* number of active defer scopes when the loop began (defers exit on break/continue) */
+    StackMark bodyMark;   // owning-locals count before the loop body (dropped on break/continue;
+                          // a `for` header's own locals are dropped at for.end)
+    StackMark scopeDepth; // number of active defer scopes when the loop began (defers exit on break/continue)
 } Loop;
 
-/* A `defer` scope: holds the statements queued to run at the block's exit. */
+// A `defer` scope: holds the statements queued to run at the block's exit.
 typedef struct
 {
-    Vec defers; /* Node* (DeferStmt.stmt) in source order; run LIFO */
+    Vec defers; // Node* (DeferStmt.stmt) in source order; run LIFO
 } BlockScope;
 
 // -- Impl properties (methods are rewritten to plain extern calls by sema)
@@ -100,17 +101,17 @@ typedef struct
     const FunctionDecl* setter; // NULL for read-only
 } ImplPropEntry;
 
-/* An owning piece (element / field) read out of a registered temporary,
-   keyed by the AST node that read it. If that node is later moved into an
-   owning destination, NullMovedSource nulls `addr` inside the temporary, so
-   the temporary's end-of-statement drop frees everything except the moved
-   piece. If it is only read, the drop frees it along with the rest. */
+// An owning piece (element / field) read out of a registered temporary,
+// keyed by the AST node that read it. If that node is later moved into an
+// owning destination, NullMovedSource nulls `addr` inside the temporary, so
+// the temporary's end-of-statement drop frees everything except the moved
+// piece. If it is only read, the drop frees it along with the rest.
 typedef struct TempPart
 {
     const Node* node;
     LLVMValueRef addr;
     TypeDesc td;
-    StackMark tempIdx; /* index in temps of the owning temporary */
+    StackMark tempIdx; // index in temps of the owning temporary
 } TempPart;
 
 typedef struct PseudoCallDefinition
@@ -119,17 +120,17 @@ typedef struct PseudoCallDefinition
     Value (*callDef)(Builder* b, CallExpr* n);
 } IntrinsicDefinition;
 
-/* A caller-owned array-literal temp lent to a `ref T[]` param: the callee
-   borrows it; the caller drops it right after the call returns. */
+// A caller-owned array-literal temp lent to a `ref T[]` param: the callee
+// borrows it; the caller drops it right after the call returns.
 typedef struct
 {
     LLVMValueRef slot;
     TypeDesc td;
-    bool stackOnly; /* stack-constructed view: drop owning ELEMENTS, never free the buffer */
+    bool stackOnly; // stack-constructed view: drop owning ELEMENTS, never free the buffer
 } OwnedArgTemp;
 
-/* Prototypes for functions defined in one Builder/ file and used in another. */
-/* IrUtil.c */
+// Prototypes for functions defined in one Builder/ file and used in another.
+// -- IrUtil.c
 LLVMValueRef IcmpByName(LLVMBuilderRef builder, const char* pred, bool isUnsigned, LLVMValueRef l, LLVMValueRef r);
 LLVMValueRef FcmpByName(LLVMBuilderRef builder, const char* pred, LLVMValueRef l, LLVMValueRef r);
 LLVMTypeRef I32Ty(Builder* b);
@@ -146,7 +147,7 @@ LLVMValueRef IdxConst(Builder* b, unsigned i);
 LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty);
 LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name);
 
-/* Types.c */
+// -- Types.c
 TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlags flags, const char* structTypeName);
 Value ValueMake(LLVMValueRef value, TypeDesc typeDesc);
 TypeName MakeTypeName(Builder* b, const char* name);
@@ -162,7 +163,7 @@ Value ZeroInt(Builder* b);
 Value Coerce(Builder* b, Value value, TypeDesc target);
 LLVMValueRef TypeDescConstant(Builder* b, const char* structName);
 
-/* Runtime.c */
+// -- Runtime.c
 const char* ExportedSymbolName(Builder* b, const char* name);
 void MakeHelperModuleLocal(Builder* b, LLVMValueRef function);
 LLVMValueRef StrataAllocFn(Builder* b);
@@ -175,7 +176,7 @@ void EmitOobReport(Builder* b);
 void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length);
 void EmitPanicIf(Builder* b, LLVMValueRef bad, const char* message);
 
-/* Strings.c */
+// -- Strings.c
 LLVMValueRef EmitCStringLiteralPtr(Builder* b, const StrLiteral* literal);
 TypeDesc StringFatDesc(Builder* b);
 LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMValueRef lenVal);
@@ -192,7 +193,7 @@ LLVMValueRef StrataCStrLenFn(Builder* b);
 Value EmitSubstringBuiltin(Builder* b, CallExpr* n);
 Value EmitTextCast(Builder* b, CastExpr* cast);
 
-/* Arrays.c */
+// -- Arrays.c
 LLVMTypeRef ArrayStructType(Builder* b);
 LLVMValueRef ArrayDataPtr(Builder* b, LLVMValueRef slot);
 LLVMValueRef ArrayLenPtr(Builder* b, LLVMValueRef slot);
@@ -210,7 +211,7 @@ Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
 ArrayLength FixedDimProduct(const TypeName* t);
 LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, ArrayLength k);
 
-/* Boxes.c */
+// -- Boxes.c
 Value DerefBoxValue(Builder* b, Value value);
 Value UnboxIfBox(Builder* b, Value value, TypeDesc target);
 LValue EmitLValueForNullStore(Builder* b, Node* n);
@@ -220,7 +221,7 @@ LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td);
 bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd);
 Value TakeBoxContents(Builder* b, Value box, Node* srcNode);
 
-/* Structs.c */
+// -- Structs.c
 FieldIndex PhysicalFieldIndex(const StructType* st, int idx);
 LLVMValueRef InsertStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMValueRef value);
 LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMTypeRef fieldTy);
@@ -232,7 +233,7 @@ bool FieldInitMovesSource(Builder* b, TypeDesc fieldTd, TypeDesc valueTd, const 
 Value EmitStructInit(Builder* b, StructInitExpr* n);
 void MarkPackedFieldAccessesUnaligned(LLVMModuleRef mod);
 
-/* Ownership.c */
+// -- Ownership.c
 LLVMValueRef SharedDummyAddr(Builder* b, TypeDesc td);
 bool ElemNeedsScratchDummy(Builder* b, TypeDesc td);
 void EmitDummyInit(Builder* b, LLVMValueRef slot, TypeDesc td);
@@ -255,25 +256,25 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td);
 Value EmitCopyBuiltin(Builder* b, CallExpr* n);
 Value EmitDropBuiltin(Builder* b, CallExpr* n);
 
-/* Equality.c */
+// -- Equality.c
 LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
                                 const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB);
 LLVMValueRef EnsureEqHelper(Builder* b, const TypeDesc* td, bool externBoxCtx);
 LLVMValueRef SpillEqOperand(Builder* b, Value v);
 
-/* Numeric.c */
+// -- Numeric.c
 LLVMValueRef BuildFloatToIntSaturating(Builder* b, LLVMValueRef value, LLVMTypeRef target, bool isUnsigned);
 void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc target);
 Value EmitBinary(Builder* b, BinaryExpr* n);
 
-/* Vectors.c */
+// -- Vectors.c
 LValue MakeVectorLaneLValue(Builder* b, LValue none, const MemberExpr* m, LLVMValueRef vecAddr, TypeDesc vectorTd);
 Value EmitVectorConstruct(Builder* b, CallExpr* n);
 Value EmitVectorReduce(Builder* b, CallExpr* n);
 Value EmitVectorDot(Builder* b, CallExpr* n);
 Value EmitVectorCross(Builder* b, CallExpr* n);
 
-/* Expr.c */
+// -- Expr.c
 LLVMValueRef CurrentContext(Builder* b);
 Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found);
 LLVMValueRef ToI1(Builder* b, Value v);
@@ -284,16 +285,16 @@ LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td);
 void EmitDiscardExpr(Builder* b, Node* expr);
 LLVMValueRef EmitConditionI1(Builder* b, Node* cond);
 
-/* Call.c */
+// -- Call.c
 const FunctionDecl* FindModuleFunction(const Module* module, const char* name);
 const char* StaticExprTypeName(Builder* b, Node* n);
 LLVMValueRef ExternSlot(Builder* b, const char* name);
 Value EmitCall(Builder* b, CallExpr* n);
 
-/* Assign.c */
+// -- Assign.c
 Value EmitAssign(Builder* b, AssignExpr* n);
 
-/* Stmt.c */
+// -- Stmt.c
 void PushScope(Builder* b);
 void PopScope(Builder* b);
 BlockScope* TopScope(Builder* b);
@@ -302,17 +303,17 @@ void SymPop(Builder* b);
 void RunDefers(Builder* b, BlockScope* scope);
 void EmitStmt(Builder* b, Node* n);
 
-/* ConstInit.c */
+// -- ConstInit.c
 ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td);
 bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out);
 
-/* Function.c */
+// -- Function.c
 bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f);
 void DeclareFunction(Builder* b, const FunctionDecl* f);
 void DefineFunction(Builder* b, const FunctionDecl* f);
 void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry);
 
-// Expr.c dispatch
+// -- Literal and cast dispatch
 Value EmitIntLiteral(Builder* b, IntLiteral* literal);
 Value EmitFloatLiteral(Builder* b, FloatLiteral* literal);
 Value EmitBoolLiteral(Builder* b, BoolLiteral* literal);
@@ -321,13 +322,13 @@ Value EmitCast(Builder* b, CastExpr* cast);
 Value EmitStrLiteral(Builder* b, StrLiteral* literal);
 Value EmitNullTest(Builder* b, NullTestExpr* nt);
 
-// Stmt.c dispatch
+// -- Variable declaration dispatch
 void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
 void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
 void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
 void SymDeclare(Builder* b, const char* name, Value* sym);
 
-// Arrays.c dispatch (EmitArrayBuiltin cases)
+// -- Array builtins (EmitArrayBuiltin cases)
 Value EmitArrayPop(Builder* b, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd, LLVMTypeRef elemTy);
 Value EmitArrayReserve(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
                        LLVMTypeRef elemTy);
@@ -342,18 +343,18 @@ Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
 Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr,
                       LLVMValueRef capPtr, TypeDesc elemTd, LLVMTypeRef elemTy);
 
-// Arrays.c dispatch (EmitArrayFromNodes)
+// -- Array literals (EmitArrayFromNodes)
 LLVMValueRef EmitArrayLiteralBuffer(Builder* b, LLVMTypeRef elemTy, LLVMTypeRef slotTy, size_t count, bool stackBuffer);
 void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd,
                              LLVMTypeRef elemTy);
 void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd, bool borrow);
 
-// Expr.c dispatch (EmitLValue cases)
+// -- LValue dispatch (EmitLValue cases)
 LValue EmitIdentLValue(Builder* b, IdentExpr* id);
 LValue EmitMemberLValue(Builder* b, MemberExpr* m);
 LValue EmitIndexLValue(Builder* b, IndexExpr* ix);
 
-// Expr.c dispatch (EmitMember cases)
+// -- Member dispatch (EmitMember cases)
 Value EmitEnumConstMember(Builder* b, MemberExpr* n);
 bool TryEmitScalarPseudoMember(Builder* b, MemberExpr* n, Value* out);
 Value EmitMemberLValueRead(Builder* b, LValue lvalue);
@@ -367,7 +368,7 @@ Value EmitBoxedVectorDeref(Builder* b, Value base);
 bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out);
 bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out);
 
-// ConstInit.c dispatch (FoldConstInit cases)
+// -- Constant fold dispatch (FoldConstInit cases)
 bool FoldIntLiteralInit(Node* n, ConstInitVal* out);
 bool FoldFloatLiteralInit(Node* n, ConstInitVal* out);
 bool FoldBoolLiteralInit(Node* n, ConstInitVal* out);

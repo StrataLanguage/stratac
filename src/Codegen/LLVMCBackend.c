@@ -1,3 +1,4 @@
+// Entry point that generates LLVM IR for a module.
 #include "Codegen/CodegenBackend.h"
 #include "Codegen/LLVMCApi.h"
 #include "Codegen/LLVMModuleBuilder.h"
@@ -28,9 +29,9 @@ CodegenResult GenerateLlvmIr(const Module* mod)
             SbPrintf(&sb, ";   %s\n", diag.diagnostics[i].message);
         }
 
-        /* The caller free()s `output`, so it must be heap-owned — NOT an
-           arena/scratch pointer (a free() on scratch memory corrupts the
-           heap and crashes at teardown). */
+        // The caller free()s `output`, so it must be heap-owned — NOT an
+        // arena/scratch pointer (a free() on scratch memory corrupts the
+        // heap and crashes at teardown).
         res.output = DupString(SbFinish(&sb, ScratchArena()));
         res.ok = false;
 

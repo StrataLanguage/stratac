@@ -1,4 +1,5 @@
 #pragma once
+// Type predicates and helpers shared across the codegen.
 
 #include "AST/AST.h"
 
@@ -20,7 +21,7 @@ typedef struct
     char ir[32];
 } MappedType;
 
-/* Full definition lives in TypeRegistry.h. */
+// Full definition lives in TypeRegistry.h.
 typedef struct TypeRegistry TypeRegistry;
 typedef struct Arena Arena;
 
@@ -31,11 +32,9 @@ bool IsNameNumeric(const char* t);
 
 LaneCount IsSimdVector(PrimitiveType prim);
 
-/**
- * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
- * Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the
- * user. Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
- */
+// Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
+// Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the
+// user. Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
 LaneCount IsNameSimdVector(const char* t);
 
 #define GET_SIMD_VECTOR_LANES(t_) IsSimdVector(t_)
@@ -54,16 +53,16 @@ bool IsNameFloatType(const char* t);
 
 bool IsScalarPseudoType(PrimitiveType prim);
 
-/* Builtin numeric scalars eligible for `max`/`min` pseudo-properties:
-   int/uint/long/ulong/byte/sbyte/short/ushort/float/double (NOT bool).
-   True only for the BUILTIN names — never aliases or user types. */
+// Builtin numeric scalars eligible for `max`/`min` pseudo-properties:
+// int/uint/long/ulong/byte/sbyte/short/ushort/float/double (NOT bool).
+// True only for the BUILTIN names — never aliases or user types.
 bool IsNameScalarPseudoType(const char* t);
 
-/* Scalar pseudo-property read (`int.max`, `float.min`): `t` must be a
-   builtin scalar pseudo type and `member` must be "max" (every scalar) or
-   "min" (float/double only). When valid, fills the constant value: `outInt`
-   gets the integer bit pattern (ints), `outFloat` the double (floats),
-   `outIsFloat` distinguishes them. Any output may be NULL. */
+// Scalar pseudo-property read (`int.max`, `float.min`): `t` must be a
+// builtin scalar pseudo type and `member` must be "max" (every scalar) or
+// "min" (float/double only). When valid, fills the constant value: `outInt`
+// gets the integer bit pattern (ints), `outFloat` the double (floats),
+// `outIsFloat` distinguishes them. Any output may be NULL.
 bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* outInt, double* outFloat,
                        bool* outIsFloat);
 
@@ -76,53 +75,53 @@ bool TypeIsString(const TypeRegistry* reg, const char* name);
 // True when the (alias-resolved) name is "cstring".
 bool TypeIsCString(const TypeRegistry* reg, const char* name);
 
-/* True when `==`/`!=` (and ordering) compares the value directly — scalars,
-   handles, enums, and aliases of those compare by value / pointer identity.
-   NOT true for strings (CONTENT equality via codegen `strata_str_eq`) or for
-   aggregates — arrays and structs take the structural-equality path instead
-   (see TypeIsComparableAggregate); this is the sema fallback for everything
-   that still compares as a single value. */
+// True when `==`/`!=` (and ordering) compares the value directly — scalars,
+// handles, enums, and aliases of those compare by value / pointer identity.
+// NOT true for strings (CONTENT equality via codegen `strata_str_eq`) or for
+// aggregates — arrays and structs take the structural-equality path instead
+// (see TypeIsComparableAggregate); this is the sema fallback for everything
+// that still compares as a single value.
 bool TypeIsTriviallyComparable(const TypeRegistry* reg, const TypeName* t);
 
-/* True for equality-comparable AGGREGATE types: dynamic and fixed arrays
-   (`T[]`, `T[N]`, and optional `T[]?`), and DEFINED structs (plain or
-   extern — never opaque/handle/alias/enum, which stay value/pointer
-   compares). `==`/`!=` on these is structural (codegen emits per-type
-   `strata_eq_*` helpers: memcmp where the layout allows, member-wise /
-   element-wise recursion otherwise); ordering comparisons are rejected. */
+// True for equality-comparable AGGREGATE types: dynamic and fixed arrays
+// (`T[]`, `T[N]`, and optional `T[]?`), and DEFINED structs (plain or
+// extern — never opaque/handle/alias/enum, which stay value/pointer
+// compares). `==`/`!=` on these is structural (codegen emits per-type
+// `strata_eq_*` helpers: memcmp where the layout allows, member-wise /
+// element-wise recursion otherwise); ordering comparisons are rejected.
 bool TypeIsComparableAggregate(const TypeRegistry* reg, const TypeName* t);
 
 // True when the type owns (box/array/string, or alias of one).
 bool TypeIsOwningResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);
 
-/* True when a VALUE of the type owns heap data: everything
-   TypeIsOwningResolved covers, plus owning structs (defined structs with a
-   transitive owning field — `Rec` when `struct Rec { string s; };`), their
-   aliases included. This is the predicate that decides move/drop/copy
-   treatment wherever an owning-struct value can appear (notably as a `T[]`
-   element, where `Rec[]` is legal inline storage). */
+// True when a VALUE of the type owns heap data: everything
+// TypeIsOwningResolved covers, plus owning structs (defined structs with a
+// transitive owning field — `Rec` when `struct Rec { string s; };`), their
+// aliases included. This is the predicate that decides move/drop/copy
+// treatment wherever an owning-struct value can appear (notably as a `T[]`
+// element, where `Rec[]` is legal inline storage).
 bool TypeIsOwningValueResolved(const TypeRegistry* reg, Arena* arena, const TypeName* t);
 
-/* Follows alias chains to the type they stand for (a bare name; shaped types come back as written). */
+// Follows alias chains to the type they stand for (a bare name; shaped types come back as written).
 const TypeName* ResolveAliasedType(const TypeRegistry* reg, Arena* arena, const TypeName* t);
 
-/* The four type properties of docs "Strata Language Foundations", computed once per resolved type.
-   New rules test these instead of `isBox`/`isOptional` or a spelling. */
+// The four type properties of docs "Strata Language Foundations", computed once per resolved type.
+// New rules test these instead of `isBox`/`isOptional` or a spelling.
 typedef struct
 {
-    bool trivial;   /* bitwise copy, no drop glue */
-    bool owning;    /* a by-value use moves; has drop glue (the complement of trivial) */
-    bool userDrop;  /* has a `Drop`, itself or in a field; no `copy()` */
-    bool zeroValid; /* all-zero bits are a valid value */
+    bool trivial;   // bitwise copy, no drop glue
+    bool owning;    // a by-value use moves; has drop glue (the complement of trivial)
+    bool userDrop;  // has a `Drop`, itself or in a field; no `copy()`
+    bool zeroValid; // all-zero bits are a valid value
 } TypeProps;
 
-/* How a `T?` is laid out (Value optionals). Picked per type; `None` for a type that is not optional. */
+// How a `T?` is laid out (Value optionals). Picked per type; `None` for a type that is not optional.
 typedef enum
 {
     OptLayoutNone,
-    OptLayoutNiche,  /* the pointer itself, null means empty: `^U?`, `H?` */
-    OptLayoutInline, /* `{ T value; bool has; }` */
-    OptLayoutBox     /* nullable heap box, as `T?` is today and `^T?` stays */
+    OptLayoutNiche,  // the pointer itself, null means empty: `^U?`, `H?`
+    OptLayoutInline, // `{ T value; bool has; }`
+    OptLayoutBox     // nullable heap box, as `T?` is today and `^T?` stays
 } OptionalLayout;
 
 OptionalLayout TypeOptionalLayout(const TypeRegistry* reg, Arena* arena, const TypeName* t);

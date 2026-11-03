@@ -1,4 +1,4 @@
-/* Builder: Runtime helpers: alloc/free/panic/oob, bounds checks, exported symbol names. */
+// Builder: Runtime helpers: alloc/free/panic/oob, bounds checks, exported symbol names.
 #include "Codegen/Builder/BuilderInternal.h"
 
 static bool HasSymbolPrefix(const Builder* b)
@@ -6,7 +6,7 @@ static bool HasSymbolPrefix(const Builder* b)
     return b->symbolPrefix && b->symbolPrefix[0];
 }
 
-/* The linker-visible name of an exported (non-extern) symbol. */
+// The linker-visible name of an exported (non-extern) symbol.
 const char* ExportedSymbolName(Builder* b, const char* name)
 {
     if (!HasSymbolPrefix(b))
@@ -17,8 +17,8 @@ const char* ExportedSymbolName(Builder* b, const char* name)
     return ArenaFormat(b->arena, "%s%s", b->symbolPrefix, name);
 }
 
-/* With a symbol prefix, module-emitted runtime helpers become module-local so several objects
-   (each with its own copy) can link into one binary. */
+// With a symbol prefix, module-emitted runtime helpers become module-local so several objects
+// (each with its own copy) can link into one binary.
 void MakeHelperModuleLocal(Builder* b, LLVMValueRef function)
 {
     if (HasSymbolPrefix(b))
@@ -27,8 +27,8 @@ void MakeHelperModuleLocal(Builder* b, LLVMValueRef function)
     }
 }
 
-/* A runtime helper (`strata_alloc`, ...): the host's, or the module's own when it defines one as
-   an `@export` function (a Strata-written runtime). */
+// A runtime helper (`strata_alloc`, ...): the host's, or the module's own when it defines one as
+// an `@export` function (a Strata-written runtime).
 static LLVMValueRef RuntimeHelperFn(Builder* b, const char* name, LLVMTypeRef type)
 {
     LLVMValueRef existing = LLVMGetNamedFunction(b->mod, name);
@@ -48,7 +48,7 @@ LLVMValueRef StrataAllocFn(Builder* b)
     return b->allocFn;
 }
 
-/* A heap cell for a box's value of `size` bytes, returning the value's address. */
+// A heap cell for a box's value of `size` bytes, returning the value's address.
 LLVMValueRef AllocBoxCell(Builder* b, LLVMValueRef size, const char* name)
 {
     LLVMValueRef args[1] = {size};
@@ -92,7 +92,7 @@ static LLVMValueRef StrataOobFn(Builder* b)
     return b->oobFn;
 }
 
-/* A private constant global holding `message`, decayed to a char* (GEP 0,0). */
+// A private constant global holding `message`, decayed to a char* (GEP 0,0).
 LLVMValueRef MsgGlobalPtr(Builder* b, const char* prefix, const char* message)
 {
     size_t len = strlen(message);
@@ -109,9 +109,9 @@ LLVMValueRef MsgGlobalPtr(Builder* b, const char* prefix, const char* message)
     return LLVMConstGEP2(strType, g, idx, 2);
 }
 
-/* Emits a call to strata_panic(message) followed by an unreachable terminator.
-   Shared by bounds checks, null-extern-call checks, and any other runtime
-   abort the profile emits. The current block must be terminated. */
+// Emits a call to strata_panic(message) followed by an unreachable terminator.
+// Shared by bounds checks, null-extern-call checks, and any other runtime
+// abort the profile emits. The current block must be terminated.
 void EmitPanic(Builder* b, const char* message)
 {
     LLVMValueRef args[1] = {MsgGlobalPtr(b, ".pmsg", message)};
@@ -120,9 +120,9 @@ void EmitPanic(Builder* b, const char* message)
     LLVMBuildUnreachable(b->builder);
 }
 
-/* Reports a recoverable out-of-bounds access (LLVM JIT): notifies the host's
-   panic handler via strata_oob but returns, so the caller continues with a
-   dummy element. */
+// Reports a recoverable out-of-bounds access (LLVM JIT): notifies the host's
+// panic handler via strata_oob but returns, so the caller continues with a
+// dummy element.
 void EmitOobReport(Builder* b)
 {
     LLVMValueRef args[1] = {MsgGlobalPtr(b, ".omsg", "array index out of bounds")};
@@ -130,10 +130,10 @@ void EmitOobReport(Builder* b)
     LLVMBuildCall2(b->builder, b->oobFnType, b->oobFn, args, 1, "");
 }
 
-/* Emits a bounds check: if index >= length, call strata_panic with the given
-   message and halt (unreachable). Does nothing if index and length are
-   compile-time constants and index < length. Skipped entirely when the
-   StrataProfile disables bounds checking. */
+// Emits a bounds check: if index >= length, call strata_panic with the given
+// message and halt (unreachable). Does nothing if index and length are
+// compile-time constants and index < length. Skipped entirely when the
+// StrataProfile disables bounds checking.
 void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length)
 {
     if (!b->boundsCheck)
@@ -154,7 +154,7 @@ void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length)
     PositionAtEnd(b, okBB);
 }
 
-/* Branches to a panic with `message` when `bad` is true, and carries on in the ok block otherwise. */
+// Branches to a panic with `message` when `bad` is true, and carries on in the ok block otherwise.
 void EmitPanicIf(Builder* b, LLVMValueRef bad, const char* message)
 {
     LLVMBasicBlockRef panicBB = NewBb(b, "arith.panic");

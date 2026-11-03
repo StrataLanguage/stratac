@@ -1,7 +1,6 @@
-/* Builder: Type descriptors, resolution, coercion, default values, owning-type queries. */
+// Builder: Type descriptors, resolution, coercion, default values, owning-type queries.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* Forward declarations for functions used before their definition in this file. */
 static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type);
 
 TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlags flags, const char* structTypeName)
@@ -28,8 +27,8 @@ TypeName MakeTypeName(Builder* b, const char* name)
     return TypeNameParse(b->arena, name);
 }
 
-/* Resolve from a canonical spelling — only for the few spots that genuinely
-   start from a plain name (e.g. "string"). */
+// Resolve from a canonical spelling — only for the few spots that genuinely
+// start from a plain name (e.g. "string").
 TypeDesc ResolveByName(Builder* b, const char* name)
 {
     TypeName tn = MakeTypeName(b, name);
@@ -84,7 +83,7 @@ static LLVMTypeRef ScalarLlvmType(LLVMContextRef ctx, const MappedType* t)
     return LLVMInt32TypeInContext(ctx);
 }
 
-/* SIMD vectors route here (lanes > 1); ScalarLlvmType stays scalar-only. */
+// SIMD vectors route here (lanes > 1); ScalarLlvmType stays scalar-only.
 static LLVMTypeRef VectorLlvmType(LLVMContextRef ctx, const MappedType* t)
 {
     assert(t->isSimdVector);
@@ -109,9 +108,9 @@ bool BuilderIsOwningValue(Builder* b, const TypeName* t)
     return TypeIsOwningValueResolved(&b->registry, b->arena, t);
 }
 
-/* A TypeDesc that owns heap memory and must be dropped: string / box (a heap
-   pointer), a dynamic array (its buffer, plus owning elements), or an owning
-   struct held by value. Fixed arrays / scalars are non-owning. */
+// A TypeDesc that owns heap memory and must be dropped: string / box (a heap
+// pointer), a dynamic array (its buffer, plus owning elements), or an owning
+// struct held by value. Fixed arrays / scalars are non-owning.
 bool TypeDescIsOwning(Builder* b, const TypeDesc* td)
 {
     if (TypeDescIsString(td) || TypeDescIsBox(td) || TypeDescHasArrayShape(td))
@@ -158,13 +157,13 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(ScalarLlvmType(b->ctx, &mapped), flags, NULL);
     }
 
-    /* Type alias: resolve to the underlying type's LLVM representation. */
+    // Type alias: resolve to the underlying type's LLVM representation.
     if (TypeRegistryIsTypeAlias(&b->registry, t->name))
     {
         const char* underlying = TypeRegistryGetUnderlyingType(&b->registry, t->name);
         TypeName resolved = MakeTypeName(b, underlying);
 
-        /* Propagate const/vector/array flags from the alias wrapper. */
+        // Propagate const/vector/array flags from the alias wrapper.
         resolved.isConst = t->isConst;
         resolved.isVector = t->isVector;
 
@@ -178,7 +177,7 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
         return TypeDescMake(found, 0, t->name);
     }
 
-    /* T[N]: fixed-size inline [N x T] (C ABI) — struct fields and stack-allocated locals. */
+    // T[N]: fixed-size inline [N x T] (C ABI) — struct fields and stack-allocated locals.
     if (TypeNameHasArrayShape(t) && t->length >= 0)
     {
         TypeDesc elemTd = Resolve(b, t->elem);
@@ -242,10 +241,10 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
         TypeDescSetBox(&td, true);
         TypeDescSetOptional(&td, TypeNameIsOptional(t)); // `T?` rebinds whole slots on assign.
 
-        /* `^T?` (a box over `T?`, or an optional over `^T`) is ONE heap cell
-           holding a T, exactly like `T?`: the box-up sites construct a T into
-           the cell, so the cell's inner type (its size, deref and drop) must
-           be T, not another box pointer. */
+        // `^T?` (a box over `T?`, or an optional over `^T`) is ONE heap cell
+        // holding a T, exactly like `T?`: the box-up sites construct a T into
+        // the cell, so the cell's inner type (its size, deref and drop) must
+        // be T, not another box pointer.
         while (boxInner && (TypeNameIsBox(boxInner) || TypeNameIsOptional(boxInner)) && boxInner->inner)
         {
             TypeDescSetOptional(&td, TypeDescIsOptional(&td) || TypeNameIsOptional(boxInner));
@@ -276,7 +275,7 @@ LLVMValueRef ZeroOf(TypeDesc typeDesc)
 // Marks "computed, no defaults" (and "being computed") in structDefaults.
 static char noStructDefault;
 
-/* A field default folded by sema, as a constant of the field's own type. */
+// A field default folded by sema, as a constant of the field's own type.
 static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultValue* value)
 {
     if (TypeDescIsSimdVector(&typeDesc))
@@ -301,7 +300,7 @@ static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultV
     return ConstIntTrunc(typeDesc.type, (ConstUInt)value->intValue);
 }
 
-/* `structName` with its field defaults applied, or NULL when that is all-zero. */
+// `structName` with its field defaults applied, or NULL when that is all-zero.
 static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
 {
     void* cached = StrMapGet(&b->structDefaults, structName);
@@ -356,8 +355,8 @@ static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
     return constant;
 }
 
-/* The default value of `type` when field defaults make it differ from all-zero (a struct with
-   defaults, directly or nested, or a fixed array of one), else NULL. */
+// The default value of `type` when field defaults make it differ from all-zero (a struct with
+// defaults, directly or nested, or a fixed array of one), else NULL.
 static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type)
 {
     if (!type || !type->name || TypeNameIsBox(type) || TypeNameIsOptional(type))
@@ -394,7 +393,7 @@ static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type)
     return leaf ? StructDefaultConstant(b, leaf) : NULL;
 }
 
-/* What an uninitialized binding of `type` starts as: its field defaults, else zero. */
+// What an uninitialized binding of `type` starts as: its field defaults, else zero.
 LLVMValueRef DefaultValueOf(Builder* b, const TypeName* type, TypeDesc typeDesc)
 {
     LLVMValueRef defaults = TypeDefaultConstant(b, type);
@@ -419,7 +418,7 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
         return value;
     }
 
-    /* Handle <-> integer (sema allows these only as explicit casts): a handle is its address. */
+    // Handle <-> integer (sema allows these only as explicit casts): a handle is its address.
     bool valueIsHandle = value.typeDesc.structTypeName && IsHandleType(&b->registry, value.typeDesc.structTypeName);
     bool targetIsHandle = target.structTypeName && IsHandleType(&b->registry, target.structTypeName);
 
@@ -441,10 +440,10 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
         return value;
     }
 
-    /* `cstring` <-> `string`: copy in either direction at the use site.
-       cstring -> string heap-copies the NUL-terminated bytes into a fresh
-       owned fat; string -> cstring borrows the fat's data pointer (the NUL
-       invariant holds; an empty {null, 0} becomes the static empty buffer). */
+    // `cstring` <-> `string`: copy in either direction at the use site.
+    // cstring -> string heap-copies the NUL-terminated bytes into a fresh
+    // owned fat; string -> cstring borrows the fat's data pointer (the NUL
+    // invariant holds; an empty {null, 0} becomes the static empty buffer).
     if (TypeDescIsCString(&value.typeDesc) && TypeDescIsString(&target))
     {
         return ValueMake(BuildOwnedStringFromCStr(b, value.value), target);
@@ -455,7 +454,7 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
         return ValueMake(BuildExternStringPtr(b, value), target);
     }
 
-    /* Conversion to bool is a (non)zero test, not a bit-truncation. */
+    // Conversion to bool is a (non)zero test, not a bit-truncation.
     if (target.type == I1Ty(b))
     {
         LLVMValueRef zero = LLVMConstNull(value.typeDesc.type);
@@ -478,19 +477,19 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
     }
     else if (!TypeDescIsFloat(&value.typeDesc) && !TypeDescIsFloat(&target) && !TypeDescIsVoid(&target))
     {
-        /* Widen per the SOURCE's signedness: an unsigned i8/i16/i32 (byte,
-           ushort, uint) must zero-extend, a signed one sign-extend. The
-           target's signedness only matters for truncation, where the flag
-           is irrelevant. */
+        // Widen per the SOURCE's signedness: an unsigned i8/i16/i32 (byte,
+        // ushort, uint) must zero-extend, a signed one sign-extend. The
+        // target's signedness only matters for truncation, where the flag
+        // is irrelevant.
         bool srcIsBool = value.typeDesc.type == I1Ty(b);
         r = LLVMBuildIntCast2(b->builder, value.value, target.type, !TypeDescIsUnsigned(&value.typeDesc) && !srcIsBool,
                               "c");
     }
     else if (TypeDescIsFloat(&value.typeDesc) && TypeDescIsFloat(&target))
     {
-        /* float <-> double: widen (fpext) or narrow (fptrunc). SIMD vectors
-           are float-typed but never convert element-wise here - they fall
-           through to `return value` unchanged. */
+        // float <-> double: widen (fpext) or narrow (fptrunc). SIMD vectors
+        // are float-typed but never convert element-wise here - they fall
+        // through to `return value` unchanged.
         LLVMTypeRef f = LLVMFloatTypeInContext(b->ctx);
         LLVMTypeRef d = LLVMDoubleTypeInContext(b->ctx);
 
@@ -515,8 +514,8 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
     return ValueMake(r, target);
 }
 
-/* T's descriptor for `extern<T>` calls: {nameHash, layoutHash, size, alignment} then the
-   NUL-terminated name, as StrataTypeDesc in strata.h. */
+// T's descriptor for `extern<T>` calls: {nameHash, layoutHash, size, alignment} then the
+// NUL-terminated name, as StrataTypeDesc in strata.h.
 LLVMValueRef TypeDescConstant(Builder* b, const char* structName)
 {
     LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->typeDescs, structName);

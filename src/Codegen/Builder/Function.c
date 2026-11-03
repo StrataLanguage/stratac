@@ -1,10 +1,10 @@
-/* Builder: Function declaration, definition and AOT entry point. */
+// Builder: Function declaration, definition and AOT entry point.
 #include "Codegen/Builder/BuilderInternal.h"
 
 #define STRATA_AOT_MAIN_SYMBOL "__strata_main"
 
-/* An AOT module's `int main()` (or `void main()`) is the program entry: its Strata body is emitted
-   as __strata_main and EmitAotEntryPoint wraps it in a real C `main` that owns the context. */
+// An AOT module's `int main()` (or `void main()`) is the program entry: its Strata body is emitted
+// as __strata_main and EmitAotEntryPoint wraps it in a real C `main` that owns the context.
 bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f)
 {
     if (b->jitMode || f->isExtern || f->isExport || f->fromImpl || !f->body || f->params.count != 0
@@ -20,8 +20,8 @@ bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f)
 
 void DeclareFunction(Builder* b, const FunctionDecl* f)
 {
-    /* An `extern<T>` itself is never called (sema redirects calls to instantiations), but the
-       host binds its name, so the JIT needs its slot. */
+    // An `extern<T>` itself is never called (sema redirects calls to instantiations), but the
+    // host binds its name, so the JIT needs its slot.
     if (f->typeParam)
     {
         if (b->jitMode)
@@ -38,15 +38,15 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
 
     info->returnType = Resolve(b, &f->returnType);
 
-    /* Remember the semantic return type before widening so extern call
-       sites can narrow the (partially-defined) register back down. */
+    // Remember the semantic return type before widening so extern call
+    // sites can narrow the (partially-defined) register back down.
     info->retSemanticTy = info->returnType.type;
     info->retSemanticUnsigned = TypeDescIsUnsigned(&info->returnType);
     info->returnType.type = WidenRetType(b, info->returnType.type);
 
-    /* An extern `string` (or alias-of-string) return crosses the host
-       boundary as a NUL-terminated char*: the caller copies it into a fresh
-       owned buffer. `string?` (the maybe-empty fat) stays banned in sema. */
+    // An extern `string` (or alias-of-string) return crosses the host
+    // boundary as a NUL-terminated char*: the caller copies it into a fresh
+    // owned buffer. `string?` (the maybe-empty fat) stays banned in sema.
     info->externStringReturn = f->isExtern && !hasReturnParam && !TypeNameIsOptional(&f->returnType)
                                && TypeIsString(&b->registry, f->returnType.name);
 
@@ -54,12 +54,12 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     info->paramByPtr = (bool*)ArenaAlloc(b->arena, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
 
-    /* Every non-extern function gets ONE hidden leading LLVM parameter (a
-       pointer to the per-instance globals struct) that never appears at the
-       Strata source level: invisible in `f->params`, added only to the
-       compiled signature here and forwarded automatically by EmitCall. It is
-       there even when the module has no instanced globals (the context is
-       then NULL), so hosts never branch on the ABI. */
+    // Every non-extern function gets ONE hidden leading LLVM parameter (a
+    // pointer to the per-instance globals struct) that never appears at the
+    // Strata source level: invisible in `f->params`, added only to the
+    // compiled signature here and forwarded automatically by EmitCall. It is
+    // there even when the module has no instanced globals (the context is
+    // then NULL), so hosts never branch on the ABI.
     info->hasHiddenCtxParam = !f->isExtern && !f->isExport;
     size_t ctxOffset = info->hasHiddenCtxParam ? 1 : 0;
 
@@ -82,9 +82,9 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     {
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
 
-        /* Structs pass BY VALUE: the callee gets its own copy (an explicit
-           `ref` still shares the caller's storage). Sema makes extern struct
-           params spell out `ref`, since the host C ABI contract is `T*`. */
+        // Structs pass BY VALUE: the callee gets its own copy (an explicit
+        // `ref` still shares the caller's storage). Sema makes extern struct
+        // params spell out `ref`, since the host C ABI contract is `T*`.
         bool byPtr = p->mod != ModNone || BuilderIsOwningType(b, &p->type);
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
@@ -121,7 +121,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     info->type
         = LLVMFunctionType(abiRetType, params, (unsigned)(pcount + ctxOffset + typeDescCount), f->isCVararg ? 1 : 0);
 
-    /* A delegate is a call signature, not a symbol: calls go through a pointer value. */
+    // A delegate is a call signature, not a symbol: calls go through a pointer value.
     if (f->isDelegate)
     {
         info->function = NULL;
@@ -133,7 +133,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     {
         LLVMValueRef slot = ExternSlot(b, f->name);
 
-        /* Calls to an instantiation name it by its mangled `Name<T>`. */
+        // Calls to an instantiation name it by its mangled `Name<T>`.
         if (f->genericOf)
         {
             StrMapPut(&b->externSlots, f->mangledName, (void*)slot);
@@ -143,14 +143,14 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     }
     else if (f->genericOf)
     {
-        /* Every instantiation has the same ABI (T crosses as a pointer), so all share one declaration. */
+        // Every instantiation has the same ABI (T crosses as a pointer), so all share one declaration.
         LLVMValueRef existing = LLVMGetNamedFunction(b->mod, f->name);
         info->function = existing ? existing : LLVMAddFunction(b->mod, f->name, info->type);
     }
     else
     {
-        /* Externs and `@export`s keep their C names; the AOT entry point is renamed so the
-           synthesized C `main` (EmitAotEntryPoint) can wrap it. */
+        // Externs and `@export`s keep their C names; the AOT entry point is renamed so the
+        // synthesized C `main` (EmitAotEntryPoint) can wrap it.
         const char* symbol = (f->isExtern || f->isExport) ? f->mangledName
                              : IsAotEntryPoint(b, f)      ? ExportedSymbolName(b, STRATA_AOT_MAIN_SYMBOL)
                                                           : ExportedSymbolName(b, f->mangledName);
@@ -189,7 +189,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
     b->entryAllocaPt = NULL;
     LLVMPositionBuilderAtEnd(b->builder, entry);
 
-    /* An `@export` body has no context parameter: it uses the module's newest context. */
+    // An `@export` body has no context parameter: it uses the module's newest context.
     if (f->isExport)
     {
         b->curGlobalsPtr = b->exportCtxGlobal ? LLVMBuildLoad2(b->builder, b->ptrTy, b->exportCtxGlobal, "exportctx")
@@ -205,8 +205,8 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
         bool structVal
             = TypeRegistryIsUserType(&b->registry, leafName) && !TypeRegistryIsOpaque(&b->registry, leafName);
         bool boxParam = BuilderIsOwningType(b, &p->type);
-        /* An owning struct passed BY VALUE (non-ref, non-extern): the callee
-           owns its copy's fields and drops them at return. */
+        // An owning struct passed BY VALUE (non-ref, non-extern): the callee
+        // owns its copy's fields and drops them at return.
         bool owningStructParam = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->registry, leafName);
 
         Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
@@ -216,8 +216,8 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
             sym->value = LLVMGetParam(b->curFn, (unsigned)(i + paramBase));
             sym->typeDesc = typeDesc;
 
-            /* A `ref T... rest` with non-owning elements collects pointers to
-               the source arguments; element access derefs the slot. */
+            // A `ref T... rest` with non-owning elements collects pointers to
+            // the source arguments; element access derefs the slot.
             if (p->isVarargRest && p->mod == ModRef)
             {
                 const TypeName* elem = TypeNameArrayElem(&p->type);
@@ -228,9 +228,9 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
                 }
             }
 
-            /* An owned (non-ref) box/array parameter is consumed: freed at return.
-               A vararg rest array is stack-backed: its owning ELEMENTS are
-               dropped, but the caller's stack buffer is not freed. */
+            // An owned (non-ref) box/array parameter is consumed: freed at return.
+            // A vararg rest array is stack-backed: its owning ELEMENTS are
+            // dropped, but the caller's stack buffer is not freed.
             if (boxParam && p->mod == ModNone)
             {
                 OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->arena, sizeof(OwnLocal));
@@ -300,7 +300,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
     }
 }
 
-/* int main(int argc, char** argv): create the context, run the Strata entry, destroy the context. */
+// int main(int argc, char** argv): create the context, run the Strata entry, destroy the context.
 void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry)
 {
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->funcs, entry->mangledName);

@@ -1,4 +1,4 @@
-/* Builder: IR helpers: integer types, blocks, entry allocas, predicates, return widening. */
+// Builder: IR helpers: integer types, blocks, entry allocas, predicates, return widening.
 #include "Codegen/Builder/BuilderInternal.h"
 
 static LLVMIntPredicate PredNameToPredicate(const char* p, bool uns)
@@ -91,14 +91,12 @@ LLVMTypeRef I1Ty(Builder* b)
     return LLVMInt1TypeInContext(b->ctx);
 }
 
-/*
-   Return types smaller than 32-bit integers are returned sign/zero-extended
-   in a 32-bit register (the callee is responsible for the extension). The ARM64
-   ORC/JIT backend leaves the upper bits in the old wider value, so a C caller
-   reading the full register at high optimization levels get garbage.
-
-   Widen the LLVM return type to 32-bits so the register always holds a properly extended value.
-*/
+// Return types smaller than 32-bit integers are returned sign/zero-extended
+// in a 32-bit register (the callee is responsible for the extension). The ARM64
+// ORC/JIT backend leaves the upper bits in the old wider value, so a C caller
+// reading the full register at high optimization levels get garbage.
+//
+// Widen the LLVM return type to 32-bits so the register always holds a properly extended value.
 LLVMTypeRef WidenRetType(Builder* b, LLVMTypeRef t)
 {
     if (t && LLVMGetTypeKind(t) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(t) < 32)
@@ -109,8 +107,8 @@ LLVMTypeRef WidenRetType(Builder* b, LLVMTypeRef t)
     return t;
 }
 
-/* Extend a value of the semantic return type into the (widened) ABI return
-   register: zero-extend unsigned / bool, sign-extend signed variants. */
+// Extend a value of the semantic return type into the (widened) ABI return
+// register: zero-extend unsigned / bool, sign-extend signed variants.
 LLVMValueRef ExtendToRetWidth(Builder* b, LLVMValueRef value, TypeDesc semantic, LLVMTypeRef retLlvm)
 {
     if (retLlvm == semantic.type)
@@ -141,9 +139,9 @@ LLVMValueRef EntryAlloca(Builder* b, LLVMTypeRef type, const char* name)
     }
     else
     {
-        /* The entry block may already be terminated (e.g. drop code emitted
-           on a return before any alloca was created). Insert before the
-           terminator so the alloca stays in the entry prologue. */
+        // The entry block may already be terminated (e.g. drop code emitted
+        // on a return before any alloca was created). Insert before the
+        // terminator so the alloca stays in the entry prologue.
         LLVMValueRef term = LLVMGetBasicBlockTerminator(b->entryBlock);
 
         if (term)
@@ -178,10 +176,10 @@ void Br(Builder* b, LLVMBasicBlockRef dest)
     }
 }
 
-/* Integer constant of `ty` from a 64-bit folded value. Compile-time folds carry negative values sign-extended to
-   64 bits; LLVMConstInt(ty, v, 0) on a narrower type then leaves the bits above the width set in the constant's
-   internal representation. It prints as the right value but compares unequal to the canonical constant, so the
-   optimizer folds `icmp eq` of the two to false. Masking to the type's width keeps it canonical. */
+// Integer constant of `ty` from a 64-bit folded value. Compile-time folds carry negative values sign-extended to
+// 64 bits; LLVMConstInt(ty, v, 0) on a narrower type then leaves the bits above the width set in the constant's
+// internal representation. It prints as the right value but compares unequal to the canonical constant, so the
+// optimizer folds `icmp eq` of the two to false. Masking to the type's width keeps it canonical.
 LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, ConstUInt v)
 {
     unsigned width = LLVMGetIntTypeWidth(ty);
@@ -196,10 +194,10 @@ LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, ConstUInt v)
 
 LLVMValueRef IdxConst(Builder* b, unsigned i)
 {
-    /* LLVM requires i32 for struct-field GEP indices (LLVMBuildGEP2 does not
-       validate this; an i64 field index produces malformed IR that crashes
-       InstCombine once the JIT runs an optimization pipeline). Sequential
-       (pointer/array) indices accept any width, so i32 works everywhere. */
+    // LLVM requires i32 for struct-field GEP indices (LLVMBuildGEP2 does not
+    // validate this; an i64 field index produces malformed IR that crashes
+    // InstCombine once the JIT runs an optimization pipeline). Sequential
+    // (pointer/array) indices accept any width, so i32 works everywhere.
     return LLVMConstInt(I32Ty(b), i, 0);
 }
 
@@ -211,18 +209,18 @@ LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
     return LLVMConstPtrToInt(gep, I64Ty(b));
 }
 
-/* JIT out-of-bounds: with boundsCheck on, bad indexes don't panic - reads
-   resolve to a dummy element and writes are absorbed. Non-owning elements
-   share a zeroed global; owning elements get a fresh dummy in per-site entry
-   scratch (dropping whatever a prior OOB event left there). */
+// JIT out-of-bounds: with boundsCheck on, bad indexes don't panic - reads
+// resolve to a dummy element and writes are absorbed. Non-owning elements
+// share a zeroed global; owning elements get a fresh dummy in per-site entry
+// scratch (dropping whatever a prior OOB event left there).
 LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name)
 {
     LLVMValueRef before = b->entryAllocaPt;
     LLVMValueRef slot = EntryAlloca(b, type, name);
     LLVMBasicBlockRef cur = LLVMGetInsertBlock(b->builder);
 
-    /* EntryAlloca inserted the slot just before `before` (or the entry
-       terminator); positioning there puts the zeroing store right after it. */
+    // EntryAlloca inserted the slot just before `before` (or the entry
+    // terminator); positioning there puts the zeroing store right after it.
     if (before)
     {
         LLVMPositionBuilderBefore(b->builder, before);

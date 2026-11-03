@@ -1,7 +1,7 @@
-/* Builder: Module build entry points. */
+// Builder: Module build entry points.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* Setup: the builder's module, diagnostics and profile flags, and the LLVM context, module and IR builder. */
+// Setup: the builder's module, diagnostics and profile flags, and the LLVM context, module and IR builder.
 static void BuilderInitModule(Builder* b, const Module* module, DiagnosticEngine* diag, bool jitMode,
                               const StrataProfile* profile)
 {
@@ -17,8 +17,8 @@ static void BuilderInitModule(Builder* b, const Module* module, DiagnosticEngine
     b->strLitCount = 0;
 }
 
-/* Impl property table: "Handle.Prop" -> accessors, resolved against the
-   module's function list (sema guarantees the externs exist). */
+// Impl property table: "Handle.Prop" -> accessors, resolved against the
+// module's function list (sema guarantees the externs exist).
 static void DeclareImplProperties(Builder* b, const Module* module)
 {
     for (size_t i = 0; i < module->impls.count; i++)
@@ -38,8 +38,8 @@ static void DeclareImplProperties(Builder* b, const Module* module)
     }
 }
 
-/* Names every struct up front so bodies can refer to each other: opaque structs are plain pointers,
-   the rest are named LLVM structs whose bodies come later. */
+// Names every struct up front so bodies can refer to each other: opaque structs are plain pointers,
+// the rest are named LLVM structs whose bodies come later.
 static void DeclareStructTypes(Builder* b)
 {
     for (size_t i = 0; i < b->registry.count; i++)
@@ -59,9 +59,9 @@ static void DeclareStructTypes(Builder* b)
     }
 }
 
-/* The physical body of one struct. Registry-computed [n x i8] pads are interleaved before the fields they
-   follow. A struct with any explicit fieldoffset is emitted packed (pad members fully determine layout);
-   natural structs (padCount 0) produce the same body. */
+// The physical body of one struct. Registry-computed [n x i8] pads are interleaved before the fields they
+// follow. A struct with any explicit fieldoffset is emitted packed (pad members fully determine layout);
+// natural structs (padCount 0) produce the same body.
 static void DefineStructBody(Builder* b, StructType* st)
 {
     size_t memberCount = st->hasLayout ? st->physicalCount : st->fields.count;
@@ -78,7 +78,7 @@ static void DefineStructBody(Builder* b, StructType* st)
 
     if (st->isUnion && st->hasLayout)
     {
-        /* One representative member (+ tail pad); every field is read and written at byte 0. */
+        // One representative member (+ tail pad); every field is read and written at byte 0.
         FieldDecl* rep = (FieldDecl*)VecGet(&st->fields, (size_t)st->unionMember);
         members[m++] = Resolve(b, &rep->type).type;
 
@@ -113,7 +113,6 @@ static void DefineStructBody(Builder* b, StructType* st)
     LLVMStructSetBody(structTy, members, (unsigned)memberCount, st->packedLayout ? 1 : 0);
 }
 
-/* Gives every non-opaque struct its body. */
 static void DefineStructBodies(Builder* b)
 {
     for (size_t i = 0; i < b->registry.count; i++)
@@ -129,15 +128,15 @@ static void DefineStructBodies(Builder* b)
     }
 }
 
-/* Decides where one global lives: an instanced field of the context struct (appended to ctxFieldTypes), or
-   a manifest constant with no storage at all. */
+// Decides where one global lives: an instanced field of the context struct (appended to ctxFieldTypes), or
+// a manifest constant with no storage at all.
 static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldTypes, size_t* ctxFieldCount)
 {
     TypeDesc typeDesc = Resolve(b, &gd->type);
 
-    /* ^T / T[] / string / alias-of-string globals always get an
-       instanced field: __strata_context_create fills them at runtime
-       and __strata_context_destroy drops them. */
+    // ^T / T[] / string / alias-of-string globals always get an
+    // instanced field: __strata_context_create fills them at runtime
+    // and __strata_context_destroy drops them.
     if (BuilderIsOwningType(b, &gd->type))
     {
         FieldIndex index = (FieldIndex)(*ctxFieldCount);
@@ -145,20 +144,20 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
         StrMapPut(&b->globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
 
         Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
-        sym->value = NULL; /* no static address any more; see GlobalFieldPtr */
+        sym->value = NULL; // no static address; see GlobalFieldPtr
         sym->typeDesc = typeDesc;
         StrMapPut(&b->globals, gd->name, sym);
         return;
     }
 
-    /* cstring global: a `.rodata` pointer, but still an instanced field
-       (a `cstring` binding is rebindable unless `const`, so per-instance
-       isolation applies the same as any other mutable global). No init
-       = the static empty buffer, never NULL. `cstring g2 = g;` copies
-       whatever `g`'s field currently holds — both fields live in the
-       same struct now, so __strata_context_create does this as a
-       runtime load-then-store (in declaration order) instead of a
-       compile-time constant copy. */
+    // cstring global: a `.rodata` pointer, but still an instanced field
+    // (a `cstring` binding is rebindable unless `const`, so per-instance
+    // isolation applies the same as any other mutable global). No init
+    // = the static empty buffer, never NULL. `cstring g2 = g;` copies
+    // whatever `g`'s field currently holds — both fields live in the
+    // same struct now, so __strata_context_create does this as a
+    // runtime load-then-store (in declaration order) instead of a
+    // compile-time constant copy.
     bool csCopyInit = false;
 
     if (TypeDescIsCString(&typeDesc) && gd->init && gd->init->kind == NodeIdent)
@@ -201,12 +200,12 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
         }
     }
 
-    /* A `const` scalar global with a constant initializer is a MANIFEST
-       constant: no storage, no symbol — uses inline the value. This is
-       the C++-safe alternative to `const int X = N;` globals (C++ gives
-       const globals internal linkage, so the symbol can never be linked
-       against) and the enabler for `[constName]` array dimensions.
-       Unaffected by instancing: no runtime state exists for it at all. */
+    // A `const` scalar global with a constant initializer is a MANIFEST
+    // constant: no storage, no symbol — uses inline the value. This is
+    // the C++-safe alternative to `const int X = N;` globals (C++ gives
+    // const globals internal linkage, so the symbol can never be linked
+    // against) and the enabler for `[constName]` array dimensions.
+    // Unaffected by instancing: no runtime state exists for it at all.
     if (gd->type.isConst && folded)
     {
         ConstInitVal castVal = CastConstVal(b, foldedVal, typeDesc);
@@ -221,9 +220,9 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
         return;
     }
 
-    /* Mutable scalar/struct/handle/alias global (or a const one whose
-       initializer failed to fold — already diagnosed above): instanced
-       field, initial value stored at runtime by __strata_context_create. */
+    // Mutable scalar/struct/handle/alias global (or a const one whose
+    // initializer failed to fold — already diagnosed above): instanced
+    // field, initial value stored at runtime by __strata_context_create.
     FieldIndex index = (FieldIndex)(*ctxFieldCount);
     ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
     StrMapPut(&b->globalFieldIndex, gd->name, (void*)(uintptr_t)(index + 1));
@@ -234,11 +233,11 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
     StrMapPut(&b->globals, gd->name, sym);
 }
 
-/* Module-level globals: every global that needs real runtime storage moves into ONE per-instance "context"
-   struct, reached only through a hidden pointer threaded automatically through every non-extern function
-   (see DeclareFunction/DefineFunction/EmitCall). A `const` scalar whose initializer folds to a compile-time
-   manifest constant still gets NO storage at all. This pass must run BEFORE DefineFunction so bodies can
-   resolve the globals' fields. */
+// Module-level globals: every global that needs real runtime storage moves into ONE per-instance "context"
+// struct, reached only through a hidden pointer threaded automatically through every non-extern function
+// (see DeclareFunction/DefineFunction/EmitCall). A `const` scalar whose initializer folds to a compile-time
+// manifest constant still gets NO storage at all. This pass must run BEFORE DefineFunction so bodies can
+// resolve the globals' fields.
 static void DeclareGlobals(Builder* b, const Module* module)
 {
     LLVMTypeRef* ctxFieldTypes = NULL;
@@ -267,7 +266,7 @@ static void DeclareGlobals(Builder* b, const Module* module)
     }
 }
 
-/* Declares every function (generic instances and delegates too) so that any body can call any of them. */
+// Declares every function (generic instances and delegates too) so that any body can call any of them.
 static void DeclareFunctions(Builder* b, const Module* module)
 {
     for (size_t i = 0; i < module->functions.count; i++)
@@ -276,7 +275,7 @@ static void DeclareFunctions(Builder* b, const Module* module)
         DeclareFunction(b, f);
     }
 
-    /* After the generics themselves, so each instantiation finds its generic's JIT slot. */
+    // After the generics themselves, so each instantiation finds its generic's JIT slot.
     for (size_t i = 0; i < module->genericInstances.count; i++)
     {
         DeclareFunction(b, (FunctionDecl*)VecGet(&module->genericInstances, i));
@@ -288,7 +287,6 @@ static void DeclareFunctions(Builder* b, const Module* module)
     }
 }
 
-/* Emits the body of every declared function. */
 static void DefineFunctionBodies(Builder* b, const Module* module)
 {
     for (size_t i = 0; i < module->functions.count; i++)
@@ -298,8 +296,8 @@ static void DefineFunctionBodies(Builder* b, const Module* module)
     }
 }
 
-/* Starts a body for one of the context functions: a fresh symbol table, temporaries and loop stack, and an
-   entry block positioned for emission. */
+// Starts a body for one of the context functions: a fresh symbol table, temporaries and loop stack, and an
+// entry block positioned for emission.
 static void BeginContextFunction(Builder* b, LLVMValueRef fn, TypeDesc ret, LLVMTypeRef retAbi)
 {
     b->curFn = fn;
@@ -316,7 +314,7 @@ static void BeginContextFunction(Builder* b, LLVMValueRef fn, TypeDesc ret, LLVM
     LLVMPositionBuilderAtEnd(b->builder, entry);
 }
 
-/* Context functions when the module has no instanced globals: create returns NULL and destroy does nothing. */
+// Context functions when the module has no instanced globals: create returns NULL and destroy does nothing.
 static void EmitContextStubs(Builder* b)
 {
     LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->ctx);
@@ -333,7 +331,7 @@ static void EmitContextStubs(Builder* b)
     LLVMBuildRetVoid(b->builder);
 }
 
-/* An owning global (^T, T[], string): the initializer is constructed into the field. */
+// An owning global (^T, T[], string): the initializer is constructed into the field.
 static void InitOwningContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLVMValueRef fieldPtr)
 {
     if (!gd->init)
@@ -347,9 +345,9 @@ static void InitOwningContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
     }
     else if (TypeDescIsString(&td))
     {
-        /* string / alias-of-string global: construct the owned
-           value directly into the field (heap-copy a literal;
-           take a call result). Teardown drops it. */
+        // string / alias-of-string global: construct the owned
+        // value directly into the field (heap-copy a literal;
+        // take a call result). Teardown drops it.
         Value val = EmitExpr(b, gd->init);
         LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, StringTypeName(b));
         LLVMBuildStore(b->builder, owned, fieldPtr);
@@ -358,7 +356,7 @@ static void InitOwningContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
     {
         Value val = EmitExpr(b, gd->init);
 
-        /* Direct move from the same ^T kind: take pointer. */
+        // Direct move from the same ^T kind: take pointer.
         bool sameBoxKind = val.typeDesc.boxInner && strcmp(val.typeDesc.boxInner->name, td.boxInner->name) == 0;
 
         if (sameBoxKind)
@@ -367,24 +365,24 @@ static void InitOwningContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
         }
         else
         {
-            /* Box up the inner value (owning or not). */
+            // Box up the inner value (owning or not).
             LLVMValueRef heap = EmitBoxCell(b, td.boxInner, val, gd->init, "boxgl");
             LLVMBuildStore(b->builder, heap, fieldPtr);
         }
     }
     else
     {
-        /* Any other owning initializer (an array or owning struct
-           from a call or literal): sema has already rejected moves
-           from variables, so this is a fresh value we take. Without
-           this the field would be left as uninitialized heap. */
+        // Any other owning initializer (an array or owning struct
+        // from a call or literal): sema has already rejected moves
+        // from variables, so this is a fresh value we take. Without
+        // this the field would be left as uninitialized heap.
         Value val = EmitExpr(b, gd->init);
         LLVMValueRef owned = EmitOwnedValue(b, val, gd->init, &gd->type);
         LLVMBuildStore(b->builder, owned, fieldPtr);
     }
 }
 
-/* A cstring global: a `.rodata` pointer, or a copy of another cstring global's field. */
+// A cstring global: a `.rodata` pointer, or a copy of another cstring global's field.
 static void InitCStringContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLVMValueRef fieldPtr)
 {
     bool csCopyInit = false;
@@ -404,8 +402,8 @@ static void InitCStringContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LL
     }
     else if (csCopyInit)
     {
-        /* Runtime load: the source field, declared earlier, is
-           already initialized by this same forward pass. */
+        // Runtime load: the source field, declared earlier, is
+        // already initialized by this same forward pass.
         LLVMValueRef srcPtr = GlobalFieldPtr(b, ((IdentExpr*)gd->init)->name);
         value = LLVMBuildLoad2(b->builder, td.type, srcPtr, "cscopy");
     }
@@ -415,16 +413,16 @@ static void InitCStringContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LL
     }
     else
     {
-        /* Anything else already failed FoldConstInit above (pass
-           1) and was diagnosed; store a harmless empty value. */
+        // Anything else already failed FoldConstInit above (pass
+        // 1) and was diagnosed; store a harmless empty value.
         value = EmptyNulString(b);
     }
 
     LLVMBuildStore(b->builder, value, fieldPtr);
 }
 
-/* A mutable scalar, struct, handle or alias field: re-derive the same compile-time fold pass 1 already
-   validated (and diagnosed on failure), store zero on failure or absence. */
+// A mutable scalar, struct, handle or alias field: re-derive the same compile-time fold pass 1 already
+// validated (and diagnosed on failure), store zero on failure or absence.
 static void InitScalarContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLVMValueRef fieldPtr)
 {
     ConstInitVal foldedVal;
@@ -440,12 +438,12 @@ static void InitScalarContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
     LLVMBuildStore(b->builder, value, fieldPtr);
 }
 
-/* Stores one global's initial value into its context field. Manifest constants have no field. */
+// Stores one global's initial value into its context field. Manifest constants have no field.
 static void InitContextGlobal(Builder* b, GlobalDecl* gd)
 {
     if (!StrMapGet(&b->globalFieldIndex, gd->name))
     {
-        return; /* manifest constant: no field, nothing to store */
+        return; // manifest constant: no field, nothing to store
     }
 
     TypeDesc td = Resolve(b, &gd->type);
@@ -465,26 +463,26 @@ static void InitContextGlobal(Builder* b, GlobalDecl* gd)
     }
 }
 
-/* __strata_context_create: allocates the context and initializes every global in declaration order. */
+// __strata_context_create: allocates the context and initializes every global in declaration order.
 static void EmitContextCreate(Builder* b, const Module* module)
 {
     LLVMTypeRef createTy = LLVMFunctionType(b->ptrTy, NULL, 0, 0);
     LLVMValueRef createFn = LLVMAddFunction(b->mod, ExportedSymbolName(b, "__strata_context_create"), createTy);
     BeginContextFunction(b, createFn, TypeDescMake(b->ptrTy, 0, NULL), b->ptrTy);
 
-    /* strata_alloc does NOT zero memory: every field must be explicitly
-       stored below (unlike the old static-initializer globals, which
-       zero-filled for free). Set as this function's own hidden context
-       pointer BEFORE evaluating any initializer, since an owning
-       global's initializer may legally be a call to another non-extern
-       Strata function (sema allows "... or a call returning T"), and
-       that call needs a context to forward. */
+    // strata_alloc does NOT zero memory: every field must be explicitly
+    // stored below (unlike the old static-initializer globals, which
+    // zero-filled for free). Set as this function's own hidden context
+    // pointer BEFORE evaluating any initializer, since an owning
+    // global's initializer may legally be a call to another non-extern
+    // Strata function (sema allows "... or a call returning T"), and
+    // that call needs a context to forward.
     LLVMValueRef allocArgs[1] = {SizeOfConst(b, b->globalsStructTy)};
     StrataAllocFn(b);
     LLVMValueRef ctxMem = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, allocArgs, 1, "ctxmem");
     b->curGlobalsPtr = ctxMem;
 
-    /* The newest context is the one `@export` bodies (C callbacks) run against. */
+    // The newest context is the one `@export` bodies (C callbacks) run against.
     LLVMBuildStore(b->builder, ctxMem, b->exportCtxGlobal);
 
     for (size_t i = 0; i < module->globals.count; i++)
@@ -492,13 +490,13 @@ static void EmitContextCreate(Builder* b, const Module* module)
         InitContextGlobal(b, (GlobalDecl*)VecGet(&module->globals, i));
     }
 
-    /* Temporaries borrowed by global initializers. */
+    // Temporaries borrowed by global initializers.
     FlushTemps(b, 0);
 
     LLVMBuildRet(b->builder, ctxMem);
 }
 
-/* Drops one global's field at context destruction, if the global owns heap data. */
+// Drops one global's field at context destruction, if the global owns heap data.
 static void DropContextGlobal(Builder* b, GlobalDecl* gd)
 {
     if (!BuilderIsOwningType(b, &gd->type) && !BuilderIsOwningValue(b, &gd->type))
@@ -515,8 +513,8 @@ static void DropContextGlobal(Builder* b, GlobalDecl* gd)
     EmitDropOne(b, GlobalFieldPtr(b, gd->name), td);
 }
 
-/* __strata_context_destroy: drops the globals in reverse declaration order, unbinds the @export context, and
-   frees the context. */
+// __strata_context_destroy: drops the globals in reverse declaration order, unbinds the @export context, and
+// frees the context.
 static void EmitContextDestroy(Builder* b, const Module* module)
 {
     LLVMTypeRef voidTy = LLVMVoidTypeInContext(b->ctx);
@@ -527,14 +525,14 @@ static void EmitContextDestroy(Builder* b, const Module* module)
 
     b->curGlobalsPtr = LLVMGetParam(destroyFn, 0);
 
-    /* Globals are built in declaration order and destroyed in the reverse, so a later global's Drop can still
-       read an earlier one. A struct that owns heap data through its fields is destroyed too. */
+    // Globals are built in declaration order and destroyed in the reverse, so a later global's Drop can still
+    // read an earlier one. A struct that owns heap data through its fields is destroyed too.
     for (size_t i = module->globals.count; i-- > 0;)
     {
         DropContextGlobal(b, (GlobalDecl*)VecGet(&module->globals, i));
     }
 
-    /* Destroying the `@export` context unbinds it. */
+    // Destroying the `@export` context unbinds it.
     LLVMValueRef boundCtx = LLVMBuildLoad2(b->builder, b->ptrTy, b->exportCtxGlobal, "boundctx");
     LLVMValueRef isBound = LLVMBuildICmp(b->builder, LLVMIntEQ, boundCtx, b->curGlobalsPtr, "isbound");
     LLVMBuildStore(b->builder, LLVMBuildSelect(b->builder, isBound, LLVMConstNull(b->ptrTy), boundCtx, "unbind"),
@@ -547,11 +545,9 @@ static void EmitContextDestroy(Builder* b, const Module* module)
     LLVMBuildRetVoid(b->builder);
 }
 
-/* Every module exports __strata_context_create + __strata_context_destroy. Unlike the old per-process
-   __strata_module_init/teardown, these are NEVER auto-registered (no llvm.global_ctors) in either mode: the
-   whole point of instancing is that a host may create many independent contexts, so it always calls these
-   explicitly — discoverable/callable exactly like any other exported Strata function (JIT:
-   strataJitGetFunction; AOT: a hand-written extern prototype). */
+// Every module exports __strata_context_create and __strata_context_destroy. They are never auto-registered
+// (no llvm.global_ctors): a host may create many independent contexts, so it calls these explicitly, like any
+// other exported function (JIT: strataJitGetFunction; AOT: a hand-written extern prototype).
 static void EmitContextFunctions(Builder* b, const Module* module)
 {
     if (!b->hasInstancedGlobals)
@@ -564,7 +560,7 @@ static void EmitContextFunctions(Builder* b, const Module* module)
     EmitContextDestroy(b, module);
 }
 
-/* Emits the @export entry points the module declares. */
+// Emits the @export entry points the module declares.
 static void EmitAotEntryPoints(Builder* b, const Module* module)
 {
     for (size_t i = 0; i < module->functions.count; i++)
@@ -578,7 +574,7 @@ static void EmitAotEntryPoints(Builder* b, const Module* module)
     }
 }
 
-/* Records the module's extern declarations so the host can bind them by name. */
+// Records the module's extern declarations so the host can bind them by name.
 static void CollectExternNames(Builder* b, const Module* module)
 {
     for (size_t i = 0; i < module->functions.count; i++)
@@ -592,8 +588,8 @@ static void CollectExternNames(Builder* b, const Module* module)
     }
 }
 
-/* The same blob strataCompileTypeMetadata produces, as a read-only symbol the host can find in an AOT object
-   (the JIT hands out the copy kept on the BuiltModule). */
+// The same blob strataCompileTypeMetadata produces, as a read-only symbol the host can find in an AOT object
+// (the JIT hands out the copy kept on the BuiltModule).
 static void EmitTypeMetadataGlobal(Builder* b, const Module* module, uint8_t** typeMetadata, size_t* typeMetadataSize)
 {
     if (TypeMetadataBuild(&b->registry, module, typeMetadata, typeMetadataSize))
@@ -607,8 +603,8 @@ static void EmitTypeMetadataGlobal(Builder* b, const Module* module, uint8_t** t
     }
 }
 
-/* Finalizes the module: disposes the IR builder, emits the type metadata, and hands the LLVM context and
-   module over in the result. */
+// Finalizes the module: disposes the IR builder, emits the type metadata, and hands the LLVM context and
+// module over in the result.
 static BuiltModule BuilderFinalize(Builder* b, const Module* module)
 {
     if (b->builder)
@@ -643,20 +639,20 @@ static BuiltModule BuilderBuild(Builder* b, const Module* module, DiagnosticEngi
 {
     BuilderInitModule(b, module, diag, jitMode, profile);
 
-    /* Declare types: impl property table, struct names, then struct bodies. */
+    // Declare types: impl property table, struct names, then struct bodies.
     TypeRegistryBuild(&b->registry, module);
     DeclareImplProperties(b, module);
     DeclareStructTypes(b);
     DefineStructBodies(b);
 
-    /* Globals are classified before any function is declared, because the context struct they fill is what
-       bodies resolve against. */
+    // Globals are classified before any function is declared, because the context struct they fill is what
+    // bodies resolve against.
     DeclareGlobals(b, module);
 
     DeclareFunctions(b, module);
     DefineFunctionBodies(b, module);
 
-    /* Globals' bodies: the context create/destroy functions. */
+    // Globals' bodies: the context create/destroy functions.
     EmitContextFunctions(b, module);
 
     EmitAotEntryPoints(b, module);

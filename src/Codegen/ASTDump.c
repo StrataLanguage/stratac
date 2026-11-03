@@ -1,3 +1,4 @@
+// Textual dump of the AST.
 #include "AST/AST.h"
 #include "Codegen/CodegenBackend.h"
 #include "Codegen/TypeRegistry.h"
@@ -128,8 +129,8 @@ static void DumpModule(Node* n, int indent, Sb* out)
     {
         Node* func = (Node*)VecGet(&module->functions, i);
 
-        /* Impl methods and synthesized property accessors print inside
-           their impl blocks instead. */
+        // Impl methods and synthesized property accessors print inside
+        // their impl blocks instead.
         if (((FunctionDecl*)func)->fromImpl)
         {
             continue;
@@ -557,7 +558,7 @@ static void DumpCall(Node* n, Sb* out)
 
     if (callExpr->calleeBase)
     {
-        /* Pre-sema member call: `base.Member(args...)`. */
+        // Pre-sema member call: `base.Member(args...)`.
         SbPrintf(out, "(callmethod %s ", callExpr->callee);
         Dump(callExpr->calleeBase, 0, out);
     }

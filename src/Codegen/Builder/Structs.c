@@ -1,8 +1,8 @@
-/* Builder: Struct fields, initializers, copy and drop helpers. */
+// Builder: Struct fields, initializers, copy and drop helpers.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* LLVM member index for logical field `idx` of a struct, mapping through the
-   computed layout (explicit fieldoffsets insert padding members). */
+// LLVM member index for logical field `idx` of a struct, mapping through the
+// computed layout (explicit fieldoffsets insert padding members).
 FieldIndex PhysicalFieldIndex(const StructType* st, int idx)
 {
     if (st && st->hasLayout && st->physicalIndex && idx >= 0 && (size_t)idx < st->fields.count)
@@ -13,8 +13,8 @@ FieldIndex PhysicalFieldIndex(const StructType* st, int idx)
     return (FieldIndex)(idx < 0 ? 0 : idx);
 }
 
-/* `agg` with logical field `idx` set to `value`. A union's fields all overlay byte 0, so they go
-   through memory: store the aggregate, store the field over it, reload. */
+// `agg` with logical field `idx` set to `value`. A union's fields all overlay byte 0, so they go
+// through memory: store the aggregate, store the field over it, reload.
 LLVMValueRef InsertStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMValueRef value)
 {
     if (!st || !st->isUnion)
@@ -30,7 +30,7 @@ LLVMValueRef InsertStructField(Builder* b, const StructType* st, LLVMValueRef ag
     return LLVMBuildLoad2(b->builder, aggTy, slot, "union.v");
 }
 
-/* Logical field `idx` (of LLVM type `fieldTy`) read out of the aggregate value `agg`. */
+// Logical field `idx` (of LLVM type `fieldTy`) read out of the aggregate value `agg`.
 LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMTypeRef fieldTy)
 {
     if (!st || !st->isUnion)
@@ -44,10 +44,10 @@ LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef a
     return LLVMBuildLoad2(b->builder, fieldTy, slot, "m");
 }
 
-/* Drops the owning fields of a struct at `structPtr`. */
+// Drops the owning fields of a struct at `structPtr`.
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName)
 {
-    /* A field typed as an alias (`struct RA = Res;`) is dropped as the struct it names. */
+    // A field typed as an alias (`struct RA = Res;`) is dropped as the struct it names.
     structName = TypeRegistryResolveAlias(&b->registry, structName);
     const StructType* st = TypeRegistryFind(&b->registry, structName);
 
@@ -63,7 +63,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
         return;
     }
 
-    /* The struct's Drop method, while the value is alive: cleared first, so a re-drop is a no-op. */
+    // The struct's Drop method, while the value is alive: cleared first, so a re-drop is a no-op.
     FuncInfo* dropInfo = st->dropFunction ? (FuncInfo*)StrMapGet(&b->funcs, st->dropFunction->mangledName) : NULL;
     int aliveIndex = TypeRegistryFieldIndex(&b->registry, structName, STRATA_ALIVE_FIELD);
 
@@ -94,8 +94,8 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
         FieldDecl* f = (FieldDecl*)VecGet(&st->fields, j);
         bool fieldOwning = BuilderIsOwningType(b, &f->type);
 
-        /* A plain owning struct held by value is normally rejected (must be
-           boxed), but handle it defensively for completeness. */
+        // A plain owning struct held by value is normally rejected (must be
+        // boxed), but handle it defensively for completeness.
         bool fieldOwningStruct = TypeRegistryIsOwningStruct(&b->registry, f->type.name);
 
         if (!fieldOwning && !fieldOwningStruct)
@@ -118,9 +118,9 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
     }
 }
 
-/* Builds a drop fn body: `if (!p) return;` then EmitDropStructFields(p). May
-   run mid-emission of another function (a ^T drop can be reached anywhere),
-   so the enclosing build context is saved and restored around it. */
+// Builds a drop fn body: `if (!p) return;` then EmitDropStructFields(p). May
+// run mid-emission of another function (a ^T drop can be reached anywhere),
+// so the enclosing build context is saved and restored around it.
 static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* structName)
 {
     LLVMValueRef savedCurFn = b->curFn;
@@ -131,7 +131,7 @@ static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* struct
     LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->builder);
 
     b->curFn = fn;
-    b->curGlobalsPtr = LLVMGetParam(fn, 1); /* the dropping function's context, for Drop methods */
+    b->curGlobalsPtr = LLVMGetParam(fn, 1); // the dropping function's context, for Drop methods
 
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->ctx, fn, "entry");
     PositionAtEnd(b, entry);
@@ -173,10 +173,10 @@ static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* struct
     }
 }
 
-/* Returns (creating if needed) a per-struct drop fn for `structName`'s owning
-   fields, used instead of inlining at ^T drop sites. A self-referential/
-   mutually recursive owning struct would otherwise recurse without bound at
-   IR-gen time; a real call terminates via the callee's null check. */
+// Returns (creating if needed) a per-struct drop fn for `structName`'s owning
+// fields, used instead of inlining at ^T drop sites. A self-referential/
+// mutually recursive owning struct would otherwise recurse without bound at
+// IR-gen time; a real call terminates via the callee's null check.
 LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
 {
     LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->dropFns, structName);
@@ -186,15 +186,15 @@ LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
         return existing;
     }
 
-    LLVMTypeRef params[2] = {b->ptrTy, b->ptrTy}; /* (value, context) */
+    LLVMTypeRef params[2] = {b->ptrTy, b->ptrTy}; // (value, context)
     LLVMTypeRef fnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), params, 2, 0);
     char* fnName = ArenaFormat(b->arena, "__strata_drop_%s", structName);
     LLVMValueRef fn = LLVMAddFunction(b->mod, fnName, fnTy);
     LLVMSetLinkage(fn, LLVMInternalLinkage);
 
-    /* Register before emitting the body: a self-referential or mutually
-       recursive struct's own drop body will look this function back up
-       (cache hit) instead of triggering another EmitStructDropFnBody call. */
+    // Register before emitting the body: a self-referential or mutually
+    // recursive struct's own drop body will look this function back up
+    // (cache hit) instead of triggering another EmitStructDropFnBody call.
     StrMapPut(&b->dropFns, structName, (void*)fn);
 
     EmitStructDropFnBody(b, fn, structName);
@@ -202,11 +202,11 @@ LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
     return fn;
 }
 
-/* GEP to a module global's field inside the current function's per-instance
-   globals struct (see BuilderBuild's "instanced globals" pass). Only
-   reachable when `name` is a storage-backed global, which implies
-   b->hasInstancedGlobals and therefore a bound b->curGlobalsPtr in any
-   function whose body can reference it (extern functions have no body). */
+// GEP to a module global's field inside the current function's per-instance
+// globals struct (see BuilderBuild's "instanced globals" pass). Only
+// reachable when `name` is a storage-backed global, which implies
+// b->hasInstancedGlobals and therefore a bound b->curGlobalsPtr in any
+// function whose body can reference it (extern functions have no body).
 LLVMValueRef GlobalFieldPtr(Builder* b, const char* name)
 {
     void* raw = StrMapGet(&b->globalFieldIndex, name);
@@ -215,8 +215,8 @@ LLVMValueRef GlobalFieldPtr(Builder* b, const char* name)
     return LLVMBuildGEP2(b->builder, b->globalsStructTy, b->curGlobalsPtr, idx, 2, "gfld");
 }
 
-/* Deep-copies an owning-struct VALUE field-by-field: owning fields recurse
-   through EmitCopyValue, plain fields bitwise. */
+// Deep-copies an owning-struct VALUE field-by-field: owning fields recurse
+// through EmitCopyValue, plain fields bitwise.
 Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
 {
     const StructType* st = TypeRegistryFind(&b->registry, td.structTypeName);
@@ -231,8 +231,8 @@ Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
     LLVMBuildStore(b->builder, src.value, srcSlot);
     LLVMValueRef dstSlot = EntryAlloca(b, td.type, "cpsd");
 
-    /* The cached copy fn is a real call: self-referential owning structs
-       (a `Node? next` field) recurse at runtime, not at IR-gen time. */
+    // The cached copy fn is a real call: self-referential owning structs
+    // (a `Node? next` field) recurse at runtime, not at IR-gen time.
     LLVMTypeRef copyParamTys[2] = {b->ptrTy, b->ptrTy};
     LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), copyParamTys, 2, 0);
     LLVMValueRef copyFn = GetOrCreateStructCopyFn(b, td.structTypeName);
@@ -242,14 +242,9 @@ Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td)
     return ValueMake(LLVMBuildLoad2(b->builder, td.type, dstSlot, "cpS"), td);
 }
 
-/* Copies an owning struct value field-by-field from srcPtr into dstPtr.
-   Owning fields recurse through EmitCopyValue; a self-referential owning
-   struct terminates because struct/box field copies go through the cached
-   per-struct copy fn (a real call), never inline expansion. */
-
-/* Copies `srcPtr`'s struct fields into `dstPtr`. Owning fields recurse
-   through EmitCopyValue (whose struct/box branches bottom out in the cached
-   copy fn — a real call), plain fields bitwise. */
+// Copies `srcPtr`'s struct fields into `dstPtr`. Owning fields recurse
+// through EmitCopyValue (whose struct/box branches bottom out in the cached
+// copy fn — a real call), plain fields bitwise.
 static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef srcPtr, const char* structName)
 {
     const StructType* st = TypeRegistryFind(&b->registry, structName);
@@ -282,16 +277,13 @@ static void EmitStructCopyInto(Builder* b, LLVMValueRef dstPtr, LLVMValueRef src
     }
 }
 
-/* Returns (creating if needed) a per-struct deep-copy fn
-   `void __strata_copy_<T>(dst, src)` — the call-based form of
-   EmitStructCopyInto that self-referential structs can recurse through at
-   runtime (the same escape hatch the drop fns use). */
-
-/* Builds (once) `void __strata_copy_<T>(dst, src)` around EmitStructCopyInto.
-   Registered in the cache BEFORE the body is emitted, so a self-referential
-   owning struct's own copy body looks the function back up (cache hit) and
-   recurses with a real call at runtime. May run mid-emission of another
-   function, so the enclosing build context is saved and restored. */
+// Returns (creating if needed) the per-struct deep-copy fn `void __strata_copy_<T>(dst, src)`: the call-based form
+// of EmitStructCopyInto that self-referential structs recurse through at runtime (as the drop fns do).
+// Builds (once) `void __strata_copy_<T>(dst, src)` around EmitStructCopyInto.
+// Registered in the cache BEFORE the body is emitted, so a self-referential
+// owning struct's own copy body looks the function back up (cache hit) and
+// recurses with a real call at runtime. May run mid-emission of another
+// function, so the enclosing build context is saved and restored.
 LLVMValueRef GetOrCreateStructCopyFn(Builder* b, const char* structName)
 {
     LLVMValueRef existing = (LLVMValueRef)StrMapGet(&b->copyFns, structName);
@@ -361,7 +353,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
 
     const StructType* st = TypeRegistryFind(&b->registry, n->typeName);
 
-    /* Fields the literal leaves out keep their declared defaults. */
+    // Fields the literal leaves out keep their declared defaults.
     LLVMValueRef agg = DefaultValueOf(b, &tn, typeDesc);
 
     size_t positionalIndex = 0;
@@ -398,9 +390,9 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
 
         if (TypeDescIsFixedArray(&fieldTd) && field->value->kind == NodeArrayInit)
         {
-            /* Fixed-size array field from a braced literal: the flat list
-                carries row-major elements (sema placed nested rows at their
-                offsets); NULL entries are holes that stay zero. */
+            // Fixed-size array field from a braced literal: the flat list
+            // carries row-major elements (sema placed nested rows at their
+            // offsets); NULL entries are holes that stay zero.
             ArrayInitExpr* ai = (ArrayInitExpr*)field->value;
             TypeDesc elemTd = Resolve(b, ai->elementType);
 
@@ -428,7 +420,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
 
         if (TypeDescIsString(&fieldTd) && field->value->kind == NodeStrLiteral)
         {
-            /* string field from a literal -> heap copy (safe to free). */
+            // string field from a literal -> heap copy (safe to free).
             LLVMValueRef sp = LLVMBuildExtractValue(b->builder, rawField.value, 0, "fslit.p");
             LLVMValueRef sl = LLVMBuildExtractValue(b->builder, rawField.value, 1, "fslit.l");
             fieldValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
@@ -437,10 +429,10 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
                  && !(TypeDescIsBox(&rawField.typeDesc) && rawField.typeDesc.boxInner
                       && strcmp(rawField.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
         {
-            /* ^T field from a non-^T value (bare T, string literal,
-               string variable into ^string): allocate a T slot, construct
-               the owned inner value, store it. Same pattern as a top-level
-               ^T init. */
+            // ^T field from a non-^T value (bare T, string literal,
+            // string variable into ^string): allocate a T slot, construct
+            // the owned inner value, store it. Same pattern as a top-level
+            // ^T init.
             LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawField, field->value, "fieldbox");
             fieldValue = ValueMake(heap, fieldTd);
         }
@@ -456,8 +448,8 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
 
         agg = InsertStructField(b, st, agg, (int)idx, fieldValue.value);
 
-        /* If an owning field was moved from an owning lvalue source, null
-           the source so its scope-exit drop is a no-op. */
+        // If an owning field was moved from an owning lvalue source, null
+        // the source so its scope-exit drop is a no-op.
         if (FieldInitMovesSource(b, fieldTd, rawField.typeDesc, field->value))
         {
             NullMovedSource(b, field->value);
@@ -467,9 +459,9 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
     return ValueMake(agg, typeDesc);
 }
 
-/* A packed struct places fields at offsets its types' natural alignment would not allow, so a load or store that
-   goes through one of its fields cannot assume the usual alignment: a `float4` at offset 5 read with an aligned
-   vector instruction faults. Marking those accesses align 1 makes the backend pick the unaligned forms. */
+// A packed struct places fields at offsets its types' natural alignment would not allow, so a load or store that
+// goes through one of its fields cannot assume the usual alignment: a `float4` at offset 5 read with an aligned
+// vector instruction faults. Marking those accesses align 1 makes the backend pick the unaligned forms.
 void MarkPackedFieldAccessesUnaligned(LLVMModuleRef mod)
 {
     for (LLVMValueRef fn = LLVMGetFirstFunction(mod); fn; fn = LLVMGetNextFunction(fn))

@@ -1,4 +1,5 @@
 #pragma once
+// Registry of the module's struct, alias, enum and delegate types with computed layouts.
 
 #include "AST/AST.h"
 #include "Core/Util.h"
@@ -6,15 +7,15 @@
 #include "Codegen/TypeUtil.h"
 #include "PrimitiveTypes.h"
 
-/* Builtin handle types registered in every module (see TypeRegistryBuild). */
+// Builtin handle types registered in every module (see TypeRegistryBuild).
 #define STRATA_PTR_TYPE "ptr"
 #define STRATA_NULL_TYPE "null"
 
-/* The hidden field of a struct with a `Drop` method: 1 while it holds a live value, 0 once moved or dropped. */
+// The hidden field of a struct with a `Drop` method: 1 while it holds a live value, 0 once moved or dropped.
 #define STRATA_ALIVE_FIELD "__alive"
 
-/* `ptr.null`, the null pointer: of type `null`, which converts to `ptr`, any handle and any delegate.
-   The parser turns `ptr.null` into an identifier of this name, which no variable can have. */
+// `ptr.null`, the null pointer: of type `null`, which converts to `ptr`, any handle and any delegate.
+// The parser turns `ptr.null` into an identifier of this name, which no variable can have.
 #define STRATA_NULL_CONSTANT "ptr.null"
 
 static inline bool IsNullConstantName(const char* name)
@@ -22,7 +23,7 @@ static inline bool IsNullConstantName(const char* name)
     return name && strcmp(name, STRATA_NULL_CONSTANT) == 0;
 }
 
-/* A pad filling a `fieldoffset` gap; a trailing pad rounds out the struct. */
+// A pad filling a `fieldoffset` gap; a trailing pad rounds out the struct.
 typedef struct
 {
     size_t beforeField;
@@ -39,30 +40,30 @@ typedef struct
     Vec fields;
     bool isExtern;                           // `extern struct`: mirrors a C layout.
     bool isUnion;                            // `union`: every field at offset 0.
-    const struct FunctionDecl* delegate;     /* `extern delegate`: the handle's call signature */
-    const struct FunctionDecl* dropFunction; /* the struct's `Drop` method, NULL if none */
-    int unionMember;                         /* union: the field the backend lays out (the most aligned, then largest);
-                                                every field's physical index is 0, a tail pad rounds out the size */
+    const struct FunctionDecl* delegate;     // `extern delegate`: the handle's call signature
+    const struct FunctionDecl* dropFunction; // the struct's `Drop` method, NULL if none
+    int unionMember;                         // union: the field the backend lays out (the most aligned, then largest);
+                                             // every field's physical index is 0, a tail pad rounds out the size
     bool isTypeAlias;
-    bool isEnum;                           /* `enum Foo` — a strong alias with scoped constants. */
-    bool isFlagsEnum;                      /* `@flags enum Foo`: values combine with the bitwise operators */
-    const char* underlyingType;            /* underlying type name for aliases */
-    PrimitiveType underlyingPrimitiveType; /* underlying type value for the alias */
-    bool isComponent;                      /* `@component` */
-    Vec attributes;                        /* Vec<Attribute*>, shared with the StructDecl */
-    const char* moduleName;                /* module the struct was declared in */
+    bool isEnum;                           // `enum Foo` — a strong alias with scoped constants.
+    bool isFlagsEnum;                      // `@flags enum Foo`: values combine with the bitwise operators
+    const char* underlyingType;            // underlying type name for aliases
+    PrimitiveType underlyingPrimitiveType; // underlying type value for the alias
+    bool isComponent;                      // `@component`
+    Vec attributes;                        // Vec<Attribute*>, shared with the StructDecl
+    const char* moduleName;                // module the struct was declared in
 
-    /* Computed layout; hasLayout is set only on success,
-       layoutError holds the failure message. */
+    // Computed layout; hasLayout is set only on success,
+    // layoutError holds the failure message.
     bool hasLayout;
-    bool packedLayout; /* any explicit fieldoffset — backends emit packed */
+    bool packedLayout; // any explicit fieldoffset — backends emit packed
     long sizeBytes;
     long alignBytes;
-    long* fieldOffsets;        /* logical field index -> byte offset */
-    FieldIndex* physicalIndex; /* logical field index -> physical member index */
+    long* fieldOffsets;        // logical field index -> byte offset
+    FieldIndex* physicalIndex; // logical field index -> physical member index
     StructPad* pads;
     size_t padCount;
-    size_t physicalCount; /* fields + pads */
+    size_t physicalCount; // fields + pads
     char* layoutError;
 } StructType;
 
@@ -87,14 +88,14 @@ bool TypeRegistryIsOpaque(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name);
 int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, const char* field);
 
-/* Does the field sit at an offset its own type cannot be accessed at (a `fieldoffset` that breaks the type's
-   alignment)? Such a field can be read and written by value, but a ref to it would be a misaligned pointer. */
+// Does the field sit at an offset its own type cannot be accessed at (a `fieldoffset` that breaks the type's
+// alignment)? Such a field can be read and written by value, but a ref to it would be a misaligned pointer.
 bool TypeRegistryFieldMisaligned(const TypeRegistry* reg, const char* structName, const char* field);
 
 // Shape queries are structural (see TypeNameIs* in AST.h).
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name);
 
-/* Type alias queries. */
+// Type alias queries.
 bool TypeRegistryIsTypeAlias(const TypeRegistry* reg, const char* name);
 bool TypeRegistryIsEnum(const TypeRegistry* reg, const char* name);
 const char* TypeRegistryGetUnderlyingType(const TypeRegistry* reg, const char* name);

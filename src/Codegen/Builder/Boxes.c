@@ -1,4 +1,4 @@
-/* Builder: Owning boxes (^T and T?): deref, unbox, cells, moves, null stores. */
+// Builder: Owning boxes (^T and T?): deref, unbox, cells, moves, null stores.
 #include "Codegen/Builder/BuilderInternal.h"
 
 // Read through a box pointer without moving or freeing it.
@@ -16,11 +16,11 @@ Value DerefBoxValue(Builder* b, Value value)
 
     TypeDesc innerTd = Resolve(b, value.typeDesc.boxInner);
 
-    /* ^T where T is an INCOMPLETE struct (a forward declaration): the box
-       cell holds the T* ITSELF, so unwrapping to T is identity -
-       dereferencing again would read whatever the pointer points at as a
-       pointer. Handles are NOT identity: the cell holds the handle VALUE
-       (a box of a handle allocates like any other), so unwrap loads. */
+    // ^T where T is an INCOMPLETE struct (a forward declaration): the box
+    // cell holds the T* ITSELF, so unwrapping to T is identity -
+    // dereferencing again would read whatever the pointer points at as a
+    // pointer. Handles are NOT identity: the cell holds the handle VALUE
+    // (a box of a handle allocates like any other), so unwrap loads.
     if (innerTd.structTypeName && TypeRegistryIsOpaque(&b->registry, innerTd.structTypeName)
         && !IsHandleType(&b->registry, innerTd.structTypeName))
     {
@@ -29,13 +29,13 @@ Value DerefBoxValue(Builder* b, Value value)
 
     LLVMValueRef loaded = LLVMBuildLoad2(b->builder, innerTd.type, value.value, "boxval");
 
-    /* `int v = mkb();`: the box itself is a temporary once its value is read. */
+    // `int v = mkb();`: the box itself is a temporary once its value is read.
     BorrowTemp(b, value, innerTd);
 
     return ValueMake(loaded, innerTd);
 }
 
-/* If value is ^T but the target context expects T, load the pointee. */
+// If value is ^T but the target context expects T, load the pointee.
 Value UnboxIfBox(Builder* b, Value value, TypeDesc target)
 {
     if (TypeDescIsBox(&value.typeDesc) && !TypeDescIsBox(&target) && value.typeDesc.boxInner)
@@ -46,16 +46,16 @@ Value UnboxIfBox(Builder* b, Value value, TypeDesc target)
     return value;
 }
 
-/* Re-resolves the lvalue of a moved-from node purely to store NULL into it.
-   Suppresses the OOB dummy re-construction for array-index sources: the
-   scratch's drop+re-init would free a dummy that was legitimately moved out
-   (the move loads the value but does not null the scratch itself). */
+// Re-resolves the lvalue of a moved-from node purely to store NULL into it.
+// Suppresses the OOB dummy re-construction for array-index sources: the
+// scratch's drop+re-init would free a dummy that was legitimately moved out
+// (the move loads the value but does not null the scratch itself).
 LValue EmitLValueForNullStore(Builder* b, Node* n)
 {
-    /* A piece of a temporary (`mkArr()[0]`, `mkS().name`) has no place to
-       re-resolve (its root is a call): it lives where BorrowTempPart recorded
-       it, inside the temporary. Nulling it there makes the temporary's
-       end-of-statement drop skip the moved piece. */
+    // A piece of a temporary (`mkArr()[0]`, `mkS().name`) has no place to
+    // re-resolve (its root is a call): it lives where BorrowTempPart recorded
+    // it, inside the temporary. Nulling it there makes the temporary's
+    // end-of-statement drop skip the moved piece.
     const TempPart* tp = FindTempPart(b, n);
 
     if (tp)
@@ -73,10 +73,10 @@ LValue EmitLValueForNullStore(Builder* b, Node* n)
     return src;
 }
 
-/* Nulls a moved-from owning slot after its value was transferred: array fats
-   zero wholesale, owning-struct slots zero wholesale (canonical empty
-   strings/fats/null boxes in every owning field), box/string slots zero the
-   pointer. */
+// Nulls a moved-from owning slot after its value was transferred: array fats
+// zero wholesale, owning-struct slots zero wholesale (canonical empty
+// strings/fats/null boxes in every owning field), box/string slots zero the
+// pointer.
 void NullOwningSlot(Builder* b, LValue src)
 {
     if (!src.valid || src.vectorLane)
@@ -86,7 +86,6 @@ void NullOwningSlot(Builder* b, LValue src)
 
     if (TypeDescHasArrayShape(&src.typeDesc))
     {
-        /* Array / string slots rebind wholesale: zero the whole fat. */
         LLVMBuildStore(b->builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
     }
     else if (src.typeDesc.structTypeName && TypeRegistryIsOwningStruct(&b->registry, src.typeDesc.structTypeName))
@@ -99,8 +98,8 @@ void NullOwningSlot(Builder* b, LValue src)
     }
 }
 
-/* Allocates a fresh T cell and constructs the owned inner value `src` into it,
-   returning the heap pointer. Shared by every ^T / T? box-up site. */
+// Allocates a fresh T cell and constructs the owned inner value `src` into it,
+// returning the heap pointer. Shared by every ^T / T? box-up site.
 LLVMValueRef EmitBoxCell(Builder* b, const TypeName* innerTn, Value src, Node* srcNode, const char* name)
 {
     TypeDesc innerTd = Resolve(b, innerTn);
@@ -111,8 +110,8 @@ LLVMValueRef EmitBoxCell(Builder* b, const TypeName* innerTn, Value src, Node* s
     return heap;
 }
 
-/* Deep-copies the CELL behind a non-null box pointer `src` into a fresh
-   allocation, returning the new cell pointer. Callers guard optionals. */
+// Deep-copies the CELL behind a non-null box pointer `src` into a fresh
+// allocation, returning the new cell pointer. Callers guard optionals.
 LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
 {
     TypeDesc innerTd = Resolve(b, td.boxInner);
@@ -126,9 +125,9 @@ LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
 
     if (st && structTy)
     {
-        /* Field copies go through the cached per-struct copy fn: a REAL
-           call, so a self-referential inner (`Node? next`) recurses at
-           runtime (bounded by the null slots) instead of hanging IR-gen. */
+        // Field copies go through the cached per-struct copy fn: a REAL
+        // call, so a self-referential inner (`Node? next`) recurses at
+        // runtime (bounded by the null slots) instead of hanging IR-gen.
         LLVMTypeRef copyParamTys[2] = {b->ptrTy, b->ptrTy};
         LLVMTypeRef copyFnTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), copyParamTys, 2, 0);
         LLVMValueRef copyFn = GetOrCreateStructCopyFn(b, td.boxInner->name);
@@ -137,9 +136,9 @@ LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
     }
     else
     {
-        /* Inner is not a registered struct: a scalar, or a bare owning
-            value such as string (^string), another box, or an array.
-            Deep-copy it. */
+        // Inner is not a registered struct: a scalar, or a bare owning
+        // value such as string (^string), another box, or an array.
+        // Deep-copy it.
         Value innerVal = ValueMake(LLVMBuildLoad2(b->builder, innerTd.type, src.value, "cv"), innerTd);
         Value copied = EmitCopyValue(b, innerVal, innerTd);
         LLVMBuildStore(b->builder, copied.value, heap);
@@ -148,12 +147,8 @@ LLVMValueRef EmitBoxCellCopy(Builder* b, Value src, TypeDesc td)
     return heap;
 }
 
-/* Whether initializing a struct field of type `fieldTd` from `valueNode`
-   (evaluated as `valueTd`) moves an owning source: string, ^T, dynamic array,
-   or an owning struct like a `Rec` element. Shared by the positional
-   `S(a, b)` and braced `S{x: a}` constructors so both null the same sources. */
-/* A `^T` (or a proven `T?`) given where an inline owning `T` is wanted: a struct field, an array
-   element. */
+// A `^T` (or a proven `T?`) given where an inline owning `T` is wanted: a struct field, an array
+// element.
 bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd)
 {
     return !TypeDescIsBox(&targetTd) && !TypeDescHasArrayShape(&targetTd) && targetTd.structTypeName
@@ -161,9 +156,9 @@ bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd)
            && valueTd.boxInner && strcmp(valueTd.boxInner->name, targetTd.structTypeName) == 0;
 }
 
-/* Moves the value out of its box cell (see BoxIntoInlineOwning): the cell is freed, and a variable
-   it came from is left empty, so its own drop does nothing. Dropping the box instead would drop
-   the value that now lives elsewhere. */
+// Moves the value out of its box cell (see BoxIntoInlineOwning): the cell is freed, and a variable
+// it came from is left empty, so its own drop does nothing. Dropping the box instead would drop
+// the value that now lives elsewhere.
 Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
 {
     Value inner = DerefBoxValue(b, box);
@@ -187,10 +182,10 @@ Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
 
 Value EmitNullTest(Builder* b, NullTestExpr* nt)
 {
-    /* `expr?` - test whether the optional holds anything (zero cost
-       beyond the compare; sema guarantees a nullable path). A T?/^T slot
-       tests the pointer; an optional array tests its fat struct: set =
-       non-null data OR non-zero length. */
+    // `expr?` - test whether the optional holds anything (zero cost
+    // beyond the compare; sema guarantees a nullable path). A T?/^T slot
+    // tests the pointer; an optional array tests its fat struct: set =
+    // non-null data OR non-zero length.
     LValue lv = EmitLValue(b, nt->operand);
 
     if (lv.valid && TypeDescHasArrayShape(&lv.typeDesc))
@@ -204,7 +199,7 @@ Value EmitNullTest(Builder* b, NullTestExpr* nt)
         return ValueMake(LLVMBuildOr(b->builder, dataNonNull, lenNonZero, "opt"), TypeDescMake(I1Ty(b), 0, NULL));
     }
 
-    /* Testing a temporary (`Make()?`) only reads it: the end of the statement drops it. */
+    // Testing a temporary (`Make()?`) only reads it: the end of the statement drops it.
     Value tested = {0};
 
     if (!lv.valid)
@@ -230,9 +225,9 @@ void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
         Value value = EmitExpr(b, varDecl->init);
         bool isLiteral = varDecl->init->kind == NodeStrLiteral;
 
-        /* Direct move: source and destination are the same owning type
-           (string=string, ^T=^T). Copy the pointer, null the
-           source. No allocation needed. */
+        // Direct move: source and destination are the same owning type
+        // (string=string, ^T=^T). Copy the pointer, null the
+        // source. No allocation needed.
         bool sameOwningType = TypeDescIsBox(&value.typeDesc) && !isLiteral
                               && ((typeDesc.boxInner == NULL && value.typeDesc.boxInner == NULL)
                                   || (typeDesc.boxInner && value.typeDesc.boxInner
@@ -245,17 +240,17 @@ void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
         }
         else if (typeDesc.boxInner)
         {
-            /* ^T: allocate a T slot, construct the owned inner into it,
-               store. For ^string this is: construct a string (heap-copy
-               literal / move source), then box it up - identical to ^int
-               but the inner happens to be owning. */
+            // ^T: allocate a T slot, construct the owned inner into it,
+            // store. For ^string this is: construct a string (heap-copy
+            // literal / move source), then box it up - identical to ^int
+            // but the inner happens to be owning.
             LLVMValueRef heap = EmitBoxCell(b, typeDesc.boxInner, value, varDecl->init, "heap");
             LLVMBuildStore(b->builder, heap, slot);
         }
         else
         {
-            /* string (owning primitive, no box inner): construct the
-                owned value directly into the slot. */
+            // string (owning primitive, no box inner): construct the
+            // owned value directly into the slot.
             LLVMValueRef owned = EmitOwnedValue(b, value, varDecl->init, StringTypeName(b));
             LLVMBuildStore(b->builder, owned, slot);
         }
