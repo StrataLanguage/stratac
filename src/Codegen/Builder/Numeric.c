@@ -613,3 +613,137 @@ Value EmitBinary(Builder* b, BinaryExpr* n)
         return l;
     }
 }
+
+Value EmitIntLiteral(Builder* b, IntLiteral* literal)
+{
+    /* A magnitude that can't be represented as a non-negative signed
+       i32 (>= 2^31) must be a 64-bit literal - otherwise LLVMConstInt on
+       an i32 sign-wraps it and the value is lost (e.g. `long a = 3000000000`
+       previously became a negative i32). */
+    if (literal->value > 0x7FFFFFFFULL || literal->isLong)
+    {
+        TypeDesc typeDesc = TypeDescMake(I64Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
+
+        return ValueMake(LLVMConstInt(I64Ty(b), literal->value, 1), typeDesc);
+    }
+
+    TypeDesc typeDesc = TypeDescMake(I32Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
+
+    return ValueMake(LLVMConstInt(I32Ty(b), literal->value, 1), typeDesc);
+}
+
+Value EmitFloatLiteral(Builder* b, FloatLiteral* literal)
+{
+    LLVMTypeRef fty = LLVMFloatTypeInContext(b->m_ctx);
+    TypeDesc typeDesc = TypeDescMake(fty, TD_FLOAT, NULL);
+
+    return ValueMake(LLVMConstReal(fty, literal->value), typeDesc);
+}
+
+Value EmitBoolLiteral(Builder* b, BoolLiteral* literal)
+{
+    TypeDesc typeDesc = TypeDescMake(I1Ty(b), 0, NULL);
+
+    return ValueMake(LLVMConstInt(I1Ty(b), (unsigned long long)literal->value, 0), typeDesc);
+}
+
+Value EmitIncDec(Builder* b, IncDecExpr* inc)
+{
+    LValue lv = EmitLValue(b, inc->operand);
+
+    if (!lv.valid)
+    {
+        if (b->m_diag)
+        {
+            DiagError(b->m_diag, inc->base.range, "increment/decrement of non-lvalue");
+        }
+
+        return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+    }
+
+    if (lv.vectorLane)
+    {
+        /* SIMD lane ++/--: load the vector, adjust the lane, store back. */
+        LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, lv.vectorType, lv.ptr, "lanev");
+        LLVMValueRef laneVal
+            = LLVMBuildExtractElement(b->m_builder, cur, LLVMConstInt(I32Ty(b), lv.lane, 0), "lanecur");
+        LLVMValueRef one = LLVMConstReal(LLVMFloatTypeInContext(b->m_ctx), 1.0);
+        LLVMValueRef newVal = inc->isDec ? LLVMBuildFSub(b->m_builder, laneVal, one, "dec")
+                                         : LLVMBuildFAdd(b->m_builder, laneVal, one, "inc");
+        LLVMValueRef newVec
+            = LLVMBuildInsertElement(b->m_builder, cur, newVal, LLVMConstInt(I32Ty(b), lv.lane, 0), "laneins");
+        LLVMBuildStore(b->m_builder, newVec, lv.ptr);
+
+        return ValueMake(inc->isPrefix ? newVal : laneVal, lv.typeDesc);
+    }
+
+    LLVMValueRef valPtr = lv.ptr;
+    TypeDesc valTd = lv.typeDesc;
+
+    if (TypeDescIsBox(&lv.typeDesc))
+    {
+        /* lv.ptr is the address of the box pointer slot (ref-adjusted
+           already by EmitLValue); load through it to get the box
+           pointer, then read/write the boxed value through that -
+           same pattern as the box branch in EmitAssign. */
+        valPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "box");
+        valTd = Resolve(b, lv.typeDesc.boxInner);
+    }
+
+    LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, valTd.type, valPtr, "inc");
+    LLVMValueRef one = valTd.isFloat ? LLVMConstReal(valTd.type, 1.0) : LLVMConstInt(valTd.type, 1, 0);
+
+    LLVMValueRef newVal = inc->isDec ? (valTd.isFloat ? LLVMBuildFSub(b->m_builder, cur, one, "dec")
+                                                      : LLVMBuildSub(b->m_builder, cur, one, "dec"))
+                                     : (valTd.isFloat ? LLVMBuildFAdd(b->m_builder, cur, one, "inc")
+                                                      : LLVMBuildAdd(b->m_builder, cur, one, "inc"));
+
+    LLVMBuildStore(b->m_builder, newVal, valPtr);
+
+    return ValueMake(inc->isPrefix ? newVal : cur, valTd);
+}
+
+Value EmitCast(Builder* b, CastExpr* cast)
+{
+    if (cast->textKind != CastTextNone)
+    {
+        return EmitTextCast(b, cast);
+    }
+
+    Value operand = EmitExpr(b, cast->operand);
+    TypeDesc target = Resolve(b, &cast->type);
+
+    EmitEnumCastCheck(b, cast, operand, target);
+
+    /* `(Name)"lit"` / `(string)"lit"`: the result must OWN its bytes, so
+       heap-copy the static literal (drop glue frees real memory, never
+       the constant pool). Movable sources stay a retag - the consumer
+       nulls the source, exactly like `string t = s;`. */
+    if (target.isString && cast->operand->kind == NodeStrLiteral)
+    {
+        LLVMValueRef srcPtr = LLVMBuildExtractValue(b->m_builder, operand.value, 0, "clit.p");
+        LLVMValueRef lenVal = LLVMBuildExtractValue(b->m_builder, operand.value, 1, "clit.l");
+        LLVMValueRef owned = BuildOwnedStringFat(b, srcPtr, lenVal);
+
+        return ValueMake(owned, target);
+    }
+
+    if ((TypeDescIsBox(&operand.typeDesc) && TypeDescIsBox(&target)) || (operand.typeDesc.isString && target.isString))
+    {
+        /* Retag with the destination type; Coerce would keep the source's. */
+        return ValueMake(operand.value, target);
+    }
+
+    /* Pointer to pointer (handle <-> handle, ptr <-> cstring): same bits, the destination's type. */
+    bool operandIsPointer = operand.typeDesc.type && LLVMGetTypeKind(operand.typeDesc.type) == LLVMPointerTypeKind
+                            && !TypeDescIsBox(&operand.typeDesc);
+    bool targetIsPointer
+        = target.type && LLVMGetTypeKind(target.type) == LLVMPointerTypeKind && !TypeDescIsBox(&target);
+
+    if (operandIsPointer && targetIsPointer)
+    {
+        return ValueMake(operand.value, target);
+    }
+
+    return Coerce(b, operand, target);
+}

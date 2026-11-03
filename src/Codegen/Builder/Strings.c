@@ -682,3 +682,34 @@ Value EmitTextCast(Builder* b, CastExpr* cast)
 
     return ValueMake(BuildOwnedStringFat(b, data, BuildBoundedStrLen(b, data, capacity)), target);
 }
+
+Value EmitStrLiteral(Builder* b, StrLiteral* literal)
+{
+    size_t len = literal->length;
+    /* The constant carries its NUL terminator (flag 0 in this LLVM
+       build), upholding the fat-string invariant: NUL at [len]. */
+    LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, literal->value, (unsigned)len, 0);
+    LLVMTypeRef strType = LLVMTypeOf(strConst);
+
+    char* gName = arena_format(b->m_arena, ".str.%d", b->m_strLitCount++);
+    LLVMValueRef global = LLVMAddGlobal(b->m_mod, strType, gName);
+    LLVMSetInitializer(global, strConst);
+    LLVMSetLinkage(global, LLVMPrivateLinkage);
+    LLVMSetUnnamedAddr(global, 1);
+    LLVMSetGlobalConstant(global, 1);
+
+    LLVMValueRef zero = LLVMConstInt(I32Ty(b), 0, 0);
+    LLVMValueRef idx[2] = {zero, zero};
+    LLVMValueRef gep = LLVMConstGEP2(strType, global, idx, 2);
+
+    /* A literal is a borrowed fat {ptr, len, cap}: no allocation, NUL at
+       [len]. cap is len+1 (the constant carries the terminator byte).
+       Owning consumers heap-copy via EmitOwnedValue. */
+    TypeDesc td = StringFatDesc(b);
+    LLVMValueRef fat = LLVMConstNamedStruct(ArrayStructType(b),
+                                            (LLVMValueRef[3]){gep, LLVMConstInt(I32Ty(b), (unsigned long long)len, 0),
+                                                              LLVMConstInt(I32Ty(b), (unsigned long long)len + 1, 0)},
+                                            3);
+
+    return ValueMake(fat, td);
+}
