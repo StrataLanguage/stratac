@@ -9,12 +9,12 @@ static Token LexNumber(Lexer* lex);
 static Token LexStringLiteral(Lexer* lex);
 static Token LexCharLiteral(Lexer* lex);
 
-static bool IsIdentStart(char c)
+bool IsIdentStart(char c)
 {
     return isalpha((unsigned char)c) || c == '_';
 }
 
-static bool IsIdentCont(char c)
+bool IsIdentCont(char c)
 {
     return isalnum((unsigned char)c) || c == '_';
 }
