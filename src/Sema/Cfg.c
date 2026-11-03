@@ -155,7 +155,7 @@ static bool IsPurePlace(const Node* n)
 {
     while (n && n->kind == NodeMember)
     {
-        n = ((const MemberExpr*)n)->base_node;
+        n = ((const MemberExpr*)n)->baseNode;
     }
 
     return n && n->kind == NodeIdent;
@@ -191,12 +191,12 @@ static void LowerPlace(Builder* b, const Node* n)
     case NodeMember:
         if (!IsPurePlace(n))
         {
-            LowerPlaceRoot(b, ((const MemberExpr*)n)->base_node);
+            LowerPlaceRoot(b, ((const MemberExpr*)n)->baseNode);
         }
 
         return;
     case NodeIndex:
-        LowerPlaceRoot(b, ((const IndexExpr*)n)->base_node);
+        LowerPlaceRoot(b, ((const IndexExpr*)n)->baseNode);
         LowerExpr(b, ((const IndexExpr*)n)->index);
         return;
     default:
@@ -323,12 +323,12 @@ static void LowerExprC(Builder* b, const Node* n, bool consumed)
     case NodeMember:
         if (!IsPurePlace(n))
         {
-            LowerExpr(b, ((const MemberExpr*)n)->base_node);
+            LowerExpr(b, ((const MemberExpr*)n)->baseNode);
         }
 
         break;
     case NodeIndex:
-        LowerExpr(b, ((const IndexExpr*)n)->base_node);
+        LowerExpr(b, ((const IndexExpr*)n)->baseNode);
         LowerExpr(b, ((const IndexExpr*)n)->index);
         break;
     case NodeCall:

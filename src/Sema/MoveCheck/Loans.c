@@ -108,11 +108,11 @@ static void CollectAccesses(const Env* env, Accesses* acc, const Node* n, LoanMo
                     CollectAccesses(env, acc, ix->index, LoanShared);
                 }
 
-                cur = ix->base_node;
+                cur = ix->baseNode;
             }
             else
             {
-                cur = ((const MemberExpr*)cur)->base_node;
+                cur = ((const MemberExpr*)cur)->baseNode;
             }
         }
 
@@ -135,10 +135,10 @@ static void CollectAccesses(const Env* env, Accesses* acc, const Node* n, LoanMo
         CollectAccesses(env, acc, ((const CastExpr*)n)->operand, LoanShared);
         break;
     case NodeMember:
-        CollectAccesses(env, acc, ((const MemberExpr*)n)->base_node, LoanShared);
+        CollectAccesses(env, acc, ((const MemberExpr*)n)->baseNode, LoanShared);
         break;
     case NodeIndex:
-        CollectAccesses(env, acc, ((const IndexExpr*)n)->base_node, LoanShared);
+        CollectAccesses(env, acc, ((const IndexExpr*)n)->baseNode, LoanShared);
         CollectAccesses(env, acc, ((const IndexExpr*)n)->index, LoanShared);
         break;
     case NodeConditional:
@@ -212,7 +212,7 @@ static bool Operands(const Node* n, const Node** ops, LoanMode* modes, size_t* c
 
     if (n->kind == NodeIndex)
     {
-        ops[0] = ((const IndexExpr*)n)->base_node;
+        ops[0] = ((const IndexExpr*)n)->baseNode;
         ops[1] = ((const IndexExpr*)n)->index;
         modes[0] = modes[1] = LoanShared;
         *count = 2;
@@ -222,7 +222,7 @@ static bool Operands(const Node* n, const Node** ops, LoanMode* modes, size_t* c
     if (n->kind == NodeAssign && ((const AssignExpr*)n)->target->kind == NodeIndex)
     {
         const IndexExpr* ix = (const IndexExpr*)((const AssignExpr*)n)->target;
-        ops[0] = ix->base_node;
+        ops[0] = ix->baseNode;
         ops[1] = ix->index;
         modes[0] = LoanMut;
         modes[1] = LoanShared;

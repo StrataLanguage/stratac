@@ -207,7 +207,7 @@ static void DisposeStructInit(Node* node)
 static void DisposeIndex(Node* node)
 {
     IndexExpr* idx = (IndexExpr*)node;
-    AstDispose(idx->base_node);
+    AstDispose(idx->baseNode);
     AstDispose(idx->index);
 }
 
@@ -297,7 +297,7 @@ void AstDispose(Node* node)
         DisposeCall(node);
         return;
     case NodeMember:
-        AstDispose(((MemberExpr*)node)->base_node);
+        AstDispose(((MemberExpr*)node)->baseNode);
         return;
     case NodeStructInit:
         DisposeStructInit(node);

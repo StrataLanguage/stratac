@@ -40,11 +40,11 @@ const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope)
     {
         if (base->kind == NodeMember)
         {
-            base = ((MemberExpr*)base)->base_node;
+            base = ((MemberExpr*)base)->baseNode;
         }
         else if (base->kind == NodeIndex)
         {
-            base = ((IndexExpr*)base)->base_node;
+            base = ((IndexExpr*)base)->baseNode;
         }
         else
         {
@@ -83,7 +83,7 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMa
 
         if (strcmp(tm->member, "length") == 0)
         {
-            const TypeName* bt = InferType(r, tm->base_node, scope);
+            const TypeName* bt = InferType(r, tm->baseNode, scope);
 
             if (bt && IsLengthPseudoMemberBase(&r->m_registry, bt))
             {
@@ -291,9 +291,9 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
     /* Builtin scalar pseudo-property: `int.max` / `float.min` has the
        base scalar's own type. Resolution-order independent (like the
        impl-property path below). */
-    if (m->base_node->kind == NodeIdent)
+    if (m->baseNode->kind == NodeIdent)
     {
-        const char* baseName = ((IdentExpr*)m->base_node)->name;
+        const char* baseName = ((IdentExpr*)m->baseNode)->name;
         PrimitiveType primitive = GetPrimitiveType(baseName);
 
         if (IsScalarPseudoType(primitive) && ScalarPseudoConst(primitive, m->member, NULL, NULL, NULL))
@@ -302,7 +302,7 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    const TypeName* baseType = InferType(r, m->base_node, scope);
+    const TypeName* baseType = InferType(r, m->baseNode, scope);
 
     /* Impl properties: a member read on a handle with a matching
        `property` yields the property's type. Methods are call-only
@@ -407,7 +407,7 @@ static const TypeName* InferCallType(Resolver* r, Node* n, StrMap* scope)
 
 static const TypeName* InferIndexType(Resolver* r, Node* n, StrMap* scope)
 {
-    const TypeName* baseType = InferType(r, ((IndexExpr*)n)->base_node, scope);
+    const TypeName* baseType = InferType(r, ((IndexExpr*)n)->baseNode, scope);
 
     /* Indexing through an optional array (`T[]?`) unwraps it. */
     if (baseType && TypeNameIsOptional(baseType))
@@ -894,7 +894,7 @@ static bool CheckAssignTargetForm(Resolver* r, AssignExpr* a, StrMap* scope)
 
         while (base && base->kind == NodeIndex)
         {
-            base = ((IndexExpr*)base)->base_node;
+            base = ((IndexExpr*)base)->baseNode;
         }
 
         if (base)
@@ -915,7 +915,7 @@ static bool CheckAssignTargetForm(Resolver* r, AssignExpr* a, StrMap* scope)
     {
         MemberExpr* fatM = (MemberExpr*)a->target;
 
-        if (IsFatPseudoProperty(r, InferType(r, fatM->base_node, scope), fatM->member))
+        if (IsFatPseudoProperty(r, InferType(r, fatM->baseNode, scope), fatM->member))
         {
             DiagErrorFmt(r->m_diag, a->base.range,
                          "cannot assign to '.%s' (read-only; arrays grow via array_push/array_resize)", fatM->member);
@@ -931,18 +931,18 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
     if (a->target->kind == NodeMember)
     {
         MemberExpr* tm = (MemberExpr*)a->target;
-        PropertyDecl* prop = PropertyOnHandle(r, InferType(r, tm->base_node, scope), tm->member);
+        PropertyDecl* prop = PropertyOnHandle(r, InferType(r, tm->baseNode, scope), tm->member);
 
         if (prop)
         {
-            const TypeName* rawBase = InferType(r, tm->base_node, scope);
+            const TypeName* rawBase = InferType(r, tm->baseNode, scope);
 
             if (rawBase && TypeNameIsOptional(rawBase))
             {
-                const char* baseKey = MovableBoxSourceKey(r, tm->base_node);
+                const char* baseKey = MovableBoxSourceKey(r, tm->baseNode);
             }
 
-            ResolveExpr(r, tm->base_node, scope);
+            ResolveExpr(r, tm->baseNode, scope);
             ResolveExpr(r, a->value, scope);
 
             /* The setter call produces no value: `a.P = b.Q = v` has no
@@ -1003,17 +1003,17 @@ static bool AssignTargetIsOwningField(Resolver* r, AssignExpr* a, StrMap* scope)
         }
 
         // Writing through an optional needs proven ancestors.
-        for (Node* anc = ((MemberExpr*)a->target)->base_node; anc;)
+        for (Node* anc = ((MemberExpr*)a->target)->baseNode; anc;)
         {
             const TypeName* at2 = InferType(r, anc, scope);
 
             if (anc->kind == NodeMember)
             {
-                anc = ((MemberExpr*)anc)->base_node;
+                anc = ((MemberExpr*)anc)->baseNode;
             }
             else if (anc->kind == NodeIndex)
             {
-                anc = ((IndexExpr*)anc)->base_node;
+                anc = ((IndexExpr*)anc)->baseNode;
             }
             else
             {
@@ -1170,7 +1170,7 @@ static void ResolveAssignOwningFieldTarget(Resolver* r, AssignExpr* a, StrMap* s
 
     while (root->kind == NodeMember || root->kind == NodeIndex)
     {
-        root = (root->kind == NodeMember) ? ((MemberExpr*)root)->base_node : ((IndexExpr*)root)->base_node;
+        root = (root->kind == NodeMember) ? ((MemberExpr*)root)->baseNode : ((IndexExpr*)root)->baseNode;
     }
 
     if (root->kind == NodeIdent)
@@ -1236,7 +1236,7 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     {
         MemberExpr* sm = (MemberExpr*)a->target;
         DiagErrorFmt(r->m_diag, a->base.range, "cannot assign to '%s.%s' (a constant)",
-                     ((IdentExpr*)sm->base_node)->name, sm->member);
+                     ((IdentExpr*)sm->baseNode)->name, sm->member);
         return;
     }
 
@@ -1411,14 +1411,14 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
     {
         MemberExpr* tm = (MemberExpr*)inc->operand;
 
-        if (PropertyOnHandle(r, InferType(r, tm->base_node, scope), tm->member))
+        if (PropertyOnHandle(r, InferType(r, tm->baseNode, scope), tm->member))
         {
             DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s property '%s'; assign it explicitly instead",
                          inc->isDec ? "decrement" : "increment", tm->member);
             return;
         }
 
-        if (IsFatPseudoProperty(r, InferType(r, tm->base_node, scope), tm->member))
+        if (IsFatPseudoProperty(r, InferType(r, tm->baseNode, scope), tm->member))
         {
             DiagErrorFmt(r->m_diag, inc->base.range,
                          "cannot %s '.%s' (read-only; arrays grow via array_push/array_resize)",
@@ -1437,7 +1437,7 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
 
         while (base && base->kind == NodeIndex)
         {
-            base = ((IndexExpr*)base)->base_node;
+            base = ((IndexExpr*)base)->baseNode;
         }
 
         if (base)
@@ -1469,7 +1469,7 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
     {
         MemberExpr* sm = (MemberExpr*)inc->operand;
         DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s '%s.%s' (a constant)",
-                     inc->isDec ? "decrement" : "increment", ((IdentExpr*)sm->base_node)->name, sm->member);
+                     inc->isDec ? "decrement" : "increment", ((IdentExpr*)sm->baseNode)->name, sm->member);
         return;
     }
 
@@ -1622,11 +1622,11 @@ static void ResolveNullTestExpr(Resolver* r, Node* n, StrMap* scope)
 
     if (nt->operand->kind == NodeMember)
     {
-        anc = ((MemberExpr*)nt->operand)->base_node;
+        anc = ((MemberExpr*)nt->operand)->baseNode;
     }
     else if (nt->operand->kind == NodeIndex)
     {
-        anc = ((IndexExpr*)nt->operand)->base_node;
+        anc = ((IndexExpr*)nt->operand)->baseNode;
     }
 
     for (; anc;)
@@ -1635,11 +1635,11 @@ static void ResolveNullTestExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (anc->kind == NodeMember)
         {
-            anc = ((MemberExpr*)anc)->base_node;
+            anc = ((MemberExpr*)anc)->baseNode;
         }
         else if (anc->kind == NodeIndex)
         {
-            anc = ((IndexExpr*)anc)->base_node;
+            anc = ((IndexExpr*)anc)->baseNode;
         }
         else
         {

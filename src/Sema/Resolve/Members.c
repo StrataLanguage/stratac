@@ -244,12 +244,12 @@ PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char
    diagnosed. Anything else (value bases, non-scalar bases) returns false. */
 bool TryResolveScalarPseudoConst(Resolver* r, MemberExpr* m)
 {
-    if (m->base_node->kind != NodeIdent)
+    if (m->baseNode->kind != NodeIdent)
     {
         return false;
     }
 
-    const char* baseName = ((IdentExpr*)m->base_node)->name;
+    const char* baseName = ((IdentExpr*)m->baseNode)->name;
     const PrimitiveType primitive = GetPrimitiveType(baseName);
 
     if (!IsScalarPseudoType(primitive))
@@ -817,9 +817,9 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
 
-    ResolveExprImpl(r, m->base_node, scope, true);
+    ResolveExprImpl(r, m->baseNode, scope, true);
 
-    const TypeName* rawBaseType = InferType(r, m->base_node, scope);
+    const TypeName* rawBaseType = InferType(r, m->baseNode, scope);
 
     /* Impl property reads are call-like: no lvalue, no move source. */
     m->isImplProperty = PropertyOnHandle(r, rawBaseType, m->member) != NULL;
@@ -827,7 +827,7 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
     /* Reading a possibly-empty optional needs a narrowing fact. */
     if (rawBaseType && TypeNameIsOptional(rawBaseType))
     {
-        const char* baseKey = MovableBoxSourceKey(r, m->base_node);
+        const char* baseKey = MovableBoxSourceKey(r, m->baseNode);
     }
 
     const TypeName* baseType = UnwrapBoxPtr(rawBaseType);

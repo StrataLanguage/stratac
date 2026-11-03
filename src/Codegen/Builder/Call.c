@@ -81,7 +81,7 @@ const char* StaticExprTypeName(Builder* b, Node* n)
         /* `cams[i].Prop` — the element type comes from the base's TypeDesc
            (arrayInner points into the declaration's stable TypeName tree). */
         IndexExpr* ix = (IndexExpr*)n;
-        Node* baseNode = ix->base_node;
+        Node* baseNode = ix->baseNode;
         const TypeName* inner = NULL;
 
         if (baseNode->kind == NodeIdent)
@@ -99,7 +99,7 @@ const char* StaticExprTypeName(Builder* b, Node* n)
         else if (baseNode->kind == NodeMember)
         {
             MemberExpr* bm = (MemberExpr*)baseNode;
-            const char* bn = StaticExprTypeName(b, bm->base_node);
+            const char* bn = StaticExprTypeName(b, bm->baseNode);
 
             if (bn && !TypeRegistryIsOpaque(&b->m_registry, bn))
             {
@@ -119,7 +119,7 @@ const char* StaticExprTypeName(Builder* b, Node* n)
     case NodeMember:
     {
         MemberExpr* m = (MemberExpr*)n;
-        const char* baseName = StaticExprTypeName(b, m->base_node);
+        const char* baseName = StaticExprTypeName(b, m->baseNode);
 
         if (!baseName)
         {

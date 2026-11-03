@@ -458,7 +458,7 @@ static Node* ParsePostfix(Parser* p)
             IndexExpr* node = AST_NEW(p->m_arena, IndexExpr);
             node->base.kind = NodeIndex;
             node->base.range = SpanFrom(lbr, close);
-            node->base_node = e;
+            node->baseNode = e;
             node->index = index;
 
             e = (Node*)node;
@@ -508,7 +508,7 @@ static Node* ParsePostfix(Parser* p)
         MemberExpr* node = AST_NEW(p->m_arena, MemberExpr);
         node->base.kind = NodeMember;
         node->base.range = SpanFrom(dot, memberTok);
-        node->base_node = e;
+        node->baseNode = e;
         node->member = ToOwned(p->m_arena, ParserIdentText(p, memberTok));
 
         e = (Node*)node;
@@ -522,7 +522,7 @@ static Node* ParsePostfix(Parser* p)
             call->base.kind = NodeCall;
             call->base.range = node->base.range;
             call->callee = node->member;
-            call->calleeBase = node->base_node;
+            call->calleeBase = node->baseNode;
             call->isIntrinsicCall = false;
             VecInit(&call->args);
 

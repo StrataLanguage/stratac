@@ -244,7 +244,7 @@ static void CheckMisalignedRef(Resolver* r, Node* arg, StrMap* scope)
     }
 
     MemberExpr* m = (MemberExpr*)arg;
-    const TypeName* baseType = UnwrapBoxPtr(InferType(r, m->base_node, scope));
+    const TypeName* baseType = UnwrapBoxPtr(InferType(r, m->baseNode, scope));
 
     if (baseType && baseType->name && TypeRegistryFieldMisaligned(&r->m_registry, baseType->name, m->member))
     {
@@ -628,7 +628,7 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
         MemberExpr* m = AST_NEW(r->m_arena, MemberExpr);
         m->base.kind = NodeMember;
         m->base.range = c->base.range;
-        m->base_node = c->calleeBase;
+        m->baseNode = c->calleeBase;
         m->member = c->callee;
         c->delegateCallee = (Node*)m;
         c->calleeBase = NULL;

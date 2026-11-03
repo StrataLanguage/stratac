@@ -119,10 +119,10 @@ static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* change
         ScanGrowth(mod, f, ((CastExpr*)n)->operand, changed);
         return;
     case NodeMember:
-        ScanGrowth(mod, f, ((MemberExpr*)n)->base_node, changed);
+        ScanGrowth(mod, f, ((MemberExpr*)n)->baseNode, changed);
         return;
     case NodeIndex:
-        ScanGrowth(mod, f, ((IndexExpr*)n)->base_node, changed);
+        ScanGrowth(mod, f, ((IndexExpr*)n)->baseNode, changed);
         ScanGrowth(mod, f, ((IndexExpr*)n)->index, changed);
         return;
     case NodeNullTest:
@@ -207,8 +207,8 @@ static ParamDecl* BorrowRoot(FunctionDecl* f, Node* n)
 {
     while (n && (n->kind == NodeMember || n->kind == NodeIndex || n->kind == NodeCast))
     {
-        n = n->kind == NodeMember  ? ((MemberExpr*)n)->base_node
-            : n->kind == NodeIndex ? ((IndexExpr*)n)->base_node
+        n = n->kind == NodeMember  ? ((MemberExpr*)n)->baseNode
+            : n->kind == NodeIndex ? ((IndexExpr*)n)->baseNode
                                    : ((CastExpr*)n)->operand;
     }
 
@@ -248,7 +248,7 @@ static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
 
     if (n->kind == NodeIndex)
     {
-        t = BorrowPathType(r, root, ((IndexExpr*)n)->base_node);
+        t = BorrowPathType(r, root, ((IndexExpr*)n)->baseNode);
         return t ? (TypeNameArrayElem(t) ? TypeNameArrayElem(t) : NULL) : NULL;
     }
 
@@ -257,7 +257,7 @@ static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
         return &root->type;
     }
 
-    t = BorrowPathType(r, root, ((MemberExpr*)n)->base_node);
+    t = BorrowPathType(r, root, ((MemberExpr*)n)->baseNode);
 
     if (!t)
     {
@@ -443,7 +443,7 @@ static void ScanIncDecBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* chang
 
 static void ScanIndexBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
 {
-    ScanBorrows(r, f, ((IndexExpr*)n)->base_node, changed);
+    ScanBorrows(r, f, ((IndexExpr*)n)->baseNode, changed);
     ScanBorrows(r, f, ((IndexExpr*)n)->index, changed);
 }
 
@@ -589,7 +589,7 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
         ScanBorrows(r, f, ((CastExpr*)n)->operand, changed);
         return;
     case NodeMember:
-        ScanBorrows(r, f, ((MemberExpr*)n)->base_node, changed);
+        ScanBorrows(r, f, ((MemberExpr*)n)->baseNode, changed);
         return;
     case NodeIndex:
         ScanIndexBorrows(r, f, n, changed);

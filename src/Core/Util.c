@@ -41,7 +41,7 @@ Str StrNew(Arena* arena, const char* str, size_t len)
 
 static void ArenaGrow(Arena* a, size_t need)
 {
-    size_t chunk_size = a->default_chunk;
+    size_t chunk_size = a->defaultChunk;
 
     if (chunk_size < need + sizeof(ArenaChunk))
     {
@@ -64,11 +64,11 @@ static void ArenaGrow(Arena* a, size_t need)
     a->end = a->ptr + c->size;
 }
 
-void ArenaInit(Arena* a, size_t initial_chunk)
+void ArenaInit(Arena* a, size_t initialChunk)
 {
     *a = (Arena){0};
     a->head = NULL;
-    a->default_chunk = initial_chunk > 0 ? initial_chunk : (1 << 16);
+    a->defaultChunk = initialChunk > 0 ? initialChunk : (1 << 16);
     a->ptr = NULL;
     a->end = NULL;
 }
@@ -194,23 +194,23 @@ char* ArenaFormat(Arena* a, const char* fmt, ...)
     return result;
 }
 
-static THREAD_LOCAL Arena g_scratch;
+static THREAD_LOCAL Arena scratch;
 
 Arena* ScratchArena(void)
 {
-    if (!g_scratch.head)
+    if (!scratch.head)
     {
-        ArenaInit(&g_scratch, 0);
+        ArenaInit(&scratch, 0);
     }
-    return &g_scratch;
+    return &scratch;
 }
 
 void ScratchReset(void)
 {
-    if (g_scratch.head)
+    if (scratch.head)
     {
-        ArenaFree(&g_scratch);
-        ArenaInit(&g_scratch, 0);
+        ArenaFree(&scratch);
+        ArenaInit(&scratch, 0);
     }
 }
 

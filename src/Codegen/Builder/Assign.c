@@ -368,7 +368,7 @@ static Value EmitLValueAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalu
 static bool DiagnoseVectorMemberAssign(Builder* b, AssignExpr* n)
 {
     MemberExpr* mt = (MemberExpr*)n->target;
-    LValue baseLv = EmitLValue(b, mt->base_node);
+    LValue baseLv = EmitLValue(b, mt->baseNode);
 
     if (!(baseLv.valid
           && (TypeDescIsSimdVector(&baseLv.typeDesc)

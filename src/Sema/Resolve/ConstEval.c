@@ -160,8 +160,8 @@ bool ResolvedConstIntValue(Node* n, ConstUInt* mag, bool* isNegative)
         ConstUInt intVal = 0;
         bool isFloat = false;
 
-        if (m->base_node->kind == NodeIdent
-            && ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, NULL, &isFloat)
+        if (m->baseNode->kind == NodeIdent
+            && ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->baseNode)->name), m->member, &intVal, NULL, &isFloat)
             && !isFloat)
         {
             *mag = intVal;
@@ -786,7 +786,7 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
        to their constants, exactly like enum constants. */
     MemberExpr* m = (MemberExpr*)n;
 
-    if (m->base_node->kind != NodeIdent)
+    if (m->baseNode->kind != NodeIdent)
     {
         return false;
     }
@@ -795,25 +795,25 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
     double floatVal = 0.0;
     bool isFloat = false;
 
-    if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal, &isFloat))
+    if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->baseNode)->name), m->member, &intVal, &floatVal, &isFloat))
     {
         bool wasInt = out->isInt;
         out->i = (ConstInt)intVal;
         out->f = floatVal;
         out->isFloat = isFloat;
         out->isInt = wasInt;
-        out->ity = SemaConstIntType(GetPrimitiveType(((IdentExpr*)m->base_node)->name));
+        out->ity = SemaConstIntType(GetPrimitiveType(((IdentExpr*)m->baseNode)->name));
         return true;
     }
 
     /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
        BEFORE the main resolution marks members, so scan the module. */
-    if (!TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->base_node)->name))
+    if (!TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->baseNode)->name))
     {
         return false;
     }
 
-    const char* baseName = ((IdentExpr*)m->base_node)->name;
+    const char* baseName = ((IdentExpr*)m->baseNode)->name;
 
     for (size_t i = 0; i < r->m_mod->enums.count; i++)
     {

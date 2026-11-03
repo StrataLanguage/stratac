@@ -763,7 +763,7 @@ static inline bool StmtIsNoReturnCall(const Node* n)
 typedef struct MemberExpr
 {
     Node base;
-    Node* base_node;
+    Node* baseNode;
     char* member;
     UseKind useKind;          /* set by the checker */
     bool isImplProperty;      /* set by sema: member names an impl property (call-like read, never a move source) */
@@ -825,7 +825,7 @@ typedef struct
 typedef struct
 {
     Node base;
-    Node* base_node;
+    Node* baseNode;
     Node* index;
     UseKind useKind; /* set by the checker */
 } IndexExpr;
