@@ -133,8 +133,7 @@ extern "C"
     }
 
     static StrataResult BuildResult(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
-                                    size_t sourceCount, StrataEmitKind emit, StrataEmitFlags emitFlags,
-                                    const StrataArch arch)
+                                    size_t sourceCount, StrataEmitKind emit, StrataEmitFlags emitFlags)
     {
         StrataResult r = {0};
 
@@ -189,7 +188,7 @@ extern "C"
     }
 
     static StrataResult CompileSource(StrataCompiler* c, const char* source, size_t sourceLen, const char* moduleName,
-                                      StrataEmitKind emit, StrataEmitFlags emitFlags, const StrataArch arch)
+                                      StrataEmitKind emit, StrataEmitFlags emitFlags)
     {
         if (c && c->importResolver)
         {
@@ -203,7 +202,7 @@ extern "C"
             Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
             AnalyzeModule(mod, &diag, &arena);
 
-            StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, arch);
+            StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags);
 
             TeardownCompile(mod, &loader, &diag, &arena);
 
@@ -237,7 +236,7 @@ extern "C"
 
         AnalyzeModule(mod, &diag, &arena);
 
-        StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit, emitFlags, arch);
+        StrataResult r = BuildResult(mod, &diag, &arena, &src, 1, emit, emitFlags);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -255,8 +254,7 @@ extern "C"
             return NullResult("null compiler or source");
         }
 
-        return CompileSource(c, source, strlen(source), moduleName ? moduleName : "strata_module", emit, emitFlags,
-                             c->arch);
+        return CompileSource(c, source, strlen(source), moduleName ? moduleName : "strata_module", emit, emitFlags);
     }
 
     StrataResult strataCompileFile(StrataCompiler* c, const char* path, StrataEmitKind emit, StrataEmitFlags emitFlags)
@@ -274,7 +272,7 @@ extern "C"
         Module* mod = ModuleLoaderLoad(&loader, path);
         AnalyzeModule(mod, &diag, &arena);
 
-        StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags, c->arch);
+        StrataResult r = BuildResult(mod, &diag, &arena, loader.sources, loader.sourceCount, emit, emitFlags);
 
         TeardownCompile(mod, &loader, &diag, &arena);
 

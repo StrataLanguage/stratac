@@ -156,9 +156,8 @@ extern "C"
 #endif
 
     static StrataJit* JitFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
-                                    size_t sourceCount, const char** errOut, const StrataArch arch, void* allocFn,
-                                    void* freeFn, StrataJitBackend want, const StrataProfile* profile,
-                                    const char* symbolPrefix)
+                                    size_t sourceCount, const char** errOut, void* allocFn, void* freeFn,
+                                    StrataJitBackend want, const StrataProfile* profile, const char* symbolPrefix)
     {
         char* diagText = DiagFormat(diag, sources, sourceCount, arena);
 
@@ -185,7 +184,7 @@ extern "C"
     }
 
     static StrataJit* JitCompileString(StrataCompiler* c, const char* source, size_t sourceLen, const char* moduleName,
-                                       const char** errOut, const StrataArch arch)
+                                       const char** errOut)
     {
         if (c && c->importResolver)
         {
@@ -199,7 +198,7 @@ extern "C"
             Module* mod = ModuleLoaderLoadSource(&loader, moduleName, source, sourceLen);
             AnalyzeModule(mod, &diag, &arena);
 
-            StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, arch,
+            StrataJit* handle = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut,
                                               c->allocFn, c->freeFn, c->jitBackend, &c->profile, c->symbolPrefix);
 
             TeardownCompile(mod, &loader, &diag, &arena);
@@ -234,8 +233,8 @@ extern "C"
 
         AnalyzeModule(mod, &diag, &arena);
 
-        StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut, arch, c->allocFn, c->freeFn,
-                                          c->jitBackend, &c->profile, c->symbolPrefix);
+        StrataJit* handle = JitFromModule(mod, &diag, &arena, &src, 1, errOut, c->allocFn, c->freeFn, c->jitBackend,
+                                          &c->profile, c->symbolPrefix);
 
         AstDispose((Node*)mod);
         DiagnosticEngineFree(&diag);
@@ -260,7 +259,7 @@ extern "C"
             return NULL;
         }
 
-        return JitCompileString(c, source, strlen(source), moduleName ? moduleName : "strata_module", errOut, c->arch);
+        return JitCompileString(c, source, strlen(source), moduleName ? moduleName : "strata_module", errOut);
     }
 
     StrataJit* strataJitCompileFile(StrataCompiler* c, const char* path, const char** errOut)
@@ -288,8 +287,8 @@ extern "C"
         Module* mod = ModuleLoaderLoad(&loader, path);
         AnalyzeModule(mod, &diag, &arena);
 
-        StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->arch,
-                                       c->allocFn, c->freeFn, c->jitBackend, &c->profile, c->symbolPrefix);
+        StrataJit* jit = JitFromModule(mod, &diag, &arena, loader.sources, loader.sourceCount, errOut, c->allocFn,
+                                       c->freeFn, c->jitBackend, &c->profile, c->symbolPrefix);
 
         TeardownCompile(mod, &loader, &diag, &arena);
 

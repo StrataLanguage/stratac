@@ -143,7 +143,6 @@ typedef struct CLICommand
 static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdSetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode CmdPrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdSetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdSetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdDisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd);
