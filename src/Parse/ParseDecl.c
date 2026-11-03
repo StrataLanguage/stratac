@@ -505,29 +505,24 @@ Node* ParseFunction(Parser* p)
     return node;
 }
 
-Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
+/* `extern`, `extern delegate` and `extern<T>` before a function or global declaration. */
+static void ParseExternPrefix(Parser* p, bool* isExtern, bool* isDelegate, char** typeParam)
 {
-    bool isPrivate = false;
-    bool isExport = false;
-    bool isNoReturn = false;
-    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate, &isExport, &isNoReturn);
-    SourceRange firstAttributeRange = hasAttrs ? ((const Attribute*)VecGet(attributes, 0))->range : SRC_INVALID;
-
-    bool isExtern = ParserConsume(p, TokKwExtern);
+    *isExtern = ParserConsume(p, TokKwExtern);
 
     /* `extern delegate R Name(params);` — a C function-pointer type. */
-    bool isDelegate = isExtern && ParserConsume(p, TokKwDelegate);
+    *isDelegate = *isExtern && ParserConsume(p, TokKwDelegate);
 
     /* `extern<T>`: one host function serving every type T (see strata.h). */
-    char* typeParam = NULL;
+    *typeParam = NULL;
 
-    if (isExtern && p->m_cur.kind == TokLt)
+    if (*isExtern && p->m_cur.kind == TokLt)
     {
         Advance(p);
 
         if (p->m_cur.kind == TokIdent)
         {
-            typeParam = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+            *typeParam = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
             Advance(p);
         }
         else
@@ -537,81 +532,102 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
 
         ParserExpect(p, TokGt, "'>'");
     }
+}
 
+/* Attributes decorate functions and struct definitions only. Returns true when they were put on
+   something else, in which case the caller drops the declaration. */
+static bool RejectAttributesOnNonFunction(Parser* p, bool hasAttrs, SourceRange firstAttributeRange)
+{
     if (hasAttrs
         && (p->m_cur.kind == TokKwStruct || AtHandleDecl(p) || p->m_cur.kind == TokKwEnum
             || p->m_cur.kind == TokKwImport || p->m_cur.kind == TokKwImpl))
     {
         DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
-        return NULL;
+        return true;
     }
 
-    TypeName returnType = {0};
-    if (!ParserTryParseType(p, &returnType))
+    return false;
+}
+
+/* The `ReturnType name` that starts every function and global declaration. Returns false after
+   reporting the error, and the caller gives up on the declaration. */
+static bool ParseSignatureHead(Parser* p, TypeName* returnType, Token* nameTok)
+{
+    if (!ParserTryParseType(p, returnType))
     {
         if (p->m_cur.kind != TokEof)
         {
             DiagError(p->m_diag, p->m_cur.range, "expected a type to declare a function");
         }
 
-        return NULL;
+        return false;
     }
 
     if (p->m_cur.kind != TokIdent)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected a name");
 
+        return false;
+    }
+
+    *nameTok = p->m_cur;
+    Advance(p);
+
+    return true;
+}
+
+/* `Type name [= init];` at file scope, reached when no '(' follows the name. */
+static Node* ParseGlobalDecl(Parser* p, TypeName returnType, Token nameTok, bool isExtern, bool hasAttrs,
+                             SourceRange firstAttributeRange)
+{
+    if (isExtern)
+    {
+        DiagError(p->m_diag, nameTok.range, "extern cannot be used with a global variable");
+        Synchronize(p);
+
         return NULL;
     }
 
-    Token nameTok = p->m_cur;
-    Advance(p);
+    GlobalDecl* gd = AST_NEW(p->m_arena, GlobalDecl);
+    gd->base.kind = NodeGlobal;
+    gd->base.range = nameTok.range;
+    gd->type = returnType;
+    gd->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    gd->init = NULL;
 
-    if (p->m_cur.kind != TokLParen)
+    if (hasAttrs)
     {
-        if (isExtern)
-        {
-            DiagError(p->m_diag, nameTok.range, "extern cannot be used with a global variable");
-            Synchronize(p);
-
-            return NULL;
-        }
-
-        GlobalDecl* gd = AST_NEW(p->m_arena, GlobalDecl);
-        gd->base.kind = NodeGlobal;
-        gd->base.range = nameTok.range;
-        gd->type = returnType;
-        gd->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
-        gd->init = NULL;
-
-        if (hasAttrs)
-        {
-            DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
-        }
-
-        if (ParserConsume(p, TokAssign))
-        {
-            if (p->m_cur.kind == TokLBrace && returnType.isArray)
-            {
-                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem);
-            }
-            else if (p->m_cur.kind == TokLBrace && returnType.isOptional && returnType.inner
-                     && returnType.inner->isArray)
-            {
-                // `T[]? g = { ... };` - a braced literal initializes the inner dynamic array.
-                gd->init = ParseArrayInitBody(p, p->m_cur, returnType.inner->elem);
-            }
-            else
-            {
-                gd->init = ParseExpr(p);
-            }
-        }
-
-        ParserExpect(p, TokSemicolon, "';'");
-
-        return (Node*)gd;
+        DiagError(p->m_diag, firstAttributeRange, "attributes are only allowed on function and struct definitions");
     }
 
+    if (ParserConsume(p, TokAssign))
+    {
+        if (p->m_cur.kind == TokLBrace && returnType.isArray)
+        {
+            gd->init = ParseArrayInitBody(p, p->m_cur, returnType.elem);
+        }
+        else if (p->m_cur.kind == TokLBrace && returnType.isOptional && returnType.inner && returnType.inner->isArray)
+        {
+            // `T[]? g = { ... };` - a braced literal initializes the inner dynamic array.
+            gd->init = ParseArrayInitBody(p, p->m_cur, returnType.inner->elem);
+        }
+        else
+        {
+            gd->init = ParseExpr(p);
+        }
+    }
+
+    ParserExpect(p, TokSemicolon, "';'");
+
+    return (Node*)gd;
+}
+
+/* The FunctionDecl for a signature that has its name, with the flags and range it carries before
+   the parameter list is read. */
+static FunctionDecl* NewFunctionDecl(Parser* p, TypeName returnType, Token nameTok, bool isExtern, bool isDelegate,
+                                     bool isPrivate, bool isExport, bool isNoReturn, char* typeParam, bool hasAttrs,
+                                     SourceRange firstAttributeRange)
+{
     FunctionDecl* node = AST_NEW(p->m_arena, FunctionDecl);
     node->base.kind = NodeFunction;
     node->base.range = SpanFrom((Token){TokIdent, returnType.range}, nameTok);
@@ -642,11 +658,13 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
         node->base.range = SpanFrom((Token){TokAt, firstAttributeRange}, nameTok);
     }
 
-    if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
-    {
-        return (Node*)node;
-    }
+    return node;
+}
 
+/* The parameter list after '(' through ')': the bare `...` forms, the rest and `return`
+   parameters, and the checks that depend on them. */
+static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
+{
     if (p->m_cur.kind == TokDotDotDot)
     {
         DiagError(p->m_diag, p->m_cur.range, "bare '...' requires at least one named parameter");
@@ -735,10 +753,15 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     }
 
     ParserExpect(p, TokRParen, "')'");
+}
 
+/* What follows the parameter list: `;` for a declaration, or the body. Extern functions and
+   functions with neither are reported here. */
+static void ParseFunctionBody(Parser* p, FunctionDecl* node, bool isExtern)
+{
     if (ParserConsume(p, TokSemicolon))
     {
-        return (Node*)node;
+        return;
     }
 
     if (isExtern)
@@ -751,14 +774,14 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
             Synchronize(p);
         }
 
-        return (Node*)node;
+        return;
     }
 
     if (p->m_cur.kind != TokLBrace)
     {
         DiagError(p->m_diag, p->m_cur.range, "expected function body '{...}' or ';'");
 
-        return (Node*)node;
+        return;
     }
 
     p->m_hasReturnStmt = false;
@@ -778,6 +801,50 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     node->hasReturnStmt = p->m_hasReturnStmt;
 
     p->m_hasReturnStmt = false;
+}
+
+/* A function or global declaration, from its leading attributes through the body or ';'. The
+   stages are: the extern prefix, the signature, then the parameters and the body. */
+Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
+{
+    bool isPrivate = false;
+    bool isExport = false;
+    bool isNoReturn = false;
+    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate, &isExport, &isNoReturn);
+    SourceRange firstAttributeRange = hasAttrs ? ((const Attribute*)VecGet(attributes, 0))->range : SRC_INVALID;
+
+    bool isExtern = false;
+    bool isDelegate = false;
+    char* typeParam = NULL;
+    ParseExternPrefix(p, &isExtern, &isDelegate, &typeParam);
+
+    if (RejectAttributesOnNonFunction(p, hasAttrs, firstAttributeRange))
+    {
+        return NULL;
+    }
+
+    TypeName returnType = {0};
+    Token nameTok = {0};
+    if (!ParseSignatureHead(p, &returnType, &nameTok))
+    {
+        return NULL;
+    }
+
+    if (p->m_cur.kind != TokLParen)
+    {
+        return ParseGlobalDecl(p, returnType, nameTok, isExtern, hasAttrs, firstAttributeRange);
+    }
+
+    FunctionDecl* node = NewFunctionDecl(p, returnType, nameTok, isExtern, isDelegate, isPrivate, isExport, isNoReturn,
+                                         typeParam, hasAttrs, firstAttributeRange);
+
+    if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
+    {
+        return (Node*)node;
+    }
+
+    ParseFunctionParams(p, node, isExtern);
+    ParseFunctionBody(p, node, isExtern);
 
     return (Node*)node;
 }
