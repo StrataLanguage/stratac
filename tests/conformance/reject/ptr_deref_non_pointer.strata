@@ -1,0 +1,7 @@
+// expect: reject "cannot dereference a value of type 'int'"
+// rule: only a `*T` can be dereferenced
+int main()
+{
+    int x = 1;
+    return *x;
+}

@@ -1,0 +1,8 @@
+// expect: panic "null pointer dereference"
+// rule: reading or writing through a null `*T` panics instead of crashing
+int main()
+{
+    *int p = null;
+    *p = 1;
+    return 0;
+}

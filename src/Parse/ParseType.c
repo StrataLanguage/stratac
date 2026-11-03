@@ -34,9 +34,11 @@ bool LooksLikeVarDecl(Parser* p)
     case TokKwCstring:
     case TokCaret:
         return true;
+    case TokStar:
     case TokIdent:
     {
         // A user-type decl may carry postfix array brackets before the name; speculatively parse, then undo.
+        // A leading `*` is a pointer type or a dereference (`*p = 1;`); only a type followed by a name is a decl.
         LexerCheckpoint saved = SaveLexerState(p);
 
         TypeName tn = {0};
@@ -444,6 +446,41 @@ static bool ParseBoxedType(Parser* p, TypeName* out, bool isConst, SourceRange c
     return true;
 }
 
+// `*T` — pointer. `*` binds tighter than a trailing `[]`, so `*S[]` is an array of pointers to S. A pointer
+// is already nullable, so `*S?` is left unparsed and rejected by the caller.
+static bool ParsePointerType(Parser* p, TypeName* out, bool isConst, SourceRange constRange, bool bare)
+{
+    SourceRange starRange = p->cur.range;
+    Advance(p);
+
+    TypeName base = {0};
+
+    // No diagnostic on failure: a statement may start with a dereference, and LooksLikeVarDecl speculates.
+    if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
+    {
+        return false;
+    }
+
+    TypeName wrapped = TypeNamePointerWrap(p->arena, base);
+
+    wrapped.range = (SourceRange){starRange.start, (uint32_t)(p->cur.range.start - starRange.start), starRange.fileId};
+    *out = wrapped;
+
+    if (!bare)
+    {
+        ApplyArrayBrackets(p, out, constRange);
+
+        if (out->isArray)
+        {
+            ParseArrayOptionalSuffix(p, out, constRange);
+        }
+    }
+
+    out->isConst = isConst;
+
+    return true;
+}
+
 // `bare` parses only the base type (`const`, `^`, a keyword or a name) and
 // leaves any trailing `?` / `[]` for the caller: the box branch uses it so
 // that `^` binds tighter than those suffixes.
@@ -462,6 +499,11 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
     if (p->cur.kind == TokCaret)
     {
         return ParseBoxedType(p, out, isConst, constRange, bare);
+    }
+
+    if (p->cur.kind == TokStar)
+    {
+        return ParsePointerType(p, out, isConst, constRange, bare);
     }
 
     const char* name = ParseBaseTypeName(p, isConst, constRange, &isVector);

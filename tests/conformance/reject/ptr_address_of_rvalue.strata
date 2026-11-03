@@ -1,0 +1,7 @@
+// expect: reject "cannot take the address of this expression"
+// rule: '&' needs a place, not a computed value
+int main()
+{
+    *int p = &(1 + 2);
+    return 0;
+}

@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: roundtrip
+// expect-output: raw
+// rule: a `*T` converts to `ptr` implicitly; `ptr`, handles, integers and other pointers reach a `*T` by cast
+int main()
+{
+    int x = 1;
+    *int p = (*int)addressof(x);
+    ulong addr = (ulong)p;
+    *int back = (*int)addr;
+    if (back == p) { printf("roundtrip\n"); }
+
+    ptr raw = p;
+    if ((*int)raw == p) { printf("raw\n"); }
+    Report();
+    return 0;
+}

@@ -73,6 +73,16 @@ static inline bool TypeDescIsFixedArray(const TypeDesc* t)
     return (t->flags & TDF_FIXED_ARRAY) != 0;
 }
 
+static inline bool TypeDescIsPointer(const TypeDesc* t)
+{
+    return (t->flags & TDF_POINTER) != 0;
+}
+
+static inline void TypeDescSetPointer(TypeDesc* t, bool v)
+{
+    TypeDescSetFlag(t, TDF_POINTER, v);
+}
+
 static inline void TypeDescSetFloat(TypeDesc* t, bool v)
 {
     TypeDescSetFlag(t, TDF_FLOAT, v);

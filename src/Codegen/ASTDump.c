@@ -15,6 +15,10 @@ static const char* UnaryOpSpelling(UnaryOp op)
         return "!";
     case UnBitNot:
         return "~";
+    case UnAddrOf:
+        return "&";
+    case UnDeref:
+        return "*";
     }
 
     return "?";

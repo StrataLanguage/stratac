@@ -1076,6 +1076,12 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
                 return false;
             }
         }
+        else if ((TypeNameIsPointer(paramType) || TypeNameIsPointer(argType)) && !mutableRef
+                 && IsAssignableType(r, paramType, argType))
+        {
+            // `null` and `*T` into a `*T` param, a `*T` into a `ptr` param.
+            *score += 1;
+        }
         else if (HandleExtendsFrom(&r->registry, argType->name, paramType->name))
         {
             *score += 1;
