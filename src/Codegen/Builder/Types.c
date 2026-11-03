@@ -301,7 +301,7 @@ static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultV
         return LLVMConstReal(typeDesc.type, value->floatLanes[0]);
     }
 
-    return LLVMConstInt(typeDesc.type, (unsigned long long)value->intValue, 0);
+    return ConstIntTrunc(typeDesc.type, (unsigned long long)value->intValue);
 }
 
 /* `structName` with its field defaults applied, or NULL when that is all-zero. */

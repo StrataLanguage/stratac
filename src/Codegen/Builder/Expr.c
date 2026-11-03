@@ -351,7 +351,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
     {
         TypeName tn = TypeNameLeaf((char*)n->enumTypeName);
         TypeDesc td = Resolve(b, &tn);
-        LLVMValueRef v = LLVMConstInt(td.type, n->enumValue, td.isUnsigned);
+        LLVMValueRef v = ConstIntTrunc(td.type, n->enumValue);
         return ValueMake(v, td);
     }
 
@@ -368,7 +368,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
         if (ScalarPseudoConst(tn.primitiveType, n->member, &intVal, &floatVal, &isFloat))
         {
-            LLVMValueRef v = isFloat ? LLVMConstReal(td.type, floatVal) : LLVMConstInt(td.type, intVal, td.isUnsigned);
+            LLVMValueRef v = isFloat ? LLVMConstReal(td.type, floatVal) : ConstIntTrunc(td.type, intVal);
             return ValueMake(v, td);
         }
     }

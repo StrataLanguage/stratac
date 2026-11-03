@@ -149,6 +149,7 @@ LLVMBasicBlockRef NewBb(Builder* b, const char* name);
 LLVMValueRef EntryAlloca(Builder* b, LLVMTypeRef type, const char* name);
 void PositionAtEnd(Builder* b, LLVMBasicBlockRef bb);
 void Br(Builder* b, LLVMBasicBlockRef dest);
+LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, unsigned long long v);
 LLVMValueRef IdxConst(Builder* b, unsigned i);
 LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty);
 LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name);

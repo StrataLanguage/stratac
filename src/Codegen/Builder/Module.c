@@ -211,7 +211,7 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
     {
         ConstInitVal castVal = CastConstVal(b, foldedVal, typeDesc);
         LLVMValueRef constant
-            = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, castVal.f) : LLVMConstInt(typeDesc.type, castVal.i, 0);
+            = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, castVal.f) : ConstIntTrunc(typeDesc.type, castVal.i);
 
         ConstValueSlot* cs = (ConstValueSlot*)arena_alloc(b->m_arena, sizeof(ConstValueSlot));
         cs->civ = castVal;
@@ -434,7 +434,7 @@ static void InitScalarContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
     if (folded)
     {
         foldedVal = CastConstVal(b, foldedVal, td);
-        value = td.isFloat ? LLVMConstReal(td.type, foldedVal.f) : LLVMConstInt(td.type, foldedVal.i, 0);
+        value = td.isFloat ? LLVMConstReal(td.type, foldedVal.f) : ConstIntTrunc(td.type, foldedVal.i);
     }
 
     LLVMBuildStore(b->m_builder, value, fieldPtr);
