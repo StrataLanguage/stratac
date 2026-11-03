@@ -1,38 +1,32 @@
 ---
-# Strata C++ lint config (clang-tidy 22+).
+# Strata C11 lint config (clang-tidy 22+).
 #
 # Usage:
-#   clang-tidy -p build/default src/Lex/Lexer.cpp
-#   clang-tidy -p build/default --fix src/Lex/Lexer.cpp   (apply fixes)
+#   clang-tidy -p build/default src/Lex/Lexer.c
+#   clang-tidy -p build/default --fix src/Lex/Lexer.c   (apply fixes)
 #
 # `-p` points at compile_commands.json. Generate it by enabling
 # CMAKE_EXPORT_COMPILE_COMMANDS in the CMake configure step; ccache/Ninja
 # presets already use the Ninja generator which writes it to build/default.
 #
 # Naming conventions enforced by readability-identifier-naming:
-#   - Free functions and methods:  PascalCase  (e.g. SkipWhitespace)
-#   - Private/protected members:   m_ + camelCase (e.g. m_pos)
-#   - Parameters / locals:         camelCase
-#   - Types / enums / enum constants: PascalCase
-#   - Namespaces:                  lower_case
-# The public C ABI (strata.h: strataJit*, strataCompiler*, ...) intentionally
-# keeps a camelCase, C-friendly spelling and is exempted via
-# FunctionIgnoredRegexp below, as is `main`.
+#   - Functions, structs, typedefs, enums, unions:  CamelCase (e.g. SkipWhitespace)
+#   - Parameters / locals / members:                camelBack (e.g. bodyLength)
+#   - Global constants and macros:                  UPPER_CASE (e.g. MAX_DEPTH)
+#   - Enum constants:                               not checked; the tree uses
+#     two styles on purpose (TitleCase-with-prefix for plain enums, PREFIX_NAME
+#     for bitflags).
+# The public C API (include/strata/: strata*, STRATA_*) keeps its camelCase,
+# C-friendly spelling and is exempted via FunctionIgnoredRegexp below, as is `main`.
 
 Checks: >
   -*,
   bugprone-*,
   clang-analyzer-*,
-  modernize-*,
   performance-*,
   readability-*,
   -bugprone-easily-swappable-parameters,
   -bugprone-no-int-to-ptr,
-  -modernize-avoid-c-arrays,
-  -modernize-macro-to-enum,
-  -modernize-use-default-member-init,
-  -modernize-use-nodiscard,
-  -modernize-use-trailing-return-type,
   -performance-no-int-to-ptr,
   -readability-braces-around-statements,
   -readability-else-after-return,
@@ -49,44 +43,34 @@ HeaderFilterRegex: 'strata'
 FormatStyle: file
 
 CheckOptions:
-  # ---- Functions / methods: PascalCase ----
+  # ---- Functions: CamelCase ----
   - key:             readability-identifier-naming.FunctionCase
     value:           CamelCase
   - key:             readability-identifier-naming.FunctionIgnoredRegexp
-    value:           '^strata[A-Z]|^main$'
-  - key:             readability-identifier-naming.MethodCase
-    value:           CamelCase
+    value:           '^strata[A-Z]|^strata_|^main$'
 
-  # ---- Private / protected data members: m_ + camelCase ----
-  - key:             readability-identifier-naming.PrivateMemberPrefix
-    value:           'm_'
-  - key:             readability-identifier-naming.PrivateMemberCase
-    value:           camelBack
-  - key:             readability-identifier-naming.ProtectedMemberPrefix
-    value:           'm_'
-  - key:             readability-identifier-naming.ProtectedMemberCase
-    value:           camelBack
-
-  # ---- Parameters / locals / constants: camelCase ----
+  # ---- Parameters / locals / members: camelBack ----
   - key:             readability-identifier-naming.ParameterCase
     value:           camelBack
   - key:             readability-identifier-naming.ConstantParameterCase
     value:           camelBack
   - key:             readability-identifier-naming.LocalVariableCase
     value:           camelBack
+  - key:             readability-identifier-naming.MemberCase
+    value:           camelBack
 
-  # ---- Types: PascalCase ----
-  - key:             readability-identifier-naming.ClassCase
-    value:           CamelCase
+  # ---- Types: CamelCase ----
   - key:             readability-identifier-naming.StructCase
+    value:           CamelCase
+  - key:             readability-identifier-naming.TypedefCase
     value:           CamelCase
   - key:             readability-identifier-naming.EnumCase
     value:           CamelCase
-  - key:             readability-identifier-naming.EnumConstantCase
-    value:           CamelCase
-  - key:             readability-identifier-naming.TypeAliasCase
+  - key:             readability-identifier-naming.UnionCase
     value:           CamelCase
 
-  # ---- Namespaces: lower_case ----
-  - key:             readability-identifier-naming.NamespaceCase
-    value:           lower_case
+  # ---- Global constants and macros: UPPER_CASE ----
+  - key:             readability-identifier-naming.GlobalConstantCase
+    value:           UPPER_CASE
+  - key:             readability-identifier-naming.MacroDefinitionCase
+    value:           UPPER_CASE
