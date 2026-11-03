@@ -21,7 +21,7 @@ static bool TryEmitImplPropertyAssign(Builder* b, AssignExpr* n, Value* out)
    value to store. */
 static Value ApplyCompoundOp(Builder* b, AssignOp op, LLVMValueRef cur, Value rhs, TypeDesc td)
 {
-    bool flt = td.isFloat;
+    bool flt = TypeDescIsFloat(&td);
 
     switch (op)
     {
@@ -42,14 +42,14 @@ static Value ApplyCompoundOp(Builder* b, AssignOp op, LLVMValueRef cur, Value rh
 
     case AssignDiv:
         return ValueMake(flt ? LLVMBuildFDiv(b->m_builder, cur, rhs.value, "div")
-                             : (td.isUnsigned ? LLVMBuildUDiv(b->m_builder, cur, rhs.value, "div")
-                                              : LLVMBuildSDiv(b->m_builder, cur, rhs.value, "div")),
+                             : (TypeDescIsUnsigned(&td) ? LLVMBuildUDiv(b->m_builder, cur, rhs.value, "div")
+                                                        : LLVMBuildSDiv(b->m_builder, cur, rhs.value, "div")),
                          td);
 
     case AssignMod:
         return ValueMake(flt ? LLVMBuildFRem(b->m_builder, cur, rhs.value, "mod")
-                             : (td.isUnsigned ? LLVMBuildURem(b->m_builder, cur, rhs.value, "mod")
-                                              : LLVMBuildSRem(b->m_builder, cur, rhs.value, "mod")),
+                             : (TypeDescIsUnsigned(&td) ? LLVMBuildURem(b->m_builder, cur, rhs.value, "mod")
+                                                        : LLVMBuildSRem(b->m_builder, cur, rhs.value, "mod")),
                          td);
 
     default:
@@ -103,11 +103,11 @@ static Value EmitVectorLaneAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
    likewise (borrowed .rodata bytes — the slot owns a copy). */
 static Value EmitArrayRebindAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
-    if (rhs.typeDesc.isCString)
+    if (TypeDescIsCString(&rhs.typeDesc))
     {
         rhs = ValueMake(BuildOwnedStringFromCStr(b, rhs.value), lvalue.typeDesc);
     }
-    else if (lvalue.typeDesc.isString && n->value->kind == NodeStrLiteral)
+    else if (TypeDescIsString(&lvalue.typeDesc) && n->value->kind == NodeStrLiteral)
     {
         LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rhs.value, 0, "aslit.p");
         LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rhs.value, 1, "aslit.l");
@@ -290,7 +290,7 @@ static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValu
     EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
 
     TypeName elemTn
-        = lvalue.typeDesc.isString ? *StringTypeName(b) : TypeNameLeaf((char*)lvalue.typeDesc.structTypeName);
+        = TypeDescIsString(&lvalue.typeDesc) ? *StringTypeName(b) : TypeNameLeaf((char*)lvalue.typeDesc.structTypeName);
     LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, &elemTn);
     LLVMBuildStore(b->m_builder, owned, lvalue.ptr);
 
@@ -350,7 +350,7 @@ static Value EmitLValueAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalu
     }
 
     bool elemOwningSlot = n->op == AssignSet
-                          && (lvalue.typeDesc.isString
+                          && (TypeDescIsString(&lvalue.typeDesc)
                               || (lvalue.typeDesc.structTypeName
                                   && TypeRegistryIsOwningStruct(&b->m_registry, lvalue.typeDesc.structTypeName)));
 
@@ -371,7 +371,7 @@ static bool DiagnoseVectorMemberAssign(Builder* b, AssignExpr* n)
     LValue baseLv = EmitLValue(b, mt->base_node);
 
     if (!(baseLv.valid
-          && (baseLv.typeDesc.isSimdVector
+          && (TypeDescIsSimdVector(&baseLv.typeDesc)
               || (TypeDescIsBox(&baseLv.typeDesc) && baseLv.typeDesc.boxInner
                   && IsNameSimdVector(baseLv.typeDesc.boxInner->name)))))
     {
@@ -383,7 +383,7 @@ static bool DiagnoseVectorMemberAssign(Builder* b, AssignExpr* n)
         if (mt->member[0] && mt->member[1] == '\0')
         {
             DiagErrorFmt(b->m_diag, n->base.range, "lane '%s' is out of range for a vector with %d lane(s)", mt->member,
-                         baseLv.typeDesc.isSimdVector
+                         TypeDescIsSimdVector(&baseLv.typeDesc)
                              ? (int)LLVMGetVectorSize(baseLv.typeDesc.type)
                              : (int)LLVMGetVectorSize(Resolve(b, baseLv.typeDesc.boxInner).type));
         }

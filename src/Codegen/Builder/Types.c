@@ -8,10 +8,10 @@ TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlags flags, const char* structT
 {
     TypeDesc td = {0};
     td.type = type;
-    td.isFloat = (flags & TDF_FLOAT);
-    td.isUnsigned = (flags & TDF_UNSIGNED);
-    td.isVoid = (flags & TDF_VOID);
-    td.isSimdVector = (flags & TDF_SIMD_VECTOR);
+    TypeDescSetFloat(&td, (flags & TDF_FLOAT));
+    TypeDescSetUnsigned(&td, (flags & TDF_UNSIGNED));
+    TypeDescSetVoid(&td, (flags & TDF_VOID));
+    TypeDescSetSimdVector(&td, (flags & TDF_SIMD_VECTOR));
     td.structTypeName = structTypeName;
 
     return td;
@@ -117,7 +117,7 @@ bool BuilderIsOwningValue(Builder* b, const TypeName* t)
    struct held by value. Fixed arrays / scalars are non-owning. */
 bool TypeDescIsOwning(Builder* b, const TypeDesc* td)
 {
-    if (td->isString || TypeDescIsBox(td) || TypeDescHasArrayShape(td))
+    if (TypeDescIsString(td) || TypeDescIsBox(td) || TypeDescHasArrayShape(td))
     {
         return true;
     }
@@ -188,7 +188,7 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
 
         TypeDesc td = {0};
         td.type = LLVMArrayType(elemTd.type, (unsigned)t->length);
-        td.isFixedArray = true;
+        TypeDescSetFixedArray(&td, true);
         td.fixedLength = t->length;
         td.arrayInner = t->elem;
 
@@ -233,7 +233,7 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
     {
         TypeDesc td = {0};
         td.type = b->m_ptrTy;
-        td.isCString = true;
+        TypeDescSetCString(&td, true);
         return td;
     }
 
@@ -282,7 +282,7 @@ static char s_noStructDefault;
 /* A field default folded by sema, as a constant of the field's own type. */
 static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultValue* value)
 {
-    if (typeDesc.isSimdVector)
+    if (TypeDescIsSimdVector(&typeDesc))
     {
         LLVMTypeRef laneTy = LLVMGetElementType(typeDesc.type);
         unsigned laneCount = LLVMGetVectorSize(typeDesc.type);
@@ -296,7 +296,7 @@ static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultV
         return LLVMConstVector(lanes, (int)(laneCount < 4 ? laneCount : 4));
     }
 
-    if (typeDesc.isFloat)
+    if (TypeDescIsFloat(&typeDesc))
     {
         return LLVMConstReal(typeDesc.type, value->floatLanes[0]);
     }
@@ -434,8 +434,8 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
     if (targetIsHandle && LLVMGetTypeKind(value.typeDesc.type) == LLVMIntegerTypeKind)
     {
         bool srcIsBool = value.typeDesc.type == I1Ty(b);
-        LLVMValueRef wide
-            = LLVMBuildIntCast2(b->m_builder, value.value, I64Ty(b), !value.typeDesc.isUnsigned && !srcIsBool, "i64");
+        LLVMValueRef wide = LLVMBuildIntCast2(b->m_builder, value.value, I64Ty(b),
+                                              !TypeDescIsUnsigned(&value.typeDesc) && !srcIsBool, "i64");
         return ValueMake(LLVMBuildIntToPtr(b->m_builder, wide, b->m_ptrTy, "i2p"), target);
     }
 
@@ -448,12 +448,12 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
        cstring -> string heap-copies the NUL-terminated bytes into a fresh
        owned fat; string -> cstring borrows the fat's data pointer (the NUL
        invariant holds; an empty {null, 0} becomes the static empty buffer). */
-    if (value.typeDesc.isCString && target.isString)
+    if (TypeDescIsCString(&value.typeDesc) && TypeDescIsString(&target))
     {
         return ValueMake(BuildOwnedStringFromCStr(b, value.value), target);
     }
 
-    if (value.typeDesc.isString && target.isCString)
+    if (TypeDescIsString(&value.typeDesc) && TypeDescIsCString(&target))
     {
         return ValueMake(BuildExternStringPtr(b, value), target);
     }
@@ -462,7 +462,7 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
     if (target.type == I1Ty(b))
     {
         LLVMValueRef zero = LLVMConstNull(value.typeDesc.type);
-        LLVMValueRef cmp = value.typeDesc.isFloat
+        LLVMValueRef cmp = TypeDescIsFloat(&value.typeDesc)
                                ? LLVMBuildFCmp(b->m_builder, LLVMRealUNE, value.value, zero, "tobool")
                                : LLVMBuildICmp(b->m_builder, LLVMIntNE, value.value, zero, "tobool");
         return ValueMake(cmp, target);
@@ -470,25 +470,26 @@ Value Coerce(Builder* b, Value value, TypeDesc target)
 
     LLVMValueRef r = NULL;
 
-    if (!value.typeDesc.isFloat && target.isFloat)
+    if (!TypeDescIsFloat(&value.typeDesc) && TypeDescIsFloat(&target))
     {
-        r = value.typeDesc.isUnsigned ? LLVMBuildUIToFP(b->m_builder, value.value, target.type, "c")
-                                      : LLVMBuildSIToFP(b->m_builder, value.value, target.type, "c");
+        r = TypeDescIsUnsigned(&value.typeDesc) ? LLVMBuildUIToFP(b->m_builder, value.value, target.type, "c")
+                                                : LLVMBuildSIToFP(b->m_builder, value.value, target.type, "c");
     }
-    else if (value.typeDesc.isFloat && !target.isFloat)
+    else if (TypeDescIsFloat(&value.typeDesc) && !TypeDescIsFloat(&target))
     {
-        r = BuildFloatToIntSaturating(b, value.value, target.type, target.isUnsigned);
+        r = BuildFloatToIntSaturating(b, value.value, target.type, TypeDescIsUnsigned(&target));
     }
-    else if (!value.typeDesc.isFloat && !target.isFloat && !target.isVoid)
+    else if (!TypeDescIsFloat(&value.typeDesc) && !TypeDescIsFloat(&target) && !TypeDescIsVoid(&target))
     {
         /* Widen per the SOURCE's signedness: an unsigned i8/i16/i32 (byte,
            ushort, uint) must zero-extend, a signed one sign-extend. The
            target's signedness only matters for truncation, where the flag
            is irrelevant. */
         bool srcIsBool = value.typeDesc.type == I1Ty(b);
-        r = LLVMBuildIntCast2(b->m_builder, value.value, target.type, !value.typeDesc.isUnsigned && !srcIsBool, "c");
+        r = LLVMBuildIntCast2(b->m_builder, value.value, target.type,
+                              !TypeDescIsUnsigned(&value.typeDesc) && !srcIsBool, "c");
     }
-    else if (value.typeDesc.isFloat && target.isFloat)
+    else if (TypeDescIsFloat(&value.typeDesc) && TypeDescIsFloat(&target))
     {
         /* float <-> double: widen (fpext) or narrow (fptrunc). SIMD vectors
            are float-typed but never convert element-wise here - they fall

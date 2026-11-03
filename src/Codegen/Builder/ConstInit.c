@@ -4,9 +4,10 @@
 /* The runtime integer type of a scalar TypeDesc. Non-integers (and i1 bools) carry no narrowing. */
 static ConstIntType ConstIntTypeOfTd(TypeDesc td)
 {
-    if (td.type && !td.isFloat && LLVMGetTypeKind(td.type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(td.type) > 1)
+    if (td.type && !TypeDescIsFloat(&td) && LLVMGetTypeKind(td.type) == LLVMIntegerTypeKind
+        && LLVMGetIntTypeWidth(td.type) > 1)
     {
-        return (ConstIntType){LLVMGetIntTypeWidth(td.type), td.isUnsigned};
+        return (ConstIntType){LLVMGetIntTypeWidth(td.type), TypeDescIsUnsigned(&td)};
     }
 
     return (ConstIntType){0, false};
@@ -26,7 +27,7 @@ ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
         return r;
     }
 
-    if (td.isFloat)
+    if (TypeDescIsFloat(&td))
     {
         if (v.kind == CIK_FLOAT)
         {
@@ -248,8 +249,8 @@ bool FoldCastInit(Builder* b, Node* n, ConstInitVal* out)
     CastExpr* c = AsNode(CastExpr, n);
     TypeDesc innerTd = Resolve(b, &c->type);
 
-    if (innerTd.isVoid || innerTd.structTypeName || TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd)
-        || innerTd.isSimdVector)
+    if (TypeDescIsVoid(&innerTd) || innerTd.structTypeName || TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd)
+        || TypeDescIsSimdVector(&innerTd))
     {
         return false;
     }

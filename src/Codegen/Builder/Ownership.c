@@ -551,7 +551,7 @@ LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeN
         return evaluated.value;
     }
 
-    if (evaluated.typeDesc.isCString)
+    if (TypeDescIsCString(&evaluated.typeDesc))
     {
         /* A `cstring` value is borrowed bytes (a bare `const char*`): the
            owning destination gets its own heap copy (NUL at [len]). */
@@ -574,7 +574,7 @@ LLVMValueRef EmitOwnedValue(Builder* b, Value evaluated, Node* init, const TypeN
 
 Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
 {
-    if (td.isString)
+    if (TypeDescIsString(&td))
     {
         /* Deep copy: fresh buffer with the NUL terminator at [len]. */
         LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, src.value, 0, "cp.p");

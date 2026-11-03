@@ -118,7 +118,7 @@ LLVMValueRef ExtendToRetWidth(Builder* b, LLVMValueRef value, TypeDesc semantic,
         return value;
     }
 
-    if (semantic.isUnsigned || semantic.type == I1Ty(b))
+    if (TypeDescIsUnsigned(&semantic) || semantic.type == I1Ty(b))
     {
         return LLVMBuildZExt(b->m_builder, value, retLlvm, "ret.zext");
     }

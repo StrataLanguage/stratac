@@ -203,7 +203,7 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
 static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
 {
     /* A string vararg crosses as char* (printf("%s", s) et al). */
-    if (v.typeDesc.isString)
+    if (TypeDescIsString(&v.typeDesc))
     {
         return BuildExternStringPtr(b, v);
     }
@@ -217,8 +217,8 @@ static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
 
     if (ty == LLVMInt8TypeInContext(b->m_ctx) || ty == LLVMInt16TypeInContext(b->m_ctx))
     {
-        return v.typeDesc.isUnsigned ? LLVMBuildZExt(b->m_builder, v.value, I32Ty(b), "vap")
-                                     : LLVMBuildSExt(b->m_builder, v.value, I32Ty(b), "vap");
+        return TypeDescIsUnsigned(&v.typeDesc) ? LLVMBuildZExt(b->m_builder, v.value, I32Ty(b), "vap")
+                                               : LLVMBuildSExt(b->m_builder, v.value, I32Ty(b), "vap");
     }
 
     if (ty == LLVMFloatTypeInContext(b->m_ctx))
@@ -386,7 +386,7 @@ static LLVMValueRef EmitStructInitField(Builder* b, const StructType* st, LLVMVa
 
     /* A string field takes a heap copy of a literal so the field can
        be freed without freeing a (borrowed) string constant. */
-    if (fieldTd.isString && argNode->kind == NodeStrLiteral)
+    if (TypeDescIsString(&fieldTd) && argNode->kind == NodeStrLiteral)
     {
         LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawArg.value, 0, "fslit.p");
         LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawArg.value, 1, "fslit.l");
@@ -579,7 +579,7 @@ static LLVMValueRef TryLowerFixedArrayViewArg(Builder* b, const FunctionDecl* fd
 
     LValue lv = EmitLValue(b, argNode);
 
-    if (!(lv.valid && lv.typeDesc.isFixedArray))
+    if (!(lv.valid && TypeDescIsFixedArray(&lv.typeDesc)))
     {
         return NULL;
     }
@@ -612,7 +612,7 @@ static LLVMValueRef LowerInternalStringArg(Builder* b, const FunctionDecl* fd, s
 
     /* A string lvalue: pass the caller's own storage (move
        semantics — the callee nulls the slot at exit). */
-    if (lv.valid && !lv.vectorLane && !lv.typeDesc.isCString)
+    if (lv.valid && !lv.vectorLane && !TypeDescIsCString(&lv.typeDesc))
     {
         return lv.ptr;
     }
@@ -620,7 +620,7 @@ static LLVMValueRef LowerInternalStringArg(Builder* b, const FunctionDecl* fd, s
     Value av = lv.valid ? ValueMake(LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "csarg"), lv.typeDesc)
                         : EmitExpr(b, argNode);
 
-    if (av.typeDesc.isCString)
+    if (TypeDescIsCString(&av.typeDesc))
     {
         LLVMValueRef owned = BuildOwnedStringFromCStr(b, av.value);
 
@@ -779,7 +779,7 @@ static LLVMValueRef LowerExternBoxParamArg(Builder* b, const FunctionDecl* fd, s
 
     Value av = EmitExpr(b, argNode);
 
-    if (TypeNameIsBox(extTy) && (TypeDescHasArrayShape(&av.typeDesc) || av.typeDesc.isFixedArray))
+    if (TypeNameIsBox(extTy) && (TypeDescHasArrayShape(&av.typeDesc) || TypeDescIsFixedArray(&av.typeDesc)))
     {
         LLVMValueRef decayed = TryLowerExternArrayToBoxArg(b, extTy, av, argNode);
 
@@ -791,7 +791,7 @@ static LLVMValueRef LowerExternBoxParamArg(Builder* b, const FunctionDecl* fd, s
 
     bool paramIsRealBox = TypeNameIsBox(extTy) || TypeNameIsOptional(extTy);
 
-    if (av.typeDesc.isString)
+    if (TypeDescIsString(&av.typeDesc))
     {
         return LowerExternStringArg(b, av, paramIsRealBox);
     }
@@ -1141,7 +1141,7 @@ static void EmitNullExternGuard(Builder* b, CallExpr* n, LLVMValueRef callee)
            extern's. Returning the extern's type (e.g. a ptr for a `handle`
            return inside an i32 fn) produces malformed IR that crashes LLVM
            optimizers. */
-        if (b->m_curRet.isVoid)
+        if (TypeDescIsVoid(&b->m_curRet))
         {
             LLVMBuildRetVoid(b->m_builder);
         }

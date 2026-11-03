@@ -41,7 +41,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     /* Remember the semantic return type before widening so extern call
        sites can narrow the (partially-defined) register back down. */
     info->retSemanticTy = info->returnType.type;
-    info->retSemanticUnsigned = info->returnType.isUnsigned;
+    info->retSemanticUnsigned = TypeDescIsUnsigned(&info->returnType);
     info->returnType.type = WidenRetType(b, info->returnType.type);
 
     /* An extern `string` (or alias-of-string) return crosses the host
@@ -225,7 +225,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
 
                 if (elem && !BuilderIsOwningType(b, elem))
                 {
-                    sym->typeDesc.aliasedArray = true;
+                    TypeDescSetAliasedArray(&sym->typeDesc, true);
                 }
             }
 
@@ -290,7 +290,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
     {
         EmitDrops(b, 0);
 
-        if (b->m_curRet.isVoid)
+        if (TypeDescIsVoid(&b->m_curRet))
         {
             LLVMBuildRetVoid(b->m_builder);
         }

@@ -3,6 +3,7 @@
 #include <AST/AST.h>
 
 #include "LLVMModuleBuilder.h"
+#include "TypeDescFlags.h"
 #include <assert.h>
 #include <string.h>
 
@@ -198,9 +199,9 @@ LLVMValueRef LSimdVector2Construct(struct Builder* b, CallExpr* n)
     return NULL;
 }
 
-#define IS_VECTOR(x_) ((x_).typeDesc.isSimdVector == true)
+#define IS_VECTOR(x_) (TypeDescIsSimdVector(&(x_).typeDesc))
 
-#define IS_SCALAR(x_) ((x_).typeDesc.isSimdVector == false)
+#define IS_SCALAR(x_) (!TypeDescIsSimdVector(&(x_).typeDesc))
 #define IS_ALL_SCALAR3(x_, y_, z_) (IS_SCALAR(x_) && IS_SCALAR(y_) && IS_SCALAR(z_))
 #define IS_ALL_SCALAR4(x_, y_, z_, w_) (IS_SCALAR(x_) && IS_SCALAR(y_) && IS_SCALAR(z_) && IS_SCALAR(w_))
 

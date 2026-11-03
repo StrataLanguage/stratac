@@ -42,7 +42,7 @@ TypeDesc StringFatDesc(Builder* b)
     TypeDesc td = {0};
     td.type = ArrayStructType(b);
     TypeDescSetArrayShape(&td, true);
-    td.isString = true;
+    TypeDescSetString(&td, true);
     return td;
 }
 
@@ -530,7 +530,7 @@ Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
        a temporary (the slice is a separate copy). */
     BorrowTemp(b, v, TypeDescMake(I32Ty(b), 0, NULL));
 
-    if (!v.typeDesc.isString)
+    if (!TypeDescIsString(&v.typeDesc))
     {
         if (b->m_diag)
         {

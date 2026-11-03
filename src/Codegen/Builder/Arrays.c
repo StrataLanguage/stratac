@@ -292,10 +292,10 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
                                   && strcmp(elemTd.boxInner->name, v.typeDesc.boxInner->name) == 0))
                           && valNode->kind != NodeStrLiteral;
 
-    bool stringMove = elemTd.isString && v.typeDesc.isString && valNode->kind != NodeStrLiteral;
+    bool stringMove = TypeDescIsString(&elemTd) && TypeDescIsString(&v.typeDesc) && valNode->kind != NodeStrLiteral;
     /* An array pushed into an array of arrays moves: the source is emptied, or both would free it. */
-    bool arrayMove = TypeDescHasArrayShape(&elemTd) && !elemTd.isString && TypeDescHasArrayShape(&v.typeDesc)
-                     && !v.typeDesc.isString;
+    bool arrayMove = TypeDescHasArrayShape(&elemTd) && !TypeDescIsString(&elemTd) && TypeDescHasArrayShape(&v.typeDesc)
+                     && !TypeDescIsString(&v.typeDesc);
 
     if (sameOwningType || stringMove || arrayMove)
     {
@@ -313,7 +313,7 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
         LLVMBuildStore(b->m_builder, inner, heap);
         LLVMBuildStore(b->m_builder, heap, elAddr);
     }
-    else if (elemTd.isString)
+    else if (TypeDescIsString(&elemTd))
     {
         /* string element: heap-copy literal, move source. */
         LLVMValueRef owned = EmitOwnedValue(b, v, valNode, StringTypeName(b));
@@ -811,7 +811,7 @@ void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elem
    is borrowed. */
 void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd, bool borrow)
 {
-    if (elemTd.isString)
+    if (TypeDescIsString(&elemTd))
     {
         /* string element: literals are heap-copied (the constant is
            borrowed; the array owns its elements); variables move. */
@@ -957,7 +957,7 @@ Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* ele
     td.type = ArrayStructType(b);
     TypeDescSetArrayShape(&td, true);
     td.arrayInner = elementType;
-    td.aliasedArray = aliased;
+    TypeDescSetAliasedArray(&td, aliased);
 
     return ValueMake(arr, td);
 }
@@ -1000,7 +1000,7 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
 
             /* `{ boxed; n }` for a bare element type copies what the box points at, not the box pointer. */
             if (TypeDescIsBox(&source.typeDesc) && !TypeDescIsBox(&elemTd) && !TypeDescHasArrayShape(&elemTd)
-                && !elemTd.isString)
+                && !TypeDescIsString(&elemTd))
             {
                 source = DerefBoxValue(b, source);
             }
@@ -1234,7 +1234,7 @@ void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
             LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, varDecl->init)).value;
             LLVMBuildStore(b->m_builder, arr, slot);
         }
-        else if (typeDesc.isString && varDecl->init->kind == NodeStrLiteral)
+        else if (TypeDescIsString(&typeDesc) && varDecl->init->kind == NodeStrLiteral)
         {
             /* string from a literal: heap-copy (the constant is
                borrowed; the binding owns its bytes). */
