@@ -1,0 +1,31 @@
+// expect: run
+// expect-output: 7
+// rule: a meta call folds per instance, so the dropped branch of a type without `drop` is never type-checked
+@meta
+bool droppable(type T)
+{
+    // Whether T's impl defines a method `drop`.
+    return @has_function(T, drop);
+}
+
+struct A { int v; }
+impl A { void drop(ref A self) { self.v = 0; } }
+struct B { int v; }
+
+void clear<T>(ref T x)
+{
+    if (@droppable(T))
+    {
+        x.drop();
+    }
+}
+
+int main()
+{
+    A a = A { .v = 5 };
+    B b = B { .v = 7 };
+    clear<A>(a);
+    clear<B>(b);
+    printf("%d\n", a.v + b.v);
+    return 0;
+}

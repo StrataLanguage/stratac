@@ -49,6 +49,7 @@ typedef enum
     NodeNullTest,
     NodeDefer,
     NodeConditional,
+    NodeMetaCall,
 } NodeKind;
 
 typedef struct
@@ -536,6 +537,9 @@ typedef struct FunctionDecl
     // `@noreturn`: never returns to its caller (exits, aborts, panics). A call to it as a statement
     // ends the path for flow typing, like `return`; its body must not reach its end or `return`.
     bool isNoReturn;
+    // `@meta`: a compile-time function, evaluated by Monomorphize at each `@name(...)` call. It lives in
+    // Module::metaFunctions, is never emitted, and is interpreted rather than rewritten as code.
+    bool isMeta;
     // `extern delegate R Name(params);`: not a function but a C function-pointer type `Name` with this
     // signature. Kept in Module::delegates; `mangledName` is the internal `__delegate_Name`.
     bool isDelegate;
@@ -610,6 +614,7 @@ typedef struct
     Vec genericInstances; // FunctionDecl*: per-type `extern<T>` instantiations, created by sema
     Vec delegates;        // FunctionDecl* (isDelegate): `extern delegate` function-pointer types
     Vec genericTemplates; // Node*: generic templates moved out of the lists by Monomorphize; empty until then
+    Vec metaFunctions;    // FunctionDecl*: `@meta` functions, kept apart from `functions`
 } Module;
 
 typedef struct
@@ -935,6 +940,22 @@ typedef struct
     Node* elseExpr;
     const TypeName* resultType;
 } ConditionalExpr;
+
+// One argument of a meta call: a type (for a `type` parameter, or a built-in's type operand) or an expression.
+// Exactly one of `type` and `expr` is set.
+typedef struct
+{
+    TypeName* type;
+    Node* expr;
+} MetaArg;
+
+// `@name(args)`: a call to a meta function. Monomorphize folds it into a literal before sema.
+typedef struct
+{
+    Node base;
+    char* name;
+    Vec args; // MetaArg*
+} MetaCallExpr;
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);

@@ -28,6 +28,7 @@ void AstReleaseModuleLists(Module* module)
     DisposeVec(&module->genericInstances);
     DisposeVec(&module->delegates);
     DisposeVec(&module->genericTemplates);
+    DisposeVec(&module->metaFunctions);
 }
 
 char* TypeNameGenericSpelling(Arena* arena, const char* base, const TypeName* args, size_t argCount)
@@ -113,6 +114,7 @@ static void DisposeModule(Node* node)
     DISPOSE_ALL(genericInstances);
     DISPOSE_ALL(delegates);
     DISPOSE_ALL(genericTemplates);
+    DISPOSE_ALL(metaFunctions);
 
 #undef DISPOSE_ALL
 
@@ -268,6 +270,18 @@ static void DisposeConditional(Node* node)
     AstDispose(((ConditionalExpr*)node)->elseExpr);
 }
 
+static void DisposeMetaCall(Node* node)
+{
+    MetaCallExpr* call = (MetaCallExpr*)node;
+
+    for (size_t i = 0; i < call->args.count; ++i)
+    {
+        AstDispose(((MetaArg*)VecGet(&call->args, i))->expr);
+    }
+
+    DisposeVec(&call->args);
+}
+
 void AstDispose(Node* node)
 {
     if (!node)
@@ -368,6 +382,9 @@ void AstDispose(Node* node)
         return;
     case NodeConditional:
         DisposeConditional(node);
+        return;
+    case NodeMetaCall:
+        DisposeMetaCall(node);
         return;
     }
 }

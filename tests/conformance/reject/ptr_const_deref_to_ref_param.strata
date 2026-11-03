@@ -1,0 +1,11 @@
+// expect: reject "cannot be passed to non-const 'ref' parameter 'f'"
+// rule: `*p` of a `const` pointer binding can't be passed to a `ref` parameter
+struct Foo { int v; }
+void Bump(ref Foo f) { f.v = 9; }
+int main()
+{
+    Foo f = Foo { .v = 1 };
+    const *Foo p = &f;
+    Bump(*p);
+    return f.v;
+}

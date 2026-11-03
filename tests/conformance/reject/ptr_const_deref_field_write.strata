@@ -1,0 +1,10 @@
+// expect: reject "'p' is immutable"
+// rule: `(*p).field = x` through a `const` pointer binding is a write to the pointee
+struct Foo { int v; }
+int main()
+{
+    Foo f = Foo { .v = 1 };
+    const *Foo p = &f;
+    (*p).v = 6;
+    return f.v;
+}

@@ -1,0 +1,4 @@
+// expect: reject "'type' is reserved and cannot name a struct"
+// rule: `type` is the parameter keyword of meta functions, so no struct, enum or handle may be named `type`
+struct type { int v; }
+int main() { return 0; }

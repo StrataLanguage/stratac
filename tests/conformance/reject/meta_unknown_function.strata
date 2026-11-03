@@ -1,0 +1,7 @@
+// expect: reject "unknown meta function '@nope'"
+// rule: a meta call names a meta function; a plain function of the same name is never found by `@`
+int nope(int n) { return n; }
+int main()
+{
+    return @nope(1);
+}

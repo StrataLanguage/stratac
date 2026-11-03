@@ -85,6 +85,37 @@ v1 limits:
 - Extern functions, `@component` structs, `extern struct`, struct aliases and handles cannot be generic.
 - Properties and extern methods are not allowed in a generic `impl`.
 
+## Meta functions
+
+A `@meta` function runs at compile time. Its calls are written with an `@` prefix and fold to a `bool`
+or integer constant before type checking. In a generic function each instance is checked separately, so
+a branch that does not apply to one type is dropped before it is checked:
+
+```c
+@meta
+bool droppable(type T)
+{
+    // Whether T's impl defines a method `drop`.
+    return @has_function(T, drop);
+}
+
+void free_object<T>(*T ptr_value)
+{
+    if (@droppable(T))
+    {
+        ptr_value.drop();
+    }
+}
+```
+
+The built-ins are `@has_function(T, name)`, true when T's impl has a method `name`, and `@is_same(A, B)`,
+true when the two types have the same name (`const` ignored). A `type` parameter is written only in a
+`@meta` function. Meta functions have their own namespace, so `@hello` and `hello` can both exist.
+
+Limits: parameters are `type`, `bool` or an integer type, and the result is `bool` or an integer. The
+body may use locals, `if`, `return`, `?:`, bool and integer operators, and other meta calls. Loops,
+ordinary function calls and member access are errors. Built-in names cannot be redefined.
+
 ## Building
 
 Requires CMake 3.20+, Ninja, a C11 compiler, and LLVM (set `LLVM_C_DIR` in `CMakePresets.json`).

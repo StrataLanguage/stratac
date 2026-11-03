@@ -1,0 +1,10 @@
+// expect: panic "null pointer dereference"
+// rule: a method called through a null `*S` panics the same way a field read through it does
+struct Foo { int v; }
+impl Foo { int get(const ref Foo self) { return self.v; } }
+int main()
+{
+    *Foo p = null;
+    printf("%d\n", p.get());
+    return 0;
+}

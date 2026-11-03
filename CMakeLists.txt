@@ -270,6 +270,7 @@ if(NOT STRATA_SHARED)
         tests/unit/LexerTests.c
         tests/unit/ParserTests.c
         tests/unit/GenericTests.c
+        tests/unit/MetaTests.c
         tests/unit/CapabilityTests.c
         tests/unit/EmbedTests.c
         tests/unit/OverloadTests.c

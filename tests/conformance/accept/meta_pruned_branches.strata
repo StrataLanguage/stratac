@@ -1,0 +1,26 @@
+// expect: run
+// expect-output: bump 6
+// expect-output: no bump
+// expect-output: 6 100
+// rule: a `?:` or `if` whose condition is a meta constant keeps only the branch taken, so a missing method in the other is never checked
+struct A { int v; }
+impl A { int bump(const ref A self) { return self.v + 1; } }
+struct B { int v; }
+@meta bool has_bump(type T) { return @has_function(T, bump); }
+int get<T>(const ref T x)
+{
+    return @has_bump(T) ? x.bump() : 100;
+}
+void show<T>(const ref T x)
+{
+    if (@has_bump(T)) { printf("bump %d\n", x.bump()); } else { printf("no bump\n"); }
+}
+int main()
+{
+    A a = A { .v = 5 };
+    B b = B { .v = 7 };
+    show<A>(a);
+    show<B>(b);
+    printf("%d %d\n", get<A>(a), get<B>(b));
+    return 0;
+}

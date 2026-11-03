@@ -1,0 +1,4 @@
+// expect: reject "meta function '@pick' takes 2 argument(s), but 1 were given"
+// rule: a meta call must pass exactly as many arguments as the meta function has parameters
+@meta int pick(int a, int b) { return a; }
+int main() { return @pick(1); }

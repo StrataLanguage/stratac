@@ -1,0 +1,4 @@
+// expect: reject "meta function '@sign' reaches its end without returning"
+// rule: a meta function must return on every path that is evaluated, so a call that falls off the end is an error
+@meta int sign(int n) { if (n > 0) { return 1; } }
+int main() { return @sign(0); }

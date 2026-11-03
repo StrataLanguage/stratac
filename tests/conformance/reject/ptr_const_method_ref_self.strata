@@ -1,0 +1,11 @@
+// expect: reject "cannot be passed to non-const 'ref' parameter 'self'"
+// rule: a method taking `ref self` can't be called through a `const` pointer binding
+struct Foo { int v; }
+impl Foo { void bump(ref Foo self) { self.v = self.v + 1; } }
+int main()
+{
+    Foo f = Foo { .v = 1 };
+    const *Foo p = &f;
+    p.bump();
+    return f.v;
+}

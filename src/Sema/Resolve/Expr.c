@@ -36,7 +36,10 @@ const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope)
 {
     Node* base = target;
 
-    while (base && (base->kind == NodeMember || base->kind == NodeIndex || base->kind == NodeCast))
+    // `*p` is rooted at `p`, as `p.field` already is: a const pointer binding doesn't write its pointee.
+    while (base
+           && (base->kind == NodeMember || base->kind == NodeIndex || base->kind == NodeCast
+               || (base->kind == NodeUnary && ((UnaryExpr*)base)->op == UnDeref)))
     {
         if (base->kind == NodeMember)
         {
@@ -45,6 +48,10 @@ const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope)
         else if (base->kind == NodeIndex)
         {
             base = ((IndexExpr*)base)->baseNode;
+        }
+        else if (base->kind == NodeUnary)
+        {
+            base = ((UnaryExpr*)base)->operand;
         }
         else
         {
@@ -596,7 +603,7 @@ static void ResolveIdentExpr(Resolver* r, Node* n, StrMap* scope)
 
 // `&place` and `*ptr`: the operand must be a place / a pointer, and the value behind the address must not own
 // anything (a pointer neither drops nor moves what it points at).
-static void ResolveAddressUnary(Resolver* r, UnaryExpr* u, StrMap* scope)
+void ResolveAddressUnary(Resolver* r, UnaryExpr* u, StrMap* scope)
 {
     const TypeName* ot = InferType(r, u->operand, scope);
 
