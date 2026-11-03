@@ -374,6 +374,949 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
     return value;
 }
 
+/* One field of a struct initializer call (`Point(1, 2)`): the argument lands in
+   field i of the aggregate being built. */
+static LLVMValueRef EmitStructInitField(Builder* b, const StructType* st, LLVMValueRef agg, size_t i, Node* argNode)
+{
+    FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, i);
+    TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
+
+    Value rawArg = EmitExpr(b, argNode);
+    Value argValue;
+
+    /* A string field takes a heap copy of a literal so the field can
+       be freed without freeing a (borrowed) string constant. */
+    if (fieldTd.isString && argNode->kind == NodeStrLiteral)
+    {
+        LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawArg.value, 0, "fslit.p");
+        LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawArg.value, 1, "fslit.l");
+        argValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
+    }
+    else if (TypeDescIsBox(&fieldTd) && fieldTd.boxInner
+             && !(TypeDescIsBox(&rawArg.typeDesc) && rawArg.typeDesc.boxInner
+                  && strcmp(rawArg.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
+    {
+        /* ^T / T? field from a non-box value (bare T, braced struct
+           literal): allocate a T slot and construct the value into it.
+           A braced `{}` against a `T?` field constructs a NON-EMPTY
+           boxed T (same rule as the named-literal form). */
+        LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawArg, argNode, "argbox");
+        argValue = ValueMake(heap, fieldTd);
+    }
+    else
+    {
+        argValue = Coerce(b, rawArg, fieldTd);
+    }
+
+    agg = InsertStructField(b, st, agg, (int)i, argValue.value);
+
+    /* If an owning field was moved from an owning lvalue source,
+       null the source so its scope-exit drop is a no-op. */
+    if (FieldInitMovesSource(b, fieldTd, rawArg.typeDesc, argNode))
+    {
+        NullMovedSource(b, argNode);
+    }
+
+    return agg;
+}
+
+/* Struct initializer call: `Point(1, 2)` builds the aggregate field by field. */
+static Value EmitStructInitCall(Builder* b, CallExpr* n)
+{
+    TypeName tn = MakeTypeName(b, n->callee);
+    TypeDesc typeDesc = Resolve(b, &tn);
+
+    const StructType* st = TypeRegistryFind(&b->m_registry, n->callee);
+
+    /* Fields the call leaves out keep their declared defaults, as in a struct literal. */
+    LLVMValueRef agg = DefaultValueOf(b, &tn, typeDesc);
+
+    size_t nargs = n->args.count;
+
+    for (size_t i = 0; i < nargs && st; i++)
+    {
+        if (i >= st->fields.count)
+        {
+            break;
+        }
+
+        agg = EmitStructInitField(b, st, agg, i, (Node*)VecGet(&n->args, i));
+    }
+
+    return ValueMake(agg, typeDesc);
+}
+
+/* A typed rest param: the trailing call args are gathered into one T[] whose
+   buffer is stack-allocated. A `ref` rest borrows owning elements instead of
+   moving them. */
+static LLVMValueRef EmitTypedRestArg(Builder* b, CallExpr* n, const FunctionDecl* fd)
+{
+    const ParamDecl* restParam = (ParamDecl*)VecGet(&fd->params, fd->params.count - 1);
+    const TypeName* elemType = TypeNameArrayElem(&restParam->type);
+
+    if (!elemType)
+    {
+        TypeName empty = MakeTypeName(b, "");
+        elemType = (const TypeName*)arena_dup(b->m_arena, &empty, sizeof(TypeName));
+    }
+
+    Vec tail;
+    VecInit(&tail);
+
+    for (size_t i = fd->params.count - 1; i < n->args.count; i++)
+    {
+        VecPush(&tail, VecGet(&n->args, i));
+    }
+
+    Value arr = EmitArrayFromNodes(b, elemType, &tail, true, restParam->mod == ModRef);
+
+    LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "rest");
+    LLVMBuildStore(b->m_builder, arr.value, slot);
+
+    return slot;
+}
+
+/* Return-param slot: a fresh temp the callee writes its result into; loaded
+   back into a value after the call. */
+static LLVMValueRef EmitReturnParamSlot(Builder* b, const FunctionDecl* fd, TypeDesc* outTd)
+{
+    *outTd = Resolve(b, &fd->returnType);
+
+    return EntryAlloca(b, outTd->type, "retparam");
+}
+
+/* Extern `T[]` param with a non-owning element: the array decays to a pointer
+   to its first element. */
+static bool IsExternArrayDecayArg(Builder* b, const FunctionDecl* fd, size_t k)
+{
+    if (!(fd && fd->isExtern && k < fd->params.count))
+    {
+        return false;
+    }
+
+    const ParamDecl* pd = (ParamDecl*)VecGet(&fd->params, k);
+
+    if (pd->mod != ModNone)
+    {
+        return false;
+    }
+
+    const TypeName* pty = &pd->type;
+    const TypeName* elem = TypeNameArrayElem(pty);
+
+    return TypeNameIsDynamicArray(pty) && !(elem && BuilderIsOwningValue(b, elem));
+}
+
+/* `extern` array decay - T[] in extern functions are punned to T* */
+static LLVMValueRef LowerExternArrayDecayArg(Builder* b, Node* argNode)
+{
+    LLVMValueRef arrAddr = ArgAddress(b, argNode);
+    LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
+
+    return LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataSlot, "arrptr");
+}
+
+/* Array literal against a dynamic-array param: the param's shape
+   stamps the element types (sema), so the literal can construct. */
+static LLVMValueRef LowerArrayLiteralArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode,
+                                         Vec* ownedArgTemps)
+{
+    const ParamDecl* litParam = (ParamDecl*)VecGet(&fd->params, k);
+    ArrayInitExpr* ai = AsNode(ArrayInitExpr, argNode);
+    Value arr;
+
+    if (litParam->mod == ModRef)
+    {
+        /* `ref T[]` borrows: construct the literal on the STACK
+           (a la the typed rest slot). The caller drops owning
+           elements after the call; the stack buffer is never
+           freed. */
+        arr = EmitArrayFromNodes(b, ai->elementType, &ai->elements, true, false);
+    }
+    else
+    {
+        /* By value: a normal heap-backed dynamic array — the
+           callee owns it and drops it at exit. */
+        arr = EmitArrayInit(b, ai);
+    }
+
+    LLVMValueRef litSlot = EntryAlloca(b, ArrayStructType(b), "litarr");
+    LLVMBuildStore(b->m_builder, arr.value, litSlot);
+
+    if (litParam->mod == ModRef)
+    {
+        OwnedArgTemp* temp = (OwnedArgTemp*)arena_alloc(b->m_arena, sizeof(OwnedArgTemp));
+        temp->slot = litSlot;
+        temp->td = arr.typeDesc;
+        temp->stackOnly = true;
+        VecPush(ownedArgTemps, temp);
+    }
+
+    return litSlot;
+}
+
+/* Fixed array → `ref T[]` param: borrow the inline storage as a
+   stack fat {&fixed[0], N, N} — a slice/view with no allocation and
+   no copy (same stack-fat trick as the typed rest slot). The callee
+   reads/writes elements through the data pointer; a `ref` binding is
+   never dropped or freed (ref params are exempt from the
+   owning-local teardown). Returns NULL when the argument is not a fixed
+   array, so the caller lowers it the ordinary way. */
+static LLVMValueRef TryLowerFixedArrayViewArg(Builder* b, const FunctionDecl* fd, size_t k, bool shouldPassByPtr,
+                                              Node* argNode)
+{
+    if (!(shouldPassByPtr && fd && k < fd->params.count && (argNode->kind == NodeIdent || argNode->kind == NodeMember)))
+    {
+        return NULL;
+    }
+
+    const ParamDecl* viewParam = (ParamDecl*)VecGet(&fd->params, k);
+
+    if (!(viewParam->mod == ModRef && TypeNameIsDynamicArray(&viewParam->type)))
+    {
+        return NULL;
+    }
+
+    LValue lv = EmitLValue(b, argNode);
+
+    if (!(lv.valid && lv.typeDesc.isFixedArray))
+    {
+        return NULL;
+    }
+
+    LLVMValueRef zero[2] = {LLVMConstInt(I64Ty(b), 0, 0), LLVMConstInt(I64Ty(b), 0, 0)};
+    LLVMValueRef data = LLVMBuildGEP2(b->m_builder, lv.typeDesc.type, lv.ptr, zero, 2, "fixview");
+    LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)lv.typeDesc.fixedLength, 0);
+    LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
+    fat = LLVMBuildInsertValue(b->m_builder, fat, data, 0, "fixview.p");
+    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 1, "fixview.l");
+    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 2, "fixview.c");
+
+    LLVMValueRef viewSlot = EntryAlloca(b, ArrayStructType(b), "fixview");
+    LLVMBuildStore(b->m_builder, fat, viewSlot);
+
+    return viewSlot;
+}
+
+/* Internal string param (by slot address): the callee owns the
+   fat and drops/nulls the slot at exit. Dispatch on the EMITTED
+   value's type, never the arg's AST shape: a `cstring` of ANY
+   form (element, member chain, call result, cast) is borrowed
+   bytes that must be heap-copied into a fresh owned fat. */
+static LLVMValueRef LowerInternalStringArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode)
+{
+    LValue lv = EmitLValue(b, argNode);
+    /* A `ref string` param only borrows: owned temporaries made for it die with the statement. */
+    const ParamDecl* strParam = (const ParamDecl*)VecGet((Vec*)&fd->params, k);
+    bool borrowsString = strParam->mod == ModRef;
+
+    /* A string lvalue: pass the caller's own storage (move
+       semantics — the callee nulls the slot at exit). */
+    if (lv.valid && !lv.vectorLane && !lv.typeDesc.isCString)
+    {
+        return lv.ptr;
+    }
+
+    Value av = lv.valid ? ValueMake(LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "csarg"), lv.typeDesc)
+                        : EmitExpr(b, argNode);
+
+    if (av.typeDesc.isCString)
+    {
+        LLVMValueRef owned = BuildOwnedStringFromCStr(b, av.value);
+
+        if (borrowsString)
+        {
+            return ParkTemp(b, ValueMake(owned, Resolve(b, &strParam->type)));
+        }
+
+        LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "cs2s");
+        LLVMBuildStore(b->m_builder, owned, slot);
+
+        return slot;
+    }
+
+    const TempPart* tp = FindTempPart(b, MovableBoxSourceNode(argNode));
+
+    if (tp)
+    {
+        /* A string piece of a temporary (`f(mkArr()[0])`):
+           hand over its storage inside the temporary, like
+           an lvalue, so the callee's null-at-exit keeps the
+           temporary's drop from freeing it again. */
+        return tp->addr;
+    }
+
+    if (borrowsString)
+    {
+        return ParkTemp(b, av);
+    }
+
+    /* A non-lvalue string value (e.g. a call result):
+       spill the already-computed fat (ArgAddress's
+       fallback, minus a second evaluation). */
+    LLVMValueRef slot = EntryAlloca(b, av.typeDesc.type, "outarg");
+    LLVMBuildStore(b->m_builder, av.value, slot);
+
+    return slot;
+}
+
+/* Internal string param (by slot address) given a string literal: the callee
+   owns and drops the value, so materialize an owned fat into a fresh temp slot
+   instead of handing out the borrowed constant. */
+static LLVMValueRef LowerStringLiteralParamArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode)
+{
+    Value litVal = EmitExpr(b, argNode);
+    const ParamDecl* litParam = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
+    LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "stslot");
+
+    if (litParam && litParam->mod == ModRef)
+    {
+        /* A `ref string` param only reads: lend it the constant itself. */
+        LLVMBuildStore(b->m_builder, litVal.value, slot);
+    }
+    else
+    {
+        LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, litVal.value, 0, "arglit.p");
+        LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, litVal.value, 1, "arglit.l");
+        LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), slot);
+    }
+
+    return slot;
+}
+
+/* A box argument to a by-pointer param whose param is not a box: the callee
+   borrows the box's contents. A box that is only a temporary (`F(Box(1))`) has
+   no other owner: park it so the end of the statement drops it. */
+static LLVMValueRef LowerBorrowedBoxArg(Builder* b, Node* argNode)
+{
+    Value boxArg = EmitExpr(b, argNode);
+
+    if (argNode->kind != NodeIdent && argNode->kind != NodeMember && argNode->kind != NodeIndex
+        && TypeDescIsOwning(b, &boxArg.typeDesc))
+    {
+        ParkTemp(b, boxArg);
+    }
+
+    return boxArg.value;
+}
+
+/* Extern string param: the C side only borrows, so an owned temporary dies with
+   the statement. A `string?` param keeps the raw pointer so NULL stays NULL. */
+static LLVMValueRef LowerExternStringArg(Builder* b, Value av, bool paramIsRealBox)
+{
+    if (paramIsRealBox)
+    {
+        /* `string?` param: pass the RAW data pointer — NULL stays
+           NULL (empty optional), preserving the C-side NULL check. */
+        return LLVMBuildExtractValue(b->m_builder, av.value, 0, "optstr");
+    }
+
+    /* Extern string param: pun the fat to char*
+       (NUL-terminated; empty {null, 0} materializes a valid
+       empty C string). */
+    ClaimTemp(b, av); /* C only borrows: an owned temporary dies with the statement */
+
+    return BuildExternStringPtr(b, av);
+}
+
+/* Extern array argument to a `^T` / `T?` param: the T[] / T[N] is passed as a
+   pointer to its first element (the box IS that pointer). Dynamic arrays hand
+   over their data buffer; fixed arrays GEP to element 0. Returns NULL when the
+   element type does not match, so the caller lowers the argument normally. */
+static LLVMValueRef TryLowerExternArrayToBoxArg(Builder* b, const TypeName* extTy, Value av, Node* argNode)
+{
+    const TypeName* boxInner = TypeNameBoxInner(extTy);
+    const TypeName* argElem = av.typeDesc.arrayInner;
+
+    if (!(boxInner && argElem && strcmp(boxInner->name, argElem->name) == 0))
+    {
+        return NULL;
+    }
+
+    if (TypeDescHasArrayShape(&av.typeDesc))
+    {
+        return LLVMBuildExtractValue(b->m_builder, av.value, 0, "arrptr");
+    }
+
+    LLVMValueRef slot = ArgAddress(b, argNode);
+    LLVMValueRef zero[1] = {LLVMConstInt(I64Ty(b), 0, 0)};
+
+    return LLVMBuildGEP2(b->m_builder, av.typeDesc.type, slot, zero, 1, "farr");
+}
+
+/* A plain value passed to an extern `^T` / `T?` param: a real box (or optional)
+   takes a fresh cell holding the owned value; a plain `string` param takes the
+   value itself as the char*. */
+static LLVMValueRef LowerExternValueToBoxArg(Builder* b, Node* argNode, Value av, const TypeName* extTy,
+                                             bool paramIsRealBox)
+{
+    const TypeName* innerTn = TypeNameBoxInner(extTy) ? TypeNameBoxInner(extTy) : StringTypeName(b);
+
+    if (!paramIsRealBox)
+    {
+        /* Plain `string` param: the value already is the char*. */
+        return av.value;
+    }
+
+    LLVMValueRef owned = EmitOwnedValue(b, av, argNode, innerTn);
+
+    LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
+    LLVMValueRef cellArgs[1] = {cellSz};
+    StrataAllocFn(b);
+    LLVMValueRef cell = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1, "argcell");
+    LLVMBuildStore(b->m_builder, owned, cell);
+
+    return cell;
+}
+
+/* Extern ^T / T? param: pass the pointer ITSELF by value.
+   A box/optional arg already is that pointer; a plain owning
+   value is constructed into a fresh cell first. */
+static LLVMValueRef LowerExternBoxParamArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode)
+{
+    const ParamDecl* extParam = (ParamDecl*)VecGet(&fd->params, k);
+    const TypeName* extTy = &extParam->type;
+
+    Value av = EmitExpr(b, argNode);
+
+    if (TypeNameIsBox(extTy) && (TypeDescHasArrayShape(&av.typeDesc) || av.typeDesc.isFixedArray))
+    {
+        LLVMValueRef decayed = TryLowerExternArrayToBoxArg(b, extTy, av, argNode);
+
+        if (decayed)
+        {
+            return decayed;
+        }
+    }
+
+    bool paramIsRealBox = TypeNameIsBox(extTy) || TypeNameIsOptional(extTy);
+
+    if (av.typeDesc.isString)
+    {
+        return LowerExternStringArg(b, av, paramIsRealBox);
+    }
+
+    if (TypeDescIsBox(&av.typeDesc))
+    {
+        return paramIsRealBox ? av.value : DerefBoxValue(b, av).value;
+    }
+
+    return LowerExternValueToBoxArg(b, argNode, av, extTy, paramIsRealBox);
+}
+
+/* C default argument promotions for a bare extern `...` trailing arg. */
+static LLVMValueRef LowerCVarargArg(Builder* b, Value v)
+{
+    /* Bare extern `...` trailing args follow C default promotions. */
+    /* C only borrows: an owned temporary (`printf("%s", mk())`) dies with the statement. */
+    ClaimTemp(b, v);
+
+    return ApplyCVarargPromotion(b, DerefBoxValue(b, v));
+}
+
+/* By-value (non-indirect) param: the value is coerced to the declared type; an
+   owning struct is deep-copied so the caller keeps its own fields (C value
+   semantics; `ref` is the zero-copy escape). */
+static LLVMValueRef LowerByValueArg(Builder* b, const FunctionDecl* fd, size_t k, Value v)
+{
+    /* A box arg passed to a by-value (non-indirect) param - e.g. a
+       plain handle - must be dereferenced to its value, not passed
+       as the box's own heap pointer. */
+    v = DerefBoxValue(b, v);
+
+    if (fd && k < fd->params.count)
+    {
+        /* Implicit scalar widening/narrowing to the declared
+           param type (e.g. a float literal to a double param)
+           - without this the arg crosses at its own width and
+           the call gets a mismatched ABI (garbage). */
+        TypeDesc paramTd = Resolve(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
+        v = Coerce(b, v, paramTd);
+
+        /* An owning struct passed by value: the callee owns
+           and drops its copy at return, so hand it a deep
+           copy — the caller's value keeps its own fields
+           (C value semantics; `ref` is the zero-copy escape). */
+        if (paramTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, paramTd.structTypeName))
+        {
+            v = EmitCopyValue(b, v, paramTd);
+        }
+    }
+
+    return v.value;
+}
+
+/* Indirect (by-pointer) param given a plain expression: a `ref` param lent an
+   owned temporary parks it for the statement; a call result is spilled (its
+   value is already computed, and ArgAddress would evaluate it again); anything
+   else passes the address of its storage. */
+static LLVMValueRef LowerByPtrPlainArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode, Value v,
+                                       bool paramIsBoxType, bool argIsBox)
+{
+    const ParamDecl* refParam = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
+    bool borrowsTemp = refParam && refParam->mod == ModRef && !fd->isExtern && argNode->kind != NodeIdent
+                       && argNode->kind != NodeMember && argNode->kind != NodeIndex && TypeDescIsOwning(b, &v.typeDesc);
+
+    if (borrowsTemp)
+    {
+        /* An owned temporary lent to a `ref` param: dropped when the statement ends. */
+        return ParkTemp(b, v);
+    }
+
+    if (argNode->kind == NodeCall)
+    {
+        /* A call result has no address: spill the value already
+           computed above. ArgAddress would evaluate the call a
+           second time (repeating its side effects and leaking the
+           first result). */
+        LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "outarg");
+        LLVMBuildStore(b->m_builder, v.value, slot);
+
+        return slot;
+    }
+
+    /* A box-typed field or element (`h.buffer.Method()`, `ref T` param from a `^T`
+       / `T?` slot): the callee wants the boxed value, not the slot. */
+    LValue slot = {0};
+
+    if (!paramIsBoxType && !argIsBox && (argNode->kind == NodeMember || argNode->kind == NodeIndex))
+    {
+        slot = EmitLValue(b, argNode);
+    }
+
+    if (slot.valid && !slot.vectorLane && TypeDescIsBox(&slot.typeDesc))
+    {
+        return LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot.ptr, "boxarg");
+    }
+
+    if (slot.valid && !slot.vectorLane)
+    {
+        return slot.ptr;
+    }
+
+    return ArgAddress(b, argNode);
+}
+
+/* A plain (non-special-cased) argument: evaluated once, then passed by pointer,
+   by value, or as a bare C vararg. */
+static LLVMValueRef LowerPlainArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode, bool cVararg,
+                                  bool shouldPassByPtr, bool paramIsBoxType, bool argIsBox)
+{
+    Value v = EmitExpr(b, argNode);
+
+    if (cVararg && k >= fd->params.count)
+    {
+        return LowerCVarargArg(b, v);
+    }
+
+    if (shouldPassByPtr)
+    {
+        return LowerByPtrPlainArg(b, fd, k, argNode, v, paramIsBoxType, argIsBox);
+    }
+
+    return LowerByValueArg(b, fd, k, v);
+}
+
+/* Whether a by-pointer argument names a box (a variable, or a call returning one):
+   the callee then borrows the box's contents. */
+static bool CallArgIsBoxSource(Builder* b, Node* argNode)
+{
+    if (argNode->kind == NodeIdent)
+    {
+        Value* sym = (Value*)StrMapGet(&b->m_symbols, ((IdentExpr*)argNode)->name);
+
+        if (!sym)
+        {
+            sym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)argNode)->name);
+        }
+
+        return sym && TypeDescIsBox(&sym->typeDesc);
+    }
+
+    if (argNode->kind == NodeCall)
+    {
+        FuncInfo* fi = (FuncInfo*)StrMapGet(&b->m_funcs, ((CallExpr*)argNode)->callee);
+
+        return fi && TypeDescIsBox(&fi->returnType);
+    }
+
+    return false;
+}
+
+/* The argument-only dispatcher: one call argument lowered to its slot form, by
+   which parameter kind it binds to. */
+static LLVMValueRef EmitCallArg(Builder* b, CallExpr* n, FuncInfo* info, const FunctionDecl* fd, size_t k, bool cVararg,
+                                Vec* ownedArgTemps)
+{
+    bool shouldPassByPtr = k < info->paramByPtrCount && info->paramByPtr[k];
+    Node* argNode = (Node*)VecGet(&n->args, k);
+
+    /* ^T coerced to T: if the param is a plain struct (not box),
+       and the arg is a box, the heap pointer IS the T* the param wants. */
+    bool paramIsBoxType
+        = fd && k < fd->params.count && BuilderIsOwningType(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
+    bool argIsBox = shouldPassByPtr && !paramIsBoxType && CallArgIsBoxSource(b, argNode);
+
+    if (IsExternArrayDecayArg(b, fd, k))
+    {
+        return LowerExternArrayDecayArg(b, argNode);
+    }
+
+    if (shouldPassByPtr && fd && k < fd->params.count && argNode->kind == NodeArrayInit
+        && TypeNameIsDynamicArray(&((ParamDecl*)VecGet(&fd->params, k))->type))
+    {
+        return LowerArrayLiteralArg(b, fd, k, argNode, ownedArgTemps);
+    }
+
+    LLVMValueRef fixedView = TryLowerFixedArrayViewArg(b, fd, k, shouldPassByPtr, argNode);
+
+    if (fixedView)
+    {
+        return fixedView;
+    }
+
+    if (shouldPassByPtr && paramIsBoxType && fd && k < fd->params.count && argNode->kind != NodeStrLiteral
+        && TypeIsString(&b->m_registry, ((ParamDecl*)VecGet((Vec*)&fd->params, k))->type.name))
+    {
+        return LowerInternalStringArg(b, fd, k, argNode);
+    }
+
+    if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
+    {
+        return LowerStringLiteralParamArg(b, fd, k, argNode);
+    }
+
+    if (shouldPassByPtr && !paramIsBoxType && argIsBox)
+    {
+        return LowerBorrowedBoxArg(b, argNode);
+    }
+
+    if (!shouldPassByPtr && paramIsBoxType && fd && fd->isExtern && k < fd->params.count)
+    {
+        return LowerExternBoxParamArg(b, fd, k, argNode);
+    }
+
+    return LowerPlainArg(b, fd, k, argNode, cVararg, shouldPassByPtr, paramIsBoxType, argIsBox);
+}
+
+/* Lowers every call argument into args[k]. A typed rest param gathers the
+   trailing args into one array and a `return` param gets a fresh out-slot; both
+   keep the LLVM call at exactly params.count args. */
+static void EmitCallArgs(Builder* b, CallExpr* n, FuncInfo* info, const FunctionDecl* fd, LLVMValueRef* args,
+                         size_t nargs, Vec* ownedArgTemps, LLVMValueRef* returnParamSlot, TypeDesc* returnParamTd)
+{
+    bool hasReturnParam = fd && FunctionHasReturnParam(fd);
+    bool typedRest = fd && fd->isVariadic && !fd->isCVararg && fd->params.count > 0;
+    bool cVararg = fd && fd->isCVararg;
+
+    for (size_t k = 0; k < nargs; k++)
+    {
+        if (hasReturnParam && k == fd->params.count - 1)
+        {
+            *returnParamSlot = EmitReturnParamSlot(b, fd, returnParamTd);
+            args[k] = *returnParamSlot;
+            continue;
+        }
+
+        if (typedRest && k == fd->params.count - 1)
+        {
+            args[k] = EmitTypedRestArg(b, n, fd);
+            continue;
+        }
+
+        args[k] = EmitCallArg(b, n, info, fd, k, cVararg, ownedArgTemps);
+    }
+}
+
+/* The hidden context pointer (see DeclareFunction) is never written by Strata
+   source; forward the CALLING function's pointer automatically. It goes first, so
+   the final order is [ctx, self, ...rest]. */
+static LLVMValueRef* PrependHiddenCtxArg(Builder* b, FuncInfo* info, LLVMValueRef* args, unsigned* count)
+{
+    if (!info->hasHiddenCtxParam)
+    {
+        return args;
+    }
+
+    size_t nargs = *count;
+    LLVMValueRef* finalArgs = (LLVMValueRef*)arena_alloc(b->m_arena, (nargs + 1) * sizeof(LLVMValueRef));
+    finalArgs[0] = b->m_curGlobalsPtr;
+
+    if (nargs > 0)
+    {
+        memcpy(finalArgs + 1, args, nargs * sizeof(LLVMValueRef));
+    }
+
+    *count = (unsigned)(nargs + 1);
+
+    return finalArgs;
+}
+
+/* `extern<T>`: T's descriptor goes last, after every argument the call spells out. */
+static LLVMValueRef* AppendTypeDescArg(Builder* b, FuncInfo* info, const FunctionDecl* fd, LLVMValueRef* args,
+                                       unsigned* count)
+{
+    if (!(info->hasTypeDescParam && fd && fd->typeArg))
+    {
+        return args;
+    }
+
+    unsigned finalCount = *count;
+    LLVMValueRef* withTypeDesc = (LLVMValueRef*)arena_alloc(b->m_arena, (finalCount + 1) * sizeof(LLVMValueRef));
+
+    if (finalCount > 0)
+    {
+        memcpy(withTypeDesc, args, finalCount * sizeof(LLVMValueRef));
+    }
+
+    withTypeDesc[finalCount] = TypeDescConstant(b, fd->typeArg);
+    *count = finalCount + 1;
+
+    return withTypeDesc;
+}
+
+/* Through a delegate: the pointer value is the callee; a null one panics instead of jumping to 0. */
+static LLVMValueRef EmitDelegateCallee(Builder* b, CallExpr* n)
+{
+    LLVMValueRef callee = EmitExpr(b, n->delegateCallee).value;
+
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "dlgnull");
+    LLVMBasicBlockRef nullBB = NewBb(b, "dlg.null");
+    LLVMBasicBlockRef callBB = NewBb(b, "dlg.call");
+    LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
+
+    PositionAtEnd(b, nullBB);
+    LLVMValueRef panicArgs[1] = {
+        MsgGlobalPtr(b, ".pmsg", arena_format(b->m_arena, "call through a null '%s' delegate", n->delegateDecl->name))};
+    StrataPanicFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, panicArgs, 1, "");
+    LLVMBuildUnreachable(b->m_builder);
+
+    PositionAtEnd(b, callBB);
+
+    return callee;
+}
+
+/* A JIT extern is called through its slot, which the host binds later. */
+static LLVMValueRef ResolveJitExternCallee(Builder* b, CallExpr* n, LLVMValueRef callee, bool* slotExtern)
+{
+    if (!b->m_jitMode)
+    {
+        return callee;
+    }
+
+    LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->m_externSlots, n->callee);
+
+    if (!slot)
+    {
+        return callee;
+    }
+
+    *slotExtern = true;
+
+    return LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "extfn");
+}
+
+/* A JIT extern slot starts null: under nullExternCall, a call before the host
+   binds it panics with the unbound name instead of jumping to address 0. The
+   panic block RETURNS a zero value so a host panic handler that returns keeps the
+   JIT frame's stack walker away. */
+static void EmitNullExternGuard(Builder* b, CallExpr* n, LLVMValueRef callee)
+{
+    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "extnull");
+    LLVMBasicBlockRef nullBB = NewBb(b, "ext.null");
+    LLVMBasicBlockRef callBB = NewBb(b, "ext.call");
+    LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, nullBB);
+    {
+        LLVMValueRef args2[1]
+            = {MsgGlobalPtr(b, ".pmsg", arena_format(b->m_arena, "call to null extern function '%s'", n->callee))};
+        StrataPanicFn(b);
+        LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args2, 1, "");
+
+        /* The `ret` here terminates the ENCLOSING Strata function, so it
+           must use the enclosing function's return type (m_curRet), not the
+           extern's. Returning the extern's type (e.g. a ptr for a `handle`
+           return inside an i32 fn) produces malformed IR that crashes LLVM
+           optimizers. */
+        if (b->m_curRet.isVoid)
+        {
+            LLVMBuildRetVoid(b->m_builder);
+        }
+        else
+        {
+            LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_curRetAbi));
+        }
+    }
+
+    PositionAtEnd(b, callBB);
+}
+
+/* The call instruction itself. */
+static LLVMValueRef EmitCallInstruction(Builder* b, CallExpr* n, FuncInfo* info, LLVMValueRef callee,
+                                        LLVMValueRef* finalArgs, unsigned finalCount, bool slotExtern)
+{
+    if (slotExtern && b->m_nullExternCheck)
+    {
+        EmitNullExternGuard(b, n, callee);
+    }
+
+    return LLVMBuildCall2(b->m_builder, info->type, callee, finalArgs, finalCount, "call");
+}
+
+/* Array-literal args: `ref T[]` temps are stack views (drop owning
+   elements, never the buffer); by-value temps transferred ownership to
+   the callee and are not touched here. */
+static void DropOwnedArgTemps(Builder* b, Vec* ownedArgTemps)
+{
+    for (size_t t = 0; t < ownedArgTemps->count; t++)
+    {
+        OwnedArgTemp* at = (OwnedArgTemp*)VecGet(ownedArgTemps, t);
+
+        if (at->stackOnly)
+        {
+            EmitDropOneStack(b, at->slot, at->td);
+        }
+        else
+        {
+            EmitDropOne(b, at->slot, at->td);
+        }
+    }
+}
+
+/* Sub-32-bit integer extern returns (bool/byte/sbyte/short/ushort): the
+   C host only defines the low part of the widened register (AL/AX), so
+   narrow the raw result back to the semantic type - truncating away the
+   undefined upper bits, then re-extending per the semantic signedness.
+   Strata-emitted callees always extend the full register themselves. */
+static LLVMValueRef NarrowExternIntReturn(Builder* b, const FunctionDecl* fd, FuncInfo* info, LLVMValueRef call)
+{
+    if (!(fd && fd->isExtern && info->retSemanticTy && call
+          && LLVMGetTypeKind(info->retSemanticTy) == LLVMIntegerTypeKind))
+    {
+        return call;
+    }
+
+    LLVMTypeRef abiRet = LLVMGetReturnType(info->type);
+
+    if (!(abiRet && LLVMGetTypeKind(abiRet) == LLVMIntegerTypeKind
+          && LLVMGetIntTypeWidth(abiRet) > LLVMGetIntTypeWidth(info->retSemanticTy)))
+    {
+        return call;
+    }
+
+    LLVMValueRef narrow = LLVMBuildTrunc(b->m_builder, call, info->retSemanticTy, "ret.narrow");
+
+    bool zeroExtend = info->retSemanticUnsigned || info->retSemanticTy == I1Ty(b);
+
+    return zeroExtend ? LLVMBuildZExt(b->m_builder, narrow, abiRet, "ret.zext")
+                      : LLVMBuildSExt(b->m_builder, narrow, abiRet, "ret.sext");
+}
+
+/* Extern `string` return: the host handed back a NUL-terminated char*;
+   copy it into a fresh owned buffer (the semantic type stays the fat).
+   A DISCARDED result is skipped entirely — no allocation, no leak. */
+static Value EmitExternStringResult(Builder* b, FuncInfo* info, LLVMValueRef call, bool discarded)
+{
+    if (discarded)
+    {
+        return ValueMake(LLVMConstNull(ArrayStructType(b)), info->returnType);
+    }
+
+    Value owned = ValueMake(BuildOwnedStringFromCStr(b, call), info->returnType);
+    NoteFreshOwned(b, owned);
+
+    return owned;
+}
+
+/* The Strata-level result of a call, shaped by the callee's return kind. */
+static Value EmitCallResult(Builder* b, const FunctionDecl* fd, FuncInfo* info, LLVMValueRef call, bool discarded,
+                            bool hasReturnParam, LLVMValueRef returnParamSlot, TypeDesc returnParamTd)
+{
+    /* Return-param call: the C function wrote the result into our temp slot;
+       load it back as the Strata-level return value. */
+    if (hasReturnParam)
+    {
+        LLVMValueRef retVal = LLVMBuildLoad2(b->m_builder, returnParamTd.type, returnParamSlot, "retparam.val");
+
+        return ValueMake(retVal, returnParamTd);
+    }
+
+    if (info->externStringReturn)
+    {
+        return EmitExternStringResult(b, info, call, discarded);
+    }
+
+    Value result = ValueMake(call, info->returnType);
+
+    /* A Strata function's owning result is a fresh value the caller owns
+       (extern results keep their existing host-ownership handling). */
+    if (fd && !fd->isExtern && !discarded)
+    {
+        NoteFreshOwned(b, result);
+    }
+
+    return result;
+}
+
+/* A call to a Strata or extern function: lower the arguments, add the hidden
+   trailing ones, resolve the callee, make the call, then shape the result. */
+static Value EmitFunctionCall(Builder* b, CallExpr* n, FuncInfo* info, bool discarded)
+{
+    const FunctionDecl* fd = n->resolvedDecl;
+
+    /* A typed rest param collects the trailing call args into one T[] array
+       passed in the rest param's slot, so the LLVM call has exactly
+       `params.count` args. A bare extern `...` passes every arg straight
+       through as a real C vararg call. A `return` param is synthesized by
+       the caller as one out-pointer slot, so the LLVM call also has exactly
+       `params.count` args (one more than the user wrote). */
+    bool hasReturnParam = fd && FunctionHasReturnParam(fd);
+    bool typedRest = fd && fd->isVariadic && !fd->isCVararg && fd->params.count > 0;
+
+    size_t nargs = (typedRest || hasReturnParam) ? fd->params.count : n->args.count;
+    LLVMValueRef* args = NULL;
+
+    if (nargs > 0)
+    {
+        args = (LLVMValueRef*)arena_alloc(b->m_arena, nargs * sizeof(LLVMValueRef));
+    }
+
+    LLVMValueRef returnParamSlot = NULL;
+    TypeDesc returnParamTd = {0};
+
+    /* Array literals lent to `ref T[]` params: caller-owned temps, dropped
+       after the call. */
+    Vec ownedArgTemps;
+    VecInit(&ownedArgTemps);
+
+    EmitCallArgs(b, n, info, fd, args, nargs, &ownedArgTemps, &returnParamSlot, &returnParamTd);
+
+    unsigned finalCount = (unsigned)nargs;
+    LLVMValueRef* finalArgs = PrependHiddenCtxArg(b, info, args, &finalCount);
+    finalArgs = AppendTypeDescArg(b, info, fd, finalArgs, &finalCount);
+
+    LLVMValueRef callee = info->function;
+    bool slotExtern = false;
+
+    if (n->delegateCallee)
+    {
+        callee = EmitDelegateCallee(b, n);
+    }
+
+    callee = ResolveJitExternCallee(b, n, callee, &slotExtern);
+
+    LLVMValueRef call = EmitCallInstruction(b, n, info, callee, finalArgs, finalCount, slotExtern);
+
+    DropOwnedArgTemps(b, &ownedArgTemps);
+
+    call = NarrowExternIntReturn(b, fd, info, call);
+
+    return EmitCallResult(b, fd, info, call, discarded, hasReturnParam, returnParamSlot, returnParamTd);
+}
+
 Value EmitCall(Builder* b, CallExpr* n)
 {
     /* A direct expression-statement call has an unused result. Consumed here
@@ -392,68 +1335,10 @@ Value EmitCall(Builder* b, CallExpr* n)
         }
     }
 
-    // Is it a struct initializer call?
+    /* Struct initializer call. */
     if (StrMapGet(&b->m_structTypes, n->callee) != NULL)
     {
-        TypeName tn = MakeTypeName(b, n->callee);
-        TypeDesc typeDesc = Resolve(b, &tn);
-
-        const StructType* st = TypeRegistryFind(&b->m_registry, n->callee);
-
-        /* Fields the call leaves out keep their declared defaults, as in a struct literal. */
-        LLVMValueRef agg = DefaultValueOf(b, &tn, typeDesc);
-
-        size_t nargs = n->args.count;
-
-        for (size_t i = 0; i < nargs && st; i++)
-        {
-            if (i >= st->fields.count)
-            {
-                break;
-            }
-
-            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, i);
-            TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
-
-            Node* argNode = (Node*)VecGet(&n->args, i);
-            Value rawArg = EmitExpr(b, argNode);
-            Value argValue;
-
-            /* A string field takes a heap copy of a literal so the field can
-               be freed without freeing a (borrowed) string constant. */
-            if (fieldTd.isString && argNode->kind == NodeStrLiteral)
-            {
-                LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawArg.value, 0, "fslit.p");
-                LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawArg.value, 1, "fslit.l");
-                argValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
-            }
-            else if (TypeDescIsBox(&fieldTd) && fieldTd.boxInner
-                     && !(TypeDescIsBox(&rawArg.typeDesc) && rawArg.typeDesc.boxInner
-                          && strcmp(rawArg.typeDesc.boxInner->name, fieldTd.boxInner->name) == 0))
-            {
-                /* ^T / T? field from a non-box value (bare T, braced struct
-                   literal): allocate a T slot and construct the value into it.
-                   A braced `{}` against a `T?` field constructs a NON-EMPTY
-                   boxed T (same rule as the named-literal form). */
-                LLVMValueRef heap = EmitBoxCell(b, fieldTd.boxInner, rawArg, argNode, "argbox");
-                argValue = ValueMake(heap, fieldTd);
-            }
-            else
-            {
-                argValue = Coerce(b, rawArg, fieldTd);
-            }
-
-            agg = InsertStructField(b, st, agg, (int)i, argValue.value);
-
-            /* If an owning field was moved from an owning lvalue source,
-               null the source so its scope-exit drop is a no-op. */
-            if (FieldInitMovesSource(b, fieldTd, rawArg.typeDesc, argNode))
-            {
-                NullMovedSource(b, argNode);
-            }
-        }
-
-        return ValueMake(agg, typeDesc);
+        return EmitStructInitCall(b, n);
     }
 
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, n->callee);
@@ -468,672 +1353,5 @@ Value EmitCall(Builder* b, CallExpr* n)
         return ZeroInt(b);
     }
 
-    const FunctionDecl* fd = n->resolvedDecl;
-
-    /* A typed rest param collects the trailing call args into one T[] array
-       passed in the rest param's slot, so the LLVM call has exactly
-       `params.count` args. A bare extern `...` passes every arg straight
-       through as a real C vararg call. A `return` param is synthesized by
-       the caller as one out-pointer slot, so the LLVM call also has exactly
-       `params.count` args (one more than the user wrote). */
-    bool hasReturnParam = fd && FunctionHasReturnParam(fd);
-    bool typedRest = fd && fd->isVariadic && !fd->isCVararg && fd->params.count > 0;
-    bool cVararg = fd && fd->isCVararg;
-
-    size_t nargs = (typedRest || hasReturnParam) ? fd->params.count : n->args.count;
-    LLVMValueRef* args = NULL;
-
-    if (nargs > 0)
-    {
-        args = (LLVMValueRef*)arena_alloc(b->m_arena, nargs * sizeof(LLVMValueRef));
-    }
-
-    LLVMValueRef returnParamSlot = NULL;
-    TypeDesc returnParamTd = {0};
-
-    /* Array literals lent to `ref T[]` params: caller-owned temps, dropped
-       after the call. */
-    Vec ownedArgTemps;
-    VecInit(&ownedArgTemps);
-
-    for (size_t k = 0; k < nargs; k++)
-    {
-        /* Return-param slot: a fresh temp the callee writes its result into;
-           loaded back into a value after the call. */
-        if (hasReturnParam && k == fd->params.count - 1)
-        {
-            returnParamTd = Resolve(b, &fd->returnType);
-            returnParamSlot = EntryAlloca(b, returnParamTd.type, "retparam");
-            args[k] = returnParamSlot;
-            continue;
-        }
-
-        /* Typed rest slot: gather the trailing call args into a T[]. The
-           buffer is stack-allocated; a `ref` rest borrows owning elements
-           instead of moving them. */
-        if (typedRest && k == fd->params.count - 1)
-        {
-            const ParamDecl* restParam = (ParamDecl*)VecGet(&fd->params, fd->params.count - 1);
-            const TypeName* elemType = TypeNameArrayElem(&restParam->type);
-
-            if (!elemType)
-            {
-                TypeName empty = MakeTypeName(b, "");
-                elemType = (const TypeName*)arena_dup(b->m_arena, &empty, sizeof(TypeName));
-            }
-
-            Vec tail;
-            VecInit(&tail);
-
-            for (size_t i = fd->params.count - 1; i < n->args.count; i++)
-            {
-                VecPush(&tail, VecGet(&n->args, i));
-            }
-
-            Value arr = EmitArrayFromNodes(b, elemType, &tail, true, restParam->mod == ModRef);
-
-            LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "rest");
-            LLVMBuildStore(b->m_builder, arr.value, slot);
-            args[k] = slot;
-            continue;
-        }
-
-        bool shouldPassByPtr = k < info->paramByPtrCount && info->paramByPtr[k];
-        Node* argNode = (Node*)VecGet(&n->args, k);
-
-        /* ^T coerced to T: if the param is a plain struct (not box),
-           and the arg is a box, the heap pointer IS the T* the param wants. */
-        bool paramIsBoxType
-            = fd && k < fd->params.count && BuilderIsOwningType(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
-
-        bool argIsBox = false;
-
-        if (shouldPassByPtr && !paramIsBoxType)
-        {
-            if (argNode->kind == NodeIdent)
-            {
-                Value* sym = (Value*)StrMapGet(&b->m_symbols, ((IdentExpr*)argNode)->name);
-
-                if (!sym)
-                {
-                    sym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)argNode)->name);
-                }
-
-                argIsBox = sym && TypeDescIsBox(&sym->typeDesc);
-            }
-            else if (argNode->kind == NodeCall)
-            {
-                FuncInfo* fi = (FuncInfo*)StrMapGet(&b->m_funcs, ((CallExpr*)argNode)->callee);
-                argIsBox = fi && TypeDescIsBox(&fi->returnType);
-            }
-        }
-
-        /* `extern` array decay - T[] in extern functions are punned to T* */
-        if (fd && fd->isExtern && k < fd->params.count)
-        {
-            const ParamDecl* pd = (ParamDecl*)VecGet(&fd->params, k);
-
-            if (pd->mod == ModNone)
-            {
-                const TypeName* pty = &pd->type;
-                const TypeName* elem = TypeNameArrayElem(pty);
-
-                if (TypeNameIsDynamicArray(pty) && !(elem && BuilderIsOwningValue(b, elem)))
-                {
-                    LLVMValueRef arrAddr = ArgAddress(b, argNode);
-                    LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
-                    args[k] = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataSlot, "arrptr");
-                    continue;
-                }
-            }
-        }
-
-        /* Array literal against a dynamic-array param: the param's shape
-           stamps the element types (sema), so the literal can construct. */
-        if (shouldPassByPtr && fd && k < fd->params.count && argNode->kind == NodeArrayInit)
-        {
-            const ParamDecl* litParam = (ParamDecl*)VecGet(&fd->params, k);
-
-            if (TypeNameIsDynamicArray(&litParam->type))
-            {
-                ArrayInitExpr* ai = AsNode(ArrayInitExpr, argNode);
-                Value arr;
-
-                if (litParam->mod == ModRef)
-                {
-                    /* `ref T[]` borrows: construct the literal on the STACK
-                       (a la the typed rest slot). The caller drops owning
-                       elements after the call; the stack buffer is never
-                       freed. */
-                    arr = EmitArrayFromNodes(b, ai->elementType, &ai->elements, true, false);
-                }
-                else
-                {
-                    /* By value: a normal heap-backed dynamic array — the
-                       callee owns it and drops it at exit. */
-                    arr = EmitArrayInit(b, ai);
-                }
-
-                LLVMValueRef litSlot = EntryAlloca(b, ArrayStructType(b), "litarr");
-                LLVMBuildStore(b->m_builder, arr.value, litSlot);
-                args[k] = litSlot;
-
-                if (litParam->mod == ModRef)
-                {
-                    OwnedArgTemp* temp = (OwnedArgTemp*)arena_alloc(b->m_arena, sizeof(OwnedArgTemp));
-                    temp->slot = litSlot;
-                    temp->td = arr.typeDesc;
-                    temp->stackOnly = true;
-                    VecPush(&ownedArgTemps, temp);
-                }
-
-                continue;
-            }
-        }
-
-        /* Fixed array → `ref T[]` param: borrow the inline storage as a
-           stack fat {&fixed[0], N, N} — a slice/view with no allocation and
-           no copy (same stack-fat trick as the typed rest slot). The callee
-           reads/writes elements through the data pointer; a `ref` binding is
-           never dropped or freed (ref params are exempt from the
-           owning-local teardown). */
-        if (shouldPassByPtr && fd && k < fd->params.count
-            && (argNode->kind == NodeIdent || argNode->kind == NodeMember))
-        {
-            const ParamDecl* viewParam = (ParamDecl*)VecGet(&fd->params, k);
-
-            if (viewParam->mod == ModRef && TypeNameIsDynamicArray(&viewParam->type))
-            {
-                LValue lv = EmitLValue(b, argNode);
-
-                if (lv.valid && lv.typeDesc.isFixedArray)
-                {
-                    LLVMValueRef zero[2] = {LLVMConstInt(I64Ty(b), 0, 0), LLVMConstInt(I64Ty(b), 0, 0)};
-                    LLVMValueRef data = LLVMBuildGEP2(b->m_builder, lv.typeDesc.type, lv.ptr, zero, 2, "fixview");
-                    LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)lv.typeDesc.fixedLength, 0);
-                    LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
-                    fat = LLVMBuildInsertValue(b->m_builder, fat, data, 0, "fixview.p");
-                    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 1, "fixview.l");
-                    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 2, "fixview.c");
-
-                    LLVMValueRef viewSlot = EntryAlloca(b, ArrayStructType(b), "fixview");
-                    LLVMBuildStore(b->m_builder, fat, viewSlot);
-                    args[k] = viewSlot;
-                    continue;
-                }
-            }
-        }
-
-        if (shouldPassByPtr && paramIsBoxType && fd && k < fd->params.count && argNode->kind != NodeStrLiteral
-            && TypeIsString(&b->m_registry, ((ParamDecl*)VecGet((Vec*)&fd->params, k))->type.name))
-        {
-            /* Internal string param (by slot address): the callee owns the
-               fat and drops/nulls the slot at exit. Dispatch on the EMITTED
-               value's type, never the arg's AST shape: a `cstring` of ANY
-               form (element, member chain, call result, cast) is borrowed
-               bytes that must be heap-copied into a fresh owned fat. */
-            LValue lv = EmitLValue(b, argNode);
-            /* A `ref string` param only borrows: owned temporaries made for it die with the statement. */
-            const ParamDecl* strParam = (const ParamDecl*)VecGet((Vec*)&fd->params, k);
-            bool borrowsString = strParam->mod == ModRef;
-
-            if (lv.valid && !lv.vectorLane && !lv.typeDesc.isCString)
-            {
-                /* A string lvalue: pass the caller's own storage (move
-                   semantics — the callee nulls the slot at exit). */
-                args[k] = lv.ptr;
-            }
-            else
-            {
-                Value av = lv.valid
-                               ? ValueMake(LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "csarg"), lv.typeDesc)
-                               : EmitExpr(b, argNode);
-
-                if (av.typeDesc.isCString)
-                {
-                    LLVMValueRef owned = BuildOwnedStringFromCStr(b, av.value);
-
-                    if (borrowsString)
-                    {
-                        args[k] = ParkTemp(b, ValueMake(owned, Resolve(b, &strParam->type)));
-                    }
-                    else
-                    {
-                        LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "cs2s");
-                        LLVMBuildStore(b->m_builder, owned, slot);
-
-                        args[k] = slot;
-                    }
-                }
-                else
-                {
-                    const TempPart* tp = FindTempPart(b, MovableBoxSourceNode(argNode));
-
-                    if (tp)
-                    {
-                        /* A string piece of a temporary (`f(mkArr()[0])`):
-                           hand over its storage inside the temporary, like
-                           an lvalue, so the callee's null-at-exit keeps the
-                           temporary's drop from freeing it again. */
-                        args[k] = tp->addr;
-                    }
-                    else if (borrowsString)
-                    {
-                        args[k] = ParkTemp(b, av);
-                    }
-                    else
-                    {
-                        /* A non-lvalue string value (e.g. a call result):
-                           spill the already-computed fat (ArgAddress's
-                           fallback, minus a second evaluation). */
-                        LLVMValueRef slot = EntryAlloca(b, av.typeDesc.type, "outarg");
-                        LLVMBuildStore(b->m_builder, av.value, slot);
-
-                        args[k] = slot;
-                    }
-                }
-            }
-        }
-        else if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
-        {
-            /* Internal string param (by slot address): the callee owns and
-               drops the value, so materialize an owned fat into a fresh
-               temp slot instead of handing out the borrowed constant. */
-            Value litVal = EmitExpr(b, argNode);
-            const ParamDecl* litParam
-                = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
-            LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "stslot");
-
-            if (litParam && litParam->mod == ModRef)
-            {
-                /* A `ref string` param only reads: lend it the constant itself. */
-                LLVMBuildStore(b->m_builder, litVal.value, slot);
-            }
-            else
-            {
-                LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, litVal.value, 0, "arglit.p");
-                LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, litVal.value, 1, "arglit.l");
-                LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), slot);
-            }
-
-            args[k] = slot;
-        }
-        else if (shouldPassByPtr && !paramIsBoxType && argIsBox)
-        {
-            /* The callee borrows the box's contents. A box that is only a temporary (`F(Box(1))`) has no other
-               owner: park it so the end of the statement drops it. */
-            Value boxArg = EmitExpr(b, argNode);
-
-            if (argNode->kind != NodeIdent && argNode->kind != NodeMember && argNode->kind != NodeIndex
-                && TypeDescIsOwning(b, &boxArg.typeDesc))
-            {
-                ParkTemp(b, boxArg);
-            }
-
-            args[k] = boxArg.value;
-        }
-        else if (!shouldPassByPtr && paramIsBoxType && fd && fd->isExtern && k < fd->params.count)
-        {
-            /* Extern ^T / T? param: pass the pointer ITSELF by value.
-               A box/optional arg already is that pointer; a plain owning
-               value is constructed into a fresh cell first. */
-            const ParamDecl* extParam = (ParamDecl*)VecGet(&fd->params, k);
-            const TypeName* extTy = &extParam->type;
-
-            Value av = EmitExpr(b, argNode);
-
-            /* Extern ^T param + array arg: array decay - the T[] / T[N]
-               argument is passed as a pointer to its first element (the box
-               IS that pointer). Dynamic arrays hand over their data buffer;
-               fixed arrays GEP to element 0. */
-            if (TypeNameIsBox(extTy) && (TypeDescHasArrayShape(&av.typeDesc) || av.typeDesc.isFixedArray))
-            {
-                const TypeName* boxInner = TypeNameBoxInner(extTy);
-                const TypeName* argElem = av.typeDesc.arrayInner;
-
-                if (boxInner && argElem && strcmp(boxInner->name, argElem->name) == 0)
-                {
-                    if (TypeDescHasArrayShape(&av.typeDesc))
-                    {
-                        args[k] = LLVMBuildExtractValue(b->m_builder, av.value, 0, "arrptr");
-                    }
-                    else
-                    {
-                        LLVMValueRef slot = ArgAddress(b, argNode);
-                        LLVMValueRef zero[1] = {LLVMConstInt(I64Ty(b), 0, 0)};
-                        args[k] = LLVMBuildGEP2(b->m_builder, av.typeDesc.type, slot, zero, 1, "farr");
-                    }
-
-                    continue;
-                }
-            }
-
-            bool paramIsRealBox = TypeNameIsBox(extTy) || TypeNameIsOptional(extTy);
-
-            if (av.typeDesc.isString)
-            {
-                if (paramIsRealBox)
-                {
-                    /* `string?` param: pass the RAW data pointer — NULL stays
-                       NULL (empty optional), preserving the C-side NULL check. */
-                    args[k] = LLVMBuildExtractValue(b->m_builder, av.value, 0, "optstr");
-                }
-                else
-                {
-                    /* Extern string param: pun the fat to char*
-                       (NUL-terminated; empty {null, 0} materializes a valid
-                       empty C string). */
-                    ClaimTemp(b, av); /* C only borrows: an owned temporary dies with the statement */
-                    args[k] = BuildExternStringPtr(b, av);
-                }
-            }
-            else if (TypeDescIsBox(&av.typeDesc))
-            {
-                args[k] = paramIsRealBox ? av.value : DerefBoxValue(b, av).value;
-            }
-            else
-            {
-                const TypeName* innerTn = TypeNameBoxInner(extTy) ? TypeNameBoxInner(extTy) : StringTypeName(b);
-
-                if (!paramIsRealBox)
-                {
-                    /* Plain `string` param: the value already is the char*. */
-                    args[k] = av.value;
-                }
-                else
-                {
-                    LLVMValueRef owned = EmitOwnedValue(b, av, argNode, innerTn);
-
-                    LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
-                    LLVMValueRef cellArgs[1] = {cellSz};
-                    StrataAllocFn(b);
-                    LLVMValueRef cell
-                        = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1, "argcell");
-                    LLVMBuildStore(b->m_builder, owned, cell);
-
-                    args[k] = cell;
-                }
-            }
-        }
-        else
-        {
-            /* A box arg passed to a by-value (non-indirect) param - e.g. a
-               plain handle - must be dereferenced to its value, not passed
-               as the box's own heap pointer. */
-            Value v = EmitExpr(b, argNode);
-
-            if (cVararg && k >= fd->params.count)
-            {
-                /* Bare extern `...` trailing args follow C default promotions. */
-                /* C only borrows: an owned temporary (`printf("%s", mk())`) dies with the statement. */
-                ClaimTemp(b, v);
-                args[k] = ApplyCVarargPromotion(b, DerefBoxValue(b, v));
-            }
-            else
-            {
-                const ParamDecl* refParam
-                    = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
-                bool borrowsTemp = shouldPassByPtr && refParam && refParam->mod == ModRef && !fd->isExtern
-                                   && argNode->kind != NodeIdent && argNode->kind != NodeMember
-                                   && argNode->kind != NodeIndex && TypeDescIsOwning(b, &v.typeDesc);
-
-                if (borrowsTemp)
-                {
-                    /* An owned temporary lent to a `ref` param: dropped when the statement ends. */
-                    args[k] = ParkTemp(b, v);
-                }
-                else if (shouldPassByPtr && argNode->kind == NodeCall)
-                {
-                    /* A call result has no address: spill the value already
-                       computed above. ArgAddress would evaluate the call a
-                       second time (repeating its side effects and leaking the
-                       first result). */
-                    LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "outarg");
-                    LLVMBuildStore(b->m_builder, v.value, slot);
-                    args[k] = slot;
-                }
-                else if (shouldPassByPtr)
-                {
-                    {
-                        /* A box-typed field or element (`h.buffer.Method()`, `ref T` param from a `^T`
-                           / `T?` slot): the callee wants the boxed value, not the slot. */
-                        LValue slot = {0};
-
-                        if (!paramIsBoxType && !argIsBox && (argNode->kind == NodeMember || argNode->kind == NodeIndex))
-                        {
-                            slot = EmitLValue(b, argNode);
-                        }
-
-                        if (slot.valid && !slot.vectorLane && TypeDescIsBox(&slot.typeDesc))
-                        {
-                            args[k] = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot.ptr, "boxarg");
-                        }
-                        else if (slot.valid && !slot.vectorLane)
-                        {
-                            args[k] = slot.ptr;
-                        }
-                        else
-                        {
-                            args[k] = ArgAddress(b, argNode);
-                        }
-                    }
-                }
-                else
-                {
-                    v = DerefBoxValue(b, v);
-
-                    if (fd && k < fd->params.count)
-                    {
-                        /* Implicit scalar widening/narrowing to the declared
-                           param type (e.g. a float literal to a double param)
-                           - without this the arg crosses at its own width and
-                           the call gets a mismatched ABI (garbage). */
-                        TypeDesc paramTd = Resolve(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
-                        v = Coerce(b, v, paramTd);
-
-                        /* An owning struct passed by value: the callee owns
-                           and drops its copy at return, so hand it a deep
-                           copy — the caller's value keeps its own fields
-                           (C value semantics; `ref` is the zero-copy escape). */
-                        if (paramTd.structTypeName
-                            && TypeRegistryIsOwningStruct(&b->m_registry, paramTd.structTypeName))
-                        {
-                            v = EmitCopyValue(b, v, paramTd);
-                        }
-                    }
-
-                    args[k] = v.value;
-                }
-            }
-        }
-    }
-
-    /* The callee's own hidden context pointer (see DeclareFunction) is never
-       written by Strata source; forward the CALLING function's pointer
-       automatically. `impl` self-insertion already happened at the sema
-       level (an ordinary arg inside [0,nargs)), so this composes for free:
-       final order is [ctx, self, ...rest]. */
-    LLVMValueRef* finalArgs = args;
-    unsigned finalCount = (unsigned)nargs;
-
-    if (info->hasHiddenCtxParam)
-    {
-        finalArgs = (LLVMValueRef*)arena_alloc(b->m_arena, (nargs + 1) * sizeof(LLVMValueRef));
-        finalArgs[0] = b->m_curGlobalsPtr;
-
-        if (nargs > 0)
-        {
-            memcpy(finalArgs + 1, args, nargs * sizeof(LLVMValueRef));
-        }
-
-        finalCount = (unsigned)(nargs + 1);
-    }
-
-    /* `extern<T>`: T's descriptor goes last, after every argument the call spells out. */
-    if (info->hasTypeDescParam && fd && fd->typeArg)
-    {
-        LLVMValueRef* withTypeDesc = (LLVMValueRef*)arena_alloc(b->m_arena, (finalCount + 1) * sizeof(LLVMValueRef));
-
-        if (finalCount > 0)
-        {
-            memcpy(withTypeDesc, finalArgs, finalCount * sizeof(LLVMValueRef));
-        }
-
-        withTypeDesc[finalCount] = TypeDescConstant(b, fd->typeArg);
-        finalArgs = withTypeDesc;
-        finalCount++;
-    }
-
-    LLVMValueRef callee = info->function;
-    bool slotExtern = false;
-
-    /* Through a delegate: the pointer value is the callee; a null one panics instead of jumping to 0. */
-    if (n->delegateCallee)
-    {
-        callee = EmitExpr(b, n->delegateCallee).value;
-
-        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "dlgnull");
-        LLVMBasicBlockRef nullBB = NewBb(b, "dlg.null");
-        LLVMBasicBlockRef callBB = NewBb(b, "dlg.call");
-        LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
-
-        PositionAtEnd(b, nullBB);
-        LLVMValueRef panicArgs[1] = {MsgGlobalPtr(
-            b, ".pmsg", arena_format(b->m_arena, "call through a null '%s' delegate", n->delegateDecl->name))};
-        StrataPanicFn(b);
-        LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, panicArgs, 1, "");
-        LLVMBuildUnreachable(b->m_builder);
-
-        PositionAtEnd(b, callBB);
-    }
-
-    if (b->m_jitMode)
-    {
-        LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->m_externSlots, n->callee);
-
-        if (slot)
-        {
-            slotExtern = true;
-            LLVMValueRef fnPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "extfn");
-            callee = fnPtr;
-        }
-    }
-
-    LLVMValueRef call;
-
-    if (slotExtern && b->m_nullExternCheck)
-    {
-        /* JIT extern slots start null; a call before strataJitAddSymbol bound
-           the host fn would jump to address 0. Under nullExternCall, panic with
-           the unbound name. The panic block RETURNS a zero value so a host
-           panic handler that returns keeps the JIT frame's stack walker away. */
-        LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "extnull");
-        LLVMBasicBlockRef nullBB = NewBb(b, "ext.null");
-        LLVMBasicBlockRef callBB = NewBb(b, "ext.call");
-        LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
-        b->m_terminated = true;
-
-        PositionAtEnd(b, nullBB);
-        {
-            LLVMValueRef args2[1]
-                = {MsgGlobalPtr(b, ".pmsg", arena_format(b->m_arena, "call to null extern function '%s'", n->callee))};
-            StrataPanicFn(b);
-            LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args2, 1, "");
-
-            /* The `ret` here terminates the ENCLOSING Strata function, so it
-               must use the enclosing function's return type (m_curRet), not the
-               extern's. Returning the extern's type (e.g. a ptr for a `handle`
-               return inside an i32 fn) produces malformed IR that crashes LLVM
-               optimizers. */
-            if (b->m_curRet.isVoid)
-            {
-                LLVMBuildRetVoid(b->m_builder);
-            }
-            else
-            {
-                LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_curRetAbi));
-            }
-        }
-
-        PositionAtEnd(b, callBB);
-        call = LLVMBuildCall2(b->m_builder, info->type, callee, finalArgs, finalCount, "call");
-    }
-    else
-    {
-        call = LLVMBuildCall2(b->m_builder, info->type, callee, finalArgs, finalCount, "call");
-    }
-
-    /* Array-literal args: `ref T[]` temps are stack views (drop owning
-       elements, never the buffer); by-value temps transferred ownership to
-       the callee and are not touched here. */
-    for (size_t t = 0; t < ownedArgTemps.count; t++)
-    {
-        OwnedArgTemp* at = (OwnedArgTemp*)VecGet(&ownedArgTemps, t);
-
-        if (at->stackOnly)
-        {
-            EmitDropOneStack(b, at->slot, at->td);
-        }
-        else
-        {
-            EmitDropOne(b, at->slot, at->td);
-        }
-    }
-
-    /* Sub-32-bit integer extern returns (bool/byte/sbyte/short/ushort): the
-       C host only defines the low part of the widened register (AL/AX), so
-       narrow the raw result back to the semantic type - truncating away the
-       undefined upper bits, then re-extending per the semantic signedness.
-       Strata-emitted callees always extend the full register themselves. */
-    if (fd && fd->isExtern && info->retSemanticTy && call
-        && LLVMGetTypeKind(info->retSemanticTy) == LLVMIntegerTypeKind)
-    {
-        LLVMTypeRef abiRet = LLVMGetReturnType(info->type);
-
-        if (abiRet && LLVMGetTypeKind(abiRet) == LLVMIntegerTypeKind
-            && LLVMGetIntTypeWidth(abiRet) > LLVMGetIntTypeWidth(info->retSemanticTy))
-        {
-            LLVMValueRef narrow = LLVMBuildTrunc(b->m_builder, call, info->retSemanticTy, "ret.narrow");
-
-            bool zeroExtend = info->retSemanticUnsigned || info->retSemanticTy == I1Ty(b);
-
-            call = zeroExtend ? LLVMBuildZExt(b->m_builder, narrow, abiRet, "ret.zext")
-                              : LLVMBuildSExt(b->m_builder, narrow, abiRet, "ret.sext");
-        }
-    }
-
-    /* Return-param call: the C function wrote the result into our temp slot;
-       load it back as the Strata-level return value. */
-    if (hasReturnParam)
-    {
-        LLVMValueRef retVal = LLVMBuildLoad2(b->m_builder, returnParamTd.type, returnParamSlot, "retparam.val");
-
-        return ValueMake(retVal, returnParamTd);
-    }
-
-    /* Extern `string` return: the host handed back a NUL-terminated char*;
-       copy it into a fresh owned buffer (the semantic type stays the fat).
-       A DISCARDED result is skipped entirely — no allocation, no leak. */
-    if (info->externStringReturn)
-    {
-        if (discarded)
-        {
-            return ValueMake(LLVMConstNull(ArrayStructType(b)), info->returnType);
-        }
-
-        Value owned = ValueMake(BuildOwnedStringFromCStr(b, call), info->returnType);
-        NoteFreshOwned(b, owned);
-        return owned;
-    }
-
-    Value result = ValueMake(call, info->returnType);
-
-    /* A Strata function's owning result is a fresh value the caller owns
-       (extern results keep their existing host-ownership handling). */
-    if (fd && !fd->isExtern && !discarded)
-    {
-        NoteFreshOwned(b, result);
-    }
-
-    return result;
+    return EmitFunctionCall(b, n, info, discarded);
 }
