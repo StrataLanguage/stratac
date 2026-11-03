@@ -26,7 +26,6 @@ typedef struct
     StrMap m_boxGlobals;
     StrMap m_refBoxParams;
     StrMap m_refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
-    StrMap m_refThroughBox;  /* `ref` locals that alias the value inside a box at their path */
     StrMap m_refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
     StrMap m_typeCache;      /* canonical spelling -> interned TypeName tree */
     StrMap m_constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
@@ -48,10 +47,6 @@ typedef struct
 
     /* The current path is dead (after return/break/continue). */
     bool m_unreachable;
-
-    /* The index expression being resolved is the target of a plain `=`: it
-       is overwritten, not read, so a moved-out element is legal there. */
-    bool m_indexWriteTarget;
 } Resolver;
 
 /* A folded manifest constant: a `const` scalar global whose initializer is a
@@ -6963,7 +6958,7 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
 
 /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
    variable, field or element of type T (or a `^T` / proven `T?` holding one). Nothing is
-   moved or copied; the alias cannot be rebound or moved from, and dies (see InvalidateRefLocals) once
+   moved or copied; the alias cannot be rebound or moved from, and dies once
    what it refers to may have moved. */
 static void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range);
 
@@ -7024,7 +7019,6 @@ static void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     vd->refThroughBox = through;
     StrMapPut(&r->m_refLocals, vd->name, (void*)CanonicalRefKey(r, key));
-    StrMapPut(&r->m_refThroughBox, vd->name, through ? (void*)1 : NULL);
 
     // Like a `ref` param: it does not own what it aliases, so it is never moved from or rebound.
     if (AliasIsOwning(r, &vd->type) || AliasIsOwningValue(r, &vd->type))
@@ -7735,10 +7729,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
         }
         else
         {
-            // A plain `=` overwrites an element: a moved-out slot may be refilled.
-            r->m_indexWriteTarget = a->target->kind == NodeIndex && a->op == AssignSet;
             ResolveExpr(r, a->target, scope);
-            r->m_indexWriteTarget = false;
             ResolveExpr(r, a->value, scope);
 
             if (a->op == AssignSet)
@@ -8433,9 +8424,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     case NodeIndex:
     {
         IndexExpr* ix = (IndexExpr*)n;
-        bool writeTarget = r->m_indexWriteTarget;
 
-        r->m_indexWriteTarget = false;
         ResolveExprImpl(r, ix->base_node, scope, true);
         ResolveExprImpl(r, ix->index, scope, false);
 
@@ -8983,7 +8972,6 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (StrMapGet(&r->m_refLocals, vd->name))
         {
             StrMapPut(&r->m_refLocals, vd->name, NULL);
-            StrMapPut(&r->m_refThroughBox, vd->name, NULL);
             StrMapPut(&r->m_refBoxParams, vd->name, NULL);
         }
 
@@ -10164,7 +10152,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&r.m_boxGlobals);
     StrMapInit(&r.m_refBoxParams);
     StrMapInit(&r.m_refLocals);
-    StrMapInit(&r.m_refThroughBox);
     StrMapInit(&r.m_refArrayParams);
     StrMapInit(&r.m_typeCache);
     VecInit(&r.m_scopeDecls);
@@ -10250,7 +10237,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
         ResetStrMap(&r.m_constVars);
         ResetStrMap(&r.m_refBoxParams);
         ResetStrMap(&r.m_refLocals);
-        ResetStrMap(&r.m_refThroughBox);
         ResetStrMap(&r.m_refArrayParams);
         r.m_scopeDecls.count = 0;
         r.m_deferFrames.count = 0;
@@ -10693,7 +10679,6 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapFree(&r.m_boxGlobals);
     StrMapFree(&r.m_refBoxParams);
     StrMapFree(&r.m_refLocals);
-    StrMapFree(&r.m_refThroughBox);
     StrMapFree(&r.m_refArrayParams);
     StrMapFree(&r.m_typeCache);
     StrMapFree(&byMangled);
