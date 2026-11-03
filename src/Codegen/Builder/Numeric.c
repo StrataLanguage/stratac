@@ -186,314 +186,323 @@ static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
     return ValueMake(out, boolDesc);
 }
 
-Value EmitBinary(Builder* b, BinaryExpr* n)
+/* `a && b` and `a || b`: the right side is evaluated only when the left does not decide the result. */
+static Value EmitLogicalBinary(Builder* b, BinaryExpr* n)
 {
-    if (n->op == BinLogicAnd || n->op == BinLogicOr)
+    bool isAnd = (n->op == BinLogicAnd);
+
+    LLVMValueRef cond = ToI1(b, EmitCondOperand(b, n->lhs));
+
+    LLVMBasicBlockRef lhsEnd = LLVMGetInsertBlock(b->m_builder);
+    LLVMBasicBlockRef rhsBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.rhs");
+    LLVMBasicBlockRef mergeBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.end");
+
+    if (isAnd)
     {
-        bool isAnd = (n->op == BinLogicAnd);
-
-        LLVMValueRef cond = ToI1(b, EmitCondOperand(b, n->lhs));
-
-        LLVMBasicBlockRef lhsEnd = LLVMGetInsertBlock(b->m_builder);
-        LLVMBasicBlockRef rhsBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.rhs");
-        LLVMBasicBlockRef mergeBlock = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "logic.end");
-
-        if (isAnd)
-        {
-            LLVMBuildCondBr(b->m_builder, cond, rhsBlock, mergeBlock);
-        }
-        else
-        {
-            LLVMBuildCondBr(b->m_builder, cond, mergeBlock, rhsBlock);
-        }
-
-        LLVMPositionBuilderAtEnd(b->m_builder, rhsBlock);
-        LLVMValueRef rhsCond = ToI1(b, EmitCondOperand(b, n->rhs));
-
-        LLVMBasicBlockRef rhsEnd = LLVMGetInsertBlock(b->m_builder);
-        LLVMBuildBr(b->m_builder, mergeBlock);
-
-        LLVMPositionBuilderAtEnd(b->m_builder, mergeBlock);
-        LLVMValueRef phi = LLVMBuildPhi(b->m_builder, I1Ty(b), "logic");
-
-        LLVMValueRef shortCircuit = isAnd ? LLVMConstNull(I1Ty(b)) : LLVMConstInt(I1Ty(b), 1, 0);
-
-        LLVMBasicBlockRef incomingBlocks[2] = {lhsEnd, rhsEnd};
-        LLVMValueRef incomingVals[2] = {shortCircuit, rhsCond};
-        LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
-
-        return ValueMake(phi, TypeDescMake(I1Ty(b), 0, NULL));
+        LLVMBuildCondBr(b->m_builder, cond, rhsBlock, mergeBlock);
+    }
+    else
+    {
+        LLVMBuildCondBr(b->m_builder, cond, mergeBlock, rhsBlock);
     }
 
-    Value l = EmitExpr(b, n->lhs);
-    Value r = EmitExpr(b, n->rhs);
+    LLVMPositionBuilderAtEnd(b->m_builder, rhsBlock);
+    LLVMValueRef rhsCond = ToI1(b, EmitCondOperand(b, n->rhs));
 
-    /* Box/optional operands (^T, T?) AUTO-DEREF like everywhere else:
-        `==`/`!=` compare the pointed-to values structurally (member-wise for
-        structs, content for strings, element-wise for arrays). `T?` is
-        null-aware: empty == empty, empty != non-empty. Incomplete-struct
-        inners hold the T* itself, so their deref is identity; handle inners
-        hold the handle value, so they load. (An explicit identity intrinsic
-        may come later; deep equality of cyclic T? graphs does not
-        terminate.) */
-    if ((TypeDescIsBox(&l.typeDesc) && TypeDescIsBox(&r.typeDesc)) && (n->op == BinEqEq || n->op == BinNotEq))
+    LLVMBasicBlockRef rhsEnd = LLVMGetInsertBlock(b->m_builder);
+    LLVMBuildBr(b->m_builder, mergeBlock);
+
+    LLVMPositionBuilderAtEnd(b->m_builder, mergeBlock);
+    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, I1Ty(b), "logic");
+
+    LLVMValueRef shortCircuit = isAnd ? LLVMConstNull(I1Ty(b)) : LLVMConstInt(I1Ty(b), 1, 0);
+
+    LLVMBasicBlockRef incomingBlocks[2] = {lhsEnd, rhsEnd};
+    LLVMValueRef incomingVals[2] = {shortCircuit, rhsCond};
+    LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
+
+    return ValueMake(phi, TypeDescMake(I1Ty(b), 0, NULL));
+}
+
+/* `==`/`!=` on two box or optional operands (^T, T?) compare the pointed-to values
+   structurally (member-wise for structs, content for strings, element-wise for
+   arrays). `T?` is null-aware: empty == empty, empty != non-empty. Incomplete-struct
+   inners hold the T* itself, so their deref is identity; handle inners hold the
+   handle value, so they load. (An explicit identity intrinsic may come later; deep
+   equality of cyclic T? graphs does not terminate.) */
+static Value EmitBoxEquality(Builder* b, BinaryExpr* n, Value l, Value r)
+{
+    LLVMBasicBlockRef falseBB = NewBb(b, "boxeq.f");
+    LLVMBasicBlockRef trueBB = NewBb(b, "boxeq.t");
+    LLVMBasicBlockRef eqEnd;
+
+    if (l.typeDesc.boxInner)
     {
-        LLVMBasicBlockRef falseBB = NewBb(b, "boxeq.f");
-        LLVMBasicBlockRef trueBB = NewBb(b, "boxeq.t");
-        LLVMBasicBlockRef eqEnd;
-
-        if (l.typeDesc.boxInner)
-        {
-            TypeDesc innerTd = Resolve(b, l.typeDesc.boxInner);
-            eqEnd = EmitBoxCellEq(b, b->m_curFn, l.value, r.value, &innerTd, TypeDescIsOptional(&l.typeDesc), falseBB);
-            LLVMBuildBr(b->m_builder, trueBB);
-        }
-        else
-        {
-            /* ^string (degenerate: the cell IS a char*): identity. */
-            LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, l.value, r.value, "boxeq"), trueBB,
-                            falseBB);
-            eqEnd = LLVMGetInsertBlock(b->m_builder);
-        }
-
-        LLVMPositionBuilderAtEnd(b->m_builder, falseBB);
+        TypeDesc innerTd = Resolve(b, l.typeDesc.boxInner);
+        eqEnd = EmitBoxCellEq(b, b->m_curFn, l.value, r.value, &innerTd, TypeDescIsOptional(&l.typeDesc), falseBB);
         LLVMBuildBr(b->m_builder, trueBB);
-        LLVMPositionBuilderAtEnd(b->m_builder, trueBB);
-        LLVMValueRef cmp = LLVMBuildPhi(b->m_builder, I1Ty(b), "boxeq");
-        LLVMValueRef inVals[2] = {LLVMConstInt(I1Ty(b), 1, 0), LLVMConstInt(I1Ty(b), 0, 0)};
-        LLVMBasicBlockRef inBlocks[2] = {eqEnd, falseBB};
-        LLVMAddIncoming(cmp, inVals, inBlocks, 2);
-
-        if (n->op == BinNotEq)
-        {
-            cmp = LLVMBuildNot(b->m_builder, cmp, "boxne");
-        }
-
-        return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
     }
-
-    l = DerefBoxValue(b, l);
-    r = DerefBoxValue(b, r);
-
-    TypeDesc typeDesc = l.typeDesc;
-
-    /* String / cstring equality is CONTENT comparison (strata_str_eq with a
-       length fast-out and pointer-identity fast-in) — never a raw compare of
-       the pointers. `cstring` supplies its length via strlen. Other
-       comparisons are meaningless. */
-    if (l.typeDesc.isString || r.typeDesc.isString || l.typeDesc.isCString || r.typeDesc.isCString)
+    else
     {
-        if (n->op == BinEqEq || n->op == BinNotEq)
-        {
-            /* Both sides are only read: `make_str() == "x"` temporaries. */
-            BorrowTemp(b, l, TypeDescMake(I1Ty(b), 0, NULL));
-            BorrowTemp(b, r, TypeDescMake(I1Ty(b), 0, NULL));
-
-            LLVMValueRef lp;
-            LLVMValueRef ll;
-            LLVMValueRef rp;
-            LLVMValueRef rl;
-
-            if (l.typeDesc.isCString)
-            {
-                lp = l.value;
-                ll = BuildStrLen(b, l.value);
-            }
-            else
-            {
-                lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
-                ll = WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll"));
-            }
-
-            if (r.typeDesc.isCString)
-            {
-                rp = r.value;
-                rl = BuildStrLen(b, r.value);
-            }
-            else
-            {
-                rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
-                rl = WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl"));
-            }
-
-            LLVMValueRef args[4] = {lp, ll, rp, rl};
-            StrataStrEqFn(b);
-            LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
-            LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
-
-            if (n->op == BinNotEq)
-            {
-                cmp = LLVMBuildNot(b->m_builder, cmp, "sne");
-            }
-
-            return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
-        }
-
-        if (n->op == BinAdd)
-        {
-            /* Concatenation: both sides are read (temporaries die at statement end); the result is
-               a fresh owned string. */
-            ClaimTemp(b, l);
-            ClaimTemp(b, r);
-
-            LLVMValueRef lp = l.typeDesc.isCString ? l.value : LLVMBuildExtractValue(b->m_builder, l.value, 0, "cat.l");
-            LLVMValueRef ll = l.typeDesc.isCString
-                                  ? BuildStrLen(b, l.value)
-                                  : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
-            LLVMValueRef rp = r.typeDesc.isCString ? r.value : LLVMBuildExtractValue(b->m_builder, r.value, 0, "cat.r");
-            LLVMValueRef rl = r.typeDesc.isCString
-                                  ? BuildStrLen(b, r.value)
-                                  : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
-
-            Value result = ValueMake(BuildConcatStringFat(b, lp, ll, rp, rl), StringFatDesc(b));
-            NoteFreshOwned(b, result);
-            return result;
-        }
-
-        DiagError(b->m_diag, n->base.range, "strings only support '==' and '!=' comparisons");
-
-        return ValueMake(LLVMConstNull(I1Ty(b)), TypeDescMake(I1Ty(b), 0, NULL));
+        /* ^string (degenerate: the cell IS a char*): identity. */
+        LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, l.value, r.value, "boxeq"), trueBB,
+                        falseBB);
+        eqEnd = LLVMGetInsertBlock(b->m_builder);
     }
 
-    /* Aggregate equality: structs and arrays compare structurally — a
-       whole-value byte compare where the layout allows (zero-initialized
-       padding, no floats), member-wise / element-wise recursion otherwise
-       (IEEE-754 floats, strcmp-style strings, nested arrays). The operands
-       were loaded as values above: spill each to a temp so the per-type
-       helper can compare through addresses. */
+    LLVMPositionBuilderAtEnd(b->m_builder, falseBB);
+    LLVMBuildBr(b->m_builder, trueBB);
+    LLVMPositionBuilderAtEnd(b->m_builder, trueBB);
+    LLVMValueRef cmp = LLVMBuildPhi(b->m_builder, I1Ty(b), "boxeq");
+    LLVMValueRef inVals[2] = {LLVMConstInt(I1Ty(b), 1, 0), LLVMConstInt(I1Ty(b), 0, 0)};
+    LLVMBasicBlockRef inBlocks[2] = {eqEnd, falseBB};
+    LLVMAddIncoming(cmp, inVals, inBlocks, 2);
+
+    if (n->op == BinNotEq)
+    {
+        cmp = LLVMBuildNot(b->m_builder, cmp, "boxne");
+    }
+
+    return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
+}
+
+/* String / cstring equality is CONTENT comparison (strata_str_eq with a
+   length fast-out and pointer-identity fast-in) — never a raw compare of
+   the pointers. `cstring` supplies its length via strlen. */
+static Value EmitStringEquality(Builder* b, BinaryExpr* n, Value l, Value r)
+{
+    /* Both sides are only read: `make_str() == "x"` temporaries. */
+    BorrowTemp(b, l, TypeDescMake(I1Ty(b), 0, NULL));
+    BorrowTemp(b, r, TypeDescMake(I1Ty(b), 0, NULL));
+
+    LLVMValueRef lp;
+    LLVMValueRef ll;
+    LLVMValueRef rp;
+    LLVMValueRef rl;
+
+    if (l.typeDesc.isCString)
+    {
+        lp = l.value;
+        ll = BuildStrLen(b, l.value);
+    }
+    else
+    {
+        lp = LLVMBuildExtractValue(b->m_builder, l.value, 0, "seq.l");
+        ll = WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll"));
+    }
+
+    if (r.typeDesc.isCString)
+    {
+        rp = r.value;
+        rl = BuildStrLen(b, r.value);
+    }
+    else
+    {
+        rp = LLVMBuildExtractValue(b->m_builder, r.value, 0, "seq.r");
+        rl = WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "seq.rl"));
+    }
+
+    LLVMValueRef args[4] = {lp, ll, rp, rl};
+    StrataStrEqFn(b);
+    LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "seq");
+    LLVMValueRef cmp = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "seq.b");
+
+    if (n->op == BinNotEq)
+    {
+        cmp = LLVMBuildNot(b->m_builder, cmp, "sne");
+    }
+
+    return ValueMake(cmp, TypeDescMake(I1Ty(b), 0, NULL));
+}
+
+/* Concatenation: both sides are read (temporaries die at statement end); the result is
+   a fresh owned string. */
+static Value EmitStringConcat(Builder* b, Value l, Value r)
+{
+    ClaimTemp(b, l);
+    ClaimTemp(b, r);
+
+    LLVMValueRef lp = l.typeDesc.isCString ? l.value : LLVMBuildExtractValue(b->m_builder, l.value, 0, "cat.l");
+    LLVMValueRef ll = l.typeDesc.isCString ? BuildStrLen(b, l.value)
+                                           : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
+    LLVMValueRef rp = r.typeDesc.isCString ? r.value : LLVMBuildExtractValue(b->m_builder, r.value, 0, "cat.r");
+    LLVMValueRef rl = r.typeDesc.isCString ? BuildStrLen(b, r.value)
+                                           : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
+
+    Value result = ValueMake(BuildConcatStringFat(b, lp, ll, rp, rl), StringFatDesc(b));
+    NoteFreshOwned(b, result);
+
+    return result;
+}
+
+/* Strings support only `==`, `!=` and `+`; any other operator is a diagnosed error. */
+static Value EmitStringBinary(Builder* b, BinaryExpr* n, Value l, Value r)
+{
     if (n->op == BinEqEq || n->op == BinNotEq)
     {
-        /* Handles (opaque) are pointers: they compare by address below, never member-wise. */
-        bool lAgg
-            = (l.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, l.typeDesc.structTypeName))
-              || ((TypeDescHasArrayShape(&l.typeDesc) || l.typeDesc.isFixedArray) && !l.typeDesc.isString);
-        bool rAgg
-            = (r.typeDesc.structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, r.typeDesc.structTypeName))
-              || ((TypeDescHasArrayShape(&r.typeDesc) || r.typeDesc.isFixedArray) && !r.typeDesc.isString);
-
-        if (lAgg && rAgg)
-        {
-            LLVMValueRef la = SpillEqOperand(b, l);
-            LLVMValueRef ra = SpillEqOperand(b, r);
-            LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
-            LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
-            LLVMValueRef eqArgs[2] = {la, ra};
-            LLVMValueRef eq
-                = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2, "eq");
-
-            if (n->op == BinNotEq)
-            {
-                eq = LLVMBuildNot(b->m_builder, eq, "eqne");
-            }
-
-            return ValueMake(eq, TypeDescMake(I1Ty(b), 0, NULL));
-        }
+        return EmitStringEquality(b, n, l, r);
     }
 
-    /* A signed value against an unsigned one compares by value, not by whichever signedness the operands happen
-       to be coerced to: -1 < 1u is true, and a long is never equal to an ulong it merely shares bits with. */
-    if (IsComparisonOp(n->op) && !l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type && r.typeDesc.type
-        && LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
-        && LLVMGetTypeKind(r.typeDesc.type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(l.typeDesc.type) > 1
-        && LLVMGetIntTypeWidth(r.typeDesc.type) > 1 && l.typeDesc.isUnsigned != r.typeDesc.isUnsigned)
+    if (n->op == BinAdd)
     {
-        return EmitMixedSignCompare(b, n->op, l, r);
+        return EmitStringConcat(b, l, r);
     }
 
-    if (l.typeDesc.isFloat && !r.typeDesc.isFloat)
-    {
-        r = Coerce(b, r, l.typeDesc);
-    }
-    else if (!l.typeDesc.isFloat && r.typeDesc.isFloat)
-    {
-        l = Coerce(b, l, r.typeDesc);
+    DiagError(b->m_diag, n->base.range, "strings only support '==' and '!=' comparisons");
 
-        typeDesc = r.typeDesc;
+    return ValueMake(LLVMConstNull(I1Ty(b)), TypeDescMake(I1Ty(b), 0, NULL));
+}
+
+/* Structs and arrays (other than strings and opaque handles) are aggregate
+   operands of `==`/`!=`. */
+static bool IsAggregateEqOperand(Builder* b, TypeDesc* td)
+{
+    return (td->structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, td->structTypeName))
+           || ((TypeDescHasArrayShape(td) || td->isFixedArray) && !td->isString);
+}
+
+/* Aggregate equality: structs and arrays compare structurally — a
+   whole-value byte compare where the layout allows (zero-initialized
+   padding, no floats), member-wise / element-wise recursion otherwise
+   (IEEE-754 floats, strcmp-style strings, nested arrays). The operands
+   were loaded as values above: spill each to a temp so the per-type
+   helper can compare through addresses. */
+static Value EmitAggregateEquality(Builder* b, BinaryExpr* n, Value l, Value r)
+{
+    LLVMValueRef la = SpillEqOperand(b, l);
+    LLVMValueRef ra = SpillEqOperand(b, r);
+    LLVMTypeRef eqParams[2] = {b->m_ptrTy, b->m_ptrTy};
+    LLVMTypeRef eqFnTy = LLVMFunctionType(I1Ty(b), eqParams, 2, 0);
+    LLVMValueRef eqArgs[2] = {la, ra};
+    LLVMValueRef eq = LLVMBuildCall2(b->m_builder, eqFnTy, EnsureEqHelper(b, &l.typeDesc, false), eqArgs, 2, "eq");
+
+    if (n->op == BinNotEq)
+    {
+        eq = LLVMBuildNot(b->m_builder, eq, "eqne");
     }
-    else if (l.typeDesc.isFloat && r.typeDesc.isFloat && l.typeDesc.type != r.typeDesc.type)
+
+    return ValueMake(eq, TypeDescMake(I1Ty(b), 0, NULL));
+}
+
+/* A signed value against an unsigned one compares by value, not by whichever signedness the operands happen
+   to be coerced to: -1 < 1u is true, and a long is never equal to an ulong it merely shares bits with. */
+static bool IsMixedSignIntCompare(BinaryOp op, Value l, Value r)
+{
+    return IsComparisonOp(op) && !l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type && r.typeDesc.type
+           && LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
+           && LLVMGetTypeKind(r.typeDesc.type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(l.typeDesc.type) > 1
+           && LLVMGetIntTypeWidth(r.typeDesc.type) > 1 && l.typeDesc.isUnsigned != r.typeDesc.isUnsigned;
+}
+
+/* Brings two numeric operands to one type: a float meets a float, a mixed float / double pair computes
+   in double, and mixed integer widths compute in the wider type. Returns the operation's type. */
+static TypeDesc NormalizeNumericOperands(Builder* b, Value* l, Value* r)
+{
+    TypeDesc typeDesc = l->typeDesc;
+
+    if (l->typeDesc.isFloat && !r->typeDesc.isFloat)
+    {
+        *r = Coerce(b, *r, l->typeDesc);
+    }
+    else if (!l->typeDesc.isFloat && r->typeDesc.isFloat)
+    {
+        *l = Coerce(b, *l, r->typeDesc);
+
+        typeDesc = r->typeDesc;
+    }
+    else if (l->typeDesc.isFloat && r->typeDesc.isFloat && l->typeDesc.type != r->typeDesc.type)
     {
         /* float mixed with double: compute in the wider type (fpext the float
            side) - the old code left the operands at mismatched widths, which
            emitted invalid IR like `fmul float X, double Y`. */
         LLVMTypeRef d = LLVMDoubleTypeInContext(b->m_ctx);
 
-        if (l.typeDesc.type == d)
+        if (l->typeDesc.type == d)
         {
-            r = Coerce(b, r, l.typeDesc);
-            typeDesc = l.typeDesc;
+            *r = Coerce(b, *r, l->typeDesc);
+            typeDesc = l->typeDesc;
         }
         else
         {
-            l = Coerce(b, l, r.typeDesc);
-            typeDesc = r.typeDesc;
+            *l = Coerce(b, *l, r->typeDesc);
+            typeDesc = r->typeDesc;
         }
     }
-    else if (!l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type != r.typeDesc.type && l.typeDesc.type
-             && r.typeDesc.type)
+    else if (!l->typeDesc.isFloat && !r->typeDesc.isFloat && l->typeDesc.type != r->typeDesc.type && l->typeDesc.type
+             && r->typeDesc.type)
     {
         /* Mixed integer widths: compute in the wider type (`int + byte`
            must not truncate the int to i8). Non-integer operands (pointers
            etc.) keep the old left-to-right coercion. */
-        bool bothInt = LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
-                       && LLVMGetTypeKind(r.typeDesc.type) == LLVMIntegerTypeKind;
-        bool leftWider = bothInt ? LLVMGetIntTypeWidth(l.typeDesc.type) > LLVMGetIntTypeWidth(r.typeDesc.type)
-                                 : l.typeDesc.type == I64Ty(b);
+        bool bothInt = LLVMGetTypeKind(l->typeDesc.type) == LLVMIntegerTypeKind
+                       && LLVMGetTypeKind(r->typeDesc.type) == LLVMIntegerTypeKind;
+        bool leftWider = bothInt ? LLVMGetIntTypeWidth(l->typeDesc.type) > LLVMGetIntTypeWidth(r->typeDesc.type)
+                                 : l->typeDesc.type == I64Ty(b);
 
         if (leftWider)
         {
-            r = Coerce(b, r, l.typeDesc);
+            *r = Coerce(b, *r, l->typeDesc);
         }
         else
         {
-            l = Coerce(b, l, r.typeDesc);
-            typeDesc = r.typeDesc;
+            *l = Coerce(b, *l, r->typeDesc);
+            typeDesc = r->typeDesc;
         }
     }
 
-    LLVMValueRef out = NULL;
-    bool flt = typeDesc.isFloat;
+    return typeDesc;
+}
 
-    TypeDesc boolTypeDesc = TypeDescMake(I1Ty(b), 0, NULL);
-
-    /* For comparisons involving pointer types (string, box, handle), convert
-       both operands to i64 so that icmp works correctly. */
-    if (typeDesc.type == b->m_ptrTy || r.typeDesc.type == b->m_ptrTy)
+/* For comparisons involving pointer types (string, box, handle), convert
+   both operands to i64 so that icmp works correctly. */
+static void PromotePointerComparison(Builder* b, BinaryOp op, Value* l, Value* r, TypeDesc* typeDesc, bool* flt)
+{
+    if (!(typeDesc->type == b->m_ptrTy || r->typeDesc.type == b->m_ptrTy))
     {
-        switch (n->op)
-        {
-        case BinEqEq:
-        case BinNotEq:
-        case BinLt:
-        case BinLtEq:
-        case BinGt:
-        case BinGtEq:
-            typeDesc = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
-            flt = false;
-            if (l.typeDesc.type == b->m_ptrTy)
-            {
-                l.value = LLVMBuildPtrToInt(b->m_builder, l.value, I64Ty(b), "picmp");
-                l.typeDesc = typeDesc;
-            }
-            else
-            {
-                l = Coerce(b, l, typeDesc);
-            }
-            if (r.typeDesc.type == b->m_ptrTy)
-            {
-                r.value = LLVMBuildPtrToInt(b->m_builder, r.value, I64Ty(b), "picmp");
-                r.typeDesc = typeDesc;
-            }
-            else
-            {
-                r = Coerce(b, r, typeDesc);
-            }
-            break;
-        default:
-            break;
-        }
+        return;
     }
 
-    switch (n->op)
+    switch (op)
+    {
+    case BinEqEq:
+    case BinNotEq:
+    case BinLt:
+    case BinLtEq:
+    case BinGt:
+    case BinGtEq:
+        *typeDesc = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
+        *flt = false;
+        if (l->typeDesc.type == b->m_ptrTy)
+        {
+            l->value = LLVMBuildPtrToInt(b->m_builder, l->value, I64Ty(b), "picmp");
+            l->typeDesc = *typeDesc;
+        }
+        else
+        {
+            *l = Coerce(b, *l, *typeDesc);
+        }
+        if (r->typeDesc.type == b->m_ptrTy)
+        {
+            r->value = LLVMBuildPtrToInt(b->m_builder, r->value, I64Ty(b), "picmp");
+            r->typeDesc = *typeDesc;
+        }
+        else
+        {
+            *r = Coerce(b, *r, *typeDesc);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* Integer and float `+ - * / %`. Integer `/` and `%` are checked for a zero divisor and
+   for overflow before the operation. */
+static Value EmitNumericBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDesc typeDesc, bool flt)
+{
+    LLVMValueRef out = NULL;
+
+    switch (op)
     {
     case BinAdd:
         out = flt ? LLVMBuildFAdd(b->m_builder, l.value, r.value, "add")
@@ -537,6 +546,20 @@ Value EmitBinary(Builder* b, BinaryExpr* n)
 
         return ValueMake(out, typeDesc);
 
+    default:
+        /* Not an arithmetic operator: the dispatcher never sends one here. */
+        return l;
+    }
+}
+
+/* Integer-only bitwise operators and shifts. A shift by the operand's width or more
+   is undefined in LLVM and masked by the hardware, so it panics instead. */
+static Value EmitBitwiseBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDesc typeDesc)
+{
+    LLVMValueRef out = NULL;
+
+    switch (op)
+    {
     case BinBitAnd:
         out = LLVMBuildAnd(b->m_builder, l.value, r.value, "and");
 
@@ -565,6 +588,21 @@ Value EmitBinary(Builder* b, BinaryExpr* n)
 
         return ValueMake(out, typeDesc);
 
+    default:
+        /* Not a bitwise operator: the dispatcher never sends one here. */
+        return l;
+    }
+}
+
+/* The six comparisons on integers, floats and vectors. A vector comparison yields one
+   bool per lane; `==` holds when every lane does. */
+static Value EmitComparisonBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDesc typeDesc, bool flt)
+{
+    LLVMValueRef out = NULL;
+    TypeDesc boolTypeDesc = TypeDescMake(I1Ty(b), 0, NULL);
+
+    switch (op)
+    {
     case BinEqEq:
         out = flt ? FcmpByName(b->m_builder, "oeq", l.value, r.value)
                   : IcmpByName(b->m_builder, "eq", typeDesc.isUnsigned, l.value, r.value);
@@ -608,6 +646,75 @@ Value EmitBinary(Builder* b, BinaryExpr* n)
                   : IcmpByName(b->m_builder, "ge", typeDesc.isUnsigned, l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
+
+    default:
+        /* Not a comparison: the dispatcher never sends one here. */
+        return l;
+    }
+}
+
+Value EmitBinary(Builder* b, BinaryExpr* n)
+{
+    if (n->op == BinLogicAnd || n->op == BinLogicOr)
+    {
+        return EmitLogicalBinary(b, n);
+    }
+
+    Value l = EmitExpr(b, n->lhs);
+    Value r = EmitExpr(b, n->rhs);
+
+    if (TypeDescIsBox(&l.typeDesc) && TypeDescIsBox(&r.typeDesc) && (n->op == BinEqEq || n->op == BinNotEq))
+    {
+        return EmitBoxEquality(b, n, l, r);
+    }
+
+    l = DerefBoxValue(b, l);
+    r = DerefBoxValue(b, r);
+
+    if (l.typeDesc.isString || r.typeDesc.isString || l.typeDesc.isCString || r.typeDesc.isCString)
+    {
+        return EmitStringBinary(b, n, l, r);
+    }
+
+    if ((n->op == BinEqEq || n->op == BinNotEq) && IsAggregateEqOperand(b, &l.typeDesc)
+        && IsAggregateEqOperand(b, &r.typeDesc))
+    {
+        return EmitAggregateEquality(b, n, l, r);
+    }
+
+    if (IsMixedSignIntCompare(n->op, l, r))
+    {
+        return EmitMixedSignCompare(b, n->op, l, r);
+    }
+
+    TypeDesc typeDesc = NormalizeNumericOperands(b, &l, &r);
+    bool flt = typeDesc.isFloat;
+
+    PromotePointerComparison(b, n->op, &l, &r, &typeDesc, &flt);
+
+    switch (n->op)
+    {
+    case BinAdd:
+    case BinSub:
+    case BinMul:
+    case BinDiv:
+    case BinMod:
+        return EmitNumericBinary(b, n->op, l, r, typeDesc, flt);
+
+    case BinBitAnd:
+    case BinBitOr:
+    case BinBitXor:
+    case BinShl:
+    case BinShr:
+        return EmitBitwiseBinary(b, n->op, l, r, typeDesc);
+
+    case BinEqEq:
+    case BinNotEq:
+    case BinLt:
+    case BinLtEq:
+    case BinGt:
+    case BinGtEq:
+        return EmitComparisonBinary(b, n->op, l, r, typeDesc, flt);
 
     default:
         return l;
