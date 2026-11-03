@@ -296,12 +296,6 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* raw = InferType(r, base, scope);
 
-        if (raw && TypeNameIsOptional(raw))
-        {
-            // Reading through a `T?` receiver needs a narrowing fact.
-            const char* key = MovableBoxSourceKey(r, base);
-        }
-
         const TypeName* inner = UnwrapBoxPtr(raw);
 
         if (!inner || !TypeRegistryIsImplTarget(&r->registry, inner->name))
@@ -718,7 +712,6 @@ static void ResolveStructInitField(Resolver* r, StructInitExpr* structInitExpr, 
         }
         else
         {
-            field->value = field->value;
             const TypeName* fieldValueType = InferType(r, field->value, scope);
 
             if (fieldValueType && !IsAssignableType(r, &fieldDecl->type, fieldValueType)
@@ -816,18 +809,12 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
 
-    ResolveExprImpl(r, m->baseNode, scope, true);
+    ResolveExprImpl(r, m->baseNode, scope);
 
     const TypeName* rawBaseType = InferType(r, m->baseNode, scope);
 
     // Impl property reads are call-like: no lvalue, no move source.
     m->isImplProperty = PropertyOnHandle(r, rawBaseType, m->member) != NULL;
-
-    // Reading a possibly-empty optional needs a narrowing fact.
-    if (rawBaseType && TypeNameIsOptional(rawBaseType))
-    {
-        const char* baseKey = MovableBoxSourceKey(r, m->baseNode);
-    }
 
     const TypeName* baseType = UnwrapBoxPtr(rawBaseType);
 

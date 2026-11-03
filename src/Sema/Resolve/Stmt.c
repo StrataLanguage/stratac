@@ -201,11 +201,6 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
         FlowFree(&afterCond);
     }
 
-    // Condition true: its facts hold through the body.
-    if (condition)
-    {
-    }
-
     VecPush(&r->loopFlows, &lf);
 
     if (bodyScope)
@@ -672,7 +667,6 @@ static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
 static void WalkVarDeclInit(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
     ResolveExpr(r, vd->init, scope);
-    vd->init = vd->init;
     const TypeName* initType = InferType(r, vd->init, scope);
 
     bool ok = initType && (IsAssignableType(r, &vd->type, initType) || IsStrLiteralForCString(r, &vd->type, vd->init));
@@ -779,7 +773,6 @@ static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
         }
 
         ResolveExpr(r, rs->value, scope);
-        rs->value = rs->value;
 
         const TypeName* typeName = InferType(r, rs->value, scope);
 

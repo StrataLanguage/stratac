@@ -461,32 +461,6 @@ bool FlowSame(const FlowState* a, const FlowState* b)
 
 void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
 {
-    // Calls may rebind globals, so global facts never survive.
-    for (size_t g = 0; g < r->mod->globals.count; g++)
-    {
-        GlobalDecl* gd = (GlobalDecl*)VecGet(&r->mod->globals, g);
-
-        // ...and refs into globals may dangle after any call that could reach them.
-        if (!best->isExtern)
-        {
-        }
-    }
-
-    // A callee given a path by mutable ref (or taking it) may grow, shrink or rebind it.
-    {
-        size_t named = NamedParamCount(best);
-
-        for (size_t j = 0; j < c->args.count && j < named; j++)
-        {
-            const ParamDecl* p = (ParamDecl*)VecGet(&best->params, j);
-            Node* arg = (Node*)VecGet(&c->args, j);
-
-            if ((p->mod == ModRef && !p->type.isConst) || (p->mod == ModNone && AliasIsOwning(r, &p->type)))
-            {
-            }
-        }
-    }
-
     // A typed rest collects trailing args as its element type.
     bool typedRest = best->isVariadic && !best->isCVararg;
     size_t namedCount = NamedParamCount(best);
@@ -494,50 +468,6 @@ void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c)
     for (size_t j = 0; j < c->args.count; j++)
     {
         Node* arg = (Node*)VecGet(&c->args, j);
-
-        // A non-const `ref` arg may be mutated: drop its facts.
-        if (j < namedCount)
-        {
-            const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, j);
-
-            if (rp->mod == ModRef && !rp->type.isConst)
-            {
-                if (arg->kind == NodeIdent)
-                {
-                }
-
-                const char* refKey = MovableBoxSourceKey(r, arg);
-
-                if (refKey)
-                {
-                    // The callee may write through the ref: drop nested facts.
-
-                    // Anything under the borrowed path may be rewritten (`h.f`, `a[0]`).
-
-                    // A `T?` source unwrapped into a plain `ref T` param only
-                    // borrows the pointee - the callee cannot rebind (or
-                    // empty) the caller's slot, so the non-empty fact
-                    // survives. A `ref T?` param crosses the SLOT itself,
-                    // which the callee may rebind: its fact dies.
-                    if (TypeNameIsOptional(&rp->type))
-                    {
-                    }
-                }
-            }
-        }
-        else if (typedRest && best->params.count > 0)
-        {
-            const ParamDecl* rp = (ParamDecl*)VecGet(&best->params, best->params.count - 1);
-
-            if (rp->mod == ModRef && !rp->type.isConst)
-            {
-                if (arg->kind == NodeIdent)
-                {
-                }
-
-                // A mutable ref rest element may be rewritten like a named ref arg.
-            }
-        }
 
         const TypeName* targetType = NULL;
         bool moves = false;
