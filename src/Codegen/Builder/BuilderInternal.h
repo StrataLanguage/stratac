@@ -355,3 +355,8 @@ LLVMValueRef EmitArrayLiteralBuffer(Builder* b, LLVMTypeRef elemTy, LLVMTypeRef 
 void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd,
                              LLVMTypeRef elemTy);
 void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd, bool borrow);
+
+// Expr.c dispatch (EmitLValue cases)
+LValue EmitIdentLValue(Builder* b, IdentExpr* id);
+LValue EmitMemberLValue(Builder* b, MemberExpr* m);
+LValue EmitIndexLValue(Builder* b, IndexExpr* ix);
