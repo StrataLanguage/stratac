@@ -47,17 +47,19 @@ extern "C"
 
     typedef enum StrataEmitFlags
     {
+        STRATA_EMIT_NONE = (0),
         /* Not supported yet: SIMD vector types always lower to native vector
            instructions, so an STRATA_EMIT_LLVM_IR compile with this flag fails
            with an error instead of silently emitting SIMD code. */
-        STRATA_EMIT_NO_SIMD = (1U << 0),
+        STRATA_EMIT_NO_SIMD = (1u << 0),
     } StrataEmitFlags;
 
-    typedef enum
+    typedef enum StrataCapabilityFlags
     {
-        STRATA_CAP_LLVM_IR = 1u << 0,
-        STRATA_CAP_LLVM_AOT = 1u << 1,
-        STRATA_CAP_LLVM_JIT = 1u << 2,
+        STRATA_CAP_NONE = (0),
+        STRATA_CAP_LLVM_IR = (1u << 0),
+        STRATA_CAP_LLVM_AOT = (1u << 1),
+        STRATA_CAP_LLVM_JIT = (1u << 2),
     } StrataCapability;
 
     typedef enum

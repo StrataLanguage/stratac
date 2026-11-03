@@ -94,6 +94,7 @@ typedef struct
 
 typedef enum TypeDescFlag
 {
+    TD_NONE = (0),
     TD_FLOAT = (1 << 0),
     TD_UNSIGNED = (1 << 1),
     TD_VOID = (1 << 2),
