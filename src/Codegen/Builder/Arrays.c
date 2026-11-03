@@ -1168,7 +1168,7 @@ void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
 
     if (varDecl->init && varDecl->init->kind == NodeArrayInit)
     {
-        ArrayInitExpr* ai = AsNode(ArrayInitExpr, varDecl->init);
+        ArrayInitExpr* ai = AS_NODE(ArrayInitExpr, varDecl->init);
 
         /* Sema guarantees the leaf element type; fall back to a
            leaf-walk of the declared type if it is missing or not a
@@ -1231,7 +1231,7 @@ void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
     {
         if (varDecl->init->kind == NodeArrayInit)
         {
-            LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, varDecl->init)).value;
+            LLVMValueRef arr = EmitArrayInit(b, AS_NODE(ArrayInitExpr, varDecl->init)).value;
             LLVMBuildStore(b->builder, arr, slot);
         }
         else if (TypeDescIsString(&typeDesc) && varDecl->init->kind == NodeStrLiteral)

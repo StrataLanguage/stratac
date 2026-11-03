@@ -38,8 +38,8 @@ LaneCount IsSimdVector(PrimitiveType prim);
  */
 LaneCount IsNameSimdVector(const char* t);
 
-#define GetSimdVectorLanes(t_) IsSimdVector(t_)
-#define GetNameSimdVectorLanes(t_) IsNameSimdVector(t_)
+#define GET_SIMD_VECTOR_LANES(t_) IsSimdVector(t_)
+#define GET_NAME_SIMD_VECTOR_LANES(t_) IsNameSimdVector(t_)
 
 bool IsScalarType(PrimitiveType prim);
 bool IsNameScalarType(const char* t);

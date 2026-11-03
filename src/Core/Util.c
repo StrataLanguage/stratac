@@ -41,23 +41,23 @@ Str StrNew(Arena* arena, const char* str, size_t len)
 
 static void ArenaGrow(Arena* a, size_t need)
 {
-    size_t chunk_size = a->defaultChunk;
+    size_t chunkSize = a->defaultChunk;
 
-    if (chunk_size < need + sizeof(ArenaChunk))
+    if (chunkSize < need + sizeof(ArenaChunk))
     {
-        chunk_size = need + sizeof(ArenaChunk);
+        chunkSize = need + sizeof(ArenaChunk);
     }
 
-    chunk_size = (chunk_size + 63) & ~(size_t)63;
+    chunkSize = (chunkSize + 63) & ~(size_t)63;
 
-    ArenaChunk* c = (ArenaChunk*)malloc(chunk_size);
+    ArenaChunk* c = (ArenaChunk*)malloc(chunkSize);
     if (!c)
     {
         STRATA_OOM();
     }
 
     c->next = a->head;
-    c->size = chunk_size - sizeof(ArenaChunk);
+    c->size = chunkSize - sizeof(ArenaChunk);
 
     a->head = c;
     a->ptr = (char*)(c + 1);

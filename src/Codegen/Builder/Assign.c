@@ -171,7 +171,7 @@ static Value EmitBoxMoveAssign(Builder* b, AssignExpr* n, Value rhs, LValue lval
 static Value EmitBoxFromLiteralAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
-    StrLiteral* lit = AsNode(StrLiteral, n->value);
+    StrLiteral* lit = AS_NODE(StrLiteral, n->value);
     size_t copyLen = lit->length + 1;
     LLVMValueRef size = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
     LLVMValueRef args2[1] = {size};

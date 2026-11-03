@@ -97,7 +97,7 @@ static void Pad(int indent, Sb* out)
 
 static void DumpModule(Node* n, int indent, Sb* out)
 {
-    Module* module = AsNode(Module, n);
+    Module* module = AS_NODE(Module, n);
     SbPrintf(out, "module %s\n", module->name);
     for (size_t i = 0; i < module->imports.count; i++)
     {
@@ -147,7 +147,7 @@ static void DumpModule(Node* n, int indent, Sb* out)
 
 static void DumpImpl(Node* n, int indent, Sb* out)
 {
-    ImplDecl* impl = AsNode(ImplDecl, n);
+    ImplDecl* impl = AS_NODE(ImplDecl, n);
     SbPrintf(out, "impl %s {\n", impl->handleName);
 
     for (size_t i = 0; i < impl->methods.count; i++)
@@ -181,21 +181,21 @@ static void DumpImpl(Node* n, int indent, Sb* out)
 
 static void DumpImport(Node* n, Sb* out)
 {
-    ImportDecl* imp = AsNode(ImportDecl, n);
+    ImportDecl* imp = AS_NODE(ImportDecl, n);
     SbPrintf(out, "import %s;\n", imp->importPath);
     return;
 }
 
 static void DumpHandle(Node* n, Sb* out)
 {
-    HandleDecl* handleDecl = AsNode(HandleDecl, n);
+    HandleDecl* handleDecl = AS_NODE(HandleDecl, n);
     SbPrintf(out, "handle %s  ; opaque\n", handleDecl->name);
     return;
 }
 
 static void DumpEnum(Node* n, int indent, Sb* out)
 {
-    EnumDecl* enumDecl = AsNode(EnumDecl, n);
+    EnumDecl* enumDecl = AS_NODE(EnumDecl, n);
     SbPrintf(out, "enum %s", enumDecl->name);
 
     if (enumDecl->underlyingType)
@@ -226,7 +226,7 @@ static void DumpEnum(Node* n, int indent, Sb* out)
 
 static void DumpStruct(Node* n, int indent, Sb* out)
 {
-    StructDecl* structDecl = AsNode(StructDecl, n);
+    StructDecl* structDecl = AS_NODE(StructDecl, n);
     if (structDecl->isTypeAlias)
     {
         SbPrintf(out, "struct %s = %s;\n", structDecl->name, structDecl->underlyingType);
@@ -255,7 +255,7 @@ static void DumpStruct(Node* n, int indent, Sb* out)
 
 static void DumpFunction(Node* n, int indent, Sb* out)
 {
-    FunctionDecl* functionDecl = AsNode(FunctionDecl, n);
+    FunctionDecl* functionDecl = AS_NODE(FunctionDecl, n);
     if (functionDecl->isPrivate)
     {
         SbPuts(out, "@private\n");
@@ -340,7 +340,7 @@ static void DumpFunction(Node* n, int indent, Sb* out)
 
 static void DumpBlock(Node* n, int indent, Sb* out)
 {
-    Block* block = AsNode(Block, n);
+    Block* block = AS_NODE(Block, n);
     SbPuts(out, "{\n");
 
     for (size_t i = 0; i < block->statements.count; i++)
@@ -357,7 +357,7 @@ static void DumpBlock(Node* n, int indent, Sb* out)
 
 static void DumpReturn(Node* n, Sb* out)
 {
-    ReturnStmt* returnStmt = AsNode(ReturnStmt, n);
+    ReturnStmt* returnStmt = AS_NODE(ReturnStmt, n);
     SbPuts(out, "return");
 
     if (returnStmt->value)
@@ -376,7 +376,7 @@ static void DumpReturn(Node* n, Sb* out)
 
 static void DumpIf(Node* n, int indent, Sb* out)
 {
-    IfStmt* i = AsNode(IfStmt, n);
+    IfStmt* i = AS_NODE(IfStmt, n);
 
     SbPuts(out, "if ");
     Dump(i->condition, 0, out);
@@ -395,7 +395,7 @@ static void DumpIf(Node* n, int indent, Sb* out)
 
 static void DumpWhile(Node* n, int indent, Sb* out)
 {
-    WhileStmt* w = AsNode(WhileStmt, n);
+    WhileStmt* w = AS_NODE(WhileStmt, n);
     SbPuts(out, "while ");
     Dump(w->condition, 0, out);
     SbPutc(out, '\n');
@@ -406,7 +406,7 @@ static void DumpWhile(Node* n, int indent, Sb* out)
 
 static void DumpFor(Node* n, int indent, Sb* out)
 {
-    ForStmt* forStmt = AsNode(ForStmt, n);
+    ForStmt* forStmt = AS_NODE(ForStmt, n);
     SbPuts(out, "for (");
 
     if (forStmt->init)
@@ -438,7 +438,7 @@ static void DumpFor(Node* n, int indent, Sb* out)
 
 static void DumpVarDecl(Node* n, Sb* out)
 {
-    VarDeclStmt* varDecl = AsNode(VarDeclStmt, n);
+    VarDeclStmt* varDecl = AS_NODE(VarDeclStmt, n);
     SbPrintf(out, "%s %s", varDecl->type.name, varDecl->name);
 
     if (varDecl->init)
@@ -456,7 +456,7 @@ static void DumpVarDecl(Node* n, Sb* out)
 
 static void DumpExprStmt(Node* n, Sb* out)
 {
-    ExprStmt* expr = AsNode(ExprStmt, n);
+    ExprStmt* expr = AS_NODE(ExprStmt, n);
 
     if (expr->expr)
     {
@@ -484,7 +484,7 @@ static void DumpContinue(Sb* out)
 
 static void DumpIntLiteral(Node* n, Sb* out)
 {
-    IntLiteral* lit = AsNode(IntLiteral, n);
+    IntLiteral* lit = AS_NODE(IntLiteral, n);
     SbPrintf(out, "%llu", (unsigned long long)lit->value);
 
     if (lit->isUnsigned)
@@ -499,31 +499,31 @@ static void DumpIntLiteral(Node* n, Sb* out)
 
 static void DumpFloatLiteral(Node* n, Sb* out)
 {
-    SbPrintf(out, "%g\n", AsNode(FloatLiteral, n)->value);
+    SbPrintf(out, "%g\n", AS_NODE(FloatLiteral, n)->value);
     return;
 }
 
 static void DumpBoolLiteral(Node* n, Sb* out)
 {
-    SbPuts(out, AsNode(BoolLiteral, n)->value ? "true\n" : "false\n");
+    SbPuts(out, AS_NODE(BoolLiteral, n)->value ? "true\n" : "false\n");
     return;
 }
 
 static void DumpStrLiteral(Node* n, Sb* out)
 {
-    SbPrintf(out, "\"%s\"\n", AsNode(StrLiteral, n)->value);
+    SbPrintf(out, "\"%s\"\n", AS_NODE(StrLiteral, n)->value);
     return;
 }
 
 static void DumpIdent(Node* n, Sb* out)
 {
-    SbPrintf(out, "%s\n", AsNode(IdentExpr, n)->name);
+    SbPrintf(out, "%s\n", AS_NODE(IdentExpr, n)->name);
     return;
 }
 
 static void DumpUnary(Node* n, Sb* out)
 {
-    UnaryExpr* unaryExpr = AsNode(UnaryExpr, n);
+    UnaryExpr* unaryExpr = AS_NODE(UnaryExpr, n);
     SbPrintf(out, "(%s ", UnaryOpSpelling(unaryExpr->op));
     Dump(unaryExpr->operand, 0, out);
 
@@ -532,7 +532,7 @@ static void DumpUnary(Node* n, Sb* out)
 
 static void DumpBinary(Node* n, Sb* out)
 {
-    BinaryExpr* binaryExpr = AsNode(BinaryExpr, n);
+    BinaryExpr* binaryExpr = AS_NODE(BinaryExpr, n);
     SbPrintf(out, "(%s ", BinaryOpSpelling(binaryExpr->op));
     Dump(binaryExpr->lhs, 0, out);
     Pad(0, out);
@@ -543,7 +543,7 @@ static void DumpBinary(Node* n, Sb* out)
 
 static void DumpAssign(Node* n, Sb* out)
 {
-    AssignExpr* assignExpr = AsNode(AssignExpr, n);
+    AssignExpr* assignExpr = AS_NODE(AssignExpr, n);
     SbPrintf(out, "(%s ", AssignOpSpelling(assignExpr->op));
     Dump(assignExpr->target, 0, out);
     Dump(assignExpr->value, 0, out);
@@ -553,7 +553,7 @@ static void DumpAssign(Node* n, Sb* out)
 
 static void DumpCall(Node* n, Sb* out)
 {
-    CallExpr* callExpr = AsNode(CallExpr, n);
+    CallExpr* callExpr = AS_NODE(CallExpr, n);
 
     if (callExpr->calleeBase)
     {
@@ -578,7 +578,7 @@ static void DumpCall(Node* n, Sb* out)
 
 static void DumpMember(Node* n, Sb* out)
 {
-    MemberExpr* memberExpr = AsNode(MemberExpr, n);
+    MemberExpr* memberExpr = AS_NODE(MemberExpr, n);
     SbPrintf(out, "(. %s ", memberExpr->member);
     Dump(memberExpr->baseNode, 0, out);
 
@@ -587,7 +587,7 @@ static void DumpMember(Node* n, Sb* out)
 
 static void DumpStructInit(Node* n, Sb* out)
 {
-    StructInitExpr* si = AsNode(StructInitExpr, n);
+    StructInitExpr* si = AS_NODE(StructInitExpr, n);
     SbPrintf(out, "(struct-init %s", si->typeName);
 
     for (size_t i = 0; i < si->fields.count; i++)
@@ -612,7 +612,7 @@ static void DumpStructInit(Node* n, Sb* out)
 
 static void DumpIncDec(Node* n, Sb* out)
 {
-    IncDecExpr* inc = AsNode(IncDecExpr, n);
+    IncDecExpr* inc = AS_NODE(IncDecExpr, n);
     SbPrintf(out, "(%c%c%s ", inc->isDec ? '-' : '+', inc->isDec ? '-' : '+', inc->isPrefix ? "" : "p");
     Dump(inc->operand, 0, out);
     SbPutc(out, ')');
@@ -622,7 +622,7 @@ static void DumpIncDec(Node* n, Sb* out)
 
 static void DumpCast(Node* n, Sb* out)
 {
-    CastExpr* cast = AsNode(CastExpr, n);
+    CastExpr* cast = AS_NODE(CastExpr, n);
     SbPrintf(out, "(cast %s ", cast->type.name);
     Dump(cast->operand, 0, out);
     SbPutc(out, ')');
@@ -631,7 +631,7 @@ static void DumpCast(Node* n, Sb* out)
 
 static void DumpGlobal(Node* n, Sb* out)
 {
-    GlobalDecl* gd = AsNode(GlobalDecl, n);
+    GlobalDecl* gd = AS_NODE(GlobalDecl, n);
     SbPrintf(out, "global %s %s", gd->type.name, gd->name);
 
     if (gd->init)
@@ -647,7 +647,7 @@ static void DumpGlobal(Node* n, Sb* out)
 
 static void DumpIndex(Node* n, Sb* out)
 {
-    IndexExpr* idx = AsNode(IndexExpr, n);
+    IndexExpr* idx = AS_NODE(IndexExpr, n);
     SbPuts(out, "([] ");
     Dump(idx->baseNode, 0, out);
     SbPutc(out, ' ');
@@ -658,7 +658,7 @@ static void DumpIndex(Node* n, Sb* out)
 
 static void DumpArrayInit(Node* n, Sb* out)
 {
-    ArrayInitExpr* ai = AsNode(ArrayInitExpr, n);
+    ArrayInitExpr* ai = AS_NODE(ArrayInitExpr, n);
     SbPrintf(out, "(array-init %s", ai->elementType ? ai->elementType->name : "");
 
     for (size_t i = 0; i < ai->elements.count; i++)
@@ -673,7 +673,7 @@ static void DumpArrayInit(Node* n, Sb* out)
 
 static void DumpConditional(Node* n, Sb* out)
 {
-    ConditionalExpr* ce = AsNode(ConditionalExpr, n);
+    ConditionalExpr* ce = AS_NODE(ConditionalExpr, n);
     SbPuts(out, "(? ");
     Dump(ce->condition, 0, out);
     SbPutc(out, ' ');
@@ -686,7 +686,7 @@ static void DumpConditional(Node* n, Sb* out)
 
 static void DumpNullTest(Node* n, Sb* out)
 {
-    NullTestExpr* nt = AsNode(NullTestExpr, n);
+    NullTestExpr* nt = AS_NODE(NullTestExpr, n);
     SbPuts(out, "(nulltest ");
     Dump(nt->operand, 0, out);
     SbPutc(out, '?');
@@ -696,7 +696,7 @@ static void DumpNullTest(Node* n, Sb* out)
 
 static void DumpDefer(Node* n, Sb* out)
 {
-    DeferStmt* d = AsNode(DeferStmt, n);
+    DeferStmt* d = AS_NODE(DeferStmt, n);
     SbPuts(out, "defer ");
     Dump(d->stmt, 0, out);
     return;

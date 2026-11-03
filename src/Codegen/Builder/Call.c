@@ -522,7 +522,7 @@ static LLVMValueRef LowerArrayLiteralArg(Builder* b, const FunctionDecl* fd, siz
                                          Vec* ownedArgTemps)
 {
     const ParamDecl* litParam = (ParamDecl*)VecGet(&fd->params, k);
-    ArrayInitExpr* ai = AsNode(ArrayInitExpr, argNode);
+    ArrayInitExpr* ai = AS_NODE(ArrayInitExpr, argNode);
     Value arr;
 
     if (litParam->mod == ModRef)

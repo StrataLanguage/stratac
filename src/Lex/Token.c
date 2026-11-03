@@ -8,7 +8,7 @@ typedef struct
     const char* text;
 } Spelling;
 
-static const Spelling keywords[] = {
+static const Spelling KEYWORDS[] = {
     {TokKwVoid,        "void"       },
     {TokKwBool,        "bool"       },
     {TokKwInt,         "int"        },
@@ -51,7 +51,7 @@ static const Spelling keywords[] = {
     {TokKwProperty,    "property"   }
 };
 
-static const Spelling punct[] = {
+static const Spelling PUNCT[] = {
     {TokLParen,    "("  },
     {TokRParen,    ")"  },
     {TokLBrace,    "{"  },
@@ -96,16 +96,16 @@ static const Spelling punct[] = {
     {TokAt,        "@"  }
 };
 
-#define KEYWORD_COUNT ARRAY_COUNT(keywords)
-#define PUNCT_COUNT ARRAY_COUNT(punct)
+#define KEYWORD_COUNT ARRAY_COUNT(KEYWORDS)
+#define PUNCT_COUNT ARRAY_COUNT(PUNCT)
 
 TokKind ClassifyKeyword(Str ident)
 {
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (ident.len == strlen(keywords[i].text) && memcmp(ident.data, keywords[i].text, ident.len) == 0)
+        if (ident.len == strlen(KEYWORDS[i].text) && memcmp(ident.data, KEYWORDS[i].text, ident.len) == 0)
         {
-            return keywords[i].kind;
+            return KEYWORDS[i].kind;
         }
     }
 
@@ -116,17 +116,17 @@ const char* TokSpelling(TokKind kind)
 {
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (keywords[i].kind == kind)
+        if (KEYWORDS[i].kind == kind)
         {
-            return keywords[i].text;
+            return KEYWORDS[i].text;
         }
     }
 
     for (size_t i = 0; i < PUNCT_COUNT; i++)
     {
-        if (punct[i].kind == kind)
+        if (PUNCT[i].kind == kind)
         {
-            return punct[i].text;
+            return PUNCT[i].text;
         }
     }
 
@@ -167,9 +167,9 @@ const char* TokName(TokKind kind)
 
     for (size_t i = 0; i < KEYWORD_COUNT; i++)
     {
-        if (keywords[i].kind == kind)
+        if (KEYWORDS[i].kind == kind)
         {
-            return keywords[i].text;
+            return KEYWORDS[i].text;
         }
     }
 
