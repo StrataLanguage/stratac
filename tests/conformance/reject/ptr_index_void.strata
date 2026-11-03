@@ -1,0 +1,7 @@
+// expect: reject "cannot index a pointer to 'void'"
+// rule: a void pointer has no element type, so it cannot be indexed
+int main()
+{
+    *void v = null;
+    return v[0];
+}

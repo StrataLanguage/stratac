@@ -1,0 +1,7 @@
+// expect: panic "null pointer dereference"
+// rule: indexing through a null typed pointer panics, as *p does
+int main()
+{
+    *int p = null;
+    return p[1];
+}

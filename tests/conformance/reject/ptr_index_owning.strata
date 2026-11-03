@@ -1,0 +1,7 @@
+// expect: reject "cannot index a pointer to an owning type"
+// rule: an element of a pointer's pointee cannot be an owning value, same as *p
+int main()
+{
+    *string s = null;
+    return s[0];
+}
