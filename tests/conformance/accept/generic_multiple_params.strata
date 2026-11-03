@@ -1,0 +1,22 @@
+// expect: run
+// expect-output: 5
+// rule: a generic struct and a generic function with two type parameters take each argument independently
+struct pair<A, B> { A first; B second; }
+impl pair<A, B>
+{
+    A get_first(const ref pair<A, B> self) { return self.first; }
+    B get_second(const ref pair<A, B> self) { return self.second; }
+}
+pair<A, B> make_pair<A, B>(A a, B b)
+{
+    pair<A, B> p = pair<A, B> { .first = a, .second = b };
+    return p;
+}
+int main()
+{
+    pair<int, float> p = make_pair<int, float>(4, 2.5);
+    int x = p.get_first();
+    float y = p.get_second();
+    if (y > 2.0) { printf("%d\n", x + 1); }
+    return 0;
+}

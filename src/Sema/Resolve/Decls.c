@@ -1,4 +1,5 @@
 // Declaration-level checks and the ResolveOverloads entry point.
+#include "Sema/Monomorphize.h"
 #include "Sema/Resolve/ResolverInternal.h"
 
 // Why a component field of `type` isn't plain data (NULL when it is). The offending
@@ -1114,6 +1115,15 @@ static void ReleaseResolverState(Resolver* r)
 
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
+    // Generic templates become concrete declarations first, so sema never sees a template or a type parameter.
+    uint32_t errorsBefore = DiagErrorCount(diag);
+    Monomorphize(mod, diag, arena);
+
+    if (DiagErrorCount(diag) != errorsBefore)
+    {
+        return;
+    }
+
     Resolver r = {0};
     r.mod = mod;
     r.diag = diag;

@@ -1,0 +1,13 @@
+// expect: reject "needs explicit type arguments"
+// rule: a call to a generic function names its type arguments (inference is not supported yet)
+struct number<T> { T value; }
+number<T> make_number<T>(T value)
+{
+    number<T> n = number<T> { .value = value };
+    return n;
+}
+int main()
+{
+    number<int> n = make_number(3);
+    return 0;
+}

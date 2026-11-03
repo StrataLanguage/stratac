@@ -1,0 +1,14 @@
+// expect: reject "cannot be overloaded"
+// rule: two generic functions cannot share a name, so an overload set never has a generic member
+int pick<T>(T v)
+{
+    return 0;
+}
+int pick<T>(T v, T w)
+{
+    return 1;
+}
+int main()
+{
+    return 0;
+}

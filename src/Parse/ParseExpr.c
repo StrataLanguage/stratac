@@ -892,25 +892,21 @@ static Node* ParseStrLiteral(Parser* p, Token token)
     return (Node*)node;
 }
 
-// An identifier or a builtin type keyword: a call (plain, or with an explicit `Name<Type>(...)`
-// type argument), a struct literal `Name { ... }`, or a plain identifier.
+// An identifier or a builtin type keyword: a call (plain, or with explicit `Name<T, ...>(...)`
+// type arguments), a struct literal `Name { ... }` or `Name<T, ...> { ... }`, or a plain identifier.
 static Node* ParseNamedPrimary(Parser* p, Token token)
 {
     Advance(p);
 
-    // `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
-    // else starting `Name <` is a comparison, so the attempt is rolled back.
+    // `Name<T, ...>(args)` and `Name<T, ...> { ... }`: explicit type arguments. Anything else starting
+    // `Name <` is a comparison, so the attempt is rolled back.
     if (token.kind == TokIdent && p->cur.kind == TokLt)
     {
         LexerCheckpoint saved = SaveLexerState(p);
-        Advance(p);
+        TypeName use = {0};
 
-        TypeName typeArg = {0};
-
-        if (ParserTryParseType(p, &typeArg) && typeArg.name && p->cur.kind == TokGt)
+        if (ParseTypeArgsAfter(p, ToOwned(p->arena, ParserIdentText(p, token)), token.range, &use))
         {
-            Advance(p);
-
             if (p->cur.kind == TokLParen)
             {
                 CallExpr* call = AST_NEW(p->arena, CallExpr);
@@ -918,12 +914,22 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
                 call->base.range = token.range;
                 call->callee = ToOwned(p->arena, ParserIdentText(p, token));
                 call->isIntrinsicCall = false;
-                call->typeArg = (TypeName*)ArenaDup(p->arena, &typeArg, sizeof(TypeName));
+                call->typeArgs = use.typeArgs;
+                call->typeArgCount = use.typeArgCount;
+                call->typeArg = use.typeArgCount == 1 ? &use.typeArgs[0] : NULL;
                 VecInit(&call->args);
 
                 ParseCallArgs(p, call);
 
                 return (Node*)call;
+            }
+
+            if (p->cur.kind == TokLBrace)
+            {
+                Node* init = ParseStructInitBody(p, token, use.name);
+                ((StructInitExpr*)init)->genericType = (TypeName*)ArenaDup(p->arena, &use, sizeof(TypeName));
+
+                return init;
             }
         }
 

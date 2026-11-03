@@ -1,0 +1,28 @@
+// expect: run
+// expect-output: 3 15
+// rule: the generics plan example: a generic struct with an impl, a generic function, and two instances of one template
+struct number<T>
+{
+    T value;
+}
+
+impl number<T>
+{
+    T get_value(const ref number<T> self) { return self.value; }
+    void set_value(ref number<T> self, T value) { self.value = value; }
+}
+
+number<T> make_number<T>(T value)
+{
+    number<T> num;
+    num.set_value(value);
+    return num;
+}
+
+int main()
+{
+    number<int> a = make_number<int>(3);
+    number<float> b = number<float> { .value = 1.5 };
+    printf("%d %d\n", a.get_value(), (int)(b.get_value() * 10.0));
+    return 0;
+}

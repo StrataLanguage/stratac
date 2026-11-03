@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: 8 6
+// rule: a generic struct used as a field of a plain struct is instantiated for that field's type arguments
+struct number<T> { T value; }
+impl number<T> { T get_value(const ref number<T> self) { return self.value; } }
+struct scene
+{
+    number<int> count;
+    number<float> scale;
+}
+int main()
+{
+    scene s = { .count = number<int> { .value = 4 }, .scale = number<float> { .value = 2.0 } };
+    printf("%d %d\n", s.count.get_value() * 2, (int)(s.scale.get_value() * 3.0));
+    return 0;
+}

@@ -64,6 +64,62 @@ HandleDecl* ParseHandleDecl(Parser* p)
     return node;
 }
 
+static bool TypeParamListHas(const Vec* params, const char* name)
+{
+    for (size_t i = 0; i < params->count; i++)
+    {
+        if (strcmp((const char*)VecGet(params, i), name) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// `<T, U, ...>` after a declaration's name, the current token being the `<`. Appends the names to
+// `outParams`, the caller's Vec. Duplicates and builtin type names are reported and dropped.
+static void ParseTypeParamList(Parser* p, Vec* outParams)
+{
+    Advance(p);
+
+    while (true)
+    {
+        Token nameTok = p->cur;
+        char* name = ToOwned(p->arena, ParserIdentText(p, nameTok));
+        bool isBuiltin = GetPrimitiveType(name) != PrimNone;
+
+        // Builtin type names lex as keywords: they are named in the message, not reported as a bad token.
+        if (nameTok.kind != TokIdent && !isBuiltin)
+        {
+            DiagError(p->diag, nameTok.range, "expected a type parameter name");
+            break;
+        }
+
+        Advance(p);
+
+        if (isBuiltin)
+        {
+            DiagErrorFmt(p->diag, nameTok.range, "'%s' is a builtin type and cannot be a type parameter", name);
+        }
+        else if (TypeParamListHas(outParams, name))
+        {
+            DiagErrorFmt(p->diag, nameTok.range, "duplicate type parameter '%s'", name);
+        }
+        else
+        {
+            VecPush(outParams, name);
+        }
+
+        if (!ParserConsume(p, TokComma))
+        {
+            break;
+        }
+    }
+
+    ParserExpect(p, TokGt, "'>'");
+}
+
 // `struct Name = type;`: a type alias. It has no fields of its own.
 static StructDecl* ParseStructAlias(Parser* p, Token nameTok)
 {
@@ -224,8 +280,23 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     CheckTypeNameNotHandle(p, nameTok);
     Advance(p);
 
+    Vec genericParams;
+    VecInit(&genericParams);
+
+    if (p->cur.kind == TokLt)
+    {
+        ParseTypeParamList(p, &genericParams);
+    }
+
     if (ParserConsume(p, TokAssign))
     {
+        if (genericParams.count > 0)
+        {
+            DiagError(p->diag, nameTok.range, "a struct alias cannot have type parameters");
+        }
+
+        free(genericParams.items);
+
         return ParseStructAlias(p, nameTok);
     }
 
@@ -237,6 +308,12 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     node->isExtern = isExtern;
     node->isUnion = isUnion;
     node->moduleName = p->moduleName;
+    node->genericParams = genericParams;
+
+    if (isExtern && genericParams.count > 0)
+    {
+        DiagError(p->diag, nameTok.range, "an extern struct cannot have type parameters");
+    }
 
     if (ParserConsume(p, TokLBrace))
     {
@@ -249,6 +326,11 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
         if (isExtern)
         {
             DiagError(p->diag, nameTok.range, "extern struct must have a body");
+        }
+
+        if (genericParams.count > 0)
+        {
+            DiagError(p->diag, nameTok.range, "a forward declaration cannot have type parameters");
         }
 
         node->incomplete = true;
@@ -518,6 +600,12 @@ void ApplyStructAttributes(Parser* p, StructDecl* sd, Vec* attributes)
             DiagErrorFmt(p->diag, attribute->range,
                          "'@component' requires a struct definition with a body (not an alias, forward "
                          "declaration or extern struct)");
+            continue;
+        }
+
+        if (sd->genericParams.count > 0)
+        {
+            DiagErrorFmt(p->diag, attribute->range, "'@component' cannot have type parameters");
             continue;
         }
 
@@ -866,6 +954,23 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
         return NULL;
     }
 
+    // A `<` right after the name starts the type parameters of a generic function.
+    Vec genericParams;
+    VecInit(&genericParams);
+
+    if (p->cur.kind == TokLt)
+    {
+        ParseTypeParamList(p, &genericParams);
+
+        if (p->cur.kind != TokLParen)
+        {
+            DiagError(p->diag, p->cur.range, "expected '(' after type parameters");
+            free(genericParams.items);
+
+            return NULL;
+        }
+    }
+
     if (p->cur.kind != TokLParen)
     {
         return ParseGlobalDecl(p, returnType, nameTok, isExtern, hasAttrs, firstAttributeRange);
@@ -873,6 +978,13 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
 
     FunctionDecl* node = NewFunctionDecl(p, returnType, nameTok, isExtern, isDelegate, isPrivate, isExport, isNoReturn,
                                          typeParam, hasAttrs, firstAttributeRange);
+    node->genericParams = genericParams;
+
+    if (genericParams.count > 0 && (isExtern || isExport))
+    {
+        DiagErrorFmt(p->diag, node->base.range, "extern or @export function '%s' cannot have type parameters",
+                     node->name);
+    }
 
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
     {
@@ -1001,6 +1113,12 @@ ImplDecl* ParseImplDecl(Parser* p)
     impl->handleName = ToOwned(p->arena, ParserIdentText(p, nameTok));
     VecInit(&impl->methods);
     VecInit(&impl->properties);
+    VecInit(&impl->genericParams);
+
+    if (p->cur.kind == TokLt)
+    {
+        ParseTypeParamList(p, &impl->genericParams);
+    }
 
     Token openBrace = ParserExpect(p, TokLBrace, "'{'");
 
@@ -1043,6 +1161,11 @@ ImplDecl* ParseImplDecl(Parser* p)
             // ParseFunction already diagnosed the malformed declaration.
             Synchronize(p);
             continue;
+        }
+
+        if (fn->genericParams.count > 0)
+        {
+            DiagErrorFmt(p->diag, fn->base.range, "type parameters go on the impl, not on method '%s'", fn->name);
         }
 
         if (ImplHasMethod(impl, fn->name))

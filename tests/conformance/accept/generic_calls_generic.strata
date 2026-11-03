@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: 6
+// rule: a generic function may call another generic function with its own type parameter
+struct number<T> { T value; }
+number<T> wrap<T>(T v)
+{
+    number<T> n = number<T> { .value = v };
+    return n;
+}
+number<T> twice<T>(T v)
+{
+    return wrap<T>(v);
+}
+int main()
+{
+    number<int> n = twice<int>(6);
+    number<float> f = twice<float>(0.5);
+    if (f.value > 0.25) { printf("%d\n", n.value); }
+    return 0;
+}

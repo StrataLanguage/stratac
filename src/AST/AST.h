@@ -79,6 +79,11 @@ typedef struct TypeName
     struct TypeName* inner;
     bool isOptional; // `T?` — maybe-empty box; `inner` is the wrapped type
     bool isPointer;  // `*T` — nullable, non-owning address; `inner` is the pointee
+    // A use with type arguments (`number<int>`): `genericBase` is the template name and `typeArgs` its
+    // arguments. `name` is then the canonical spelling `number<int>`.
+    char* genericBase;
+    struct TypeName* typeArgs;
+    size_t typeArgCount;
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -369,7 +374,25 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
 // genuinely starts from a name string; the pipeline itself carries trees.
 static inline TypeName TypeNameParse(Arena* arena, const char* spelling)
 {
-    const char* open = strchr(spelling, '[');
+    // The first '[' outside a type-argument list: `number<int[]>` keeps its brackets in its name.
+    const char* open = NULL;
+    int argDepth = 0;
+
+    for (const char* c = spelling; *c && !open; c++)
+    {
+        if (*c == '<')
+        {
+            argDepth++;
+        }
+        else if (*c == '>')
+        {
+            argDepth--;
+        }
+        else if (*c == '[' && argDepth == 0)
+        {
+            open = c;
+        }
+    }
 
     if (!open)
     {
@@ -466,6 +489,7 @@ typedef struct
     // The `void Drop(ref T self)` of the struct's impl, bound by sema: runs when an owned value is dropped.
     // Such a struct carries a hidden `__alive` byte (STRATA_ALIVE_FIELD) so a moved-from value is skipped.
     const struct FunctionDecl* dropFunction;
+    Vec genericParams; // `struct Name<T>`: the type parameter names (char*); non-empty = a generic template
 } StructDecl;
 
 typedef struct
@@ -531,6 +555,8 @@ typedef struct FunctionDecl
     // still `name`, and calls pass T's StrataTypeDesc as a hidden trailing argument.
     const struct FunctionDecl* genericOf;
     const char* typeArg;
+    // `R name<T>(...)`: the type parameter names (char*), distinct from `typeParam`; non-empty = a template.
+    Vec genericParams;
 } FunctionDecl;
 
 static inline const ParamDecl* FunctionReturnParam(const FunctionDecl* f)
@@ -567,6 +593,7 @@ typedef struct
     char* handleName;
     Vec methods; // Also listed in Module::functions.
     Vec properties;
+    Vec genericParams; // `impl Name<T>`: the names bound by the impl (char*); handleName stays the base
 } ImplDecl;
 
 typedef struct
@@ -582,6 +609,7 @@ typedef struct
     Vec impls;
     Vec genericInstances; // FunctionDecl*: per-type `extern<T>` instantiations, created by sema
     Vec delegates;        // FunctionDecl* (isDelegate): `extern delegate` function-pointer types
+    Vec genericTemplates; // Node*: generic templates moved out of the lists by Monomorphize; empty until then
 } Module;
 
 typedef struct
@@ -775,7 +803,9 @@ typedef struct CallExpr
     const FunctionDecl* resolvedDecl;
     Vec args;
     bool isIntrinsicCall;
-    TypeName* typeArg; // explicit `Name<T>(...)` type argument (generic externs), NULL otherwise
+    TypeName* typeArg;  // explicit `Name<T>(...)` type argument (generic externs), NULL otherwise
+    TypeName* typeArgs; // every explicit type argument of `Name<T, U>(...)`; typeArg is &typeArgs[0] when one
+    size_t typeArgCount;
     // `expr.Member(args)` — non-NULL until sema resolves the member against
     // impl blocks (then the base moves into `args` as the self argument).
     Node* calleeBase;
@@ -823,6 +853,7 @@ typedef struct
     Node base;
     char* typeName;
     Vec fields;
+    TypeName* genericType; // `Name<T> { ... }`: the full generic type; typeName is its canonical spelling
 } StructInitExpr;
 
 typedef struct
@@ -912,3 +943,5 @@ void AstReleaseModuleLists(Module* module);
 const EnumDecl* ModuleFindEnum(const Module* mod, const char* name);
 // First impl block for the type `handleName`, or NULL.
 const ImplDecl* ModuleFindImpl(const Module* mod, const char* handleName);
+// The canonical spelling of a generic use: `base<arg1,arg2>`, each argument's `name`, no spaces.
+char* TypeNameGenericSpelling(Arena* arena, const char* base, const TypeName* args, size_t argCount);

@@ -1,0 +1,8 @@
+// expect: reject "needs type arguments"
+// rule: a generic struct names a type only with its type arguments
+struct number<T> { T value; }
+int main()
+{
+    number x;
+    return 0;
+}

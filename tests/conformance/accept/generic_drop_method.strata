@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: holder drop
+// expect-output: END live=0
+// rule: a generic struct's Drop method is instantiated with it, and runs before its fields are dropped
+struct holder<T> { T item; }
+impl holder<T>
+{
+    void Drop(ref holder<T> self) { printf("holder drop\n"); }
+}
+int main()
+{
+    {
+        ^holder<^Res> h = { .item = Box(7) };
+        ^holder<int> plain = { .item = 5 };
+        printf("made %d\n", plain.item);
+    }
+    Report();
+    return 0;
+}

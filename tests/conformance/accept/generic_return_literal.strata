@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: 12
+// rule: `return { ... };` in a generic function builds the instance of the function's generic return type
+struct number<T> { T value; }
+impl number<T> { T get_value(const ref number<T> self) { return self.value; } }
+number<T> make<T>(T v)
+{
+    return { .value = v };
+}
+int main()
+{
+    number<int> n = make<int>(12);
+    printf("%d\n", n.get_value());
+    return 0;
+}

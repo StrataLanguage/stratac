@@ -206,6 +206,93 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
 static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare);
 
+// Closes a type-argument list. A `>>` closes two lists: its first `>` is consumed, and the current token
+// becomes the second `>` (one character later) for the enclosing list to close.
+static bool ConsumeTypeArgClose(Parser* p)
+{
+    if (p->cur.kind == TokGt)
+    {
+        Advance(p);
+
+        return true;
+    }
+
+    if (p->cur.kind == TokShr)
+    {
+        p->cur.kind = TokGt;
+        p->cur.range.start += 1;
+        p->cur.range.length = 1;
+
+        return true;
+    }
+
+    return false;
+}
+
+// `<T1, T2, ...>` after a type name, the current token being the `<`. Each argument is a full type,
+// so wrappers and nested lists work inside. Returns false when the list does not close.
+static bool ParseTypeArgList(Parser* p, TypeName** outArgs, size_t* outCount)
+{
+    Advance(p);
+
+    Vec args;
+    VecInit(&args);
+
+    bool ok = true;
+
+    do
+    {
+        TypeName arg = {0};
+
+        if (!ParseTypeImpl(p, &arg, false))
+        {
+            ok = false;
+            break;
+        }
+
+        VecPush(&args, TypeNameWrapInner(p->arena, arg));
+    } while (ParserConsume(p, TokComma));
+
+    ok = ok && ConsumeTypeArgClose(p);
+
+    if (ok)
+    {
+        TypeName* copy = (TypeName*)ArenaAlloc(p->arena, args.count * sizeof(TypeName));
+
+        for (size_t i = 0; i < args.count; i++)
+        {
+            copy[i] = *(TypeName*)VecGet(&args, i);
+        }
+
+        *outArgs = copy;
+        *outCount = args.count;
+    }
+
+    free(args.items);
+
+    return ok;
+}
+
+bool ParseTypeArgsAfter(Parser* p, const char* base, SourceRange baseRange, TypeName* out)
+{
+    TypeName* args = NULL;
+    size_t argCount = 0;
+
+    if (!ParseTypeArgList(p, &args, &argCount))
+    {
+        return false;
+    }
+
+    out->genericBase = (char*)base;
+    out->typeArgs = args;
+    out->typeArgCount = argCount;
+    out->name = TypeNameGenericSpelling(p->arena, base, args, argCount);
+    out->primitiveType = GetPrimitiveType(out->name);
+    out->range = SpanToCur(p, baseRange);
+
+    return true;
+}
+
 // The name of a builtin type keyword or of an identifier. The token is left for the caller to
 // consume. Returns NULL when the token starts no type.
 static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constRange, bool* isVector)
@@ -506,6 +593,7 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
         return ParsePointerType(p, out, isConst, constRange, bare);
     }
 
+    bool isIdent = p->cur.kind == TokIdent;
     const char* name = ParseBaseTypeName(p, isConst, constRange, &isVector);
 
     if (!name)
@@ -518,6 +606,12 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
     out->name = (char*)name;
     out->primitiveType = GetPrimitiveType(name);
     out->range = SpanToCur(p, constRange);
+
+    // `Name<T, ...>`: a generic use; `name` becomes the canonical spelling.
+    if (isIdent && p->cur.kind == TokLt && !ParseTypeArgsAfter(p, name, constRange, out))
+    {
+        return false;
+    }
 
     if (bare)
     {

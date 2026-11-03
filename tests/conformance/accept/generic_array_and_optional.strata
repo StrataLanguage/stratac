@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: 4 9
+// rule: a generic struct works as a dynamic array element and as the payload of an optional
+struct number<T> { T value; }
+impl number<T> { T get_value(const ref number<T> self) { return self.value; } }
+int main()
+{
+    number<int>[] items = { number<int> { .value = 4 } };
+    number<int>? maybe = number<int> { .value = 9 };
+    if (maybe?)
+    {
+        printf("%d %d\n", items[0].get_value(), maybe.value);
+    }
+    return 0;
+}
