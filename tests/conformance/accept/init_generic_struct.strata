@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: a=1/0 b=5/9
+// expect-output: END live=0
+// rule: a generic struct's Init overloads are instantiated with it, as `holder<int>(5)` and `holder<int> h;`
+struct holder<T> { T item; int n; }
+impl holder<T>
+{
+    void Init(ref holder<T> self) { self.item = 1; self.n = 0; }
+    void Init(ref holder<T> self, T item) { self.item = item; self.n = 9; }
+}
+int main()
+{
+    holder<int> a;
+    holder<int> b = holder<int>(5);
+    printf("a=%d/%d b=%d/%d\n", a.item, a.n, b.item, b.n);
+    Report();
+    return 0;
+}

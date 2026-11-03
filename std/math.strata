@@ -1,0 +1,50 @@
+import bit;
+
+T min<T>(const T x, const T y)
+{
+	if (x <= y) {
+		return x;
+	}
+
+	return y;
+}
+
+T max<T>(const T x, const T y)
+{
+	if (x >= y) {
+		return x;
+	}
+
+	return y;
+}
+
+
+@private
+uint __typetobits<T>(T x)
+{
+	return bitcast<T, uint>(x);
+}
+
+@private
+T __bitstotype<T>(uint bits)
+{
+	return bitcast<uint, T>(bits);
+}
+
+float abs(float x)
+{
+	const uint bits = __typetobits<float>(x);
+	return __bitstotype<float>((bits & 0x7FFFFFFF));
+}
+
+int abs(int x)
+{
+	const int mask = (x >> 31);
+	return (x + mask) ^ mask;
+}
+
+float sign(float x)
+{
+	// Get the sign bit for the float and apply it to 1.0 if it is set.
+	return __bitstotype<float>((__typetobits<float>(1.0f) | (__typetobits<float>(x) & (uint)0x80000000)));
+}
