@@ -57,8 +57,35 @@ typedef struct
     long long i;
     double f;
     bool isFloat;
-    bool isInt; /* integer-kind type: usable as a fixed-array dimension */
+    bool isInt;       /* integer-kind type: usable as a fixed-array dimension */
+    ConstIntType ity; /* the runtime integer type `i` is normalized to (see ConstFold.h) */
 } ConstGlobalVal;
+
+/* The runtime integer type of a scalar. Anything that is not an integer carries no narrowing. */
+static ConstIntType SemaConstIntType(PrimitiveType p)
+{
+    switch (p)
+    {
+    case PrimSByte:
+        return (ConstIntType){8, false};
+    case PrimByte:
+        return (ConstIntType){8, true};
+    case PrimShort:
+        return (ConstIntType){16, false};
+    case PrimUShort:
+        return (ConstIntType){16, true};
+    case PrimInt:
+        return (ConstIntType){32, false};
+    case PrimUInt:
+        return (ConstIntType){32, true};
+    case PrimLong:
+        return (ConstIntType){64, false};
+    case PrimULong:
+        return (ConstIntType){64, true};
+    default:
+        return (ConstIntType){0, false};
+    }
+}
 
 /* The scalar integral types an enum may be based on. */
 static bool IsEnumUnderlyingType(const char* t)
@@ -553,6 +580,25 @@ static bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, con
     return lit->kind == NodeFloatLiteral && (dst == PrimFloat || dst == PrimDouble);
 }
 
+/* Folds an integer operator at the type the runtime computes it in: both operands are converted to that type
+   first, so `>>` picks the same shift the emitted code does. */
+static bool SemaFoldIntBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r, ConstGlobalVal* out)
+{
+    ConstIntType t = ConstIntTypeCommon(l.ity, r.ity);
+    uint64_t v;
+
+    if (!ConstFoldIntAt(op, ConstIntNarrow((uint64_t)l.i, t), ConstIntNarrow((uint64_t)r.i, t), t, &v))
+    {
+        return false;
+    }
+
+    out->i = (long long)v;
+    out->f = 0.0;
+    out->isFloat = false;
+    out->ity = t;
+    return true;
+}
+
 /* Applies a binary operator to two folded values with C constant-expression
    semantics: usual arithmetic conversions (int promotes to double when the
    other side is float); bitwise/shift/modulo require integers; comparisons
@@ -576,20 +622,11 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
 
             out->i = 0;
             out->isFloat = true;
+            out->ity = (ConstIntType){0, false};
             return ConstFoldFloatArith(op, a, b, &out->f);
         }
 
-        uint64_t v;
-
-        if (!ConstFoldIntArith(op, (uint64_t)l.i, (uint64_t)r.i, ConstShrLogical, &v))
-        {
-            return false;
-        }
-
-        out->i = (long)v;
-        out->f = 0.0;
-        out->isFloat = false;
-        return true;
+        return SemaFoldIntBinary(op, l, r, out);
     }
     case BinMod:
     case BinBitAnd:
@@ -603,17 +640,7 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
             return false;
         }
 
-        uint64_t v;
-
-        if (!ConstFoldIntArith(op, (uint64_t)l.i, (uint64_t)r.i, ConstShrLogical, &v))
-        {
-            return false;
-        }
-
-        out->i = (long long)v;
-        out->f = 0.0;
-        out->isFloat = false;
-        return true;
+        return SemaFoldIntBinary(op, l, r, out);
     }
     case BinEqEq:
     case BinNotEq:
@@ -642,6 +669,7 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
         out->i = res ? 1 : 0;
         out->f = 0.0;
         out->isFloat = false;
+        out->ity = (ConstIntType){0, false};
         return true;
     }
     case BinLogicAnd:
@@ -653,6 +681,7 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
         out->i = (op == BinLogicAnd) ? (a && b) : (a || b);
         out->f = 0.0;
         out->isFloat = false;
+        out->ity = (ConstIntType){0, false};
         return true;
     }
     default:
@@ -674,18 +703,26 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        out->i = (long long)((IntLiteral*)n)->value;
+    {
+        /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
+        const IntLiteral* lit = (const IntLiteral*)n;
+
+        out->i = (long long)lit->value;
         out->f = 0.0;
         out->isFloat = false;
+        out->ity = (ConstIntType){lit->isLong || lit->value > 0x7FFFFFFFULL ? 64u : 32u, lit->isUnsigned};
         return true;
+    }
     case NodeFloatLiteral:
         out->f = ((FloatLiteral*)n)->value;
         out->isFloat = true;
+        out->ity = (ConstIntType){0, false};
         return true;
     case NodeBoolLiteral:
         out->i = ((BoolLiteral*)n)->value ? 1 : 0;
         out->f = 0.0;
         out->isFloat = false;
+        out->ity = (ConstIntType){0, false};
         return true;
     case NodeUnary:
     {
@@ -705,7 +742,7 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
             }
             else
             {
-                out->i = -out->i;
+                out->i = (long long)ConstIntNarrow((uint64_t)(-out->i), out->ity);
             }
 
             return true;
@@ -723,6 +760,7 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
 
             out->f = 0.0;
             out->isFloat = false;
+            out->ity = (ConstIntType){0, false};
             return true;
         case UnBitNot:
             if (out->isFloat)
@@ -730,7 +768,7 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
                 return false;
             }
 
-            out->i = ~out->i;
+            out->i = (long long)ConstIntNarrow((uint64_t)~out->i, out->ity);
             return true;
         }
 
@@ -763,6 +801,29 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
         bool wasInt = out->isInt;
         *out = inner;
         out->isInt = wasInt;
+
+        /* An integer target takes the value at its own width (`(byte)-8` is 248) and converts a float operand. */
+        const char* castName = ((CastExpr*)n)->type.name;
+        ConstIntType target = {0, false};
+
+        if (castName)
+        {
+            target = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->m_registry, castName)));
+        }
+
+        if (target.bits != 0)
+        {
+            if (out->isFloat)
+            {
+                out->i = (long long)out->f;
+                out->f = 0.0;
+                out->isFloat = false;
+            }
+
+            out->ity = target;
+            out->i = (long long)ConstIntNarrow((uint64_t)out->i, target);
+        }
+
         return true;
     }
     case NodeIdent:
@@ -802,6 +863,7 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
             out->f = floatVal;
             out->isFloat = isFloat;
             out->isInt = wasInt;
+            out->ity = SemaConstIntType(GetPrimitiveType(((IdentExpr*)m->base_node)->name));
             return true;
         }
 
@@ -834,6 +896,9 @@ static bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
                     out->f = 0.0;
                     out->isFloat = false;
                     out->isInt = wasInt;
+                    /* An enum member is typed by its underlying integer type (`int` when none is spelled). */
+                    out->ity = SemaConstIntType(GetPrimitiveType(
+                        TypeRegistryResolveAlias(&r->m_registry, ed->underlyingType ? ed->underlyingType : "int")));
                     return true;
                 }
             }
@@ -10048,6 +10113,15 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
         if (SemaFoldConstInit(&r, gd->init, v))
         {
+            /* The constant takes its declared type: later uses read it at that width and signedness (a
+               `const uint` initialized with -1 holds 0xFFFFFFFF). */
+            v->ity = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r.m_registry, gd->type.name)));
+
+            if (!v->isFloat)
+            {
+                v->i = (long long)ConstIntNarrow((uint64_t)v->i, v->ity);
+            }
+
             StrMapPut(&r.m_constGlobals, gd->name, v);
         }
     }

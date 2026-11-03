@@ -1881,6 +1881,153 @@ STRATA_TEST(jit_scalar_max_in_global_init)
     }
 }
 
+/* `>>` in a const initializer folds with the same shift the runtime emits: arithmetic for a signed left operand,
+   logical for an unsigned one. A negative operand used as an array dimension must not fold to a huge value. */
+STRATA_TEST(const_shift_negative_operand_array_dimension)
+{
+    StrataJit* jit = CompileJit("const int N = (-8 >> 1) + 6;\n"
+                                "int entry() {\n"
+                                "  int[N] xs = { 0; 2 };\n"
+                                "  return N;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 2);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* A folded signed `>>` equals the runtime `>>` on the same operand. The values are returned and compared here
+   rather than with `==` in the source, which the JIT does not evaluate reliably for negative operands. */
+STRATA_TEST(const_shift_signed_matches_runtime)
+{
+    StrataJit* jit = CompileJit("const int A = -8 >> 1;\n"
+                                "int folded() { return A; }\n"
+                                "int runtime() {\n"
+                                "  int x = -8;\n"
+                                "  return x >> 1;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*folded)(void*) = (int (*)(void*))strataJitGetFunction(jit, "folded");
+        int (*runtime)(void*) = (int (*)(void*))strataJitGetFunction(jit, "runtime");
+        STRATA_CHECK(folded != NULL && runtime != NULL);
+        if (folded && runtime)
+        {
+            STRATA_CHECK_EQ(folded(NULL), -4);
+            STRATA_CHECK_EQ(folded(NULL), runtime(NULL));
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* Unsigned `>>` folds logically, both for a uint literal and for a negative value cast to uint (whose 32-bit
+   pattern is 0xFFFFFFF0, not a 64-bit one). */
+STRATA_TEST(const_shift_unsigned_matches_runtime)
+{
+    StrataJit* jit
+        = CompileJit("const uint U = 0xFFFFFFF0u >> 4;\n"
+                     "const uint V = (uint)-16 >> 4;\n"
+                     "int entry() {\n"
+                     "  uint x = (uint)0xFFFFFFF0u;\n"
+                     "  uint runtime = x >> 4;\n"
+                     "  uint y = (uint)-16;\n"
+                     "  uint runtimeV = y >> 4;\n"
+                     "  return (int)(U == 0x0FFFFFFFu) + 2 * (int)(U == runtime) + 4 * (int)(V == 0x0FFFFFFFu)\n"
+                     "         + 8 * (int)(V == runtimeV);\n"
+                     "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+        STRATA_CHECK(entry != NULL);
+        if (entry)
+        {
+            STRATA_CHECK_EQ(entry(NULL), 15);
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* Narrow signed operands keep their sign: the folded shift matches the runtime one at the operand's width. */
+STRATA_TEST(const_shift_narrow_signed_matches_runtime)
+{
+    StrataJit* jit = CompileJit("const sbyte SB = -8;\n"
+                                "const short SH = -8;\n"
+                                "const int A = SB >> 1;\n"
+                                "const int B = SH >> 1;\n"
+                                "int folded_sb() { return A; }\n"
+                                "int folded_sh() { return B; }\n"
+                                "int runtime_sb() {\n"
+                                "  sbyte sb = -8;\n"
+                                "  return sb >> 1;\n"
+                                "}\n"
+                                "int runtime_sh() {\n"
+                                "  short sh = -8;\n"
+                                "  return sh >> 1;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*folded_sb)(void*) = (int (*)(void*))strataJitGetFunction(jit, "folded_sb");
+        int (*folded_sh)(void*) = (int (*)(void*))strataJitGetFunction(jit, "folded_sh");
+        int (*runtime_sb)(void*) = (int (*)(void*))strataJitGetFunction(jit, "runtime_sb");
+        int (*runtime_sh)(void*) = (int (*)(void*))strataJitGetFunction(jit, "runtime_sh");
+        STRATA_CHECK(folded_sb && folded_sh && runtime_sb && runtime_sh);
+        if (folded_sb && folded_sh && runtime_sb && runtime_sh)
+        {
+            STRATA_CHECK_EQ(folded_sb(NULL), -4);
+            STRATA_CHECK_EQ(folded_sb(NULL), runtime_sb(NULL));
+            STRATA_CHECK_EQ(folded_sh(NULL), -4);
+            STRATA_CHECK_EQ(folded_sh(NULL), runtime_sh(NULL));
+        }
+        strataJitDestroy(jit);
+    }
+}
+
+/* A cast narrows its operand before the shift: `(sbyte)200` is -56 (so -28 after the shift) and `(byte)-8` is 248
+   (so 124 after the shift). */
+STRATA_TEST(const_shift_narrow_cast_truncates_before_shift)
+{
+    StrataJit* jit = CompileJit("const int C = (sbyte)200 >> 1;\n"
+                                "const int D = (byte)-8 >> 1;\n"
+                                "int folded_c() { return C; }\n"
+                                "int folded_d() { return D; }\n"
+                                "int runtime_c() {\n"
+                                "  int v = 200;\n"
+                                "  sbyte s = (sbyte)v;\n"
+                                "  return s >> 1;\n"
+                                "}\n"
+                                "int runtime_d() {\n"
+                                "  byte b = (byte)-8;\n"
+                                "  return b >> 1;\n"
+                                "}\n");
+    STRATA_CHECK(jit != NULL);
+    if (jit)
+    {
+        int (*folded_c)(void*) = (int (*)(void*))strataJitGetFunction(jit, "folded_c");
+        int (*folded_d)(void*) = (int (*)(void*))strataJitGetFunction(jit, "folded_d");
+        int (*runtime_c)(void*) = (int (*)(void*))strataJitGetFunction(jit, "runtime_c");
+        int (*runtime_d)(void*) = (int (*)(void*))strataJitGetFunction(jit, "runtime_d");
+        STRATA_CHECK(folded_c && folded_d && runtime_c && runtime_d);
+        if (folded_c && folded_d && runtime_c && runtime_d)
+        {
+            STRATA_CHECK_EQ(folded_c(NULL), -28);
+            STRATA_CHECK_EQ(folded_c(NULL), runtime_c(NULL));
+            STRATA_CHECK_EQ(folded_d(NULL), 124);
+            STRATA_CHECK_EQ(folded_d(NULL), runtime_d(NULL));
+        }
+        strataJitDestroy(jit);
+    }
+}
+
 /* Enum member values may reference a scalar pseudo-property. */
 STRATA_TEST(jit_scalar_max_in_enum_value)
 {
