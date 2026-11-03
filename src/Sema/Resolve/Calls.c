@@ -1331,3 +1331,20 @@ const TypeName* InferIntrinsicType(Resolver* r, CallExpr* c, StrMap* scope)
 
     return NULL;
 }
+
+void ResolveCallExpr(Resolver* r, Node* n, StrMap* scope)
+{
+    CallExpr* c = (CallExpr*)n;
+
+    /* `addressof(fn)`'s argument names a function, not a value. */
+    bool argIsFunction = IsAddressOfFunctionArg(r, c, scope);
+
+    for (size_t i = 0; i < c->args.count && !argIsFunction; i++)
+    {
+        ResolveExpr(r, (Node*)VecGet(&c->args, i), scope);
+    }
+
+    ResolveCall(r, c, scope);
+
+    return;
+}
