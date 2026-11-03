@@ -81,6 +81,6 @@ pointee owns something.
 - `array_take` for element types with an empty value.
 - The value-optional layout (Foundations, "Value optionals") will change O4's runtime drop flag from
   null to a tag for inline layouts.
-- Roadmap phase 5 is under way: codegen follows the use annotations for moves. Drop glue, temporaries and
-  argument passing still use codegen's own rules, and the AddressSanitizer gate needs a clang build for the MSVC
-  target (MinGW GCC has no ASan).
+- Roadmap phase 5: codegen follows the use annotations for moves, and every `accept/` case plus eleven AOT samples
+  also run under AddressSanitizer (see `tests/conformance/README.md`; `aot_components_test` is not covered yet).
+  Drop glue, temporaries and argument passing still use codegen's own rules.
