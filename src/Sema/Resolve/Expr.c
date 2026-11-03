@@ -160,6 +160,283 @@ const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
     return t;
 }
 
+static const TypeName* InferIntLiteralType(Resolver* r, Node* n, StrMap* scope)
+{
+    const IntLiteral* lit = (const IntLiteral*)n;
+
+    /* Values that don't fit a non-negative signed i32 are 64-bit, as is any `l` literal. */
+    if (lit->value > 0x7FFFFFFFULL || lit->isLong)
+    {
+        return InternTypeName(r, lit->isUnsigned ? "ulong" : "long");
+    }
+
+    return InternTypeName(r, lit->isUnsigned ? "uint" : "int");
+}
+
+static const TypeName* InferIdentType(Resolver* r, Node* n, StrMap* scope)
+{
+    const TypeName* t = (const TypeName*)StrMapGet(scope, ((IdentExpr*)n)->name);
+
+    /* The builtin `null` constant (a variable named `null` shadows it). */
+    if (!t && IsNullConstantName(((IdentExpr*)n)->name))
+    {
+        return InternTypeName(r, STRATA_NULL_TYPE);
+    }
+
+    return t ? t : NULL;
+}
+
+static const TypeName* InferUnaryType(Resolver* r, Node* n, StrMap* scope)
+{
+    UnaryExpr* u = (UnaryExpr*)n;
+
+    return u->op == UnNot ? InternTypeName(r, "bool") : InferType(r, u->operand, scope);
+}
+
+static const TypeName* InferArithmeticType(Resolver* r, BinaryExpr* b, StrMap* scope)
+{
+    const TypeName* lt = InferType(r, b->lhs, scope);
+    const TypeName* rt = InferType(r, b->rhs, scope);
+    PrimitiveType lp = lt ? lt->primitiveType : PrimNone;
+
+    if (IsEnumFlagsOp(r, b->op, lt, rt))
+    {
+        return lt;
+    }
+
+    if (IsStringConcat(r, b->op, lt, rt))
+    {
+        return InternTypeName(r, "string");
+    }
+    PrimitiveType rp = rt ? rt->primitiveType : PrimNone;
+
+    /* Box/optional operands deref to their inner for arithmetic
+       (mirrors the ResolveExpr operand check). Same-shape SIMD
+       vectors keep the vector type: the scalar ladder below would
+       report a bogus `int` and break overload matching for valid
+       vector arguments. */
+    const char* ln2 = lt && TypeNameIsBox(lt) && lt->inner ? lt->inner->name : lt ? lt->name : "";
+    const char* rn2 = rt && TypeNameIsBox(rt) && rt->inner ? rt->inner->name : rt ? rt->name : "";
+
+    if (SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
+    {
+        return InternTypeName(r, TypeRegistryResolveAlias(&r->m_registry, ln2));
+    }
+
+    if (lp == PrimDouble || rp == PrimDouble)
+    {
+        return InternTypeName(r, "double");
+    }
+
+    if (lp == PrimFloat || rp == PrimFloat)
+    {
+        return InternTypeName(r, "float");
+    }
+
+    if (lp == PrimULong || rp == PrimULong)
+    {
+        return InternTypeName(r, "ulong");
+    }
+
+    if (lp == PrimLong || rp == PrimLong)
+    {
+        return InternTypeName(r, "long");
+    }
+
+    if (lp == PrimUInt || rp == PrimUInt)
+    {
+        return InternTypeName(r, "uint");
+    }
+
+    return InternTypeName(r, "int");
+}
+
+static const TypeName* InferBinaryType(Resolver* r, Node* n, StrMap* scope)
+{
+    BinaryExpr* b = (BinaryExpr*)n;
+
+    switch (b->op)
+    {
+    case BinEqEq:
+    case BinNotEq:
+    case BinLt:
+    case BinLtEq:
+    case BinGt:
+    case BinGtEq:
+    case BinLogicAnd:
+    case BinLogicOr:
+        return InternTypeName(r, "bool");
+    default:
+        return InferArithmeticType(r, b, scope);
+    }
+}
+
+static const TypeName* InferConditionalType(Resolver* r, Node* n, StrMap* scope)
+{
+    ConditionalExpr* ce = (ConditionalExpr*)n;
+
+    return ce->resultType ? ce->resultType : ConditionalType(r, ce, scope, false);
+}
+
+static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
+{
+    MemberExpr* m = (MemberExpr*)n;
+
+    /* Scoped enum constant: `EnumName.Member` has the enum's type. */
+    if (m->isEnumConst && m->enumTypeName)
+    {
+        return InternTypeName(r, m->enumTypeName);
+    }
+
+    /* Builtin scalar pseudo-property: `int.max` / `float.min` has the
+       base scalar's own type. Resolution-order independent (like the
+       impl-property path below). */
+    if (m->base_node->kind == NodeIdent)
+    {
+        const char* baseName = ((IdentExpr*)m->base_node)->name;
+        PrimitiveType primitive = GetPrimitiveType(baseName);
+
+        if (IsScalarPseudoType(primitive) && ScalarPseudoConst(primitive, m->member, NULL, NULL, NULL))
+        {
+            return InternTypeName(r, baseName);
+        }
+    }
+
+    const TypeName* baseType = InferType(r, m->base_node, scope);
+
+    /* Impl properties: a member read on a handle with a matching
+       `property` yields the property's type. Methods are call-only
+       (NULL here; the resolve pass diagnoses bare access). */
+    PropertyDecl* prop = PropertyOnHandle(r, baseType, m->member);
+
+    if (prop)
+    {
+        return &prop->returnType;
+    }
+
+    /* Optional member access follows the box pointer. */
+    baseType = UnwrapBoxPtr(baseType);
+
+    if (!baseType)
+    {
+        return NULL;
+    }
+
+    /* SIMD lane read / swizzle: `v.x` is a float, `v.xy` a float2, `v.xyz` a float3. */
+    if (IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name)) != 0)
+    {
+        size_t lanes = strlen(m->member);
+        bool swizzle = lanes >= 1 && lanes <= 4;
+
+        for (size_t i = 0; swizzle && i < lanes; i++)
+        {
+            swizzle = m->member[i] >= 'w' && m->member[i] <= 'z';
+        }
+
+        if (swizzle)
+        {
+            static const char* const swizzleTypes[5] = {NULL, "float", "float2", "float3", "float4"};
+            return InternTypeName(r, swizzleTypes[lanes]);
+        }
+    }
+
+    if (TypeRegistryIsOpaque(&r->m_registry, baseType->name))
+    {
+        if (IsIncompleteStruct(&r->m_registry, baseType->name))
+        {
+            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member,
+                         baseType->name);
+        }
+        else
+        {
+            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member,
+                         baseType->name);
+        }
+
+        return NULL;
+    }
+
+    /* Array/string pseudo-properties: `.length` and `.cap` read the fat's
+       u32 fields (uint). Fixed arrays expose a compile-time `.length`
+       only — they have no capacity (inline storage). */
+    if (IsFatPseudoProperty(r, baseType, m->member))
+    {
+        return InternTypeName(r, strcmp(m->member, "data") == 0 ? STRATA_PTR_TYPE : "uint");
+    }
+
+    const StructType* structType = TypeRegistryFind(&r->m_registry, baseType->name);
+    if (!structType)
+    {
+        return NULL;
+    }
+
+    int idx = TypeRegistryFieldIndex(&r->m_registry, baseType->name, m->member);
+    if (idx < 0)
+    {
+        return NULL;
+    }
+
+    FieldDecl* fieldDecl = (FieldDecl*)VecGet((Vec*)&structType->fields, (size_t)idx);
+
+    return &fieldDecl->type;
+}
+
+static const TypeName* InferCallType(Resolver* r, Node* n, StrMap* scope)
+{
+    CallExpr* c = (CallExpr*)n;
+
+    if (c->resolvedDecl)
+    {
+        return &c->resolvedDecl->returnType;
+    }
+
+    // Infer the type for intrinsic calls
+    const TypeName* intrinsicType = InferIntrinsicType(r, c, scope);
+    if (intrinsicType != NULL)
+    {
+        return intrinsicType;
+    }
+
+    if (TypeRegistryIsUserType(&r->m_registry, c->callee))
+    {
+        return InternTypeName(r, c->callee);
+    }
+
+    return NULL;
+}
+
+static const TypeName* InferIndexType(Resolver* r, Node* n, StrMap* scope)
+{
+    const TypeName* baseType = InferType(r, ((IndexExpr*)n)->base_node, scope);
+
+    /* Indexing through an optional array (`T[]?`) unwraps it. */
+    if (baseType && TypeNameIsOptional(baseType))
+    {
+        baseType = baseType->inner;
+    }
+
+    if (baseType && TypeIsString(&r->m_registry, baseType->name))
+    {
+        // `s[i]` is a bounds-checked byte.
+        return InternTypeName(r, "byte");
+    }
+
+    if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+    {
+        // `cs[i]` is a bounds-checked byte read (strlen is the length).
+        return InternTypeName(r, "byte");
+    }
+
+    return baseType ? TypeNameArrayElem(baseType) : NULL;
+}
+
+static const TypeName* InferArrayInitType(Resolver* r, Node* n, StrMap* scope)
+{
+    const ArrayInitExpr* ai = (const ArrayInitExpr*)n;
+
+    return ai->elementType ? InternTypeName(r, arena_format(r->m_arena, "%s[]", ai->elementType->name)) : NULL;
+}
+
 static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
 {
     if (!n)
@@ -170,17 +447,7 @@ static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
     switch (n->kind)
     {
     case NodeIntLiteral:
-    {
-        const IntLiteral* lit = (const IntLiteral*)n;
-
-        /* Values that don't fit a non-negative signed i32 are 64-bit, as is any `l` literal. */
-        if (lit->value > 0x7FFFFFFFULL || lit->isLong)
-        {
-            return InternTypeName(r, lit->isUnsigned ? "ulong" : "long");
-        }
-
-        return InternTypeName(r, lit->isUnsigned ? "uint" : "int");
-    }
+        return InferIntLiteralType(r, n, scope);
     case NodeFloatLiteral:
         return InternTypeName(r, "float");
     case NodeBoolLiteral:
@@ -188,268 +455,31 @@ static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
     case NodeStrLiteral:
         return InternTypeName(r, "string");
     case NodeIdent:
-    {
-        const TypeName* t = (const TypeName*)StrMapGet(scope, ((IdentExpr*)n)->name);
-
-        /* The builtin `null` constant (a variable named `null` shadows it). */
-        if (!t && IsNullConstantName(((IdentExpr*)n)->name))
-        {
-            return InternTypeName(r, STRATA_NULL_TYPE);
-        }
-
-        return t ? t : NULL;
-    }
+        return InferIdentType(r, n, scope);
     case NodeUnary:
-    {
-        UnaryExpr* u = (UnaryExpr*)n;
-
-        return u->op == UnNot ? InternTypeName(r, "bool") : InferType(r, u->operand, scope);
-    }
+        return InferUnaryType(r, n, scope);
     case NodeBinary:
-    {
-        BinaryExpr* b = (BinaryExpr*)n;
-
-        switch (b->op)
-        {
-        case BinEqEq:
-        case BinNotEq:
-        case BinLt:
-        case BinLtEq:
-        case BinGt:
-        case BinGtEq:
-        case BinLogicAnd:
-        case BinLogicOr:
-            return InternTypeName(r, "bool");
-        default:
-        {
-            const TypeName* lt = InferType(r, b->lhs, scope);
-            const TypeName* rt = InferType(r, b->rhs, scope);
-            PrimitiveType lp = lt ? lt->primitiveType : PrimNone;
-
-            if (IsEnumFlagsOp(r, b->op, lt, rt))
-            {
-                return lt;
-            }
-
-            if (IsStringConcat(r, b->op, lt, rt))
-            {
-                return InternTypeName(r, "string");
-            }
-            PrimitiveType rp = rt ? rt->primitiveType : PrimNone;
-
-            /* Box/optional operands deref to their inner for arithmetic
-               (mirrors the ResolveExpr operand check). Same-shape SIMD
-               vectors keep the vector type: the scalar ladder below would
-               report a bogus `int` and break overload matching for valid
-               vector arguments. */
-            const char* ln2 = lt && TypeNameIsBox(lt) && lt->inner ? lt->inner->name : lt ? lt->name : "";
-            const char* rn2 = rt && TypeNameIsBox(rt) && rt->inner ? rt->inner->name : rt ? rt->name : "";
-
-            if (SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
-            {
-                return InternTypeName(r, TypeRegistryResolveAlias(&r->m_registry, ln2));
-            }
-
-            if (lp == PrimDouble || rp == PrimDouble)
-            {
-                return InternTypeName(r, "double");
-            }
-
-            if (lp == PrimFloat || rp == PrimFloat)
-            {
-                return InternTypeName(r, "float");
-            }
-
-            if (lp == PrimULong || rp == PrimULong)
-            {
-                return InternTypeName(r, "ulong");
-            }
-
-            if (lp == PrimLong || rp == PrimLong)
-            {
-                return InternTypeName(r, "long");
-            }
-
-            if (lp == PrimUInt || rp == PrimUInt)
-            {
-                return InternTypeName(r, "uint");
-            }
-
-            return InternTypeName(r, "int");
-        }
-        }
-    }
+        return InferBinaryType(r, n, scope);
     case NodeAssign:
         return InferType(r, ((AssignExpr*)n)->target, scope);
     case NodeNullTest:
         return InternTypeName(r, "bool");
     case NodeConditional:
-    {
-        ConditionalExpr* ce = (ConditionalExpr*)n;
-
-        return ce->resultType ? ce->resultType : ConditionalType(r, ce, scope, false);
-    }
+        return InferConditionalType(r, n, scope);
     case NodeIncDec:
         return InferType(r, ((IncDecExpr*)n)->operand, scope);
     case NodeCast:
         return &((CastExpr*)n)->type;
     case NodeMember:
-    {
-        MemberExpr* m = (MemberExpr*)n;
-
-        /* Scoped enum constant: `EnumName.Member` has the enum's type. */
-        if (m->isEnumConst && m->enumTypeName)
-        {
-            return InternTypeName(r, m->enumTypeName);
-        }
-
-        /* Builtin scalar pseudo-property: `int.max` / `float.min` has the
-           base scalar's own type. Resolution-order independent (like the
-           impl-property path below). */
-        if (m->base_node->kind == NodeIdent)
-        {
-            const char* baseName = ((IdentExpr*)m->base_node)->name;
-            PrimitiveType primitive = GetPrimitiveType(baseName);
-
-            if (IsScalarPseudoType(primitive) && ScalarPseudoConst(primitive, m->member, NULL, NULL, NULL))
-            {
-                return InternTypeName(r, baseName);
-            }
-        }
-
-        const TypeName* baseType = InferType(r, m->base_node, scope);
-
-        /* Impl properties: a member read on a handle with a matching
-           `property` yields the property's type. Methods are call-only
-           (NULL here; the resolve pass diagnoses bare access). */
-        PropertyDecl* prop = PropertyOnHandle(r, baseType, m->member);
-
-        if (prop)
-        {
-            return &prop->returnType;
-        }
-
-        /* Optional member access follows the box pointer. */
-        baseType = UnwrapBoxPtr(baseType);
-
-        if (!baseType)
-        {
-            return NULL;
-        }
-
-        /* SIMD lane read / swizzle: `v.x` is a float, `v.xy` a float2, `v.xyz` a float3. */
-        if (IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name)) != 0)
-        {
-            size_t lanes = strlen(m->member);
-            bool swizzle = lanes >= 1 && lanes <= 4;
-
-            for (size_t i = 0; swizzle && i < lanes; i++)
-            {
-                swizzle = m->member[i] >= 'w' && m->member[i] <= 'z';
-            }
-
-            if (swizzle)
-            {
-                static const char* const swizzleTypes[5] = {NULL, "float", "float2", "float3", "float4"};
-                return InternTypeName(r, swizzleTypes[lanes]);
-            }
-        }
-
-        if (TypeRegistryIsOpaque(&r->m_registry, baseType->name))
-        {
-            if (IsIncompleteStruct(&r->m_registry, baseType->name))
-            {
-                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member,
-                             baseType->name);
-            }
-            else
-            {
-                DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member,
-                             baseType->name);
-            }
-
-            return NULL;
-        }
-
-        /* Array/string pseudo-properties: `.length` and `.cap` read the fat's
-           u32 fields (uint). Fixed arrays expose a compile-time `.length`
-           only — they have no capacity (inline storage). */
-        if (IsFatPseudoProperty(r, baseType, m->member))
-        {
-            return InternTypeName(r, strcmp(m->member, "data") == 0 ? STRATA_PTR_TYPE : "uint");
-        }
-
-        const StructType* structType = TypeRegistryFind(&r->m_registry, baseType->name);
-        if (!structType)
-        {
-            return NULL;
-        }
-
-        int idx = TypeRegistryFieldIndex(&r->m_registry, baseType->name, m->member);
-        if (idx < 0)
-        {
-            return NULL;
-        }
-
-        FieldDecl* fieldDecl = (FieldDecl*)VecGet((Vec*)&structType->fields, (size_t)idx);
-
-        return &fieldDecl->type;
-    }
+        return InferMemberType(r, n, scope);
     case NodeCall:
-    {
-        CallExpr* c = (CallExpr*)n;
-
-        if (c->resolvedDecl)
-        {
-            return &c->resolvedDecl->returnType;
-        }
-
-        // Infer the type for intrinsic calls
-        const TypeName* intrinsicType = InferIntrinsicType(r, c, scope);
-        if (intrinsicType != NULL)
-        {
-            return intrinsicType;
-        }
-
-        if (TypeRegistryIsUserType(&r->m_registry, c->callee))
-        {
-            return InternTypeName(r, c->callee);
-        }
-
-        return NULL;
-    }
+        return InferCallType(r, n, scope);
     case NodeStructInit:
         return ((StructInitExpr*)n)->typeName ? InternTypeName(r, ((StructInitExpr*)n)->typeName) : NULL;
     case NodeIndex:
-    {
-        const TypeName* baseType = InferType(r, ((IndexExpr*)n)->base_node, scope);
-
-        /* Indexing through an optional array (`T[]?`) unwraps it. */
-        if (baseType && TypeNameIsOptional(baseType))
-        {
-            baseType = baseType->inner;
-        }
-
-        if (baseType && TypeIsString(&r->m_registry, baseType->name))
-        {
-            // `s[i]` is a bounds-checked byte.
-            return InternTypeName(r, "byte");
-        }
-
-        if (baseType && TypeIsCString(&r->m_registry, baseType->name))
-        {
-            // `cs[i]` is a bounds-checked byte read (strlen is the length).
-            return InternTypeName(r, "byte");
-        }
-
-        return baseType ? TypeNameArrayElem(baseType) : NULL;
-    }
+        return InferIndexType(r, n, scope);
     case NodeArrayInit:
-    {
-        const ArrayInitExpr* ai = (const ArrayInitExpr*)n;
-
-        return ai->elementType ? InternTypeName(r, arena_format(r->m_arena, "%s[]", ai->elementType->name)) : NULL;
-    }
+        return InferArrayInitType(r, n, scope);
     default:
         return NULL;
     }
