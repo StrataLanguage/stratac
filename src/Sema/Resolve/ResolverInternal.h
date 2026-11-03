@@ -240,3 +240,11 @@ void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope);
 void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range);
 void WalkBlock(Resolver* r, Block* b, StrMap* scope);
 bool StmtFallsThrough(const Node* n, int depth);
+
+// Expr.c dispatch: ResolveExprImpl hands these node kinds to their feature files.
+void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase);
+void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope);
+void ResolveStructInitExpr(Resolver* r, Node* n, StrMap* scope);
+void ResolveIndexExpr(Resolver* r, Node* n, StrMap* scope);
+void ResolveArrayInitExpr(Resolver* r, Node* n, StrMap* scope);
+void ResolveCallExpr(Resolver* r, Node* n, StrMap* scope);

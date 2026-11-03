@@ -646,3 +646,83 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
                      elem->name);
     }
 }
+
+void ResolveIndexExpr(Resolver* r, Node* n, StrMap* scope)
+{
+    IndexExpr* ix = (IndexExpr*)n;
+
+    ResolveExprImpl(r, ix->base_node, scope, true);
+    ResolveExprImpl(r, ix->index, scope, false);
+
+    /* Indexing an optional array (`opt[i]`) reads its contents - the
+        same narrowing rule as a member read through a `T?`. */
+    {
+        const TypeName* baseType = InferType(r, ix->base_node, scope);
+
+        if (baseType && TypeNameIsOptional(baseType))
+        {
+            const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
+        }
+    }
+
+    return;
+}
+
+void ResolveArrayInitExpr(Resolver* r, Node* n, StrMap* scope)
+{
+    ArrayInitExpr* ai = (ArrayInitExpr*)n;
+
+    if (ai->repeatCount)
+    {
+        ResolveArrayRepeat(r, ai, scope);
+        return;
+    }
+
+    for (size_t i = 0; i < ai->elements.count; i++)
+    {
+        Node* elem = (Node*)VecGet(&ai->elements, i);
+
+        // A flattened multidim fixed-array init carries NULL holes
+        // (short rows / missing rows zero-fill); nothing to resolve.
+        if (!elem)
+        {
+            continue;
+        }
+
+        // Nested rows inherit the inner element type.
+        if (ai->elementType && TypeNameHasArrayShape(ai->elementType) && elem->kind == NodeArrayInit
+            && !((ArrayInitExpr*)elem)->elementType)
+        {
+            const TypeName* innerElem = TypeNameArrayElem(ai->elementType);
+
+            if (innerElem)
+            {
+                ((ArrayInitExpr*)elem)->elementType = innerElem;
+            }
+        }
+
+        ResolveExpr(r, elem, scope);
+
+        if (ai->elementType)
+        {
+            elem = elem;
+            VecSet(&ai->elements, i, elem);
+        }
+
+        // Owning elements move out of their sources (owning-struct
+        // elements included: `{ Rec{...}, arr2[0] }` takes arr2[0]).
+        if (ai->elementType && AliasIsOwningValue(r, ai->elementType))
+        {
+            const char* movedKey = MovableBoxSourceKey(r, elem);
+
+            if (movedKey)
+            {
+                MarkMoved(r, movedKey, elem->range);
+            }
+        }
+
+        // Plain elements unwrap `T?` sources.
+    }
+
+    return;
+}
