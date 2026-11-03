@@ -1377,6 +1377,88 @@ STRATA_TEST(ref_array_param_growth_rejected)
     }
 }
 
+/* ---- array_take / array_replace on a by-value array param ------------------
+   Both builtins mutate their array argument, so a by-value `T[]` param they touch is owned by the
+   callee (the caller's array is moved in), never inferred as a read-only borrow. array_replace also
+   stores its value argument, so that value is moved into the array too. */
+
+STRATA_TEST(array_take_and_replace_own_by_value_params)
+{
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
+        {"void f(string[] a) { string t = array_take(a, 0u); }\n"
+         "int entry() { string[] n = {\"a\", \"b\"}; f(n); return (int)n.length; }",                 "'n' used after move"},
+        {"int f(string[] a, string v) { string old = array_replace(a, 0u, v); return 0; }\n"
+         "int entry() { string[] n = {\"a\"}; string s = \"z\"; f(n, s); string u = s; return 0; }", "'s' used after move"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena;
+        arena_init(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
+        ParseAndResolve(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+
+        SourceManager sm;
+        SourceManagerInit(&sm);
+        char* d = DiagFormat(&diag, &sm, 1, &arena);
+        STRATA_CHECK(strstr(d, cases[i].msg) != NULL);
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
+/* The index argument of a mutator is only read, so a by-value struct passed in for it stays usable
+   afterwards, as it does for array_remove. */
+STRATA_TEST(array_take_and_replace_index_args_are_reads)
+{
+    struct
+    {
+        const char* builtin;
+        const char* src;
+    } cases[] = {
+        {"array_remove",  "struct Slot { uint i; string tag; };\n"
+                         "int f(string[] a, Slot s) { string t = array_remove(a, s.i); return 0; }\n"
+                         "int entry() { string[] n = {\"a\", \"b\"}; ^Slot s = Slot { .i = 1u, .tag = \"x\" };\n"
+                         "  f(n, s); string u = s.tag; return 0; }"  },
+        {"array_take",    "struct Slot { uint i; string tag; };\n"
+                       "int f(string[] a, Slot s) { string t = array_take(a, s.i); return 0; }\n"
+                       "int entry() { string[] n = {\"a\", \"b\"}; ^Slot s = Slot { .i = 1u, .tag = \"x\" };\n"
+                       "  f(n, s); string u = s.tag; return 0; }"      },
+        {"array_replace", "struct Slot { uint i; string tag; };\n"
+                          "int f(string[] a, Slot s) { string old = array_replace(a, s.i, \"z\"); return 0; }\n"
+                          "int entry() { string[] n = {\"a\", \"b\"}; ^Slot s = Slot { .i = 1u, .tag = \"x\" };\n"
+                          "  f(n, s); string u = s.tag; return 0; }"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena;
+        arena_init(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
+        ParseAndResolve(cases[i].src, &diag, &arena);
+
+        SourceManager sm;
+        SourceManagerInit(&sm);
+        char* d = DiagFormat(&diag, &sm, 1, &arena);
+        if (DiagHasErrors(&diag))
+        {
+            printf("  %s: %s\n", cases[i].builtin, d);
+        }
+        STRATA_CHECK(!DiagHasErrors(&diag));
+
+        DiagnosticEngineFree(&diag);
+        arena_free(&arena);
+    }
+}
+
 /* ---- Fixed array → NON-ref array params are rejected ----------------------
    A stack view can only be BORROWED (`ref T[]`). By-value array params
    (ownership transfer), owning/optional/rest/extern-array params and

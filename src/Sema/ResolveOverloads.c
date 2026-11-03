@@ -2,6 +2,7 @@
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
 #include "Lex/Lexer.h"
+#include "Sema/Builtins.h"
 #include "Sema/ConstFold.h"
 #include "Sema/MoveCheck.h"
 #include "Sema/NodeTypes.h"
@@ -2969,10 +2970,7 @@ static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* change
 
         ScanGrowth(mod, f, c->calleeBase, changed);
 
-        if (c->callee && c->args.count > 0
-            && (strcmp(c->callee, "array_push") == 0 || strcmp(c->callee, "array_resize") == 0
-                || strcmp(c->callee, "array_pop") == 0 || strcmp(c->callee, "array_remove") == 0
-                || strcmp(c->callee, "array_swap_remove") == 0 || strcmp(c->callee, "array_reserve") == 0))
+        if (c->callee && c->args.count > 0 && (ArrayBuiltinFlagsOf(c->callee) & ABF_RESIZES))
         {
             MarkGrowth(f, (Node*)VecGet(&c->args, 0), changed);
         }
@@ -3134,13 +3132,6 @@ static void ConsumeIfTaken(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
             ConsumeParam(p, changed);
         }
     }
-}
-
-static bool IsArrayMutator(const char* callee)
-{
-    return strcmp(callee, "array_push") == 0 || strcmp(callee, "array_resize") == 0 || strcmp(callee, "array_pop") == 0
-           || strcmp(callee, "array_remove") == 0 || strcmp(callee, "array_swap_remove") == 0
-           || strcmp(callee, "array_reserve") == 0;
 }
 
 static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed);
@@ -3346,6 +3337,12 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
             if (strcmp(c->callee, "array_push") == 0 && c->args.count > 1)
             {
                 ConsumeIfTaken(r, f, (Node*)VecGet(&c->args, 1), changed);
+            }
+
+            /* `array_replace(a, i, v)` stores `v` in the array, so `v` is owned, not borrowed. */
+            if (strcmp(c->callee, "array_replace") == 0 && c->args.count > 2)
+            {
+                ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, 2)), changed);
             }
             return;
         }
@@ -3980,13 +3977,6 @@ static bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return false;
 }
 
-/* `array_remove(a, i)` / `array_swap_remove(a, i)`: drop element i, keeping order / filling the hole
-   with the last element. */
-static bool IsArrayRemoveName(const char* callee)
-{
-    return strcmp(callee, "array_remove") == 0 || strcmp(callee, "array_swap_remove") == 0;
-}
-
 static FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId, bool* ambiguous);
 
 /* A fixed array passed where an extern takes a `ptr` decays to its first element, as in C:
@@ -4043,7 +4033,7 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     bool isPush = strcmp(c->callee, "array_push") == 0;
-    bool isResize = strcmp(c->callee, "array_resize") == 0 || IsArrayRemoveName(c->callee)
+    bool isResize = strcmp(c->callee, "array_resize") == 0 || (ArrayBuiltinFlagsOf(c->callee) & ABF_REMOVES)
                     || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
     bool isReplace = strcmp(c->callee, "array_replace") == 0;
@@ -4066,7 +4056,7 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     /* Pop, remove, replace and take hand the element to the caller. */
-    if (isPop || isReplace || isTake || IsArrayRemoveName(c->callee))
+    if (isPop || isReplace || isTake || (ArrayBuiltinFlagsOf(c->callee) & ABF_REMOVES))
     {
         return elem;
     }
@@ -4129,7 +4119,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     /* `array_reserve(a, n)` grows the capacity like a resize would, without touching the elements. */
     bool isResize = strcmp(c->callee, "array_resize") == 0 || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
-    bool isRemove = IsArrayRemoveName(c->callee);
+    bool isRemove = (ArrayBuiltinFlagsOf(c->callee) & ABF_REMOVES) != 0;
     /* `array_replace(a, i, v)` stores `v` in slot i and hands the old element to the caller. */
     bool isReplace = strcmp(c->callee, "array_replace") == 0;
     /* `array_take(a, i)` moves element i out and leaves its empty value behind; the array keeps its length. */
