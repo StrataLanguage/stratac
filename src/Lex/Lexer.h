@@ -22,6 +22,10 @@ void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngin
 Token LexerNextToken(Lexer* lex);
 Token LexerPeekToken(Lexer* lex);
 
+// Identifier character classes: a leading character is a letter or '_', later ones add digits.
+bool IsIdentStart(char c);
+bool IsIdentCont(char c);
+
 size_t LexerPosition(const Lexer* lex);
 bool LexerAtEnd(const Lexer* lex);
 Str LexerSourceText(const Lexer* lex);

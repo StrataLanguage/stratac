@@ -1,6 +1,7 @@
 #include "Sema/ResolveOverloads.h"
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
+#include "Lex/Lexer.h"
 #include "Sema/ConstFold.h"
 #include "Sema/MoveCheck.h"
 #include "Sema/NodeTypes.h"
@@ -1461,16 +1462,6 @@ static const char* KeyRoot(Arena* arena, const char* key)
 static bool PathKeyIsErased(const char* key)
 {
     return key && strstr(key, "[]") != NULL;
-}
-
-static bool IsIdentStart(char c)
-{
-    return isalpha((unsigned char)c) || c == '_';
-}
-
-static bool IsIdentCont(char c)
-{
-    return isalnum((unsigned char)c) || c == '_';
 }
 
 // True when an index group of `key` spells the variable `var`.
