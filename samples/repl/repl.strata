@@ -1,11 +1,20 @@
 
 import ../../std/bytebuffer;
 
+import ../../std/math;
+
 extern int printf(string fmt, ...);
+
 
 
 int main()
 {
+	const float x = -20.0f;
+	const float res = sign(x);
+
+	printf("res: %f\n", res);
+
+/*
 	bytebuffer bb;
 
 	bb.init(128);
@@ -16,6 +25,7 @@ int main()
 	printf("value: %s\n", bb.get());
 
 	bb.free();
+*/
 
 	return 0;
 }
