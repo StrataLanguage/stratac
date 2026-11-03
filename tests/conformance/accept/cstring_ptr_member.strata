@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: 72 105
+// expect-output: field
+// rule: `cs.ptr` is the cstring's own NUL-terminated bytes as a raw `ptr`, readable through a typed pointer
+struct Named
+{
+    cstring name;
+}
+
+int main()
+{
+    cstring cs = "Hi";
+    ptr p = cs.ptr;
+    printf("%d %d\n", (int)*((*byte)p), (int)*((*byte)((ulong)p + 1)));
+    Named n = Named { .name = "field" };
+    printf("%s\n", n.name.ptr);
+    return 0;
+}

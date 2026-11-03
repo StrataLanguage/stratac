@@ -1,0 +1,29 @@
+// expect: run
+// expect-output: 1 7 7
+// expect-output: 11
+// expect-output: 20
+// rule: methods of one name may be overloaded inside one impl; the arguments pick the overload, and the receiver is passed only to an instance overload
+struct Thing
+{
+    int v;
+}
+
+impl Thing
+{
+    int make() { return 7; }
+    int get(const ref Thing self) { return 1; }
+    int get(const ref Thing self, int extra) { return 2 + extra; }
+    void set(ref Thing self, int x) { self.v = 10 + x; }
+    void set(ref Thing self, float x) { self.v = 20; }
+}
+
+int main()
+{
+    Thing t = Thing { .v = 0 };
+    printf("%d %d %d\n", t.get(), t.get(5), t.make());
+    t.set(1);
+    printf("%d\n", t.v);
+    t.set(1.5);
+    printf("%d\n", t.v);
+    return 0;
+}

@@ -92,7 +92,7 @@ STRATA_TEST(impl_parses_methods_and_properties)
     ArenaFree(&arena);
 }
 
-STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
+STRATA_TEST(impl_allows_inline_body_and_overloads)
 {
     /* An impl method may be DEFINED inline (non-extern, with a body) - it
        hoists to the qualified symbol like any other method. */
@@ -123,7 +123,7 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     DiagnosticEngineFree(&diag);
     ArenaFree(&arena);
 
-    /* Duplicate methods (extern or inline) are still rejected. */
+    /* Overloads of one method name parse; identical signatures are rejected by sema (conformance reject cases). */
     Arena arena2;
     ArenaInit(&arena2, 0);
     DiagnosticEngine diag2;
@@ -131,10 +131,10 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     ParseModule("handle Camera;\n"
                 "impl Camera {\n"
                 "    extern float GetFOV(Camera self);\n"
-                "    extern float GetFOV(Camera self);\n"
+                "    extern float GetFOV(Camera self, int k);\n"
                 "}\n",
                 &diag2, &arena2);
-    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(!DiagHasErrors(&diag2));
     DiagnosticEngineFree(&diag2);
     ArenaFree(&arena2);
 
@@ -145,10 +145,10 @@ STRATA_TEST(impl_allows_inline_body_and_rejects_duplicates)
     ParseModule("handle Camera;\n"
                 "impl Camera {\n"
                 "    float GetFOV(Camera self) { return 0.0; }\n"
-                "    float GetFOV(Camera self) { return 1.0; }\n"
+                "    float GetFOV(Camera self, int k) { return 1.0; }\n"
                 "}\n",
                 &diag3, &arena3);
-    STRATA_CHECK(DiagHasErrors(&diag3));
+    STRATA_CHECK(!DiagHasErrors(&diag3));
     DiagnosticEngineFree(&diag3);
     ArenaFree(&arena3);
 }

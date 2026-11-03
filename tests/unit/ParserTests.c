@@ -643,7 +643,7 @@ STRATA_TEST(parser_error_paths_dispose_partial_nodes)
 {
     /* Exercise the error paths that now dispose partially built nodes. */
     const char* srcs[] = {"int f() { return g(1, 2) + ; }", "int f(int[] a) { return a[h(1, 2)][; }",
-                          "handle H;\nimpl H { extern int M(int a); extern int M(int b); }"};
+                          "handle H;\nimpl H { int M(int a) { return 1 + ; } }"};
 
     for (size_t i = 0; i < sizeof(srcs) / sizeof(srcs[0]); i++)
     {

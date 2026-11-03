@@ -164,7 +164,8 @@ void CheckStructInitFields(Resolver* r, Node* n)
 // -- Impl blocks.
 
 // Method lookup walks base handles: a `handle Player : Entity` sees impl Entity methods.
-FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
+// Returns the first handle in that walk whose impls define `methodName`.
+static const char* ImplMethodOwner(Resolver* r, const char* handleName, const char* methodName)
 {
     const char* hn = handleName;
     size_t depth = 0;
@@ -186,7 +187,7 @@ FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* me
 
                 if (fn->methodName && strcmp(fn->methodName, methodName) == 0)
                 {
-                    return fn;
+                    return hn;
                 }
             }
         }
@@ -197,6 +198,114 @@ FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* me
     }
 
     return NULL;
+}
+
+// The first method named `methodName` in the impls of `owner`; overloads of one name are all in that set.
+static FunctionDecl* FindMethodInOwner(Resolver* r, const char* owner, const char* methodName)
+{
+    for (size_t i = 0; i < r->mod->impls.count; i++)
+    {
+        ImplDecl* impl = (ImplDecl*)VecGet(&r->mod->impls, i);
+
+        if (strcmp(impl->handleName, owner) != 0)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < impl->methods.count; j++)
+        {
+            FunctionDecl* fn = (FunctionDecl*)VecGet(&impl->methods, j);
+
+            if (fn->methodName && strcmp(fn->methodName, methodName) == 0)
+            {
+                return fn;
+            }
+        }
+    }
+
+    return NULL;
+}
+
+FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
+{
+    const char* owner = ImplMethodOwner(r, handleName, methodName);
+
+    return owner ? FindMethodInOwner(r, owner, methodName) : NULL;
+}
+
+// Whether `method`'s first parameter is the receiver slot of the impl type `handleName` (or a base of it).
+static bool TakesReceiver(Resolver* r, const FunctionDecl* method, const char* handleName)
+{
+    if (method->params.count == 0)
+    {
+        return false;
+    }
+
+    const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
+
+    return TypeRegistryIsImplTarget(&r->registry, p0->type.name)
+           && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->registry, handleName, p0->type.name));
+}
+
+// Whether `recv.name(args)` passes the receiver as the first argument. Overloads of one name are told apart by
+// argument count: an instance overload takes the receiver, a static one does not. With no overload of that count,
+// the first method decides, so its arity error reads as it always has. Sets `*ambiguous` when both kinds fit.
+static bool PassesReceiver(Resolver* r, const char* handleName, const char* methodName, size_t argCount,
+                           bool* ambiguous)
+{
+    const char* owner = ImplMethodOwner(r, handleName, methodName);
+    bool instanceFits = false;
+    bool staticFits = false;
+
+    *ambiguous = false;
+
+    if (!owner)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < r->mod->impls.count; i++)
+    {
+        ImplDecl* impl = (ImplDecl*)VecGet(&r->mod->impls, i);
+
+        if (strcmp(impl->handleName, owner) != 0)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < impl->methods.count; j++)
+        {
+            const FunctionDecl* fn = (const FunctionDecl*)VecGet(&impl->methods, j);
+
+            if (!fn->methodName || strcmp(fn->methodName, methodName) != 0)
+            {
+                continue;
+            }
+
+            if (TakesReceiver(r, fn, handleName))
+            {
+                instanceFits = instanceFits || fn->params.count == argCount + 1;
+            }
+            else
+            {
+                staticFits = staticFits || fn->params.count == argCount;
+            }
+        }
+    }
+
+    *ambiguous = instanceFits && staticFits;
+
+    if (instanceFits)
+    {
+        return true;
+    }
+
+    if (staticFits)
+    {
+        return false;
+    }
+
+    return TakesReceiver(r, FindMethodInOwner(r, owner, methodName), handleName);
 }
 
 // Property lookup on the exact handle (no inheritance).
@@ -344,21 +453,25 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    // Instance call: when the method's first parameter is the receiver slot
-    // (the impl type the receiver's type extends or equals), prepend the base
-    // expression as the self argument. Parameterless methods (factories) and
-    // static calls map arguments 1:1.
-    if (!isStatic && method->params.count > 0)
+    // Instance call: prepend the base expression as the self argument when the
+    // overload that fits the argument count takes the receiver. Parameterless
+    // methods (factories) and static calls map arguments 1:1.
+    bool ambiguous = false;
+    bool passesReceiver = !isStatic && PassesReceiver(r, handleName, c->callee, c->args.count, &ambiguous);
+
+    if (ambiguous)
     {
-        const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
+        DiagErrorFmt(r->diag, c->base.range,
+                     "call to '%s' is ambiguous: an instance overload and a static overload both take %zu argument(s)",
+                     c->callee, c->args.count);
+        return true;
+    }
 
-        if (TypeRegistryIsImplTarget(&r->registry, p0->type.name)
-            && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->registry, handleName, p0->type.name)))
-        {
-            Node* self = viaPointer ? DerefReceiver(r, c->calleeBase, scope) : c->calleeBase;
+    if (passesReceiver)
+    {
+        Node* self = viaPointer ? DerefReceiver(r, c->calleeBase, scope) : c->calleeBase;
 
-            VecPushFront(&c->args, self);
-        }
+        VecPushFront(&c->args, self);
     }
 
     c->calleeBase = NULL;
@@ -868,10 +981,11 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    // `cstring` exposes only `.length` (no `.cap`, no other members).
-    if (baseType && TypeIsCString(&r->registry, baseType->name) && strcmp(m->member, "length") != 0)
+    // `cstring` exposes only `.length` and `.ptr` (no `.cap`, no other members).
+    if (baseType && TypeIsCString(&r->registry, baseType->name) && strcmp(m->member, "length") != 0
+        && strcmp(m->member, "ptr") != 0)
     {
-        DiagErrorFmt(r->diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
+        DiagErrorFmt(r->diag, m->base.range, "cstring has no member '%s' (only '.length' and '.ptr')", m->member);
     }
 
     // A swizzle names lanes the vector has: `float2` has x and y, no z.
