@@ -107,6 +107,219 @@ static bool FindEnumMemberIndex(EnumDecl* ed, const char* memberName, size_t* ou
     return false;
 }
 
+static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
+                                        uint64_t* out);
+
+static EnumEvalStatus EnumEvalIntLiteral(Node* n, uint64_t* out)
+{
+    *out = ((IntLiteral*)n)->value;
+    return EnumEvalOk;
+}
+
+static EnumEvalStatus EnumEvalBoolLiteral(Node* n, uint64_t* out)
+{
+    *out = ((BoolLiteral*)n)->value ? 1 : 0;
+    return EnumEvalOk;
+}
+
+static EnumEvalStatus EnumEvalUnary(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
+                                    uint64_t* out)
+{
+    UnaryExpr* u = (UnaryExpr*)n;
+    uint64_t inner = 0;
+    EnumEvalStatus st = EnumEvalConstExpr(u->operand, mod, enumIndex, memberIndex, isUnsigned, &inner);
+
+    if (st != EnumEvalOk)
+    {
+        return st;
+    }
+
+    switch (u->op)
+    {
+    case UnPos:
+        *out = inner;
+        return EnumEvalOk;
+    case UnNeg:
+        if (isUnsigned)
+        {
+            /* `-1u` on an unsigned underlying wraps C-style to 0xFFFFFFFF
+               (a plain `-1` stays rejected). */
+            if (ConstBitWidth(u->operand) == 32)
+            {
+                *out = (0 - inner) & 0xFFFFFFFFULL;
+                return EnumEvalOk;
+            }
+
+            return EnumEvalNegForUnsigned;
+        }
+
+        *out = (uint64_t)(0 - inner);
+        return EnumEvalOk;
+    case UnBitNot:
+        *out = ConstBitWidth(u->operand) == 32 ? (~inner & 0xFFFFFFFFULL) : ~inner;
+        return EnumEvalOk;
+    default:
+        return EnumEvalNotConst;
+    }
+}
+
+static EnumEvalStatus EnumEvalBinary(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
+                                     uint64_t* out)
+{
+    BinaryExpr* e = (BinaryExpr*)n;
+    uint64_t l = 0;
+    uint64_t r = 0;
+    EnumEvalStatus sl = EnumEvalConstExpr(e->lhs, mod, enumIndex, memberIndex, isUnsigned, &l);
+
+    if (sl != EnumEvalOk)
+    {
+        return sl;
+    }
+
+    EnumEvalStatus sr = EnumEvalConstExpr(e->rhs, mod, enumIndex, memberIndex, isUnsigned, &r);
+
+    if (sr != EnumEvalOk)
+    {
+        return sr;
+    }
+
+    switch (e->op)
+    {
+    case BinAdd:
+        *out = l + r;
+        return EnumEvalOk;
+    case BinSub:
+        *out = l - r;
+        return EnumEvalOk;
+    case BinMul:
+        *out = l * r;
+        return EnumEvalOk;
+    case BinDiv:
+        if (r == 0)
+        {
+            return EnumEvalNotConst;
+        }
+
+        *out = isUnsigned ? (l / r) : (uint64_t)((int64_t)l / (int64_t)r);
+        return EnumEvalOk;
+    case BinMod:
+        if (r == 0)
+        {
+            return EnumEvalNotConst;
+        }
+
+        *out = isUnsigned ? (l % r) : (uint64_t)((int64_t)l % (int64_t)r);
+        return EnumEvalOk;
+    case BinBitAnd:
+        *out = l & r;
+        return EnumEvalOk;
+    case BinBitOr:
+        *out = l | r;
+        return EnumEvalOk;
+    case BinBitXor:
+        *out = l ^ r;
+        return EnumEvalOk;
+    case BinShl:
+        if (r >= 64)
+        {
+            return EnumEvalNotConst;
+        }
+
+        *out = (isUnsigned && ConstBitWidth(e->lhs) == 32) ? ((l << r) & 0xFFFFFFFFULL) : (l << r);
+        return EnumEvalOk;
+    case BinShr:
+        if (r >= 64)
+        {
+            return EnumEvalNotConst;
+        }
+
+        *out = isUnsigned ? (l >> r) : (uint64_t)((int64_t)l >> (int64_t)r);
+        return EnumEvalOk;
+    default:
+        return EnumEvalNotConst; /* comparisons / && / || don't fold to an integer value */
+    }
+}
+
+static EnumEvalStatus EnumEvalIdent(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, uint64_t* out)
+{
+    /* A bare name: a reference to an EARLIER member of this enum. */
+    IdentExpr* id = (IdentExpr*)n;
+    EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, enumIndex);
+    size_t refIndex = 0;
+
+    if (!FindEnumMemberIndex(ed, id->name, &refIndex))
+    {
+        return EnumEvalNotConst;
+    }
+
+    if (refIndex >= memberIndex)
+    {
+        return EnumEvalForwardRef;
+    }
+
+    *out = ((EnumMemberDecl*)VecGet(&ed->members, refIndex))->value;
+    return EnumEvalOk;
+}
+
+static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, uint64_t* out)
+{
+    /* `EnumName.Member` — a scoped constant from an already-resolved enum. */
+    MemberExpr* me = (MemberExpr*)n;
+
+    /* `int.max` — a builtin scalar pseudo-property folds to its value
+       (integral only; enums never have float underlyings). */
+    if (me->base_node->kind == NodeIdent)
+    {
+        uint64_t intVal = 0;
+        bool isFloat = false;
+
+        if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)me->base_node)->name), me->member, &intVal, NULL, &isFloat))
+        {
+            if (isFloat)
+            {
+                return EnumEvalNotConst;
+            }
+
+            *out = intVal;
+            return EnumEvalOk;
+        }
+    }
+
+    if (me->base_node->kind != NodeIdent)
+    {
+        return EnumEvalNotConst;
+    }
+
+    const char* enumName = ((IdentExpr*)me->base_node)->name;
+
+    for (size_t i = 0; i < mod->enums.count; i++)
+    {
+        EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, i);
+
+        if (strcmp(ed->name, enumName) != 0)
+        {
+            continue;
+        }
+
+        size_t refIndex = 0;
+
+        if (!FindEnumMemberIndex(ed, me->member, &refIndex))
+        {
+            return EnumEvalNotConst;
+        }
+
+        if (i > enumIndex || (i == enumIndex && refIndex >= memberIndex))
+        {
+            return EnumEvalForwardRef;
+        }
+
+        *out = ((EnumMemberDecl*)VecGet(&ed->members, refIndex))->value;
+        return EnumEvalOk;
+    }
+
+    return EnumEvalNotConst;
+}
+
 /* Folds an enum member value expression to a 64-bit value */
 static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
                                         uint64_t* out)
@@ -119,206 +332,19 @@ static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, 
     switch (n->kind)
     {
     case NodeIntLiteral:
-        *out = ((IntLiteral*)n)->value;
-        return EnumEvalOk;
+        return EnumEvalIntLiteral(n, out);
     case NodeBoolLiteral:
-        *out = ((BoolLiteral*)n)->value ? 1 : 0;
-        return EnumEvalOk;
+        return EnumEvalBoolLiteral(n, out);
     case NodeUnary:
-    {
-        UnaryExpr* u = (UnaryExpr*)n;
-        uint64_t inner = 0;
-        EnumEvalStatus st = EnumEvalConstExpr(u->operand, mod, enumIndex, memberIndex, isUnsigned, &inner);
-
-        if (st != EnumEvalOk)
-        {
-            return st;
-        }
-
-        switch (u->op)
-        {
-        case UnPos:
-            *out = inner;
-            return EnumEvalOk;
-        case UnNeg:
-            if (isUnsigned)
-            {
-                /* `-1u` on an unsigned underlying wraps C-style to 0xFFFFFFFF
-                   (a plain `-1` stays rejected). */
-                if (ConstBitWidth(u->operand) == 32)
-                {
-                    *out = (0 - inner) & 0xFFFFFFFFULL;
-                    return EnumEvalOk;
-                }
-
-                return EnumEvalNegForUnsigned;
-            }
-
-            *out = (uint64_t)(0 - inner);
-            return EnumEvalOk;
-        case UnBitNot:
-            *out = ConstBitWidth(u->operand) == 32 ? (~inner & 0xFFFFFFFFULL) : ~inner;
-            return EnumEvalOk;
-        default:
-            return EnumEvalNotConst;
-        }
-    }
+        return EnumEvalUnary(n, mod, enumIndex, memberIndex, isUnsigned, out);
     case NodeBinary:
-    {
-        BinaryExpr* e = (BinaryExpr*)n;
-        uint64_t l = 0;
-        uint64_t r = 0;
-        EnumEvalStatus sl = EnumEvalConstExpr(e->lhs, mod, enumIndex, memberIndex, isUnsigned, &l);
-
-        if (sl != EnumEvalOk)
-        {
-            return sl;
-        }
-
-        EnumEvalStatus sr = EnumEvalConstExpr(e->rhs, mod, enumIndex, memberIndex, isUnsigned, &r);
-
-        if (sr != EnumEvalOk)
-        {
-            return sr;
-        }
-
-        switch (e->op)
-        {
-        case BinAdd:
-            *out = l + r;
-            return EnumEvalOk;
-        case BinSub:
-            *out = l - r;
-            return EnumEvalOk;
-        case BinMul:
-            *out = l * r;
-            return EnumEvalOk;
-        case BinDiv:
-            if (r == 0)
-            {
-                return EnumEvalNotConst;
-            }
-
-            *out = isUnsigned ? (l / r) : (uint64_t)((int64_t)l / (int64_t)r);
-            return EnumEvalOk;
-        case BinMod:
-            if (r == 0)
-            {
-                return EnumEvalNotConst;
-            }
-
-            *out = isUnsigned ? (l % r) : (uint64_t)((int64_t)l % (int64_t)r);
-            return EnumEvalOk;
-        case BinBitAnd:
-            *out = l & r;
-            return EnumEvalOk;
-        case BinBitOr:
-            *out = l | r;
-            return EnumEvalOk;
-        case BinBitXor:
-            *out = l ^ r;
-            return EnumEvalOk;
-        case BinShl:
-            if (r >= 64)
-            {
-                return EnumEvalNotConst;
-            }
-
-            *out = (isUnsigned && ConstBitWidth(e->lhs) == 32) ? ((l << r) & 0xFFFFFFFFULL) : (l << r);
-            return EnumEvalOk;
-        case BinShr:
-            if (r >= 64)
-            {
-                return EnumEvalNotConst;
-            }
-
-            *out = isUnsigned ? (l >> r) : (uint64_t)((int64_t)l >> (int64_t)r);
-            return EnumEvalOk;
-        default:
-            return EnumEvalNotConst; /* comparisons / && / || don't fold to an integer value */
-        }
-    }
+        return EnumEvalBinary(n, mod, enumIndex, memberIndex, isUnsigned, out);
     case NodeCast:
         return EnumEvalConstExpr(((CastExpr*)n)->operand, mod, enumIndex, memberIndex, isUnsigned, out);
     case NodeIdent:
-    {
-        /* A bare name: a reference to an EARLIER member of this enum. */
-        IdentExpr* id = (IdentExpr*)n;
-        EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, enumIndex);
-        size_t refIndex = 0;
-
-        if (!FindEnumMemberIndex(ed, id->name, &refIndex))
-        {
-            return EnumEvalNotConst;
-        }
-
-        if (refIndex >= memberIndex)
-        {
-            return EnumEvalForwardRef;
-        }
-
-        *out = ((EnumMemberDecl*)VecGet(&ed->members, refIndex))->value;
-        return EnumEvalOk;
-    }
+        return EnumEvalIdent(n, mod, enumIndex, memberIndex, out);
     case NodeMember:
-    {
-        /* `EnumName.Member` — a scoped constant from an already-resolved enum. */
-        MemberExpr* me = (MemberExpr*)n;
-
-        /* `int.max` — a builtin scalar pseudo-property folds to its value
-           (integral only; enums never have float underlyings). */
-        if (me->base_node->kind == NodeIdent)
-        {
-            uint64_t intVal = 0;
-            bool isFloat = false;
-
-            if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)me->base_node)->name), me->member, &intVal, NULL,
-                                  &isFloat))
-            {
-                if (isFloat)
-                {
-                    return EnumEvalNotConst;
-                }
-
-                *out = intVal;
-                return EnumEvalOk;
-            }
-        }
-
-        if (me->base_node->kind != NodeIdent)
-        {
-            return EnumEvalNotConst;
-        }
-
-        const char* enumName = ((IdentExpr*)me->base_node)->name;
-
-        for (size_t i = 0; i < mod->enums.count; i++)
-        {
-            EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, i);
-
-            if (strcmp(ed->name, enumName) != 0)
-            {
-                continue;
-            }
-
-            size_t refIndex = 0;
-
-            if (!FindEnumMemberIndex(ed, me->member, &refIndex))
-            {
-                return EnumEvalNotConst;
-            }
-
-            if (i > enumIndex || (i == enumIndex && refIndex >= memberIndex))
-            {
-                return EnumEvalForwardRef;
-            }
-
-            *out = ((EnumMemberDecl*)VecGet(&ed->members, refIndex))->value;
-            return EnumEvalOk;
-        }
-
-        return EnumEvalNotConst;
-    }
+        return EnumEvalMember(n, mod, enumIndex, memberIndex, out);
     default:
         return EnumEvalNotConst;
     }
