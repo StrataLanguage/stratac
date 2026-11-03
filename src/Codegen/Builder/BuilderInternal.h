@@ -360,3 +360,17 @@ void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAd
 LValue EmitIdentLValue(Builder* b, IdentExpr* id);
 LValue EmitMemberLValue(Builder* b, MemberExpr* m);
 LValue EmitIndexLValue(Builder* b, IndexExpr* ix);
+
+// Expr.c dispatch (EmitMember cases)
+Value EmitEnumConstMember(Builder* b, MemberExpr* n);
+bool TryEmitScalarPseudoMember(Builder* b, MemberExpr* n, Value* out);
+Value EmitMemberLValueRead(Builder* b, LValue lvalue);
+Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base);
+Value EmitArrayDataMember(Builder* b, Value base);
+Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base);
+Value EmitFixedArrayLengthMember(Builder* b, Value base);
+Value EmitCStringLengthMember(Builder* b, Value base);
+bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out);
+Value EmitBoxedVectorDeref(Builder* b, Value base);
+bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out);
+bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out);

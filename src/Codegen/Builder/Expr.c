@@ -357,34 +357,247 @@ LLVMValueRef AsI64Index(Builder* b, Value v)
     return v.value;
 }
 
+/* Scoped enum constant `EnumName.Member`: the underlying constant value, inline. */
+Value EmitEnumConstMember(Builder* b, MemberExpr* n)
+{
+    TypeName tn = TypeNameLeaf((char*)n->enumTypeName);
+    TypeDesc td = Resolve(b, &tn);
+    LLVMValueRef v = ConstIntTrunc(td.type, n->enumValue);
+    return ValueMake(v, td);
+}
+
+/* Builtin scalar pseudo-property `int.max` / `float.min`: a compile-time constant of the base scalar's own type.
+ * Returns false when the name is not one, so the caller falls through. */
+bool TryEmitScalarPseudoMember(Builder* b, MemberExpr* n, Value* out)
+{
+    TypeName tn = TypeNameLeaf((char*)((IdentExpr*)n->base_node)->name);
+    TypeDesc td = Resolve(b, &tn);
+
+    uint64_t intVal = 0;
+    double floatVal = 0.0;
+    bool isFloat = false;
+
+    if (ScalarPseudoConst(tn.primitiveType, n->member, &intVal, &floatVal, &isFloat))
+    {
+        LLVMValueRef v = isFloat ? LLVMConstReal(td.type, floatVal) : ConstIntTrunc(td.type, intVal);
+        *out = ValueMake(v, td);
+        return true;
+    }
+    return false;
+}
+
+/* Read of an addressable member: a single-lane vector load plus extract, or a plain load. */
+Value EmitMemberLValueRead(Builder* b, LValue lvalue)
+{
+    if (lvalue.vectorLane)
+    {
+        /* Single-lane vector read: load the vector, extract the lane. */
+        LLVMValueRef vec = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "mvec");
+        LLVMValueRef v = LLVMBuildExtractElement(b->m_builder, vec, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
+        return ValueMake(v, lvalue.typeDesc);
+    }
+
+    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "m");
+
+    return ValueMake(v, lvalue.typeDesc);
+}
+
+/* array.data / string.data: the element buffer as a raw `ptr` (NULL when empty). */
+Value EmitArrayDataMember(Builder* b, Value base)
+{
+    TypeDesc ptrTd = ResolveByName(b, STRATA_PTR_TYPE);
+    LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, 0, "data");
+    BorrowTemp(b, base, ptrTd);
+    return ValueMake(v, ptrTd);
+}
+
+/* array.length / array.cap on a non-lvalue array (e.g. MakeArr().length). */
+Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
+{
+    unsigned field = strcmp(n->member, "length") == 0 ? 1 : 2;
+    LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
+    TypeDesc lenTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
+    BorrowTemp(b, base, lenTd);
+    return ValueMake(v, lenTd);
+}
+
+/* Fixed-array .length: the compile-time dimension as a constant. */
+Value EmitFixedArrayLengthMember(Builder* b, Value base)
+{
+    LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)base.typeDesc.fixedLength, 0);
+    return ValueMake(len, TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
+}
+
+/* cstring .length: runtime strlen (NUL-terminated), typed uint. */
+Value EmitCStringLengthMember(Builder* b, Value base)
+{
+    LLVMValueRef len = BuildStrLen(b, base.value);
+    return ValueMake(LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
+}
+
+/* Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
+ * struct has no such field. */
+bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
+{
+    /* A box-typed value with no addressable lvalue (e.g. a call result
+        used directly: `MakeThing().field`) - GEP+load through the
+        pointer instead of extracting from an aggregate value. */
+    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, base.typeDesc.boxInner->name);
+    int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.boxInner->name, n->member);
+
+    if (structTy && idx >= 0)
+    {
+        const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.boxInner->name);
+        FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
+        TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
+
+        LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, idx))};
+        LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, base.value, idxs, 2, "f");
+        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
+
+        if (TypeDescIsOwning(b, &fieldTypeDesc))
+        {
+            BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, ptr, NULL, 0);
+        }
+        else
+        {
+            BorrowTemp(b, base, fieldTypeDesc);
+        }
+
+        *out = ValueMake(v, fieldTypeDesc);
+        return true;
+    }
+    return false;
+}
+
+/* A box around a SIMD vector resolves down to the vector value, so lane and swizzle reads see the vector. */
+Value EmitBoxedVectorDeref(Builder* b, Value base)
+{
+    if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner && IsNameSimdVector(base.typeDesc.boxInner->name))
+    {
+        /* Resolve a box (surrounding a vector) down to the vector type. */
+        TypeDesc innerType = Resolve(b, base.typeDesc.boxInner);
+        base.value = LLVMBuildLoad2(b->m_builder, innerType.type, base.value, "boxvec");
+        base.typeDesc = innerType;
+    }
+
+    return base;
+}
+
+/* Lane or swizzle read of a SIMD vector value (`v.x`, `v.xy`). Returns false when the destructure does not apply. */
+bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
+{
+    LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
+
+    LLVMValueRef dsValue = LSimdVectorDestructure(b, base.value, n);
+
+    if (dsValue != NULL)
+    {
+        TypeDesc dsTd = TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL);
+        size_t comps = strlen(n->member);
+        dsTd.simdLanes = comps > 1 ? (int)comps : 0;
+        *out = (Value){dsValue, dsTd};
+        return true;
+    }
+    return false;
+}
+
+/* Struct field read from a value. Returns false when the struct has no such field. */
+bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
+{
+    int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.structTypeName, n->member);
+
+    if (idx >= 0)
+    {
+        const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.structTypeName);
+
+        FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
+        TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
+
+        LLVMValueRef v = ExtractStructField(b, st, base.value, idx, fieldTypeDesc.type);
+
+        if (TypeDescIsOwning(b, &fieldTypeDesc))
+        {
+            BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, NULL, base.typeDesc.type,
+                           (int)PhysicalFieldIndex(st, idx));
+        }
+        else
+        {
+            BorrowTemp(b, base, fieldTypeDesc);
+        }
+
+        *out = ValueMake(v, fieldTypeDesc);
+        return true;
+    }
+    return false;
+}
+
+/* Member read from a non-lvalue base value, dispatched by member kind. */
+Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
+{
+    if ((TypeDescHasArrayShape(&base.typeDesc) || base.typeDesc.isString) && strcmp(n->member, "data") == 0)
+    {
+        return EmitArrayDataMember(b, base);
+    }
+
+    if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(n->member, "length") == 0 || strcmp(n->member, "cap") == 0))
+    {
+        return EmitArrayLengthMember(b, n, base);
+    }
+
+    if (base.typeDesc.isFixedArray && strcmp(n->member, "length") == 0)
+    {
+        return EmitFixedArrayLengthMember(b, base);
+    }
+
+    if (base.typeDesc.isCString && strcmp(n->member, "length") == 0)
+    {
+        return EmitCStringLengthMember(b, base);
+    }
+
+    Value out;
+
+    if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner && TryEmitBoxFieldMember(b, n, base, &out))
+    {
+        return out;
+    }
+
+    base = EmitBoxedVectorDeref(b, base);
+
+    if (base.typeDesc.isSimdVector && TryEmitSimdLaneMember(b, n, base, &out))
+    {
+        return out;
+    }
+
+    if (base.typeDesc.structTypeName && TryEmitStructFieldMember(b, n, base, &out))
+    {
+        return out;
+    }
+
+    if (b->m_diag)
+    {
+        DiagErrorFmt(b->m_diag, n->base.range, "cannot access member '%s'", n->member);
+    }
+
+    return ZeroInt(b);
+}
+
 static Value EmitMember(Builder* b, MemberExpr* n)
 {
     /* Scoped enum constant: `EnumName.Member` — emit the underlying constant
        value inline. */
     if (n->isEnumConst)
     {
-        TypeName tn = TypeNameLeaf((char*)n->enumTypeName);
-        TypeDesc td = Resolve(b, &tn);
-        LLVMValueRef v = ConstIntTrunc(td.type, n->enumValue);
-        return ValueMake(v, td);
+        return EmitEnumConstMember(b, n);
     }
 
     /* Builtin scalar pseudo-property: `int.max` / `float.min` — a compile
        time constant of the base scalar's own type. */
-    if (n->isScalarConst)
+    Value scalar;
+
+    if (n->isScalarConst && TryEmitScalarPseudoMember(b, n, &scalar))
     {
-        TypeName tn = TypeNameLeaf((char*)((IdentExpr*)n->base_node)->name);
-        TypeDesc td = Resolve(b, &tn);
-
-        uint64_t intVal = 0;
-        double floatVal = 0.0;
-        bool isFloat = false;
-
-        if (ScalarPseudoConst(tn.primitiveType, n->member, &intVal, &floatVal, &isFloat))
-        {
-            LLVMValueRef v = isFloat ? LLVMConstReal(td.type, floatVal) : ConstIntTrunc(td.type, intVal);
-            return ValueMake(v, td);
-        }
+        return scalar;
     }
 
     /* Impl property read: lower to the getter extern call. Checked first —
@@ -401,142 +614,12 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
     if (lvalue.valid)
     {
-        if (lvalue.vectorLane)
-        {
-            /* Single-lane vector read: load the vector, extract the lane. */
-            LLVMValueRef vec = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "mvec");
-            LLVMValueRef v = LLVMBuildExtractElement(b->m_builder, vec, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
-            return ValueMake(v, lvalue.typeDesc);
-        }
-
-        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "m");
-
-        return ValueMake(v, lvalue.typeDesc);
+        return EmitMemberLValueRead(b, lvalue);
     }
 
     Value base = EmitExpr(b, n->base_node);
 
-    /* array.data / string.data: the element buffer as a raw `ptr` (NULL when empty). */
-    if ((TypeDescHasArrayShape(&base.typeDesc) || base.typeDesc.isString) && strcmp(n->member, "data") == 0)
-    {
-        TypeDesc ptrTd = ResolveByName(b, STRATA_PTR_TYPE);
-        LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, 0, "data");
-        BorrowTemp(b, base, ptrTd);
-        return ValueMake(v, ptrTd);
-    }
-
-    /* array.length / array.cap on a non-lvalue array (e.g. MakeArr().length). */
-    if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(n->member, "length") == 0 || strcmp(n->member, "cap") == 0))
-    {
-        unsigned field = strcmp(n->member, "length") == 0 ? 1 : 2;
-        LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
-        TypeDesc lenTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
-        BorrowTemp(b, base, lenTd);
-        return ValueMake(v, lenTd);
-    }
-
-    /* Fixed-array .length: the compile-time dimension as a constant. */
-    if (base.typeDesc.isFixedArray && strcmp(n->member, "length") == 0)
-    {
-        LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)base.typeDesc.fixedLength, 0);
-        return ValueMake(len, TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
-    }
-
-    /* cstring .length: runtime strlen (NUL-terminated), typed uint. */
-    if (base.typeDesc.isCString && strcmp(n->member, "length") == 0)
-    {
-        LLVMValueRef len = BuildStrLen(b, base.value);
-        return ValueMake(LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "cslen"),
-                         TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
-    }
-
-    if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner)
-    {
-        /* A box-typed value with no addressable lvalue (e.g. a call result
-            used directly: `MakeThing().field`) - GEP+load through the
-            pointer instead of extracting from an aggregate value. */
-        LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, base.typeDesc.boxInner->name);
-        int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.boxInner->name, n->member);
-
-        if (structTy && idx >= 0)
-        {
-            const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.boxInner->name);
-            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
-            TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
-
-            LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, idx))};
-            LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, base.value, idxs, 2, "f");
-            LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
-
-            if (TypeDescIsOwning(b, &fieldTypeDesc))
-            {
-                BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, ptr, NULL, 0);
-            }
-            else
-            {
-                BorrowTemp(b, base, fieldTypeDesc);
-            }
-
-            return ValueMake(v, fieldTypeDesc);
-        }
-    }
-
-    if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner && IsNameSimdVector(base.typeDesc.boxInner->name))
-    {
-        /* Resolve a box (surrounding a vector) down to the vector type. */
-        TypeDesc innerType = Resolve(b, base.typeDesc.boxInner);
-        base.value = LLVMBuildLoad2(b->m_builder, innerType.type, base.value, "boxvec");
-        base.typeDesc = innerType;
-    }
-
-    if (base.typeDesc.isSimdVector)
-    {
-        LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
-
-        LLVMValueRef dsValue = LSimdVectorDestructure(b, base.value, n);
-
-        if (dsValue != NULL)
-        {
-            TypeDesc dsTd = TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL);
-            size_t comps = strlen(n->member);
-            dsTd.simdLanes = comps > 1 ? (int)comps : 0;
-            return (Value){dsValue, dsTd};
-        }
-    }
-
-    if (base.typeDesc.structTypeName)
-    {
-        int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.structTypeName, n->member);
-
-        if (idx >= 0)
-        {
-            const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.structTypeName);
-
-            FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
-            TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
-
-            LLVMValueRef v = ExtractStructField(b, st, base.value, idx, fieldTypeDesc.type);
-
-            if (TypeDescIsOwning(b, &fieldTypeDesc))
-            {
-                BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, NULL, base.typeDesc.type,
-                               (int)PhysicalFieldIndex(st, idx));
-            }
-            else
-            {
-                BorrowTemp(b, base, fieldTypeDesc);
-            }
-
-            return ValueMake(v, fieldTypeDesc);
-        }
-    }
-
-    if (b->m_diag)
-    {
-        DiagErrorFmt(b->m_diag, n->base.range, "cannot access member '%s'", n->member);
-    }
-
-    return ZeroInt(b);
+    return EmitMemberOfValue(b, n, base);
 }
 
 static Value EmitIndex(Builder* b, IndexExpr* n)
