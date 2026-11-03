@@ -52,7 +52,12 @@ set(STRATA_COMMON_SOURCES
     src/Codegen/TypeUtil.c
     src/Codegen/ASTDump.c
     src/Import/ModuleLoader.c
-    src/Embed.c
+    src/Embed/Pipeline.c
+    src/Embed/Compiler.c
+    src/Embed/Jit.c
+    src/Embed/Aot.c
+    src/Embed/Types.c
+    src/Embed/Runtime.c
 )
 
 set(STRATA_LLVM_SOURCES
@@ -239,7 +244,7 @@ if(NOT STRATA_SHARED)
     )
 
     # These exercise the public strataJit* embed API (LLVM/ORCv2 - see
-    # src/Embed.c).
+    # src/Embed/Jit.c).
     if(STRATA_ENABLE_LLVM)
         list(APPEND STRATA_TEST_SOURCES
             tests/unit/JitTests.c
