@@ -57,14 +57,14 @@ static const char* DiskModuleKey(Arena* arena, const char* canonPath)
     wchar_t wide[4096];
     wchar_t longPath[4096];
 
-    int wideLen = MultiByteToWideChar(CP_ACP, 0, canonPath, -1, wide, (int)(sizeof(wide) / sizeof(wide[0])));
+    int wideLen = MultiByteToWideChar(CP_ACP, 0, canonPath, -1, wide, (int)ARRAY_COUNT(wide));
 
     if (wideLen > 0)
     {
         const wchar_t* folded = wide;
-        DWORD longLen = GetLongPathNameW(wide, longPath, (DWORD)(sizeof(longPath) / sizeof(longPath[0])));
+        DWORD longLen = GetLongPathNameW(wide, longPath, (DWORD)ARRAY_COUNT(longPath));
 
-        if (longLen > 0 && longLen < (DWORD)(sizeof(longPath) / sizeof(longPath[0])))
+        if (longLen > 0 && longLen < (DWORD)ARRAY_COUNT(longPath))
         {
             folded = longPath;
         }

@@ -427,7 +427,7 @@ static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
         {PrimFloat4, 16, 16},
     };
 
-    for (size_t i = 0; i < sizeof(kSizes) / sizeof(kSizes[0]); i++)
+    for (size_t i = 0; i < ARRAY_COUNT(kSizes); i++)
     {
         if (type == kSizes[i].primitive)
         {

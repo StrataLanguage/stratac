@@ -97,7 +97,7 @@ MappedType MapType(const TypeName* t)
         {PrimDouble, true,  false, 64, "double"},
     };
 
-    for (size_t i = 0; i < sizeof(kPrims) / sizeof(kPrims[0]); i++)
+    for (size_t i = 0; i < ARRAY_COUNT(kPrims); i++)
     {
         if (t->primitiveType == kPrims[i].primitive)
         {
@@ -247,7 +247,7 @@ bool ScalarPseudoConst(PrimitiveType primitive, const char* member, uint64_t* ou
 
     if (!IsFloatType(primitive))
     {
-        for (size_t i = 0; i < sizeof(kIntMax) / sizeof(kIntMax[0]); i++)
+        for (size_t i = 0; i < ARRAY_COUNT(kIntMax); i++)
         {
             if (primitive == kIntMax[i].primitive)
             {
