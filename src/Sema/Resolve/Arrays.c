@@ -705,7 +705,29 @@ void ResolveIndexExpr(Resolver* r, Node* n, StrMap* scope)
     ResolveExprImpl(r, ix->baseNode, scope);
     ResolveExprImpl(r, ix->index, scope);
 
-    InferType(r, ix->baseNode, scope);
+    const TypeName* baseType = InferType(r, ix->baseNode, scope);
+
+    // `p[i]` on a typed pointer reads and writes the pointee, so it takes the pointee rules `*p` does.
+    if (TypeNameIsPointer(baseType) && baseType->inner)
+    {
+        const TypeName* target = baseType->inner;
+
+        if (target->primitiveType == PrimVoid)
+        {
+            DiagError(r->diag, ix->base.range, "cannot index a pointer to 'void'; cast it to a typed pointer first");
+        }
+        else if (TypeRegistryIsOpaque(&r->registry, target->name))
+        {
+            DiagErrorFmt(r->diag, ix->base.range, "cannot index a pointer to '%s' (no known layout)", target->name);
+        }
+        else if (!TypeClassify(&r->registry, r->arena, target).trivial)
+        {
+            DiagErrorFmt(r->diag, ix->base.range,
+                         "cannot index a pointer to an owning type: '%s' owns memory, and a pointer neither moves "
+                         "nor drops what it points at",
+                         target->name);
+        }
+    }
 
     return;
 }

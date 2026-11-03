@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: 6 3 40 4 9
+// rule: p[i] on a typed pointer addresses element i of the pointee: it reads, writes, compounds and takes addresses
+struct Pt { int x; int y; };
+*int first_of(*int p) { return p; }
+int main()
+{
+    int[4] arr = {1, 2, 3, 4};
+    *int p = &arr[0];
+    p[0] += 5;
+    p[1]++;
+    *int q = &p[2];
+    *q = 40;
+    int got = first_of(p)[3];
+    Pt[2] pts = {};
+    *Pt pp = &pts[0];
+    pp[1].y = 9;
+    printf("%d %d %d %d %d\n", p[0], p[1], p[2], got, pts[1].y);
+    return 0;
+}

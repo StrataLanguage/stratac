@@ -454,6 +454,12 @@ static const TypeName* InferIndexType(Resolver* r, Node* n, StrMap* scope)
         return InternTypeName(r, "byte");
     }
 
+    if (TypeNameIsPointer(baseType))
+    {
+        // `p[i]` on a typed pointer is an element of its pointee.
+        return baseType->inner;
+    }
+
     return baseType ? TypeNameArrayElem(baseType) : NULL;
 }
 

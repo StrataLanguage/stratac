@@ -278,12 +278,41 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     return none;
 }
 
-// Lvalue of `base[index]`: a cstring byte, a fixed-array element, or a dynamic array or string element.
+// Address of `p[index]` for a typed pointer `*T` whose address is `ptr`: `ptr + index`, typed as T. A typed
+// pointer carries no length, so the index is not bounds-checked; a null pointer panics, as `*p` does.
+static LValue PointerElemLValue(Builder* b, IndexExpr* ix, LLVMValueRef ptr, const TypeName* pointee)
+{
+    LValue none = {0};
+
+    TypeDesc elemTd = Resolve(b, pointee);
+    LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+
+    EmitPanicIf(b, LLVMBuildICmp(b->builder, LLVMIntEQ, ptr, LLVMConstNull(b->ptrTy), "isnull"),
+                "null pointer dereference");
+
+    none.valid = true;
+    none.ptr = LLVMBuildGEP2(b->builder, elemTd.type, ptr, &idxVal, 1, "pidx");
+    none.typeDesc = elemTd;
+
+    return none;
+}
+
+// Lvalue of `base[index]`: a cstring byte, a typed pointer's element, a fixed-array element, or a dynamic
+// array or string element.
 LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 {
     LValue none = {0};
 
     LValue base = EmitLValue(b, ix->baseNode);
+
+    if (base.valid && TypeDescIsPointer(&base.typeDesc) && !TypeDescHasArrayShape(&base.typeDesc)
+        && base.typeDesc.pointee)
+    {
+        // `p[i]` where p is `*T`: load the address the slot holds, then step over it.
+        LLVMValueRef ptr = LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "pp");
+
+        return PointerElemLValue(b, ix, ptr, base.typeDesc.pointee);
+    }
 
     if (base.valid && TypeDescIsCString(&base.typeDesc))
     {
@@ -705,6 +734,14 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
         LLVMValueRef v = LLVMBuildLoad2(b->builder, elemTd.type, elemAddr, "el");
 
         return ValueMake(v, elemTd);
+    }
+
+    // Typed pointer rvalue (`make()[i]`): index from the pointer value itself.
+    if (TypeDescIsPointer(&base.typeDesc) && base.typeDesc.pointee)
+    {
+        LValue elem = PointerElemLValue(b, n, base.value, base.typeDesc.pointee);
+
+        return ValueMake(LLVMBuildLoad2(b->builder, elem.typeDesc.type, elem.ptr, "el"), elem.typeDesc);
     }
 
     if (!TypeDescHasArrayShape(&base.typeDesc))
