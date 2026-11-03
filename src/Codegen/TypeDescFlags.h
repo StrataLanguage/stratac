@@ -5,112 +5,124 @@
 /* Roadmap phase 3: the shape flags of a TypeDesc are read through these predicates, so code outside the
    type layer never tests `isBox`, `isOptional` or `isArray` itself. */
 
+static inline void TypeDescSetFlag(TypeDesc* t, TypeDescFlags flag, bool v)
+{
+    if (v)
+    {
+        t->flags |= flag;
+    }
+    else
+    {
+        t->flags &= ~flag;
+    }
+}
+
 static inline bool TypeDescIsFloat(const TypeDesc* t)
 {
-    return t->isFloat;
+    return (t->flags & TDF_FLOAT) != 0;
 }
 
 static inline bool TypeDescIsUnsigned(const TypeDesc* t)
 {
-    return t->isUnsigned;
+    return (t->flags & TDF_UNSIGNED) != 0;
 }
 
 static inline bool TypeDescIsVoid(const TypeDesc* t)
 {
-    return t->isVoid;
+    return (t->flags & TDF_VOID) != 0;
 }
 
 static inline bool TypeDescIsBox(const TypeDesc* t)
 {
-    return t->isBox;
+    return (t->flags & TDF_BOX) != 0;
 }
 
 static inline bool TypeDescIsOptional(const TypeDesc* t)
 {
-    return t->isOptional;
+    return (t->flags & TDF_OPTIONAL) != 0;
 }
 
 static inline bool TypeDescHasArrayShape(const TypeDesc* t)
 {
-    return t->isArray;
+    return (t->flags & TDF_ARRAY) != 0;
 }
 
 static inline bool TypeDescIsString(const TypeDesc* t)
 {
-    return t->isString;
+    return (t->flags & TDF_STRING) != 0;
 }
 
 static inline bool TypeDescIsCString(const TypeDesc* t)
 {
-    return t->isCString;
+    return (t->flags & TDF_CSTRING) != 0;
 }
 
 static inline bool TypeDescIsSimdVector(const TypeDesc* t)
 {
-    return t->isSimdVector;
+    return (t->flags & TDF_SIMD_VECTOR) != 0;
 }
 
 static inline bool TypeDescIsAliasedArray(const TypeDesc* t)
 {
-    return t->aliasedArray;
+    return (t->flags & TDF_ALIASED_ARRAY) != 0;
 }
 
 static inline bool TypeDescIsFixedArray(const TypeDesc* t)
 {
-    return t->isFixedArray;
+    return (t->flags & TDF_FIXED_ARRAY) != 0;
 }
 
 static inline void TypeDescSetFloat(TypeDesc* t, bool v)
 {
-    t->isFloat = v;
+    TypeDescSetFlag(t, TDF_FLOAT, v);
 }
 
 static inline void TypeDescSetUnsigned(TypeDesc* t, bool v)
 {
-    t->isUnsigned = v;
+    TypeDescSetFlag(t, TDF_UNSIGNED, v);
 }
 
 static inline void TypeDescSetVoid(TypeDesc* t, bool v)
 {
-    t->isVoid = v;
+    TypeDescSetFlag(t, TDF_VOID, v);
 }
 
 static inline void TypeDescSetBox(TypeDesc* t, bool v)
 {
-    t->isBox = v;
+    TypeDescSetFlag(t, TDF_BOX, v);
 }
 
 static inline void TypeDescSetOptional(TypeDesc* t, bool v)
 {
-    t->isOptional = v;
+    TypeDescSetFlag(t, TDF_OPTIONAL, v);
 }
 
 static inline void TypeDescSetArrayShape(TypeDesc* t, bool v)
 {
-    t->isArray = v;
+    TypeDescSetFlag(t, TDF_ARRAY, v);
 }
 
 static inline void TypeDescSetString(TypeDesc* t, bool v)
 {
-    t->isString = v;
+    TypeDescSetFlag(t, TDF_STRING, v);
 }
 
 static inline void TypeDescSetCString(TypeDesc* t, bool v)
 {
-    t->isCString = v;
+    TypeDescSetFlag(t, TDF_CSTRING, v);
 }
 
 static inline void TypeDescSetSimdVector(TypeDesc* t, bool v)
 {
-    t->isSimdVector = v;
+    TypeDescSetFlag(t, TDF_SIMD_VECTOR, v);
 }
 
 static inline void TypeDescSetAliasedArray(TypeDesc* t, bool v)
 {
-    t->aliasedArray = v;
+    TypeDescSetFlag(t, TDF_ALIASED_ARRAY, v);
 }
 
 static inline void TypeDescSetFixedArray(TypeDesc* t, bool v)
 {
-    t->isFixedArray = v;
+    TypeDescSetFlag(t, TDF_FIXED_ARRAY, v);
 }

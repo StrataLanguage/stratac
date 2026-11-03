@@ -8,10 +8,7 @@ TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlags flags, const char* structT
 {
     TypeDesc td = {0};
     td.type = type;
-    TypeDescSetFloat(&td, (flags & TDF_FLOAT));
-    TypeDescSetUnsigned(&td, (flags & TDF_UNSIGNED));
-    TypeDescSetVoid(&td, (flags & TDF_VOID));
-    TypeDescSetSimdVector(&td, (flags & TDF_SIMD_VECTOR));
+    td.flags = flags;
     td.structTypeName = structTypeName;
 
     return td;
