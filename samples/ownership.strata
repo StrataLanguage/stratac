@@ -1,9 +1,8 @@
-// ownership.strata -- destructors (`Drop`) and shared ownership (`rc<T>`).
+// ownership.strata -- destructors (`Drop`), optionals and ownership across boxes, arrays and fields.
 //
 // A struct whose impl has `void Drop(ref T self)` runs it once, when its owned value goes:
 // scope end, overwrite, drop(), the box, array or struct holding it being dropped, or the
-// module context being destroyed. `rc<T>` is a box shared by reference count: copying it
-// retains, dropping it releases, and the last release drops the value.
+// module context being destroyed.
 
 extern ptr  malloc(ulong size);
 extern void free(ptr p);
@@ -36,7 +35,7 @@ struct Holder
     Res res;
 };
 
-// -- rc ----------------------------------------------------------------------------
+// -- owned fields and optionals ---------------------------------------------------------
 
 struct Image
 {
@@ -48,7 +47,7 @@ impl Image
     void Drop(ref Image self) { gLive--; printf("free image %d\n", self.id); }
 }
 
-rc<Image> MakeImage(int id)
+^Image MakeImage(int id)
 {
     gLive++;
     return Image { .id = id };
@@ -57,7 +56,7 @@ rc<Image> MakeImage(int id)
 struct View
 {
     int mip;
-    rc<Image> image;
+    ^Image image;
 };
 
 impl View
@@ -65,19 +64,18 @@ impl View
     void Drop(ref View self) { gLive--; printf("free view %d of image %d\n", self.mip, self.image.id); }
 }
 
-rc<View> MakeView(rc<Image> image, int mip)
+^View MakeView(int image, int mip)
 {
     gLive++;
-    return View { .mip = mip, .image = image };
+    return View { .mip = mip, .image = MakeImage(image) };
 }
 
-int Describe(ref Image image) { return image.id * 10; }
+int Describe(const ref Image image) { return image.id * 10; }
 
-// `rc<T>?`: an rc that may be empty, narrowed like any `T?`.
 struct Target
 {
     int width;
-    rc<Image>? depth;
+    Image? depth;
 };
 
 int DepthId(ref Target t)
@@ -87,25 +85,6 @@ int DepthId(ref Target t)
         return t.depth.id;
     }
     return -1;
-}
-
-// Smart cast: once flow typing proves an `rc<T>?` (or `T?`) set, it is an `rc<T>` (or `^T`).
-rc<Image> DepthOr(ref Target t, rc<Image> fallback)
-{
-    if (t.depth?)
-    {
-        return t.depth;              // a copy: t keeps its reference
-    }
-    return fallback;
-}
-
-int IdOf(rc<Image> image) { return image.id; }
-
-// A `^T` moves into a fresh `rc<T>` wherever one is wanted.
-^Image MakeBoxedImage(int id)
-{
-    gLive++;
-    return Image { .id = id };
 }
 
 struct Point
@@ -130,7 +109,7 @@ int Width(Target? t)
     return t.width;
 }
 
-rc<Image> gShared = MakeImage(100);
+^Image gShared = MakeImage(100);
 
 int main()
 {
@@ -159,38 +138,31 @@ int main()
     printf("live after Drop tests: %d\n", gLive);
 
     {
-        rc<View>[] views = {};
-        {
-            rc<Image> image = MakeImage(1);
-            array_push(views, MakeView(image, 0));
-            array_push(views, MakeView(image, 1));
-            printf("describe %d\n", Describe(image));
-        }
+        ^View[] views = {};
+        array_push(views, MakeView(1, 0));
+        array_push(views, MakeView(2, 1));
         printf("live with views: %d\n", gLive);
         printf("describe through an element: %d\n", Describe(views[0].image));
-        rc<View> keep = views[1];
+        ^View keep = array_remove(views, 1u);
         drop(views);                 // view 0 goes; view 1 is kept
-        rc<View> also = keep;
-        printf("kept view %d of image %d\n", keep.mip, also.image.id);
-        printf("describe through a field: %d\n", Describe(also.image));
+        printf("kept view %d of image %d\n", keep.mip, keep.image.id);
+        printf("describe through a field: %d\n", Describe(keep.image));
     }
     {
-        rc<Image> image = MakeImage(7);
         ^Target t = Target { .width = 4 };
         int before = DepthId(t);
-        t.depth = image;
-        rc<Image>? held = t.depth;
+        t.depth = MakeImage(7);
+        int during = DepthId(t);
         drop(t.depth);
-        printf("optional rc: %d %d %d\n", before, DepthId(t), held? ? 1 : 0);
+        printf("optional: %d %d %d\n", before, during, DepthId(t));
     }
     {
         ^Target t = Target { .width = 1, .depth = MakeImage(8) };
-        rc<Image> got = DepthOr(t, MakeImage(9));
-        rc<Image>? maybe = t.depth;
+        Image? maybe = t.depth;
         if (maybe?)
         {
-            rc<Image> sure = maybe;
-            printf("smart cast: %d %d %d\n", got.id, sure.id, IdOf(maybe));
+            ^Image sure = maybe;     // a move: maybe is empty from here
+            printf("smart cast: %d %d\n", sure.id, maybe? ? 1 : 0);
         }
         Point? p = Point { .x = 5 };
         if (p?)
@@ -210,14 +182,6 @@ int main()
         array_swap_remove(list, 0u);     // 20 goes; the last (24) takes its place
         printf("after remove: %d %d %d (%u)\n", list[0].id, list[1].id, list[2].id, list.length);
     }
-    {
-        rc<Image> made = MakeBoxedImage(11);
-        rc<Image> other = made;
-        ^Image boxed = MakeBoxedImage(12);
-        rc<Image>[] list = { boxed };
-        printf("box to rc: %d %d %d\n", other.id, list[0].id, IdOf(MakeBoxedImage(13)));
-    }
-    rc<Image> fromGlobal = gShared;
-    printf("live at end: %d (global %d)\n", gLive, fromGlobal.id);
+    printf("live at end: %d (global %d)\n", gLive, gShared.id);
     return 0;
 }

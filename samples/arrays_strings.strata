@@ -47,8 +47,8 @@ void Repeats()
     words[1] = "changed";
     Named[] records = { {}; 2u };            // default-constructed
     array_push(records[0].values, 5);
-    rc<Image> image = Image { .id = 9 };
-    rc<Image>[] shared = { image; 3u };      // retained, not copied
+    Image image = Image { .id = 9 };
+    Image[] shared = { image; 3u };          // copied
     int[] none = { 7; 0u };
     byte[8] fill = { 0x41; 8 };
     printf("repeat: %u %d | %u %.1f | %s %s %s %s | %u %u %u | %d %u | %u | %c%c\n", zeros.length, zeros[3],
@@ -124,7 +124,7 @@ struct Pass
 struct Frame
 {
     Pass[] passes;
-    rc<Image>? target;
+    Image? target;
 };
 
 void RefLocals()
@@ -142,7 +142,7 @@ void RefLocals()
 
     if (frame.target?)
     {
-        ref Image image = frame.target;                  // the value inside the rc
+        ref Image image = frame.target;                  // the value inside the optional
         image.id = 4;
     }
 
@@ -170,7 +170,7 @@ void Borrows()
 
 // -- out-params: `=` through a ref replaces the caller's value ---------------------------
 
-void Describe(int code, ref string error, ref rc<Image>? image)
+void Describe(int code, ref string error, ref Image? image)
 {
     if (code != 0)
     {
@@ -183,7 +183,7 @@ void Describe(int code, ref string error, ref rc<Image>? image)
 void OutParams()
 {
     string error = "";
-    rc<Image>? image;
+    Image? image;
     Describe(1, error, image);
     Describe(0, error, image);
     printf("out: %s %d\n", error, image? ? image.id : -1);
@@ -204,7 +204,7 @@ struct Shelf
     return named;
 }
 
-void RestockShared(rc<Shelf> shelf)
+void RestockShared(ref ^Shelf shelf)
 {
     ^Named fresh = NamedBox("shared", 7);
     shelf.item = fresh;                      // the box's value moves into the field
@@ -218,7 +218,7 @@ void RestockBorrowed(ref Shelf shelf)
 
 void BoxIntoField()
 {
-    rc<Shelf> shared = Shelf { .label = "a", .item = NamedBox("first", 1) };
+    ^Shelf shared = Shelf { .label = "a", .item = NamedBox("first", 1) };
     RestockShared(shared);
     ^Shelf local = Shelf { .label = "b", .item = NamedBox("second", 2) };
     RestockBorrowed(local);

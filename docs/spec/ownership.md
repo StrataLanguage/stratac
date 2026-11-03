@@ -42,7 +42,6 @@ Type aliases are resolved before any property is read.
 | O13 | Lossy numeric conversions need a cast; literals that fit convert. Arithmetic traps instead of invoking undefined behaviour. | `arith_*`, `literal_*` | `arith_*`, `lossy_*`, `literal_*` |
 | O14 | Enum values are compared and combined only within their enum, and runtime casts are range-checked. | `enum_*` | `enum_*` |
 | O15 | Types that cross the host boundary have a fixed layout; a struct passes to an `extern` by pointer. | `layout_*`, `union_*`, `vec_*` | `extern_*`, `layout_*`, `union_*`, `vec_*` |
-| O16 | `rc<T>` is out of scope and being removed. | n/a | `rc_*` |
 
 ## Where each rule is enforced
 
@@ -65,16 +64,15 @@ use after move, partial moves, narrowing, loans and `ref` validity. The rest are
 | Rule O15 | Sema and backend: no `ref` to a field at a misaligned `fieldoffset`; such fields are read and written unaligned. |
 
 The checker also hands its verdict to the code generator. Every identifier, member and index expression that names
-a place carries a `UseKind` (`AST.h`): `UseMove` empties the place, `UseRetain` copies an `rc` handle by taking a
-reference, `UseCopy` and `UseRead` leave it alone. `MovedSource` in `LLVMModuleBuilder.c` is the only thing that
+a place carries a `UseKind` (`AST.h`): `UseMove` empties the place; `UseCopy` and `UseRead` leave it alone. `MovedSource` in `LLVMModuleBuilder.c` is the only thing that
 decides whether a consuming use empties its source, and it asks the annotation; codegen no longer guesses from the
 shape of the expression. A box handed to a bare place is a copy when its pointee is plain data and a move when the
 pointee owns something.
 
 ## Open points
 
-- `rc<T>` narrowing and `ref` validity through another handle (Foundations hole 4) are not modelled; `rc` is
-  being removed (O16).
+- `rc<T>` is gone, which closes the holes that only it opened (narrowing and `ref` validity through another
+  handle, Foundations hole 4).
 - Casting a box through an opaque marker and back is allowed because the round trip is intended
   (`box_cast_via_opaque_marker_round_trips`). Retyping a box through the marker (hole 17) needs the checker
   to know what the opaque box carries.

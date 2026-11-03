@@ -29,7 +29,6 @@ typedef struct
     const char* structTypeName;
     bool isBox;
     bool isOptional; /* T?: same repr as ^T, but may be empty (sema-gated) */
-    bool isRc;       /* rc<T>: a ^T whose cell has a 16-byte count header before the value */
     const TypeName* boxInner; /* inner T of ^T / T? (NULL for string) */
     bool isArray;
     bool isString;              /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */

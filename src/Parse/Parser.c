@@ -643,51 +643,6 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
         return true;
     }
 
-    /* `rc<T>` — a reference-counted shared box. Like `^T` it is never empty and never wraps an array. */
-    if (p->m_cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->m_cur), "rc")
-        && LexerPeekToken(p->m_lex).kind == TokLt)
-    {
-        SourceRange rcRange = p->m_cur.range;
-        Advance(p);
-        Advance(p); /* '<' */
-
-        TypeName base = {0};
-
-        if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
-        {
-            DiagError(p->m_diag, p->m_cur.range, "expected a type after 'rc<'");
-            return false;
-        }
-
-        ParserExpect(p, TokGt, "'>'");
-
-        if (base.primitiveType == PrimString || base.primitiveType == PrimCString || base.isBox || base.isOptional)
-        {
-            DiagErrorFmt(p->m_diag, rcRange, "'rc<%s>' is not allowed: share a struct, scalar or handle", base.name);
-        }
-
-        *out = TypeNameRcWrap(p->m_arena, base);
-        out->range = SpanToCur(p, rcRange);
-
-        if (bare)
-        {
-            out->isConst = isConst;
-            return true;
-        }
-
-        /* `rc<T>?` — an rc that may be empty. */
-        if (p->m_cur.kind == TokQuestion)
-        {
-            Advance(p);
-            *out = TypeNameOptionalRcWrap(p->m_arena, *out);
-            out->range = SpanToCur(p, rcRange);
-        }
-
-        ApplyArrayBrackets(p, out, constRange);
-        out->isConst = isConst;
-        return true;
-    }
-
     const char* name = NULL;
 
     switch (p->m_cur.kind)

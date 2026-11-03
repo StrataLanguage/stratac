@@ -72,8 +72,7 @@ static int FindLocal(const Locals* ls, const char* name)
 
 static bool TypeOwns(const Env* env, const TypeName* t)
 {
-    /* `rc<T>` is out of scope (being removed): copying a handle retains it, so it never moves. */
-    return t && t->name && !TypeNameIsRc(t) && TypeClassify(env->reg, env->arena, t).owning;
+    return t && t->name && TypeClassify(env->reg, env->arena, t).owning;
 }
 
 static void AddLocalTo(Locals* ls, const char* name, bool owning, const TypeName* type)
@@ -487,7 +486,7 @@ static void NoteIfCopied(Env* env, const Node* value, const TypeName* target)
             return;
         }
 
-        const StructType* st = vt->name && TypeNameIsBare(vt) && !TypeNameIsRc(vt)
+        const StructType* st = vt->name && TypeNameIsBare(vt)
                                    ? TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, vt->name))
                                    : NULL;
 
@@ -1308,7 +1307,7 @@ static void ApplyDropWrites(const Env* env, unsigned char* f, const TypeName* t,
         t = next;
     }
 
-    if (!t || !t->name || depth > 6 || TypeNameIsRc(t))
+    if (!t || !t->name || depth > 6)
     {
         return;
     }
@@ -2385,7 +2384,7 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
             bt = bt->inner;
         }
 
-        const StructType* st = bt && bt->name && !TypeNameIsRc(bt) && !TypeNameHasArrayShape(bt)
+        const StructType* st = bt && bt->name && !TypeNameHasArrayShape(bt)
                                    ? TypeRegistryFind(env->reg, TypeRegistryResolveAlias(env->reg, bt->name))
                                    : NULL;
 
@@ -2434,10 +2433,6 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         if (IsCopied(env, n))
         {
             kind = UseCopy;
-        }
-        else if (t && TypeNameIsRc(t))
-        {
-            kind = UseRetain;
         }
         else if (t && TypeNameIsFixedArray(t))
         {

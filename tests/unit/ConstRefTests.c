@@ -221,8 +221,8 @@ STRATA_TEST(const_box_drop_is_error)
    struct field, an element, a set optional) is an error, like moving out of a global. */
 static const char* HOLDER =
     "struct Box { int v; };\n"
-    "struct H { ulong id; rc<Box> view; };\n"
-    "struct Holder { H tex; H? opt; H[] mips; string name; rc<Box> shared; };\n";
+    "struct H { ulong id; string view; };\n"
+    "struct Holder { H tex; H? opt; H[] mips; string name; string shared; };\n";
 
 static bool HolderRejected(const char* body, const char* needle)
 {
@@ -278,13 +278,13 @@ STRATA_TEST(const_ref_read_copy_and_borrow_are_fine)
         "  return copy(self.tex);\n"
         "}\n"
         "H mip(const ref Holder self, uint i) { return copy(self.mips[i]); }\n"
-        "rc<Box> shared(const ref Holder self) { return self.shared; }\n" /* copying an rc retains */
-        "rc<Box> view(const ref Holder self) { return self.tex.view; }\n"
+        "string shared(const ref Holder self) { return copy(self.shared); }\n"
+        "string view(const ref Holder self) { return copy(self.tex.view); }\n"
         "void take(H h) { drop(h); }\n"
         "void give(const ref Holder self) { take(self.tex); }\n" /* a by-value struct argument is a copy */
         "int f(const ref Holder self) {\n"
         "  const ref H t = self.tex;\n"
-        "  return len(self.name) + (int)t.id + self.tex.view.v + (int)self.mips.length;\n"
+        "  return len(self.name) + (int)t.id + (int)self.tex.view.length + (int)self.mips.length;\n"
         "}\n"));
 }
 
@@ -373,7 +373,7 @@ STRATA_TEST(const_ref_getter_copies_leave_the_holder_intact)
     StrataJit* jit = strataJitCompileString(
         c,
         "struct Box { int v; };\n"
-        "struct H { ulong id; rc<Box> view; };\n"
+        "struct H { ulong id; string view; };\n"
         "struct Holder { H tex; H? opt; H[] mips; };\n"
         "H tex(const ref Holder self) { return copy(self.tex); }\n"
         "H opt(const ref Holder self) {\n"
@@ -382,16 +382,16 @@ STRATA_TEST(const_ref_getter_copies_leave_the_holder_intact)
         "}\n"
         "H mip(const ref Holder self, uint i) { return copy(self.mips[i]); }\n"
         "int entry() {\n"
-        "  rc<Box> b = Box { .v = 7 };\n"
-        "  ^Holder h = Holder { .tex = H { .id = 1ul, .view = b } };\n"
-        "  h.opt = H { .id = 2ul, .view = b };\n"
-        "  array_push(h.mips, H { .id = 3ul, .view = b });\n"
+        "  string b = \"abcdefg\";\n"
+        "  ^Holder h = Holder { .tex = H { .id = 1ul, .view = copy(b) } };\n"
+        "  h.opt = H { .id = 2ul, .view = copy(b) };\n"
+        "  array_push(h.mips, H { .id = 3ul, .view = copy(b) });\n"
         "  ^H a = tex(h); ^H a2 = tex(h);\n"
         "  ^H o = opt(h); ^H o2 = opt(h);\n"
         "  ^H m = mip(h, 0u); ^H m2 = mip(h, 0u);\n"
         "  if (!h.opt?) { return 100; }\n"
-        "  return a.view.v + a2.view.v + o.view.v + o2.view.v + m.view.v + m2.view.v\n"
-        "         + h.tex.view.v + h.mips[0].view.v + (int)(o2.id + m2.id);\n" /* 8 * 7 + 5 */
+        "  return (int)a.view.length + (int)a2.view.length + (int)o.view.length + (int)o2.view.length + (int)m.view.length + (int)m2.view.length\n"
+        "         + (int)h.tex.view.length + (int)h.mips[0].view.length + (int)(o2.id + m2.id);\n" /* 8 * 7 + 5 */
         "}\n",
         "cref_getters", &err);
     strataCompilerDestroy(c);

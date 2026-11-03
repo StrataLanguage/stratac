@@ -81,7 +81,7 @@ static void LowerStmt(Builder* b, const Node* n);
 static void LowerExprC(Builder* b, const Node* n, bool consumed);
 
 /* A cast that only looks at its operand (a buffer or string viewed as text, an array as a pointer). Any
-   other cast hands its operand on, so a move through `rc<T> c = box` still moves the box. */
+   other cast hands its operand on, so a move through `(^T)box` still moves the box. */
 static bool CastViewsOperand(int kind)
 {
     return kind == CastBufferToCString || kind == CastBufferToString || kind == CastStringToCString

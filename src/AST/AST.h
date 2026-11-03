@@ -73,7 +73,6 @@ typedef struct TypeName {
     bool isBox;
     struct TypeName* inner;
     bool isOptional; // `T?` — maybe-empty box; `inner` is the wrapped type
-    bool isRc;       // `rc<T>` — a box shared by reference count (isBox is set too); `inner` is T
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -92,32 +91,6 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
     t.inner = i;
     t.name = arena_format(arena, "^%s", i->name);
     t.range = i->range;
-    return t;
-}
-
-// `rc<T>`: a shared box. Laid out like `^T` (a pointer to the T), with the count in a header before it.
-static inline TypeName TypeNameRcWrap(Arena* arena, TypeName inner)
-{
-    TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
-    *i = inner;
-
-    TypeName t = {0};
-    t.isBox = true;
-    t.isRc = true;
-    t.inner = i;
-    t.name = arena_format(arena, "rc<%s>", i->name);
-    t.range = i->range;
-    return t;
-}
-
-// `rc<T>?`: an rc that may be empty. Shaped like `T?` (inner T, isOptional) and refcounted (isRc).
-static inline TypeName TypeNameOptionalRcWrap(Arena* arena, TypeName rcType)
-{
-    TypeName t = rcType;
-    t.isBox = false;
-    t.isOptional = true;
-    t.isRc = true;
-    t.name = arena_format(arena, "%s?", rcType.name);
     return t;
 }
 
@@ -210,12 +183,6 @@ static inline bool TypeNameIsOptional(const TypeName* t)
     return t && t->isOptional;
 }
 
-// `rc<T>` / `rc<T>?`: a box shared by reference count.
-static inline bool TypeNameIsRc(const TypeName* t)
-{
-    return t && t->isRc;
-}
-
 // The type has array shape (dynamic `T[]` or fixed `T[N]`); `TypeNameArrayElem` gives the element.
 static inline bool TypeNameHasArrayShape(const TypeName* t)
 {
@@ -278,11 +245,6 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
     {
         TypeName inner = TypeNameParseGroups(arena, base, baseLen, groups, groupsLen - 1);
 
-        if (inner.isRc && !inner.isOptional)
-        {
-            return TypeNameOptionalRcWrap(arena, inner);
-        }
-
         TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
         *i = inner;
 
@@ -300,25 +262,12 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
         {
             TypeName inner = TypeNameParseGroups(arena, base, baseLen - 1, NULL, 0);
 
-            if (inner.isRc && !inner.isOptional)
-            {
-                return TypeNameOptionalRcWrap(arena, inner);
-            }
-
             TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
             *i = inner;
 
             TypeName t = {0};
             t.isOptional = true;
             t.inner = i;
-            t.name = arena_strndup(arena, base, baseLen);
-            return t;
-        }
-
-        if (baseLen > 4 && strncmp(base, "rc<", 3) == 0 && base[baseLen - 1] == '>')
-        {
-            TypeName inner = TypeNameParseGroups(arena, base + 3, baseLen - 4, NULL, 0);
-            TypeName t = TypeNameRcWrap(arena, inner);
             t.name = arena_strndup(arena, base, baseLen);
             return t;
         }
@@ -624,7 +573,7 @@ typedef struct {
     Node* init;
     /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, not a copy. */
     bool isRef;
-    /* Set by sema: the path holds a `^T` / `rc<T>` / proven `T?` and the ref aliases the value inside. */
+    /* Set by sema: the path holds a `^T` / proven `T?` and the ref aliases the value inside. */
     bool refThroughBox;
 } VarDeclStmt;
 
@@ -731,7 +680,6 @@ typedef enum {
     UseRead, /* looked at, or borrowed: nothing moves */
     UseMove, /* an Owning value leaves the place (an optional is left empty) */
     UseCopy, /* the value is copied; the place keeps its own */
-    UseRetain, /* an rc handle is copied by taking another reference */
 } UseKind;
 
 typedef struct {
@@ -808,7 +756,6 @@ typedef enum {
     CastBufferToString,
     CastStringToCString,
     CastFixedToPtr, /* any fixed array as a `ptr` to its first element (C's array decay) */
-    CastBoxToRc,    /* a `^T` / `T?` moved into a fresh `rc<T>` / `rc<T>?` cell (inserted by sema) */
 } CastTextKind;
 
 typedef struct {

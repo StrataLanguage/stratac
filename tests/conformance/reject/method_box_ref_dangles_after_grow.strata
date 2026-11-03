@@ -1,10 +1,10 @@
 // expect: reject "may dangle"
-// rule: a 'ref self' method called through an rc handle may grow its arrays, so refs into them are invalidated
+// rule: a 'ref self' method called through a box may grow its arrays, so refs into them are invalidated
 struct Bag { Res[] items; };
 impl Bag { void Grow(ref Bag self) { for (int i = 0; i < 64; i++) { array_push(self.items, Res.Make(200 + i)); } } }
 int main()
 {
-    rc<Bag> b = Bag { .items = {} };
+    ^Bag b = Bag { .items = {} };
     array_push(b.items, Res.Make(1));
     ref Res first = b.items[0];
     b.Grow();

@@ -1698,12 +1698,9 @@ static void ReplaceStrMapContents(StrMap* dst, const StrMap* src);
 static void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
 
 // Mark `name` moved, unless it is a borrowed global or ref param.
-/* The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it), and whether any step of it reads
-   through an `rc<T>` (a shared value, which nothing may be moved out of). NULL when it cannot be typed. */
-static const TypeName* KeyPathType(Resolver* r, const char* key, bool* throughRc)
+/* The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it). NULL when it cannot be typed. */
+static const TypeName* KeyPathType(Resolver* r, const char* key)
 {
-    *throughRc = false;
-
     if (!r->m_curScope || !key)
     {
         return NULL;
@@ -1720,11 +1717,6 @@ static const TypeName* KeyPathType(Resolver* r, const char* key, bool* throughRc
 
     while (t && key[at])
     {
-        if (TypeNameIsRc(t))
-        {
-            *throughRc = true;
-        }
-
         if ((TypeNameIsBox(t) || TypeNameIsOptional(t)) && t->inner)
         {
             t = t->inner;
@@ -1762,28 +1754,6 @@ static const TypeName* KeyPathType(Resolver* r, const char* key, bool* throughRc
 }
 
 static void MarkMoved(Resolver* r, const char* name, SourceRange range);
-
-/* Moves the value at `name` out (an owning use). Copying an `rc<T>` retains it instead, which works from
-   anywhere: a global, a ref param, a field. Moving anything else out from under an rc is an error. */
-static void MoveBoxIdent(Resolver* r, const char* name, SourceRange range)
-{
-    bool throughRc = false;
-    const TypeName* type = KeyPathType(r, name, &throughRc);
-
-    if (type && TypeNameIsRc(type))
-    {
-        return;
-    }
-
-    if (throughRc)
-    {
-        DiagErrorFmt(r->m_diag, range, "cannot move '%s' out of a shared rc<...> value; copy() it instead", name);
-        return;
-    }
-
-    MarkMoved(r, name, range);
-}
-
 
 /* `key` with a `ref` local at its root replaced by the path the local aliases. */
 static const char* CanonicalRefKey(Resolver* r, const char* key)
@@ -1859,7 +1829,6 @@ static void DiagMoveFromConstRef(Resolver* r, SourceRange range, const char* nam
                  name, KeyRoot(r->m_arena, name));
 }
 
-/* `drop(x)` consumes x whatever it is, an rc included. */
 static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 {
 
@@ -1889,21 +1858,14 @@ static void MarkMoved(Resolver* r, const char* name, SourceRange range)
 }
 
 // Moving a `T?` empties the source instead of poisoning it.
-static const TypeName* KeyPathType(Resolver* r, const char* key, bool* throughRc);
+static const TypeName* KeyPathType(Resolver* r, const char* key);
 static void EmptyOptionalSource(Resolver* r, const char* name);
 
 static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 {
-    bool throughRc = false;
-    const TypeName* type = KeyPathType(r, name, &throughRc);
+    const TypeName* type = KeyPathType(r, name);
 
-    /* An `rc<T>?` copied out keeps its value: the copy is another reference. */
-    if (type && TypeNameIsRc(type))
-    {
-        return;
-    }
-
-    /* A `^T` taken into an optional slot (`rc<T>? r = box;`) is moved, not emptied: it has no empty state. */
+    /* A `^T` taken into an optional slot (`Res? r = box;`) is moved, not emptied: it has no empty state. */
     if (type && !TypeNameIsOptional(type) && TypeNameIsBox(type))
     {
         MarkMoved(r, name, range);
@@ -1928,7 +1890,7 @@ static void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
     EmptyOptionalSource(r, name);
 }
 
-/* `drop(x)` of an optional: x is now definitely empty, rc or not. */
+/* `drop(x)` of an optional: x is now definitely empty. */
 static void EmptyOptionalSource(Resolver* r, const char* name)
 {
 
@@ -3204,7 +3166,7 @@ static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* change
 
 static bool BorrowCandidateType(Resolver* r, const TypeName* t)
 {
-    if (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameIsRc(t) || TypeNameIsFixedArray(t))
+    if (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameIsFixedArray(t))
     {
         return false;
     }
@@ -4259,43 +4221,6 @@ static bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType
 
 static Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target);
 
-/* A `^T` given where an `rc<T>` or `rc<T>?` is wanted (or a `T?` where an `rc<T>?` is): the value moves
-   into a fresh rc cell, so `rc<P> p = P.Create();` works like `rc<P> p = P { ... };`. Called on a
-   RESOLVED value; returns it wrapped in a CastBoxToRc conversion, which every later check sees as an
-   rc<T> value. The source is moved by the site's own tracking (MovableBoxSourceNode sees through
-   casts), with the usual errors for globals, refs and use after move. Anything else is returned
-   unchanged, to be judged by IsAssignableType as before. */
-static Node* ApplyBoxToRcTarget(Resolver* r, Node* value, const TypeName* target, StrMap* scope)
-{
-    if (!value || !target || !TypeNameIsRc(target) || !target->inner)
-    {
-        return value;
-    }
-
-    const TypeName* vt = InferType(r, value, scope);
-
-    if (!vt || TypeNameIsRc(vt) || !vt->inner || !(TypeNameIsBox(vt) || TypeNameIsOptional(vt)) || (TypeNameIsOptional(vt) && !TypeNameIsOptional(target)))
-    {
-        return value;
-    }
-
-    const char* inner = TypeRegistryResolveAlias(&r->m_registry, vt->inner->name);
-
-    /* An opaque box holds a foreign pointer, not a value that could move into a cell. */
-    if (!SameResolvedType(r, vt->inner->name, target->inner->name) || !inner || TypeRegistryIsOpaque(&r->m_registry, inner))
-    {
-        return value;
-    }
-
-    CastExpr* cast = AST_NEW(r->m_arena, CastExpr);
-    cast->base.kind = NodeCast;
-    cast->base.range = value->range;
-    cast->type = *target;
-    cast->operand = value;
-    cast->textKind = CastBoxToRc;
-    return (Node*)cast;
-}
-
 /* An EMPTY braced value for a `T?` target is the canonical empty optional
    (zero-fill), not a T value missing its owning fields. */
 static bool IsEmptyBracedForOptional(const Node* n, const TypeName* target)
@@ -4482,7 +4407,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (!bracedValue && elemType)
         {
-            typedArg = ApplyBoxToRcTarget(r, typedArg, elemType, scope);
+            typedArg = typedArg;
             VecSet(&c->args, valueIdx, typedArg);
         }
 
@@ -4506,7 +4431,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
 
         /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
-        if (valueType && !TypeNameIsRc(valueType) && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
+        if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
         {
             DiagErrorFmt(r->m_diag, arg1->range,
                          "cannot push '%s' read from an array element - it would be owned by two arrays; "
@@ -4532,7 +4457,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
                 }
                 else
                 {
-                    MoveBoxIdent(r, movedKey, c->base.range);
+                    MarkMoved(r, movedKey, c->base.range);
                 }
             }
         }
@@ -4742,7 +4667,7 @@ static void TrackCallArgMoves(Resolver* r, const FunctionDecl* best, CallExpr* c
 
         if (movedArgKey)
         {
-            MoveBoxIdent(r, movedArgKey, arg->range);
+            MarkMoved(r, movedArgKey, arg->range);
         }
     }
 }
@@ -6335,12 +6260,12 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
             bool bracedArg = (arg->kind == NodeArrayInit && !((ArrayInitExpr*)arg)->elementType)
                              || (arg->kind == NodeStructInit && !((StructInitExpr*)arg)->typeName);
 
-            // A braced arg takes the field's struct/array shape; a `^T` for an `rc<T>` field moves into an rc.
+            // A braced arg takes the field's struct/array shape.
             Node* resolvedArg = ApplyBracedStructTarget(r, arg, &fd->type);
 
             if (!bracedArg && resolvedArg == arg)
             {
-                resolvedArg = ApplyBoxToRcTarget(r, arg, &fd->type, scope);
+                resolvedArg = arg;
             }
 
             if (resolvedArg != arg)
@@ -6375,7 +6300,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
                             if (movedKey)
                             {
-                                MoveBoxIdent(r, movedKey, elemNode->range);
+                                MarkMoved(r, movedKey, elemNode->range);
                             }
                         }
                     }
@@ -6397,7 +6322,7 @@ static void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
                 if (movedKey)
                 {
-                    MoveBoxIdent(r, movedKey, arg->range);
+                    MarkMoved(r, movedKey, arg->range);
                 }
             }
         }
@@ -6650,18 +6575,11 @@ resolve_candidates:;
                     break;
                 }
             }
-            else if (!mutableRef && !functionDecl->isExtern && TypeNameIsRc(paramType) && !TypeNameIsOptional(paramType) && TypeNameIsBox(argType)
-                     && !TypeNameIsRc(argType) && !TypeNameIsOptional(argType) && TypeNameBoxInner(paramType) && TypeNameBoxInner(argType)
-                     && SameResolvedType(r, TypeNameBoxInner(paramType)->name, TypeNameBoxInner(argType)->name))
-            {
-                /* `^T` moves into a fresh `rc<T>` (ApplyBoxToRcTarget once the overload is picked). */
-                score += 1;
-            }
-            else if (!mutableRef && TypeNameIsBox(paramType) && TypeNameIsOptional(argType) && TypeNameIsRc(paramType) == TypeNameIsRc(argType)
+            else if (!mutableRef && TypeNameIsBox(paramType) && TypeNameIsOptional(argType)
                      && TypeNameBoxInner(paramType) && TypeNameBoxInner(argType)
                      && strcmp(TypeNameBoxInner(paramType)->name, TypeNameBoxInner(argType)->name) == 0)
             {
-                /* Smart cast: a proven `T?` / `rc<T>?` passes as `^T` / `rc<T>` (proof checked by
+                /* Smart cast: a proven `T?` passes as `^T` (proof checked by
                    CheckCallArgOptionalDerefs once the overload is picked). */
                 score += 1;
             }
@@ -6832,22 +6750,6 @@ resolve_candidates:;
                 && !IsEmptyBracedForOptional(resolvedArg, &param->type))
             {
                 CheckStructInitFields(r, resolvedArg);
-            }
-        }
-    }
-
-    /* A `^T` given for a by-value `rc<T>` / `rc<T>?` param moves into a fresh rc cell. */
-    if (!best->isExtern)
-    {
-        size_t named = NamedParamCount(best);
-
-        for (size_t j = 0; j < c->args.count && j < named; j++)
-        {
-            const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
-
-            if (param->mod == ModNone)
-            {
-                VecSet(&c->args, j, ApplyBoxToRcTarget(r, (Node*)VecGet(&c->args, j), &param->type, scope));
             }
         }
     }
@@ -7358,12 +7260,6 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
 
     if (targetType && TypeNameIsOwning(targetType))
     {
-        /* An rc cell carries a count a plain box does not: rc and ^T / T? never convert into each other. */
-        if (valueType && TypeNameIsRc(targetType) != TypeNameIsRc(valueType) && (TypeNameIsBox(valueType) || TypeNameIsOptional(valueType)))
-        {
-            return false;
-        }
-
         const TypeName* inner = TypeNameBoxInner(targetType);
 
         // `T?` and `^T` share an ABI; they convert when inners match.
@@ -7374,7 +7270,7 @@ static bool IsAssignableType(const Resolver* r, const TypeName* targetType, cons
             return strcmp(inner->name, valueInner->name) == 0;
         }
 
-        /* Smart cast: a `T?` (or `rc<T>?`) goes where `^T` (or `rc<T>`) is wanted once flow typing
+        /* Smart cast: a `T?` goes where `^T` is wanted once flow typing
            proves it non-empty; CheckOptionalDeref demands the proof at each use site. */
         if (!TypeNameIsOptional(targetType) && TypeNameIsBox(targetType) && TypeNameIsOptional(valueType) && inner && valueInner)
         {
@@ -7420,7 +7316,7 @@ static bool IsEmptyBraced(const Node* n)
 }
 
 /* Whether all-zero bytes are a valid `t`: what `{ {}; count }` and array_resize fill with. Empty
-   strings, arrays and optionals and zeroed scalars are; a `^T` or `rc<T>` (which must point at
+   strings, arrays and optionals and zeroed scalars are; a `^T` (which must point at
    something) is not, nor is a struct holding one. */
 static bool ZeroIsValid(Resolver* r, const TypeName* t, int depth)
 {
@@ -7456,7 +7352,7 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
         {
             DiagErrorFmt(r->m_diag, value->range,
                          "'{ {}; count }' fills each element with its zero value, which is not a valid '%s' (a "
-                         "'^T' or 'rc<T>' in it must point at something); give a value to copy instead",
+                         "'^T' in it must point at something); give a value to copy instead",
                          elem->name);
         }
         return;
@@ -7483,7 +7379,7 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
         DiagErrorFmt(r->m_diag, value->range, "a '%s' cannot fill an array of '%s'", valueType->name, elem->name);
     }
 
-    if (!IsEmptyBraced(value) && AliasIsOwningValue(r, elem) && !TypeNameIsRc(elem) && TypeNameHasDrop(&r->m_registry, elem))
+    if (!IsEmptyBraced(value) && AliasIsOwningValue(r, elem) && TypeNameHasDrop(&r->m_registry, elem))
     {
         DiagErrorFmt(r->m_diag, value->range,
                      "'%s' has a Drop method, so it cannot be copied into each element; write '{ {}; count }' "
@@ -7494,7 +7390,7 @@ static void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
 }
 
 /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
-   variable, field or element of type T (or a `^T` / `rc<T>` / proven `T?` holding one). Nothing is
+   variable, field or element of type T (or a `^T` / proven `T?` holding one). Nothing is
    moved or copied; the alias cannot be rebound or moved from, and dies (see InvalidateRefLocals) once
    what it refers to may have moved. */
 static void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range);
@@ -8126,7 +8022,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (a->op == AssignSet)
             {
-                a->value = ApplyBoxToRcTarget(r, a->value, tt, scope);
+                a->value = a->value;
             }
 
             const TypeName* vt = InferType(r, a->value, scope);
@@ -8156,10 +8052,10 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     return;
                 }
 
-                /* A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`,
-                   `rc<T>` or `rc<T>?` (or a string) is the caller's slot: `=` drops what it held and
+                /* A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`
+                   (or a string) is the caller's slot: `=` drops what it held and
                    stores the new value there, so out-params work. */
-                bool slotRef = TypeNameIsOptional(tt) || TypeNameIsRc(tt) || TypeIsString(&r->m_registry, tt->name)
+                bool slotRef = TypeNameIsOptional(tt) || TypeIsString(&r->m_registry, tt->name)
                                || TypeNameIsDynamicArray(tt);
 
                 if (StrMapGet(&r->m_refBoxParams, targetName) && !slotRef)
@@ -8184,7 +8080,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     }
                     else
                     {
-                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                        MarkMoved(r, movedValueKey, a->base.range);
                     }
                 }
             }
@@ -8212,7 +8108,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                     if (movedValueKey)
                     {
-                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                        MarkMoved(r, movedValueKey, a->base.range);
                     }
                 }
 
@@ -8248,7 +8144,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (a->op == AssignSet)
             {
-                a->value = ApplyBoxToRcTarget(r, a->value, InferType(r, a->target, scope), scope);
+                a->value = a->value;
                 const TypeName* vt = InferType(r, a->value, scope);
                 const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
@@ -8261,7 +8157,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                     }
                     else
                     {
-                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                        MarkMoved(r, movedValueKey, a->base.range);
                     }
                 }
             }
@@ -8276,7 +8172,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (a->op == AssignSet)
             {
-                a->value = ApplyBoxToRcTarget(r, a->value, InferType(r, a->target, scope), scope);
+                a->value = a->value;
             }
 
             const char* writtenKey = MovableBoxSourceKey(r, a->target);
@@ -8357,7 +8253,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                         }
                         else
                         {
-                            MoveBoxIdent(r, movedValueKey, a->base.range);
+                            MarkMoved(r, movedValueKey, a->base.range);
                         }
                     }
                 }
@@ -8370,7 +8266,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                     if (movedValueKey)
                     {
-                        MoveBoxIdent(r, movedValueKey, a->base.range);
+                        MarkMoved(r, movedValueKey, a->base.range);
                     }
                 }
             }
@@ -8487,12 +8383,6 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
     case NodeCast:
     {
         CastExpr* cast = (CastExpr*)n;
-
-        /* Inserted by ApplyBoxToRcTarget around an already resolved value; not a written cast. */
-        if (cast->textKind == CastBoxToRc)
-        {
-            return;
-        }
 
         ResolveExpr(r, cast->operand, scope);
 
@@ -8936,7 +8826,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
                 }
                 else
                 {
-                    field->value = ApplyBoxToRcTarget(r, field->value, &fieldDecl->type, scope);
+                    field->value = field->value;
                     const TypeName* fieldValueType = InferType(r, field->value, scope);
 
                     if (fieldValueType && !IsAssignableType(r, &fieldDecl->type, fieldValueType)
@@ -8960,7 +8850,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 if (movedFieldKey)
                 {
-                    MoveBoxIdent(r, movedFieldKey, structInitExpr->base.range);
+                    MarkMoved(r, movedFieldKey, structInitExpr->base.range);
                 }
             }
         }
@@ -9078,7 +8968,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
             if (ai->elementType)
             {
-                elem = ApplyBoxToRcTarget(r, elem, ai->elementType, scope);
+                elem = elem;
                 VecSet(&ai->elements, i, elem);
             }
 
@@ -9090,7 +8980,7 @@ static void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBa
 
                 if (movedKey)
                 {
-                    MoveBoxIdent(r, movedKey, elem->range);
+                    MarkMoved(r, movedKey, elem->range);
                 }
             }
 
@@ -9812,7 +9702,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
         if (vd->init)
         {
             ResolveExpr(r, vd->init, scope);
-            vd->init = ApplyBoxToRcTarget(r, vd->init, &vd->type, scope);
+            vd->init = vd->init;
             const TypeName* initType = InferType(r, vd->init, scope);
 
             bool ok = initType
@@ -9845,7 +9735,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
                 }
                 else
                 {
-                    MoveBoxIdent(r, movedInitKey, vd->base.range);
+                    MarkMoved(r, movedInitKey, vd->base.range);
                 }
             }
         }
@@ -9893,7 +9783,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
             }
 
             ResolveExpr(r, rs->value, scope);
-            rs->value = ApplyBoxToRcTarget(r, rs->value, r->m_currentReturnType, scope);
+            rs->value = rs->value;
 
             const TypeName* typeName = InferType(r, rs->value, scope);
 
@@ -9932,7 +9822,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
                 if (returnsSameBox)
                 {
-                    MoveBoxIdent(r, movedReturnKey, rs->base.range);
+                    MarkMoved(r, movedReturnKey, rs->base.range);
                 }
                 else
                 {
@@ -9952,7 +9842,7 @@ static void WalkStmt(Resolver* r, Node* n, StrMap* scope)
 
                     if (innerIsOwning || !innerMatchesReturn)
                     {
-                        MoveBoxIdent(r, movedReturnKey, rs->base.range);
+                        MarkMoved(r, movedReturnKey, rs->base.range);
                     }
                 }
             }

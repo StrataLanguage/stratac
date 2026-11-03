@@ -32,37 +32,23 @@ explicitly.
 value goes away (scope end, overwrite, `drop()`, its owner dropping). Such values cannot be
 `copy()`d or passed by value.
 
-**`rc<T>`.** A box shared by reference count: copying retains, dropping releases, the last
-release drops the value. `rc<T>?` may be empty. Moving a field out of an rc is an error — copy it.
-
-A `^T` given where an `rc<T>` or `rc<T>?` is wanted (a `T?` where an `rc<T>?` is) moves into a
-fresh rc cell — initialization, assignment, field, argument, return, array literal, `array_push`:
-
-```c
-rc<DynParams> block = DynParams.Create(layout);   // Create returns ^DynParams
-```
-
-It is a move: the source is gone afterwards ("used after move"), and a global or `ref` source is
-an error. The value is copied once into the new cell (its `Drop` still runs exactly once); the
-other direction, `rc<T>` to `^T`, does not exist.
-
 **Globals are never moved out of.** No function owns a global, so reading an owning global by
 value — a `string`, array, box, optional, or any such field of a global struct — is an error
 (`string dir = gHost.dir;`); borrow it (`const ref string dir = gHost.dir;`, a read-only param),
-`copy()` it, or assign it a new value. Copying an `rc<T>` out of a global is fine (it retains).
+`copy()` it, or assign it a new value.
 
 **Nor is a `const ref`.** A `const ref` param or local only borrows, and nothing can be put back
 through it, so moving any owning part out of one is the same error: a field, an element, or a set
 optional (`TextureHandle Texture(const ref Target self) { return self.texture; }`). `copy()` it or
-bind it with `const ref`. Copying an `rc<T>` out is fine. A mutable `ref` still allows
+bind it with `const ref`. A mutable `ref` still allows
 take-and-refill.
 
-**Smart cast.** Once flow typing proves a `T?` / `rc<T>?` set, it is a `^T` / `rc<T>`:
+**Smart cast.** Once flow typing proves a `T?` set, it is a `^T`:
 
 ```c
-rc<Image> DepthOr(ref Target t, rc<Image> fallback)
+^Image DepthOr(ref Target t, ^Image fallback)
 {
-    if (t.depth?) { return t.depth; }      // rc<Image>? -> rc<Image>
+    if (t.depth?) { return t.depth; }      // Image? -> ^Image
     return fallback;
 }
 ```
@@ -73,7 +59,7 @@ rc<Image> DepthOr(ref Target t, rc<Image> fallback)
 const ref string label = frame.passes[i].label;   // read without taking it out of the array
 ref Pass pass = frame.passes[0];
 array_push(pass.draws, 7);                        // writes through
-ref Image image = frame.target;                   // the value inside a ^T / rc<T> / proven T?
+ref Image image = frame.target;                   // the value inside a ^T / proven T?
 ```
 
 A ref must be bound to a variable, field or element. It cannot be rebound or moved from, and it
@@ -82,11 +68,10 @@ reaches through, an assignment to (or move or `drop` of) a path it reaches throu
 a path by mutable `ref`, or — for refs into globals — any call. Using it afterwards is an error
 ("may dangle"); bind it again after the change.
 
-**Out-parameters.** `=` through a `ref` param or `ref` local of a `string`, `T[]`, `T?`, `rc<T>` or
-`rc<T>?` drops what the caller's slot held and stores the new value there:
+**Out-parameters.** `=` through a `ref` param or `ref` local of a `string`, `T[]` or `T?` drops what the caller's slot held and stores the new value there:
 
 ```c
-void Describe(int code, ref string error, ref rc<Image>? image)
+void Describe(int code, ref string error, ref Image? image)
 {
     if (code != 0) { error = "failed"; return; }
     image = Image { .id = 12 };
@@ -128,7 +113,7 @@ right-hand side.
 | Feature | Example |
 |---|---|
 | Sized / filled arrays | `VkPhysicalDevice[] adapters = { ptr.null; count };` — `count` copies of the value (evaluated once; a variable stays usable; strings are copied, rcs retained) |
-| Default-filled | `Record[] slots = { {}; 8u };` — each element's default value (Drop types are alive and dropped); rejected for types that must hold a `^T` / `rc<T>` |
+| Default-filled | `Record[] slots = { {}; 8u };` — each element's default value (Drop types are alive and dropped); rejected for types that must hold a `^T` |
 | Fixed fill | `byte[256] fill = { 0xFF; 256 };` — the count must be the length |
 | Capacity | `array_reserve(list, 100u);` |
 | Removal | `array_remove(a, i)` keeps order; `array_swap_remove(a, i)` moves the last element into the hole; both drop the removed element |

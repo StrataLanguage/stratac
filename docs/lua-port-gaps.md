@@ -1,5 +1,7 @@
 # Proposals: language gaps found porting rna's Lua API (Strafe)
 
+Note: `rc<T>` has since been removed from the language, so the rc parts of these designs no longer apply.
+
 Status (2026-10-15): **4, 6, 1 and 5 implemented** (documented in `engine-ffi.md`); **3, 2 and 7b
 held**. Differences from the designs below:
 

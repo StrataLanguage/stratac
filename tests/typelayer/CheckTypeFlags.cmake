@@ -1,4 +1,4 @@
-# Roadmap phase 3 gate: `isBox`, `isOptional`, `isRc` and `isArray` are read and written only by the type
+# Roadmap phase 3 gate: `isBox`, `isOptional` and `isArray` are read and written only by the type
 # layer. Every other source file asks a predicate (TypeNameIsBox, TypeDescIsOptional, ...). Run with
 # -DSRC=<src dir>.
 set(type_layer
@@ -17,7 +17,7 @@ foreach(f ${sources})
         continue()
     endif()
     file(READ "${SRC}/${f}" text)
-    string(REGEX MATCHALL "[.>](isBox|isOptional|isRc|isArray)[^A-Za-z0-9_]" hits "${text}")
+    string(REGEX MATCHALL "[.>](isBox|isOptional|isArray)[^A-Za-z0-9_]" hits "${text}")
     list(LENGTH hits count)
     if(count GREATER 0)
         message(SEND_ERROR "${f}: ${count} type-flag accesses outside the type layer. Use a predicate from AST.h or Codegen/TypeDescFlags.h.")
