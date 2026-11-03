@@ -301,6 +301,151 @@ static bool IsDropMethod(const FunctionDecl* fn)
     return n >= 4 && strcmp(fn->name + n - 4, "Drop") == 0;
 }
 
+static void CollectFunctionFacts(Env* env, const FunctionDecl* fn, Cfg* g)
+{
+    CollectLocals(env, fn, g);
+    BuildAliases(env, g);
+    CollectCopies(env, g);
+    CollectPaths(env, g);
+    CollectFacts(env, g);
+}
+
+static unsigned char* SolveEntryStates(Env* env, Cfg* g, size_t n, size_t pathCount)
+{
+    /* Entry state of every block; everything is Live on entry. */
+    unsigned char* in = (unsigned char*)calloc(g->count * n + 1, 1);
+    unsigned char* cur = (unsigned char*)malloc(n + 1);
+    unsigned char* edge = (unsigned char*)malloc(n + 1);
+
+    for (size_t k = 0; k < n; k++)
+    {
+        in[g->entry * n + k] = StateLive;
+    }
+
+    for (int pass = 0; pass < 64; pass++)
+    {
+        bool changed = false;
+
+        for (size_t b = 0; b < g->count; b++)
+        {
+            const CfgBlock* blk = &g->blocks[b];
+
+            if (!blk->reachable)
+            {
+                continue;
+            }
+
+            memcpy(cur, &in[b * n], n);
+            Transfer(env, blk, cur, NULL);
+
+            for (unsigned s = 0; s < blk->succCount; s++)
+            {
+                unsigned char* dst = &in[blk->succ[s] * n];
+                const CfgOp* last = blk->opCount ? &blk->ops[blk->opCount - 1] : NULL;
+
+                memcpy(edge, cur, n);
+
+                if (last && last->kind == CfgCondition)
+                {
+                    ApplyCond(env, edge + pathCount, last->node, s == 0, blk->loopCond && s == 1);
+                }
+
+                for (size_t k = 0; k < n; k++)
+                {
+                    unsigned char joined = Join(dst[k], edge[k]);
+
+                    if (joined != dst[k])
+                    {
+                        dst[k] = joined;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if (!changed)
+        {
+            break;
+        }
+    }
+
+    free(cur);
+    free(edge);
+    return in;
+}
+
+static void ReportMoveFacts(Env* env, Cfg* g, const unsigned char* in, size_t n, Found* found)
+{
+    unsigned char* cur = (unsigned char*)malloc(n + 1);
+
+    for (size_t b = 0; b < g->count; b++)
+    {
+        if (g->blocks[b].reachable)
+        {
+            memcpy(cur, &in[b * n], n);
+            Transfer(env, &g->blocks[b], cur, found);
+        }
+    }
+
+    free(cur);
+}
+
+static void CheckRefParamsRestored(Env* env, const FunctionDecl* fn, const Cfg* g, const unsigned char* in, size_t n,
+                                   size_t pathCount, Found* found)
+{
+    /* A ref parameter belongs to the caller: whatever was taken out of it has to be back by the time the
+       function returns. */
+    /* A `Drop` method is taking its value apart; nothing needs to be put back. */
+    if (g->blocks[g->exit].reachable && !env->inDropMethod)
+    {
+        for (size_t k = 0; k < pathCount; k++)
+        {
+            unsigned char st = in[g->exit * n + k];
+            char root[128];
+            const char* dot = strchr(env->paths[k], '.');
+            size_t len = dot ? (size_t)(dot - env->paths[k]) : strlen(env->paths[k]);
+
+            if (st == StateLive || st == StateUnvisited || len >= sizeof(root))
+            {
+                continue;
+            }
+
+            memcpy(root, env->paths[k], len);
+            root[len] = 0;
+
+            for (size_t i = 0; i < fn->params.count; i++)
+            {
+                const ParamDecl* prm = (const ParamDecl*)VecGet(&fn->params, i);
+
+                if (prm->mod == ModRef && !prm->type.isConst && strcmp(prm->name, root) == 0)
+                {
+                    ReportAs(found, MoveDiagRefParam, fn->base.range, arena_strdup(env->arena, env->paths[k]));
+                }
+            }
+        }
+    }
+}
+
+static void FreeMoveEnv(Env* env)
+{
+    for (size_t i = 0; i < env->pathCount; i++)
+    {
+        free(env->paths[i]);
+    }
+
+    free(env->paths);
+    for (size_t i = 0; i < env->factCount; i++)
+    {
+        free(env->facts[i]);
+    }
+
+    free(env->facts);
+    free((void*)env->copied);
+    FreeAliases(env);
+    free(env->locals.locals);
+    free(env->named.locals);
+}
+
 size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types, const WriteSets* ws,
                          Arena* arena, MoveDiag** out)
 {
@@ -319,11 +464,7 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
                .ws = ws,
                .inDropMethod = IsDropMethod(fn)};
     Cfg g = CfgBuild(fn);
-    CollectLocals(&env, fn, &g);
-    BuildAliases(&env, &g);
-    CollectCopies(&env, &g);
-    CollectPaths(&env, &g);
-    CollectFacts(&env, &g);
+    CollectFunctionFacts(&env, fn, &g);
 
     size_t pathCount = env.pathCount;
     size_t n = pathCount + env.factCount + env.aliasCount;
@@ -331,125 +472,14 @@ size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const 
 
     if (g.count > 0)
     {
-        /* Entry state of every block; everything is Live on entry. */
-        unsigned char* in = (unsigned char*)calloc(g.count * n + 1, 1);
-        unsigned char* cur = (unsigned char*)malloc(n + 1);
-        unsigned char* edge = (unsigned char*)malloc(n + 1);
+        unsigned char* in = SolveEntryStates(&env, &g, n, pathCount);
 
-        for (size_t k = 0; k < n; k++)
-        {
-            in[g.entry * n + k] = StateLive;
-        }
-
-        for (int pass = 0; pass < 64; pass++)
-        {
-            bool changed = false;
-
-            for (size_t b = 0; b < g.count; b++)
-            {
-                const CfgBlock* blk = &g.blocks[b];
-
-                if (!blk->reachable)
-                {
-                    continue;
-                }
-
-                memcpy(cur, &in[b * n], n);
-                Transfer(&env, blk, cur, NULL);
-
-                for (unsigned s = 0; s < blk->succCount; s++)
-                {
-                    unsigned char* dst = &in[blk->succ[s] * n];
-                    const CfgOp* last = blk->opCount ? &blk->ops[blk->opCount - 1] : NULL;
-
-                    memcpy(edge, cur, n);
-
-                    if (last && last->kind == CfgCondition)
-                    {
-                        ApplyCond(&env, edge + pathCount, last->node, s == 0, blk->loopCond && s == 1);
-                    }
-
-                    for (size_t k = 0; k < n; k++)
-                    {
-                        unsigned char joined = Join(dst[k], edge[k]);
-
-                        if (joined != dst[k])
-                        {
-                            dst[k] = joined;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-
-            if (!changed)
-            {
-                break;
-            }
-        }
-
-        for (size_t b = 0; b < g.count; b++)
-        {
-            if (g.blocks[b].reachable)
-            {
-                memcpy(cur, &in[b * n], n);
-                Transfer(&env, &g.blocks[b], cur, &found);
-            }
-        }
-
-        /* A ref parameter belongs to the caller: whatever was taken out of it has to be back by the time the
-           function returns. */
-        /* A `Drop` method is taking its value apart; nothing needs to be put back. */
-        if (g.blocks[g.exit].reachable && !env.inDropMethod)
-        {
-            for (size_t k = 0; k < pathCount; k++)
-            {
-                unsigned char st = in[g.exit * n + k];
-                char root[128];
-                const char* dot = strchr(env.paths[k], '.');
-                size_t len = dot ? (size_t)(dot - env.paths[k]) : strlen(env.paths[k]);
-
-                if (st == StateLive || st == StateUnvisited || len >= sizeof(root))
-                {
-                    continue;
-                }
-
-                memcpy(root, env.paths[k], len);
-                root[len] = 0;
-
-                for (size_t i = 0; i < fn->params.count; i++)
-                {
-                    const ParamDecl* prm = (const ParamDecl*)VecGet(&fn->params, i);
-
-                    if (prm->mod == ModRef && !prm->type.isConst && strcmp(prm->name, root) == 0)
-                    {
-                        ReportAs(&found, MoveDiagRefParam, fn->base.range, arena_strdup(arena, env.paths[k]));
-                    }
-                }
-            }
-        }
-
+        ReportMoveFacts(&env, &g, in, n, &found);
+        CheckRefParamsRestored(&env, fn, &g, in, n, pathCount, &found);
         free(in);
-        free(cur);
-        free(edge);
     }
 
-    for (size_t i = 0; i < env.pathCount; i++)
-    {
-        free(env.paths[i]);
-    }
-
-    free(env.paths);
-    for (size_t i = 0; i < env.factCount; i++)
-    {
-        free(env.facts[i]);
-    }
-
-    free(env.facts);
-    free((void*)env.copied);
-    FreeAliases(&env);
-    free(env.locals.locals);
-    free(env.named.locals);
+    FreeMoveEnv(&env);
     CfgFree(&g);
     *out = found.items;
     return found.count;
