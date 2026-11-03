@@ -1,5 +1,5 @@
-// expect: reject "never runs 'C's Init"
-// rule: default fills and array_resize never run Init, so they are rejected for types holding one
+// expect: reject "never runs 'C's init"
+// rule: default fills and array_resize never run init, so they are rejected for types holding one
 struct C { int n; };
-impl C { void Init(ref C self) { self.n = 42; } }
+impl C { void init(ref C self) { self.n = 42; } }
 int main() { C[] arr = { {}; 3u }; return 0; }

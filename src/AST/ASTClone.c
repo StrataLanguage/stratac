@@ -219,7 +219,7 @@ static Node* CloneStruct(Arena* arena, const StructDecl* src, const TypeSubst* s
 
     CloneNameList(&copy->genericParams, &src->genericParams);
 
-    // Bound by sema: the struct's Drop function.
+    // Bound by sema: the struct's drop function.
     copy->dropFunction = NULL;
 
     return (Node*)copy;

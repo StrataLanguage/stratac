@@ -29,16 +29,16 @@ explicitly.
 
 ## Ownership
 
-**`Drop`.** A struct whose `impl` has `void Drop(ref T self)` runs it exactly once, when its owned
+**`drop`.** A struct whose `impl` has `void drop(ref T self)` runs it exactly once, when its owned
 value goes away (scope end, overwrite, `drop()`, its owner dropping). The struct keeps the layout
 it declares. Such values cannot be `copy()`d or passed by value (pass `ref T` or a box `^T`), but a
 local may hold one by value (`T v = T { ... };`, or `T v;` for its field defaults). A field that
 holds one by value only moves with its parent; declare it `^T` or `T?` to move it out on its own.
 
-**`Init`.** `void Init(ref T self, ...)` in the impl is a constructor, and may be overloaded: `T(args)` builds a
-value from the field defaults and runs the matching `Init` on it, and `T v;` runs the one without arguments. A
-type with `Init` loses its positional `T(a, b)` field constructor (braced `T { .a = ... }` still works), cannot
-hold a non-optional `^T` field (use `T?` and set it in `Init`), and its `Init` is never called directly.
+**`init`.** `void init(ref T self, ...)` in the impl is a constructor, and may be overloaded: `T(args)` builds a
+value from the field defaults and runs the matching `init` on it, and `T v;` runs the one without arguments. A
+type with `init` loses its positional `T(a, b)` field constructor (braced `T { .a = ... }` still works), cannot
+hold a non-optional `^T` field (use `T?` and set it in `init`), and its `init` is never called directly.
 
 **Globals are never moved out of.** No function owns a global, so reading an owning global by
 value — a `string`, array, box, optional, or any such field of a global struct — is an error
@@ -121,7 +121,7 @@ right-hand side.
 | Feature | Example |
 |---|---|
 | Sized / filled arrays | `VkPhysicalDevice[] adapters = { ptr.null; count };` — `count` copies of the value (evaluated once; a variable stays usable; strings are copied, rcs retained) |
-| Default-filled | `Record[] slots = { {}; 8u };` — each element's default value (Drop types are alive and dropped); rejected for types that must hold a `^T` |
+| Default-filled | `Record[] slots = { {}; 8u };` — each element's default value (drop types are alive and dropped); rejected for types that must hold a `^T` |
 | Fixed fill | `byte[256] fill = { 0xFF; 256 };` — the count must be the length |
 | Capacity | `array_reserve(list, 100u);` |
 | Removal | `array_remove(a, i)` keeps order; `array_swap_remove(a, i)` moves the last element into the hole; both drop the removed element |

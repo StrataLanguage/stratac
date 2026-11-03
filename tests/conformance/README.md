@@ -7,7 +7,7 @@ cases linked with the C compiler and run.
 
 `prelude.strata` is prepended to every case. It provides `printf`, a poisoning allocator (reads of
 freed memory print `-572662307`, double frees print `!!! DOUBLE/BAD FREE`), a `Res` type with a
-counting `Drop`, `Box(id)` and `Report()`, which prints `END live=N`.
+counting `drop`, `Box(id)` and `Report()`, which prints `END live=N`.
 
 ```sh
 ctest --preset default -L conformance            # the whole suite

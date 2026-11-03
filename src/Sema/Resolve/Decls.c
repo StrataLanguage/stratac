@@ -217,7 +217,7 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
     field->folded = folded;
 }
 
-// `void Drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct; runs before the
+// `void drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct; runs before the
 // type registry is built, so every layout knows which structs own.
 static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
@@ -241,14 +241,14 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
         {
             FunctionDecl* method = (FunctionDecl*)VecGet(&impl->methods, j);
 
-            if (!method->methodName || strcmp(method->methodName, "Drop") != 0)
+            if (!method->methodName || strcmp(method->methodName, "drop") != 0)
             {
                 continue;
             }
 
             if (!sd)
             {
-                DiagErrorFmt(diag, method->base.range, "'Drop' is only allowed in the impl of a struct with a body");
+                DiagErrorFmt(diag, method->base.range, "'drop' is only allowed in the impl of a struct with a body");
                 continue;
             }
 
@@ -258,7 +258,7 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
             if (!shape)
             {
-                DiagErrorFmt(diag, method->base.range, "a destructor must be declared 'void Drop(ref %s self) { ... }'",
+                DiagErrorFmt(diag, method->base.range, "a destructor must be declared 'void drop(ref %s self) { ... }'",
                              sd->name);
                 continue;
             }
@@ -266,14 +266,14 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
             if (sd->isExtern || sd->isUnion || sd->isComponent)
             {
                 DiagErrorFmt(diag, method->base.range,
-                             "'%s' cannot have a Drop method: extern structs, unions and components are plain data",
+                             "'%s' cannot have a drop method: extern structs, unions and components are plain data",
                              sd->name);
                 continue;
             }
 
             if (sd->dropFunction)
             {
-                DiagErrorFmt(diag, method->base.range, "'%s' already has a Drop method", sd->name);
+                DiagErrorFmt(diag, method->base.range, "'%s' already has a drop method", sd->name);
                 continue;
             }
 
@@ -282,8 +282,8 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 }
 
-// `void Init(ref T self, ...)` in a struct's impl is a constructor; it may be overloaded. For each one sema
-// builds `T __init_T(...) { T self; self.Init(...); return self; }` (the local starting from its field
+// `void init(ref T self, ...)` in a struct's impl is a constructor; it may be overloaded. For each one sema
+// builds `T __init_T(...) { T self; self.init(...); return self; }` (the local starting from its field
 // defaults), so `T(args)` is an ordinary call that overload resolution, the move checker and codegen already
 // understand. Runs before overloads are mangled, so the wrappers mangle like any overload set.
 static void BindInitMethods(Resolver* r)
@@ -313,14 +313,14 @@ static void BindInitMethods(Resolver* r)
         {
             FunctionDecl* method = (FunctionDecl*)VecGet(&impl->methods, j);
 
-            if (!method->methodName || strcmp(method->methodName, "Init") != 0)
+            if (!method->methodName || strcmp(method->methodName, "init") != 0)
             {
                 continue;
             }
 
             if (!sd)
             {
-                DiagErrorFmt(diag, method->base.range, "'Init' is only allowed in the impl of a struct with a body");
+                DiagErrorFmt(diag, method->base.range, "'init' is only allowed in the impl of a struct with a body");
                 continue;
             }
 
@@ -332,14 +332,14 @@ static void BindInitMethods(Resolver* r)
             if (!shape)
             {
                 DiagErrorFmt(diag, method->base.range,
-                             "a constructor must be declared 'void Init(ref %s self, ...) { ... }'", sd->name);
+                             "a constructor must be declared 'void init(ref %s self, ...) { ... }'", sd->name);
                 continue;
             }
 
             if (sd->isExtern || sd->isUnion || sd->isComponent)
             {
                 DiagErrorFmt(diag, method->base.range,
-                             "'%s' cannot have an Init method: extern structs, unions and components are plain data",
+                             "'%s' cannot have an init method: extern structs, unions and components are plain data",
                              sd->name);
                 continue;
             }
@@ -381,7 +381,7 @@ static void BindInitMethods(Resolver* r)
             CallExpr* call = AST_NEW(arena, CallExpr);
             call->base.kind = NodeCall;
             call->base.range = at;
-            call->callee = (char*)"Init";
+            call->callee = (char*)"init";
             call->calleeBase = (Node*)receiver;
             VecInit(&call->args);
 
@@ -1167,7 +1167,7 @@ static void CheckFunctionSignatures(Resolver* r)
             {
                 DiagErrorFmt(
                     diag, p->base.range,
-                    "parameter '%s' cannot take '%s' by value: it has a Drop method; pass 'ref %s' or a box '^%s'",
+                    "parameter '%s' cannot take '%s' by value: it has a drop method; pass 'ref %s' or a box '^%s'",
                     p->name, p->type.name, p->type.name, p->type.name);
             }
 

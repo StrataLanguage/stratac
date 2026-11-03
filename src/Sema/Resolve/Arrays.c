@@ -396,7 +396,7 @@ static void ResolveArrayResize(Resolver* r, CallExpr* c, StrMap* scope, const Ty
         if (initHeld)
         {
             DiagErrorFmt(r->diag, c->base.range,
-                         "'array_resize' fills new elements from their field defaults, which never runs '%s's Init; "
+                         "'array_resize' fills new elements from their field defaults, which never runs '%s's init; "
                          "push constructed values instead",
                          initHeld);
         }
@@ -654,7 +654,7 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
         if (initHeld)
         {
             DiagErrorFmt(r->diag, value->range,
-                         "'{ {}; count }' fills each element from its field defaults, which never runs '%s's Init; "
+                         "'{ {}; count }' fills each element from its field defaults, which never runs '%s's init; "
                          "push constructed values instead",
                          initHeld);
         }
@@ -692,7 +692,7 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
     if (!IsEmptyBraced(value) && AliasIsOwningValue(r, elem) && TypeNameHasDrop(&r->registry, elem))
     {
         DiagErrorFmt(r->diag, value->range,
-                     "'%s' has a Drop method, so it cannot be copied into each element; write '{ {}; count }' "
+                     "'%s' has a drop method, so it cannot be copied into each element; write '{ {}; count }' "
                      "to default-construct them instead",
                      elem->name);
     }

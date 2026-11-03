@@ -32,8 +32,8 @@ typedef struct
     StrMap refArrayParams; // `ref T[]` param names: borrowed binding — no rebind, no push/resize
     StrMap typeCache;      // canonical spelling -> interned TypeName tree
     StrMap constGlobals;   // const scalar global name -> ConstGlobalVal* (manifest constants)
-    StrMap initWrappers;   // struct name -> the name of its Init wrappers (`__init_T`), for types with Init
-    StrMap defaultInits;   // struct names with an `Init` that takes no arguments besides self
+    StrMap initWrappers;   // struct name -> the name of its init wrappers (`__init_T`), for types with init
+    StrMap defaultInits;   // struct names with an `init` that takes no arguments besides self
     const TypeName* currentReturnType;
     const FunctionDecl* currentFunction;
     StrMap* curScope; // the function's scope, for typing move paths (see KeyPathType)

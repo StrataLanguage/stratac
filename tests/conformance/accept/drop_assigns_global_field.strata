@@ -1,11 +1,11 @@
 // expect: run
 // expect-output: drop 7
 // expect-output: now 8
-// rule: a Drop method may assign a global's field; the old value is dropped on assignment
+// rule: a drop method may assign a global's field; the old value is dropped on assignment
 struct Holder { Res? r; };
 ^Holder gH = Holder {};
 struct Pusher { int id; };
-impl Pusher { void Drop(ref Pusher self) { gH.r = Res.Make(8); } }
+impl Pusher { void drop(ref Pusher self) { gH.r = Res.Make(8); } }
 int main()
 {
     gH.r = Res.Make(7);

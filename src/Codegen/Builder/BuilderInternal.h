@@ -76,7 +76,7 @@ typedef struct
     LLVMValueRef slot;
     TypeDesc td;
     bool stackBuffer; // array backing is caller's stack: drop elems, not buffer
-    // An i1 slot, set while the local holds its value, for a struct holding a Drop value inline: a move
+    // An i1 slot, set while the local holds its value, for a struct holding a drop value inline: a move
     // leaves zeroed storage that nothing else marks. NULL when zeroing alone disarms the drop.
     LLVMValueRef dropFlag;
 } OwnLocal;

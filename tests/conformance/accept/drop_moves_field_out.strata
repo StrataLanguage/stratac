@@ -1,12 +1,12 @@
 // expect: run
 // expect-output: outer drop
 // expect-output: took 7
-// rule: a Drop method may move a field out; the moved field is then not dropped again
+// rule: a drop method may move a field out; the moved field is then not dropped again
 struct Inner { int id; };
-impl Inner { void Drop(ref Inner self) { gLive--; printf("inner drop %d\n", self.id); } }
+impl Inner { void drop(ref Inner self) { gLive--; printf("inner drop %d\n", self.id); } }
 struct Outer { ^Inner held; string name; };
 void Take(^Inner i) { printf("took %d\n", i.id); }
-impl Outer { void Drop(ref Outer self) { printf("outer drop\n"); Take(self.held); } }
+impl Outer { void drop(ref Outer self) { printf("outer drop\n"); Take(self.held); } }
 int main()
 {
     gLive++;

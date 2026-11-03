@@ -270,7 +270,7 @@ static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
     return result;
 }
 
-// `self` inside the Drop method of its own type: assigning it drops the old fields, not the old value, whose Drop
+// `self` inside the drop method of its own type: assigning it drops the old fields, not the old value, whose drop
 // is the one running.
 static bool IsDropSelf(Builder* b, const Node* target, TypeDesc td)
 {
@@ -289,7 +289,7 @@ static bool IsDropSelf(Builder* b, const Node* target, TypeDesc td)
 
 // Element write into an owning-element array (`Rec[]`, `string[]`) or an inline owning field: construct the owned
 // value (heap-copy a string literal, move a movable source, take a temporary bitwise, move a box's value out of
-// it), store it, then drop the old element, so a Drop method that reaches this slot again sees the new value.
+// it), store it, then drop the old element, so a drop method that reaches this slot again sees the new value.
 static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
 {
     Value owned;

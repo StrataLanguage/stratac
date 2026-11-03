@@ -1,9 +1,9 @@
 // expect: reject
-// rule: a Drop that runs implicitly at scope end may grow a global array, so refs into it are invalidated
+// rule: a drop that runs implicitly at scope end may grow a global array, so refs into it are invalidated
 struct Holder { Res[] list; };
 struct Grower { int id; };
 ^Holder gH = Holder { .list = {} };
-impl Grower { void Drop(ref Grower self) { for (int i = 0; i < 64; i++) { array_push(gH.list, Res.Make(500 + i)); } } }
+impl Grower { void drop(ref Grower self) { for (int i = 0; i < 64; i++) { array_push(gH.list, Res.Make(500 + i)); } } }
 int main()
 {
     array_push(gH.list, Res.Make(1));

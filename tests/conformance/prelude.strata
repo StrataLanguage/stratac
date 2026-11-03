@@ -33,7 +33,7 @@ struct Res { int id; };
 impl Res
 {
     Res Make(int id) { gLive++; return Res { .id = id }; }
-    void Drop(ref Res self) { gLive--; if (self.id < 10 || self.id > 99) { printf("drop %d\n", self.id); } fflush(ptr.null); }
+    void drop(ref Res self) { gLive--; if (self.id < 10 || self.id > 99) { printf("drop %d\n", self.id); } fflush(ptr.null); }
 }
 ^Res Box(int id) { gLive++; return Res { .id = id }; }
 void Report() { printf("END live=%d\n", gLive); fflush(ptr.null); }

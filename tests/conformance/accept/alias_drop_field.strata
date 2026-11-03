@@ -1,6 +1,6 @@
 // expect: run
 // expect-output: drop 5
-// rule: a field whose type is an alias of a Drop type is dropped with its struct
+// rule: a field whose type is an alias of a drop type is dropped with its struct
 struct RA = Res;
 struct Holder { RA r; };
 int main()

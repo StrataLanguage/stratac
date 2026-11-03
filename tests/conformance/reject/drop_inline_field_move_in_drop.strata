@@ -1,9 +1,9 @@
 // expect: reject "cannot move 'self.a' out on its own"
-// rule: a Drop method may take box fields apart, but not a field holding a Drop value by value
+// rule: a drop method may take box fields apart, but not a field holding a drop value by value
 struct Inner { int id; };
-impl Inner { void Drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
+impl Inner { void drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
 struct D { Inner a; int n; };
-impl D { void Drop(ref D self) { ^Inner kept = self.a; } }
+impl D { void drop(ref D self) { ^Inner kept = self.a; } }
 int main()
 {
     ^D d = D { .a = Inner { .id = 3 }, .n = 0 };

@@ -50,7 +50,7 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
     EmitDropStructFieldsEx(b, structPtr, structName, true);
 }
 
-// Without `runDrop`, only the fields go: the struct's own Drop method is the one running.
+// Without `runDrop`, only the fields go: the struct's own drop method is the one running.
 void EmitDropStructFieldsEx(Builder* b, LLVMValueRef structPtr, const char* structName, bool runDrop)
 {
     // A field typed as an alias (`struct RA = Res;`) is dropped as the struct it names.
@@ -69,7 +69,7 @@ void EmitDropStructFieldsEx(Builder* b, LLVMValueRef structPtr, const char* stru
         return;
     }
 
-    // The struct's Drop method, then its fields.
+    // The struct's drop method, then its fields.
     FuncInfo* dropInfo = st->dropFunction ? (FuncInfo*)StrMapGet(&b->funcs, st->dropFunction->mangledName) : NULL;
 
     if (runDrop && dropInfo && dropInfo->function)
@@ -120,7 +120,7 @@ static void EmitStructDropFnBody(Builder* b, LLVMValueRef fn, const char* struct
     LLVMBasicBlockRef savedInsertBlock = LLVMGetInsertBlock(b->builder);
 
     b->curFn = fn;
-    b->curGlobalsPtr = LLVMGetParam(fn, 1); // the dropping function's context, for Drop methods
+    b->curGlobalsPtr = LLVMGetParam(fn, 1); // the dropping function's context, for drop methods
 
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->ctx, fn, "entry");
     PositionAtEnd(b, entry);

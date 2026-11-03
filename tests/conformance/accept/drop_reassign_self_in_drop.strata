@@ -2,9 +2,9 @@
 // expect-output: Z drop 0
 // expect-output: drop 1
 // expect-output: drop 2
-// rule: a Drop method that reassigns self drops the old fields on assignment and the new ones afterwards
+// rule: a drop method that reassigns self drops the old fields on assignment and the new ones afterwards
 struct Z { ^Res inner; int id; };
-impl Z { void Drop(ref Z self) { printf("Z drop %d\n", self.id); if (self.id == 0) { self = Z { .inner = Box(2), .id = 1 }; } } }
+impl Z { void drop(ref Z self) { printf("Z drop %d\n", self.id); if (self.id == 0) { self = Z { .inner = Box(2), .id = 1 }; } } }
 int main()
 {
     {

@@ -10,7 +10,7 @@ static const char* kClassifySource = "struct P { int x; };\n"
                                      "struct Named { string s; };\n"
                                      "struct Wrapped = Holder;\n"
                                      "struct Res { int id; }\n"
-                                     "impl Res { void Drop(ref Res self) { } }\n"
+                                     "impl Res { void drop(ref Res self) { } }\n"
                                      "struct HasRes { Res r; };\n";
 
 static TypeProps Classify(const TypeRegistry* reg, Arena* arena, const char* spelling)

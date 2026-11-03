@@ -85,8 +85,8 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
-// A value with a `Drop` method is moved whole or not at all: `Drop` expects every field to be there. And a field
-// holding a `Drop` value in its own storage never moves out on its own, not even in a Drop method: nothing marks
+// A value with a `drop` method is moved whole or not at all: `drop` expects every field to be there. And a field
+// holding a `drop` value in its own storage never moves out on its own, not even in a drop method: nothing marks
 // the storage it leaves behind, which is dropped with the parent.
 static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
 {
@@ -321,8 +321,8 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
 
 static bool IsDropMethod(const FunctionDecl* fn)
 {
-    size_t n = strlen(fn->name);
-    return n >= 4 && strcmp(fn->name + n - 4, "Drop") == 0;
+    // The short name, not a suffix of the mangled `H_drop`: lowercase `drop` would also match e.g. `raindrop`.
+    return fn->methodName && strcmp(fn->methodName, "drop") == 0;
 }
 
 static void CollectFunctionFacts(Env* env, const FunctionDecl* fn, Cfg* g)
@@ -419,7 +419,7 @@ static void CheckRefParamsRestored(Env* env, const FunctionDecl* fn, const Cfg* 
 {
     // A ref parameter belongs to the caller: whatever was taken out of it has to be back by the time the
     // function returns.
-    // A `Drop` method is taking its value apart; nothing needs to be put back.
+    // A `drop` method is taking its value apart; nothing needs to be put back.
     if (g->blocks[g->exit].reachable && !env->inDropMethod)
     {
         for (size_t k = 0; k < pathCount; k++)
@@ -559,12 +559,12 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
                      d->name);
         break;
     case MoveDiagDropField:
-        DiagErrorFmt(diag, d->range, "cannot move '%s' out of a type with a Drop method; move the whole value",
+        DiagErrorFmt(diag, d->range, "cannot move '%s' out of a type with a drop method; move the whole value",
                      d->name);
         break;
     case MoveDiagInlineDropField:
         DiagErrorFmt(diag, d->range,
-                     "cannot move '%s' out on its own: '%s' holds a value with a Drop method by value; move the "
+                     "cannot move '%s' out on its own: '%s' holds a value with a drop method by value; move the "
                      "whole value, or make the field a box '^%s' or an optional '%s?'",
                      d->name, d->type, d->type, d->type);
         break;

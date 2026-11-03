@@ -148,7 +148,7 @@ else()
         message(FATAL_ERROR "unexpected panic:\n${run_log}")
     endif()
     if(run_log MATCHES "END live=" AND NOT run_log MATCHES "END live=0")
-        message(FATAL_ERROR "Drop values leaked or dropped twice:\n${run_log}")
+        message(FATAL_ERROR "drop values leaked or dropped twice:\n${run_log}")
     endif()
 endif()
 

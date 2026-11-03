@@ -1,6 +1,6 @@
-// expect: reject "whose Init would not run on field defaults"
-// rule: a bare local of a struct holding an Init type by value is rejected; give it a value
+// expect: reject "whose init would not run on field defaults"
+// rule: a bare local of a struct holding an init type by value is rejected; give it a value
 struct C { int n; };
-impl C { void Init(ref C self) { self.n = 42; } }
+impl C { void init(ref C self) { self.n = 42; } }
 struct Outer { C c; int k; };
 int main() { Outer o; return 0; }

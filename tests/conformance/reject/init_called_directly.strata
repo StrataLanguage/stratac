@@ -1,5 +1,5 @@
-// expect: reject "'Init' runs when a value is constructed"
-// rule: Init is not called on a live value, which it would overwrite without dropping
+// expect: reject "'init' runs when a value is constructed"
+// rule: init is not called on a live value, which it would overwrite without dropping
 struct C { int n; };
-impl C { void Init(ref C self, int n) { self.n = n; } }
-int main() { C a = C(1); a.Init(2); return 0; }
+impl C { void init(ref C self, int n) { self.n = n; } }
+int main() { C a = C(1); a.init(2); return 0; }

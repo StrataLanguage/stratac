@@ -1,6 +1,6 @@
 // expect: run
 // expect-output: drop 1
-// rule: a by-value local of a Drop type named through an alias is dropped as the struct it names
+// rule: a by-value local of a drop type named through an alias is dropped as the struct it names
 struct RA = Res;
 int main()
 {

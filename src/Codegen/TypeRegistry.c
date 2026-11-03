@@ -974,7 +974,7 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
     return false;
 }
 
-// Whether copying a `t` would copy a value with a Drop method (which would then be dropped twice).
+// Whether copying a `t` would copy a value with a drop method (which would then be dropped twice).
 // Structs already looked into during one TypeNameHasDrop query: each is walked once, so types that
 // reach themselves along several paths (a tree of boxes) cost linear, not exponential, time.
 typedef struct

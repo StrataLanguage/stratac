@@ -1,7 +1,7 @@
 // expect: reject
-// rule: a field cannot be moved out of a struct that has a Drop method, since Drop expects every field
+// rule: a field cannot be moved out of a struct that has a drop method, since drop expects every field
 struct Z { ^Res inner; int id; };
-impl Z { void Drop(ref Z self) { printf("Z drop sees inner %d\n", self.inner.id); } }
+impl Z { void drop(ref Z self) { printf("Z drop sees inner %d\n", self.inner.id); } }
 int main()
 {
     {

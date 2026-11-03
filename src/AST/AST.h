@@ -487,7 +487,7 @@ typedef struct
     Vec attributes;
     bool isComponent;       // `@component`: a plain-data type the host registers (see strata_types.h)
     const char* moduleName; // module (file) the struct was declared in
-    // The `void Drop(ref T self)` of the struct's impl, bound by sema: runs when an owned value is dropped.
+    // The `void drop(ref T self)` of the struct's impl, bound by sema: runs when an owned value is dropped.
     // The struct keeps the layout it declares: nothing marks a moved-from value, so the checker only lets such a
     // value move whole (a field holding one by value never moves out on its own).
     const struct FunctionDecl* dropFunction;
@@ -554,7 +554,7 @@ typedef struct FunctionDecl
     // Impl members: `methodName` is the short name, `name` carries the `H_M` symbol.
     char* methodName;
     bool fromImpl;
-    // Sema-built `T __init_T(args)` for an `Init` method: builds a T from its field defaults and runs Init on it.
+    // Sema-built `T __init_T(args)` for an `init` method: builds a T from its field defaults and runs init on it.
     bool isInitWrapper;
     // `extern<T>`: the type parameter's name, NULL for ordinary functions.
     char* typeParam;
@@ -676,8 +676,8 @@ typedef struct
     bool isVar;
     // Set by sema: the path holds a `^T` / proven `T?` and the ref aliases the value inside.
     bool refThroughBox;
-    // Sema-built: a bare local that starts from its field defaults without running `Init()` (the value an
-    // Init wrapper builds).
+    // Sema-built: a bare local that starts from its field defaults without running `init()` (the value an
+    // init wrapper builds).
     bool rawDefault;
 } VarDeclStmt;
 

@@ -1,9 +1,9 @@
 // expect: reject
-// rule: overwriting a Drop value runs its Drop, which may change globals, so it ends narrowing of a global optional
+// rule: overwriting a drop value runs its drop, which may change globals, so it ends narrowing of a global optional
 struct Holder { Res? r; };
 struct Clearer { int id; };
 ^Holder gH = Holder {};
-impl Clearer { void Drop(ref Clearer self) { Res? e; gH.r = e; } }
+impl Clearer { void drop(ref Clearer self) { Res? e; gH.r = e; } }
 int main()
 {
     gH.r = Res.Make(1);

@@ -1,7 +1,7 @@
 // expect: run
-// rule: a value built by Init is a fresh owned value: it moves into arrays, boxes, optionals and fields and is dropped once
+// rule: a value built by init is a fresh owned value: it moves into arrays, boxes, optionals and fields and is dropped once
 struct C { int n; };
-impl C { void Init(ref C self, int n) { self.n = n; gLive++; } void Drop(ref C self) { gLive--; } }
+impl C { void init(ref C self, int n) { self.n = n; gLive++; } void drop(ref C self) { gLive--; } }
 struct Outer { C c; int k; };
 C Make(int n) { return C(n); }
 int main()

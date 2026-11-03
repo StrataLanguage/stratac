@@ -233,14 +233,14 @@ inline `T` field (4966837) — same consistency argument for making it implicit 
 `rc(x)` intrinsic.
 
 Not proposed: `rc<T>` → `^T` (the value is shared; you'd need `copy()` of the contents, which
-Drop types forbid anyway).
+drop types forbid anyway).
 
 ### Ownership / borrowing
 
 - Source is consumed; "used after move" applies to it as usual. From a global, a `ref`, or an
   array element: the existing errors (cannot move out of global / ref; element poisoning).
-- Drop: `T`'s `Drop` runs once, when the last rc reference goes — the box move is bitwise, no
-  Drop on the old cell.
+- drop: `T`'s `drop` runs once, when the last rc reference goes — the box move is bitwise, no
+  drop on the old cell.
 - A `const ref ^T` or `ref ^T` cannot convert (not owned).
 
 ### Compiler impact
@@ -254,7 +254,7 @@ Drop types forbid anyway).
 - `src/Sema/Resolve/TypeRules.c`: the assignability check that produced the error above gains
   the `^T`→`rc<T>` / `rc<T>?` case and records a move of the source (`MarkMoved`), plus an
   implicit-conversion node or flag on the expression for codegen.
-- Tests in `tests/unit/BoxTests.c` (Drop-once, moved-source error, optional target).
+- Tests in `tests/unit/BoxTests.c` (drop-once, moved-source error, optional target).
 
 ---
 
@@ -463,11 +463,11 @@ concatenates and compares as text; drop the needless `(string)` casts in Strafe.
 
 **7b (if a runtime-filled table shows up):** give fixed arrays of owning elements drop glue.
 
-- Allowed element types: `string`, `T[]`, `T?`, `rc<T>?`, owning/Drop structs. Elements that must
+- Allowed element types: `string`, `T[]`, `T?`, `rc<T>?`, owning/drop structs. Elements that must
   hold a value (`^T`, `rc<T>`) need a full initializer, the same rule as `{ {}; n }` fills today.
 - Default value: every element empty (`""`, empty array, empty optional) — zero bits, as for
   default-filled dynamic arrays.
-- Drop: elements dropped in reverse index order when the array goes away (local scope end,
+- drop: elements dropped in reverse index order when the array goes away (local scope end,
   containing struct dropped).
 - Element assignment drops the old element; moving out of an element poisons it exactly like a
   `T[]` element today; `const ref` / `ref` element locals as today.
@@ -477,7 +477,7 @@ concatenates and compares as text; drop the needless `(string)` casts in Strafe.
 
 All existing element rules reused; the only new thing is that a fixed array becomes "owning" for
 the purposes of the struct/aggregate owning predicate (so a struct holding `string[4]` is owning,
-can't be `copy()`d if a Drop is inside, etc.).
+can't be `copy()`d if a drop is inside, etc.).
 
 ### Compiler impact (7b)
 

@@ -55,7 +55,7 @@ bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     if (TypeNameHasDrop(&r->registry, argType))
     {
         DiagErrorFmt(r->diag, arg0->range,
-                     "cannot copy '%s': it holds a value with a Drop method, which would then be dropped twice",
+                     "cannot copy '%s': it holds a value with a drop method, which would then be dropped twice",
                      argType->name);
         return true;
     }

@@ -1,5 +1,5 @@
 // expect: run
-// rule: a Drop method that removes from the array it is being removed from runs cleanly and every element is dropped once
+// rule: a drop method that removes from the array it is being removed from runs cleanly and every element is dropped once
 struct Pusher { int id; };
 struct Holder { Pusher[] items; };
 ^Holder gH = Holder { .items = {} };
@@ -7,7 +7,7 @@ int gSeen = 0;
 Pusher P(int id) { gLive++; return Pusher { .id = id }; }
 impl Pusher
 {
-    void Drop(ref Pusher self)
+    void drop(ref Pusher self)
     {
         gLive--;
         if ((gSeen & (1 << self.id)) != 0) { strata_panic("dropped twice"); }

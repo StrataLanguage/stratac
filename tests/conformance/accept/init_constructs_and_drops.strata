@@ -4,13 +4,13 @@
 // expect-output: a=20 b=5
 // expect-output: drop 5
 // expect-output: drop 20
-// rule: `T v;` runs T's argument-free Init, `T(args)` the matching Init overload; Drop runs at scope end
+// rule: `T v;` runs T's argument-free init, `T(args)` the matching init overload; drop runs at scope end
 struct vstruct { ptr x; };
 impl vstruct
 {
-    void Init(ref vstruct self) { self.x = malloc(4ul); store<int>(self.x, 20); printf("init default\n"); }
-    void Init(ref vstruct self, int value) { self.x = malloc(4ul); store<int>(self.x, value); printf("init %d\n", value); }
-    void Drop(ref vstruct self) { printf("drop %d\n", load<int>(self.x)); free(self.x); }
+    void init(ref vstruct self) { self.x = malloc(4ul); store<int>(self.x, 20); printf("init default\n"); }
+    void init(ref vstruct self, int value) { self.x = malloc(4ul); store<int>(self.x, value); printf("init %d\n", value); }
+    void drop(ref vstruct self) { printf("drop %d\n", load<int>(self.x)); free(self.x); }
 }
 int main()
 {

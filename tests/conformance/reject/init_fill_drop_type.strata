@@ -1,5 +1,5 @@
 // expect: reject "cannot be copied into each element"
-// rule: '{ value; n }' cannot copy a value with a Drop method into each element
+// rule: '{ value; n }' cannot copy a value with a drop method into each element
 int main()
 {
     Res[] a = { Res.Make(1); 3 };

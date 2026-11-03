@@ -647,7 +647,7 @@ static bool ResolveCalleeLookup(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    // `T(args)` for a type with Init methods constructs through them, never field by field.
+    // `T(args)` for a type with init methods constructs through them, never field by field.
     if (!c->calleeBase && c->callee)
     {
         const char* wrapper = (const char*)StrMapGet(&r->initWrappers, c->callee);
@@ -1264,7 +1264,7 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
 
             if (any && any->isInitWrapper)
             {
-                DiagErrorFmt(r->diag, c->base.range, "no Init of '%s' takes these %zu argument(s)",
+                DiagErrorFmt(r->diag, c->base.range, "no init of '%s' takes these %zu argument(s)",
                              any->returnType.name, c->args.count);
             }
             else

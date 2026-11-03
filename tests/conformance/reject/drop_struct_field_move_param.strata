@@ -1,7 +1,7 @@
 // expect: reject
-// rule: a field cannot be moved out of a by-value parameter whose type has a Drop method
+// rule: a field cannot be moved out of a by-value parameter whose type has a drop method
 struct Z { ^Res inner; int id; };
-impl Z { void Drop(ref Z self) { printf("Z drop sees inner %d\n", self.inner.id); } }
+impl Z { void drop(ref Z self) { printf("Z drop sees inner %d\n", self.inner.id); } }
 ^Res Take(^Z z) { return z.inner; }
 int main()
 {

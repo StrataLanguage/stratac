@@ -1,6 +1,6 @@
 // expect: run
 // expect-output: drop 5
-// rule: a local of a Drop type may be held by value; it is dropped at scope end
+// rule: a local of a drop type may be held by value; it is dropped at scope end
 int main()
 {
     {

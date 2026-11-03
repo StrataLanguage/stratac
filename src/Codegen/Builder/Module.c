@@ -525,7 +525,7 @@ static void EmitContextDestroy(Builder* b, const Module* module)
 
     b->curGlobalsPtr = LLVMGetParam(destroyFn, 0);
 
-    // Globals are built in declaration order and destroyed in the reverse, so a later global's Drop can still
+    // Globals are built in declaration order and destroyed in the reverse, so a later global's drop can still
     // read an earlier one. A struct that owns heap data through its fields is destroyed too.
     for (size_t i = module->globals.count; i-- > 0;)
     {

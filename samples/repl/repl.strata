@@ -1,45 +1,40 @@
 import ../../std/bytebuffer;
 import ../../std/math;
+import ../../std/stringutil;
 
 extern int printf(string fmt, ...);
 
 struct test { int value; }
 
 impl test {
-	void Init(ref test self, int value)
+	void init(ref test self, int value)
 	{
 		self.value = value;
 		printf("Hello\n");
 	}
 
-	void Drop(ref test self) {
-		printf("goodbye %d\n", self.value);
+	void drop(ref test self) {
+		printf("Goodbye %d\n", self.value);
 	}
-
-
 }
+
+
 
 int main()
 {
-	const float x = -20.0f;
-	const float res = sign(x);
+// 	{
+// 		var t = test(20);
+// 	}
+//
+// 	var bb = bytebuffer(128);
+//
+// 	bb.write("Hello, World!");
+// 	bb.write((byte)0);
+//
+// 	printf("value: %s\n", bb.get_ptr());
 
-	printf("res: %f\n", res);
-
-	var t = test(20);
-
-/*
-	bytebuffer bb;
-
-	bb.init(128);
-
-	bb.write("Hello, World!");
-	bb.write_byte((byte)0);
-
-	printf("value: %s\n", bb.get());
-
-	bb.free();
-*/
+	int result = to_int("-123");
+	printf("result: %d\n", result);
 
 	return 0;
 }

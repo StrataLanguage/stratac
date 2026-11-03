@@ -1,12 +1,12 @@
 // expect: run
-// rule: a Drop method that pushes into the array being reset runs cleanly and every element is dropped once
+// rule: a drop method that pushes into the array being reset runs cleanly and every element is dropped once
 struct Pusher { int id; };
 struct Holder { Pusher[] items; };
 ^Holder gH = Holder { .items = {} };
 Pusher P(int id) { gLive++; return Pusher { .id = id }; }
 impl Pusher
 {
-    void Drop(ref Pusher self) { gLive--; if (self.id < 3) { for (int i = 0; i < 20; i++) { array_push(gH.items, P(1000 + i)); } } }
+    void drop(ref Pusher self) { gLive--; if (self.id < 3) { for (int i = 0; i < 20; i++) { array_push(gH.items, P(1000 + i)); } } }
 }
 int main()
 {

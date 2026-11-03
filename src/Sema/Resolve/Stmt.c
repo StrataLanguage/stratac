@@ -639,14 +639,14 @@ static void WalkFixedArrayLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
 static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
 {
-    // A bare local of a type with Init is built by its argument-free Init.
+    // A bare local of a type with init is built by its argument-free init.
     if (!vd->init && !vd->rawDefault && StrMapGet(&r->initWrappers, vd->type.name))
     {
         const char* wrapper = (const char*)StrMapGet(&r->defaultInits, vd->type.name);
 
         if (!wrapper)
         {
-            DiagErrorFmt(r->diag, vd->base.range, "'%s' has no Init without arguments; construct '%s' with '%s(...)'",
+            DiagErrorFmt(r->diag, vd->base.range, "'%s' has no init without arguments; construct '%s' with '%s(...)'",
                          vd->type.name, vd->name, vd->type.name);
         }
         else
@@ -667,7 +667,7 @@ static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
         if (initHeld)
         {
             DiagErrorFmt(r->diag, vd->base.range,
-                         "'%s' holds a '%s' by value, whose Init would not run on field defaults: initialize '%s'",
+                         "'%s' holds a '%s' by value, whose init would not run on field defaults: initialize '%s'",
                          vd->type.name, initHeld, vd->name);
         }
     }
@@ -692,8 +692,8 @@ static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
         if (vd->rawDefault)
         {
             DiagErrorFmt(r->diag, vd->base.range,
-                         "'%s' has an Init method, so its fields start from their defaults before Init runs; a "
-                         "box field has none: make it an optional ('T?') and set it in Init",
+                         "'%s' has an init method, so its fields start from their defaults before init runs; a "
+                         "box field has none: make it an optional ('T?') and set it in init",
                          vd->type.name);
         }
         else

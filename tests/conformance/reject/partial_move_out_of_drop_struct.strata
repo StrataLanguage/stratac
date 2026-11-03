@@ -1,7 +1,7 @@
 // expect: reject
-// rule: a field may not be moved out of a value whose type has a Drop method
+// rule: a field may not be moved out of a value whose type has a drop method
 struct Outer { ^Res held; int n; };
-impl Outer { void Drop(ref Outer self) { printf("outer drop %d\n", self.held.id); } }
+impl Outer { void drop(ref Outer self) { printf("outer drop %d\n", self.held.id); } }
 void Take(^Res r) { printf("took %d\n", r.id); }
 int main()
 {
