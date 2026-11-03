@@ -1,10 +1,13 @@
 ---
-# Strata C++ style guide (clang-format 22+).
+# Strata C11 style guide (clang-format 22+).
 #
 # Usage:
 #   clang-format -i <file>            reformat in place
 #   clang-format --dry-run -Werror <file>   check without writing
 # (clang-format finds this file automatically.)
+#
+# The sources are C11. Language stays Cpp, which is how clang-format applies
+# these rules to C files; Standard is Latest rather than a pinned C++ dialect.
 #
 # Rules this file enforces:
 #   - 4-space indentation, no tabs
@@ -20,7 +23,7 @@
 
 Language:        Cpp
 BasedOnStyle:    LLVM
-Standard:        c++20
+Standard:        Latest
 
 # ---- Indentation ----
 IndentWidth:                        4
