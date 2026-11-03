@@ -237,21 +237,6 @@ static StrataTypeKind KindForPrimitive(PrimitiveType primitive)
     }
 }
 
-static const EnumDecl* FindEnumDecl(const Module* mod, const char* name)
-{
-    for (size_t i = 0; i < mod->enums.count; i++)
-    {
-        const EnumDecl* decl = (const EnumDecl*)VecGet(&mod->enums, i);
-
-        if (strcmp(decl->name, name) == 0)
-        {
-            return decl;
-        }
-    }
-
-    return NULL;
-}
-
 static uint32_t EnumIndex(Writer* w, const char* name)
 {
     for (size_t i = 0; i < w->enums.count; i++)
@@ -381,7 +366,7 @@ static void AddEnum(Writer* w, const char* name)
         return;
     }
 
-    const EnumDecl* decl = FindEnumDecl(w->mod, name);
+    const EnumDecl* decl = ModuleFindEnum(w->mod, name);
 
     if (!decl)
     {

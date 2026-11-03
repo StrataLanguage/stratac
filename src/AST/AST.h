@@ -864,3 +864,8 @@ typedef struct
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);
+
+// The enum named `name`, or NULL.
+const EnumDecl* ModuleFindEnum(const Module* mod, const char* name);
+// First impl block for the type `handleName`, or NULL.
+const ImplDecl* ModuleFindImpl(const Module* mod, const char* handleName);
