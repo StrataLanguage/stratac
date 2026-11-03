@@ -20,7 +20,7 @@ bool IsLengthPseudoMemberBase(const TypeRegistry* reg, const TypeName* t)
 // Rewrite a braced list as a positional struct init of `structName`.
 static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structName)
 {
-    ArrayInitExpr* ai = AsNode(ArrayInitExpr, braced);
+    ArrayInitExpr* ai = AS_NODE(ArrayInitExpr, braced);
 
     StructInitExpr* init = (StructInitExpr*)ArenaAlloc(r->arena, sizeof(StructInitExpr));
     memset(init, 0, sizeof(StructInitExpr));

@@ -169,7 +169,7 @@ const TypeName* VectorCrossBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     const TypeName* a0Type = InferType(r, a0, scope);
 
     const char* resolved = TypeRegistryResolveAlias(&r->registry, a0Type ? a0Type->name : "");
-    if (GetNameSimdVectorLanes(resolved) == 2)
+    if (GET_NAME_SIMD_VECTOR_LANES(resolved) == 2)
     {
         return InternTypeName(r, "float");
     }

@@ -1325,7 +1325,7 @@ void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 
 // NOTE: Make sure there are matching definitions for any new intrinsics added at `EmitIntrinsicCall()` in
 // LLVMModuleBuilder.c.
-static const IntrinsicTypeDefinition intrinsics[] = {
+static const IntrinsicTypeDefinition INTRINSICS[] = {
     /* Array calls */
     {"array_push",        ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_pop",         ArrayBuiltinType,           ResolveArrayBuiltin    },
@@ -1365,9 +1365,9 @@ static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)
         return false;
     }
 
-    for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
+    for (int i = 0; i < ARRAY_COUNT(INTRINSICS); i++)
     {
-        const IntrinsicTypeDefinition* intrinsic = &intrinsics[i];
+        const IntrinsicTypeDefinition* intrinsic = &INTRINSICS[i];
 
         if (strcmp(intrinsic->name, c->callee) == 0)
         {
@@ -1388,9 +1388,9 @@ static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)
 
 const TypeName* InferIntrinsicType(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    for (int i = 0; i < ARRAY_COUNT(intrinsics); i++)
+    for (int i = 0; i < ARRAY_COUNT(INTRINSICS); i++)
     {
-        const IntrinsicTypeDefinition* intrinsic = &intrinsics[i];
+        const IntrinsicTypeDefinition* intrinsic = &INTRINSICS[i];
 
         if (strcmp(intrinsic->name, c->callee) == 0)
         {

@@ -342,7 +342,7 @@ static void InitOwningContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
     }
     else if (TypeDescHasArrayShape(&td) && gd->init->kind == NodeArrayInit)
     {
-        LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
+        LLVMValueRef arr = EmitArrayInit(b, AS_NODE(ArrayInitExpr, gd->init)).value;
         LLVMBuildStore(b->builder, arr, fieldPtr);
     }
     else if (TypeDescIsString(&td))

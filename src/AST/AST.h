@@ -56,7 +56,7 @@ typedef struct
 } Node;
 
 #define AST_NEW(arena, type) ((type*)ArenaAlloc((arena), sizeof(type)))
-#define AsNode(type, node) ((type*)(node))
+#define AS_NODE(type, node) ((type*)(node))
 
 /* Types are structural: `^T` (box), `T?` (optional), and `T[]`/`T[N]` (array)
    wrap an inner/element TypeName. `name` is the canonical spelling ("^Foo",

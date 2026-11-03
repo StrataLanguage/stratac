@@ -1,7 +1,7 @@
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
 /* What a value is handed to when only "not an optional" matters: a C vararg, a `substring` operand. */
-static const TypeName kPlainTarget = {.name = "?"};
+static const TypeName PLAIN_TARGET = {.name = "?"};
 
 static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
 {
@@ -649,7 +649,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         }
         else if (arg0 && strcmp(e->callee, "substring") == 0)
         {
-            ConsumeValue(env, f, found, arg0, &kPlainTarget, arg0->range, false);
+            ConsumeValue(env, f, found, arg0, &PLAIN_TARGET, arg0->range, false);
         }
 
         if (arg0 && IsArrayMutator(e->callee))
@@ -698,7 +698,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
                                                           : NULL;
         bool byValue = p && !d->isExtern && p->mod == ModNone && !p->inferredBorrow;
 
-        ConsumeValue(env, f, found, arg, p && !p->isVarargRest ? &p->type : &kPlainTarget, arg->range, byValue);
+        ConsumeValue(env, f, found, arg, p && !p->isVarargRest ? &p->type : &PLAIN_TARGET, arg->range, byValue);
 
         if (p && p->mod == ModRef && !p->type.isConst)
         {

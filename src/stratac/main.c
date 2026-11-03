@@ -10,9 +10,9 @@
 // CLI table helpers.
 #define COMMAND_SEPARATOR {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, NULL}
 #define COMMAND_SEPARATOR_LABEL(label_) {NULL, NULL, NULL, NULL, CF_SEPARATOR, MF_NONE, label_}
-#define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
+#define COMMAND_MODE(long_cmd_, toggle_flag_, desc_) {NULL, long_cmd_, NULL, &CmdSetMode, CF_NONE, toggle_flag_, desc_}
 #define COMMAND_TOGGLE(long_cmd_, toggle_flag_, desc_)                                                                 \
-    {NULL, long_cmd_, NULL, &Cmd_SetMode, CF_NONE, toggle_flag_, desc_}
+    {NULL, long_cmd_, NULL, &CmdSetMode, CF_NONE, toggle_flag_, desc_}
 #define COMMAND_INFO(short_cmd_, long_cmd_, func_, desc_) {short_cmd_, long_cmd_, NULL, func_, CF_FINAL, MF_NONE, desc_}
 #define COMMAND_GENERAL(short_cmd_, long_cmd_, follower_, func_, desc_)                                                \
     {short_cmd_, long_cmd_, follower_, func_, CF_NONE, MF_NONE, desc_}
@@ -140,36 +140,36 @@ typedef struct CLICommand
 } CLICommand;
 
 // Forward declarations.
-static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_PrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_SetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd);
-static ResultCode Cmd_SetSymbolPrefix(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdSetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdPrintAst(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdSetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdSetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdDisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdSetSymbolPrefix(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 
-static ResultCode Cmd_AddImportDir(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdAddImportDir(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 
-static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd);
+static ResultCode CmdRunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 
 // clang-format off
-static const CLICommand commands[] = {
-    COMMAND_INFO("-h", "--help",    &Cmd_Help,    "show available commands and usage"),
-    COMMAND_INFO("-v", "--version", &Cmd_Version, "print version and exit"),
+static const CLICommand COMMANDS[] = {
+    COMMAND_INFO("-h", "--help",    &CmdHelp,    "show available commands and usage"),
+    COMMAND_INFO("-v", "--version", &CmdVersion, "print version and exit"),
 
-    COMMAND_GENERAL("-o", NULL,    "<file>", &Cmd_SetOutputFilename, "output object file (default: <input>.o)"),
+    COMMAND_GENERAL("-o", NULL,    "<file>", &CmdSetOutputFilename, "output object file (default: <input>.o)"),
 
     COMMAND_MODE("--ast",     MF_PRINT_AST, "print ast tree"),
     COMMAND_MODE("--asm",     MF_EMIT_ASM,  "output asm representation"),
         COMMAND_MODE("--emit-ir", MF_EMIT_IR,   "emit LLVM IR"),
     COMMAND_MODE("--run",     MF_RUN,       "JIT and run an int(void) entry in memory"),
 
-    COMMAND_GENERAL(NULL, "--no-simd", NULL,      &Cmd_DisableSimd, "disable SIMD intrinsics (not supported yet)"),
-    COMMAND_GENERAL(NULL, "--entry",   "<name>",  &Cmd_RunSetEntry, "entry for --run (default: main)"),
-    COMMAND_GENERAL(NULL, "--arch",    "<value>", &Cmd_SetArch,     "set output architecture (default: auto, x64, arm64)"),
-    COMMAND_GENERAL(NULL, "--symbol-prefix", "<prefix>", &Cmd_SetSymbolPrefix, "prefix every exported symbol, so several objects can link together"),
-    COMMAND_GENERAL("-I", NULL,    "<dir>",   &Cmd_AddImportDir, "also search <dir> for imports (repeatable)"),
+    COMMAND_GENERAL(NULL, "--no-simd", NULL,      &CmdDisableSimd, "disable SIMD intrinsics (not supported yet)"),
+    COMMAND_GENERAL(NULL, "--entry",   "<name>",  &CmdRunSetEntry, "entry for --run (default: main)"),
+    COMMAND_GENERAL(NULL, "--arch",    "<value>", &CmdSetArch,     "set output architecture (default: auto, x64, arm64)"),
+    COMMAND_GENERAL(NULL, "--symbol-prefix", "<prefix>", &CmdSetSymbolPrefix, "prefix every exported symbol, so several objects can link together"),
+    COMMAND_GENERAL("-I", NULL,    "<dir>",   &CmdAddImportDir, "also search <dir> for imports (repeatable)"),
 };
 // clang-format on
 
@@ -180,18 +180,18 @@ typedef struct ModeImpl
     ResultCode (*func)(State* state, StrataCompiler* compiler);
 } ModeImpl;
 
-static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler);
-static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler);
-static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler);
-static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler);
-static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler);
+static ResultCode ImplEmitAsm(State* state, StrataCompiler* compiler);
+static ResultCode ImplEmitIr(State* state, StrataCompiler* compiler);
+static ResultCode ImplJitAndRun(State* state, StrataCompiler* compiler);
+static ResultCode ImplCompileToObject(State* state, StrataCompiler* compiler);
+static ResultCode ImplPrintAst(State* state, StrataCompiler* compiler);
 
 // Modes run after parsing; earlier entries run first.
-static const ModeImpl modeImpls[] = {
-    {MF_PRINT_AST, &Impl_PrintAst },
-    {MF_RUN,       &Impl_JitAndRun},
-    {MF_EMIT_ASM,  &Impl_EmitAsm  },
-    {MF_EMIT_IR,   &Impl_EmitIr   },
+static const ModeImpl MODE_IMPLS[] = {
+    {MF_PRINT_AST, &ImplPrintAst },
+    {MF_RUN,       &ImplJitAndRun},
+    {MF_EMIT_ASM,  &ImplEmitAsm  },
+    {MF_EMIT_IR,   &ImplEmitIr   },
 };
 
 const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count)
@@ -221,9 +221,9 @@ const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count
 // Runs every requested mode.
 void ExecuteCommands(State* state, StrataCompiler* compiler)
 {
-    for (size_t toggleIndex = 0; toggleIndex < ARRAY_COUNT(modeImpls); toggleIndex++)
+    for (size_t toggleIndex = 0; toggleIndex < ARRAY_COUNT(MODE_IMPLS); toggleIndex++)
     {
-        const ModeImpl* impl = &modeImpls[toggleIndex];
+        const ModeImpl* impl = &MODE_IMPLS[toggleIndex];
         if (HAS_TOGGLE(state->toggleCommands, impl->toggle))
         {
             ResultCode result = impl->func(state, compiler);
@@ -240,7 +240,7 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
     // --run, --ast, --emit-ir and --asm produce their own output only.
     if (state->toggleCommands == MF_NONE)
     {
-        ResultCode result = Impl_CompileToObject(state, compiler);
+        ResultCode result = ImplCompileToObject(state, compiler);
 
         if (result != RCSuccess)
         {
@@ -250,7 +250,7 @@ void ExecuteCommands(State* state, StrataCompiler* compiler)
     }
 }
 
-static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     fprintf(stderr, "stratac - Strata compiler\n"
                     "Usage: stratac [options] <file.strata>\n"
@@ -260,10 +260,10 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
     const int tmpBufferSize = 512;
     char tmpCmdBuffer[512];
 
-    const int numCommands = ARRAY_COUNT(commands);
+    const int numCommands = ARRAY_COUNT(COMMANDS);
     for (int i = 0; i < numCommands; i++)
     {
-        const CLICommand* cmd = &commands[i];
+        const CLICommand* cmd = &COMMANDS[i];
 
         if ((cmd->flags & CF_SEPARATOR) != 0 && cmd->shortCmd == NULL && cmd->longCmd == NULL)
         {
@@ -315,7 +315,7 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
     return RCSuccess;
 }
 
-static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     unsigned capabilities = strataCapabilities();
 
@@ -329,7 +329,7 @@ static ResultCode Cmd_Version(State* state, StrataCompiler* compiler, const CLIC
     return RCSuccess;
 }
 
-static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdSetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     if (state->argumentIndex + 1 >= state->argumentCount)
     {
@@ -342,13 +342,13 @@ static ResultCode Cmd_SetOutputFilename(State* state, StrataCompiler* compiler, 
     return RCSuccess;
 }
 
-static ResultCode Cmd_SetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdSetMode(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     state->toggleCommands |= MF_BIT(cmd->modeValue);
     return RCSuccess;
 }
 
-static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdSetArch(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     if (state->argumentIndex + 1 >= state->argumentCount)
     {
@@ -379,7 +379,7 @@ static ResultCode Cmd_SetArch(State* state, StrataCompiler* compiler, const CLIC
     return RCSuccess;
 }
 
-static ResultCode Cmd_SetSymbolPrefix(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdSetSymbolPrefix(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     if (state->argumentIndex + 1 >= state->argumentCount)
     {
@@ -398,7 +398,7 @@ static ResultCode Cmd_SetSymbolPrefix(State* state, StrataCompiler* compiler, co
     return RCSuccess;
 }
 
-static ResultCode Cmd_AddImportDir(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdAddImportDir(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     (void)cmd;
 
@@ -419,7 +419,7 @@ static ResultCode Cmd_AddImportDir(State* state, StrataCompiler* compiler, const
     return RCSuccess;
 }
 
-static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdDisableSimd(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     // No backend can scalarize SIMD types yet, so reject the flag explicitly
     // rather than accept it and emit SIMD code anyway.
@@ -428,7 +428,7 @@ static ResultCode Cmd_DisableSimd(State* state, StrataCompiler* compiler, const 
     return RCArgumentError;
 }
 
-static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd)
+static ResultCode CmdRunSetEntry(State* state, StrataCompiler* compiler, const CLICommand* cmd)
 {
     if (state->argumentIndex + 1 >= state->argumentCount)
     {
@@ -441,7 +441,7 @@ static ResultCode Cmd_RunSetEntry(State* state, StrataCompiler* compiler, const 
     return RCSuccess;
 }
 
-static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler)
+static ResultCode ImplPrintAst(State* state, StrataCompiler* compiler)
 {
     StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_AST, state->emitFlags);
     PrintDiagnostics(state, r.diagnostics);
@@ -456,7 +456,7 @@ static ResultCode Impl_PrintAst(State* state, StrataCompiler* compiler)
     return result;
 }
 
-static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
+static ResultCode ImplEmitAsm(State* state, StrataCompiler* compiler)
 {
     const char* asmFilename = state->outputFileName;
     bool owned = false;
@@ -491,7 +491,7 @@ static ResultCode Impl_EmitAsm(State* state, StrataCompiler* compiler)
     return asmOk ? RCSuccess : RCCompileError;
 }
 
-static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler)
+static ResultCode ImplEmitIr(State* state, StrataCompiler* compiler)
 {
     StrataResult r = strataCompileFile(compiler, state->sourceFileName, STRATA_EMIT_LLVM_IR, state->emitFlags);
     PrintDiagnostics(state, r.diagnostics);
@@ -506,7 +506,7 @@ static ResultCode Impl_EmitIr(State* state, StrataCompiler* compiler)
     return result;
 }
 
-static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
+static ResultCode ImplJitAndRun(State* state, StrataCompiler* compiler)
 {
     if (!(strataCapabilities() & STRATA_CAP_LLVM_JIT))
     {
@@ -577,7 +577,7 @@ static ResultCode Impl_JitAndRun(State* state, StrataCompiler* compiler)
     return exitCode;
 }
 
-static ResultCode Impl_CompileToObject(State* state, StrataCompiler* compiler)
+static ResultCode ImplCompileToObject(State* state, StrataCompiler* compiler)
 {
     if (state->outputFileName == NULL)
     {
@@ -622,7 +622,7 @@ int main(int argc, char** argv)
     {
         const char* argument = argv[state.argumentIndex];
 
-        const CLICommand* foundCommand = FindCommand(argument, commands, ARRAY_COUNT(commands));
+        const CLICommand* foundCommand = FindCommand(argument, COMMANDS, ARRAY_COUNT(COMMANDS));
 
         if (foundCommand)
         {
@@ -640,7 +640,7 @@ int main(int argc, char** argv)
         else if (argument[0] == '-' && argument[1] != '\0')
         {
             fprintf(stderr, "error: unknown option '%s'\n", argument);
-            Cmd_Help(&state, compiler, NULL);
+            CmdHelp(&state, compiler, NULL);
             return RCArgumentError;
         }
         else
@@ -658,7 +658,7 @@ int main(int argc, char** argv)
     if (!state.sourceFileName)
     {
         fprintf(stderr, "error: no input file\n");
-        Cmd_Help(&state, compiler, NULL);
+        CmdHelp(&state, compiler, NULL);
         strataCompilerDestroy(compiler);
         return RCArgumentError;
     }

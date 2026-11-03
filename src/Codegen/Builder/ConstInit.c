@@ -76,7 +76,7 @@ static bool FoldIntBinary(BinaryOp op, ConstInitVal l, ConstInitVal r, ConstInit
 bool FoldIntLiteralInit(Node* n, ConstInitVal* out)
 {
     /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
-    IntLiteral* lit = AsNode(IntLiteral, n);
+    IntLiteral* lit = AS_NODE(IntLiteral, n);
 
     *out = (ConstInitVal){CIK_INT, .i = lit->value, .f = 0.0};
     out->ity = (ConstIntType){lit->isLong || lit->value > 0x7FFFFFFFULL ? 64u : 32u, lit->isUnsigned};
@@ -98,7 +98,7 @@ bool FoldBoolLiteralInit(Node* n, ConstInitVal* out)
 /* Unary operators over a folded operand. */
 bool FoldUnaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
-    UnaryExpr* u = AsNode(UnaryExpr, n);
+    UnaryExpr* u = AS_NODE(UnaryExpr, n);
     ConstInitVal inner;
 
     if (!FoldConstInit(b, td, u->operand, &inner))
@@ -151,7 +151,7 @@ bool FoldUnaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 /* Binary operators over two folded operands, computed in the type EmitBinary uses. */
 bool FoldBinaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
-    BinaryExpr* e = AsNode(BinaryExpr, n);
+    BinaryExpr* e = AS_NODE(BinaryExpr, n);
     ConstInitVal l;
     ConstInitVal r;
 
@@ -246,7 +246,7 @@ bool FoldBinaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 
 bool FoldCastInit(Builder* b, Node* n, ConstInitVal* out)
 {
-    CastExpr* c = AsNode(CastExpr, n);
+    CastExpr* c = AS_NODE(CastExpr, n);
     TypeDesc innerTd = Resolve(b, &c->type);
 
     if (TypeDescIsVoid(&innerTd) || innerTd.structTypeName || TypeDescHasArrayShape(&innerTd) || TypeDescIsBox(&innerTd)
