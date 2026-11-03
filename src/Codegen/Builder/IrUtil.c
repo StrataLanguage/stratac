@@ -178,6 +178,22 @@ void Br(Builder* b, LLVMBasicBlockRef dest)
     }
 }
 
+/* Integer constant of `ty` from a 64-bit folded value. Compile-time folds carry negative values sign-extended to
+   64 bits; LLVMConstInt(ty, v, 0) on a narrower type then leaves the bits above the width set in the constant's
+   internal representation. It prints as the right value but compares unequal to the canonical constant, so the
+   optimizer folds `icmp eq` of the two to false. Masking to the type's width keeps it canonical. */
+LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, unsigned long long v)
+{
+    unsigned width = LLVMGetIntTypeWidth(ty);
+
+    if (width < 64)
+    {
+        v &= (1ULL << width) - 1;
+    }
+
+    return LLVMConstInt(ty, v, 0);
+}
+
 LLVMValueRef IdxConst(Builder* b, unsigned i)
 {
     /* LLVM requires i32 for struct-field GEP indices (LLVMBuildGEP2 does not

@@ -674,3 +674,47 @@ STRATA_TEST(jit_allocator_receives_full_size)
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
 }
+
+/* Folded negative constants narrower than 64 bits used to reach LLVM with the bits above the type's width set, so
+   the optimizer folded `icmp eq` against the canonical constant to false (JIT-only: --emit-ir prints the same text). */
+STRATA_TEST(jit_folded_negative_constants_compare_equal)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "const int A = -4;\n"
+                                            "enum E { Neg = -4, Pos = 3 }\n"
+                                            "int G = -4;\n"
+                                            "int from_const() { int y = A; return (int)(y == -4) + 1; }\n"
+                                            "int from_enum() { int y = (int)E.Neg; return (int)(y == -4) + 1; }\n"
+                                            "int from_global() { int y = G; return (int)(y == -4) + 1; }\n",
+                                            "folded_negative_jit", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
+    void (*destroyCtx)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
+    int (*fromConst)(void*) = (int (*)(void*))strataJitGetFunction(jit, "from_const");
+    int (*fromEnum)(void*) = (int (*)(void*))strataJitGetFunction(jit, "from_enum");
+    int (*fromGlobal)(void*) = (int (*)(void*))strataJitGetFunction(jit, "from_global");
+    STRATA_CHECK(create != NULL && destroyCtx != NULL);
+    STRATA_CHECK(fromConst != NULL && fromEnum != NULL && fromGlobal != NULL);
+
+    if (create && destroyCtx && fromConst && fromEnum && fromGlobal)
+    {
+        void* ctx = create();
+        STRATA_CHECK_EQ(fromConst(ctx), 2);
+        STRATA_CHECK_EQ(fromEnum(ctx), 2);
+        STRATA_CHECK_EQ(fromGlobal(ctx), 2);
+        destroyCtx(ctx);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
