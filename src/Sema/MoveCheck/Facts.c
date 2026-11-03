@@ -755,199 +755,231 @@ void DanglingCheck(const Env* env, const unsigned char* f, Found* found, const N
     }
 }
 
+static void FactDeclare(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
+{
+    const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
+    const TypeName* declared = vd->type.name && vd->type.name[0] ? &vd->type : NULL;
+    bool proves = vd->init && !vd->isRef && ConsumeValue(env, f, found, vd->init, declared, vd->base.range, true);
+
+    KillFacts(env, f, vd->name, true);
+    KillIndexVar(env, f, vd->name);
+
+    for (size_t i = 0; i < env->aliasCount; i++)
+    {
+        if (strcmp(env->aliasName[i], vd->name) == 0)
+        {
+            RefStates(env, f)[i] = StateLive;
+        }
+    }
+
+    if (proves)
+    {
+        SetFact(env, f, vd->name, FactNonEmpty);
+    }
+}
+
+static void FactScopeExit(const Env* env, unsigned char* f, const CfgOp* op)
+{
+    /* The locals of the block drop here, running their `Drop` methods. */
+    const Block* blk = (const Block*)op->node;
+
+    for (size_t i = 0; blk && blk->base.kind == NodeBlock && i < blk->statements.count; i++)
+    {
+        const Node* st = (const Node*)VecGet(&blk->statements, i);
+
+        if (st->kind == NodeVarDecl && !((const VarDeclStmt*)st)->isRef)
+        {
+            const TypeName* t = DeclType(env, (const VarDeclStmt*)st);
+
+            if (t && TypeOwns(env, t))
+            {
+                ApplyDropWrites(env, f, t, 0);
+            }
+        }
+    }
+}
+
+static void FactReturn(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
+{
+    const ReturnStmt* rs = (const ReturnStmt*)op->node;
+
+    if (rs->value)
+    {
+        ConsumeValue(env, f, found, rs->value, env->fnReturn, rs->value->range, true);
+    }
+}
+
+static void FactAssign(const Env* env, unsigned char* f, Found* found, const Node* n)
+{
+    const AssignExpr* a = (const AssignExpr*)n;
+    const TypeName* targetType = NodeTypesGet(env->types, a->target);
+    bool proves = false;
+
+    /* Writing through a `T?` base needs the proof, like reading through it. */
+    for (const Node* cur = a->target; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
+    {
+        const Node* base
+            = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node : ((const IndexExpr*)cur)->base_node;
+        const TypeName* bt = base ? ValueType(env, base) : NULL;
+
+        if (bt && TypeNameIsOptional(bt))
+        {
+            RequireProof(env, f, found, base, cur->range);
+        }
+
+        cur = base;
+    }
+
+    if (a->op == AssignSet)
+    {
+        proves = ConsumeValue(env, f, found, a->value, targetType, a->value->range, true);
+    }
+
+    /* Overwriting an owning value drops the old one. */
+    if (a->op == AssignSet && targetType && TypeOwns(env, targetType))
+    {
+        ApplyDropWrites(env, f, targetType, 0);
+    }
+
+    KillPlaceOf(env, f, a->target, true);
+
+    if (proves && targetType && TypeNameIsOptional(targetType))
+    {
+        char buf[256];
+        const char* root;
+
+        if (FactPlaceOf(a->target, buf, sizeof(buf), &root))
+        {
+            SetFact(env, f, buf, FactNonEmpty);
+        }
+    }
+}
+
+static void FactBinary(const Env* env, unsigned char* f, Found* found, const Node* n)
+{
+    const BinaryExpr* b = (const BinaryExpr*)n;
+    const TypeName* lt = ValueType(env, b->lhs);
+    const TypeName* rt = ValueType(env, b->rhs);
+    bool lo = lt && TypeNameIsOptional(lt);
+    bool ro = rt && TypeNameIsOptional(rt);
+    bool relational = b->op == BinLt || b->op == BinLtEq || b->op == BinGt || b->op == BinGtEq;
+
+    if (b->op != BinLogicAnd && b->op != BinLogicOr)
+    {
+        /* `a == b` of two optionals compares them whole; anything else reads the value. */
+        if (lo && (relational || !ro))
+        {
+            RequireProof(env, f, found, b->lhs, b->lhs->range);
+        }
+
+        if (ro && (relational || !lo))
+        {
+            RequireProof(env, f, found, b->rhs, b->rhs->range);
+        }
+    }
+}
+
+static void FactMemberIndex(const Env* env, unsigned char* f, Found* found, const Node* n)
+{
+    for (const Node* cur = n; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
+    {
+        const Node* base
+            = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node : ((const IndexExpr*)cur)->base_node;
+        const TypeName* bt = base ? ValueType(env, base) : NULL;
+
+        if (bt && TypeNameIsOptional(bt))
+        {
+            RequireProof(env, f, found, base, cur->range);
+        }
+
+        cur = base;
+    }
+}
+
+static void FactStructInit(const Env* env, unsigned char* f, Found* found, const Node* n)
+{
+    const StructInitExpr* e = (const StructInitExpr*)n;
+    const TypeName* st = NodeTypesGet(env->types, n);
+
+    for (size_t i = 0; i < e->fields.count; i++)
+    {
+        const StructInitField* fld = (const StructInitField*)VecGet(&e->fields, i);
+
+        if (!fld->value)
+        {
+            continue;
+        }
+
+        ConsumeValue(env, f, found, fld->value, fld->name ? FieldType(env, st, fld->name) : NULL, fld->value->range,
+                     true);
+    }
+}
+
+static void FactArrayInit(const Env* env, unsigned char* f, Found* found, const Node* n)
+{
+    const ArrayInitExpr* e = (const ArrayInitExpr*)n;
+
+    for (size_t i = 0; i < e->elements.count; i++)
+    {
+        const Node* el = (const Node*)VecGet(&e->elements, i);
+
+        if (el)
+        {
+            ConsumeValue(env, f, found, el, e->elementType, el->range, e->repeatCount == NULL);
+        }
+    }
+}
+
+static void FactEval(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
+{
+    const Node* n = op->node;
+
+    switch (n->kind)
+    {
+    case NodeAssign:
+        FactAssign(env, f, found, n);
+        break;
+    case NodeIncDec:
+        KillPlaceOf(env, f, ((const IncDecExpr*)n)->operand, true);
+        break;
+    case NodeBinary:
+        FactBinary(env, f, found, n);
+        break;
+    case NodeMember:
+    case NodeIndex:
+        FactMemberIndex(env, f, found, n);
+        break;
+    case NodeCall:
+        CallFactStep(env, f, found, (const CallExpr*)n);
+        break;
+    case NodeStructInit:
+        FactStructInit(env, f, found, n);
+        break;
+    case NodeArrayInit:
+        FactArrayInit(env, f, found, n);
+        break;
+    default:
+        break;
+    }
+}
+
 /* The effect of one op on the narrowing facts; with `found` set, reads that lack the proof are reported. */
 void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
 {
     if (op->kind == CfgDeclare)
     {
-        const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
-        const TypeName* declared = vd->type.name && vd->type.name[0] ? &vd->type : NULL;
-        bool proves = vd->init && !vd->isRef && ConsumeValue(env, f, found, vd->init, declared, vd->base.range, true);
-
-        KillFacts(env, f, vd->name, true);
-        KillIndexVar(env, f, vd->name);
-
-        for (size_t i = 0; i < env->aliasCount; i++)
-        {
-            if (strcmp(env->aliasName[i], vd->name) == 0)
-            {
-                RefStates(env, f)[i] = StateLive;
-            }
-        }
-
-        if (proves)
-        {
-            SetFact(env, f, vd->name, FactNonEmpty);
-        }
+        FactDeclare(env, f, op, found);
     }
     else if (op->kind == CfgScopeExit)
     {
-        /* The locals of the block drop here, running their `Drop` methods. */
-        const Block* blk = (const Block*)op->node;
-
-        for (size_t i = 0; blk && blk->base.kind == NodeBlock && i < blk->statements.count; i++)
-        {
-            const Node* st = (const Node*)VecGet(&blk->statements, i);
-
-            if (st->kind == NodeVarDecl && !((const VarDeclStmt*)st)->isRef)
-            {
-                const TypeName* t = DeclType(env, (const VarDeclStmt*)st);
-
-                if (t && TypeOwns(env, t))
-                {
-                    ApplyDropWrites(env, f, t, 0);
-                }
-            }
-        }
+        FactScopeExit(env, f, op);
     }
     else if (op->kind == CfgReturn)
     {
-        const ReturnStmt* rs = (const ReturnStmt*)op->node;
-
-        if (rs->value)
-        {
-            ConsumeValue(env, f, found, rs->value, env->fnReturn, rs->value->range, true);
-        }
+        FactReturn(env, f, op, found);
     }
     else if (op->kind == CfgEval)
     {
-        const Node* n = op->node;
-
-        switch (n->kind)
-        {
-        case NodeAssign:
-        {
-            const AssignExpr* a = (const AssignExpr*)n;
-            const TypeName* targetType = NodeTypesGet(env->types, a->target);
-            bool proves = false;
-
-            /* Writing through a `T?` base needs the proof, like reading through it. */
-            for (const Node* cur = a->target; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
-            {
-                const Node* base = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node
-                                                           : ((const IndexExpr*)cur)->base_node;
-                const TypeName* bt = base ? ValueType(env, base) : NULL;
-
-                if (bt && TypeNameIsOptional(bt))
-                {
-                    RequireProof(env, f, found, base, cur->range);
-                }
-
-                cur = base;
-            }
-
-            if (a->op == AssignSet)
-            {
-                proves = ConsumeValue(env, f, found, a->value, targetType, a->value->range, true);
-            }
-
-            /* Overwriting an owning value drops the old one. */
-            if (a->op == AssignSet && targetType && TypeOwns(env, targetType))
-            {
-                ApplyDropWrites(env, f, targetType, 0);
-            }
-
-            KillPlaceOf(env, f, a->target, true);
-
-            if (proves && targetType && TypeNameIsOptional(targetType))
-            {
-                char buf[256];
-                const char* root;
-
-                if (FactPlaceOf(a->target, buf, sizeof(buf), &root))
-                {
-                    SetFact(env, f, buf, FactNonEmpty);
-                }
-            }
-
-            break;
-        }
-        case NodeIncDec:
-            KillPlaceOf(env, f, ((const IncDecExpr*)n)->operand, true);
-            break;
-        case NodeBinary:
-        {
-            const BinaryExpr* b = (const BinaryExpr*)n;
-            const TypeName* lt = ValueType(env, b->lhs);
-            const TypeName* rt = ValueType(env, b->rhs);
-            bool lo = lt && TypeNameIsOptional(lt);
-            bool ro = rt && TypeNameIsOptional(rt);
-            bool relational = b->op == BinLt || b->op == BinLtEq || b->op == BinGt || b->op == BinGtEq;
-
-            if (b->op != BinLogicAnd && b->op != BinLogicOr)
-            {
-                /* `a == b` of two optionals compares them whole; anything else reads the value. */
-                if (lo && (relational || !ro))
-                {
-                    RequireProof(env, f, found, b->lhs, b->lhs->range);
-                }
-
-                if (ro && (relational || !lo))
-                {
-                    RequireProof(env, f, found, b->rhs, b->rhs->range);
-                }
-            }
-
-            break;
-        }
-        case NodeMember:
-        case NodeIndex:
-            for (const Node* cur = n; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
-            {
-                const Node* base = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node
-                                                           : ((const IndexExpr*)cur)->base_node;
-                const TypeName* bt = base ? ValueType(env, base) : NULL;
-
-                if (bt && TypeNameIsOptional(bt))
-                {
-                    RequireProof(env, f, found, base, cur->range);
-                }
-
-                cur = base;
-            }
-
-            break;
-        case NodeCall:
-            CallFactStep(env, f, found, (const CallExpr*)n);
-            break;
-        case NodeStructInit:
-        {
-            const StructInitExpr* e = (const StructInitExpr*)n;
-            const TypeName* st = NodeTypesGet(env->types, n);
-
-            for (size_t i = 0; i < e->fields.count; i++)
-            {
-                const StructInitField* fld = (const StructInitField*)VecGet(&e->fields, i);
-
-                if (!fld->value)
-                {
-                    continue;
-                }
-
-                ConsumeValue(env, f, found, fld->value, fld->name ? FieldType(env, st, fld->name) : NULL,
-                             fld->value->range, true);
-            }
-
-            break;
-        }
-        case NodeArrayInit:
-        {
-            const ArrayInitExpr* e = (const ArrayInitExpr*)n;
-
-            for (size_t i = 0; i < e->elements.count; i++)
-            {
-                const Node* el = (const Node*)VecGet(&e->elements, i);
-
-                if (el)
-                {
-                    ConsumeValue(env, f, found, el, e->elementType, el->range, e->repeatCount == NULL);
-                }
-            }
-
-            break;
-        }
-        default:
-            break;
-        }
+        FactEval(env, f, op, found);
     }
 }
