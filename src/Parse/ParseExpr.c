@@ -701,6 +701,281 @@ Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
     return (Node*)init;
 }
 
+/* One helper per leading token class. ParsePrimary has already read `token` and the helpers
+   consume it, so the bodies below are the original case bodies, unchanged. */
+
+static Node* ParseIntLiteral(Parser* p, Token token)
+{
+    Advance(p);
+
+    bool isUnsigned = false;
+    bool isLong = false;
+    uint64_t val = IntLiteralValueEx(p, token, &isUnsigned, &isLong);
+
+    IntLiteral* node = AST_NEW(p->m_arena, IntLiteral);
+    node->base.kind = NodeIntLiteral;
+    node->base.range = token.range;
+    node->value = val;
+    node->isUnsigned = isUnsigned;
+    node->isLong = isLong;
+
+    return (Node*)node;
+}
+
+static Node* ParseFloatLiteral(Parser* p, Token token)
+{
+    Advance(p);
+
+    Str sv = ParserIdentText(p, token);
+
+    if (sv.len > 0 && (sv.data[sv.len - 1] == 'f' || sv.data[sv.len - 1] == 'F'))
+    {
+        sv.len--;
+    }
+
+    // Full spelling (no fixed-size buffer), so long literals are never truncated.
+    char* text = arena_strndup(p->m_arena, sv.data, sv.len);
+    double val = strtod(text, NULL);
+
+    if (isinf(val))
+    {
+        DiagError(p->m_diag, token.range, "floating-point literal is out of range");
+        val = 0.0;
+    }
+
+    FloatLiteral* node = AST_NEW(p->m_arena, FloatLiteral);
+    node->base.kind = NodeFloatLiteral;
+    node->base.range = token.range;
+    node->value = val;
+
+    return (Node*)node;
+}
+
+static Node* ParseBoolLiteral(Parser* p, Token token)
+{
+    Advance(p);
+
+    Str sv = ParserIdentText(p, token);
+    bool val = StrEqC(sv, "true");
+
+    BoolLiteral* node = AST_NEW(p->m_arena, BoolLiteral);
+    node->base.kind = NodeBoolLiteral;
+    node->base.range = token.range;
+    node->value = val;
+
+    return (Node*)node;
+}
+
+static Node* ParseCharLiteral(Parser* p, Token token)
+{
+    Advance(p);
+
+    /* `'c'` is the byte constant `(byte)N` — the same nodes as the cast, so it goes wherever that
+       does (comparisons, arithmetic, fills, enum values, global initializers). The lexer has
+       already diagnosed a malformed literal; whatever byte it starts with stands in. */
+    Str sv = ParserIdentText(p, token);
+    unsigned char value = sv.len > 1 ? (unsigned char)sv.data[1] : 0;
+
+    if (value == '\\' && sv.len > 2)
+    {
+        switch (sv.data[2])
+        {
+        case 'n':
+            value = '\n';
+            break;
+        case 't':
+            value = '\t';
+            break;
+        case 'r':
+            value = '\r';
+            break;
+        case '0':
+            value = '\0';
+            break;
+        default:
+            value = (unsigned char)sv.data[2];
+            break; /* \\ \' \" */
+        }
+    }
+
+    IntLiteral* lit = AST_NEW(p->m_arena, IntLiteral);
+    lit->base.kind = NodeIntLiteral;
+    lit->base.range = token.range;
+    lit->value = value;
+
+    CastExpr* node = AST_NEW(p->m_arena, CastExpr);
+    node->base.kind = NodeCast;
+    node->base.range = token.range;
+    node->type.name = "byte";
+    node->type.primitiveType = GetPrimitiveType("byte");
+    node->type.range = token.range;
+    node->operand = (Node*)lit;
+
+    return (Node*)node;
+}
+
+static Node* ParseStrLiteral(Parser* p, Token token)
+{
+    Advance(p);
+
+    Str sv = ParserIdentText(p, token);
+
+    if (sv.len < 2)
+    {
+        StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
+        node->base.kind = NodeStrLiteral;
+        node->base.range = token.range;
+        node->value = arena_strndup(p->m_arena, "", 0);
+        node->length = 0;
+
+        return (Node*)node;
+    }
+
+    char* raw = arena_strndup(p->m_arena, sv.data + 1, sv.len - 2);
+
+    char* dst = raw;
+    for (size_t i = 0; i < sv.len - 2; i++)
+    {
+        if (raw[i] == '\\' && i + 1 < sv.len - 2)
+        {
+            char next = raw[i + 1];
+            switch (next)
+            {
+            case '\\':
+                *dst++ = '\\';
+                i++;
+                break;
+            case '"':
+                *dst++ = '"';
+                i++;
+                break;
+            case 'n':
+                *dst++ = '\n';
+                i++;
+                break;
+            case 't':
+                *dst++ = '\t';
+                i++;
+                break;
+            case 'r':
+                *dst++ = '\r';
+                i++;
+                break;
+            case '0':
+                *dst++ = '\0';
+                i++;
+                break;
+            default:
+                *dst++ = raw[i];
+                break;
+            }
+        }
+        else
+        {
+            *dst++ = raw[i];
+        }
+    }
+    *dst = '\0';
+
+    StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
+    node->base.kind = NodeStrLiteral;
+    node->base.range = token.range;
+    node->value = raw;
+    node->length = (size_t)(dst - raw); // a `\0` escape embeds a NUL, so strlen(value) may be shorter
+
+    return (Node*)node;
+}
+
+/* An identifier or a builtin type keyword: a call (plain, or with an explicit `Name<Type>(...)`
+   type argument), a struct literal `Name { ... }`, or a plain identifier. */
+static Node* ParseNamedPrimary(Parser* p, Token token)
+{
+    Advance(p);
+
+    /* `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
+       else starting `Name <` is a comparison, so the attempt is rolled back. */
+    if (token.kind == TokIdent && p->m_cur.kind == TokLt)
+    {
+        LexerCheckpoint saved = SaveLexerState(p);
+        Advance(p);
+
+        TypeName typeArg = {0};
+
+        if (ParserTryParseType(p, &typeArg) && typeArg.name && p->m_cur.kind == TokGt)
+        {
+            Advance(p);
+
+            if (p->m_cur.kind == TokLParen)
+            {
+                CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+                call->base.kind = NodeCall;
+                call->base.range = token.range;
+                call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
+                call->isIntrinsicCall = false;
+                call->typeArg = (TypeName*)arena_dup(p->m_arena, &typeArg, sizeof(TypeName));
+                VecInit(&call->args);
+
+                ParseCallArgs(p, call);
+
+                return (Node*)call;
+            }
+        }
+
+        RestoreLexerState(p, saved);
+    }
+
+    if (p->m_cur.kind == TokLParen)
+    {
+        CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+        call->base.kind = NodeCall;
+        call->base.range = token.range;
+        call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
+        call->isIntrinsicCall = false;
+        VecInit(&call->args);
+
+        ParseCallArgs(p, call);
+
+        return (Node*)call;
+    }
+
+    if (p->m_cur.kind == TokLBrace)
+    {
+        Str name = ParserIdentText(p, token);
+
+        return ParseStructInitBody(p, token, ToOwned(p->m_arena, name));
+    }
+
+    IdentExpr* node = AST_NEW(p->m_arena, IdentExpr);
+    node->base.kind = NodeIdent;
+    node->base.range = token.range;
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, token));
+
+    return (Node*)node;
+}
+
+static Node* ParseParenExpr(Parser* p)
+{
+    Advance(p);
+
+    Node* e = ParseExpr(p);
+    ParserExpect(p, TokRParen, "')'");
+
+    return e;
+}
+
+static Node* ParseBracePrimary(Parser* p, Token token)
+{
+    /* A braced list in expression position: `{1,2,3}` as an array literal
+       or `{ .field = ... }` as a struct literal (types inferred in sema).
+       Statement position never reaches here — a leading `{` starts a block. */
+    if (LexerPeekToken(p->m_lex).kind == TokDot)
+    {
+        return ParseStructInitBody(p, token, NULL);
+    }
+
+    return ParseArrayInitBody(p, token, NULL);
+}
+
 static Node* ParsePrimary(Parser* p)
 {
     Token token = p->m_cur;
@@ -708,186 +983,19 @@ static Node* ParsePrimary(Parser* p)
     switch (p->m_cur.kind)
     {
     case TokIntLit:
-    {
-        Advance(p);
-
-        bool isUnsigned = false;
-        bool isLong = false;
-        uint64_t val = IntLiteralValueEx(p, token, &isUnsigned, &isLong);
-
-        IntLiteral* node = AST_NEW(p->m_arena, IntLiteral);
-        node->base.kind = NodeIntLiteral;
-        node->base.range = token.range;
-        node->value = val;
-        node->isUnsigned = isUnsigned;
-        node->isLong = isLong;
-
-        return (Node*)node;
-    }
+        return ParseIntLiteral(p, token);
 
     case TokFloatLit:
-    {
-        Advance(p);
-
-        Str sv = ParserIdentText(p, token);
-
-        if (sv.len > 0 && (sv.data[sv.len - 1] == 'f' || sv.data[sv.len - 1] == 'F'))
-        {
-            sv.len--;
-        }
-
-        // Full spelling (no fixed-size buffer), so long literals are never truncated.
-        char* text = arena_strndup(p->m_arena, sv.data, sv.len);
-        double val = strtod(text, NULL);
-
-        if (isinf(val))
-        {
-            DiagError(p->m_diag, token.range, "floating-point literal is out of range");
-            val = 0.0;
-        }
-
-        FloatLiteral* node = AST_NEW(p->m_arena, FloatLiteral);
-        node->base.kind = NodeFloatLiteral;
-        node->base.range = token.range;
-        node->value = val;
-
-        return (Node*)node;
-    }
+        return ParseFloatLiteral(p, token);
 
     case TokBoolLit:
-    {
-        Advance(p);
-
-        Str sv = ParserIdentText(p, token);
-        bool val = StrEqC(sv, "true");
-
-        BoolLiteral* node = AST_NEW(p->m_arena, BoolLiteral);
-        node->base.kind = NodeBoolLiteral;
-        node->base.range = token.range;
-        node->value = val;
-
-        return (Node*)node;
-    }
+        return ParseBoolLiteral(p, token);
 
     case TokCharLit:
-    {
-        Advance(p);
-
-        /* `'c'` is the byte constant `(byte)N` — the same nodes as the cast, so it goes wherever that
-           does (comparisons, arithmetic, fills, enum values, global initializers). The lexer has
-           already diagnosed a malformed literal; whatever byte it starts with stands in. */
-        Str sv = ParserIdentText(p, token);
-        unsigned char value = sv.len > 1 ? (unsigned char)sv.data[1] : 0;
-
-        if (value == '\\' && sv.len > 2)
-        {
-            switch (sv.data[2])
-            {
-            case 'n':
-                value = '\n';
-                break;
-            case 't':
-                value = '\t';
-                break;
-            case 'r':
-                value = '\r';
-                break;
-            case '0':
-                value = '\0';
-                break;
-            default:
-                value = (unsigned char)sv.data[2];
-                break; /* \\ \' \" */
-            }
-        }
-
-        IntLiteral* lit = AST_NEW(p->m_arena, IntLiteral);
-        lit->base.kind = NodeIntLiteral;
-        lit->base.range = token.range;
-        lit->value = value;
-
-        CastExpr* node = AST_NEW(p->m_arena, CastExpr);
-        node->base.kind = NodeCast;
-        node->base.range = token.range;
-        node->type.name = "byte";
-        node->type.primitiveType = GetPrimitiveType("byte");
-        node->type.range = token.range;
-        node->operand = (Node*)lit;
-
-        return (Node*)node;
-    }
+        return ParseCharLiteral(p, token);
 
     case TokStrLit:
-    {
-        Advance(p);
-
-        Str sv = ParserIdentText(p, token);
-
-        if (sv.len < 2)
-        {
-            StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
-            node->base.kind = NodeStrLiteral;
-            node->base.range = token.range;
-            node->value = arena_strndup(p->m_arena, "", 0);
-            node->length = 0;
-
-            return (Node*)node;
-        }
-
-        char* raw = arena_strndup(p->m_arena, sv.data + 1, sv.len - 2);
-
-        char* dst = raw;
-        for (size_t i = 0; i < sv.len - 2; i++)
-        {
-            if (raw[i] == '\\' && i + 1 < sv.len - 2)
-            {
-                char next = raw[i + 1];
-                switch (next)
-                {
-                case '\\':
-                    *dst++ = '\\';
-                    i++;
-                    break;
-                case '"':
-                    *dst++ = '"';
-                    i++;
-                    break;
-                case 'n':
-                    *dst++ = '\n';
-                    i++;
-                    break;
-                case 't':
-                    *dst++ = '\t';
-                    i++;
-                    break;
-                case 'r':
-                    *dst++ = '\r';
-                    i++;
-                    break;
-                case '0':
-                    *dst++ = '\0';
-                    i++;
-                    break;
-                default:
-                    *dst++ = raw[i];
-                    break;
-                }
-            }
-            else
-            {
-                *dst++ = raw[i];
-            }
-        }
-        *dst = '\0';
-
-        StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
-        node->base.kind = NodeStrLiteral;
-        node->base.range = token.range;
-        node->value = raw;
-        node->length = (size_t)(dst - raw); // a `\0` escape embeds a NUL, so strlen(value) may be shorter
-
-        return (Node*)node;
-    }
+        return ParseStrLiteral(p, token);
 
     case TokKwFloat2:
     case TokKwFloat3:
@@ -903,92 +1011,13 @@ static Node* ParsePrimary(Parser* p)
     case TokKwFloat:
     case TokKwDouble:
     case TokIdent:
-    {
-        Advance(p);
-
-        /* `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
-           else starting `Name <` is a comparison, so the attempt is rolled back. */
-        if (token.kind == TokIdent && p->m_cur.kind == TokLt)
-        {
-            LexerCheckpoint saved = SaveLexerState(p);
-            Advance(p);
-
-            TypeName typeArg = {0};
-
-            if (ParserTryParseType(p, &typeArg) && typeArg.name && p->m_cur.kind == TokGt)
-            {
-                Advance(p);
-
-                if (p->m_cur.kind == TokLParen)
-                {
-                    CallExpr* call = AST_NEW(p->m_arena, CallExpr);
-                    call->base.kind = NodeCall;
-                    call->base.range = token.range;
-                    call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
-                    call->isIntrinsicCall = false;
-                    call->typeArg = (TypeName*)arena_dup(p->m_arena, &typeArg, sizeof(TypeName));
-                    VecInit(&call->args);
-
-                    ParseCallArgs(p, call);
-
-                    return (Node*)call;
-                }
-            }
-
-            RestoreLexerState(p, saved);
-        }
-
-        if (p->m_cur.kind == TokLParen)
-        {
-            CallExpr* call = AST_NEW(p->m_arena, CallExpr);
-            call->base.kind = NodeCall;
-            call->base.range = token.range;
-            call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
-            call->isIntrinsicCall = false;
-            VecInit(&call->args);
-
-            ParseCallArgs(p, call);
-
-            return (Node*)call;
-        }
-
-        if (p->m_cur.kind == TokLBrace)
-        {
-            Str name = ParserIdentText(p, token);
-
-            return ParseStructInitBody(p, token, ToOwned(p->m_arena, name));
-        }
-
-        IdentExpr* node = AST_NEW(p->m_arena, IdentExpr);
-        node->base.kind = NodeIdent;
-        node->base.range = token.range;
-        node->name = ToOwned(p->m_arena, ParserIdentText(p, token));
-
-        return (Node*)node;
-    }
+        return ParseNamedPrimary(p, token);
 
     case TokLParen:
-    {
-        Advance(p);
-
-        Node* e = ParseExpr(p);
-        ParserExpect(p, TokRParen, "')'");
-
-        return e;
-    }
+        return ParseParenExpr(p);
 
     case TokLBrace:
-    {
-        /* A braced list in expression position: `{1,2,3}` as an array literal
-           or `{ .field = ... }` as a struct literal (types inferred in sema).
-           Statement position never reaches here — a leading `{` starts a block. */
-        if (LexerPeekToken(p->m_lex).kind == TokDot)
-        {
-            return ParseStructInitBody(p, token, NULL);
-        }
-
-        return ParseArrayInitBody(p, token, NULL);
-    }
+        return ParseBracePrimary(p, token);
 
     default:
         DiagErrorFmt(p->m_diag, token.range, "expected an expression but found '%s'", TokSpelling(token.kind));
