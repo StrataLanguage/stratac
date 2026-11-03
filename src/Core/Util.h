@@ -208,14 +208,14 @@ uint64_t HashStr64(const char* s);
 // -- Misc
 
 // v rounded up to the next multiple of a (a > 0).
-static inline long AlignUp(long v, long a)
+static inline size_t AlignUp(size_t v, size_t a)
 {
     return (v + a - 1) / a * a;
 }
 
 size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val);
 
-const char* GenerateUniqueID(char* buffer, int size);
+const char* GenerateUniqueID(char* buffer, size_t size);
 
 // -- Files
 

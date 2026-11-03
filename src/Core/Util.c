@@ -539,7 +539,7 @@ size_t UpperBound(const uint32_t* arr, size_t count, uint32_t val)
     return lo;
 }
 
-const char* GenerateUniqueID(char* buffer, int size)
+const char* GenerateUniqueID(char* buffer, size_t size)
 {
     const char charset[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
     if (!size)
