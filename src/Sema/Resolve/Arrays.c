@@ -108,9 +108,8 @@ bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExp
 
 /* Verifies a fixed-array initializer's SHAPE: nested rows for multidimensional fields, a flat list for
  * single-dimension. Returns false (with a diagnostic) on mismatch. `kind` is "field" or "local" for messages. */
-// clang-format off
-bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai, const TypeName* leaf,
-                                     const char* name, const char* kind)
+bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai, const TypeName* leaf, const char* name,
+                              const char* kind)
 {
     bool multidim = t->elem && TypeNameHasArrayShape(t->elem) && t->elem->length >= 0;
     bool leafIsStruct = leaf && TypeRegistryIsUserType(&r->m_registry, leaf->name)
@@ -145,7 +144,6 @@ bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai,
 
     return true;
 }
-// clang-format on
 
 /* True when any element of a fixed-array initializer is itself a braced
    row (`NodeArrayInit`); NULL holes are skipped. */

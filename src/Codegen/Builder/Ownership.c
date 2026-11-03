@@ -353,9 +353,8 @@ static void AddTempPart(Builder* b, const Node* node, LLVMValueRef addr, TypeDes
    `fieldIdx` of the by-value struct `structTy` parked in the temporary (or
    in the parent piece). Otherwise nothing is recorded and the temporary is
    left alone (a leak, never a double free). */
-// clang-format off
 void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* node, TypeDesc pieceTd,
-                           LLVMValueRef heapAddr, LLVMTypeRef structTy, int fieldIdx)
+                    LLVMValueRef heapAddr, LLVMTypeRef structTy, int fieldIdx)
 {
     const TempPart* parent = FindTempPart(b, baseNode);
     LLVMValueRef baseAddr = parent ? parent->addr : NULL;
@@ -382,7 +381,6 @@ void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* no
 
     AddTempPart(b, node, addr, pieceTd, tempIdx);
 }
-// clang-format on
 
 /* `src` is borrowed to produce a value of type `resultTd`: if `src` is a fresh
    owning call result and the result owns nothing, schedule `src`'s drop at

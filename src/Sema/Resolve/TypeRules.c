@@ -320,9 +320,8 @@ bool IsCVarargCompatible(Resolver* r, const TypeName* type)
 /**
  * @brief Checks to see if a vector is assignable to another vector type.
  */
-// clang-format off
 bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType,
-                                   const char* resolvedTarget, const char* resolvedValue)
+                            const char* resolvedTarget, const char* resolvedValue)
 {
     // Ethan's SIMD vector rules:
     //
@@ -363,7 +362,6 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
 
     return false;
 }
-// clang-format on
 
 bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {

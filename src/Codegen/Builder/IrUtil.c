@@ -66,13 +66,10 @@ static LLVMRealPredicate RealPredNameToPredicate(const char* p)
     return LLVMRealOEQ;
 }
 
-// clang-format off
-LLVMValueRef IcmpByName(LLVMBuilderRef builder, const char* pred, bool isUnsigned, LLVMValueRef l,
-                               LLVMValueRef r)
+LLVMValueRef IcmpByName(LLVMBuilderRef builder, const char* pred, bool isUnsigned, LLVMValueRef l, LLVMValueRef r)
 {
     return LLVMBuildICmp(builder, PredNameToPredicate(pred, isUnsigned), l, r, "cmp");
 }
-// clang-format on
 
 LLVMValueRef FcmpByName(LLVMBuilderRef builder, const char* pred, LLVMValueRef l, LLVMValueRef r)
 {
