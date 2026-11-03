@@ -27,6 +27,29 @@ void AstReleaseModuleLists(Module* module)
     DisposeVec(&module->impls);
     DisposeVec(&module->genericInstances);
     DisposeVec(&module->delegates);
+    DisposeVec(&module->genericTemplates);
+}
+
+char* TypeNameGenericSpelling(Arena* arena, const char* base, const TypeName* args, size_t argCount)
+{
+    Sb sb;
+    SbInit(&sb);
+    SbPuts(&sb, base);
+    SbPutc(&sb, '<');
+
+    for (size_t i = 0; i < argCount; i++)
+    {
+        if (i > 0)
+        {
+            SbPutc(&sb, ',');
+        }
+
+        SbPuts(&sb, args[i].name);
+    }
+
+    SbPutc(&sb, '>');
+
+    return SbFinish(&sb, arena);
 }
 
 const EnumDecl* ModuleFindEnum(const Module* mod, const char* name)
@@ -89,6 +112,7 @@ static void DisposeModule(Node* node)
     DISPOSE_ALL(impls);
     DISPOSE_ALL(genericInstances);
     DISPOSE_ALL(delegates);
+    DISPOSE_ALL(genericTemplates);
 
 #undef DISPOSE_ALL
 
@@ -106,6 +130,7 @@ static void DisposeStruct(Node* node)
 
     DisposeVec(&decl->fields);
     DisposeVec(&decl->attributes);
+    DisposeVec(&decl->genericParams);
 }
 
 static void DisposeEnum(Node* node)
@@ -125,6 +150,7 @@ static void DisposeFunction(Node* node)
     FunctionDecl* function = (FunctionDecl*)node;
     AstDispose(function->body);
     DisposeVec(&function->params);
+    DisposeVec(&function->genericParams);
 }
 
 static void DisposeBlock(Node* node)
@@ -232,6 +258,7 @@ static void DisposeImpl(Node* node)
 {
     DisposeVec(&((ImplDecl*)node)->methods);
     DisposeVec(&((ImplDecl*)node)->properties);
+    DisposeVec(&((ImplDecl*)node)->genericParams);
 }
 
 static void DisposeConditional(Node* node)

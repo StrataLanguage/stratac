@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: 8
+// rule: a generic struct used at two type arguments gets its own struct and impl methods for each
+struct number<T> { T value; }
+impl number<T>
+{
+    T get_value(const ref number<T> self) { return self.value; }
+    void set_value(ref number<T> self, T value) { self.value = value; }
+}
+int main()
+{
+    number<int> a = number<int> { .value = 7 };
+    number<float> b = number<float> { .value = 1.5 };
+    a.set_value(a.get_value() + 1);
+    float f = b.get_value();
+    if (f > 1.0) { printf("%d\n", a.get_value()); }
+    return 0;
+}

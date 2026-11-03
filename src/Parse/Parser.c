@@ -373,6 +373,7 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->imports);
     VecInit(&mod->impls);
     VecInit(&mod->delegates);
+    VecInit(&mod->genericTemplates);
 
     while (p->cur.kind != TokEof)
     {

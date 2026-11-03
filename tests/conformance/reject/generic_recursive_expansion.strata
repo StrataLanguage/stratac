@@ -1,0 +1,8 @@
+// expect: reject "is too deep"
+// rule: a generic type that keeps nesting itself is reported, not expanded forever
+struct list<T> { list<list<T>>? next; }
+int main()
+{
+    list<int> l;
+    return 0;
+}

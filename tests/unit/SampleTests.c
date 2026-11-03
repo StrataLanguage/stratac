@@ -225,3 +225,28 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
     ArenaFree(&arena);
     free(src);
 }
+
+STRATA_TEST(sample_generics_instantiate_per_argument)
+{
+    char* src = LoadSample("generics.strata");
+    STRATA_CHECK(src != NULL);
+    STRATA_CHECK(src[0] != '\0');
+
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve(src, &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    /* number<int> and number<float> are separate structs with their own impl methods. */
+    CodegenResult res = GenerateLlvmIr(mod);
+    STRATA_CHECK(res.ok);
+    STRATA_CHECK(strstr(res.output, "number<int>") != NULL);
+    STRATA_CHECK(strstr(res.output, "number<float>_get_value") != NULL);
+    STRATA_CHECK(strstr(res.output, "make_number<int>") != NULL);
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+    free(src);
+}

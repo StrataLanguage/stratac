@@ -1,0 +1,7 @@
+// expect: reject "duplicate type parameter 'T'"
+// rule: each type parameter of a declaration has its own name
+struct pair<T, T> { T first; }
+int main()
+{
+    return 0;
+}

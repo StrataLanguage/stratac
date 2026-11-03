@@ -1,0 +1,8 @@
+// expect: reject "'@component' cannot have type parameters"
+// rule: a @component struct is plain data with a fixed layout, so it cannot be generic
+@component
+struct transform<T> { T value; }
+int main()
+{
+    return 0;
+}

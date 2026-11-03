@@ -1,0 +1,8 @@
+// expect: reject "takes 2 type argument(s), but 1 were given"
+// rule: a generic use gives exactly one argument per type parameter
+struct pair<A, B> { A first; B second; }
+int main()
+{
+    pair<int> p;
+    return 0;
+}

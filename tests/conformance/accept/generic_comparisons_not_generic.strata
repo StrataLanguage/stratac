@@ -1,0 +1,27 @@
+// expect: run
+// expect-output: pick 1
+// expect-output: yes
+// rule: a < b and x < y && z > w stay comparisons in a file that declares generics, including as call arguments
+struct number<T> { T value; }
+impl number<T> { T get_value(const ref number<T> self) { return self.value; } }
+int pick(bool first, bool second)
+{
+    if (first && second) { return 1; }
+    return 0;
+}
+int main()
+{
+    int a = 1;
+    int b = 2;
+    int x = 3;
+    int y = 4;
+    int z = 5;
+    int w = 1;
+    number<int> n = number<int> { .value = 7 };
+    printf("pick %d\n", pick(a < b, z > w));
+    if (a < b && x < y && z > w && n.get_value() > 6)
+    {
+        printf("yes\n");
+    }
+    return 0;
+}

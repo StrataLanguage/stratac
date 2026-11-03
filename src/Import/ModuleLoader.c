@@ -453,6 +453,7 @@ static Module* NewRootModule(Arena* arena, const char* name)
     VecInit(&root->imports);
     VecInit(&root->impls);
     VecInit(&root->delegates);
+    VecInit(&root->genericTemplates);
 
     return root;
 }

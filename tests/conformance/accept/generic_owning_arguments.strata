@@ -1,0 +1,27 @@
+// expect: run
+// expect-output: ok
+// expect-output: END live=0
+// rule: owning type arguments (^Res, string) are dropped with the generic struct that holds them
+struct number<T> { T value; }
+impl number<T>
+{
+    void set_value(ref number<T> self, T value) { self.value = value; }
+}
+^number<^Res> make_boxed(int id)
+{
+    ^number<^Res> n = { .value = Box(id) };
+    return n;
+}
+int main()
+{
+    {
+        ^number<^Res> a = { .value = Box(1) };
+        ^number<^Res> b = make_boxed(2);
+        b.set_value(Box(3));
+        ^number<string> s = { .value = "hi" };
+        s.set_value("there");
+        if (a.value.id == 1 && b.value.id == 3) { printf("ok\n"); }
+    }
+    Report();
+    return 0;
+}
