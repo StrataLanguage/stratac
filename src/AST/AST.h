@@ -70,7 +70,7 @@ typedef struct TypeName
     bool isConst;
     bool isVector;
     bool isArray;
-    long length;
+    ArrayLength length;
     char* lengthName; // fixed dim spelled `[constName]` — sema resolves to `length`
     struct TypeName* elem;
     bool isBox;
@@ -135,7 +135,7 @@ static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
 }
 
 // `T[N]` — wraps `elem` into a fixed-size inline array type (C ABI).
-static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long length)
+static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, ArrayLength length)
 {
     TypeName* e = TypeNameWrapInner(arena, elem);
 
@@ -169,7 +169,7 @@ static inline bool TypeNameIsFixedArray(const TypeName* t)
 }
 
 // N for `T[N]`; -1 otherwise (including dynamic arrays).
-static inline long TypeNameArrayLength(const TypeName* t)
+static inline ArrayLength TypeNameArrayLength(const TypeName* t)
 {
     return (t && t->isArray) ? t->length : -1;
 }
@@ -312,7 +312,7 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
     }
     else
     {
-        long v = 0;
+        ArrayLength v = 0;
 
         for (size_t i = 1; i + 1 < groupLen; i++)
         {
@@ -393,7 +393,7 @@ typedef struct
     bool isSet;
     bool isFloat; // lanes hold floating-point values (float/double fields and vectors)
     unsigned laneCount;
-    long long intValue; // integer, bool and enum fields
+    ConstInt intValue; // integer, bool and enum fields
     double floatLanes[4];
 } FieldDefaultValue;
 

@@ -61,7 +61,7 @@ bool LooksLikeVarDecl(Parser* p)
 typedef struct
 {
     bool isFixed;
-    long length;
+    ArrayLength length;
     char* lengthName; // `[constName]` — resolved to `length` by sema
 } ArrayDim;
 
@@ -109,7 +109,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
                 }
 
                 dim.isFixed = true;
-                dim.length = (long)length;
+                dim.length = (ArrayLength)length;
                 dim.lengthName = NULL;
                 consumed = true;
             }
