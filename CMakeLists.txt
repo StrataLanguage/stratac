@@ -275,6 +275,9 @@ if(NOT STRATA_SHARED)
     add_test(NAME type_flag_gate
         COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}/src
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/typelayer/CheckTypeFlags.cmake)
+    add_test(NAME style_gate
+        COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/style/CheckFormat.cmake)
     if(STRATA_ENABLE_LLVM)
         add_test(NAME stratac_cli_tests
             COMMAND ${CMAKE_COMMAND}
