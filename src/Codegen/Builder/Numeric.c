@@ -470,7 +470,7 @@ static void PromotePointerComparison(Builder* b, BinaryOp op, Value* l, Value* r
     case BinLtEq:
     case BinGt:
     case BinGtEq:
-        *typeDesc = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
+        *typeDesc = TypeDescMake(I64Ty(b), TDF_UNSIGNED, NULL);
         *flt = false;
         if (l->typeDesc.type == b->m_ptrTy)
         {
@@ -729,12 +729,12 @@ Value EmitIntLiteral(Builder* b, IntLiteral* literal)
        previously became a negative i32). */
     if (literal->value > 0x7FFFFFFFULL || literal->isLong)
     {
-        TypeDesc typeDesc = TypeDescMake(I64Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
+        TypeDesc typeDesc = TypeDescMake(I64Ty(b), (literal->isUnsigned ? TDF_UNSIGNED : 0), NULL);
 
         return ValueMake(LLVMConstInt(I64Ty(b), literal->value, 1), typeDesc);
     }
 
-    TypeDesc typeDesc = TypeDescMake(I32Ty(b), (literal->isUnsigned ? TD_UNSIGNED : 0), NULL);
+    TypeDesc typeDesc = TypeDescMake(I32Ty(b), (literal->isUnsigned ? TDF_UNSIGNED : 0), NULL);
 
     return ValueMake(LLVMConstInt(I32Ty(b), literal->value, 1), typeDesc);
 }
@@ -742,7 +742,7 @@ Value EmitIntLiteral(Builder* b, IntLiteral* literal)
 Value EmitFloatLiteral(Builder* b, FloatLiteral* literal)
 {
     LLVMTypeRef fty = LLVMFloatTypeInContext(b->m_ctx);
-    TypeDesc typeDesc = TypeDescMake(fty, TD_FLOAT, NULL);
+    TypeDesc typeDesc = TypeDescMake(fty, TDF_FLOAT, NULL);
 
     return ValueMake(LLVMConstReal(fty, literal->value), typeDesc);
 }
@@ -765,7 +765,7 @@ Value EmitIncDec(Builder* b, IncDecExpr* inc)
             DiagError(b->m_diag, inc->base.range, "increment/decrement of non-lvalue");
         }
 
-        return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+        return ValueMake(NULL, TypeDescMake(NULL, TDF_VOID, NULL));
     }
 
     if (lv.vectorLane)

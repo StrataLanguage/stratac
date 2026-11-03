@@ -4,14 +4,14 @@
 /* Forward declarations for functions used before their definition in this file. */
 static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type);
 
-TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlag flags, const char* structTypeName)
+TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlags flags, const char* structTypeName)
 {
     TypeDesc td = {0};
     td.type = type;
-    td.isFloat = (flags & TD_FLOAT);
-    td.isUnsigned = (flags & TD_UNSIGNED);
-    td.isVoid = (flags & TD_VOID);
-    td.isSimdVector = (flags & TD_VECTOR);
+    td.isFloat = (flags & TDF_FLOAT);
+    td.isUnsigned = (flags & TDF_UNSIGNED);
+    td.isVoid = (flags & TDF_VOID);
+    td.isSimdVector = (flags & TDF_SIMD_VECTOR);
     td.structTypeName = structTypeName;
 
     return td;
@@ -129,29 +129,29 @@ TypeDesc Resolve(Builder* b, const TypeName* t)
 {
     if (!t)
     {
-        return TypeDescMake(NULL, TD_VOID, NULL);
+        return TypeDescMake(NULL, TDF_VOID, NULL);
     }
 
     MappedType mapped = MapType(t);
 
     if (mapped.valid)
     {
-        TypeDescFlag flags = 0;
+        TypeDescFlags flags = 0;
         if (mapped.isFloat)
         {
-            flags |= TD_FLOAT;
+            flags |= TDF_FLOAT;
         }
         if (mapped.isUnsigned)
         {
-            flags |= TD_UNSIGNED;
+            flags |= TDF_UNSIGNED;
         }
         if (mapped.isVoid)
         {
-            flags |= TD_VOID;
+            flags |= TDF_VOID;
         }
         if (mapped.isSimdVector)
         {
-            flags |= TD_VECTOR;
+            flags |= TDF_SIMD_VECTOR;
 
             TypeDesc td = TypeDescMake(VectorLlvmType(b->m_ctx, &mapped), flags, NULL);
             td.simdLanes = IsNameSimdVector(t->name);

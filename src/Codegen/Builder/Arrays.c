@@ -445,7 +445,7 @@ Value EmitArrayReserve(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMVal
     Br(b, doneBb);
 
     PositionAtEnd(b, doneBb);
-    return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+    return ValueMake(NULL, TypeDescMake(NULL, TDF_VOID, NULL));
 }
 
 /* array_remove / array_swap_remove(a, i): the element at `i` goes to the caller; swap_remove fills the hole with the
@@ -543,7 +543,7 @@ Value EmitArrayTake(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
 Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
                     TypeDesc elemTd, LLVMTypeRef elemTy)
 {
-    TypeDesc uintTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
+    TypeDesc uintTd = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL);
 
     /* Evaluate the pushed value first: it may read the array itself
        (`array_push(a, a[0])`), and the grow path below frees the old
@@ -692,7 +692,7 @@ Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMV
     }
 
     PositionAtEnd(b, doneBb);
-    return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+    return ValueMake(NULL, TypeDescMake(NULL, TDF_VOID, NULL));
 }
 
 /* Copies a non-empty fat array value: fresh buffer + per-element deep copy

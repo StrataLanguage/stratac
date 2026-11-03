@@ -523,7 +523,7 @@ static void EmitContextDestroy(Builder* b, const Module* module)
     LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
     LLVMTypeRef destroyTy = LLVMFunctionType(voidTy, destroyParams, 1, 0);
     LLVMValueRef destroyFn = LLVMAddFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"), destroyTy);
-    BeginContextFunction(b, destroyFn, TypeDescMake(voidTy, TD_VOID, NULL), voidTy);
+    BeginContextFunction(b, destroyFn, TypeDescMake(voidTy, TDF_VOID, NULL), voidTy);
 
     b->m_curGlobalsPtr = LLVMGetParam(destroyFn, 0);
 

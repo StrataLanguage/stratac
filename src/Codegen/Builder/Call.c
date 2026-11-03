@@ -282,7 +282,7 @@ static Value EmitSizeofBuiltin(Builder* b, CallExpr* n)
 {
     TypeDesc td = Resolve(b, n->typeArg);
     LLVMTypeRef ty = TypeDescHasArrayShape(&td) ? ArrayStructType(b) : td.type;
-    TypeDesc ulongTd = TypeDescMake(I64Ty(b), TD_UNSIGNED, NULL);
+    TypeDesc ulongTd = TypeDescMake(I64Ty(b), TDF_UNSIGNED, NULL);
 
     if (strcmp(n->callee, "alignof") == 0)
     {
@@ -318,7 +318,7 @@ static Value EmitStoreBuiltin(Builder* b, CallExpr* n)
     LLVMValueRef st = LLVMBuildStore(b->m_builder, v.value, p.value);
     LLVMSetAlignment(st, 1);
 
-    return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->m_ctx), TD_VOID, NULL));
+    return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->m_ctx), TDF_VOID, NULL));
 }
 
 static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)

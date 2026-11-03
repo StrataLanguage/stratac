@@ -747,7 +747,7 @@ Value EmitDropBuiltin(Builder* b, CallExpr* n)
             EmitExpr(b, arg0); /* error recovery: keep any side effects */
         }
 
-        return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
+        return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TDF_VOID, NULL));
     }
 
     /* Temporary (non-lvalue) owning value. A string literal is a static
@@ -755,7 +755,7 @@ Value EmitDropBuiltin(Builder* b, CallExpr* n)
        literal) is freshly owned — park it in a temp slot and drop it. */
     if (arg0->kind == NodeStrLiteral)
     {
-        return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
+        return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TDF_VOID, NULL));
     }
 
     Value v = EmitExpr(b, arg0);
@@ -764,5 +764,5 @@ Value EmitDropBuiltin(Builder* b, CallExpr* n)
     LLVMBuildStore(b->m_builder, v.value, slot);
     EmitDropOne(b, slot, v.typeDesc);
 
-    return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TD_VOID, NULL));
+    return ValueMake(LLVMGetUndef(voidTy), TypeDescMake(voidTy, TDF_VOID, NULL));
 }
