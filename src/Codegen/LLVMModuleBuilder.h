@@ -30,35 +30,25 @@ typedef enum TypeDescFlags
     TDF_UNSIGNED = (1 << 1),
     TDF_VOID = (1 << 2),
     TDF_BOX = (1 << 3),
-    TDF_OPTIONAL = (1 << 4),
+    TDF_OPTIONAL = (1 << 4), /* T?: same repr as ^T, but may be empty (sema-gated) */
     TDF_ARRAY = (1 << 5),
-    TDF_STRING = (1 << 6),
-    TDF_CSTRING = (1 << 7),
+    TDF_STRING = (1 << 6),  /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
+    TDF_CSTRING = (1 << 7), /* cstring / alias-of-cstring: single `const char*` to `.rodata` (borrowed) */
     TDF_SIMD_VECTOR = (1 << 8),
-    TDF_ALIASED_ARRAY = (1 << 9),
-    TDF_FIXED_ARRAY = (1 << 10),
+    TDF_ALIASED_ARRAY = (1 << 9), /* ref T... rest: slots hold pointers to sources */
+    TDF_FIXED_ARRAY = (1 << 10),  /* T[N]: inline [N x T] (C ABI) — struct fields and stack-allocated locals */
 } TypeDescFlags;
 
 typedef struct
 {
     LLVMTypeRef type;
-    bool isFloat;
-    bool isUnsigned;
-    bool isVoid;
+    TypeDescFlags flags; /* shape bits; read and written through the TypeDescIs / TypeDescSet accessors */
     const char* structTypeName;
-    bool isBox;
-    bool isOptional;          /* T?: same repr as ^T, but may be empty (sema-gated) */
-    const TypeName* boxInner; /* inner T of ^T / T? (NULL for string) */
-    bool isArray;
-    bool isString;  /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
-    bool isCString; /* cstring / alias-of-cstring: single `const char*` to `.rodata` (borrowed) */
-    bool isSimdVector;
+    const TypeName* boxInner;   /* inner T of ^T / T? (NULL for string) */
     LaneCount simdLanes;        /* logical lanes of a SIMD vector (2/3/4), 0 if unknown: float3 shares
-                             float4's 4-lane LLVM vector, so horizontal ops must not read lane 3 */
+                                   float4's 4-lane LLVM vector, so horizontal ops must not read lane 3 */
     const TypeName* arrayInner; /* element type of T[] / T[N] */
-    bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */
-    bool isFixedArray;          /* T[N]: inline [N x T] (C ABI) — struct fields and stack-allocated locals */
-    ArrayLength fixedLength;    /* N when isFixedArray */
+    ArrayLength fixedLength;    /* N when TDF_FIXED_ARRAY */
 } TypeDesc;
 
 typedef struct
