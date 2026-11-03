@@ -533,8 +533,7 @@ STRATA_TEST(cstring_struct_field_equality_is_content)
                                             "  if (a == b) { return 7; }\n"
                                             "  return 3;\n"
                                             "}\n",
-                                            "cseq",
-                                            &err);
+                                            "cseq", &err);
     if (!jit)
     {
         printf("  JIT failed: %s\n", err ? err : "(none)");
@@ -570,8 +569,7 @@ STRATA_TEST(cstring_array_equality_is_content)
                                             "  if (a == b) { return 7; }\n"
                                             "  return 3;\n"
                                             "}\n",
-                                            "csaeq",
-                                            &err);
+                                            "csaeq", &err);
     if (!jit)
     {
         printf("  JIT failed: %s\n", err ? err : "(none)");

@@ -1,6 +1,6 @@
-#include "Util.h"
 #include "Codegen/TypeRegistry.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 
 #include <stddef.h>
@@ -12,16 +12,17 @@
 
 STRATA_TEST(parser_extern_struct_with_fieldoffset_and_fixed_arrays)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseModule(
-        "extern struct Header {\n"
-        "    fieldoffset(0) int magic;\n"
-        "    fieldoffset(8) long size;\n"
-        "    byte[16] name;\n"
-        "    float[4] bbox;\n"
-        "};\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("extern struct Header {\n"
+                              "    fieldoffset(0) int magic;\n"
+                              "    fieldoffset(8) long size;\n"
+                              "    byte[16] name;\n"
+                              "    float[4] bbox;\n"
+                              "};\n",
+                              &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK_EQ((long)mod->structs.count, 1);
 
@@ -48,8 +49,10 @@ STRATA_TEST(parser_extern_struct_with_fieldoffset_and_fixed_arrays)
 
 STRATA_TEST(parser_fixed_array_dimension_order_matches_c)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct M { int[2][6] grid; };\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -70,8 +73,10 @@ STRATA_TEST(parser_fixed_array_dimension_order_matches_c)
 
 STRATA_TEST(parser_fieldoffset_only_in_extern_struct)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseModule("struct S { fieldoffset(4) int x; };", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
@@ -81,8 +86,10 @@ STRATA_TEST(parser_fieldoffset_only_in_extern_struct)
 
 STRATA_TEST(parser_extern_struct_requires_body)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseModule("extern struct Ghost;", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
@@ -104,11 +111,15 @@ STRATA_TEST(sema_fixed_arrays_only_in_struct_fields)
 {
     /* Locals take stack-allocated `T[N]` with braced init (see ArrayTests);
        params, returns and globals still ban fixed types. */
-    struct { const char* src; const char* msg; } cases[] = {
-        {"int entry() { int[4] xs; return 0; }", "braced"},
-        {"int f(int[4] xs) { return 0; }", "parameter"},
-        {"int[4] f() { return 0; }", "return"},
-        {"int[4] g = {1,2,3,4};", "global"},
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
+        {"int entry() { int[4] xs; return 0; }", "braced"   },
+        {"int f(int[4] xs) { return 0; }",       "parameter"},
+        {"int[4] f() { return 0; }",             "return"   },
+        {"int[4] g = {1,2,3,4};",                "global"   },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -125,14 +136,18 @@ STRATA_TEST(sema_fixed_arrays_only_in_struct_fields)
 
 STRATA_TEST(sema_fixed_array_element_restrictions)
 {
-    struct { const char* src; const char* msg; } cases[] = {
-        {"struct S { ^Foo[4] xs; };", "may not own its elements"},
-        {"struct S { string[16] s; };", "may not own its elements"},
-        {"struct S { int[0] xs; };", "at least 1"},
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
+        {"struct S { ^Foo[4] xs; };",   "may not own its elements"                              },
+        {"struct S { string[16] s; };", "may not own its elements"                              },
+        {"struct S { int[0] xs; };",    "at least 1"                                            },
         /* `int[4][]` is a fixed array whose elements are dynamic arrays. */
-        {"struct S { int[4][] xs; };", "may not contain a dynamic array"},
+        {"struct S { int[4][] xs; };",  "may not contain a dynamic array"                       },
         /* `int[][4]` is a dynamic array whose elements are fixed arrays. */
-        {"struct S { int[][4] xs; };", "only appear as (nested) fixed-size array struct fields"},
+        {"struct S { int[][4] xs; };",  "only appear as (nested) fixed-size array struct fields"},
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -149,14 +164,18 @@ STRATA_TEST(sema_fixed_array_element_restrictions)
 
 STRATA_TEST(sema_extern_struct_dynamic_array_field_rejected)
 {
-    struct { const char* src; const char* msg; } cases[] = {
+    struct
+    {
+        const char* src;
+        const char* msg;
+    } cases[] = {
         /* Dynamic arrays are fats {ptr, len} — no C-layout mirror, like string. */
-        {"extern struct S { int[] xs; };", "dynamic array"},
-        {"extern struct S { uint[] xs; };", "dynamic array"},
+        {"extern struct S { int[] xs; };",               "dynamic array"},
+        {"extern struct S { uint[] xs; };",              "dynamic array"},
         /* An alias resolving to a dynamic array is rejected too. */
         {"struct A = int[];\nextern struct S { A a; };", "dynamic array"},
         /* A dynamic array whose elements are fixed arrays is still dynamic. */
-        {"extern struct S { int[][4] xs; };", "dynamic array"},
+        {"extern struct S { int[][4] xs; };",            "dynamic array"},
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -171,20 +190,18 @@ STRATA_TEST(sema_extern_struct_dynamic_array_field_rejected)
     }
 
     /* Fixed arrays and pointer members remain legal. */
-    StrataResult ok = CompileSource(
-        "extern struct S { byte[16] name; ^Counter c; };\n"
-        "struct Counter { long n; };\n");
+    StrataResult ok = CompileSource("extern struct S { byte[16] name; ^Counter c; };\n"
+                                    "struct Counter { long n; };\n");
     STRATA_CHECK(ok.ok);
     strataResultFree(&ok);
 }
 
 STRATA_TEST(sema_fieldoffset_overlap_rejected)
 {
-    StrataResult r = CompileSource(
-        "extern struct Bad {\n"
-        "    fieldoffset(0) long a;\n"
-        "    fieldoffset(4) int b;\n"
-        "};");
+    StrataResult r = CompileSource("extern struct Bad {\n"
+                                   "    fieldoffset(0) long a;\n"
+                                   "    fieldoffset(4) int b;\n"
+                                   "};");
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "overlaps") != NULL);
     strataResultFree(&r);
@@ -192,27 +209,24 @@ STRATA_TEST(sema_fieldoffset_overlap_rejected)
 
 STRATA_TEST(sema_extern_struct_redeclaration_conflict)
 {
-    StrataResult r = CompileSource(
-        "extern struct E { int x; };\n"
-        "extern struct E { long x; };\n");
+    StrataResult r = CompileSource("extern struct E { int x; };\n"
+                                   "extern struct E { long x; };\n");
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "conflicting redeclaration") != NULL);
     strataResultFree(&r);
 
     /* An identical redeclaration is fine. */
-    StrataResult ok = CompileSource(
-        "extern struct E { int x; };\n"
-        "extern struct E { int x; };\n"
-        "int entry(E e) { return e.x; }\n");
+    StrataResult ok = CompileSource("extern struct E { int x; };\n"
+                                    "extern struct E { int x; };\n"
+                                    "int entry(E e) { return e.x; }\n");
     STRATA_CHECK(ok.ok);
     strataResultFree(&ok);
 }
 
 STRATA_TEST(sema_whole_fixed_field_assignment_rejected)
 {
-    StrataResult r = CompileSource(
-        "extern struct S { byte[4] a; byte[4] b; };\n"
-        "int entry(S s) { s.a = s.b; return 0; }");
+    StrataResult r = CompileSource("extern struct S { byte[4] a; byte[4] b; };\n"
+                                   "int entry(S s) { s.a = s.b; return 0; }");
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "whole fixed-size array") != NULL);
     strataResultFree(&r);
@@ -222,17 +236,18 @@ STRATA_TEST(sema_whole_fixed_field_assignment_rejected)
 
 STRATA_TEST(registry_layout_offsets_pads_and_size)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseModule(
-        "extern struct L2 {\n"
-        "    fieldoffset(0) byte a;\n"
-        "    fieldoffset(8) long b;\n"
-        "    int c;\n"
-        "    byte[4] d;\n"
-        "};\n"
-        "struct Natural { byte a; int b; };\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("extern struct L2 {\n"
+                              "    fieldoffset(0) byte a;\n"
+                              "    fieldoffset(8) long b;\n"
+                              "    int c;\n"
+                              "    byte[4] d;\n"
+                              "};\n"
+                              "struct Natural { byte a; int b; };\n",
+                              &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     TypeRegistry reg;
@@ -249,8 +264,8 @@ STRATA_TEST(registry_layout_offsets_pads_and_size)
     STRATA_CHECK_EQ(l2->fieldOffsets[1], 8);
     STRATA_CHECK_EQ(l2->fieldOffsets[2], 16); /* natural fill after offset 8+8 */
     STRATA_CHECK_EQ(l2->fieldOffsets[3], 20);
-    STRATA_CHECK_EQ(l2->sizeBytes, 24); /* cursor is already a multiple of 8: no trailing pad */
-    STRATA_CHECK_EQ(l2->alignBytes, 8); /* natural C alignment (max field alignment) */
+    STRATA_CHECK_EQ(l2->sizeBytes, 24);     /* cursor is already a multiple of 8: no trailing pad */
+    STRATA_CHECK_EQ(l2->alignBytes, 8);     /* natural C alignment (max field alignment) */
     STRATA_CHECK_EQ((long)l2->padCount, 1); /* 7 bytes before field 1 */
     STRATA_CHECK_EQ((long)l2->pads[0].beforeField, 1);
     STRATA_CHECK_EQ(l2->pads[0].bytes, 7);
@@ -279,9 +294,8 @@ STRATA_TEST(registry_layout_offsets_pads_and_size)
 
 STRATA_TEST(emit_ir_layout_packed_with_pads)
 {
-    StrataResult r = CompileSource(
-        "extern struct Layout { fieldoffset(0) byte a; fieldoffset(4) int b; };\n"
-        "int entry(Layout l) { return l.a + l.b; }\n");
+    StrataResult r = CompileSource("extern struct Layout { fieldoffset(0) byte a; fieldoffset(4) int b; };\n"
+                                   "int entry(Layout l) { return l.a + l.b; }\n");
     STRATA_CHECK(r.ok);
     STRATA_CHECK(r.output != NULL);
     /* Packed body with an explicit 3-byte pad before field b. */
@@ -292,11 +306,11 @@ STRATA_TEST(emit_ir_layout_packed_with_pads)
 STRATA_TEST(emit_ir_layout_packed_with_pads_and_fixed_fields)
 {
     StrataCompiler* c = strataCompilerCreate();
-    StrataResult r = strataCompileString(
-        c,
-        "extern struct Layout { fieldoffset(0) byte a; fieldoffset(4) int b; byte[8] data; };\n"
-        "int entry(Layout l) { return l.a + l.b + l.data[0]; }\n",
-        "layout_c", STRATA_EMIT_LLVM_IR, 0);
+    StrataResult r
+        = strataCompileString(c,
+                              "extern struct Layout { fieldoffset(0) byte a; fieldoffset(4) int b; byte[8] data; };\n"
+                              "int entry(Layout l) { return l.a + l.b + l.data[0]; }\n",
+                              "layout_c", STRATA_EMIT_LLVM_IR, 0);
     STRATA_CHECK(r.ok);
     STRATA_CHECK(r.output != NULL);
     /* Packed body with an explicit 3-byte pad before field b, plus the
@@ -354,14 +368,13 @@ STRATA_TEST(jit_extern_struct_multidim_fixed_array)
 {
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(
-        c,
-        "extern struct Grid { int[2][3] cells; };\n"
-        "int entry() {\n"
-        "    Grid g = Grid { .cells = { { 1, 2, 3 }, { 4, 5, 6 } } };\n"
-        "    return g.cells[1][2] + (int)g.cells.length + (int)g.cells[0].length;\n"
-        "}\n",
-        "grid_jit", &err);
+    StrataJit* jit = strataJitCompileString(c,
+                                            "extern struct Grid { int[2][3] cells; };\n"
+                                            "int entry() {\n"
+                                            "    Grid g = Grid { .cells = { { 1, 2, 3 }, { 4, 5, 6 } } };\n"
+                                            "    return g.cells[1][2] + (int)g.cells.length + (int)g.cells[0].length;\n"
+                                            "}\n",
+                                            "grid_jit", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -412,19 +425,19 @@ STRATA_TEST(jit_extern_struct_box_autodrop)
     strataJitSetAllocFreeFunctions(c, (void*)DropCountAlloc, (void*)DropCountFree);
 
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(
-        c,
-        "struct Counter { long n; };\n"
-        "extern struct Payload {\n"
-        "    fieldoffset(0) long id;\n"
-        "    ^Counter c;\n"
-        "    byte[4] tag;\n"
-        "};\n"
-        "long entry() {\n"
-        "    ^Payload p = Payload { .id = 7, .c = Counter { .n = 5 }, .tag = { 1, 2 } };\n"
-        "    return p.id + p.c.n + p.tag[0] + p.tag[1] + p.tag.length;\n"
-        "}\n",
-        "drop_jit", &err);
+    StrataJit* jit
+        = strataJitCompileString(c,
+                                 "struct Counter { long n; };\n"
+                                 "extern struct Payload {\n"
+                                 "    fieldoffset(0) long id;\n"
+                                 "    ^Counter c;\n"
+                                 "    byte[4] tag;\n"
+                                 "};\n"
+                                 "long entry() {\n"
+                                 "    ^Payload p = Payload { .id = 7, .c = Counter { .n = 5 }, .tag = { 1, 2 } };\n"
+                                 "    return p.id + p.c.n + p.tag[0] + p.tag[1] + p.tag.length;\n"
+                                 "}\n",
+                                 "drop_jit", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -453,25 +466,48 @@ STRATA_TEST(jit_extern_struct_box_autodrop)
 /* -- fieldoffset layouts match C ----------------------------------------- */
 
 /* The C declarations the Strata extern structs below mirror. */
-typedef enum { LayColorRed, LayColorGreen } LayColor;
-typedef struct { LayColor c; int d; } LayE;
-typedef struct { int a; long long b; int count; } LayH;
-typedef struct { unsigned char x; LayH h; } LayW;
-typedef struct { unsigned char x; LayH hs[2]; } LayA;
+typedef enum
+{
+    LayColorRed,
+    LayColorGreen
+} LayColor;
+typedef struct
+{
+    LayColor c;
+    int d;
+} LayE;
+typedef struct
+{
+    int a;
+    long long b;
+    int count;
+} LayH;
+typedef struct
+{
+    unsigned char x;
+    LayH h;
+} LayW;
+typedef struct
+{
+    unsigned char x;
+    LayH hs[2];
+} LayA;
 
-#define LAYOUT_DECLS                                                               \
-    "enum Color { Red, Green };\n"                                                 \
-    "struct Meters = int;\n"                                                       \
-    "extern struct E { fieldoffset(0) Color c; fieldoffset(4) int d; };\n"         \
-    "extern struct M { fieldoffset(0) Meters m; fieldoffset(4) int d; };\n"        \
-    "extern struct H { fieldoffset(0) int a; fieldoffset(8) long b; int count; };\n" \
-    "extern struct W { byte x; H h; };\n"                                          \
+#define LAYOUT_DECLS                                                                                                   \
+    "enum Color { Red, Green };\n"                                                                                     \
+    "struct Meters = int;\n"                                                                                           \
+    "extern struct E { fieldoffset(0) Color c; fieldoffset(4) int d; };\n"                                             \
+    "extern struct M { fieldoffset(0) Meters m; fieldoffset(4) int d; };\n"                                            \
+    "extern struct H { fieldoffset(0) int a; fieldoffset(8) long b; int count; };\n"                                   \
+    "extern struct W { byte x; H h; };\n"                                                                              \
     "extern struct A { byte x; H[2] hs; };\n"
 
 STRATA_TEST(registry_layout_alias_enum_and_tail_padding)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule(LAYOUT_DECLS, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -530,8 +566,8 @@ STRATA_TEST(registry_layout_alias_enum_and_tail_padding)
 
 STRATA_TEST(emit_ir_layout_alias_enum_and_tail_pad)
 {
-    StrataResult r = CompileSource(LAYOUT_DECLS
-                                   "int entry(E e, H h, W w, A a) { return e.d + h.count + w.x + a.x; }\n");
+    StrataResult r
+        = CompileSource(LAYOUT_DECLS "int entry(E e, H h, W w, A a) { return e.d + h.count + w.x + a.x; }\n");
     STRATA_CHECK(r.ok);
     STRATA_CHECK(r.output != NULL);
     if (r.output)
@@ -545,9 +581,8 @@ STRATA_TEST(emit_ir_layout_alias_enum_and_tail_pad)
 
 STRATA_TEST(sema_fieldoffset_overlap_through_alias_rejected)
 {
-    StrataResult r = CompileSource(
-        "struct Wide = long;\n"
-        "extern struct Bad { fieldoffset(0) Wide a; fieldoffset(4) int b; };\n");
+    StrataResult r = CompileSource("struct Wide = long;\n"
+                                   "extern struct Bad { fieldoffset(0) Wide a; fieldoffset(4) int b; };\n");
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "overlaps") != NULL);
     strataResultFree(&r);
@@ -590,19 +625,18 @@ STRATA_TEST(jit_extern_struct_layout_matches_c)
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(
         c,
-        LAYOUT_DECLS
-        "extern void fill_e(ref E e);\n"
-        "extern void fill_w(ref W w);\n"
-        "extern void fill_a(ref A a);\n"
-        "extern long sum_w(const ref W w);\n"
-        "long read_e() { E e; fill_e(e); return (long)(int)e.c * 100 + e.d; }\n"
-        "long read_w() { W w; fill_w(w); return w.x + w.h.a + w.h.b + w.h.count; }\n"
-        "long read_a() { A a; fill_a(a); return a.hs[0].count + a.hs[1].a + a.hs[1].b + a.hs[1].count; }\n"
-        "long write_w() {\n"
-        "    W w; fill_w(w);\n"
-        "    w.x = 2; w.h.a = 3; w.h.b = 4; w.h.count = 5;\n"
-        "    return sum_w(w);\n"
-        "}\n",
+        LAYOUT_DECLS "extern void fill_e(ref E e);\n"
+                     "extern void fill_w(ref W w);\n"
+                     "extern void fill_a(ref A a);\n"
+                     "extern long sum_w(const ref W w);\n"
+                     "long read_e() { E e; fill_e(e); return (long)(int)e.c * 100 + e.d; }\n"
+                     "long read_w() { W w; fill_w(w); return w.x + w.h.a + w.h.b + w.h.count; }\n"
+                     "long read_a() { A a; fill_a(a); return a.hs[0].count + a.hs[1].a + a.hs[1].b + a.hs[1].count; }\n"
+                     "long write_w() {\n"
+                     "    W w; fill_w(w);\n"
+                     "    w.x = 2; w.h.a = 3; w.h.b = 4; w.h.count = 5;\n"
+                     "    return sum_w(w);\n"
+                     "}\n",
         "layout_c_jit", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)

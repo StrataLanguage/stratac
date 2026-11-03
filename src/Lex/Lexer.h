@@ -6,7 +6,8 @@
 
 #include <stddef.h>
 
-typedef struct {
+typedef struct
+{
     const char* m_source;
     size_t m_sourceLen;
     DiagnosticEngine* m_diag;

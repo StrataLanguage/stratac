@@ -23,37 +23,39 @@ static inline bool IsNullConstantName(const char* name)
 }
 
 /* A pad filling a `fieldoffset` gap; a trailing pad rounds out the struct. */
-typedef struct {
+typedef struct
+{
     size_t beforeField;
     long bytes;
 } StructPad;
 
-typedef struct {
+typedef struct
+{
     const char* name;
-    bool opaque;                 // `struct Foo;` or `handle Foo`.
-    bool incomplete;             // Forward-declared struct.
-    bool owning;                 // Holds an owning field, transitively.
-    const char* extendsFrom;     // Base handle for `handle X : Y`.
+    bool opaque;             // `struct Foo;` or `handle Foo`.
+    bool incomplete;         // Forward-declared struct.
+    bool owning;             // Holds an owning field, transitively.
+    const char* extendsFrom; // Base handle for `handle X : Y`.
     Vec fields;
-    bool isExtern;               // `extern struct`: mirrors a C layout.
-    bool isUnion;                // `union`: every field at offset 0.
-    const struct FunctionDecl* delegate; /* `extern delegate`: the handle's call signature */
+    bool isExtern;                           // `extern struct`: mirrors a C layout.
+    bool isUnion;                            // `union`: every field at offset 0.
+    const struct FunctionDecl* delegate;     /* `extern delegate`: the handle's call signature */
     const struct FunctionDecl* dropFunction; /* the struct's `Drop` method, NULL if none */
-    int unionMember;             /* union: the field the backend lays out (the most aligned, then largest);
-                                    every field's physical index is 0, a tail pad rounds out the size */
+    int unionMember;                         /* union: the field the backend lays out (the most aligned, then largest);
+                                                every field's physical index is 0, a tail pad rounds out the size */
     bool isTypeAlias;
-    bool isEnum;                 /* `enum Foo` — a strong alias with scoped constants. */
-    bool isFlagsEnum;            /* `@flags enum Foo`: values combine with the bitwise operators */
-    const char* underlyingType;  /* underlying type name for aliases */
+    bool isEnum;                           /* `enum Foo` — a strong alias with scoped constants. */
+    bool isFlagsEnum;                      /* `@flags enum Foo`: values combine with the bitwise operators */
+    const char* underlyingType;            /* underlying type name for aliases */
     PrimitiveType underlyingPrimitiveType; /* underlying type value for the alias */
-    bool isComponent;            /* `@component` */
-    Vec attributes;              /* Vec<Attribute*>, shared with the StructDecl */
-    const char* moduleName;      /* module the struct was declared in */
+    bool isComponent;                      /* `@component` */
+    Vec attributes;                        /* Vec<Attribute*>, shared with the StructDecl */
+    const char* moduleName;                /* module the struct was declared in */
 
     /* Computed layout; hasLayout is set only on success,
        layoutError holds the failure message. */
     bool hasLayout;
-    bool packedLayout;  /* any explicit fieldoffset — backends emit packed */
+    bool packedLayout; /* any explicit fieldoffset — backends emit packed */
     long sizeBytes;
     long alignBytes;
     long* fieldOffsets; /* logical field index -> byte offset */
@@ -64,7 +66,8 @@ typedef struct {
     char* layoutError;
 } StructType;
 
-typedef struct TypeRegistry {
+typedef struct TypeRegistry
+{
     StructType* types;
     size_t count;
     size_t cap;

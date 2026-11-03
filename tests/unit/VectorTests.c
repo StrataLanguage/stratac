@@ -187,7 +187,7 @@ STRATA_TEST(vector_float3_division_dot_reduce_not_nan)
     run_int("int entry() {\n"
             "  float3 a = float3(2.0, 4.0, 6.0);\n"
             "  float3 b = float3(2.0, 2.0, 2.0);\n"
-            "  float3 d = a / b;\n" /* {1, 2, 3}, lane 3 = 0/0 */
+            "  float3 d = a / b;\n"                             /* {1, 2, 3}, lane 3 = 0/0 */
             "  return (int)dot(d, d) * 100 + (int)reduce(d);\n" /* 14 * 100 + 6 */
             "}\n",
             1406);

@@ -441,8 +441,8 @@ static bool ScalarSizeAlign(PrimitiveType type, SizeAlign* out)
     return false;
 }
 
-static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scratch, const TypeName* t,
-                           SizeAlign* out, size_t depth)
+static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scratch, const TypeName* t, SizeAlign* out,
+                           size_t depth)
 {
     out->packed = false;
 

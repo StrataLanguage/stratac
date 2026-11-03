@@ -4,18 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
+typedef struct
+{
     size_t breakTarget;
     size_t continueTarget;
     size_t scopeDepth; /* scopes open when the loop began: break and continue leave the ones above */
 } LoopFrame;
 
-typedef struct {
+typedef struct
+{
     const Block* block;
     Vec defers; /* Vec<const Node*>, in source order */
 } ScopeFrame;
 
-typedef struct {
+typedef struct
+{
     Cfg* cfg;
     size_t cur;
     ScopeFrame* scopes;

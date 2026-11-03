@@ -1,11 +1,11 @@
-#include "Util.h"
 #include "Codegen/CodegenBackend.h"
-#include "strata/strata.h"
 #include "Test.h"
+#include "Util.h"
+#include "strata/strata.h"
 
-#include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static char* LoadSample(const char* name)
 {
@@ -14,7 +14,10 @@ static char* LoadSample(const char* name)
     snprintf(path, sizeof(path), "%s/%s", dir, name);
 
     FILE* f = fopen(path, "rb");
-    if (!f) return NULL;
+    if (!f)
+    {
+        return NULL;
+    }
 
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
@@ -33,8 +36,10 @@ STRATA_TEST(sample_hello_compiles_to_llvm_ir)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->functions.count >= 3);
@@ -55,8 +60,10 @@ STRATA_TEST(sample_structs_compile_with_native_backend)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->structs.count > 0);
@@ -77,8 +84,10 @@ STRATA_TEST(sample_control_flow_lowers_in_llvm_backend)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -98,8 +107,10 @@ STRATA_TEST(sample_strings_compiles_to_llvm_ir)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->functions.count >= 5);
@@ -119,8 +130,10 @@ STRATA_TEST(sample_arrays_lower_in_llvm_backend)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->functions.count >= 2);
@@ -144,8 +157,10 @@ STRATA_TEST(sample_simd_compiles)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK(mod->functions.count >= 2);
@@ -164,8 +179,10 @@ STRATA_TEST(array_indexing_emits_bounds_check)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -185,8 +202,10 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
     STRATA_CHECK(src != NULL);
     STRATA_CHECK(src[0] != '\0');
 
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -196,8 +215,9 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
        Owned carries the per-type drop helper for its ^Counter field. */
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
-    STRATA_CHECK(strstr(res.output, "%struct.Header = type <{ i32, [4 x i8], i64, [16 x i8], [4 x float], i32, [4 x i8] }>")
-                 != NULL);
+    STRATA_CHECK(
+        strstr(res.output, "%struct.Header = type <{ i32, [4 x i8], i64, [16 x i8], [4 x float], i32, [4 x i8] }>")
+        != NULL);
     STRATA_CHECK(strstr(res.output, "[2 x [3 x i32]]") != NULL);
     STRATA_CHECK(strstr(res.output, "__strata_drop_Owned") != NULL);
 
@@ -205,4 +225,3 @@ STRATA_TEST(sample_extern_layout_mirrors_host_struct)
     arena_free(&arena);
     free(src);
 }
-

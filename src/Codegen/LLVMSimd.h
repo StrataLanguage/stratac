@@ -7,7 +7,6 @@ struct Builder;
 struct BinaryExpr;
 struct MemberExpr;
 
-
 typedef enum LSimdVecC
 {
     VC_NULL = -1,
@@ -18,7 +17,8 @@ typedef enum LSimdVecC
 } LSimdVecC;
 
 LLVMValueRef LSimdVector2Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y);
-LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y, LSimdVecC z, LSimdVecC w);
+LLVMValueRef LSimdVector4Shuffle(struct Builder* b, LLVMValueRef v0, LLVMValueRef v1, LSimdVecC x, LSimdVecC y,
+                                 LSimdVecC z, LSimdVecC w);
 
 LLVMValueRef LSimdVector2Broadcast(struct Builder* b, LLVMValueRef scalar);
 /* Broadcast `scalar` to all lanes of a returned vector. */

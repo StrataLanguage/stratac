@@ -2,12 +2,12 @@
 
 #include "LLVMModuleBuilder.h"
 
-
-typedef struct {
+typedef struct
+{
     LLVMOrcLLJITRef m_jit;
     Vec m_externs;
-    void* allocFn;   /* host-provided allocator (NULL = malloc) */
-    void* freeFn;    /* host-provided deallocator (NULL = free) */
+    void* allocFn; /* host-provided allocator (NULL = malloc) */
+    void* freeFn;  /* host-provided deallocator (NULL = free) */
 } LLVMJit;
 
 void LLVMJitInit(LLVMJit* jit);

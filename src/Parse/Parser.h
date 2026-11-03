@@ -6,7 +6,8 @@
 #include "Lex/Lexer.h"
 #include "Lex/Token.h"
 
-typedef struct {
+typedef struct
+{
     Lexer* m_lex;
     DiagnosticEngine* m_diag;
     char* m_moduleName;

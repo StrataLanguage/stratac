@@ -82,7 +82,8 @@ static void SetOrcError(char** errorMessage, LLVMErrorRef err, const char* fmt)
    whenever a module's sections land more than 2GB apart — intermittent in
    hosts that allocate gigabytes (llvm/llvm-project#65641). The ReserveAlloc
    section memory manager carves all sections out of one reserved region. */
-static LLVMOrcObjectLayerRef ReserveAllocObjectLayerCreator(void* ctx, LLVMOrcExecutionSessionRef es, const char* triple)
+static LLVMOrcObjectLayerRef ReserveAllocObjectLayerCreator(void* ctx, LLVMOrcExecutionSessionRef es,
+                                                            const char* triple)
 {
     (void)ctx;
     (void)triple;
@@ -153,12 +154,10 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 
     if (LLVMGetTargetFromTriple(triple, &target, &targetErr))
     {
-        int needed = snprintf(NULL, 0, "could not resolve target '%s': %s",
-                              triple ? triple : "(null)",
+        int needed = snprintf(NULL, 0, "could not resolve target '%s': %s", triple ? triple : "(null)",
                               targetErr ? targetErr : "(no message)");
         char* buf = (char*)malloc((size_t)needed + 1);
-        snprintf(buf, (size_t)needed + 1, "could not resolve target '%s': %s",
-                 triple ? triple : "(null)",
+        snprintf(buf, (size_t)needed + 1, "could not resolve target '%s': %s", triple ? triple : "(null)",
                  targetErr ? targetErr : "(no message)");
         *errorMessage = buf;
 
@@ -174,10 +173,8 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
     char* cpu = LLVMGetHostCPUName();
     char* features = LLVMGetHostCPUFeatures();
 
-    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, cpu, features,
-                                                      LLVMCodeGenLevelAggressive,
-                                                      LLVMRelocPIC,
-                                                      LLVMCodeModelJITDefault);
+    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, cpu, features, LLVMCodeGenLevelAggressive,
+                                                      LLVMRelocPIC, LLVMCodeModelJITDefault);
 
     LLVMDisposeMessage(features);
     LLVMDisposeMessage(cpu);
@@ -339,8 +336,8 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
        a bare JITDylib does not resolve these automatically. */
     {
         LLVMOrcDefinitionGeneratorRef gen = NULL;
-        LLVMErrorRef genErr = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(
-            &gen, LLVMOrcLLJITGetGlobalPrefix(llj), NULL, NULL);
+        LLVMErrorRef genErr
+            = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(&gen, LLVMOrcLLJITGetGlobalPrefix(llj), NULL, NULL);
 
         if (!genErr)
         {
@@ -358,12 +355,14 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         LLVMOrcCSymbolMapPair pairs[4];
 
         pairs[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_alloc");
-        pairs[0].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
+        pairs[0].Sym.Address
+            = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
         pairs[0].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
         pairs[0].Sym.Flags.TargetFlags = 0;
 
         pairs[1].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_free");
-        pairs[1].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
+        pairs[1].Sym.Address
+            = (LLVMOrcExecutorAddress)(uintptr_t)(jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
         pairs[1].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
         pairs[1].Sym.Flags.TargetFlags = 0;
 

@@ -1056,29 +1056,29 @@ STRATA_TEST(fixed_local_array_init_rules)
         const char* msg;
     } cases[] = {
         /* Braced initialization only: no bare declaration ... */
-        {"int entry() { int[4] xs; return 0; }",                                                               "braced"                  },
+        {"int entry() { int[4] xs; return 0; }",                                                        "braced"                      },
         /* ... and no non-braced initializer. */
-        {"int entry() { int x = 1; int[2] v = x; return 0; }",                                                 "braced"                  },
+        {"int entry() { int x = 1; int[2] v = x; return 0; }",                                          "braced"                      },
         /* Too many initializers. */
-        {"int entry() { int[2] v = {1, 2, 3}; return 0; }",                                                    "too many initializers"   },
+        {"int entry() { int[2] v = {1, 2, 3}; return 0; }",                                             "too many initializers"       },
         /* Zero length. */
-        {"int entry() { int[0] v = {}; return 0; }",                                                           "at least 1"              },
+        {"int entry() { int[0] v = {}; return 0; }",                                                    "at least 1"                  },
         /* Owning elements have no drop glue. */
-        {"int entry() { string[2] v = {\"a\", \"b\"}; return 0; }",                                            "may not own its elements"},
+        {"int entry() { string[2] v = {\"a\", \"b\"}; return 0; }",                                     "may not own its elements"    },
         /* Whole-array assignment (including braced reassignment). */
-        {"int entry() { int[3] v = {1, 2, 3}; int[3] w = {4, 5, 6}; v = w; return 0; }",                       "whole fixed-size array"  },
-        {"int entry() { int[3] v = {1, 2, 3}; v = {4, 5, 6}; return 0; }",                                     "whole fixed-size array"  },
+        {"int entry() { int[3] v = {1, 2, 3}; int[3] w = {4, 5, 6}; v = w; return 0; }",                "whole fixed-size array"      },
+        {"int entry() { int[3] v = {1, 2, 3}; v = {4, 5, 6}; return 0; }",                              "whole fixed-size array"      },
         /* Passing a whole local to a function with no `ref T[]` view param. */
         {"int take(int x) { return x; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"                                                                                                  },
+         "cannot pass fixed-size array"                                                                                               },
         /* By-value T[] param implies ownership transfer — a stack view can't be owned. */
-        {"int take(int[] x) { int[] kept = x; return (int)kept.length; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"                                                                                                  },
+        {"int take(int[] x) { int[] kept = x; return (int)kept.length; }\nint entry() { int[3] v = {1, 2, 3}; return "
+         "take(v); }",                                                                         "cannot pass fixed-size array"},
         /* Element type mismatch against the ref view. */
         {"int take(ref long[] x) { return 0; }\nint entry() { int[3] v = {1, 2, 3}; return take(v); }",
-         "cannot pass fixed-size array"                                                                                                  },
+         "cannot pass fixed-size array"                                                                                               },
         /* Element type mismatch. */
-        {"int entry() { int[2] v = {1, \"x\"}; return 0; }",                                                   "cannot initialize"       },
+        {"int entry() { int[2] v = {1, \"x\"}; return 0; }",                                            "cannot initialize"           },
     };
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
     {
@@ -1344,18 +1344,18 @@ STRATA_TEST(ref_array_param_growth_rejected)
         const char* msg;
     } cases[] = {
         {"int f(ref int[] a) { array_push(a, 4); return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "not a fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "not a fixed-size array"                },
         {"int f(ref int[] a) { array_resize(a, 8); return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "not a fixed-size array"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "not a fixed-size array"                },
         {"int f(ref int[] a) { int[] b = {9}; a = b; return 0; }\n"
-         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "grows or rebinds its parameter 'a'"},
+         "int entry() { int[3] v = {1, 2, 3}; return f(v); }", "grows or rebinds its parameter 'a'"    },
         /* Passing the parameter on to a growing callee grows it too. */
         {"void g(ref int[] a) { array_push(a, 1); }\n"
          "void f(ref int[] a) { g(a); }\n"
          "int entry() { int[2] v = {1, 2}; f(v); return 0; }", "'f' grows or rebinds its parameter 'a'"},
         /* A ref rest is the same borrowed binding. */
         {"int f(ref int... rest) { array_push(rest, 4); return 0; }\n"
-         "int entry() { return f(1, 2, 3); }",                 "cannot grow"         },
+         "int entry() { return f(1, 2, 3); }",                 "cannot grow"                           },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -1583,9 +1583,9 @@ STRATA_TEST(ref_array_param_growth_reaches_caller)
                                 "int entry()\n"
                                 "{\n"
                                 "  int[] values = {99};\n"
-                                "  fill(values, 5);\n"                         /* 0 10 20 30 40 */
-                                "  int s = (int)values.length + values[4];\n"   /* 5 + 40 */
-                                "  again(values);\n"                           /* 0 10 20 7 */
+                                "  fill(values, 5);\n"                        /* 0 10 20 30 40 */
+                                "  int s = (int)values.length + values[4];\n" /* 5 + 40 */
+                                "  again(values);\n"                          /* 0 10 20 7 */
                                 "  return s * 100 + (int)values.length * 10 + values[3];\n"
                                 "}\n",
                                 &err);
@@ -2397,7 +2397,7 @@ STRATA_TEST(recursive_struct_braced_ctor_sample_shape)
                                 "  int r = (int)elems.length * 100;\n"                    /* 300 */
                                 "  if (elems[0].next?) { r += 10; }\n"                    /* constructed, non-empty */
                                 "  if (elems[2].next?) { r += 5000; } else { r += 1; }\n" /* omitted */
-                                "  return r + take(array_swap_remove(elems, 0));\n"        /* 311 */
+                                "  return r + take(array_swap_remove(elems, 0));\n"       /* 311 */
                                 "}\n",
                                 &err);
 

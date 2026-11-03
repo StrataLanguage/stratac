@@ -10,7 +10,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct {
+typedef struct
+{
     Arena* arena;
     DiagnosticEngine* diag;
 

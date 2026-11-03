@@ -13,9 +13,9 @@
 #include "Util.h"
 
 #if STRATA_TEST_HAS_LLVM
-#include "strata/strata.h"
 #include "Codegen/LLVMJit.h"
 #include "Codegen/LLVMModuleBuilder.h"
+#include "strata/strata.h"
 #endif
 
 #include "Test.h"
@@ -542,8 +542,10 @@ STRATA_TEST(enum_jit_impl_on_enum)
 {
     /* `impl` works on an enum (it is a strong alias): self crosses as the
        underlying scalar by value. */
-    EnumHostSymbol hosts[] = { { "Color_NameLen", (void*)&EnumNameLenThunk },
-                               { "Color_CountUp", (void*)&EnumCountUpThunk } };
+    EnumHostSymbol hosts[] = {
+        {"Color_NameLen", (void*)&EnumNameLenThunk},
+        {"Color_CountUp", (void*)&EnumCountUpThunk}
+    };
     CheckEnumImpl("enum Color : int { Red, Green, Blue };\n"
                   "impl Color {\n"
                   "    extern int NameLen(Color self);\n"

@@ -11,7 +11,8 @@
    then the destination's subexpressions, then the assignment itself). `&&`, `||` and `?:` split
    blocks. `defer`red statements are copied onto every path that leaves their scope. */
 
-typedef enum {
+typedef enum
+{
     CfgEval,      /* an expression node, evaluated after its operands */
     CfgDeclare,   /* a VarDeclStmt: its initializer has been evaluated, the local now exists */
     CfgCondition, /* the value of `node` decides the block's two successors: [0] true, [1] false */
@@ -19,14 +20,16 @@ typedef enum {
     CfgScopeExit, /* leaving the Block `node`; its locals drop here, in reverse declaration order */
 } CfgOpKind;
 
-typedef struct {
+typedef struct
+{
     CfgOpKind kind;
     const Node* node;
     bool consumed; /* CfgEval: the parent takes this value by value (initializer, `=` right side, `return`,
                       a by-value argument, a literal's element); an Owning one moves */
 } CfgOp;
 
-typedef struct {
+typedef struct
+{
     size_t id;
     CfgOp* ops;
     size_t opCount;
@@ -37,7 +40,8 @@ typedef struct {
     bool loopCond;  /* the condition of a loop: its false edge leaves the loop */
 } CfgBlock;
 
-typedef struct {
+typedef struct
+{
     CfgBlock* blocks;
     size_t count;
     size_t cap;

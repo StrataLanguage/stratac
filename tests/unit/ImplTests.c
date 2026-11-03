@@ -954,9 +954,15 @@ static void OpaqueGetTypeImpl(void** out)
     *out = p;
 }
 
-static int  OpaqueGetValueImpl(void* self)        { return *((int*)self); }
-static void OpaqueSetValueImpl(void* self, int v) { *((int*)self) = v; }
-static int  OpaqueBumpImpl(void* self)
+static int OpaqueGetValueImpl(void* self)
+{
+    return *((int*)self);
+}
+static void OpaqueSetValueImpl(void* self, int v)
+{
+    *((int*)self) = v;
+}
+static int OpaqueBumpImpl(void* self)
 {
     int old = *((int*)self);
     *((int*)self) = old + 1;
@@ -970,24 +976,25 @@ STRATA_TEST(impl_on_opaque_struct_jit)
        public embed API. */
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(c,
-        "struct TheType;\n"
-        "extern void GetType(return ^TheType t);\n"
-        "impl TheType {\n"
-        "    extern int GetValue(const ref TheType self);\n"
-        "    extern void SetValue(ref TheType self, int v);\n"
-        "    extern int Bump(ref TheType self);\n"
-        "    property int Value { get = TheType_GetValue; set = TheType_SetValue; }\n"
-        "}\n"
-        "int entry()\n"
-        "{\n"
-        "  ^TheType t = GetType();\n"      /* box { 42 } */
-        "  int v = t.Value;\n"             /* getter: 42 */
-        "  t.Value = v + 1;\n"             /* setter: host stores 43 */
-        "  int w = t.Bump();\n"            /* reads 43, stores 44, returns 43 */
-        "  return w + t.Value;\n"          /* 43 + 44 = 87 */
-        "}\n",
-        "opaque_impl", &err);
+    StrataJit* jit
+        = strataJitCompileString(c,
+                                 "struct TheType;\n"
+                                 "extern void GetType(return ^TheType t);\n"
+                                 "impl TheType {\n"
+                                 "    extern int GetValue(const ref TheType self);\n"
+                                 "    extern void SetValue(ref TheType self, int v);\n"
+                                 "    extern int Bump(ref TheType self);\n"
+                                 "    property int Value { get = TheType_GetValue; set = TheType_SetValue; }\n"
+                                 "}\n"
+                                 "int entry()\n"
+                                 "{\n"
+                                 "  ^TheType t = GetType();\n" /* box { 42 } */
+                                 "  int v = t.Value;\n"        /* getter: 42 */
+                                 "  t.Value = v + 1;\n"        /* setter: host stores 43 */
+                                 "  int w = t.Bump();\n"       /* reads 43, stores 44, returns 43 */
+                                 "  return w + t.Value;\n"     /* 43 + 44 = 87 */
+                                 "}\n",
+                                 "opaque_impl", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -1022,7 +1029,8 @@ STRATA_TEST(impl_inline_methods_jit)
        factories, receiver passing between methods, and recursion. */
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(c,
+    StrataJit* jit = strataJitCompileString(
+        c,
         "struct Vec3 { float x; float y; float z; };\n"
         "impl Vec3 {\n"
         "    Vec3 Make(float x, float y, float z) { return { .x = x, .y = y, .z = z }; }\n"
@@ -1040,11 +1048,11 @@ STRATA_TEST(impl_inline_methods_jit)
         "  float l = v.LengthSq();\n"
         "  v.Scale(2.0);\n"
         "  Vec3 w = Vec3.Make(1.0, 1.0, 1.0);\n"
-        "  if (l != 25.0) { return 1; }\n"              /* 3^2 + 4^2 */
+        "  if (l != 25.0) { return 1; }\n"             /* 3^2 + 4^2 */
         "  if (v.LengthSq() != 100.0) { return 2; }\n" /* scaled: 6^2 + 8^2 */
         "  if (v.Dot(w) != 14.0) { return 3; }\n"      /* 6 + 8 + 0 */
         "  Num n = { .v = 2 };\n"
-        "  if (n.Fact(5) != 16) { return 4; }\n"      /* recursive inline method: 2^4 */
+        "  if (n.Fact(5) != 16) { return 4; }\n" /* recursive inline method: 2^4 */
         "  return 0;\n"
         "}\n",
         "inline_impl", &err);
@@ -1101,19 +1109,19 @@ STRATA_TEST(impl_property_getter_return_param_jit)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "handle Widget;\n"
-        "impl Widget {\n"
-        "    extern void GetCount(Widget self, return int c);\n"
-        "    extern void SetCount(Widget self, int v);\n"
-        "    property int Count { get = Widget_GetCount; set = Widget_SetCount; }\n"
-        "}\n"
-        "int entry(Widget w)\n"
-        "{\n"
-        "  int c = w.Count;\n"
-        "  w.Count = c + 1;\n"
-        "  return w.Count;\n"
-        "}\n",
-        "prop_return_param", &err);
+                                            "handle Widget;\n"
+                                            "impl Widget {\n"
+                                            "    extern void GetCount(Widget self, return int c);\n"
+                                            "    extern void SetCount(Widget self, int v);\n"
+                                            "    property int Count { get = Widget_GetCount; set = Widget_SetCount; }\n"
+                                            "}\n"
+                                            "int entry(Widget w)\n"
+                                            "{\n"
+                                            "  int c = w.Count;\n"
+                                            "  w.Count = c + 1;\n"
+                                            "  return w.Count;\n"
+                                            "}\n",
+                                            "prop_return_param", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -1130,7 +1138,7 @@ STRATA_TEST(impl_property_getter_return_param_jit)
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        HostWidget w = { 5 };
+        HostWidget w = {5};
         STRATA_CHECK_EQ(entry(NULL, &w), 6); /* read 5, write 6, read 6 */
         STRATA_CHECK_EQ(w.count, 6);
     }
@@ -1147,18 +1155,18 @@ STRATA_TEST(impl_property_getter_return_param_struct_jit)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "struct Vec3 { float x; float y; float z; };\n"
-        "handle Widget;\n"
-        "impl Widget {\n"
-        "    extern void GetPos(Widget self, return Vec3 p);\n"
-        "    property Vec3 Pos { get = Widget_GetPos; }\n"
-        "}\n"
-        "int entry(Widget w)\n"
-        "{\n"
-        "  Vec3 p = w.Pos;\n"
-        "  return (int)(p.x + p.y + p.z);\n"
-        "}\n",
-        "prop_return_param_struct", &err);
+                                            "struct Vec3 { float x; float y; float z; };\n"
+                                            "handle Widget;\n"
+                                            "impl Widget {\n"
+                                            "    extern void GetPos(Widget self, return Vec3 p);\n"
+                                            "    property Vec3 Pos { get = Widget_GetPos; }\n"
+                                            "}\n"
+                                            "int entry(Widget w)\n"
+                                            "{\n"
+                                            "  Vec3 p = w.Pos;\n"
+                                            "  return (int)(p.x + p.y + p.z);\n"
+                                            "}\n",
+                                            "prop_return_param_struct", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -1228,20 +1236,20 @@ STRATA_TEST(impl_jit_end_to_end)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "handle Camera;\n"
-        "impl Camera {\n"
-        "    extern float GetFOV(Camera self);\n"
-        "    extern void SetFOV(Camera self, float v);\n"
-        "    extern Camera New();\n"
-        "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
-        "}\n"
-        "float entry(Camera cam)\n"
-        "{\n"
-        "    cam.FOV = 42.0;\n"
-        "    return cam.FOV + cam.GetFOV();\n"
-        "}\n"
-        "Camera make() { return Camera.New(); }\n",
-        "impl_test", &err);
+                                            "handle Camera;\n"
+                                            "impl Camera {\n"
+                                            "    extern float GetFOV(Camera self);\n"
+                                            "    extern void SetFOV(Camera self, float v);\n"
+                                            "    extern Camera New();\n"
+                                            "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
+                                            "}\n"
+                                            "float entry(Camera cam)\n"
+                                            "{\n"
+                                            "    cam.FOV = 42.0;\n"
+                                            "    return cam.FOV + cam.GetFOV();\n"
+                                            "}\n"
+                                            "Camera make() { return Camera.New(); }\n",
+                                            "impl_test", &err);
 
     if (!jit)
     {
@@ -1284,23 +1292,23 @@ STRATA_TEST(impl_jit_property_on_array_elem)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "handle Camera;\n"
-        "impl Camera {\n"
-        "    extern float GetFOV(Camera self);\n"
-        "    extern void SetFOV(Camera self, float v);\n"
-        "    extern Camera New();\n"
-        "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
-        "}\n"
-        "float entry()\n"
-        "{\n"
-        "    Camera a = Camera.New();\n"
-        "    Camera b = Camera.New();\n"
-        "    Camera[] cams = { a, b };\n"
-        "    cams[0].FOV = 7.0;\n"
-        "    cams[1].FOV = 9.0;\n"
-        "    return cams[0].FOV + cams[1].FOV;\n"
-        "}\n",
-        "impl_arr", &err);
+                                            "handle Camera;\n"
+                                            "impl Camera {\n"
+                                            "    extern float GetFOV(Camera self);\n"
+                                            "    extern void SetFOV(Camera self, float v);\n"
+                                            "    extern Camera New();\n"
+                                            "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
+                                            "}\n"
+                                            "float entry()\n"
+                                            "{\n"
+                                            "    Camera a = Camera.New();\n"
+                                            "    Camera b = Camera.New();\n"
+                                            "    Camera[] cams = { a, b };\n"
+                                            "    cams[0].FOV = 7.0;\n"
+                                            "    cams[1].FOV = 9.0;\n"
+                                            "    return cams[0].FOV + cams[1].FOV;\n"
+                                            "}\n",
+                                            "impl_arr", &err);
 
     if (!jit)
     {
@@ -1336,21 +1344,21 @@ STRATA_TEST(impl_jit_property_through_struct_field)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "handle Camera;\n"
-        "struct Holder { Camera cam; };\n"
-        "impl Camera {\n"
-        "    extern float GetFOV(Camera self);\n"
-        "    extern void SetFOV(Camera self, float v);\n"
-        "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
-        "}\n"
-        /* Host entry points take structs by `ref`: the pointer ABI is the
-           stable cross-language contract (plain params are now by value). */
-        "float entry(ref Holder h)\n"
-        "{\n"
-        "    h.cam.FOV = 5.5;\n"
-        "    return h.cam.FOV;\n"
-        "}\n",
-        "impl_field", &err);
+                                            "handle Camera;\n"
+                                            "struct Holder { Camera cam; };\n"
+                                            "impl Camera {\n"
+                                            "    extern float GetFOV(Camera self);\n"
+                                            "    extern void SetFOV(Camera self, float v);\n"
+                                            "    property float FOV { get = Camera_GetFOV; set = Camera_SetFOV; }\n"
+                                            "}\n"
+                                            /* Host entry points take structs by `ref`: the pointer ABI is the
+                                               stable cross-language contract (plain params are now by value). */
+                                            "float entry(ref Holder h)\n"
+                                            "{\n"
+                                            "    h.cam.FOV = 5.5;\n"
+                                            "    return h.cam.FOV;\n"
+                                            "}\n",
+                                            "impl_field", &err);
 
     if (!jit)
     {
@@ -1391,15 +1399,15 @@ STRATA_TEST(impl_jit_recursive_property_chain)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "handle Camera;\n"
-        "impl Camera {\n"
-        "    extern Camera GetSelf(Camera self);\n"
-        "    extern float GetFOV(Camera self);\n"
-        "    property Camera Self { get = GetSelf; }\n"
-        "    property float FOV { get = GetFOV; }\n"
-        "}\n"
-        "float entry(Camera c) { return c.Self.Self.Self.FOV; }\n",
-        "impl_rec", &err);
+                                            "handle Camera;\n"
+                                            "impl Camera {\n"
+                                            "    extern Camera GetSelf(Camera self);\n"
+                                            "    extern float GetFOV(Camera self);\n"
+                                            "    property Camera Self { get = GetSelf; }\n"
+                                            "    property float FOV { get = GetFOV; }\n"
+                                            "}\n"
+                                            "float entry(Camera c) { return c.Self.Self.Self.FOV; }\n",
+                                            "impl_rec", &err);
 
     if (!jit)
     {

@@ -221,9 +221,9 @@ STRATA_TEST(resolver_provides_virtual_module)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import lib;\n"
-        "int entry() { return lib_answer(); }\n",
-        "main", &err);
+                                            "import lib;\n"
+                                            "int entry() { return lib_answer(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -280,9 +280,9 @@ STRATA_TEST(resolver_handles_import_cycle)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import a;\n"
-        "int entry() { return a_val(); }\n",
-        "main", &err);
+                                            "import a;\n"
+                                            "int entry() { return a_val(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -296,7 +296,7 @@ STRATA_TEST(resolver_handles_import_cycle)
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(NULL), 42);   /* b_val() + 1 = 41 + 1 */
+        STRATA_CHECK_EQ(entry(NULL), 42); /* b_val() + 1 = 41 + 1 */
     }
 
     strataJitDestroy(jit);
@@ -321,9 +321,9 @@ STRATA_TEST(resolver_not_found_is_reported)
     strataSetImportResolver(c, &ResolverNever, NULL);
 
     StrataResult r = strataCompileString(c,
-        "import ghost;\n"
-        "int entry() { return 1; }\n",
-        "main", STRATA_EMIT_LLVM_IR, 0);
+                                         "import ghost;\n"
+                                         "int entry() { return 1; }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);
@@ -371,9 +371,9 @@ STRATA_TEST(resolver_receives_importer_name)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import child;\n"
-        "int entry() { return child_val(); }\n",
-        "myroot", &err);
+                                            "import child;\n"
+                                            "int entry() { return child_val(); }\n",
+                                            "myroot", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -422,7 +422,7 @@ STRATA_TEST(resolver_overrides_filesystem_import)
     /* A file-compiled main (read from disk) whose import is served by the
        resolver instead of the filesystem: mixed disk-main + virtual imports. */
     char path[512];
-    SamplePath("main.strata", path, sizeof(path));   /* import weapons/pistol; return MakePistol(5).ammo; */
+    SamplePath("main.strata", path, sizeof(path)); /* import weapons/pistol; return MakePistol(5).ammo; */
 
     StrataCompiler* c = strataCompilerCreate();
     strataSetImportResolver(c, &ResolverVirtualPistol, NULL);
@@ -442,7 +442,7 @@ STRATA_TEST(resolver_overrides_filesystem_import)
     STRATA_CHECK(entry != NULL);
     if (entry)
     {
-        STRATA_CHECK_EQ(entry(NULL), 99);   /* virtual pistol, not the disk's 5 */
+        STRATA_CHECK_EQ(entry(NULL), 99); /* virtual pistol, not the disk's 5 */
     }
 
     strataJitDestroy(jit);
@@ -460,11 +460,10 @@ static int ResolverShapes(void* ud, const char* importer, const char* path, Stra
     (void)importer;
     if (strcmp(path, "shapes") == 0)
     {
-        out->text =
-            "struct Vec2 { int x; int y; };\n"
-            "Vec2 make_vec2(int x, int y) { return { x, y }; }\n"
-            "int dot(Vec2 a, Vec2 b) { return a.x*b.x + a.y*b.y; }\n"
-            "Vec2 unit() { return { 1, 1 }; }\n";
+        out->text = "struct Vec2 { int x; int y; };\n"
+                    "Vec2 make_vec2(int x, int y) { return { x, y }; }\n"
+                    "int dot(Vec2 a, Vec2 b) { return a.x*b.x + a.y*b.y; }\n"
+                    "Vec2 unit() { return { 1, 1 }; }\n";
         out->length = strlen(out->text);
         out->name = "shapes";
         return 1;
@@ -479,15 +478,24 @@ STRATA_TEST(resolver_imports_struct_type_and_calls_function)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import shapes;\n"
-        "int entry() { Vec2 v = make_vec2(3, 4); return dot(v, v); }\n",
-        "main", &err);
+                                            "import shapes;\n"
+                                            "int entry() { Vec2 v = make_vec2(3, 4); return dot(v, v); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 25);  /* 3*3 + 4*4 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 25); /* 3*3 + 4*4 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -502,16 +510,25 @@ STRATA_TEST(resolver_imported_struct_used_in_local_function)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import shapes;\n"
-        "int norm_sq(Vec2 v) { return v.x*v.x + v.y*v.y; }\n"
-        "int entry() { Vec2 v = { 5, 12 }; return norm_sq(v); }\n",
-        "main", &err);
+                                            "import shapes;\n"
+                                            "int norm_sq(Vec2 v) { return v.x*v.x + v.y*v.y; }\n"
+                                            "int entry() { Vec2 v = { 5, 12 }; return norm_sq(v); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 169);  /* 25 + 144 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 169); /* 25 + 144 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -524,15 +541,24 @@ STRATA_TEST(resolver_imported_function_returns_struct)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import shapes;\n"
-        "int entry() { Vec2 u = unit(); return u.x + u.y; }\n",
-        "main", &err);
+                                            "import shapes;\n"
+                                            "int entry() { Vec2 u = unit(); return u.x + u.y; }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 2);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 2);
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -546,9 +572,8 @@ static int ResolverGeom(void* ud, const char* importer, const char* path, Strata
     (void)importer;
     if (strcmp(path, "geom") == 0)
     {
-        out->text =
-            "struct Pt { int x; int y; };\n"
-            "int manhattan(Pt p) { return p.x + p.y; }\n";
+        out->text = "struct Pt { int x; int y; };\n"
+                    "int manhattan(Pt p) { return p.x + p.y; }\n";
         out->length = strlen(out->text);
         out->name = "geom";
         return 1;
@@ -563,15 +588,24 @@ STRATA_TEST(resolver_imported_struct_passed_as_param)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import geom;\n"
-        "int entry() { Pt p = { 10, 20 }; return manhattan(p); }\n",
-        "main", &err);
+                                            "import geom;\n"
+                                            "int entry() { Pt p = { 10, 20 }; return manhattan(p); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 30);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 30);
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -583,16 +617,26 @@ STRATA_TEST(resolver_array_of_imported_struct_type)
     strataSetImportResolver(c, &ResolverGeom, NULL);
 
     const char* err = NULL;
-    StrataJit* jit = strataJitCompileString(c,
-        "import geom;\n"
-        "int entry() { Pt[] pts = { Pt{1, 2}, Pt{3, 4} }; return pts[0].x + pts[1].y; }\n",
-        "main", &err);
+    StrataJit* jit
+        = strataJitCompileString(c,
+                                 "import geom;\n"
+                                 "int entry() { Pt[] pts = { Pt{1, 2}, Pt{3, 4} }; return pts[0].x + pts[1].y; }\n",
+                                 "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 5);  /* 1 + 4 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 5); /* 1 + 4 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -634,15 +678,24 @@ STRATA_TEST(resolver_deep_call_chain_across_modules)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import c;\n"
-        "int entry() { return c_val(); }\n",
-        "main", &err);
+                                            "import c;\n"
+                                            "int entry() { return c_val(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 111);  /* 1 + 10 + 100 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 111); /* 1 + 10 + 100 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -680,16 +733,25 @@ STRATA_TEST(resolver_mutual_import_with_shared_function)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import a;\n"
-        "import b;\n"
-        "int entry() { return a_only() + b_only(); }\n",
-        "main", &err);
+                                            "import a;\n"
+                                            "import b;\n"
+                                            "int entry() { return a_only() + b_only(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 12);  /* a_only=8, b_only=4 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 12); /* a_only=8, b_only=4 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -747,19 +809,28 @@ STRATA_TEST(resolver_return_param_forward_decl_import)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import sdk;\n"
-        "struct Foo { int x; };\n"
-        "int entry() { Foo f = GetFoo(); return UseFoo(f) + f.x; }\n",
-        "main", &err);
+                                            "import sdk;\n"
+                                            "struct Foo { int x; };\n"
+                                            "int entry() { Foo f = GetFoo(); return UseFoo(f) + f.x; }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "GetFoo", (void*)&HostSdkGetFoo), 1);
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "UseFoo", (void*)&HostSdkUseFoo), 1);
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 81);  /* UseFoo(40)+1 + 40 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 81); /* UseFoo(40)+1 + 40 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -774,19 +845,28 @@ STRATA_TEST(resolver_return_param_forward_decl_import_reverse)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import sdkdef;\n"
-        "struct Foo;\n"
-        "int entry() { Foo f = GetFoo(); return UseFoo(f) + f.x; }\n",
-        "main", &err);
+                                            "import sdkdef;\n"
+                                            "struct Foo;\n"
+                                            "int entry() { Foo f = GetFoo(); return UseFoo(f) + f.x; }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "GetFoo", (void*)&HostSdkGetFoo), 1);
     STRATA_CHECK_EQ(strataJitAddSymbol(jit, "UseFoo", (void*)&HostSdkUseFoo), 1);
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 81);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 81);
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -815,11 +895,17 @@ STRATA_TEST(resolver_global_shared_across_modules)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import cfg;\n"
-        "int entry() { return base + base_twice(); }\n",
-        "main", &err);
+                                            "import cfg;\n"
+                                            "int entry() { return base + base_twice(); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     void* (*create)(void) = (void* (*)(void))strataJitGetFunction(jit, "__strata_context_create");
     void (*destroy)(void*) = (void (*)(void*))strataJitGetFunction(jit, "__strata_context_destroy");
@@ -828,7 +914,7 @@ STRATA_TEST(resolver_global_shared_across_modules)
     if (entry && create && destroy)
     {
         void* ctx = create();
-        STRATA_CHECK_EQ(entry(ctx), 300);  /* 100 + 200 */
+        STRATA_CHECK_EQ(entry(ctx), 300); /* 100 + 200 */
         destroy(ctx);
     }
 
@@ -859,15 +945,24 @@ STRATA_TEST(resolver_overloaded_function_imported)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import math;\n"
-        "int entry() { return sum(1, 2) + sum(1, 2, 3); }\n",
-        "main", &err);
+                                            "import math;\n"
+                                            "int entry() { return sum(1, 2) + sum(1, 2, 3); }\n",
+                                            "main", &err);
     STRATA_CHECK(jit != NULL);
-    if (!jit) { printf("  JIT failed: %s\n", err ? err : "(none)"); strataFree((char*)err); strataCompilerDestroy(c); return; }
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
 
     int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
     STRATA_CHECK(entry != NULL);
-    if (entry) STRATA_CHECK_EQ(entry(NULL), 9);  /* 3 + 6 */
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 9); /* 3 + 6 */
+    }
 
     strataJitDestroy(jit);
     strataCompilerDestroy(c);
@@ -882,9 +977,9 @@ STRATA_TEST(resolver_unknown_type_from_import_is_error)
     strataSetImportResolver(c, &ResolverShapes, NULL);
 
     StrataResult r = strataCompileString(c,
-        "import shapes;\n"
-        "int entry() { OtherT x; return 0; }\n",
-        "main", STRATA_EMIT_LLVM_IR, 0);
+                                         "import shapes;\n"
+                                         "int entry() { OtherT x; return 0; }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);
@@ -900,9 +995,9 @@ STRATA_TEST(resolver_unknown_function_from_import_is_error)
     strataSetImportResolver(c, &ResolverShapes, NULL);
 
     StrataResult r = strataCompileString(c,
-        "import shapes;\n"
-        "int entry() { return missing_fn(); }\n",
-        "main", STRATA_EMIT_LLVM_IR, 0);
+                                         "import shapes;\n"
+                                         "int entry() { return missing_fn(); }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
 
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);
@@ -933,9 +1028,9 @@ STRATA_TEST(resolver_must_set_module_name)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "import util;\n"
-        "int entry() { return util_val(); }\n",
-        "noname_root", &err);
+                                            "import util;\n"
+                                            "int entry() { return util_val(); }\n",
+                                            "noname_root", &err);
     STRATA_CHECK(jit == NULL);
     STRATA_CHECK(err != NULL && strstr(err, "did not set a canonical module name") != NULL);
 
@@ -975,10 +1070,9 @@ STRATA_TEST(import_case_variants_load_once_on_windows)
     snprintf(mainPath, sizeof(mainPath), "%s/strata_case_main.strata", tmp);
 
     STRATA_CHECK(WriteTextFile(utilPath, "struct U { int x; };\nint util_val() { return 6; }\n"));
-    STRATA_CHECK(WriteTextFile(mainPath,
-                               "import strata_case_util;\n"
-                               "import STRATA_CASE_UTIL;\n"
-                               "int entry() { return util_val(); }\n"));
+    STRATA_CHECK(WriteTextFile(mainPath, "import strata_case_util;\n"
+                                         "import STRATA_CASE_UTIL;\n"
+                                         "int entry() { return util_val(); }\n"));
 
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;

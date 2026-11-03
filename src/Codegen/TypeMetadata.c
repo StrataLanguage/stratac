@@ -460,7 +460,8 @@ static StrataTypeKind StorageKind(Writer* w, const FieldShape* shape)
 
     uint32_t index = EnumIndex(w, shape->typeName);
 
-    return index == STRATA_TYPES_NO_INDEX ? STRATA_TYPE_I32 : ((const EnumEntry*)VecGet(&w->enums, index))->underlyingKind;
+    return index == STRATA_TYPES_NO_INDEX ? STRATA_TYPE_I32
+                                          : ((const EnumEntry*)VecGet(&w->enums, index))->underlyingKind;
 }
 
 static void WriteDefaultValue(uint8_t* at, StrataTypeKind kind, const FieldDefaultValue* value)

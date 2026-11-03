@@ -1,5 +1,5 @@
-#include "Util.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 
 #include <stdio.h>
@@ -43,9 +43,9 @@ STRATA_TEST(jit_runs_noarg_function_and_calls)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int sq(int x) { return x * x; }\n"
-        "int answer() { return sq(7); }\n",
-        "calls", &err);
+                                            "int sq(int x) { return x * x; }\n"
+                                            "int answer() { return sq(7); }\n",
+                                            "calls", &err);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -98,8 +98,10 @@ STRATA_TEST(jit_runs_float_function)
 #if STRATA_TEST_HAS_LLVM
 STRATA_TEST(aot_emits_native_object_file)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int add(int a, int b) { return a + b; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -132,8 +134,10 @@ STRATA_TEST(aot_emits_native_object_file)
 
 STRATA_TEST(aot_emits_assembly_file)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("int forty_two() { return 42; }", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -175,7 +179,10 @@ static int HostAdd(int a, int b)
     return a + b;
 }
 
-typedef struct { int x; } HostFwd;
+typedef struct
+{
+    int x;
+} HostFwd;
 
 static void HostConsumeFwd(const HostFwd* f)
 {
@@ -187,11 +194,11 @@ STRATA_TEST(jit_extern_with_forward_declared_struct)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "struct Foo;\n"
-        "extern void consume(const ref Foo f);\n"
-        "struct Foo { int x; };\n"
-        "int entry() { Foo f; f.x = 7; consume(f); return f.x; }\n",
-        "fwdfwd", &err);
+                                            "struct Foo;\n"
+                                            "extern void consume(const ref Foo f);\n"
+                                            "struct Foo { int x; };\n"
+                                            "int entry() { Foo f; f.x = 7; consume(f); return f.x; }\n",
+                                            "fwdfwd", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -219,10 +226,10 @@ STRATA_TEST(jit_calls_host_extern_function)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "extern int host_double(int x);\n"
-        "extern int host_add(int a, int b);\n"
-        "int entry(int x) { return host_add(host_double(x), 1); }\n",
-        "ext", &err);
+                                            "extern int host_double(int x);\n"
+                                            "extern int host_add(int a, int b);\n"
+                                            "int entry(int x) { return host_add(host_double(x), 1); }\n",
+                                            "ext", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -270,8 +277,9 @@ STRATA_TEST(jit_custom_allocator_is_used)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int entry() { int[] a = {1, 2, 3}; int[] b = {10, 20}; array_push(a, 4); return a[0] + a[3] + (int)b.length; }",
-        "custom_alloc", &err);
+                                            "int entry() { int[] a = {1, 2, 3}; int[] b = {10, 20}; array_push(a, 4); "
+                                            "return a[0] + a[3] + (int)b.length; }",
+                                            "custom_alloc", &err);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -279,7 +287,7 @@ STRATA_TEST(jit_custom_allocator_is_used)
         STRATA_CHECK(entry != NULL);
         if (entry)
         {
-            STRATA_CHECK_EQ(entry(NULL), 7);   /* 1 + 4 + 2 */
+            STRATA_CHECK_EQ(entry(NULL), 7); /* 1 + 4 + 2 */
         }
         STRATA_CHECK(g_customAllocs > 0);
     }
@@ -293,14 +301,14 @@ STRATA_TEST(jit_runs_defer_in_lifo_order)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int g = 0;\n"
-        "void run() {\n"
-        "    defer g = g * 10 + 3;\n"
-        "    defer g = g * 10 + 2;\n"
-        "    g = g * 10 + 1;\n"
-        "}\n"
-        "int getg() { return g; }\n",
-        "defer_lifo", &err);
+                                            "int g = 0;\n"
+                                            "void run() {\n"
+                                            "    defer g = g * 10 + 3;\n"
+                                            "    defer g = g * 10 + 2;\n"
+                                            "    g = g * 10 + 1;\n"
+                                            "}\n"
+                                            "int getg() { return g; }\n",
+                                            "defer_lifo", &err);
     if (!jit)
     {
         printf("  JIT compile failed: %s\n", err ? err : "(no message)");
@@ -336,21 +344,21 @@ STRATA_TEST(jit_runs_defer_block_in_lifo_order)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int g = 0;\n"
-        "void run() {\n"
-        "    int k = 2;\n"
-        "    defer {\n"              /* deferred first, runs last (as one unit) */
-        "        defer g = g * 10 + 1;\n"
-        "        g = g * 10 + k;\n"
-        "    }\n"
-        "    defer g = g * 10 + 3;\n"
-        "    defer {\n"              /* deferred last, runs first */
-        "        g = g * 10 + 4;\n"
-        "    }\n"
-        "    g = 1;\n"
-        "}\n"
-        "int getg() { return g; }\n",
-        "defer_block_lifo", &err);
+                                            "int g = 0;\n"
+                                            "void run() {\n"
+                                            "    int k = 2;\n"
+                                            "    defer {\n" /* deferred first, runs last (as one unit) */
+                                            "        defer g = g * 10 + 1;\n"
+                                            "        g = g * 10 + k;\n"
+                                            "    }\n"
+                                            "    defer g = g * 10 + 3;\n"
+                                            "    defer {\n" /* deferred last, runs first */
+                                            "        g = g * 10 + 4;\n"
+                                            "    }\n"
+                                            "    g = 1;\n"
+                                            "}\n"
+                                            "int getg() { return g; }\n",
+                                            "defer_block_lifo", &err);
     if (!jit)
     {
         printf("  JIT compile failed: %s\n", err ? err : "(no message)");
@@ -387,17 +395,17 @@ STRATA_TEST(jit_runs_defer_block_on_early_return)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int g = 0;\n"
-        "int run() {\n"
-        "    defer {\n"
-        "        g = g * 10 + 9;\n"
-        "    }\n"
-        "    g = g * 10 + 1;\n"
-        "    if (g > 0) return g;\n"
-        "    return 0;\n"
-        "}\n"
-        "int getg() { return g; }\n",
-        "defer_block_ret", &err);
+                                            "int g = 0;\n"
+                                            "int run() {\n"
+                                            "    defer {\n"
+                                            "        g = g * 10 + 9;\n"
+                                            "    }\n"
+                                            "    g = g * 10 + 1;\n"
+                                            "    if (g > 0) return g;\n"
+                                            "    return 0;\n"
+                                            "}\n"
+                                            "int getg() { return g; }\n",
+                                            "defer_block_ret", &err);
     if (!jit)
     {
         printf("  JIT compile failed: %s\n", err ? err : "(no message)");
@@ -419,7 +427,7 @@ STRATA_TEST(jit_runs_defer_block_on_early_return)
     {
         void* ctx = create();
         int r = run(ctx);
-        STRATA_CHECK_EQ(r, 1);       /* return value snapshotted before defers run */
+        STRATA_CHECK_EQ(r, 1);          /* return value snapshotted before defers run */
         STRATA_CHECK_EQ(getg(ctx), 19); /* deferred block ran despite the early return */
         destroyCtx(ctx);
     }
@@ -433,30 +441,30 @@ STRATA_TEST(jit_runs_defer_block_on_break_and_continue)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int gb = 0;\n"
-        "int gc = 0;\n"
-        "void run_break() {\n"
-        "    int i = 0;\n"
-        "    while (i < 3) {\n"
-        "        defer {\n"
-        "            gb = gb * 10 + i;\n"
-        "        }\n"
-        "        i = i + 1;\n"
-        "        if (i == 2) break;\n"
-        "    }\n"
-        "}\n"
-        "void run_continue() {\n"
-        "    for (int i = 0; i < 3; i = i + 1) {\n"
-        "        defer {\n"
-        "            if (i == 0) gc = gc + 100;\n"
-        "            gc = gc * 10 + i;\n"
-        "        }\n"
-        "        if (i == 0) continue;\n"
-        "    }\n"
-        "}\n"
-        "int getgb() { return gb; }\n"
-        "int getgc() { return gc; }\n",
-        "defer_block_loop", &err);
+                                            "int gb = 0;\n"
+                                            "int gc = 0;\n"
+                                            "void run_break() {\n"
+                                            "    int i = 0;\n"
+                                            "    while (i < 3) {\n"
+                                            "        defer {\n"
+                                            "            gb = gb * 10 + i;\n"
+                                            "        }\n"
+                                            "        i = i + 1;\n"
+                                            "        if (i == 2) break;\n"
+                                            "    }\n"
+                                            "}\n"
+                                            "void run_continue() {\n"
+                                            "    for (int i = 0; i < 3; i = i + 1) {\n"
+                                            "        defer {\n"
+                                            "            if (i == 0) gc = gc + 100;\n"
+                                            "            gc = gc * 10 + i;\n"
+                                            "        }\n"
+                                            "        if (i == 0) continue;\n"
+                                            "    }\n"
+                                            "}\n"
+                                            "int getgb() { return gb; }\n"
+                                            "int getgc() { return gc; }\n",
+                                            "defer_block_loop", &err);
     if (!jit)
     {
         printf("  JIT compile failed: %s\n", err ? err : "(no message)");
@@ -504,15 +512,15 @@ STRATA_TEST(jit_runs_defer_on_early_return)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int g = 0;\n"
-        "int run() {\n"
-        "    defer g = g * 10 + 9;\n"
-        "    g = g * 10 + 1;\n"
-        "    if (g > 0) return g;\n"
-        "    return 0;\n"
-        "}\n"
-        "int getg() { return g; }\n",
-        "defer_ret", &err);
+                                            "int g = 0;\n"
+                                            "int run() {\n"
+                                            "    defer g = g * 10 + 9;\n"
+                                            "    g = g * 10 + 1;\n"
+                                            "    if (g > 0) return g;\n"
+                                            "    return 0;\n"
+                                            "}\n"
+                                            "int getg() { return g; }\n",
+                                            "defer_ret", &err);
     if (!jit)
     {
         printf("  JIT compile failed: %s\n", err ? err : "(no message)");
@@ -534,7 +542,7 @@ STRATA_TEST(jit_runs_defer_on_early_return)
     {
         void* ctx = create();
         int r = run(ctx);
-        STRATA_CHECK_EQ(r, 1);   /* return value snapshotted before defers run */
+        STRATA_CHECK_EQ(r, 1);          /* return value snapshotted before defers run */
         STRATA_CHECK_EQ(getg(ctx), 19); /* defer ran despite the early return */
         destroyCtx(ctx);
     }
@@ -548,24 +556,24 @@ STRATA_TEST(jit_runs_defer_on_break_and_continue)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "int gb = 0;\n"
-        "int gc = 0;\n"
-        "void run_break() {\n"
-        "    int i = 0;\n"
-        "    while (i < 3) {\n"
-        "        defer gb = gb * 10 + i;\n"
-        "        i = i + 1;\n"
-        "        if (i == 2) break;\n"
-        "    }\n"
-        "}\n"
-        "void run_continue() {\n"
-        "    for (int i = 0; i < 3; i = i + 1) {\n"
-        "        defer gc = gc * 10 + i;\n"
-        "    }\n"
-        "}\n"
-        "int getgb() { return gb; }\n"
-        "int getgc() { return gc; }\n",
-        "defer_loop", &err);
+                                            "int gb = 0;\n"
+                                            "int gc = 0;\n"
+                                            "void run_break() {\n"
+                                            "    int i = 0;\n"
+                                            "    while (i < 3) {\n"
+                                            "        defer gb = gb * 10 + i;\n"
+                                            "        i = i + 1;\n"
+                                            "        if (i == 2) break;\n"
+                                            "    }\n"
+                                            "}\n"
+                                            "void run_continue() {\n"
+                                            "    for (int i = 0; i < 3; i = i + 1) {\n"
+                                            "        defer gc = gc * 10 + i;\n"
+                                            "    }\n"
+                                            "}\n"
+                                            "int getgb() { return gb; }\n"
+                                            "int getgc() { return gc; }\n",
+                                            "defer_loop", &err);
     if (!jit)
     {
         printf("  JIT compile failed: %s\n", err ? err : "(no message)");

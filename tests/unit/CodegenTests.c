@@ -1,6 +1,6 @@
-#include "Util.h"
 #include "Codegen/CodegenBackend.h"
 #include "Test.h"
+#include "Util.h"
 
 #include "Codegen/LLVMCApi.h"
 
@@ -11,11 +11,12 @@ static bool Contains(const char* hay, const char* needle)
     return strstr(hay, needle) != NULL;
 }
 
-
 static CodegenResult GenLlvm(const char* src)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve(src, &diag, &arena);
     CodegenResult res = GenerateLlvmIr(mod);
     DiagnosticEngineFree(&diag);
@@ -148,15 +149,15 @@ STRATA_TEST(llvm_scalar_pseudo_constants_emit_correct_bits)
        builds print the double-widened encoding ("0x47EFFFFFE0000000") and
        may omit leading zeros (0x10000000000000). Accept any spelling of the
        limit-macro bit patterns. */
-    STRATA_CHECK(Contains(res.output, "store float f0x7F7FFFFF") ||             /* FLT_MAX */
+    STRATA_CHECK(Contains(res.output, "store float f0x7F7FFFFF") || /* FLT_MAX */
                  Contains(res.output, "store float 0x47EFFFFFE0000000"));
-    STRATA_CHECK(Contains(res.output, "store float f0x00800000") ||             /* FLT_MIN */
+    STRATA_CHECK(Contains(res.output, "store float f0x00800000") || /* FLT_MIN */
                  Contains(res.output, "store float 0x3810000000000000"));
-    STRATA_CHECK(Contains(res.output, "store double f0x7FEFFFFFFFFFFFFF") ||    /* DBL_MAX */
+    STRATA_CHECK(Contains(res.output, "store double f0x7FEFFFFFFFFFFFFF") || /* DBL_MAX */
                  Contains(res.output, "store double 0x7FEFFFFFFFFFFFFF"));
-    STRATA_CHECK(Contains(res.output, "store double f0x0010000000000000") ||    /* DBL_MIN */
-                 Contains(res.output, "store double 0x0010000000000000") ||
-                 Contains(res.output, "store double 0x10000000000000"));
+    STRATA_CHECK(Contains(res.output, "store double f0x0010000000000000") || /* DBL_MIN */
+                 Contains(res.output, "store double 0x0010000000000000")
+                 || Contains(res.output, "store double 0x10000000000000"));
 }
 
 /* A float literal assigned to a double local must be fpext'd, not stored as
@@ -191,5 +192,3 @@ STRATA_TEST(llvm_float_literal_to_double_param_fpext)
     STRATA_CHECK(res.ok);
     STRATA_CHECK(Contains(res.output, "call double @cos(double 1.500000e+00"));
 }
-
-

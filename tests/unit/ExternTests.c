@@ -368,12 +368,14 @@ static void CheckExtern(const char* source, const HostSymbol* hosts, size_t host
 
 STRATA_TEST(extern_string_param_by_value)
 {
-    HostSymbol hosts[] = { { "host_str_len", (void*)&HostStrLen } };
+    HostSymbol hosts[] = {
+        {"host_str_len", (void*)&HostStrLen}
+    };
     CheckExtern("extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
                 "  string s = \"hello\";\n"
-                "  int n = host_str_len(s);\n"       /* 5; s is borrowed, not moved */
+                "  int n = host_str_len(s);\n" /* 5; s is borrowed, not moved */
                 "  s = \"world\";\n"
                 "  return n + host_str_len(\"hi\") + host_str_len(s);\n" /* 5 + 2 + 5 = 12 */
                 "}\n",
@@ -382,7 +384,9 @@ STRATA_TEST(extern_string_param_by_value)
 
 STRATA_TEST(extern_const_string_param_by_value)
 {
-    HostSymbol hosts[] = { { "host_str_len_const", (void*)&HostStrLenConst } };
+    HostSymbol hosts[] = {
+        {"host_str_len_const", (void*)&HostStrLenConst}
+    };
     CheckExtern("extern int host_str_len_const(const string s);\n"
                 "int entry()\n"
                 "{\n"
@@ -396,24 +400,28 @@ STRATA_TEST(extern_ref_string_param_reads_content)
 {
     /* `ref string` (and `const ref string`) still cross by value as a
        const char* at the extern ABI; the host reads the string content. */
-    HostSymbol hosts[] = { { "host_str_len_ref", (void*)&HostStrLenRef } };
+    HostSymbol hosts[] = {
+        {"host_str_len_ref", (void*)&HostStrLenRef}
+    };
     CheckExtern("extern int host_str_len_ref(ref string s);\n"
                 "int entry()\n"
                 "{\n"
                 "  string s = \"xyz\";\n"
-                "  return host_str_len_ref(s);\n"    /* 3 */
+                "  return host_str_len_ref(s);\n" /* 3 */
                 "}\n",
                 hosts, 1, 3);
 }
 
 STRATA_TEST(extern_const_ref_string_param_reads_content)
 {
-    HostSymbol hosts[] = { { "host_str_len_cref", (void*)&HostStrLenConstRef } };
+    HostSymbol hosts[] = {
+        {"host_str_len_cref", (void*)&HostStrLenConstRef}
+    };
     CheckExtern("extern int host_str_len_cref(const ref string s);\n"
                 "int entry()\n"
                 "{\n"
                 "  string s = \"qwerty\";\n"
-                "  return host_str_len_cref(s);\n"   /* 6 */
+                "  return host_str_len_cref(s);\n" /* 6 */
                 "}\n",
                 hosts, 1, 6);
 }
@@ -422,12 +430,14 @@ STRATA_TEST(extern_ref_string_host_mutates_in_place)
 {
     /* The by-value char* still points at the caller's owned buffer, so a
        host that casts away const can mutate it in place. */
-    HostSymbol hosts[] = { { "host_str_shout", (void*)&HostStrShout } };
+    HostSymbol hosts[] = {
+        {"host_str_shout", (void*)&HostStrShout}
+    };
     CheckExtern("extern int host_str_shout(ref string s);\n"
                 "int entry()\n"
                 "{\n"
                 "  string s = \"abc\";\n"
-                "  return host_str_shout(s);\n"      /* mutates to \"ABC\", returns 'A' = 65 */
+                "  return host_str_shout(s);\n" /* mutates to \"ABC\", returns 'A' = 65 */
                 "}\n",
                 hosts, 1, 65);
 }
@@ -439,13 +449,16 @@ STRATA_TEST(extern_string_return_copies_char_star)
     /* A bare `string` return crosses as a NUL-terminated char*; the caller
        copies it into a fresh owned buffer it frees at scope exit (the host's
        static buffer is never freed). */
-    HostSymbol hosts[] = { { "sdl_get_error", (void*)&HostStrError }, { "host_str_len", (void*)&HostStrLen } };
+    HostSymbol hosts[] = {
+        {"sdl_get_error", (void*)&HostStrError},
+        {"host_str_len",  (void*)&HostStrLen  }
+    };
     CheckExtern("extern string sdl_get_error();\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
-                "  string err = sdl_get_error();\n"    /* owns a copy of \"sdl error\" */
-                "  return host_str_len(err);\n"        /* 9 */
+                "  string err = sdl_get_error();\n" /* owns a copy of \"sdl error\" */
+                "  return host_str_len(err);\n"     /* 9 */
                 "}\n",
                 hosts, 2, 9);
 }
@@ -453,13 +466,16 @@ STRATA_TEST(extern_string_return_copies_char_star)
 STRATA_TEST(extern_string_return_null_is_empty)
 {
     /* A NULL char* return materializes the canonical empty string. */
-    HostSymbol hosts[] = { { "host_str_null", (void*)&HostStrNull }, { "host_str_len", (void*)&HostStrLen } };
+    HostSymbol hosts[] = {
+        {"host_str_null", (void*)&HostStrNull},
+        {"host_str_len",  (void*)&HostStrLen }
+    };
     CheckExtern("extern string host_str_null();\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
-                "  string err = host_str_null();\n"    /* empty */
-                "  return host_str_len(err);\n"        /* 0 */
+                "  string err = host_str_null();\n" /* empty */
+                "  return host_str_len(err);\n"     /* 0 */
                 "}\n",
                 hosts, 2, 0);
 }
@@ -494,14 +510,14 @@ STRATA_TEST(extern_string_return_discard_does_not_allocate)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "extern string sdl_get_error();\n"
-        "int entry()\n"
-        "{\n"
-        "  sdl_get_error();\n"               /* discarded: no copy */
-        "  string err = sdl_get_error();\n"  /* one copy, freed at scope exit */
-        "  return 0;\n"
-        "}\n",
-        "discardret", &err);
+                                            "extern string sdl_get_error();\n"
+                                            "int entry()\n"
+                                            "{\n"
+                                            "  sdl_get_error();\n"              /* discarded: no copy */
+                                            "  string err = sdl_get_error();\n" /* one copy, freed at scope exit */
+                                            "  return 0;\n"
+                                            "}\n",
+                                            "discardret", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -538,15 +554,15 @@ STRATA_TEST(discarded_owning_call_result_is_dropped)
 
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "string make() { return \"hello\"; }\n"
-        "^int boxit() { return 42; }\n"
-        "int entry()\n"
-        "{\n"
-        "  make();\n"    /* discarded string: callee copies, caller frees */
-        "  boxit();\n"   /* discarded box cell: caller frees */
-        "  return 0;\n"
-        "}\n",
-        "discardown", &err);
+                                            "string make() { return \"hello\"; }\n"
+                                            "^int boxit() { return 42; }\n"
+                                            "int entry()\n"
+                                            "{\n"
+                                            "  make();\n"  /* discarded string: callee copies, caller frees */
+                                            "  boxit();\n" /* discarded box cell: caller frees */
+                                            "  return 0;\n"
+                                            "}\n",
+                                            "discardown", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -576,12 +592,15 @@ STRATA_TEST(extern_string_return_out_param_is_owned)
 {
     /* The caller owns the returned buffer and frees it at scope exit
        (no double-free / leak with two live results). */
-    HostSymbol hosts[] = { { "host_str_make", (void*)&HostStrMake }, { "host_str_len", (void*)&HostStrLen } };
+    HostSymbol hosts[] = {
+        {"host_str_make", (void*)&HostStrMake},
+        {"host_str_len",  (void*)&HostStrLen }
+    };
     CheckExtern("extern void host_str_make(return string s);\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
-                "  string a = host_str_make();\n"    /* owns \"fromhost\" (8 chars) */
+                "  string a = host_str_make();\n" /* owns \"fromhost\" (8 chars) */
                 "  string b = host_str_make();\n"
                 "  return host_str_len(a) + host_str_len(b);\n" /* 8 + 8 = 16 */
                 "}\n",
@@ -592,14 +611,17 @@ STRATA_TEST(extern_string_param_and_out_param_return)
 {
     /* Params arrive by value and stay borrowed; the returned string comes
        back through the out-param and is read through another extern call. */
-    HostSymbol hosts[] = { { "host_str_concat", (void*)&HostStrConcat }, { "host_str_len", (void*)&HostStrLen } };
+    HostSymbol hosts[] = {
+        {"host_str_concat", (void*)&HostStrConcat},
+        {"host_str_len",    (void*)&HostStrLen   }
+    };
     CheckExtern("extern void host_str_concat(string a, string b, return string c);\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
                 "  string a = \"foo\";\n"
                 "  string b = \"bar\";\n"
-                "  string c = host_str_concat(a, b);\n" /* owns \"foobar\" */
+                "  string c = host_str_concat(a, b);\n"                           /* owns \"foobar\" */
                 "  return host_str_len(a) + host_str_len(b) + host_str_len(c);\n" /* 3 + 3 + 6 = 12 */
                 "}\n",
                 hosts, 2, 12);
@@ -611,28 +633,33 @@ STRATA_TEST(extern_int_array_param_borrows)
 {
     /* An extern owned `int[]` param is passed by address of the slot and
        never moves the caller's array. */
-    HostSymbol hosts[] = { { "host_arr_sum", (void*)&HostArrSum } };
+    HostSymbol hosts[] = {
+        {"host_arr_sum", (void*)&HostArrSum}
+    };
     CheckExtern("extern int host_arr_sum(int[] a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {1, 2, 3};\n"
-                "  int s = host_arr_sum(a, (int)a.length);\n"       /* 6; a borrowed, still live */
-                "  return s + (int)a.length;\n"      /* 6 + 3 = 9 */
+                "  int s = host_arr_sum(a, (int)a.length);\n" /* 6; a borrowed, still live */
+                "  return s + (int)a.length;\n"               /* 6 + 3 = 9 */
                 "}\n",
                 hosts, 1, 9);
 }
 
 STRATA_TEST(extern_ref_int_array_mutates_elements)
 {
-    HostSymbol hosts[] = { { "host_arr_bump", (void*)&HostArrBump }, { "host_arr_sum", (void*)&HostArrSum } };
+    HostSymbol hosts[] = {
+        {"host_arr_bump", (void*)&HostArrBump},
+        {"host_arr_sum",  (void*)&HostArrSum }
+    };
     CheckExtern("extern void host_arr_bump(ref int[] a);\n"
                 "extern int host_arr_sum(int[] a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {1, 2, 3};\n"
-                "  host_arr_bump(a);\n"              /* {2,3,4} */
-                "  host_arr_bump(a);\n"              /* {3,4,5} */
-                "  return host_arr_sum(a, (int)a.length);\n"        /* 12 */
+                "  host_arr_bump(a);\n"                      /* {2,3,4} */
+                "  host_arr_bump(a);\n"                      /* {3,4,5} */
+                "  return host_arr_sum(a, (int)a.length);\n" /* 12 */
                 "}\n",
                 hosts, 2, 12);
 }
@@ -641,13 +668,16 @@ STRATA_TEST(extern_ref_int_array_out_param)
 {
     /* A `ref int[]` host can replace the whole array; the caller then owns
        (and frees) the buffer the host allocated. */
-    HostSymbol hosts[] = { { "host_arr_fill", (void*)&HostArrFill }, { "host_arr_sum", (void*)&HostArrSum } };
+    HostSymbol hosts[] = {
+        {"host_arr_fill", (void*)&HostArrFill},
+        {"host_arr_sum",  (void*)&HostArrSum }
+    };
     CheckExtern("extern void host_arr_fill(ref int[] a, int n);\n"
                 "extern int host_arr_sum(int[] a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a;\n"
-                "  host_arr_fill(a, 3);\n"           /* a = {0, 10, 20} */
+                "  host_arr_fill(a, 3);\n"                                   /* a = {0, 10, 20} */
                 "  return host_arr_sum(a, (int)a.length) + (int)a.length;\n" /* 30 + 3 = 33 */
                 "}\n",
                 hosts, 2, 33);
@@ -658,12 +688,14 @@ STRATA_TEST(extern_string_array_param_count)
     /* A string[] (owning elements) crosses as the fat struct; reading its
        length from the host and freeing the strings at scope exit must be
        clean. */
-    HostSymbol hosts[] = { { "host_str_arr_count", (void*)&HostStrArrCount } };
+    HostSymbol hosts[] = {
+        {"host_str_arr_count", (void*)&HostStrArrCount}
+    };
     CheckExtern("extern int host_str_arr_count(string[] a);\n"
                 "int entry()\n"
                 "{\n"
                 "  string[] a = {\"aa\", \"bb\", \"cc\"};\n"
-                "  return host_str_arr_count(a);\n"  /* 3 */
+                "  return host_str_arr_count(a);\n" /* 3 */
                 "}\n",
                 hosts, 1, 3);
 }
@@ -678,12 +710,14 @@ STRATA_TEST(extern_hat_dyn_float_array_decays_to_ptr)
 {
     /* float[] -> ^float: the data buffer pointer crosses, length as the
        caller-supplied arg. */
-    HostSymbol hosts[] = { { "host_float_sum", (void*)&HostFloatSum } };
+    HostSymbol hosts[] = {
+        {"host_float_sum", (void*)&HostFloatSum}
+    };
     CheckExtern("extern int host_float_sum(^float a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  float[] a = {1.0, 2.0, 3.0, 4.0};\n"
-                "  return host_float_sum(a, (int)a.length);\n"   /* 10 */
+                "  return host_float_sum(a, (int)a.length);\n" /* 10 */
                 "}\n",
                 hosts, 1, 10);
 }
@@ -692,13 +726,15 @@ STRATA_TEST(extern_hat_fixed_float16_field_decays_to_ptr)
 {
     /* float[16] struct field -> ^float: GEP to element 0 of the inline
        storage (short rows zero-fill, so 1..5 = 15). */
-    HostSymbol hosts[] = { { "host_float_sum", (void*)&HostFloatSum } };
+    HostSymbol hosts[] = {
+        {"host_float_sum", (void*)&HostFloatSum}
+    };
     CheckExtern("extern int host_float_sum(^float a, int n);\n"
                 "struct Buf { float[16] data; };\n"
                 "int entry()\n"
                 "{\n"
                 "  Buf b = { .data = {1.0, 2.0, 3.0, 4.0, 5.0} };\n"
-                "  return host_float_sum(b.data, (int)b.data.length);\n"   /* 15 */
+                "  return host_float_sum(b.data, (int)b.data.length);\n" /* 15 */
                 "}\n",
                 hosts, 1, 15);
 }
@@ -707,13 +743,15 @@ STRATA_TEST(extern_hat_dyn_int_array_host_mutates_in_place)
 {
     /* The decay passes the caller's live buffer, so a host can mutate it and
        Strata reads the changes back (externs borrow - nothing is moved). */
-    HostSymbol hosts[] = { { "host_int_bump", (void*)&HostIntBump } };
+    HostSymbol hosts[] = {
+        {"host_int_bump", (void*)&HostIntBump}
+    };
     CheckExtern("extern void host_int_bump(^int a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {1, 2, 3};\n"
-                "  host_int_bump(a, (int)a.length);\n"   /* {2,3,4} */
-                "  return a[0] + a[1] + a[2];\n"         /* 9 */
+                "  host_int_bump(a, (int)a.length);\n" /* {2,3,4} */
+                "  return a[0] + a[1] + a[2];\n"       /* 9 */
                 "}\n",
                 hosts, 1, 9);
 }
@@ -722,14 +760,16 @@ STRATA_TEST(extern_hat_fixed_int8_field_host_mutates_in_place)
 {
     /* Fixed array field -> ^int: the pointer hits the struct's inline
        storage, so the host mutates the actual field, not a copy. */
-    HostSymbol hosts[] = { { "host_int_bump", (void*)&HostIntBump } };
+    HostSymbol hosts[] = {
+        {"host_int_bump", (void*)&HostIntBump}
+    };
     CheckExtern("extern void host_int_bump(^int a, int n);\n"
                 "struct Buf { int[8] data; };\n"
                 "int entry()\n"
                 "{\n"
                 "  Buf b = { .data = {1, 2, 3} };\n"
-                "  host_int_bump(b.data, 8);\n"          /* {2,3,4,1,1,1,1,1} */
-                "  return b.data[0] + b.data[1] + b.data[2];\n"   /* 9 */
+                "  host_int_bump(b.data, 8);\n"                 /* {2,3,4,1,1,1,1,1} */
+                "  return b.data[0] + b.data[1] + b.data[2];\n" /* 9 */
                 "}\n",
                 hosts, 1, 9);
 }
@@ -738,13 +778,15 @@ STRATA_TEST(extern_hat_dyn_array_borrowed_not_moved)
 {
     /* After the decayed call the array is still live and readable - the
        extern never consumes it. */
-    HostSymbol hosts[] = { { "host_int_sum", (void*)&HostIntSum } };
+    HostSymbol hosts[] = {
+        {"host_int_sum", (void*)&HostIntSum}
+    };
     CheckExtern("extern int host_int_sum(^int a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {5, 6, 7};\n"
-                "  int s = host_int_sum(a, (int)a.length);\n"   /* 18 */
-                "  return s + (int)a.length + a[0];\n"          /* 18 + 3 + 5 = 26 */
+                "  int s = host_int_sum(a, (int)a.length);\n" /* 18 */
+                "  return s + (int)a.length + a[0];\n"        /* 18 + 3 + 5 = 26 */
                 "}\n",
                 hosts, 1, 26);
 }
@@ -753,12 +795,14 @@ STRATA_TEST(extern_hat_double_array_decays_to_ptr)
 {
     /* double[] -> ^double: doubles cross exactly (the element pointer is a
        double*, matching C). */
-    HostSymbol hosts[] = { { "host_double_sum", (void*)&HostDoubleSum } };
+    HostSymbol hosts[] = {
+        {"host_double_sum", (void*)&HostDoubleSum}
+    };
     CheckExtern("extern int host_double_sum(^double a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  double[] a = {1.5, 2.5, 3.0};\n"
-                "  return host_double_sum(a, (int)a.length);\n"   /* 7 */
+                "  return host_double_sum(a, (int)a.length);\n" /* 7 */
                 "}\n",
                 hosts, 1, 7);
 }
@@ -766,13 +810,15 @@ STRATA_TEST(extern_hat_double_array_decays_to_ptr)
 STRATA_TEST(extern_hat_byte_fixed_field_decays_to_ptr)
 {
     /* byte[4] field -> ^byte: sums the unsigned bytes. */
-    HostSymbol hosts[] = { { "host_byte_sum", (void*)&HostByteSum } };
+    HostSymbol hosts[] = {
+        {"host_byte_sum", (void*)&HostByteSum}
+    };
     CheckExtern("extern int host_byte_sum(^byte a, int n);\n"
                 "struct Buf { byte[4] data; };\n"
                 "int entry()\n"
                 "{\n"
                 "  Buf b = { .data = {10, 20, 30, 40} };\n"
-                "  return host_byte_sum(b.data, 4);\n"   /* 100 */
+                "  return host_byte_sum(b.data, 4);\n" /* 100 */
                 "}\n",
                 hosts, 1, 100);
 }
@@ -781,13 +827,15 @@ STRATA_TEST(extern_hat_two_array_params_in_one_call)
 {
     /* Two decayed array params (^float and ^int) in one extern call - each
        arg decays independently. */
-    HostSymbol hosts[] = { { "host_float_int_mix", (void*)&HostFloatIntMix } };
+    HostSymbol hosts[] = {
+        {"host_float_int_mix", (void*)&HostFloatIntMix}
+    };
     CheckExtern("extern int host_float_int_mix(^float f, int fn, ^int i, int in);\n"
                 "int entry()\n"
                 "{\n"
                 "  float[] f = {3.0, 4.0};\n"
                 "  int[] i = {7, 8};\n"
-                "  return host_float_int_mix(f, (int)f.length, i, (int)i.length);\n"   /* 3 + 7 + 2 + 2 = 14 */
+                "  return host_float_int_mix(f, (int)f.length, i, (int)i.length);\n" /* 3 + 7 + 2 + 2 = 14 */
                 "}\n",
                 hosts, 1, 14);
 }
@@ -796,13 +844,15 @@ STRATA_TEST(extern_hat_host_fills_dyn_buffer)
 {
     /* The host writes through the decayed pointer into the caller's buffer;
        Strata reads the filled values back. */
-    HostSymbol hosts[] = { { "host_int_fill", (void*)&HostIntFill } };
+    HostSymbol hosts[] = {
+        {"host_int_fill", (void*)&HostIntFill}
+    };
     CheckExtern("extern void host_int_fill(^int a, int n);\n"
                 "int entry()\n"
                 "{\n"
                 "  int[] a = {0, 0, 0, 0};\n"
-                "  host_int_fill(a, (int)a.length);\n"   /* {0,2,4,6} */
-                "  return a[0] + a[1] + a[2] + a[3];\n"  /* 12 */
+                "  host_int_fill(a, (int)a.length);\n"  /* {0,2,4,6} */
+                "  return a[0] + a[1] + a[2] + a[3];\n" /* 12 */
                 "}\n",
                 hosts, 1, 12);
 }
@@ -810,14 +860,16 @@ STRATA_TEST(extern_hat_host_fills_dyn_buffer)
 STRATA_TEST(extern_hat_fixed_and_dyn_arrays_together)
 {
     /* Fixed field and dynamic array both decay in the same function. */
-    HostSymbol hosts[] = { { "host_float_sum", (void*)&HostFloatSum } };
+    HostSymbol hosts[] = {
+        {"host_float_sum", (void*)&HostFloatSum}
+    };
     CheckExtern("extern int host_float_sum(^float a, int n);\n"
                 "struct Buf { float[4] data; };\n"
                 "int entry()\n"
                 "{\n"
                 "  Buf b = { .data = {1.0, 2.0, 3.0, 4.0} };\n"
                 "  float[] a = {10.0, 20.0};\n"
-                "  return host_float_sum(b.data, 4) + host_float_sum(a, (int)a.length);\n"   /* 10 + 30 = 40 */
+                "  return host_float_sum(b.data, 4) + host_float_sum(a, (int)a.length);\n" /* 10 + 30 = 40 */
                 "}\n",
                 hosts, 1, 40);
 }
@@ -830,19 +882,21 @@ STRATA_TEST(extern_fat_return_is_rejected)
        ABI for it is host-dependent (hidden sret pointer on MS x64 vs register
        return elsewhere), so the call site would read garbage. The `return`
        out-param is the supported crossing. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "extern byte[] bad_bytes();\n"
-        "extern byte[]? bad_maybe_bytes();\n"
-        "extern string? bad_maybe_str();\n"
-        "extern void good_bytes(return byte[] out);\n"
-        "extern void good_maybe_str(return string? out);\n"
-        "int entry() { return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("extern byte[] bad_bytes();\n"
+                    "extern byte[]? bad_maybe_bytes();\n"
+                    "extern string? bad_maybe_str();\n"
+                    "extern void good_bytes(return byte[] out);\n"
+                    "extern void good_maybe_str(return string? out);\n"
+                    "int entry() { return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "extern function cannot return") != NULL);
     STRATA_CHECK(strstr(d, "byte[]") != NULL);
@@ -858,42 +912,48 @@ STRATA_TEST(extern_box_struct_param_borrows)
 {
     /* ^T crosses as the box cell pointer; extern never moves the caller's
        box, so it stays live afterward. */
-    HostSymbol hosts[] = { { "host_box_read", (void*)&HostBoxRead } };
+    HostSymbol hosts[] = {
+        {"host_box_read", (void*)&HostBoxRead}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern int host_box_read(^Foo b);\n"
                 "int entry()\n"
                 "{\n"
                 "  ^Foo b = Foo { .v = 7 };\n"
-                "  int r = host_box_read(b);\n"      /* 7; b borrowed, still live */
-                "  return r + b.v;\n"                /* 7 + 7 = 14 */
+                "  int r = host_box_read(b);\n" /* 7; b borrowed, still live */
+                "  return r + b.v;\n"           /* 7 + 7 = 14 */
                 "}\n",
                 hosts, 1, 14);
 }
 
 STRATA_TEST(extern_box_struct_param_host_mutates)
 {
-    HostSymbol hosts[] = { { "host_box_set", (void*)&HostBoxSet } };
+    HostSymbol hosts[] = {
+        {"host_box_set", (void*)&HostBoxSet}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern void host_box_set(^Foo b);\n"
                 "int entry()\n"
                 "{\n"
                 "  ^Foo b = Foo { .v = 1 };\n"
-                "  host_box_set(b);\n"               /* sets b.v = 99 in place */
-                "  return b.v;\n"                    /* 99 */
+                "  host_box_set(b);\n" /* sets b.v = 99 in place */
+                "  return b.v;\n"      /* 99 */
                 "}\n",
                 hosts, 1, 99);
 }
 
 STRATA_TEST(extern_ref_box_struct_param)
 {
-    HostSymbol hosts[] = { { "host_box_read_ref", (void*)&HostBoxReadRef } };
+    HostSymbol hosts[] = {
+        {"host_box_read_ref", (void*)&HostBoxReadRef}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern int host_box_read_ref(ref ^Foo b);\n"
                 "int entry()\n"
                 "{\n"
                 "  ^Foo b = Foo { .v = 5 };\n"
-                "  int r = host_box_read_ref(b);\n"  /* 5 */
-                "  return r + b.v;\n"                /* 5 + 5 = 10 */
+                "  int r = host_box_read_ref(b);\n" /* 5 */
+                "  return r + b.v;\n"               /* 5 + 5 = 10 */
                 "}\n",
                 hosts, 1, 10);
 }
@@ -902,14 +962,17 @@ STRATA_TEST(extern_string_box_is_rejected)
 {
     /* `^string` is banned everywhere, extern params included — a plain
        `string` param already crosses as `const char*`. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("extern int host_str_box_len(^string b);\n"
                     "int entry() { return 0; }\n",
                     &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "redundant boxing of type 'string'") != NULL);
 
@@ -921,14 +984,16 @@ STRATA_TEST(extern_box_struct_array_param)
 {
     /* ^Foo[] (owning elements) crosses as the fat struct; the host
        reaches the first boxed element. The array stays live after. */
-    HostSymbol hosts[] = { { "host_box_arr_first", (void*)&HostBoxArrFirst } };
+    HostSymbol hosts[] = {
+        {"host_box_arr_first", (void*)&HostBoxArrFirst}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern int host_box_arr_first(^Foo[] arr);\n"
                 "int entry()\n"
                 "{\n"
                 "  ^Foo[] arr = { Foo { .v = 9 }, Foo { .v = 8 } };\n"
                 "  int f = host_box_arr_first(arr);\n" /* 9; arr borrowed */
-                "  return f + arr[1].v;\n"            /* 9 + 8 = 17 */
+                "  return f + arr[1].v;\n"             /* 9 + 8 = 17 */
                 "}\n",
                 hosts, 1, 17);
 }
@@ -938,14 +1003,16 @@ STRATA_TEST(extern_box_struct_array_param)
 STRATA_TEST(extern_box_struct_return_is_owned)
 {
     /* The caller owns the returned box slot and frees it at scope exit. */
-    HostSymbol hosts[] = { { "host_box_make", (void*)&HostBoxMake } };
+    HostSymbol hosts[] = {
+        {"host_box_make", (void*)&HostBoxMake}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern ^Foo host_box_make(int v);\n"
                 "int entry()\n"
                 "{\n"
                 "  ^Foo a = host_box_make(10);\n" /* owns a heap Foo */
                 "  ^Foo b = host_box_make(32);\n"
-                "  return a.v + b.v;\n"               /* 42 */
+                "  return a.v + b.v;\n" /* 42 */
                 "}\n",
                 hosts, 1, 42);
 }
@@ -979,7 +1046,9 @@ static void HostHandleGet(void** h)
 
 STRATA_TEST(extern_return_param_struct)
 {
-    HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet } };
+    HostSymbol hosts[] = {
+        {"host_foo_get", (void*)&HostFooGet}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern void host_foo_get(return Foo f);\n"
                 "int entry()\n"
@@ -994,7 +1063,9 @@ STRATA_TEST(extern_return_param_forward_declared_struct)
 {
     /* A forward-declared struct may appear in the `return` param declaration;
        the definition (here anywhere in the module) is what the CALL needs. */
-    HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet } };
+    HostSymbol hosts[] = {
+        {"host_foo_get", (void*)&HostFooGet}
+    };
     CheckExtern("struct Foo;\n"
                 "extern void host_foo_get(return Foo f);\n"
                 "struct Foo { int v; };\n"
@@ -1010,7 +1081,10 @@ STRATA_TEST(extern_return_param_struct_passed_to_ref)
 {
     /* The returned value is a real local; it can be handed to another
        extern (by-ref struct param) and read again. */
-    HostSymbol hosts[] = { { "host_foo_get", (void*)&HostFooGet }, { "host_box_read", (void*)&HostBoxRead } };
+    HostSymbol hosts[] = {
+        {"host_foo_get",  (void*)&HostFooGet },
+        {"host_box_read", (void*)&HostBoxRead}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern void host_foo_get(return Foo f);\n"
                 "extern int host_box_read(const ref Foo f);\n"
@@ -1025,7 +1099,9 @@ STRATA_TEST(extern_return_param_struct_passed_to_ref)
 
 STRATA_TEST(extern_return_param_scalar)
 {
-    HostSymbol hosts[] = { { "host_int_get", (void*)&HostIntGet } };
+    HostSymbol hosts[] = {
+        {"host_int_get", (void*)&HostIntGet}
+    };
     CheckExtern("extern void host_int_get(return int v);\n"
                 "int entry()\n"
                 "{\n"
@@ -1039,20 +1115,25 @@ STRATA_TEST(extern_return_param_string)
 {
     /* The callee writes the fat {ptr, len} into the out slot; the caller
        owns the buffer and frees it at scope exit (no leak). */
-    HostSymbol hosts[] = { { "host_str_get", (void*)&HostStrGet }, { "host_str_len", (void*)&HostStrLen } };
+    HostSymbol hosts[] = {
+        {"host_str_get", (void*)&HostStrGet},
+        {"host_str_len", (void*)&HostStrLen}
+    };
     CheckExtern("extern void host_str_get(return string s);\n"
                 "extern int host_str_len(string s);\n"
                 "int entry()\n"
                 "{\n"
                 "  string s = host_str_get();\n" /* owns \"hoststr\" (7 chars) */
-                "  return host_str_len(s);\n"     /* 7 */
+                "  return host_str_len(s);\n"    /* 7 */
                 "}\n",
                 hosts, 2, 7);
 }
 
 STRATA_TEST(extern_return_param_handle)
 {
-    HostSymbol hosts[] = { { "host_handle_get", (void*)&HostHandleGet } };
+    HostSymbol hosts[] = {
+        {"host_handle_get", (void*)&HostHandleGet}
+    };
     CheckExtern("handle Entity;\n"
                 "extern void host_handle_get(return Entity e);\n"
                 "int entry()\n"
@@ -1077,7 +1158,9 @@ STRATA_TEST(extern_return_param_box)
 {
     /* `return ^Foo f` crosses as a single out-pointer (Foo**); the caller
        owns the box and frees it at scope exit. */
-    HostSymbol hosts[] = { { "host_foo_box_get", (void*)&HostFooBoxGet } };
+    HostSymbol hosts[] = {
+        {"host_foo_box_get", (void*)&HostFooBoxGet}
+    };
     CheckExtern("struct Foo { int v; };\n"
                 "extern void host_foo_box_get(return ^Foo f);\n"
                 "int entry()\n"
@@ -1138,10 +1221,10 @@ STRATA_TEST(impl_on_forward_declared_struct_via_box)
        script drives it opaquely through a `^TheType` box (a `return` param)
        and impl-declared extern methods. */
     HostSymbol hosts[] = {
-        { "host_get_type", (void*)&HostOpaqueGetType },
-        { "TheType_GetValue", (void*)&HostOpaqueGetValue },
-        { "TheType_SetValue", (void*)&HostOpaqueSetValue },
-        { "TheType_Bump", (void*)&HostOpaqueBump },
+        {"host_get_type",    (void*)&HostOpaqueGetType },
+        {"TheType_GetValue", (void*)&HostOpaqueGetValue},
+        {"TheType_SetValue", (void*)&HostOpaqueSetValue},
+        {"TheType_Bump",     (void*)&HostOpaqueBump    },
     };
     CheckExtern("struct TheType;\n"
                 "extern void host_get_type(return ^TheType t);\n"
@@ -1153,10 +1236,10 @@ STRATA_TEST(impl_on_forward_declared_struct_via_box)
                 "int entry()\n"
                 "{\n"
                 "  ^TheType t = host_get_type();\n" /* box { 42 } */
-                "  int v = t.GetValue();\n"          /* 42 */
-                "  t.SetValue(v + 1);\n"             /* host stores 43 */
-                "  int w = t.Bump();\n"              /* reads 43, stores 44, returns 43 */
-                "  return w + t.GetValue();\n"       /* 43 + 44 = 87 */
+                "  int v = t.GetValue();\n"         /* 42 */
+                "  t.SetValue(v + 1);\n"            /* host stores 43 */
+                "  int w = t.Bump();\n"             /* reads 43, stores 44, returns 43 */
+                "  return w + t.GetValue();\n"      /* 43 + 44 = 87 */
                 "}\n",
                 hosts, 4, 87);
 }
@@ -1196,7 +1279,9 @@ STRATA_TEST(impl_on_defined_struct)
 {
     /* `impl` also works on a fully defined struct: the self param crosses
        by reference like any struct parameter. */
-    HostSymbol hosts[] = { { "Pair_Sum", (void*)&HostPairSum } };
+    HostSymbol hosts[] = {
+        {"Pair_Sum", (void*)&HostPairSum}
+    };
     CheckExtern("struct Pair { int a; int b; };\n"
                 "impl Pair {\n"
                 "    extern int Sum(const ref Pair self);\n"
@@ -1212,7 +1297,9 @@ STRATA_TEST(impl_on_defined_struct)
 STRATA_TEST(impl_on_defined_struct_static_method)
 {
     /* A parameterless-self impl method resolves as a static call. */
-    HostSymbol hosts[] = { { "Pair_StaticSum", (void*)&HostPairStaticSum } };
+    HostSymbol hosts[] = {
+        {"Pair_StaticSum", (void*)&HostPairStaticSum}
+    };
     CheckExtern("struct Pair { int a; int b; };\n"
                 "impl Pair {\n"
                 "    extern int StaticSum(int a, int b);\n"
@@ -1227,7 +1314,9 @@ STRATA_TEST(impl_on_defined_struct_static_method)
 STRATA_TEST(impl_on_type_alias_scalar_jit)
 {
     /* `impl` on a strong alias of a scalar: self crosses by value (i32). */
-    HostSymbol hosts[] = { { "Meter_Get", (void*)&HostMeterGet } };
+    HostSymbol hosts[] = {
+        {"Meter_Get", (void*)&HostMeterGet}
+    };
     CheckExtern("struct Meter = int;\n"
                 "impl Meter {\n"
                 "    extern int Get(Meter self);\n"
@@ -1245,7 +1334,9 @@ STRATA_TEST(impl_on_type_alias_struct_jit)
     /* `impl` on a strong alias of a struct: self crosses by reference like
        any struct parameter. The alias is its own target — distinct from the
        underlying's impl (see impl_on_defined_struct). */
-    HostSymbol hosts[] = { { "X_Get", (void*)&HostXGet } };
+    HostSymbol hosts[] = {
+        {"X_Get", (void*)&HostXGet}
+    };
     CheckExtern("struct Pair { int a; int b; };\n"
                 "struct X = Pair;\n"
                 "impl X {\n"
@@ -1264,7 +1355,9 @@ STRATA_TEST(impl_on_type_alias_static_factory_jit)
 {
     /* A parameterless impl method on an alias resolves as a static call and
        returns the underlying scalar by value. */
-    HostSymbol hosts[] = { { "Meter_New", (void*)&HostMeterNew } };
+    HostSymbol hosts[] = {
+        {"Meter_New", (void*)&HostMeterNew}
+    };
     CheckExtern("struct Meter = int;\n"
                 "impl Meter {\n"
                 "    extern Meter New();\n"
@@ -1327,7 +1420,9 @@ STRATA_TEST(extern_alias_scalar_param)
        underlying scalar by VALUE (i32), not as a pointer to the caller's
        slot. Regression: aliases were classified as structs in
        DeclareFunction/DefineFunction, so the host received &s. */
-    HostSymbol hosts[] = { { "host_state_get", (void*)&HostStateGet } };
+    HostSymbol hosts[] = {
+        {"host_state_get", (void*)&HostStateGet}
+    };
     CheckExtern("struct State = uint;\n"
                 "extern uint host_state_get(State s);\n"
                 "int entry()\n"
@@ -1343,7 +1438,9 @@ STRATA_TEST(extern_alias_scalar_param)
 STRATA_TEST(extern_alias_scalar_return)
 {
     /* Alias return types cross as the underlying scalar value too. */
-    HostSymbol hosts[] = { { "host_state_return", (void*)&HostStateReturn } };
+    HostSymbol hosts[] = {
+        {"host_state_return", (void*)&HostStateReturn}
+    };
     CheckExtern("struct State = uint;\n"
                 "extern State host_state_return(State s);\n"
                 "int entry()\n"
@@ -1358,7 +1455,9 @@ STRATA_TEST(extern_alias_scalar_return)
 
 STRATA_TEST(extern_alias_param_alias_of_alias)
 {
-    HostSymbol hosts[] = { { "host_state_get", (void*)&HostStateGet } };
+    HostSymbol hosts[] = {
+        {"host_state_get", (void*)&HostStateGet}
+    };
     CheckExtern("struct State = uint;\n"
                 "struct State2 = State;\n"
                 "extern uint host_state_get(State2 s);\n"
@@ -1375,7 +1474,9 @@ STRATA_TEST(extern_alias_param_alias_of_alias)
 STRATA_TEST(extern_alias_param_mixed_args)
 {
     /* Alias and primitive params interleaved each land in the right slot. */
-    HostSymbol hosts[] = { { "host_mix", (void*)&HostMix } };
+    HostSymbol hosts[] = {
+        {"host_mix", (void*)&HostMix}
+    };
     CheckExtern("struct State = uint;\n"
                 "extern int host_mix(State a, int b, State c);\n"
                 "int entry()\n"
@@ -1389,7 +1490,9 @@ STRATA_TEST(extern_alias_param_mixed_args)
 STRATA_TEST(extern_alias_param_ref)
 {
     /* `ref State` stays a pointer to the caller's slot and mutates in place. */
-    HostSymbol hosts[] = { { "host_state_inc", (void*)&HostStateInc } };
+    HostSymbol hosts[] = {
+        {"host_state_inc", (void*)&HostStateInc}
+    };
     CheckExtern("struct State = uint;\n"
                 "extern void host_state_inc(ref State s);\n"
                 "int entry()\n"
@@ -1406,8 +1509,8 @@ STRATA_TEST(extern_alias_handle_param)
 {
     /* An alias of a handle crosses by value like the handle itself. */
     HostSymbol hosts[] = {
-        { "host_make_entity", (void*)&HostMakeEntity },
-        { "host_check_handle", (void*)&HostCheckHandle },
+        {"host_make_entity",  (void*)&HostMakeEntity },
+        {"host_check_handle", (void*)&HostCheckHandle},
     };
     CheckExtern("handle Entity;\n"
                 "struct E2 = Entity;\n"
@@ -1424,7 +1527,9 @@ STRATA_TEST(extern_alias_handle_param)
 STRATA_TEST(extern_alias_struct_param_still_by_ref)
 {
     /* An alias of a DEFINED struct is still a struct at the ABI: by pointer. */
-    HostSymbol hosts[] = { { "host_point_y", (void*)&HostPointY } };
+    HostSymbol hosts[] = {
+        {"host_point_y", (void*)&HostPointY}
+    };
     CheckExtern("struct Vec3 { float x; float y; float z; };\n"
                 "struct Point = Vec3;\n"
                 "extern int host_point_y(const ref Point p);\n"

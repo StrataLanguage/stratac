@@ -11,7 +11,8 @@
    proof. Loans: a place an earlier operand of a call, operator or index takes stays loaned to the end of
    the expression, and later operands may not move, mutate or (for a mutable loan) touch it. */
 
-typedef enum {
+typedef enum
+{
     MoveDiagUse,        /* a moved or maybe-moved place is used */
     MoveDiagPoisoned,   /* a place is used whole while a part of it (`detail`) is moved out */
     MoveDiagNarrow,     /* a `T?` is read without a proof that it is set */
@@ -23,7 +24,8 @@ typedef enum {
     MoveDiagDangle,     /* a `ref` is used after the place it refers to was written, moved or reallocated */
 } MoveDiagKind;
 
-typedef struct {
+typedef struct
+{
     SourceRange range; /* the offending use */
     const char* name;
     MoveDiagKind kind;
@@ -37,8 +39,8 @@ WriteSets* WriteSetsBuild(const Module* mod, const TypeRegistry* reg, const Node
 void WriteSetsFree(WriteSets* ws);
 
 /* Uses of a moved or maybe-moved place, and reads of an unproven `T?`, in `fn`. The caller frees `*out`. */
-size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types,
-                         const WriteSets* ws, Arena* arena, MoveDiag** out);
+size_t MoveCheckFunction(const FunctionDecl* fn, const TypeRegistry* reg, const NodeTypes* types, const WriteSets* ws,
+                         Arena* arena, MoveDiag** out);
 
 /* Runs MoveCheckFunction over every function of `mod` and adds what it finds to `diag`. */
 void MoveCheckModule(const Module* mod, const TypeRegistry* reg, const NodeTypes* types, DiagnosticEngine* diag,

@@ -7,9 +7,9 @@
 #include <stdio.h>
 #include <string.h>
 
-static jmp_buf  s_panicJmp;
-static char     s_panicMsg[256];
-static int      s_panicCount;
+static jmp_buf s_panicJmp;
+static char s_panicMsg[256];
+static int s_panicCount;
 
 static void TestPanicHandler(const char* msg)
 {
@@ -181,8 +181,7 @@ STRATA_TEST(errored_module_rejected_cleanly_llvm)
 
 STRATA_TEST(errored_module_rejected_cleanly_string_mismatch)
 {
-    CheckErrorRejected(STRATA_JIT_BACKEND_LLVM,
-                       "int f() { string s = \"x\"; return s; }\n",
+    CheckErrorRejected(STRATA_JIT_BACKEND_LLVM, "int f() { string s = \"x\"; return s; }\n",
                        "cannot return a value of type 'string'");
 }
 
@@ -195,8 +194,7 @@ STRATA_TEST(profile_oob_read_returns_zero_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit("int entry() { int[] a = {1, 2, 3}; return a[5]; }",
-                                STRATA_JIT_BACKEND_LLVM, 1);
+    StrataJit* jit = CompileJit("int entry() { int[] a = {1, 2, 3}; return a[5]; }", STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -236,10 +234,10 @@ STRATA_TEST(profile_oob_string_read_returns_empty_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit(
-        "extern ulong strlen(string s);\n"
-        "int entry() { string[] s = {\"a\", \"b\"}; string t = copy(s[9]); return (int)strlen(t); }",
-        STRATA_JIT_BACKEND_LLVM, 1);
+    StrataJit* jit
+        = CompileJit("extern ulong strlen(string s);\n"
+                     "int entry() { string[] s = {\"a\", \"b\"}; string t = copy(s[9]); return (int)strlen(t); }",
+                     STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -282,10 +280,9 @@ STRATA_TEST(profile_oob_box_struct_field_zero_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit(
-        "struct W { int dmg; };\n"
-        "int entry() { ^W[] ws = { W(7) }; return ws[9].dmg; }",
-        STRATA_JIT_BACKEND_LLVM, 1);
+    StrataJit* jit = CompileJit("struct W { int dmg; };\n"
+                                "int entry() { ^W[] ws = { W(7) }; return ws[9].dmg; }",
+                                STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -307,10 +304,10 @@ STRATA_TEST(profile_oob_move_then_reread_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit(
-        "extern ulong strlen(string s);\n"
-        "int entry() { string[] s = {\"a\"}; string t = copy(s[9]); string u = copy(s[8]); return (int)(strlen(t) + strlen(u)); }",
-        STRATA_JIT_BACKEND_LLVM, 1);
+    StrataJit* jit = CompileJit("extern ulong strlen(string s);\n"
+                                "int entry() { string[] s = {\"a\"}; string t = copy(s[9]); string u = copy(s[8]); "
+                                "return (int)(strlen(t) + strlen(u)); }",
+                                STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -329,10 +326,9 @@ STRATA_TEST(profile_oob_box_move_then_reread_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit(
-        "struct W { int dmg; };\n"
-        "int entry() { ^W[] ws = { W(7) }; ^W m = copy(ws[9]); return ws[8].dmg + m.dmg; }",
-        STRATA_JIT_BACKEND_LLVM, 1);
+    StrataJit* jit = CompileJit("struct W { int dmg; };\n"
+                                "int entry() { ^W[] ws = { W(7) }; ^W m = copy(ws[9]); return ws[8].dmg + m.dmg; }",
+                                STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -351,9 +347,9 @@ STRATA_TEST(profile_oob_repeat_in_loop_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit(
-        "int entry() { int[] a = {1}; int total = 0; for (uint i = 0; i < 5; i++) { total += a[3]; a[4] = i; } return total; }",
-        STRATA_JIT_BACKEND_LLVM, 1);
+    StrataJit* jit = CompileJit("int entry() { int[] a = {1}; int total = 0; for (uint i = 0; i < 5; i++) { total += "
+                                "a[3]; a[4] = i; } return total; }",
+                                STRATA_JIT_BACKEND_LLVM, 1);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {
@@ -400,8 +396,7 @@ STRATA_TEST(profile_checks_disabled_bounds_no_panic_llvm)
         return;
     }
 
-    StrataJit* jit = CompileJit("int entry() { int[] a = {1, 2, 3}; return a[5]; }",
-                                STRATA_JIT_BACKEND_LLVM, 0);
+    StrataJit* jit = CompileJit("int entry() { int[] a = {1, 2, 3}; return a[5]; }", STRATA_JIT_BACKEND_LLVM, 0);
     STRATA_CHECK(jit != NULL);
     if (jit)
     {

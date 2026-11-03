@@ -16,8 +16,10 @@ static bool Contains(const char* h, const char* n)
 
 STRATA_TEST(single_function_keeps_base_name)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseAndResolve("int only(int a) { return a; }\nint entry() { return only(5); }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
@@ -32,14 +34,15 @@ STRATA_TEST(single_function_keeps_base_name)
 
 STRATA_TEST(overloads_get_mangled_names_and_resolve)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "int add(int a, int b) { return a + b; }\n"
-        "float add(float a, float b) { return a + b; }\n"
-        "int entry_i() { return add(2, 3); }\n"
-        "float entry_f() { return add(2.0, 3.0); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("int add(int a, int b) { return a + b; }\n"
+                                  "float add(float a, float b) { return a + b; }\n"
+                                  "int entry_i() { return add(2, 3); }\n"
+                                  "float entry_f() { return add(2.0, 3.0); }\n",
+                                  &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     FunctionDecl* f0 = (FunctionDecl*)VecGet(&mod->functions, 0);
@@ -64,14 +67,15 @@ STRATA_TEST(overloads_get_mangled_names_and_resolve)
 #if STRATA_TEST_HAS_LLVM
 STRATA_TEST(llvm_emits_distinct_overload_symbols)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "int add(int a, int b) { return a + b; }\n"
-        "float add(float a, float b) { return a + b; }\n"
-        "int entry_i() { return add(2, 3); }\n"
-        "float entry_f() { return add(2.0, 3.0); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("int add(int a, int b) { return a + b; }\n"
+                                  "float add(float a, float b) { return a + b; }\n"
+                                  "int entry_i() { return add(2, 3); }\n"
+                                  "float entry_f() { return add(2.0, 3.0); }\n",
+                                  &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     CodegenResult res = GenerateLlvmIr(mod);
     STRATA_CHECK(res.ok);
@@ -85,18 +89,18 @@ STRATA_TEST(llvm_emits_distinct_overload_symbols)
 }
 #endif
 
-
 STRATA_TEST(struct_vs_scalar_overload_resolves)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "struct Vec3 { float x; float y; float z; };\n"
-        "float mag(const Vec3 v) { return v.x + v.y + v.z; }\n"
-        "float mag(float s) { return s; }\n"
-        "float ev() { Vec3 v; v.x = 1.0; v.y = 2.0; v.z = 3.0; return mag(v); }\n"
-        "float es() { return mag(10.0); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Vec3 { float x; float y; float z; };\n"
+                                  "float mag(const Vec3 v) { return v.x + v.y + v.z; }\n"
+                                  "float mag(float s) { return s; }\n"
+                                  "float ev() { Vec3 v; v.x = 1.0; v.y = 2.0; v.z = 3.0; return mag(v); }\n"
+                                  "float es() { return mag(10.0); }\n",
+                                  &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     FunctionDecl* f0 = (FunctionDecl*)VecGet(&mod->functions, 0);
@@ -110,13 +114,14 @@ STRATA_TEST(struct_vs_scalar_overload_resolves)
 
 STRATA_TEST(ambiguous_overload_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int f(int a, float b) { return 1; }\n"
-        "int f(float a, int b) { return 2; }\n"
-        "int entry() { return f(1, 2); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f(int a, float b) { return 1; }\n"
+                    "int f(float a, int b) { return 2; }\n"
+                    "int entry() { return f(1, 2); }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -124,13 +129,14 @@ STRATA_TEST(ambiguous_overload_is_an_error)
 
 STRATA_TEST(no_matching_overload_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct V { float x; };\n"
-        "int f(int a) { return a; }\n"
-        "int entry() { V v; return f(v); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct V { float x; };\n"
+                    "int f(int a) { return a; }\n"
+                    "int entry() { V v; return f(v); }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -138,12 +144,15 @@ STRATA_TEST(no_matching_overload_is_an_error)
 
 STRATA_TEST(undefined_function_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int entry() { return foofdofdofd(); }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "unknown function 'foofdofdofd'"));
 
@@ -153,15 +162,17 @@ STRATA_TEST(undefined_function_is_an_error)
 
 STRATA_TEST(returning_void_value_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "void shoot(int x) { }\n"
-        "int entry() { return shoot(1); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("void shoot(int x) { }\n"
+                    "int entry() { return shoot(1); }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "cannot return a value of type 'void'"));
 
@@ -171,14 +182,15 @@ STRATA_TEST(returning_void_value_is_an_error)
 
 STRATA_TEST(returning_mismatched_type_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int f() { return \"hello\"; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int f() { return \"hello\"; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "cannot return a value of type 'string' from a function returning 'int'"));
 
@@ -191,15 +203,17 @@ STRATA_TEST(returning_array_of_wrong_element_type_is_an_error)
     /* Returning int[] from a string[] function must be a compile-time
        type error, not a miscompile that crashes at runtime (the elements
        are 4-byte ints, not {ptr, len} fats). */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int[] g = { 1 };\n"
-        "string[] f() { return g; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int[] g = { 1 };\n"
+                    "string[] f() { return g; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "cannot return a value of type 'int[]'"));
 
@@ -209,12 +223,13 @@ STRATA_TEST(returning_array_of_wrong_element_type_is_an_error)
 
 STRATA_TEST(constructor_call_is_not_unknown)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Vec3 { float x; float y; float z; };\n"
-        "int entry() { Vec3 v = Vec3(1, 2, 3); return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Vec3 { float x; float y; float z; };\n"
+                    "int entry() { Vec3 v = Vec3(1, 2, 3); return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -222,8 +237,10 @@ STRATA_TEST(constructor_call_is_not_unknown)
 
 STRATA_TEST(extern_by_value_struct_param_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { float x; };\n"
                     "struct A = V;\n"
                     "extern void take(V v);\n"
@@ -239,8 +256,10 @@ STRATA_TEST(extern_by_value_struct_param_is_an_error)
 
 STRATA_TEST(const_struct_param_is_read_only)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { float x; };\nvoid take(const V v) { v.x = 1.0; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -249,8 +268,10 @@ STRATA_TEST(const_struct_param_is_read_only)
 
 STRATA_TEST(bare_struct_param_is_mutable)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { float x; };\nvoid take(V v) { v.x = 1.0; }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -259,8 +280,10 @@ STRATA_TEST(bare_struct_param_is_mutable)
 
 STRATA_TEST(struct_inout_param_is_allowed)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { float x; };\nvoid bump(V v) { v.x = v.x + 1.0; }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -269,15 +292,16 @@ STRATA_TEST(struct_inout_param_is_allowed)
 
 STRATA_TEST(extern_struct_param_with_ref_is_ok)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct V { float x; };\n"
-        "handle H;\n"
-        "extern void take(const ref V v);\n"
-        "extern void fill(ref V v);\n"
-        "extern void use(H h);\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct V { float x; };\n"
+                    "handle H;\n"
+                    "extern void take(const ref V v);\n"
+                    "extern void fill(ref V v);\n"
+                    "extern void use(H h);\n",
+                    &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -285,8 +309,10 @@ STRATA_TEST(extern_struct_param_with_ref_is_ok)
 
 STRATA_TEST(extern_cannot_return_struct_by_value)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct V { float x; };\nextern V make();\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -295,12 +321,15 @@ STRATA_TEST(extern_cannot_return_struct_by_value)
 
 STRATA_TEST(forward_struct_local_is_incomplete_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo;\nint entry() { Foo f; return 0; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "incomplete type 'Foo'"));
 
@@ -310,12 +339,15 @@ STRATA_TEST(forward_struct_local_is_incomplete_error)
 
 STRATA_TEST(forward_struct_field_is_incomplete_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo;\nstruct Bar { Foo f; };\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "incomplete type 'Foo'"));
 
@@ -325,12 +357,15 @@ STRATA_TEST(forward_struct_field_is_incomplete_error)
 
 STRATA_TEST(forward_struct_return_is_incomplete_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo;\nFoo make();\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "incomplete type 'Foo'"));
 
@@ -340,12 +375,15 @@ STRATA_TEST(forward_struct_return_is_incomplete_error)
 
 STRATA_TEST(forward_struct_member_access_is_incomplete_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo;\nvoid use(const Foo f) { int x; x = f.x; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "incomplete type 'Foo'"));
 
@@ -356,8 +394,10 @@ STRATA_TEST(forward_struct_member_access_is_incomplete_error)
 STRATA_TEST(forward_struct_param_is_allowed)
 {
     /* An incomplete struct may appear as a (pointer-passed) parameter. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo;\nvoid use(const Foo f) {}\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -368,8 +408,10 @@ STRATA_TEST(forward_struct_return_param_decl_allowed)
 {
     /* A `return` param is implicitly ref, so its declaration may use a
        forward-declared (incomplete) type - only the CALL needs a definition. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("struct Foo;\nextern void GetFoo(return Foo f);\nint entry() { return 0; }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -378,16 +420,18 @@ STRATA_TEST(forward_struct_return_param_decl_allowed)
 
 STRATA_TEST(forward_struct_return_param_call_requires_definition)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Foo;\n"
-        "extern void GetFoo(return Foo f);\n"
-        "int entry() { Foo f = GetFoo(); return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo;\n"
+                    "extern void GetFoo(return Foo f);\n"
+                    "int entry() { Foo f = GetFoo(); return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "incomplete return type 'Foo'"));
 
@@ -399,14 +443,15 @@ STRATA_TEST(forward_struct_then_definition_return_param_call_ok)
 {
     /* A forward declaration plus a definition anywhere in the module
        satisfies the call's need for a sized return type. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct Foo;\n"
-        "extern void GetFoo(return Foo f);\n"
-        "struct Foo { int x; };\n"
-        "int entry() { Foo f = GetFoo(); return f.x; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Foo;\n"
+                    "extern void GetFoo(return Foo f);\n"
+                    "struct Foo { int x; };\n"
+                    "int entry() { Foo f = GetFoo(); return f.x; }\n",
+                    &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -414,17 +459,18 @@ STRATA_TEST(forward_struct_then_definition_return_param_call_ok)
 
 STRATA_TEST(cast_scalar_to_scalar_is_allowed)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "int entry() {\n"
-        "  float f = 2.0;\n"
-        "  int x = (int)f;\n"
-        "  long l = (long)x;\n"
-        "  bool b = (bool)l;\n"
-        "  return (int)b;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("int entry() {\n"
+                    "  float f = 2.0;\n"
+                    "  int x = (int)f;\n"
+                    "  long l = (long)x;\n"
+                    "  bool b = (bool)l;\n"
+                    "  return (int)b;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -432,14 +478,15 @@ STRATA_TEST(cast_scalar_to_scalar_is_allowed)
 
 STRATA_TEST(cast_handle_downcast_in_lineage_is_allowed)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "handle Entity;\n"
-        "handle Player : Entity;\n"
-        "extern Entity spawn();\n"
-        "int entry() { Entity e = spawn(); Player p = (Player)e; return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Entity;\n"
+                    "handle Player : Entity;\n"
+                    "extern Entity spawn();\n"
+                    "int entry() { Entity e = spawn(); Player p = (Player)e; return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -447,17 +494,19 @@ STRATA_TEST(cast_handle_downcast_in_lineage_is_allowed)
 
 STRATA_TEST(cast_between_unrelated_handles_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "handle Entity;\n"
-        "handle Camera;\n"
-        "extern Entity spawn();\n"
-        "int entry() { Entity e = spawn(); Camera c = (Camera)e; return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Entity;\n"
+                    "handle Camera;\n"
+                    "extern Entity spawn();\n"
+                    "int entry() { Entity e = spawn(); Camera c = (Camera)e; return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "invalid cast"));
 
@@ -467,16 +516,18 @@ STRATA_TEST(cast_between_unrelated_handles_is_an_error)
 
 STRATA_TEST(cast_between_handle_and_int_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "handle Entity;\n"
-        "extern Entity spawn();\n"
-        "int entry() { Entity e = spawn(); int x = (int)e; return x; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Entity;\n"
+                    "extern Entity spawn();\n"
+                    "int entry() { Entity e = spawn(); int x = (int)e; return x; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "invalid cast from 'Entity' to 'int'"));
 
@@ -486,15 +537,17 @@ STRATA_TEST(cast_between_handle_and_int_is_an_error)
 
 STRATA_TEST(cast_struct_to_scalar_is_an_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct V { float x; };\n"
-        "int entry() { V v; int x = (int)v; return x; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct V { float x; };\n"
+                    "int entry() { V v; int x = (int)v; return x; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(Contains(d, "invalid cast from 'V' to 'int'"));
 
@@ -504,8 +557,10 @@ STRATA_TEST(cast_struct_to_scalar_is_an_error)
 
 STRATA_TEST(handle_param_does_not_need_direction)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("handle Entity;\nextern int id_of(Entity e);\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -514,13 +569,14 @@ STRATA_TEST(handle_param_does_not_need_direction)
 
 STRATA_TEST(handle_cannot_have_members_accessed)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "handle Entity;\n"
-        "extern Entity make();\n"
-        "float entry() { Entity e = make(); return e.x; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("handle Entity;\n"
+                    "extern Entity make();\n"
+                    "float entry() { Entity e = make(); return e.x; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -528,8 +584,10 @@ STRATA_TEST(handle_cannot_have_members_accessed)
 
 STRATA_TEST(in_scalar_param_is_const)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("void foo(const int x) { x = 5; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -538,8 +596,10 @@ STRATA_TEST(in_scalar_param_is_const)
 
 STRATA_TEST(in_scalar_param_compound_assign_is_error)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("void foo(const int x) { x += 5; }\n", &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
@@ -548,9 +608,12 @@ STRATA_TEST(in_scalar_param_compound_assign_is_error)
 
 STRATA_TEST(in_struct_param_member_is_const)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve("struct Vec3 { float x; float y; float z; };\nvoid foo(const Vec3 v) { v.y = 3.0; }\n", &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Vec3 { float x; float y; float z; };\nvoid foo(const Vec3 v) { v.y = 3.0; }\n", &diag,
+                    &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
@@ -558,28 +621,31 @@ STRATA_TEST(in_struct_param_member_is_const)
 
 STRATA_TEST(in_param_can_be_read)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     ParseAndResolve("int foo(const int x) { return x + 1; }\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
 
-
 /* A mutable `ref` binds the caller's storage: a numeric conversion would
    write into a temporary and silently lose the callee's write. */
 STRATA_TEST(mutable_ref_numeric_param_requires_exact_type)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "void setv(ref int x) { x = 1; }\n"
-        "int entry() { float f = 0.0; setv(f); return 0; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("void setv(ref int x) { x = 1; }\n"
+                    "int entry() { float f = 0.0; setv(f); return 0; }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     STRATA_CHECK(Contains(DiagFormat(&diag, &sm, 1, &arena), "no matching overload for 'setv'"));
 
     DiagnosticEngineFree(&diag);
@@ -588,8 +654,10 @@ STRATA_TEST(mutable_ref_numeric_param_requires_exact_type)
 
 STRATA_TEST(mutable_ref_picks_exact_overload_and_by_value_still_converts)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     /* Exact `ref` matches still resolve; by-value and `const ref` params still convert. */
     ParseAndResolve(
         "void setv(ref int x) { x = 1; }\n"
@@ -607,15 +675,17 @@ STRATA_TEST(mutable_ref_picks_exact_overload_and_by_value_still_converts)
 /* SIMD args follow the assignment rule: no implicit lane-count or element-type change. */
 STRATA_TEST(simd_param_requires_matching_vector_type)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "float sum(float4 v) { return v.x; }\n"
-        "float entry() { float3 v = float3(1.0, 2.0, 3.0); return sum(v); }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("float sum(float4 v) { return v.x; }\n"
+                    "float entry() { float3 v = float3(1.0, 2.0, 3.0); return sum(v); }\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     STRATA_CHECK(Contains(DiagFormat(&diag, &sm, 1, &arena), "no matching overload for 'sum'"));
 
     DiagnosticEngineFree(&diag);
@@ -624,16 +694,17 @@ STRATA_TEST(simd_param_requires_matching_vector_type)
 
 STRATA_TEST(simd_param_overload_picks_matching_lane_count)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "float sum(float4 v) { return v.x + v.w; }\n"
-        "float sum(float3 v) { return v.x + v.z; }\n"
-        "float entry() {\n"
-        "  float4 a = float4(1.0, 2.0, 3.0, 4.0); float3 b = float3(1.0, 2.0, 3.0);\n"
-        "  return sum(a) + sum(b);\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("float sum(float4 v) { return v.x + v.w; }\n"
+                    "float sum(float3 v) { return v.x + v.z; }\n"
+                    "float entry() {\n"
+                    "  float4 a = float4(1.0, 2.0, 3.0, 4.0); float3 b = float3(1.0, 2.0, 3.0);\n"
+                    "  return sum(a) + sum(b);\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);

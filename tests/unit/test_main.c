@@ -40,12 +40,18 @@ int TestRunAll(void)
     int total = 0;
     for (size_t i = 0; i < g_testCount; i++)
     {
-        if (filter && !strstr(g_tests[i].name, filter)) continue;
+        if (filter && !strstr(g_tests[i].name, filter))
+        {
+            continue;
+        }
         if (skip)
         {
             size_t nameLen = strlen(g_tests[i].name);
             const char* hit = strstr(skip, g_tests[i].name);
-            if (hit && (hit == skip || hit[-1] == ',') && (hit[nameLen] == '\0' || hit[nameLen] == ',')) continue;
+            if (hit && (hit == skip || hit[-1] == ',') && (hit[nameLen] == '\0' || hit[nameLen] == ','))
+            {
+                continue;
+            }
         }
         int before = g_failures;
         printf("[ RUN      ] %s\n", g_tests[i].name);

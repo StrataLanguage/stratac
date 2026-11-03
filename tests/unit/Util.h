@@ -8,8 +8,8 @@
 #include "Parse/Parser.h"
 #include "Sema/ResolveOverloads.h"
 
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 static inline Module* ParseModule(const char* src, DiagnosticEngine* diag, Arena* arena)
 {
@@ -30,7 +30,8 @@ static inline Module* ParseAndResolve(const char* src, DiagnosticEngine* diag, A
     return mod;
 }
 
-typedef struct {
+typedef struct
+{
     Token* items;
     size_t count;
 } TokenList;
@@ -52,7 +53,10 @@ static inline TokenList LexAll(const char* src)
             tl.items = (Token*)realloc(tl.items, cap * sizeof(Token));
         }
         tl.items[tl.count++] = t;
-        if (t.kind == TokEof) break;
+        if (t.kind == TokEof)
+        {
+            break;
+        }
     }
     DiagnosticEngineFree(&diag);
     return tl;

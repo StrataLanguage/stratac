@@ -1,15 +1,14 @@
-#include "Util.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
-
 
 static StrataJit* CompileJit(const char* src)
 {
     StrataCompiler* c = strataCompilerCreate();
-    
+
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c, src, "cfg", &err);
-    
+
     if (err)
     {
         strataFree((char*)err);
@@ -223,7 +222,10 @@ STRATA_TEST(missing_return_on_branch_is_error)
                                 "  if (x > 0) return 1;\n"
                                 "}\n");
     STRATA_CHECK(jit == NULL);
-    if (jit) strataJitDestroy(jit);
+    if (jit)
+    {
+        strataJitDestroy(jit);
+    }
 }
 
 STRATA_TEST(missing_return_on_loop_zero_runs_is_error)
@@ -233,7 +235,10 @@ STRATA_TEST(missing_return_on_loop_zero_runs_is_error)
                                 "  while (x > 0) { return 1; }\n"
                                 "}\n");
     STRATA_CHECK(jit == NULL);
-    if (jit) strataJitDestroy(jit);
+    if (jit)
+    {
+        strataJitDestroy(jit);
+    }
 }
 
 STRATA_TEST(missing_return_break_then_fallthrough_is_error)
@@ -243,7 +248,10 @@ STRATA_TEST(missing_return_break_then_fallthrough_is_error)
                                 "  while (true) { break; }\n"
                                 "}\n");
     STRATA_CHECK(jit == NULL);
-    if (jit) strataJitDestroy(jit);
+    if (jit)
+    {
+        strataJitDestroy(jit);
+    }
 }
 
 STRATA_TEST(missing_return_if_else_both_return_ok)
@@ -254,7 +262,10 @@ STRATA_TEST(missing_return_if_else_both_return_ok)
                                 "}\n"
                                 "int entry() { return f(1); }\n");
     STRATA_CHECK(jit != NULL);
-    if (jit) strataJitDestroy(jit);
+    if (jit)
+    {
+        strataJitDestroy(jit);
+    }
 }
 
 STRATA_TEST(missing_return_while_true_infinite_ok)
@@ -265,7 +276,10 @@ STRATA_TEST(missing_return_while_true_infinite_ok)
                                 "}\n"
                                 "int entry() { return h(); }\n");
     STRATA_CHECK(jit != NULL);
-    if (jit) strataJitDestroy(jit);
+    if (jit)
+    {
+        strataJitDestroy(jit);
+    }
 }
 
 /* ---- defer is checked where it runs ----------------------------------------
@@ -273,17 +287,19 @@ STRATA_TEST(missing_return_while_true_infinite_ok)
    continue), after everything before that exit, so its moves and reads are
    checked against the state at each of those exits, LIFO. */
 
-#define DEFER_FLOW_PRELUDE                                \
-    "struct E { int v; };\n"                              \
-    "^E mk(int n) { return E { .v = n }; }\n"             \
-    "int take(^E e) { return e.v; }\n"                    \
+#define DEFER_FLOW_PRELUDE                                                                                             \
+    "struct E { int v; };\n"                                                                                           \
+    "^E mk(int n) { return E { .v = n }; }\n"                                                                          \
+    "int take(^E e) { return e.v; }\n"                                                                                 \
     "int note(int x) { return x; }\n"
 
 /* Error count of resolving `src`, or -1 when it has none of `needle`. */
 static int DeferErrors(const char* src, const char* needle)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
 
     ParseAndResolve(src, &diag, &arena);
 
@@ -304,18 +320,16 @@ static int DeferErrors(const char* src, const char* needle)
 STRATA_TEST(defer_reading_box_moved_before_exit_is_an_error)
 {
     /* The deferred read runs after `take(b)` freed the box. */
-    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE
-                             "void entry() { ^E b = mk(1); defer note(b.v); take(b); }\n",
-                             "used after move")
-                 > 0);
+    STRATA_CHECK(
+        DeferErrors(DEFER_FLOW_PRELUDE "void entry() { ^E b = mk(1); defer note(b.v); take(b); }\n", "used after move")
+        > 0);
 
     /* Only the early-return exit moved it. */
-    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE
-                             "int entry(bool c) {\n"
-                             "  ^E b = mk(1); defer note(b.v);\n"
-                             "  if (c) { take(b); return 1; }\n"
-                             "  return 0;\n"
-                             "}\n",
+    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE "int entry(bool c) {\n"
+                                                "  ^E b = mk(1); defer note(b.v);\n"
+                                                "  if (c) { take(b); return 1; }\n"
+                                                "  return 0;\n"
+                                                "}\n",
                              "used after move")
                  > 0);
 
@@ -342,23 +356,22 @@ STRATA_TEST(defer_reading_box_moved_before_exit_is_an_error)
 
 STRATA_TEST(defer_same_error_at_several_exits_is_reported_once)
 {
-    STRATA_CHECK_EQ(DeferErrors(DEFER_FLOW_PRELUDE
-                                "int entry(bool c) {\n"
-                                "  ^E b = mk(1); defer note(b.v);\n"
-                                "  if (c) { take(b); return 1; }\n"
-                                "  if (!c) { take(b); return 2; }\n"
-                                "  take(b);\n"
-                                "  return 0;\n"
-                                "}\n",
+    STRATA_CHECK_EQ(DeferErrors(DEFER_FLOW_PRELUDE "int entry(bool c) {\n"
+                                                   "  ^E b = mk(1); defer note(b.v);\n"
+                                                   "  if (c) { take(b); return 1; }\n"
+                                                   "  if (!c) { take(b); return 2; }\n"
+                                                   "  take(b);\n"
+                                                   "  return 0;\n"
+                                                   "}\n",
                                 "used after move"),
                     1);
 }
 
 STRATA_TEST(defer_cannot_see_names_declared_after_it)
 {
-    STRATA_CHECK(DeferErrors(DEFER_FLOW_PRELUDE "int entry() { defer note(x); int x = 1; return x; }\n",
-                             "unknown variable 'x'")
-                 > 0);
+    STRATA_CHECK(
+        DeferErrors(DEFER_FLOW_PRELUDE "int entry() { defer note(x); int x = 1; return x; }\n", "unknown variable 'x'")
+        > 0);
 }
 
 STRATA_TEST(defer_move_after_return_value_is_legal)
@@ -381,8 +394,7 @@ STRATA_TEST(defer_move_after_return_value_is_legal)
                                 "used after move"),
                     0);
 
-    StrataJit* jit = CompileJit(DEFER_FLOW_PRELUDE
-                                "int entry() { ^E b = mk(7); defer take(b); return b.v; }\n");
+    StrataJit* jit = CompileJit(DEFER_FLOW_PRELUDE "int entry() { ^E b = mk(7); defer take(b); return b.v; }\n");
     STRATA_CHECK(jit != NULL);
     if (jit)
     {

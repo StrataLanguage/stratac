@@ -1,6 +1,6 @@
-#include "Util.h"
 #include "Codegen/TypeRegistry.h"
 #include "Test.h"
+#include "Util.h"
 #include "strata/strata.h"
 
 #include <stdint.h>
@@ -8,8 +8,10 @@
 
 STRATA_TEST(parser_struct_declaration)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Vec3 { float x; float y; float z; };\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK_EQ((long)mod->structs.count, 1);
@@ -28,8 +30,10 @@ STRATA_TEST(parser_struct_declaration)
 
 STRATA_TEST(parser_opaque_struct)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle Entity;\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK_EQ((long)mod->handles.count, 1);
@@ -43,8 +47,10 @@ STRATA_TEST(parser_opaque_struct)
 
 STRATA_TEST(parser_forward_struct_declaration)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("struct Foo;\n", &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK_EQ((long)mod->structs.count, 1);
@@ -60,13 +66,14 @@ STRATA_TEST(parser_forward_struct_declaration)
 
 STRATA_TEST(forward_struct_is_completed_by_later_body)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseAndResolve(
-        "struct Foo;\n"
-        "int get_x(const Foo f) { return f.x; }\n"
-        "struct Foo { int x; };\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Foo;\n"
+                                  "int get_x(const Foo f) { return f.x; }\n"
+                                  "struct Foo { int x; };\n",
+                                  &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     /* The forward decl and the body collapse to a single complete type, so a
@@ -90,11 +97,11 @@ STRATA_TEST(jit_forward_decl_completed_and_used)
     StrataCompiler* c = strataCompilerCreate();
     const char* err = NULL;
     StrataJit* jit = strataJitCompileString(c,
-        "struct Foo;\n"
-        "int get_x(const Foo f) { return f.x; }\n"
-        "struct Foo { int x; };\n"
-        "int entry() { Foo f; f.x = 42; return get_x(f); }\n",
-        "fwd", &err);
+                                            "struct Foo;\n"
+                                            "int get_x(const Foo f) { return f.x; }\n"
+                                            "struct Foo { int x; };\n"
+                                            "int entry() { Foo f; f.x = 42; return get_x(f); }\n",
+                                            "fwd", &err);
     STRATA_CHECK(jit != NULL);
     if (!jit)
     {
@@ -117,12 +124,13 @@ STRATA_TEST(jit_forward_decl_completed_and_used)
 
 STRATA_TEST(parser_struct_typed_params_and_members)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseModule(
-        "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(const Vec3 a, const Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct Vec3 { float x; float y; float z; };\n"
+                              "float dot(const Vec3 a, const Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }\n",
+                              &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
     STRATA_CHECK_EQ((long)mod->functions.count, 1);
 
@@ -133,7 +141,6 @@ STRATA_TEST(parser_struct_typed_params_and_members)
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
-
 
 static StrataJit* CompileJit(const char* src)
 {
@@ -424,7 +431,10 @@ STRATA_TEST(jit_self_referential_struct_by_value_param_copies)
     }
 }
 
-typedef struct { float x, y, z; } HostVec3;
+typedef struct
+{
+    float x, y, z;
+} HostVec3;
 
 static float test_length_sq(const HostVec3* v)
 {
@@ -475,12 +485,13 @@ STRATA_TEST(jit_extern_struct_crosses_boundary_by_pointer)
 
 STRATA_TEST(aot_emits_struct_object)
 {
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    Module* mod = ParseModule(
-        "struct Vec3 { float x; float y; float z; };\n"
-        "float dot(const Vec3 a, const Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct Vec3 { float x; float y; float z; };\n"
+                              "float dot(const Vec3 a, const Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }\n",
+                              &diag, &arena);
     STRATA_CHECK(!DiagHasErrors(&diag));
 
     BuiltModule bm = BuildLlvmModule(mod, &diag, &arena, false, NULL);
@@ -743,7 +754,7 @@ STRATA_TEST(jit_struct_equality_is_memberwise)
                                 "  int r = 0;\n"
                                 "  if (p1 == p2) { r += 1; }\n"
                                 "  if (p1 != p3) { r += 2; }\n"
-                                "  if (d1 == d2) { r += 4; }\n"   /* equal only if padding is zeroed */
+                                "  if (d1 == d2) { r += 4; }\n" /* equal only if padding is zeroed */
                                 "  if (d1 != d3) { r += 8; }\n"
                                 "  return r;\n"
                                 "}\n");
@@ -767,7 +778,7 @@ STRATA_TEST(jit_struct_equality_float_fields_are_ieee754)
     StrataJit* jit = CompileJit("struct V { float x; float y; };\n"
                                 "int entry() {\n"
                                 "  V a = { .x = 0.0, .y = 1.0 };\n"
-                                "  V b = { .x = -0.0, .y = 1.0 };\n"   /* bytes differ, values equal */
+                                "  V b = { .x = -0.0, .y = 1.0 };\n" /* bytes differ, values equal */
                                 "  float z = 0.0;\n"
                                 "  V n1 = { .x = z / z, .y = 1.0 };\n" /* NaN, bit-identical below */
                                 "  V n2 = { .x = z / z, .y = 1.0 };\n"
@@ -800,9 +811,9 @@ STRATA_TEST(jit_struct_string_field_equality_is_content)
                                 "  ^Rec b = Rec { .name = \"hi\", .id = 1 };\n"
                                 "  ^Rec c = Rec { .name = \"hi\", .id = 2 };\n"
                                 "  int r = 0;\n"
-                                "  if (a == b) { r += 1; }\n"      /* deref: member-wise, content equal */
-                                "  if (a != c) { r += 2; }\n"      /* id differs */
-                                "  if (a.name == b.name) { r += 4; }\n"   /* field content equal across cells */
+                                "  if (a == b) { r += 1; }\n"           /* deref: member-wise, content equal */
+                                "  if (a != c) { r += 2; }\n"           /* id differs */
+                                "  if (a.name == b.name) { r += 4; }\n" /* field content equal across cells */
                                 "  return r;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -839,7 +850,7 @@ STRATA_TEST(jit_struct_string_field_content_eq_distinct_buffers)
                                 "  ^Rec b = Rec { .name = \"hi\", .id = 1 };\n"
                                 "  int r = 0;\n"
                                 "  if (samestrptr(a.name, b.name) == 0) { r += 1; }\n" /* buffers differ */
-                                "  if (a == b) { r += 2; }\n"                 /* deref: content equal */
+                                "  if (a == b) { r += 2; }\n"                          /* deref: content equal */
                                 "  return r;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -868,9 +879,9 @@ STRATA_TEST(jit_boxed_struct_array_equality_derefs_each)
                                 "  ^Rec[] c = { Rec { .name = \"hi\", .id = 1 }, Rec { .name = \"no\", .id = 2 } };\n"
                                 "  ^Rec[] d = { Rec { .name = \"hi\", .id = 1 } };\n"
                                 "  int r = 0;\n"
-                                "  if (a == b) { r += 1; }\n"      /* each cell deref'd: content equal */
-                                "  if (a != c) { r += 2; }\n"      /* second element's string differs */
-                                "  if (a != d) { r += 4; }\n"      /* length fast-out */
+                                "  if (a == b) { r += 1; }\n" /* each cell deref'd: content equal */
+                                "  if (a != c) { r += 2; }\n" /* second element's string differs */
+                                "  if (a != d) { r += 4; }\n" /* length fast-out */
                                 "  return r;\n"
                                 "}\n");
     STRATA_CHECK(jit != NULL);
@@ -893,7 +904,7 @@ STRATA_TEST(jit_struct_fixed_array_of_floats_equality)
     StrataJit* jit = CompileJit("struct F { float[3] vs; };\n"
                                 "int entry() {\n"
                                 "  F a = { .vs = {0.0, 1.0, 2.0} };\n"
-                                "  F b = { .vs = {-0.0, 1.0, 2.0} };\n"   /* bytes differ, values equal */
+                                "  F b = { .vs = {-0.0, 1.0, 2.0} };\n" /* bytes differ, values equal */
                                 "  F c = { .vs = {0.0, 1.0, 3.0} };\n"
                                 "  int r = 0;\n"
                                 "  if (a == b) { r += 1; }\n"
@@ -953,7 +964,7 @@ STRATA_TEST(jit_nested_struct_equality)
                                 "  Outer b = { .i = Inner { .v = 1, .w = 0.0 }, .tag = 7 };\n"
                                 "  Outer c = { .i = Inner { .v = 2, .w = 0.0 }, .tag = 7 };\n"
                                 "  int r = 0;\n"
-                                "  if (a == b) { r += 1; }\n"   /* -0.0 == 0.0 deep inside */
+                                "  if (a == b) { r += 1; }\n" /* -0.0 == 0.0 deep inside */
                                 "  if (a != c) { r += 2; }\n"
                                 "  return r;\n"
                                 "}\n");
@@ -1000,22 +1011,24 @@ STRATA_TEST(jit_extern_struct_equality_is_memberwise)
 STRATA_TEST(struct_equality_mixed_types_rejected)
 {
     /* Distinct struct types, and structs against scalars, never compare. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct A { int x; };\n"
-        "struct B { int x; };\n"
-        "int entry() {\n"
-        "  A a = { .x = 1 };\n"
-        "  B b = { .x = 1 };\n"
-        "  if (a == b) { return 1; }\n"
-        "  if (a == 1) { return 2; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct A { int x; };\n"
+                    "struct B { int x; };\n"
+                    "int entry() {\n"
+                    "  A a = { .x = 1 };\n"
+                    "  B b = { .x = 1 };\n"
+                    "  if (a == b) { return 1; }\n"
+                    "  if (a == 1) { return 2; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'B')") != NULL);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'int')") != NULL);
@@ -1027,24 +1040,25 @@ STRATA_TEST(struct_equality_mixed_types_rejected)
 STRATA_TEST(struct_equality_ordering_rejected)
 {
     /* Only ==/!= exist for structs; ordering is a compile error. */
-    Arena arena; arena_init(&arena, 0);
-    DiagnosticEngine diag; DiagnosticEngineInit(&diag);
-    ParseAndResolve(
-        "struct A { int x; };\n"
-        "int entry() {\n"
-        "  A a = { .x = 1 };\n"
-        "  A b = { .x = 2 };\n"
-        "  if (a < b) { return 1; }\n"
-        "  return 0;\n"
-        "}\n",
-        &diag, &arena);
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct A { int x; };\n"
+                    "int entry() {\n"
+                    "  A a = { .x = 1 };\n"
+                    "  A b = { .x = 2 };\n"
+                    "  if (a < b) { return 1; }\n"
+                    "  return 0;\n"
+                    "}\n",
+                    &diag, &arena);
     STRATA_CHECK(DiagHasErrors(&diag));
 
-    SourceManager sm; SourceManagerInit(&sm);
+    SourceManager sm;
+    SourceManagerInit(&sm);
     char* d = DiagFormat(&diag, &sm, 1, &arena);
     STRATA_CHECK(strstr(d, "invalid operands to binary operator ('A' and 'A')") != NULL);
 
     DiagnosticEngineFree(&diag);
     arena_free(&arena);
 }
-
