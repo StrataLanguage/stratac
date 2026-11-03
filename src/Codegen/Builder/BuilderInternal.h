@@ -334,3 +334,18 @@ void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
 void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
 void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
 void SymDeclare(Builder* b, const char* name, Value* sym);
+
+// Arrays.c dispatch (EmitArrayBuiltin cases)
+Value EmitArrayPop(Builder* b, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd, LLVMTypeRef elemTy);
+Value EmitArrayReserve(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
+                       LLVMTypeRef elemTy);
+Value EmitArrayRemove(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
+                      LLVMTypeRef elemTy);
+Value EmitArrayReplace(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
+                       LLVMTypeRef elemTy);
+Value EmitArrayTake(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
+                    LLVMTypeRef elemTy);
+Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
+                    TypeDesc elemTd, LLVMTypeRef elemTy);
+Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr,
+                      LLVMValueRef capPtr, TypeDesc elemTd, LLVMTypeRef elemTy);
