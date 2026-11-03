@@ -1,5 +1,10 @@
 # Codebase cleanup plan
 
+## Status
+
+Phases 0–8 are done on branch `codebase-cleanup`. The plan below is kept as written; where a file or line it names has
+since moved, the new location is given in parentheses.
+
 Scope: everything under `src/`, `include/`, `utilities/`, plus the style tooling. ~40.6k lines of C; three
 files hold 61% of it:
 
@@ -55,11 +60,11 @@ Each item is a small, testable commit. Found so far:
 
 | Duplicate | Where | Fix |
 |---|---|---|
-| Constant folding (int arith, float arith, int/float compare, init folding, casts) | `Sema*Fold*` in ResolveOverloads.c:559–996 and `Fold*` / `CastConstVal` in LLVMModuleBuilder.c:9084–9497 | One `src/Sema/ConstFold.{c,h}` over a small `ConstValue` type; both sides call it. Follow-up (separate commit): sema stores the folded value on the node so codegen stops re-folding. |
-| `IsArrayMutator` | MoveCheck.c:1278 and ResolveOverloads.c:3294 | **The lists have already drifted**: sema's copy lacks `array_replace` and `array_take`. Replace both with one array-builtin table (name + `ArrayBuiltinFlags`: mutates / grows / removes) in `src/Sema/Builtins.{c,h}`. Add a regression test for borrow inference over `array_take`/`array_replace` first. |
-| `IsIdentStart` / `IsIdentCont` | Lexer.c:12 and ResolveOverloads.c:1609 | Export from `Lex/Lexer.h`. |
-| `FindEnumDecl` | LLVMModuleBuilder.c:3826 and TypeMetadata.c:240 (plus sema's `FindEnum`, `FindImplDecl`) | `ModuleFindEnum` / `ModuleFindImpl` in `AST/AST.c`. |
-| `EnsureTargetsInitialized` | LLVMAot.c:8 and LLVMJit.c:24 | `Codegen/LLVMTargets.{c,h}`. |
+| Constant folding (int arith, float arith, int/float compare, init folding, casts) | `Sema*Fold*` in ResolveOverloads.c:559–996 (now `src/Sema/Resolve/ConstEval.c`) and `Fold*` / `CastConstVal` in LLVMModuleBuilder.c:9084–9497 (now `src/Sema/ConstFold.c`) | One `src/Sema/ConstFold.{c,h}` over a small `ConstValue` type; both sides call it. Follow-up (separate commit): sema stores the folded value on the node so codegen stops re-folding. |
+| `IsArrayMutator` | MoveCheck.c:1278 and ResolveOverloads.c:3294 (now `src/Sema/Builtins.c`) | **The lists have already drifted**: sema's copy lacks `array_replace` and `array_take`. Replace both with one array-builtin table (name + `ArrayBuiltinFlags`: mutates / grows / removes) in `src/Sema/Builtins.{c,h}`. Add a regression test for borrow inference over `array_take`/`array_replace` first. |
+| `IsIdentStart` / `IsIdentCont` | Lexer.c:12 and ResolveOverloads.c:1609 | Export from `Lex/Lexer.h`. (Now defined in `src/Lex/Lexer.c`.) |
+| `FindEnumDecl` | LLVMModuleBuilder.c:3826 and TypeMetadata.c:240 (plus sema's `FindEnum`, `FindImplDecl`) (now `ModuleFindEnum` in `src/AST/AST.c`) | `ModuleFindEnum` / `ModuleFindImpl` in `AST/AST.c`. |
+| `EnsureTargetsInitialized` | LLVMAot.c:8 and LLVMJit.c:24 | `Codegen/LLVMTargets.{c,h}` (now `src/Codegen/LLVMTargets.c`). |
 | Scope / defer stacks | Cfg.c, LLVMModuleBuilder.c, ResolveOverloads.c | **Dropped:** the shared part is ~75 lines and each pass does something different per defer; a shared module would save ~30. Instead, merge sema's parallel `m_scopeDecls` / `m_deferFrames` into one frame struct. |
 | Two move trackers | Path-based in ResolveOverloads.c vs CFG-based `MoveCheck.c` | Investigated. The sema tracker is the only source of three diagnostics (move from a global, from a const ref, from a ref-bound place) plus the "cannot be reassigned ... bound as a ref" check, so it can't be deleted yet. Now: delete its ~250 lines of zero-caller helpers (`PathIsDescendant`, `PathMayAlias`, `ClearAliasedSubtree`, `CopyStrMap`, ...) and the write-only `m_refThroughBox` / `m_indexWriteTarget`. Later (separate change): port the three rules into MoveCheck as new `MoveDiag` kinds, add a test for the untested reassign check first, then delete the rest (~600 lines). |
 | `sizeof(a)/sizeof(a[0])` | several | Use the existing `ARRAY_COUNT`. |
@@ -172,9 +177,11 @@ enum ExampleBitFlags
 
 Existing ones to convert:
 
-- `TypeDescFlag` (`TD_*`, LLVMModuleBuilder.c:91) → `TypeDescFlags`, add `TDF_NONE`.
-- `CommandFlags` (`CF_*`, stratac/main.c:121) → `CommandFlags`, `CF_NONE = (0)` form.
-- `STRATA_CAP_*` (strata.h:58) and `STRATA_TYPES_STRUCT_COMPONENT` (strata_types.h:54): public; keep the
+- `TypeDescFlag` (`TD_*`, LLVMModuleBuilder.c:91; now `TypeDescFlags` in `src/Codegen/LLVMModuleBuilder.h`) →
+  `TypeDescFlags`, add `TDF_NONE`.
+- `CommandFlags` (`CF_*`, stratac/main.c:121; now `src/stratac/main.c:123`) → `CommandFlags`, `CF_NONE = (0)` form.
+- `STRATA_CAP_*` (strata.h:58, now line 43) and `STRATA_TYPES_STRUCT_COMPONENT` (strata_types.h:54, now line 53):
+  public; keep the
   names, add the `_NONE` value, a named enum and the parenthesised form. Values unchanged, so ABI-safe.
 - New: `ArrayBuiltinFlags` from Phase 1.
 

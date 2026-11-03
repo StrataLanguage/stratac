@@ -92,12 +92,12 @@ intrinsic later if this shows up often (not proposed now).
 
 ### Compiler impact
 
-- `src/Sema/ResolveOverloads.c`: `m_boxGlobals` is filled at ~L10935 only when
+- `src/Sema/Resolve/Decls.c`: `boxGlobals` is filled only when
   `AliasIsOwning(&gd->type)`; an inline struct global like `LuaHost` is not "owning" by that
-  predicate, so `MarkMoved` (~L2042) never sees `gHost` as a global root. Register every global
+  predicate, so `MarkMoved` (`src/Sema/Resolve/Moves.c`) never sees `gHost` as a global root. Register every global
   whose type *contains* owning parts (struct with owning fields, fixed arrays of them, optionals)
   — or simply every global, since `MarkMoved` is only reached for owning values.
-- Check `m_boxGlobals`' other user (~L8260) still means what it says, or split it into
+- Check `boxGlobals`' other user (`src/Sema/Resolve/Moves.c`) still means what it says, or split it into
   "owning global" vs "box global".
 - Tests: `tests/unit` move tests + a sample line. Expect a few Strafe call sites to need
   `copy()`/`const ref` — which is the point.
@@ -137,9 +137,9 @@ None.
 ### Compiler impact
 
 - `src/Lex/Token.c` / `Token.h`: drop `TokKwHandle` from the keyword table.
-- `src/Parse/Parser.c`: top-level loop (~L1962) and the attribute check (~L1391) test
+- `src/Parse/Parser.c` (`ParserParseModule`) and `src/Parse/ParseType.c` test
   "identifier with text `handle` followed by an identifier" instead of `TokKwHandle`;
-  `ParseHandleDecl` (~L842) consumes the identifier.
+  `ParseHandleDecl` (`src/Parse/ParseDecl.c`) consumes the identifier.
 - No Sema/codegen change. Rename `view` back to `handle` in Strafe afterwards (optional).
 
 ---
@@ -184,10 +184,10 @@ None (scalar constant).
 
 ### Compiler impact
 
-- `src/Lex/Lexer.c`: `'` is currently "unexpected character" (~L371); add `LexCharLiteral`
-  next to `LexStringLiteral` (~L521), sharing its escape decoder. New `TokCharLiteral` in
+- `src/Lex/Lexer.c`: `'` is currently "unexpected character" (~L376); add `LexCharLiteral`
+  next to `LexStringLiteral` (~L570), sharing its escape decoder. New `TokCharLiteral` in
   `Token.h`/`Token.c`.
-- `src/Parse/Parser.c`: primary expression → an `IntLiteral` node with a `byte` type hint (or a
+- `src/Parse/ParseExpr.c` (`ParsePrimary`): primary expression → an `IntLiteral` node with a `byte` type hint (or a
   flag `isChar` for diagnostics/AST dump). Reusing `NodeIntLiteral` means Sema/codegen are
   untouched apart from typing it `byte` instead of the default integer type.
 - `src/Codegen/ASTDump.c`: print `'c'`.
@@ -245,13 +245,13 @@ Drop types forbid anyway).
 
 ### Compiler impact
 
-- `src/Codegen/LLVMModuleBuilder.c`: an rc cell has a 16-byte count header before the value
+- `src/Codegen/Builder/Runtime.c` (`AllocBoxCell`): an rc cell has a 16-byte count header before the value
   (`RC_HEADER_BYTES`, `AllocBoxCell(..., isRc)`), a `^T` cell does not, so the conversion is:
   `AllocBoxCell(size, isRc=true)`, set count 1, `memcpy` `sizeof(T)` from the box, free the box
   cell (no drop). One alloc + copy + free; only at the conversion point.
   (A zero-cost variant — give every `^T` cell the header — changes every box allocation and the
   `^T` that crosses into C; not worth it for this.)
-- `src/Sema/ResolveOverloads.c`: the assignability check that produced the error above gains
+- `src/Sema/Resolve/TypeRules.c`: the assignability check that produced the error above gains
   the `^T`→`rc<T>` / `rc<T>?` case and records a move of the source (`MarkMoved`), plus an
   implicit-conversion node or flag on the expression for codegen.
 - Tests in `tests/unit/BoxTests.c` (Drop-once, moved-source error, optional target).
@@ -280,7 +280,7 @@ makes a call. Today *any* call clears every global fact — an extern `printf`, 
 if (gHost.gd?) { int y = Pure(2); Touch(gHost.gd); }   // error: 'gHost.gd' has not been blessed
 ```
 
-Meanwhile `ref` locals into globals already survive extern calls (`TrackCallArgMoves`, ~L4768:
+Meanwhile `ref` locals into globals already survive extern calls (`TrackCallArgMoves`:
 `if (!best->isExtern) InvalidateRefLocals(...)`), so the two rules disagree.
 
 ### Options considered
@@ -335,15 +335,15 @@ from locals are unchanged. Soundness argument: a global path can only change thr
 inside some function's body; every function that can run during the call is in the callee's
 transitive set, including C-reachable entry points.
 
-Known limits: Embed.c / JIT hosts that call arbitrary Strata functions by name from C behave
+Known limits: the embedding API (`src/Embed/`) and JIT hosts that call arbitrary Strata functions by name from C behave
 like externs calling back — treat every function the host can look up as an export (or, simpler,
 when compiling for embedding, treat externs as "write everything").
 
 ### Compiler impact
 
-- `src/Sema/ResolveOverloads.c`: new pre-pass (~200–300 lines) walking all function bodies of
+- `src/Sema/Resolve/`: new pre-pass (~200–300 lines) walking all function bodies of
   the module set (the whole program is one compilation unit — Strafe builds from `main.strata`);
-  `TrackCallArgMoves` (~L4766) consults the callee's set instead of clearing every global;
+  `TrackCallArgMoves` (`src/Sema/Resolve/Moves.c`) consults the callee's set instead of clearing every global;
   `ClearNullableFacts`/`InvalidateRefLocals` gain a "prefix of" filter (they already take keys).
 - Diagnostics: when a fact *is* cleared by a call, say which call and which write
   ("`gHost.gd` may be changed by `Reset()` (writes `gHost.gd` at main.strata:208)") — today's
@@ -427,13 +427,12 @@ every completing case proves them.
 
 - `src/Lex/Token.c/.h`: keywords `switch`, `case`, `default`.
 - `src/AST/AST.h/.c`: `NodeSwitch { Node* subject; Vec cases; }` with `{ Vec labels; Node* body;
-  bool isDefault; }`; visitor in `AST.c` (~L114 next to `NodeIf`).
-- `src/Parse/Parser.c`: statement parser (next to `TokKwDefer` ~L2103).
-- `src/Sema/ResolveOverloads.c`: the five `case NodeIf:` sites (~L3321, 3645, 10124, 10349,
-  10397) get a `NodeSwitch` twin. Flow uses the existing `FlowCapture`/`FlowApply`/`FlowJoin`
-  (~L2394–2444). Constant evaluation of labels, duplicate check, enum exhaustiveness, `break`
+  bool isDefault; }`; visitor in `AST.c` (~L274 next to `NodeIf`).
+- `src/Parse/ParseStmt.c`: statement parser (next to `TokKwDefer`).
+- `src/Sema/Resolve/`: the five `case NodeIf:` sites get a `NodeSwitch` twin. Flow uses the existing
+  `FlowCapture`/`FlowApply`/`FlowJoin` (`src/Sema/Resolve/Moves.c`). Constant evaluation of labels, duplicate check, enum exhaustiveness, `break`
   check.
-- `src/Codegen/LLVMModuleBuilder.c` (~L8520): `LLVMBuildSwitch` — LLVM picks a jump table or
+- `src/Codegen/Builder/Stmt.c`: `LLVMBuildSwitch` — LLVM picks a jump table or
   binary search. `src/Codegen/ASTDump.c`.
 - Roughly the size of `for` + `defer` together.
 
@@ -482,10 +481,10 @@ can't be `copy()`d if a Drop is inside, etc.).
 
 ### Compiler impact (7b)
 
-- `src/Sema/ResolveOverloads.c`: remove the two rejections (locals and fields), make the owning
-  predicate (`AliasIsOwning` / `TypeNameIsOwning` in `src/AST/AST.h`) see through fixed arrays;
-  element-move poisoning (~L9121) is already path-based.
-- `src/Codegen/LLVMModuleBuilder.c`: a drop loop for fixed arrays in local scope cleanup and in
+- `src/Sema/Resolve/`: remove the two rejections (locals and fields), make the owning
+  predicate (`AliasIsOwning` in `src/Sema/Resolve/TypeRules.c`, `TypeNameIsOwning` in
+  `src/AST/AST.h`) see through fixed arrays; element-move poisoning is already path-based.
+- `src/Codegen/Builder/Ownership.c`: a drop loop for fixed arrays in local scope cleanup and in
   struct drop glue; zero-init (already the case for `= {}`).
 - `src/Codegen/TypeMetadata.c` if drop glue there is table-driven.
 

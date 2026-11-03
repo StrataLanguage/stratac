@@ -45,9 +45,9 @@ Type aliases are resolved before any property is read.
 
 ## Where each rule is enforced
 
-The CFG checker (`src/Sema/MoveCheck.c`, over the graph from `src/Sema/Cfg.c`) is the only place that reports
+The CFG checker (`src/Sema/MoveCheck/MoveCheck.c`, over the graph from `src/Sema/Cfg.c`) is the only place that reports
 use after move, partial moves, narrowing, loans and `ref` validity. The rest are sema checks in
-`ResolveOverloads.c` or run-time checks in the LLVM backend.
+`src/Sema/Resolve/` or run-time checks in the LLVM backend.
 
 | Rules | Enforced by |
 | --- | --- |
@@ -64,7 +64,7 @@ use after move, partial moves, narrowing, loans and `ref` validity. The rest are
 | Rule O15 | Sema and backend: no `ref` to a field at a misaligned `fieldoffset`; such fields are read and written unaligned. |
 
 The checker also hands its verdict to the code generator. Every identifier, member and index expression that names
-a place carries a `UseKind` (`AST.h`): `UseMove` empties the place; `UseCopy` and `UseRead` leave it alone. `MovedSource` in `LLVMModuleBuilder.c` is the only thing that
+a place carries a `UseKind` (`AST.h`): `UseMove` empties the place; `UseCopy` and `UseRead` leave it alone. `MovedSource` in `src/Codegen/Builder/Ownership.c` is the only thing that
 decides whether a consuming use empties its source, and it asks the annotation; codegen no longer guesses from the
 shape of the expression. A box handed to a bare place is a copy when its pointee is plain data and a move when the
 pointee owns something.
