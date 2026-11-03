@@ -118,7 +118,7 @@ extern "C"
             return true;
         }
 
-        for (size_t i = 0; i < sizeof(kReserved) / sizeof(kReserved[0]); i++)
+        for (size_t i = 0; i < ARRAY_COUNT(kReserved); i++)
         {
             if (strcmp(name, kReserved[i]) == 0)
             {

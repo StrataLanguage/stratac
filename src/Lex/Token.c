@@ -96,8 +96,8 @@ static const Spelling punct[] = {
     {TokAt,        "@"  }
 };
 
-#define KEYWORD_COUNT (sizeof(keywords) / sizeof(keywords[0]))
-#define PUNCT_COUNT (sizeof(punct) / sizeof(punct[0]))
+#define KEYWORD_COUNT ARRAY_COUNT(keywords)
+#define PUNCT_COUNT ARRAY_COUNT(punct)
 
 TokKind ClassifyKeyword(Str ident)
 {

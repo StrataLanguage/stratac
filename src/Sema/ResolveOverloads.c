@@ -2465,7 +2465,7 @@ static bool SimdVector2ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
         {(const char*[]){"float", "float"}, 2},
     };
 
-    return CheckArgTypesUnordered(r, c, scope, valid, sizeof(valid) / sizeof(valid[0]));
+    return CheckArgTypesUnordered(r, c, scope, valid, ARRAY_COUNT(valid));
 }
 
 static bool SimdVector3ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope)
@@ -2476,7 +2476,7 @@ static bool SimdVector3ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
         {(const char*[]){"float", "float", "float"}, 3}, /* float3(1.0, 2.0, 3.0) */
     };
 
-    return CheckArgTypesUnordered(r, c, scope, valid, sizeof(valid) / sizeof(valid[0]));
+    return CheckArgTypesUnordered(r, c, scope, valid, ARRAY_COUNT(valid));
 }
 
 static bool SimdVector4ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope)
@@ -2489,7 +2489,7 @@ static bool SimdVector4ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
         {(const char*[]){"float", "float", "float", "float"}, 4}, /* float4(1.0, 2.0, 3.0, 4.0) */
     };
 
-    return CheckArgTypesUnordered(r, c, scope, valid, sizeof(valid) / sizeof(valid[0]));
+    return CheckArgTypesUnordered(r, c, scope, valid, ARRAY_COUNT(valid));
 }
 
 /* Resolves SIMD vector constructors (`float3(x)`, `float4(w,x,y,z)`); returns true if this was one. */

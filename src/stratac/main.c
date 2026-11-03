@@ -1,3 +1,4 @@
+#include "Core/Util.h"
 #include "strata/strata.h"
 
 #include <stdbool.h>
@@ -220,7 +221,7 @@ const CLICommand* FindCommand(const char* req, const CLICommand* cmds, int count
 // Runs every requested mode.
 void ExecuteCommands(State* state, StrataCompiler* compiler)
 {
-    for (int toggleIndex = 0; toggleIndex < sizeof(modeImpls) / sizeof(modeImpls[0]); toggleIndex++)
+    for (int toggleIndex = 0; toggleIndex < ARRAY_COUNT(modeImpls); toggleIndex++)
     {
         const ModeImpl* impl = &modeImpls[toggleIndex];
         if (HAS_TOGGLE(state->toggleCommands, impl->toggle))
@@ -259,7 +260,7 @@ static ResultCode Cmd_Help(State* state, StrataCompiler* compiler, const CLIComm
     const int tmpBufferSize = 512;
     char tmpCmdBuffer[512];
 
-    const int numCommands = sizeof(commands) / sizeof(commands[0]);
+    const int numCommands = ARRAY_COUNT(commands);
     for (int i = 0; i < numCommands; i++)
     {
         const CLICommand* cmd = &commands[i];
@@ -621,7 +622,7 @@ int main(int argc, char** argv)
     {
         const char* argument = argv[state.argumentIndex];
 
-        const CLICommand* foundCommand = FindCommand(argument, commands, sizeof(commands) / sizeof(commands[0]));
+        const CLICommand* foundCommand = FindCommand(argument, commands, ARRAY_COUNT(commands));
 
         if (foundCommand)
         {
