@@ -251,8 +251,11 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         // would be nondeterministic).
         LLVMValueRef aData = LLVMBuildLoad2(b->builder, b->ptrTy, aPtr, "eq.csa");
         LLVMValueRef bData = LLVMBuildLoad2(b->builder, b->ptrTy, bPtr, "eq.csb");
-        LLVMValueRef aLen = LLVMBuildCall2(b->builder, b->csLenFnType, StrataCStrLenFn(b), &aData, 1, "eq.csla");
-        LLVMValueRef bLen = LLVMBuildCall2(b->builder, b->csLenFnType, StrataCStrLenFn(b), &bData, 1, "eq.cslb");
+        // Create the helper before reading csLenFnType: argument evaluation order is unspecified, and the type
+        // is only set on the helper's first creation.
+        LLVMValueRef csLenFn = StrataCStrLenFn(b);
+        LLVMValueRef aLen = LLVMBuildCall2(b->builder, b->csLenFnType, csLenFn, &aData, 1, "eq.csla");
+        LLVMValueRef bLen = LLVMBuildCall2(b->builder, b->csLenFnType, csLenFn, &bData, 1, "eq.cslb");
 
         LLVMValueRef args[4] = {aData, aLen, bData, bLen};
         StrataStrEqFn(b);
