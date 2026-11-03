@@ -1,8 +1,9 @@
+// Place paths, the alias table and the types of places.
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
 #include <inttypes.h>
 
-/* The aliases of the function being checked, so that place keys can name the bound place. */
+// The aliases of the function being checked, so that place keys can name the bound place.
 static const Env* aliasEnv;
 
 int FindLocal(const Locals* ls, const char* name)
@@ -29,7 +30,7 @@ static void AddLocalTo(Locals* ls, const char* name, bool owning, const TypeName
 
     if (existing >= 0)
     {
-        /* A name declared twice (separate scopes) counts as owning if either is. */
+        // A name declared twice (separate scopes) counts as owning if either is.
         ls->locals[existing].owning |= owning;
 
         if (owning)
@@ -65,7 +66,7 @@ const TypeName* DeclType(const Env* env, const VarDeclStmt* vd)
     return NodeTypesGet(env->types, vd->init);
 }
 
-/* The path of a variable-and-fields place into `buf`, and the variable's name; false for anything else. */
+// The path of a variable-and-fields place into `buf`, and the variable's name; false for anything else.
 bool PlaceOf(const Node* n, char* buf, size_t cap, const char** root)
 {
     if (n->kind == NodeIdent)
@@ -106,7 +107,7 @@ bool PlaceOf(const Node* n, char* buf, size_t cap, const char** root)
     return true;
 }
 
-/* A tracked place: rooted at an owning local. */
+// A tracked place: rooted at an owning local.
 bool TrackedPlace(const Env* env, const Node* n, char* buf, size_t cap)
 {
     const char* root;
@@ -149,14 +150,14 @@ static void AddPath(Env* env, const char* path)
     env->paths[env->pathCount++] = strdup(path);
 }
 
-/* Is `a` a proper ancestor of `d` (`a` is a prefix of `d` ending at a dot)? */
+// Is `a` a proper ancestor of `d` (`a` is a prefix of `d` ending at a dot)?
 bool IsAncestor(const char* a, const char* d)
 {
     size_t n = strlen(a);
     return strncmp(a, d, n) == 0 && d[n] == '.';
 }
 
-/* The declared type of the field `name` of the struct `t` (looking through `^`, `?` and aliases). */
+// The declared type of the field `name` of the struct `t` (looking through `^`, `?` and aliases).
 const TypeName* FieldType(const Env* env, const TypeName* t, const char* name)
 {
     while (t && (TypeNameIsBox(t) || TypeNameIsOptional(t)) && t->inner)
@@ -189,7 +190,7 @@ const TypeName* FieldType(const Env* env, const TypeName* t, const char* name)
     return NULL;
 }
 
-/* The type of a place node: what sema inferred, else walked from the variable's declared type. */
+// The type of a place node: what sema inferred, else walked from the variable's declared type.
 const TypeName* PlaceType(const Env* env, const Node* n)
 {
     const TypeName* t = NodeTypesGet(env->types, n);
@@ -228,7 +229,7 @@ void CollectLocals(Env* env, const FunctionDecl* fn, const Cfg* g)
         }
         else if (p->mod == ModRef && !p->type.isConst && !fn->isExtern)
         {
-            /* Parts of a ref parameter may be taken, but only if they are put back before returning. */
+            // Parts of a ref parameter may be taken, but only if they are put back before returning.
             AddLocal(env, p->name, TypeOwns(env, &p->type), &p->type);
         }
     }
@@ -249,7 +250,7 @@ void CollectLocals(Env* env, const FunctionDecl* fn, const Cfg* g)
     }
 }
 
-/* Registers every place the function's ops touch. */
+// Registers every place the function's ops touch.
 void CollectPaths(Env* env, const Cfg* g)
 {
     char buf[256];
@@ -277,7 +278,7 @@ void CollectPaths(Env* env, const Cfg* g)
         }
     }
 
-    /* Every ancestor of a place is a place too, so a move of `a.b` is visible from `a`. */
+    // Every ancestor of a place is a place too, so a move of `a.b` is visible from `a`.
     size_t known = env->pathCount;
 
     for (size_t i = 0; i < known; i++)
@@ -307,8 +308,8 @@ unsigned char Join(unsigned char a, unsigned char b)
     return StateMaybe;
 }
 
-/* A place can be read or moved when neither it nor an ancestor has moved. A part that has moved only
-   matters when the whole is used: reading `a.n` is fine while `a.r` is gone. */
+// A place can be read or moved when neither it nor an ancestor has moved. A part that has moved only
+// matters when the whole is used: reading `a.n` is fine while `a.r` is gone.
 int PlaceBlocker(const Env* env, const unsigned char* state, const char* path, bool wholeUse)
 {
     for (size_t i = 0; i < env->pathCount; i++)
@@ -328,7 +329,7 @@ int PlaceBlocker(const Env* env, const unsigned char* state, const char* path, b
     return -1;
 }
 
-/* Marks a place Moved, or makes it and every part of it Live again. */
+// Marks a place Moved, or makes it and every part of it Live again.
 void SetPlace(const Env* env, unsigned char* state, const char* path, unsigned char value)
 {
     for (size_t i = 0; i < env->pathCount; i++)
@@ -362,9 +363,9 @@ static void NoteIfCopied(Env* env, const Node* value, const TypeName* target)
         return;
     }
 
-    /* A box handed to a bare `T` copies the pointee when it is plain data. A pointee that owns something cannot be
-       copied (it would be dropped twice), so the box is emptied into the new place instead. A bare struct element
-       is a deep copy. */
+    // A box handed to a bare `T` copies the pointee when it is plain data. A pointee that owns something cannot be
+    // copied (it would be dropped twice), so the box is emptied into the new place instead. A bare struct element
+    // is a deep copy.
     if (TypeNameIsBox(vt))
     {
         if (!vt->inner || TypeClassify(env->reg, env->arena, vt->inner).owning)
@@ -436,7 +437,7 @@ void CollectCopies(Env* env, const Cfg* g)
                         break;
                     }
 
-                    /* A typed rest parameter takes each argument as one element. */
+                    // A typed rest parameter takes each argument as one element.
                     NoteIfCopied(env, (const Node*)VecGet(&e->args, i),
                                  p->isVarargRest ? (TypeNameHasArrayShape(&p->type) ? p->type.elem : NULL) : &p->type);
                 }
@@ -456,8 +457,8 @@ void CollectCopies(Env* env, const Cfg* g)
     }
 }
 
-/* Records, for each `ref x = place;` declaration, the place `x` stands for. A name declared twice with
-   different places is ambiguous and stands for nothing. */
+// Records, for each `ref x = place;` declaration, the place `x` stands for. A name declared twice with
+// different places is ambiguous and stands for nothing.
 static void AddAlias(Env* env, const char* name, const char* target)
 {
     for (size_t i = 0; i < env->aliasCount; i++)
@@ -537,8 +538,7 @@ const FnWrites* FindWrites(const WriteSets* ws, const FunctionDecl* d)
     return NULL;
 }
 
-/* The place of a variable-and-fields-and-indices expression (`a`, `a.b`, `a[i].b`, `a[0]`). An index
-   is a variable or an integer literal; any other index is no place. */
+// The place a `ref` alias named `name` stands for (see AddAlias), or NULL when it stands for nothing.
 const char* AliasTarget(const char* name)
 {
     const Env* env = aliasEnv;
@@ -554,8 +554,8 @@ const char* AliasTarget(const char* name)
     return NULL;
 }
 
-/* A canonical spelling of an index that is built from variables, literals, fields, other elements and
-   arithmetic, so that the same expression written twice names the same element. */
+// A canonical spelling of an index that is built from variables, literals, fields, other elements and
+// arithmetic, so that the same expression written twice names the same element.
 bool IndexSpelling(const Node* n, char* out, size_t cap)
 {
     const char* root;

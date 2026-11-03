@@ -1,4 +1,4 @@
-/* Move-check bookkeeping: move keys, moved and emptied optional sources, and flow state joins. */
+// Move-check bookkeeping: move keys, moved and emptied optional sources, and flow state joins.
 #include "Sema/Resolve/ResolverInternal.h"
 
 static const TypeName* KeyPathType(Resolver* r, const char* key);
@@ -14,7 +14,7 @@ static const char* KeyRoot(Arena* arena, const char* key)
     const char* dot = strchr(key, '.');
     const char* base = dot ? ArenaStrndup(arena, key, (size_t)(dot - key)) : key;
 
-    /* Drop the trailing bracket group (erased/var/literal). */
+    // Drop the trailing bracket group (erased/var/literal).
     const char* open = strrchr(base, '[');
 
     if (open)
@@ -26,7 +26,7 @@ static const char* KeyRoot(Arena* arena, const char* key)
 }
 
 // Mark `name` moved, unless it is a borrowed global or ref param.
-/* The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it). NULL when it cannot be typed. */
+// The type of a move path ("a.b[i].c" as MovableBoxSourceKey spells it). NULL when it cannot be typed.
 static const TypeName* KeyPathType(Resolver* r, const char* key)
 {
     if (!r->curScope || !key)
@@ -81,7 +81,7 @@ static const TypeName* KeyPathType(Resolver* r, const char* key)
     return t;
 }
 
-/* `key` with a `ref` local at its root replaced by the path the local aliases. */
+// `key` with a `ref` local at its root replaced by the path the local aliases.
 const char* CanonicalRefKey(Resolver* r, const char* key)
 {
     const char* root = KeyRoot(r->arena, key);
@@ -90,8 +90,8 @@ const char* CanonicalRefKey(Resolver* r, const char* key)
     return aliased ? ArenaFormat(r->arena, "%s%s", aliased, key + strlen(root)) : key;
 }
 
-/* True when the root of move key `key` is a module global (not a local of the same name): no function
-   owns a global, so nothing may be moved out of any path into it — a field of a global struct included. */
+// True when the root of move key `key` is a module global (not a local of the same name): no function
+// owns a global, so nothing may be moved out of any path into it — a field of a global struct included.
 static bool IsGlobalRootKey(Resolver* r, const char* key)
 {
     const char* root = KeyRoot(r->arena, key);
@@ -117,8 +117,8 @@ static void DiagMoveFromGlobal(Resolver* r, SourceRange range, const char* name)
                  name);
 }
 
-/* True when the root of move key `key` is a `const ref` param or local. It only borrows what it names
-   and nothing can be put back through it, so nothing may be moved out of any path into it. */
+// True when the root of move key `key` is a `const ref` param or local. It only borrows what it names
+// and nothing can be put back through it, so nothing may be moved out of any path into it.
 static bool IsConstRefRootKey(Resolver* r, const char* key)
 {
     const char* root = KeyRoot(r->arena, key);
@@ -187,14 +187,14 @@ void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
 {
     const TypeName* type = KeyPathType(r, name);
 
-    /* A `^T` taken into an optional slot (`Res? r = box;`) is moved, not emptied: it has no empty state. */
+    // A `^T` taken into an optional slot (`Res? r = box;`) is moved, not emptied: it has no empty state.
     if (type && !TypeNameIsOptional(type) && TypeNameIsBox(type))
     {
         MarkMoved(r, name, range);
         return;
     }
 
-    /* Moving would empty the global behind every other function's back. */
+    // Moving would empty the global behind every other function's back.
     if (IsGlobalRootKey(r, name))
     {
         DiagMoveFromGlobal(r, range, name);
@@ -212,12 +212,12 @@ void MoveOptionalSource(Resolver* r, const char* name, SourceRange range)
     EmptyOptionalSource(r, name);
 }
 
-/* `drop(x)` of an optional: x is now definitely empty. */
+// `drop(x)` of an optional: x is now definitely empty.
 void EmptyOptionalSource(Resolver* r, const char* name)
 {
 
-    /* The source is now definitely empty. later `path?` tests resolve to
-       "definitely empty" rather than an unproven read. */
+    // The source is now definitely empty. later `path?` tests resolve to
+    // "definitely empty" rather than an unproven read.
 }
 
 static bool IsModuleGlobalName(const Resolver* r, const char* name)
@@ -354,7 +354,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
             op = ">>";
             break;
         default:
-            return NULL; /* comparisons/logic yield bools, not indices */
+            return NULL; // comparisons/logic yield bools, not indices
         }
 
         return ArenaFormat(r->arena, "(%s %s %s)", lhs, op, rhs);
@@ -365,10 +365,10 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
     }
 }
 
-/* Move-tracking key for `n` (casts unwrapped); NULL if not movable. */
+// Move-tracking key for `n` (casts unwrapped); NULL if not movable.
 const char* MovableBoxSourceKey(Resolver* r, Node* n)
 {
-    /* Shared "what can be moved" rule (unwrap casts; ident/member/index). */
+    // Shared "what can be moved" rule (unwrap casts; ident/member/index).
     const Node* moved = MovableBoxSourceNode(n);
 
     if (!moved)
@@ -376,8 +376,8 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
         return NULL;
     }
 
-    /* Impl property reads are call-like (the getter returns a fresh value),
-       never moves out of the receiver. */
+    // Impl property reads are call-like (the getter returns a fresh value),
+    // never moves out of the receiver.
     if (moved->kind == NodeMember && ((const MemberExpr*)moved)->isImplProperty)
     {
         return NULL;
@@ -430,13 +430,13 @@ void FlowFree(FlowState* s)
     s->live = false;
 }
 
-/* Snapshots the current state (dead paths are captured as not live). */
+// Snapshots the current state (dead paths are captured as not live).
 void FlowCapture(const Resolver* r, FlowState* s)
 {
     s->live = !r->unreachable;
 }
 
-/* Makes `s` the current state. */
+// Makes `s` the current state.
 void FlowApply(Resolver* r, const FlowState* s)
 {
     r->unreachable = !s->live;

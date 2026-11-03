@@ -1,9 +1,9 @@
-/* Declaration-level checks and the ResolveOverloads entry point. */
+// Declaration-level checks and the ResolveOverloads entry point.
 #include "Sema/Resolve/ResolverInternal.h"
 
-/* Why a component field of `type` isn't plain data (NULL when it is). The offending
-   type's spelling goes to `outOffender`. Nested structs and fixed-array elements are checked
-   too, since the host copies components as raw bytes. */
+// Why a component field of `type` isn't plain data (NULL when it is). The offending
+// type's spelling goes to `outOffender`. Nested structs and fixed-array elements are checked
+// too, since the host copies components as raw bytes.
 static const char* ComponentFieldProblem(Resolver* r, const TypeName* type, const char** outOffender, size_t depth)
 {
     if (!type || !type->name || depth > r->registry.count + 8)
@@ -106,7 +106,7 @@ static void CheckComponentFields(Resolver* r, const StructDecl* sd)
     }
 }
 
-/* Collects the lanes of a constant float2/3/4 constructor (nested constructors flatten). */
+// Collects the lanes of a constant float2/3/4 constructor (nested constructors flatten).
 static bool FoldVectorDefaultLanes(Resolver* r, Node* n, double* lanes, unsigned* laneCount, unsigned maxLanes)
 {
     if (n && n->kind == NodeCall)
@@ -141,7 +141,7 @@ static bool FoldVectorDefaultLanes(Resolver* r, Node* n, double* lanes, unsigned
     return true;
 }
 
-/* Type-checks a field's `= expr` default and folds it into `field->folded`. */
+// Type-checks a field's `= expr` default and folds it into `field->folded`.
 static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
 {
     const TypeName* type = &field->type;
@@ -216,9 +216,9 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
     field->folded = folded;
 }
 
-/* `void Drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct and gives the
-   struct its hidden `__alive` byte (default 1): moves zero the source, so a moved-from value reads 0
-   and is not dropped twice. Runs before the type registry is built, so the field is in every layout. */
+// `void Drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct and gives the
+// struct its hidden `__alive` byte (default 1): moves zero the source, so a moved-from value reads 0
+// and is not dropped twice. Runs before the type registry is built, so the field is in every layout.
 static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     for (size_t i = 0; i < mod->impls.count; i++)
@@ -292,7 +292,7 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 }
 
-/* Same C prototype: return type, parameter types/modifiers, variadic-ness. */
+// Same C prototype: return type, parameter types/modifiers, variadic-ness.
 static bool SameExternSignature(const FunctionDecl* a, const FunctionDecl* b)
 {
     if (strcmp(a->returnType.name, b->returnType.name) != 0 || a->params.count != b->params.count
@@ -316,8 +316,8 @@ static bool SameExternSignature(const FunctionDecl* a, const FunctionDecl* b)
     return true;
 }
 
-/* An extern may be declared more than once (two binding files both declaring `printf`), as in C:
-   identical redeclarations collapse into the first; a conflicting one is an error. */
+// An extern may be declared more than once (two binding files both declaring `printf`), as in C:
+// identical redeclarations collapse into the first; a conflicting one is an error.
 static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
 {
     size_t kept = 0;
@@ -358,8 +358,8 @@ static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
     mod->functions.count = kept;
 }
 
-/* `Name(args)` constructs the struct `Name` when there is one, so a function of the same name could
-   never be called: its calls would silently build the struct from their arguments instead. */
+// `Name(args)` constructs the struct `Name` when there is one, so a function of the same name could
+// never be called: its calls would silently build the struct from their arguments instead.
 static void RejectFunctionsNamedLikeStructs(Module* mod, DiagnosticEngine* diag)
 {
     StrMap structs;
@@ -391,7 +391,7 @@ static void RejectFunctionsNamedLikeStructs(Module* mod, DiagnosticEngine* diag)
     StrMapFree(&structs);
 }
 
-/* Pass 1: merge extern redeclarations and mark the declarations the later passes read. */
+// Pass 1: merge extern redeclarations and mark the declarations the later passes read.
 static void CollectDeclarations(Resolver* r)
 {
     Module* mod = r->mod;
@@ -418,8 +418,8 @@ static void ResolveEnumDecls(Resolver* r)
     Module* mod = r->mod;
     DiagnosticEngine* diag = r->diag;
 
-    /* Assign enum member values and validate underlying ranges, BEFORE the
-       manifest-constant fold so `const int N = (int)Color.Red;` resolves. */
+    // Assign enum member values and validate underlying ranges, BEFORE the
+    // manifest-constant fold so `const int N = (int)Color.Red;` resolves.
     ResolveEnums(mod, diag, &r->registry);
 }
 
@@ -428,10 +428,10 @@ static void FoldManifestConstants(Resolver* r)
     Module* mod = r->mod;
     Arena* arena = r->arena;
 
-    /* Manifest constants: fold `const` scalar global initializers FIRST, so
-       `[constName]` fixed-array dimensions resolve before layouts compute.
-       Aliases register first — a `const AliasType` folds through to its
-       underlying scalar. */
+    // Manifest constants: fold `const` scalar global initializers FIRST, so
+    // `[constName]` fixed-array dimensions resolve before layouts compute.
+    // Aliases register first — a `const AliasType` folds through to its
+    // underlying scalar.
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {
@@ -447,8 +447,8 @@ static void FoldManifestConstants(Resolver* r)
 
         if (SemaFoldConstInit(r, gd->init, v))
         {
-            /* The constant takes its declared type: later uses read it at that width and signedness (a
-               `const uint` initialized with -1 holds 0xFFFFFFFF). */
+            // The constant takes its declared type: later uses read it at that width and signedness (a
+            // `const uint` initialized with -1 holds 0xFFFFFFFF).
             v->ity = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->registry, gd->type.name)));
 
             if (!v->isFloat)
@@ -492,8 +492,8 @@ static void BuildRegistryAndImpls(Resolver* r)
     TypeRegistryBuild(&r->registry, mod);
     RejectFunctionsNamedLikeStructs(mod, diag);
 
-    /* Validate impl targets and declare property accessor externs before the
-       overload/mangling pass runs. */
+    // Validate impl targets and declare property accessor externs before the
+    // overload/mangling pass runs.
     ResolveImpls(mod, diag, arena, &r->registry);
 }
 
@@ -502,7 +502,7 @@ static void CheckUnionFields(Resolver* r)
     Module* mod = r->mod;
     DiagnosticEngine* diag = r->diag;
 
-    /* A union's fields overlay one another, so none may own memory (nothing could tell which to drop). */
+    // A union's fields overlay one another, so none may own memory (nothing could tell which to drop).
     for (size_t i = 0; i < mod->structs.count; i++)
     {
         StructDecl* sd = (StructDecl*)VecGet(&mod->structs, i);
@@ -630,8 +630,8 @@ static void CheckReturnPaths(DiagnosticEngine* diag, const FunctionDecl* functio
         }
     }
 
-    /* A non-void function must return on every path; if control can fall
-       off the end of the body, at least one path is missing a return. */
+    // A non-void function must return on every path; if control can fall
+    // off the end of the body, at least one path is missing a return.
     if (functionDecl->returnType.primitiveType != PrimVoid && StmtFallsThrough(functionDecl->body, 0))
     {
         DiagErrorFmt(diag, functionDecl->base.range, "missing return statement in function '%s' returning '%s'",
@@ -695,8 +695,8 @@ static void ResolveFunctionBody(Resolver* r, FunctionDecl* functionDecl)
             StrMapPut(&r->refBoxParams, p->name, (void*)1);
         }
 
-        /* A `ref T[]` binding may be a borrowed stack view (fixed-array
-           slice): rebinds and growing writes would free caller storage. */
+        // A `ref T[]` binding may be a borrowed stack view (fixed-array
+        // slice): rebinds and growing writes would free caller storage.
         if (p->mod == ModRef && TypeNameIsDynamicArray(&p->type))
         {
             StrMapPut(&r->refArrayParams, p->name, (void*)1);
@@ -862,9 +862,9 @@ static void CheckStructFields(Resolver* r)
             }
             else if (TypeTreeHasFixedArray(&field->type))
             {
-                /* e.g. `int[4][]` — a dynamic array whose elements are fixed
-                   arrays: not supported (fixed arrays live only in struct
-                   fields, nested inside other fixed arrays). */
+                // e.g. `int[4][]` — a dynamic array whose elements are fixed
+                // arrays: not supported (fixed arrays live only in struct
+                // fields, nested inside other fixed arrays).
                 DiagErrorFmt(diag, field->type.range,
                              "fixed-size arrays may only appear as (nested) fixed-size array struct fields, "
                              "not inside '%s'",
@@ -900,13 +900,13 @@ static void CheckGlobalInits(Resolver* r)
                          gd->name, gd->type.name);
         }
 
-        /* Mirrors the local rule: a const binding needs a value. */
+        // Mirrors the local rule: a const binding needs a value.
         if (gd->type.isConst && !gd->init)
         {
             DiagErrorFmt(diag, gd->base.range, "const global '%s' must be initialized", gd->name);
         }
 
-        /* Array globals default to an empty {null, 0} fat struct. */
+        // Array globals default to an empty {null, 0} fat struct.
         if (TypeNameIsDynamicArray(&gd->type))
         {
             if (gd->init)
@@ -925,9 +925,9 @@ static void CheckGlobalInits(Resolver* r)
             continue;
         }
 
-        /* Scalar / alias / struct globals: the initializer is type-checked
-           like a local declaration (the backend only lowers compile-time
-           constant initializers, so nothing here may slip through). */
+        // Scalar / alias / struct globals: the initializer is type-checked
+        // like a local declaration (the backend only lowers compile-time
+        // constant initializers, so nothing here may slip through).
         if (!AliasIsOwning(r, &gd->type))
         {
             if (gd->init)
@@ -945,7 +945,7 @@ static void CheckGlobalInits(Resolver* r)
             }
             else if (!TypeClassify(&r->registry, r->arena, &gd->type).zeroValid)
             {
-                /* A global starts as zeroes, and a zeroed box is a null pointer waiting to be read. */
+                // A global starts as zeroes, and a zeroed box is a null pointer waiting to be read.
                 DiagErrorFmt(diag, gd->base.range,
                              "global '%s' of type '%s' must be initialized: it holds a box, which has no zero value",
                              gd->name, gd->type.name);
@@ -971,7 +971,7 @@ static void CheckGlobalInits(Resolver* r)
 
         const TypeName* boxInner = TypeNameBoxInner(&gd->type);
 
-        /* An owning global can't be initialized by moving a source. */
+        // An owning global can't be initialized by moving a source.
         if (MovableBoxSourceKey(r, gd->init))
         {
             DiagErrorFmt(diag, gd->base.range,
@@ -985,8 +985,8 @@ static void CheckGlobalInits(Resolver* r)
 
         const TypeName* initType = InferType(r, gd->init, &globalScope);
 
-        /* boxInner is NULL for `string` (no box inner), so only compare
-            against it when present; otherwise the bare type must match. */
+        // boxInner is NULL for `string` (no box inner), so only compare
+        // against it when present; otherwise the bare type must match.
         bool ok = initType
                   && ((boxInner && strcmp(initType->name, boxInner->name) == 0)
                       || strcmp(initType->name, gd->type.name) == 0);
@@ -1022,7 +1022,7 @@ static void CheckFunctionSignatures(Resolver* r)
                              p->name, p->type.name);
             }
 
-            /* By value, an owning struct argument is deep-copied for the callee: never for a destructor. */
+            // By value, an owning struct argument is deep-copied for the callee: never for a destructor.
             if (!functionDecl->isExtern && p->mod == ModNone && !TypeNameIsBox(&p->type)
                 && !TypeNameIsOptional(&p->type) && !TypeNameHasArrayShape(&p->type)
                 && TypeNameHasDrop(&r->registry, &p->type))
@@ -1033,8 +1033,8 @@ static void CheckFunctionSignatures(Resolver* r)
                     p->name, p->type.name, p->type.name, p->type.name);
             }
 
-            /* Structs (forward-declared ones included) cross to the host as pointers, so the
-               declaration has to say so. */
+            // Structs (forward-declared ones included) cross to the host as pointers, so the
+            // declaration has to say so.
             const char* paramLeaf = TypeRegistryResolveAlias(&r->registry, p->type.name);
 
             if (functionDecl->isExtern && p->mod == ModNone && TypeNameIsBare(&p->type)
@@ -1055,19 +1055,19 @@ static void CheckFunctionSignatures(Resolver* r)
                          functionDecl->name, functionDecl->returnType.name);
         }
 
-        /* Resolve aliases first: `struct Name = string;` returns a scalar
-           pointer across the boundary, not a struct. A `return` param (out
-           pointer) is exempt: its type comes back through the parameter,
-           never in the return register. */
+        // Resolve aliases first: `struct Name = string;` returns a scalar
+        // pointer across the boundary, not a struct. A `return` param (out
+        // pointer) is exempt: its type comes back through the parameter,
+        // never in the return register.
         if (functionDecl->isExtern && !functionDecl->hasReturnParam
             && IsDefinedStruct(&r->registry, TypeRegistryResolveAlias(&r->registry, functionDecl->returnType.name)))
         {
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
 
-        /* Fat-pointer type returns are disallowed for externs. A bare `string`
-           return IS allowed: it crosses as a NUL-terminated char* that the
-           caller copies into a fresh owned buffer (codegen BuildOwnedStringFromCStr). */
+        // Fat-pointer type returns are disallowed for externs. A bare `string`
+        // return IS allowed: it crosses as a NUL-terminated char* that the
+        // caller copies into a fresh owned buffer (codegen BuildOwnedStringFromCStr).
         if (functionDecl->isExtern && !functionDecl->hasReturnParam)
         {
             const char* leaf = TypeRegistryResolveAlias(&r->registry, functionDecl->returnType.name);
@@ -1087,10 +1087,10 @@ static void CheckFunctionSignatures(Resolver* r)
             }
         }
 
-        /* A `return` param (out pointer) is exempt: its type comes back
-           through the pointer, which needs no size - exactly like a `ref Foo`
-           parameter. The CALLER still needs a defined type to allocate the
-           out slot, so the call site requires it (see ResolveCall). */
+        // A `return` param (out pointer) is exempt: its type comes back
+        // through the pointer, which needs no size - exactly like a `ref Foo`
+        // parameter. The CALLER still needs a defined type to allocate the
+        // out slot, so the call site requires it (see ResolveCall).
         if (!functionDecl->hasReturnParam && IsIncompleteStruct(&r->registry, functionDecl->returnType.name))
         {
             DiagErrorFmt(diag, functionDecl->base.range, "function cannot return incomplete type '%s'",

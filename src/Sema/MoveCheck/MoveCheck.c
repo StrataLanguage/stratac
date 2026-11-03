@@ -1,3 +1,4 @@
+// Move checking: walks each function's CFG and reports uses of moved places.
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
 MoveDiag* ReportAs(Found* f, MoveDiagKind kind, SourceRange range, const char* name)
@@ -28,13 +29,13 @@ static void ReportPlace(const Env* env, Found* found, const Node* node, int bloc
     const char* blocked = env->paths[blocker];
     bool partMoved = IsAncestor(buf, blocked);
 
-    /* A member's own range starts at its dot; the use is at the variable. */
+    // A member's own range starts at its dot; the use is at the variable.
     while (node->kind == NodeMember)
     {
         node = ((const MemberExpr*)node)->baseNode;
     }
 
-    /* A use after move names the moved place; a poisoned whole names itself. */
+    // A use after move names the moved place; a poisoned whole names itself.
     MoveDiag* d = ReportAs(found, partMoved ? MoveDiagPoisoned : MoveDiagUse, node->range,
                            ArenaStrdup(env->arena, partMoved ? buf : blocked));
 
@@ -44,8 +45,8 @@ static void ReportPlace(const Env* env, Found* found, const Node* node, int bloc
     }
 }
 
-/* Moving an Owning value out of an indexed element (or a field of one) is forbidden: it would leave a
-   hole in the array. An optional element is fine, null being its drop flag. */
+// Moving an Owning value out of an indexed element (or a field of one) is forbidden: it would leave a
+// hole in the array. An optional element is fine, null being its drop flag.
 static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
 {
     const Node* n = op->node;
@@ -69,7 +70,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
             char buf[256];
             const char* root;
 
-            /* An element of a temporary (`Make()[0]`) goes away with it; nothing is left to hole. */
+            // An element of a temporary (`Make()[0]`) goes away with it; nothing is left to hole.
             if (!PlaceKeyImpl(((const IndexExpr*)cur)->baseNode, buf, sizeof(buf), &root, true))
             {
                 return;
@@ -84,7 +85,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
-/* A value with a `Drop` method is moved whole or not at all: `Drop` expects every field to be there. */
+// A value with a `Drop` method is moved whole or not at all: `Drop` expects every field to be there.
 static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
 {
     const Node* n = op->node;
@@ -125,8 +126,8 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
-/* Records on a place expression what its use does with the value, for the code generator: moved out (an Owning
-   value, or an optional it empties), copied (a box handed to a bare `T`, a bare struct element), or just read. */
+// Records on a place expression what its use does with the value, for the code generator: moved out (an Owning
+// value, or an optional it empties), copied (a box handed to a bare `T`, a bare struct element), or just read.
 static void AnnotateUse(const Env* env, const CfgOp* op)
 {
     const Node* n = op->node;
@@ -136,7 +137,7 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         return;
     }
 
-    /* Sema does not always infer the type of an identifier (one directly inside a literal): use its declaration. */
+    // Sema does not always infer the type of an identifier (one directly inside a literal): use its declaration.
     const TypeName* t = ValueType(env, n);
 
     if (!t)
@@ -144,7 +145,7 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         t = PlaceType(env, n);
     }
 
-    /* An element of an array whose type is known has the array's element type. */
+    // An element of an array whose type is known has the array's element type.
     if (!t && n->kind == NodeIndex)
     {
         const Node* base = ((const IndexExpr*)n)->baseNode;
@@ -162,7 +163,7 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         }
         else if (t && TypeNameIsFixedArray(t))
         {
-            /* Inline storage is copied. */
+            // Inline storage is copied.
             kind = UseCopy;
         }
         else if (t && TypeOwns(env, t))
@@ -171,13 +172,13 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
         }
     }
 
-    /* A fixed array handed on as text (`(string)buffer`) is copied even though the graph sees it as a view. */
+    // A fixed array handed on as text (`(string)buffer`) is copied even though the graph sees it as a view.
     if (kind == UseRead && t && TypeNameIsFixedArray(t))
     {
         kind = UseCopy;
     }
 
-    /* The graph is read-only for the checker; the annotation is the one thing it hands back. */
+    // The graph is read-only for the checker; the annotation is the one thing it hands back.
     if (n->kind == NodeIdent)
     {
         ((IdentExpr*)n)->useKind = kind;
@@ -192,7 +193,7 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
     }
 }
 
-/* Steps one block. With `found` set, uses of unusable places are reported. */
+// Steps one block. With `found` set, uses of unusable places are reported.
 static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, Found* found)
 {
     char buf[256];
@@ -216,7 +217,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
         {
             const VarDeclStmt* vd = (const VarDeclStmt*)op->node;
 
-            /* A ref sees the whole place, so it cannot be bound to one with a part moved out. */
+            // A ref sees the whole place, so it cannot be bound to one with a part moved out.
             if (found && vd->isRef && vd->init && TrackedPlace(env, vd->init, buf, sizeof(buf)))
             {
                 int blocker = PlaceBlocker(env, state, buf, true);
@@ -243,8 +244,8 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
                 continue;
             }
 
-            /* A bare variable is used whole; a field read or move uses only that part (and a move
-               takes everything under it). */
+            // A bare variable is used whole; a field read or move uses only that part (and a move
+            // takes everything under it).
             bool whole = op->node->kind == NodeIdent || op->consumed;
 
             int blocker = found ? PlaceBlocker(env, state, buf, whole) : -1;
@@ -254,7 +255,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
                 ReportPlace(env, found, op->node, blocker);
             }
 
-            /* Moving out of a `T?` leaves it empty, which is a usable (testable) state; null is its drop flag. */
+            // Moving out of a `T?` leaves it empty, which is a usable (testable) state; null is its drop flag.
             const TypeName* placeType = PlaceType(env, op->node);
 
             if (op->consumed && !IsCopied(env, op->node) && !(placeType && TypeNameIsOptional(placeType))
@@ -272,7 +273,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
                 continue;
             }
 
-            /* Writing a part needs the whole to be in one piece; writing the whole revives it. */
+            // Writing a part needs the whole to be in one piece; writing the whole revives it.
             char* dot = strrchr(buf, '.');
 
             if (found && dot)
@@ -312,7 +313,7 @@ static void CollectFunctionFacts(Env* env, const FunctionDecl* fn, Cfg* g)
 
 static unsigned char* SolveEntryStates(Env* env, Cfg* g, size_t n, size_t pathCount)
 {
-    /* Entry state of every block; everything is Live on entry. */
+    // Entry state of every block; everything is Live on entry.
     unsigned char* in = (unsigned char*)calloc(g->count * n + 1, 1);
     unsigned char* cur = (unsigned char*)malloc(n + 1);
     unsigned char* edge = (unsigned char*)malloc(n + 1);
@@ -393,9 +394,9 @@ static void ReportMoveFacts(Env* env, Cfg* g, const unsigned char* in, size_t n,
 static void CheckRefParamsRestored(Env* env, const FunctionDecl* fn, const Cfg* g, const unsigned char* in, size_t n,
                                    size_t pathCount, Found* found)
 {
-    /* A ref parameter belongs to the caller: whatever was taken out of it has to be back by the time the
-       function returns. */
-    /* A `Drop` method is taking its value apart; nothing needs to be put back. */
+    // A ref parameter belongs to the caller: whatever was taken out of it has to be back by the time the
+    // function returns.
+    // A `Drop` method is taking its value apart; nothing needs to be put back.
     if (g->blocks[g->exit].reachable && !env->inDropMethod)
     {
         for (size_t k = 0; k < pathCount; k++)

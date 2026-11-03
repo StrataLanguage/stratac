@@ -1,9 +1,9 @@
-/* Expression type inference and expression resolution. */
+// Expression type inference and expression resolution.
 #include "Sema/Resolve/ResolverInternal.h"
 
 static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope);
 
-/* Resets a map's keys without freeing its buffer (recycles per-function state). */
+// Resets a map's keys without freeing its buffer (recycles per-function state).
 void ResetStrMap(StrMap* m)
 {
     if (m->cap > 0)
@@ -30,8 +30,8 @@ int CountByName(const Module* mod, const char* name)
     return count;
 }
 
-/* The name of the `const` binding (global, param or local) that the lvalue
-   `target` is rooted at, or NULL when it is mutable. */
+// The name of the `const` binding (global, param or local) that the lvalue
+// `target` is rooted at, or NULL when it is mutable.
 const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope)
 {
     Node* base = target;
@@ -76,7 +76,7 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMa
         return;
     }
 
-    /* String and array's `.length` is readonly */
+    // String and array's `.length` is readonly
     if (target->kind == NodeMember)
     {
         MemberExpr* tm = (MemberExpr*)target;
@@ -164,7 +164,7 @@ static const TypeName* InferIntLiteralType(Resolver* r, Node* n, StrMap* scope)
 {
     const IntLiteral* lit = (const IntLiteral*)n;
 
-    /* Values that don't fit a non-negative signed i32 are 64-bit, as is any `l` literal. */
+    // Values that don't fit a non-negative signed i32 are 64-bit, as is any `l` literal.
     if (lit->value > 0x7FFFFFFFULL || lit->isLong)
     {
         return InternTypeName(r, lit->isUnsigned ? "ulong" : "long");
@@ -177,7 +177,7 @@ static const TypeName* InferIdentType(Resolver* r, Node* n, StrMap* scope)
 {
     const TypeName* t = (const TypeName*)StrMapGet(scope, ((IdentExpr*)n)->name);
 
-    /* The builtin `null` constant (a variable named `null` shadows it). */
+    // The builtin `null` constant (a variable named `null` shadows it).
     if (!t && IsNullConstantName(((IdentExpr*)n)->name))
     {
         return InternTypeName(r, STRATA_NULL_TYPE);
@@ -210,11 +210,11 @@ static const TypeName* InferArithmeticType(Resolver* r, BinaryExpr* b, StrMap* s
     }
     PrimitiveType rp = rt ? rt->primitiveType : PrimNone;
 
-    /* Box/optional operands deref to their inner for arithmetic
-       (mirrors the ResolveExpr operand check). Same-shape SIMD
-       vectors keep the vector type: the scalar ladder below would
-       report a bogus `int` and break overload matching for valid
-       vector arguments. */
+    // Box/optional operands deref to their inner for arithmetic
+    // (mirrors the ResolveExpr operand check). Same-shape SIMD
+    // vectors keep the vector type: the scalar ladder below would
+    // report a bogus `int` and break overload matching for valid
+    // vector arguments.
     const char* ln2 = lt && TypeNameIsBox(lt) && lt->inner ? lt->inner->name : lt ? lt->name : "";
     const char* rn2 = rt && TypeNameIsBox(rt) && rt->inner ? rt->inner->name : rt ? rt->name : "";
 
@@ -282,15 +282,15 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
 {
     MemberExpr* m = (MemberExpr*)n;
 
-    /* Scoped enum constant: `EnumName.Member` has the enum's type. */
+    // Scoped enum constant: `EnumName.Member` has the enum's type.
     if (m->isEnumConst && m->enumTypeName)
     {
         return InternTypeName(r, m->enumTypeName);
     }
 
-    /* Builtin scalar pseudo-property: `int.max` / `float.min` has the
-       base scalar's own type. Resolution-order independent (like the
-       impl-property path below). */
+    // Builtin scalar pseudo-property: `int.max` / `float.min` has the
+    // base scalar's own type. Resolution-order independent (like the
+    // impl-property path below).
     if (m->baseNode->kind == NodeIdent)
     {
         const char* baseName = ((IdentExpr*)m->baseNode)->name;
@@ -304,9 +304,9 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
 
     const TypeName* baseType = InferType(r, m->baseNode, scope);
 
-    /* Impl properties: a member read on a handle with a matching
-       `property` yields the property's type. Methods are call-only
-       (NULL here; the resolve pass diagnoses bare access). */
+    // Impl properties: a member read on a handle with a matching
+    // `property` yields the property's type. Methods are call-only
+    // (NULL here; the resolve pass diagnoses bare access).
     PropertyDecl* prop = PropertyOnHandle(r, baseType, m->member);
 
     if (prop)
@@ -314,7 +314,7 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
         return &prop->returnType;
     }
 
-    /* Optional member access follows the box pointer. */
+    // Optional member access follows the box pointer.
     baseType = UnwrapBoxPtr(baseType);
 
     if (!baseType)
@@ -322,7 +322,7 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
         return NULL;
     }
 
-    /* SIMD lane read / swizzle: `v.x` is a float, `v.xy` a float2, `v.xyz` a float3. */
+    // SIMD lane read / swizzle: `v.x` is a float, `v.xy` a float2, `v.xyz` a float3.
     if (IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, baseType->name)) != 0)
     {
         size_t lanes = strlen(m->member);
@@ -356,9 +356,9 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
         return NULL;
     }
 
-    /* Array/string pseudo-properties: `.length` and `.cap` read the fat's
-       u32 fields (uint). Fixed arrays expose a compile-time `.length`
-       only — they have no capacity (inline storage). */
+    // Array/string pseudo-properties: `.length` and `.cap` read the fat's
+    // u32 fields (uint). Fixed arrays expose a compile-time `.length`
+    // only — they have no capacity (inline storage).
     if (IsFatPseudoProperty(r, baseType, m->member))
     {
         return InternTypeName(r, strcmp(m->member, "data") == 0 ? STRATA_PTR_TYPE : "uint");
@@ -390,7 +390,6 @@ static const TypeName* InferCallType(Resolver* r, Node* n, StrMap* scope)
         return &c->resolvedDecl->returnType;
     }
 
-    // Infer the type for intrinsic calls
     const TypeName* intrinsicType = InferIntrinsicType(r, c, scope);
     if (intrinsicType != NULL)
     {
@@ -409,7 +408,7 @@ static const TypeName* InferIndexType(Resolver* r, Node* n, StrMap* scope)
 {
     const TypeName* baseType = InferType(r, ((IndexExpr*)n)->baseNode, scope);
 
-    /* Indexing through an optional array (`T[]?`) unwraps it. */
+    // Indexing through an optional array (`T[]?`) unwraps it.
     if (baseType && TypeNameIsOptional(baseType))
     {
         baseType = baseType->inner;
@@ -485,10 +484,10 @@ static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
     }
 }
 
-/* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
-   variable, field or element of type T (or a `^T` / proven `T?` holding one). Nothing is
-   moved or copied; the alias cannot be rebound or moved from, and dies once
-   what it refers to may have moved. */
+// `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, which must be a
+// variable, field or element of type T (or a `^T` / proven `T?` holding one). Nothing is
+// moved or copied; the alias cannot be rebound or moved from, and dies once
+// what it refers to may have moved.
 void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
     ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
@@ -588,8 +587,8 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
 
     ResolveExpr(r, u->operand, scope);
 
-    /* `-bool` and `~bool` compute i1 garbage (signed 1-bit neg/not).
-       Only `!` is defined for bools. */
+    // `-bool` and `~bool` compute i1 garbage (signed 1-bit neg/not).
+    // Only `!` is defined for bools.
     if (u->op == UnNeg || u->op == UnBitNot)
     {
         const TypeName* ot = InferType(r, u->operand, scope);
@@ -600,7 +599,7 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    /* `~` complements the bits of a flags enum only. */
+    // `~` complements the bits of a flags enum only.
     if (u->op == UnBitNot)
     {
         const TypeName* ot = InferType(r, u->operand, scope);
@@ -612,7 +611,7 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    /* An enum value is a name, not a number to negate. */
+    // An enum value is a name, not a number to negate.
     if (u->op == UnNeg)
     {
         const TypeName* ot = InferType(r, u->operand, scope);
@@ -654,14 +653,14 @@ static void ResolveArithBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     bool vectorPair
         = SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, ln2)) != 0;
 
-    /* Bool is not numeric: `true + true` must not compute i1
-       wrap-around (1+1 = 0). */
+    // Bool is not numeric: `true + true` must not compute i1
+    // wrap-around (1+1 = 0).
     bool boolOperand = (lt && IsBoolType(&r->registry, lt)) || (rt && IsBoolType(&r->registry, rt));
 
-    /* `&`, `|`, `^` combine flags of one enum type (`Usage.A | Usage.B`). */
+    // `&`, `|`, `^` combine flags of one enum type (`Usage.A | Usage.B`).
     bool flagsPair = IsEnumFlagsOp(r, b->op, lt, rt);
 
-    /* `a + b` on strings / cstrings / literals concatenates into a new string. */
+    // `a + b` on strings / cstrings / literals concatenates into a new string.
     bool concatPair = IsStringConcat(r, b->op, lt, rt);
 
     if (lt && rt && (!numericPair || boolOperand) && !vectorPair && !flagsPair && !concatPair)
@@ -673,7 +672,7 @@ static void ResolveArithBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
         CheckConstArith(r->diag, b, lt);
     }
 
-    /* Bitwise operators combine the values of a `@flags` enum; any other enum is a set of names. */
+    // Bitwise operators combine the values of a `@flags` enum; any other enum is a set of names.
     if (b->op == BinBitAnd || b->op == BinBitOr || b->op == BinBitXor)
     {
         const char* le = ExprEnumName(r, b->lhs, lt);
@@ -695,8 +694,8 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     const char* ln = lt ? lt->name : "";
     const char* rn = rt ? rt->name : "";
 
-    /* Two different enum types are never comparable, whatever their values. A constant such as
-       `Color.Red` is typed as its underlying integer, so it is named by its member expression. */
+    // Two different enum types are never comparable, whatever their values. A constant such as
+    // `Color.Red` is typed as its underlying integer, so it is named by its member expression.
     {
         const char* le = ExprEnumName(r, b->lhs, lt);
         const char* re = ExprEnumName(r, b->rhs, rt);
@@ -712,8 +711,8 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     bool lCStr = lt && TypeIsCString(&r->registry, ln);
     bool rCStr = rt && TypeIsCString(&r->registry, rn);
 
-    /* A string literal on one side of a `cstring` comparison coerces
-       to `cstring` (contextual), so `cs == "lit"` is well-typed. */
+    // A string literal on one side of a `cstring` comparison coerces
+    // to `cstring` (contextual), so `cs == "lit"` is well-typed.
     if (lCStr && rString && b->rhs->kind == NodeStrLiteral)
     {
         rString = false;
@@ -726,17 +725,17 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
         lCStr = true;
     }
 
-    /* Ordering a bool is meaningless (i1 compares with signed 1-bit
-       semantics: `true < false` computes garbage). Only `==`/`!=`
-       are defined for bools. */
+    // Ordering a bool is meaningless (i1 compares with signed 1-bit
+    // semantics: `true < false` computes garbage). Only `==`/`!=`
+    // are defined for bools.
     bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
     bool boolOperand = (lt && IsBoolType(&r->registry, lt)) || (rt && IsBoolType(&r->registry, rt));
 
-    /* Comparing a `T?` reads through it. Only `==`/`!=` with an
-       optional LEFT side and a box/optional right side is
-       null-aware (empty == empty); every other comparison derefs the
-       optional, so it must be proven non-empty first. `T[]?`
-       compares as the array it wraps (empty is a zero-length fat). */
+    // Comparing a `T?` reads through it. Only `==`/`!=` with an
+    // optional LEFT side and a box/optional right side is
+    // null-aware (empty == empty); every other comparison derefs the
+    // optional, so it must be proven non-empty first. `T[]?`
+    // compares as the array it wraps (empty is a zero-length fat).
     {
         bool lOpt = lt && TypeNameIsOptional(lt) && !TypeIsComparableAggregate(&r->registry, lt);
         bool rOpt = rt && TypeNameIsOptional(rt) && !TypeIsComparableAggregate(&r->registry, rt);
@@ -744,8 +743,8 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
         bool rNullAware = eqOp && lOpt;
     }
 
-    /* `flag == 1` would compare through an implicit numeric <-> bool
-       conversion; both sides of a bool comparison must be bool. */
+    // `flag == 1` would compare through an implicit numeric <-> bool
+    // conversion; both sides of a bool comparison must be bool.
     const TypeName* lScalar = TypeNameBoxInner(lt) ? TypeNameBoxInner(lt) : lt;
     const TypeName* rScalar = TypeNameBoxInner(rt) ? TypeNameBoxInner(rt) : rt;
     bool mixedBool = lScalar && rScalar && IsBoolType(&r->registry, lScalar) != IsBoolType(&r->registry, rScalar);
@@ -756,7 +755,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
         return;
     }
 
-    /* `string == cstring` (either order) compares the text, like `string == string`. */
+    // `string == cstring` (either order) compares the text, like `string == string`.
     if (eqOp && ((lString && rCStr) || (rString && lCStr)))
     {
         return;
@@ -773,7 +772,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
         return;
     }
 
-    /* `cstring` compares by content like `string`. */
+    // `cstring` compares by content like `string`.
     if (lCStr != rCStr)
     {
         DiagErrorFmt(r->diag, b->base.range, "cannot compare 'cstring' with '%s'", lCStr ? rn : ln);
@@ -790,10 +789,10 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
         return;
     }
 
-    /* Aggregates (structs, dynamic/fixed arrays, `T[]?`): `==`/`!=`
-       compare structurally — same resolved type only, never across
-       distinct struct/array types or against scalars. Ordering is
-       meaningless for aggregates and rejected. */
+    // Aggregates (structs, dynamic/fixed arrays, `T[]?`): `==`/`!=`
+    // compare structurally — same resolved type only, never across
+    // distinct struct/array types or against scalars. Ordering is
+    // meaningless for aggregates and rejected.
     if (lt && rt && (TypeIsComparableAggregate(&r->registry, lt) || TypeIsComparableAggregate(&r->registry, rt)))
     {
         bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
@@ -815,7 +814,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
              && (IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, ln)) != 0
                  || IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, rn)) != 0))
     {
-        /* Vectors are equal or not; they have no order. */
+        // Vectors are equal or not; they have no order.
         DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
     }
 }
@@ -838,7 +837,7 @@ static void ResolveBinaryExpr(Resolver* r, Node* n, StrMap* scope)
 
     ResolveExpr(r, b->lhs, scope);
 
-    /* `a? && a.x`: the right side runs only when the left is true (`||`: when it is false). */
+    // `a? && a.x`: the right side runs only when the left is true (`||`: when it is false).
     if (b->op == BinLogicAnd || b->op == BinLogicOr)
     {
         ResolveExpr(r, b->rhs, scope);
@@ -882,10 +881,10 @@ static void ResolveBinaryExpr(Resolver* r, Node* n, StrMap* scope)
 
 static bool CheckAssignTargetForm(Resolver* r, AssignExpr* a, StrMap* scope)
 {
-    /* Storing into a path frees or rebinds what was there: refs reaching through it die. */
+    // Storing into a path frees or rebinds what was there: refs reaching through it die.
 
-    /* `cstring` is constant storage: element writes (plain or compound)
-       are rejected. Whole-slot rebinding (`cs = ...`) is fine. */
+    // `cstring` is constant storage: element writes (plain or compound)
+    // are rejected. Whole-slot rebinding (`cs = ...`) is fine.
     if (a->target->kind == NodeIndex)
     {
         Node* base = a->target;
@@ -907,8 +906,8 @@ static bool CheckAssignTargetForm(Resolver* r, AssignExpr* a, StrMap* scope)
         }
     }
 
-    /* `.length` / `.cap` on arrays and strings are read-only views of
-       the fat (fixed `.length` is a compile-time constant). */
+    // `.length` / `.cap` on arrays and strings are read-only views of
+    // the fat (fixed `.length` is a compile-time constant).
     if (a->target->kind == NodeMember)
     {
         MemberExpr* fatM = (MemberExpr*)a->target;
@@ -943,9 +942,9 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
             ResolveExpr(r, tm->baseNode, scope);
             ResolveExpr(r, a->value, scope);
 
-            /* The setter call produces no value: `a.P = b.Q = v` has no
-               meaningful result (and an inner write used as a value would
-               flow a void into the outer setter). */
+            // The setter call produces no value: `a.P = b.Q = v` has no
+            // meaningful result (and an inner write used as a value would
+            // flow a void into the outer setter).
             if (a->value->kind == NodeAssign && ((AssignExpr*)a->value)->isImplPropertyWrite)
             {
                 DiagErrorFmt(r->diag, a->base.range,
@@ -986,7 +985,7 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
 
 static bool AssignTargetIsOwningField(Resolver* r, AssignExpr* a, StrMap* scope)
 {
-    /* An owning field target is reassigned, not read - re-life it instead of tripping use-after-move. */
+    // An owning field target is reassigned, not read - re-life it instead of tripping use-after-move.
     const char* fieldKey = NULL;
     bool targetIsOwningField = false;
 
@@ -1098,9 +1097,9 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
             return;
         }
 
-        /* A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`
-           (or a string) is the caller's slot: `=` drops what it held and
-           stores the new value there, so out-params work. */
+        // A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`
+        // (or a string) is the caller's slot: `=` drops what it held and
+        // stores the new value there, so out-params work.
         bool slotRef = TypeNameIsOptional(tt) || TypeIsString(&r->registry, tt->name) || TypeNameIsDynamicArray(tt);
 
         if (StrMapGet(&r->refBoxParams, targetName) && !slotRef)
@@ -1141,10 +1140,10 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
 
         // Contents-assign reads through the optional.
 
-        /* An owning-struct inner (`^Rec b; b = arr[i];`) REPLACES the
-           cell contents, so the RHS value moves in: the source is
-           consumed (codegen drops the old contents, then constructs
-           the new value into the cell). */
+        // An owning-struct inner (`^Rec b; b = arr[i];`) REPLACES the
+        // cell contents, so the RHS value moves in: the source is
+        // consumed (codegen drops the old contents, then constructs
+        // the new value into the cell).
         if (a->op == AssignSet && inner && vt && TypeRegistryIsOwningStruct(&r->registry, inner->name)
             && AliasIsOwningValue(r, vt))
         {
@@ -1263,14 +1262,14 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
                          ((IdentExpr*)a->target)->name, tt->name);
         }
 
-        /* Assigning a `T?` into a plain `T` unwraps the optional. */
+        // Assigning a `T?` into a plain `T` unwraps the optional.
     }
     else if (a->target->kind == NodeIndex && a->op == AssignSet)
     {
-        /* Element write into an owning-element array (`Rec[]`,
-           `string[]`): the old element is dropped and the RHS moves
-           in. A borrow out of another array element would leave the
-           value owned by two arrays — same rule as push. */
+        // Element write into an owning-element array (`Rec[]`,
+        // `string[]`): the old element is dropped and the RHS moves
+        // in. A borrow out of another array element would leave the
+        // value owned by two arrays — same rule as push.
         const TypeName* et = InferType(r, a->target, scope);
         const TypeName* vt = InferType(r, a->value, scope);
 
@@ -1300,9 +1299,9 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
         }
         else if (et && TypeNameIsBox(et) && vt && TypeNameIsBox(vt))
         {
-            /* `^T` element from a `^T` value: codegen moves the box
-               pointer in and nulls the source (a variable, field or
-               another element), so record the move. */
+            // `^T` element from a `^T` value: codegen moves the box
+            // pointer in and nulls the source (a variable, field or
+            // another element), so record the move.
             const char* movedValueKey = MovableBoxSourceKey(r, a->value);
 
             if (movedValueKey)
@@ -1313,15 +1312,15 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     }
     else if (a->target->kind == NodeMember)
     {
-        /* Non-owning field target (`bob.plain = opt;`) - the field
-            type is the unwrap target. */
+        // Non-owning field target (`bob.plain = opt;`) - the field
+        // type is the unwrap target.
         const TypeName* mt = InferType(r, a->target, scope);
         const TypeName* vt = InferType(r, a->value, scope);
     }
 
-    /* The written path holds a new value: every fact at, under, or
-       aliasing it is stale. `=` re-proves a `T?` target when the
-       value is provably non-empty. */
+    // The written path holds a new value: every fact at, under, or
+    // aliasing it is stale. `=` re-proves a `T?` target when the
+    // value is provably non-empty.
     if (writtenKey)
     {
 
@@ -1350,13 +1349,13 @@ static void ResolveAssignExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
 
-    /* Reassigning a scalar local invalidates its index spellings' facts. */
+    // Reassigning a scalar local invalidates its index spellings' facts.
     if (a->target->kind == NodeIdent)
     {
     }
     else if (a->target->kind == NodeIndex)
     {
-        /* Writing an array element kills nested-index/length facts of the array root. */
+        // Writing an array element kills nested-index/length facts of the array root.
         const char* targetKey = MovableBoxSourceKey(r, a->target);
 
         if (targetKey)
@@ -1367,8 +1366,8 @@ static void ResolveAssignExpr(Resolver* r, Node* n, StrMap* scope)
     const TypeName* tt = (a->target->kind == NodeIdent) ? InferType(r, a->target, scope) : NULL;
     bool targetIsBox = tt && AliasIsOwning(r, tt);
 
-    /* A `ref T[]` param may be a borrowed stack view (fixed-array slice):
-       rebinding drops/frees the old buffer — the caller's storage. */
+    // A `ref T[]` param may be a borrowed stack view (fixed-array slice):
+    // rebinding drops/frees the old buffer — the caller's storage.
     if (tt && a->target->kind == NodeIdent && TypeNameIsDynamicArray(tt)
         && StrMapGet(&r->refArrayParams, ((IdentExpr*)a->target)->name)
         && !IsGrowableArrayParam(r, ((IdentExpr*)a->target)->name))
@@ -1402,8 +1401,8 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
 {
     IncDecExpr* inc = (IncDecExpr*)n;
 
-    /* Properties have no addressable storage: ++/-- would need a
-       get+set pair; require explicit assignment instead. */
+    // Properties have no addressable storage: ++/-- would need a
+    // get+set pair; require explicit assignment instead.
     if (inc->operand->kind == NodeMember)
     {
         MemberExpr* tm = (MemberExpr*)inc->operand;
@@ -1427,7 +1426,7 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
     CheckConstAssign(r, inc->operand, inc->base.range, scope);
     ResolveExpr(r, inc->operand, scope);
 
-    /* ++/-- on an element of constant `cstring` storage is rejected. */
+    // ++/-- on an element of constant `cstring` storage is rejected.
     if (inc->operand->kind == NodeIndex)
     {
         Node* base = inc->operand;
@@ -1450,9 +1449,9 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    /* ++/-- only makes sense on numeric storage; anything else would
-       fall through to pointer arithmetic. Bool is not numeric: `b++`
-       wraps the i1 (true -> false). */
+    // ++/-- only makes sense on numeric storage; anything else would
+    // fall through to pointer arithmetic. Bool is not numeric: `b++`
+    // wraps the i1 (true -> false).
     const TypeName* incType = InferType(r, inc->operand, scope);
 
     if (incType && (!IsNumeric(incType->primitiveType) || IsBoolType(&r->registry, incType)))
@@ -1470,13 +1469,13 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
 
-    /* ++/-- invalidates index spellings of the operand. */
+    // ++/-- invalidates index spellings of the operand.
     if (inc->operand->kind == NodeIdent)
     {
     }
     else if (inc->operand->kind == NodeIndex)
     {
-        /* ++/-- on an array element feeds nested-index spellings too. */
+        // ++/-- on an array element feeds nested-index spellings too.
         const char* operandKey = MovableBoxSourceKey(r, inc->operand);
 
         if (operandKey)
@@ -1501,7 +1500,7 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
     const char* srcName = src ? src->name : "";
     const char* dstName = dst->name;
 
-    /* Resolve type aliases to their underlying types for cast compatibility. */
+    // Resolve type aliases to their underlying types for cast compatibility.
     const char* resolvedSrc = TypeRegistryResolveAlias(&r->registry, srcName);
     const char* resolvedDst = TypeRegistryResolveAlias(&r->registry, dstName);
 
@@ -1510,31 +1509,31 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
         = src && IsHandleType(&r->registry, srcName) && IsHandleType(&r->registry, dstName)
           && (HandleExtendsFrom(&r->registry, dstName, srcName) || HandleExtendsFrom(&r->registry, srcName, dstName));
 
-    /* SIMD vector pair: same lane count (including through type aliases). */
+    // SIMD vector pair: same lane count (including through type aliases).
     const LaneCount srcLanes = IsNameSimdVector(resolvedSrc);
     const LaneCount dstLanes = IsNameSimdVector(resolvedDst);
     bool simdPair = src && srcLanes != 0 && dstLanes != 0 && srcLanes == dstLanes;
 
-    /* ^T -> ^U only when T or U is opaque (erase/cast-back). */
+    // ^T -> ^U only when T or U is opaque (erase/cast-back).
     bool boxPair = src && TypeNameIsOwning(src) && TypeNameIsOwning(dst)
                    && ((TypeNameBoxInner(src) && TypeRegistryIsOpaque(&r->registry, src->inner->name))
                        || (TypeNameBoxInner(dst) && TypeRegistryIsOpaque(&r->registry, dst->inner->name)));
 
-    /* Alias <-> underlying (or alias <-> alias) of the SAME resolved type:
-       the explicit escape hatch for strong typedefs (`(Name)s`, `(string)n`).
-       Distinct aliases still never convert implicitly. */
+    // Alias <-> underlying (or alias <-> alias) of the SAME resolved type:
+    // the explicit escape hatch for strong typedefs (`(Name)s`, `(string)n`).
+    // Distinct aliases still never convert implicitly.
     bool aliasPair
         = src && SameResolvedType(r, srcName, dstName)
           && (TypeRegistryIsTypeAlias(&r->registry, srcName) || TypeRegistryIsTypeAlias(&r->registry, dstName));
 
-    /* `cstring` -> `string` copies (heap copy at the use site);
-       a string literal casts to `cstring` (contextual `.rodata` pointer). */
+    // `cstring` -> `string` copies (heap copy at the use site);
+    // a string literal casts to `cstring` (contextual `.rodata` pointer).
     bool cstringStringPair = src
                              && ((TypeIsCString(&r->registry, srcName) && TypeIsString(&r->registry, dstName))
                                  || (cast->operand->kind == NodeStrLiteral && TypeIsCString(&r->registry, dstName)));
 
-    /* Handle <-> integer: a handle reads back as its 64-bit address (`(ulong)h`, `(long)h`), and
-       any integer converts to a handle (`(ptr)addr`). */
+    // Handle <-> integer: a handle reads back as its 64-bit address (`(ulong)h`, `(long)h`), and
+    // any integer converts to a handle (`(ptr)addr`).
     PrimitiveType srcPrim = GetPrimitiveType(resolvedSrc);
     PrimitiveType dstPrim = GetPrimitiveType(resolvedDst);
     bool handleIntPair = src
@@ -1542,13 +1541,13 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
                              || (IsHandleType(&r->registry, dstName) && IsNumeric(srcPrim)
                                  && !IsNameFloatType(resolvedSrc) && srcPrim != PrimBool));
 
-    /* `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` the reverse. */
+    // `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` the reverse.
     bool cstringPtrPair = src
                           && ((TypeIsCString(&r->registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
                               || (TypeIsCString(&r->registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
 
-    /* Text views: a NUL-terminated `byte[N]` buffer as a `cstring` (borrowed) or a `string`
-       (copied, up to the first NUL or all N bytes); a `string` as a `cstring` (borrowed). */
+    // Text views: a NUL-terminated `byte[N]` buffer as a `cstring` (borrowed) or a `string`
+    // (copied, up to the first NUL or all N bytes); a `string` as a `cstring` (borrowed).
     bool bufferSrc = src && TypeNameHasArrayShape(src) && src->length >= 0 && src->elem
                      && !TypeNameHasArrayShape(src->elem)
                      && (strcmp(src->elem->name, "byte") == 0 || strcmp(src->elem->name, "sbyte") == 0);
@@ -1565,7 +1564,7 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
     else if (src && cast->operand->kind != NodeStrLiteral && TypeIsString(&r->registry, srcName)
              && TypeIsCString(&r->registry, dstName))
     {
-        /* The cstring would point into the string's buffer and dangle once the string is dropped or grows. */
+        // The cstring would point into the string's buffer and dangle once the string is dropped or grows.
         DiagErrorFmt(r->diag, cast->base.range,
                      "a string cannot be cast to cstring: the result would dangle when the string is dropped; "
                      "pass the string itself where C expects text");
@@ -1582,8 +1581,8 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
         DiagErrorFmt(r->diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
     }
 
-    /* Casting a compile-time constant to an enum: the value must fit the
-       enum's underlying range (`(Color)300` for a byte-based enum). */
+    // Casting a compile-time constant to an enum: the value must fit the
+    // enum's underlying range (`(Color)300` for a byte-based enum).
     if (TypeRegistryIsEnum(&r->registry, dstName))
     {
         ConstUInt mag = 0;
@@ -1644,7 +1643,6 @@ static void ResolveNullTestExpr(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    // Resolve the operand path itself.
     ResolveExpr(r, nt->operand, scope);
 
     const TypeName* operandType = InferType(r, nt->operand, scope);

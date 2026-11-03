@@ -1,3 +1,4 @@
+// Lowers each function body into its control-flow graph.
 #include "Sema/Cfg.h"
 
 #include <stdio.h>
@@ -8,13 +9,13 @@ typedef struct
 {
     size_t breakTarget;
     size_t continueTarget;
-    StackMark scopeDepth; /* scopes open when the loop began: break and continue leave the ones above */
+    StackMark scopeDepth; // scopes open when the loop began: break and continue leave the ones above
 } LoopFrame;
 
 typedef struct
 {
     const Block* block;
-    Vec defers; /* Vec<const Node*>, in source order */
+    Vec defers; // Vec<const Node*>, in source order
 } ScopeFrame;
 
 typedef struct
@@ -27,7 +28,7 @@ typedef struct
     LoopFrame* loops;
     size_t loopCount;
     size_t loopCap;
-    StackMark deferDepth; /* >0 while a deferred statement is being lowered: it cannot trigger the defers again */
+    StackMark deferDepth; // >0 while a deferred statement is being lowered: it cannot trigger the defers again
 } Builder;
 
 static size_t NewBlock(Builder* b)
@@ -74,7 +75,7 @@ static void AddEdge(Builder* b, size_t from, size_t to)
     }
 }
 
-/* Ends the current block with a jump and continues in `next`. */
+// Ends the current block with a jump and continues in `next`.
 static void Goto(Builder* b, size_t target)
 {
     AddEdge(b, b->cur, target);
@@ -83,8 +84,8 @@ static void Goto(Builder* b, size_t target)
 static void LowerStmt(Builder* b, const Node* n);
 static void LowerExprC(Builder* b, const Node* n, bool consumed);
 
-/* A cast that only looks at its operand (a buffer or string viewed as text, an array as a pointer). Any
-   other cast hands its operand on, so a move through `(^T)box` still moves the box. */
+// A cast that only looks at its operand (a buffer or string viewed as text, an array as a pointer). Any
+// other cast hands its operand on, so a move through `(^T)box` still moves the box.
 static bool CastViewsOperand(int kind)
 {
     return kind == CastBufferToCString || kind == CastBufferToString || kind == CastStringToCString
@@ -115,11 +116,11 @@ static void PopScope(Builder* b)
     free(b->scopes[b->scopeCount].defers.items);
 }
 
-/* Runs the deferred statements of the scopes above `depth`, innermost scope and latest `defer`
-   first, and emits each scope's exit. Does not pop anything: other paths still need them. */
+// Runs the deferred statements of the scopes above `depth`, innermost scope and latest `defer`
+// first, and emits each scope's exit. Does not pop anything: other paths still need them.
 static void RunDefers(Builder* b, StackMark depth)
 {
-    /* A `return`/`break` inside a defer body is a sema error; the graph just must not loop on it. */
+    // A `return`/`break` inside a defer body is a sema error; the graph just must not loop on it.
     if (b->deferDepth > 0)
     {
         return;
@@ -143,14 +144,14 @@ static void RunDefers(Builder* b, StackMark depth)
     }
 }
 
-/* After a jump the rest of the block is dead; later statements go to a block nothing enters. */
+// After a jump the rest of the block is dead; later statements go to a block nothing enters.
 static void StartDeadBlock(Builder* b)
 {
     b->cur = NewBlock(b);
 }
 
-/* `a`, `a.b`, `a.b.c`: a variable and fields only, no index or call between. Such a place is one op, so
-   the analyses see `a.b` as a use of that path and not as a use of `a`. */
+// `a`, `a.b`, `a.b.c`: a variable and fields only, no index or call between. Such a place is one op, so
+// the analyses see `a.b` as a use of that path and not as a use of `a`.
 static bool IsPurePlace(const Node* n)
 {
     while (n && n->kind == NodeMember)
@@ -163,8 +164,8 @@ static bool IsPurePlace(const Node* n)
 
 static void LowerPlace(Builder* b, const Node* n);
 
-/* The base of `base.f` or `base[i]` that is written through: a bare variable there is used (a field of a
-   moved struct cannot be assigned), unlike a variable that is itself the whole target. */
+// The base of `base.f` or `base[i]` that is written through: a bare variable there is used (a field of a
+// moved struct cannot be assigned), unlike a variable that is itself the whole target.
 static void LowerPlaceRoot(Builder* b, const Node* base)
 {
     if (base && base->kind == NodeIdent)
@@ -176,7 +177,7 @@ static void LowerPlaceRoot(Builder* b, const Node* base)
     LowerPlace(b, base);
 }
 
-/* A place being written or borrowed is not read: only its index operands and call bases run. */
+// A place being written or borrowed is not read: only its index operands and call bases run.
 static void LowerPlace(Builder* b, const Node* n)
 {
     if (!n)
@@ -205,7 +206,7 @@ static void LowerPlace(Builder* b, const Node* n)
     }
 }
 
-/* Lowers `cond` and ends the block on it. Returns the block that was ended. */
+// Lowers `cond` and ends the block on it. Returns the block that was ended.
 static size_t Branch(Builder* b, const Node* cond, size_t onTrue, size_t onFalse)
 {
     LowerExpr(b, cond);
@@ -216,8 +217,8 @@ static size_t Branch(Builder* b, const Node* cond, size_t onTrue, size_t onFalse
     return from;
 }
 
-/* Does argument `i` of the call move its value? By-value params of a defined function do, unless sema
-   inferred a borrow; externs and C varargs only borrow. `drop(x)` and `array_push(a, x)` consume. */
+// Does argument `i` of the call move its value? By-value params of a defined function do, unless sema
+// inferred a borrow; externs and C varargs only borrow. `drop(x)` and `array_push(a, x)` consume.
 static bool ArgIsConsumed(const CallExpr* e, size_t i)
 {
     if (e->isIntrinsicCall)
@@ -228,8 +229,8 @@ static bool ArgIsConsumed(const CallExpr* e, size_t i)
 
     const FunctionDecl* d = e->resolvedDecl;
 
-    /* No function behind the call: a struct constructor `S(a, b)` (or a vector one), whose arguments become
-       the fields by value. */
+    // No function behind the call: a struct constructor `S(a, b)` (or a vector one), whose arguments become
+    // the fields by value.
     if (!d && !e->calleeBase && !e->delegateCallee)
     {
         return true;
@@ -240,7 +241,7 @@ static bool ArgIsConsumed(const CallExpr* e, size_t i)
         return false;
     }
 
-    /* Arguments past the named parameters feed a typed rest parameter, which takes them by value. */
+    // Arguments past the named parameters feed a typed rest parameter, which takes them by value.
     const ParamDecl* p = (const ParamDecl*)VecGet(&d->params, i < d->params.count ? i : d->params.count - 1);
 
     if (i >= d->params.count && !p->isVarargRest)
@@ -314,7 +315,7 @@ static void LowerExprC(Builder* b, const Node* n, bool consumed)
         LowerExpr(b, ((const UnaryExpr*)n)->operand);
         break;
     case NodeCast:
-        /* A text cast (`(cstring)s`) views its operand; any other cast passes it on. */
+        // A text cast (`(cstring)s`) views its operand; any other cast passes it on.
         LowerExprC(b, ((const CastExpr*)n)->operand, consumed && !CastViewsOperand(((const CastExpr*)n)->textKind));
         break;
     case NodeNullTest:
@@ -362,7 +363,7 @@ static void LowerExprC(Builder* b, const Node* n, bool consumed)
 
         for (size_t i = 0; i < e->elements.count; i++)
         {
-            /* `{ value; n }` copies the one value into each element; a list moves each element in. */
+            // `{ value; n }` copies the one value into each element; a list moves each element in.
             LowerExprC(b, (const Node*)VecGet(&e->elements, i), e->repeatCount == NULL);
         }
 
@@ -385,7 +386,7 @@ static void LowerBlock(Builder* b, const Block* blk)
         LowerStmt(b, (const Node*)VecGet(&blk->statements, i));
     }
 
-    /* Falling off the end: the scope's defers, then its exit. */
+    // Falling off the end: the scope's defers, then its exit.
     ScopeFrame* sf = &b->scopes[b->scopeCount - 1];
 
     for (size_t d = sf->defers.count; d > 0; d--)
@@ -407,7 +408,7 @@ static void LowerExprStmt(Builder* b, const Node* n)
 {
     LowerExpr(b, ((const ExprStmt*)n)->expr);
 
-    /* A `@noreturn` call never continues: nothing runs after it, not even the defers. */
+    // A `@noreturn` call never continues: nothing runs after it, not even the defers.
     if (StmtIsNoReturnCall(n))
     {
         StartDeadBlock(b);
@@ -474,7 +475,7 @@ static void LowerWhile(Builder* b, const Node* n)
     Goto(b, head);
     b->cur = head;
 
-    /* `while (true)` has no way out but `break` and `return`. */
+    // `while (true)` has no way out but `break` and `return`.
     if (s->condition->kind == NodeBoolLiteral && ((const BoolLiteral*)s->condition)->value)
     {
         Goto(b, body);
@@ -502,7 +503,7 @@ static void LowerWhile(Builder* b, const Node* n)
 static void LowerFor(Builder* b, const Node* n)
 {
     const ForStmt* s = (const ForStmt*)n;
-    PushScope(b, NULL); /* the init's variable lives for the whole loop */
+    PushScope(b, NULL); // the init's variable lives for the whole loop
     LowerStmt(b, s->init);
 
     size_t head = NewBlock(b);

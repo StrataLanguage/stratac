@@ -1,3 +1,4 @@
+// The array builtin table and its lookups.
 #include "Sema/Builtins.h"
 
 #include "Core/Util.h"

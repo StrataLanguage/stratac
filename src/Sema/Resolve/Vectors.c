@@ -1,4 +1,4 @@
-/* SIMD vector constructor and builtin resolution. */
+// SIMD vector constructor and builtin resolution.
 #include "Sema/Resolve/ResolverInternal.h"
 
 static bool SimdVector2ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope)
@@ -13,9 +13,9 @@ static bool SimdVector2ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
 static bool SimdVector3ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope)
 {
     const AllowList valid[] = {
-        {(const char*[]){"float3"},                  1}, /* float3(float3(1.0, 2.0, 3.0)) */
-        {(const char*[]){"float2", "float"},         2}, /* float3(float2(1.0, 2.0), 3.0) */
-        {(const char*[]){"float", "float", "float"}, 3}, /* float3(1.0, 2.0, 3.0) */
+        {(const char*[]){"float3"},                  1}, // float3(float3(1.0, 2.0, 3.0))
+        {(const char*[]){"float2", "float"},         2}, // float3(float2(1.0, 2.0), 3.0)
+        {(const char*[]){"float", "float", "float"}, 3}, // float3(1.0, 2.0, 3.0)
     };
 
     return CheckArgTypesUnordered(r, c, scope, valid, ARRAY_COUNT(valid));
@@ -24,17 +24,17 @@ static bool SimdVector3ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
 static bool SimdVector4ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope)
 {
     const AllowList valid[] = {
-        {(const char*[]){"float4"},                           1}, /* float4(float4(1.0, 2.0, 3.0, 4.0)) */
-        {(const char*[]){"float3", "float"},                  2}, /* float4(float3(1.0, 2.0, 3.0), 4.0) */
-        {(const char*[]){"float2", "float", "float"},         3}, /* float4(float2(1.0, 2.0), 3.0, 4.0) */
-        {(const char*[]){"float2", "float2"},                 2}, /* float4(float2(1.0, 2.0), float2(3.0, 4.0)) */
-        {(const char*[]){"float", "float", "float", "float"}, 4}, /* float4(1.0, 2.0, 3.0, 4.0) */
+        {(const char*[]){"float4"},                           1}, // float4(float4(1.0, 2.0, 3.0, 4.0))
+        {(const char*[]){"float3", "float"},                  2}, // float4(float3(1.0, 2.0, 3.0), 4.0)
+        {(const char*[]){"float2", "float", "float"},         3}, // float4(float2(1.0, 2.0), 3.0, 4.0)
+        {(const char*[]){"float2", "float2"},                 2}, // float4(float2(1.0, 2.0), float2(3.0, 4.0))
+        {(const char*[]){"float", "float", "float", "float"}, 4}, // float4(1.0, 2.0, 3.0, 4.0)
     };
 
     return CheckArgTypesUnordered(r, c, scope, valid, ARRAY_COUNT(valid));
 }
 
-/* Resolves SIMD vector constructors (`float3(x)`, `float4(w,x,y,z)`); returns true if this was one. */
+// Resolves SIMD vector constructors (`float3(x)`, `float4(w,x,y,z)`); returns true if this was one.
 bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // The function name is the same as the type name, so we can use TypeUtil functions on it.
@@ -70,7 +70,7 @@ bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-//-- SIMD vector intrinsics.
+// -- SIMD vector intrinsics.
 bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // User defined functions take precedence

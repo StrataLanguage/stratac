@@ -1,9 +1,9 @@
-/* Enum member lookup and enum member value evaluation. */
+// Enum member lookup and enum member value evaluation.
 #include "Sema/Resolve/ResolverInternal.h"
 
 #include <inttypes.h>
 
-/* The enum an expression belongs to: its type, or the enum of a `Color.Red` constant. NULL for a non-enum. */
+// The enum an expression belongs to: its type, or the enum of a `Color.Red` constant. NULL for a non-enum.
 const char* ExprEnumName(Resolver* r, const Node* n, const TypeName* t)
 {
     if (n->kind == NodeMember && ((const MemberExpr*)n)->isEnumConst)
@@ -19,7 +19,7 @@ const char* ExprEnumName(Resolver* r, const Node* n, const TypeName* t)
     return NULL;
 }
 
-/* `a & b`, `a | b`, `a ^ b` on two values of one enum type: flag sets keep their enum type. */
+// `a & b`, `a | b`, `a ^ b` on two values of one enum type: flag sets keep their enum type.
 bool IsEnumFlagsOp(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName* rt)
 {
     if (op != BinBitAnd && op != BinBitOr && op != BinBitXor)
@@ -37,7 +37,7 @@ bool IsEnumFlagsOp(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName*
     return st && st->isEnum && st->isFlagsEnum;
 }
 
-/* Is `name` an enum that is not declared `@flags`? */
+// Is `name` an enum that is not declared `@flags`?
 bool IsPlainEnum(const Resolver* r, const char* name)
 {
     const StructType* st = name ? TypeRegistryFind(&r->registry, name) : NULL;
@@ -45,10 +45,10 @@ bool IsPlainEnum(const Resolver* r, const char* name)
     return st && st->isEnum && !st->isFlagsEnum;
 }
 
-/* Resolves `EnumName.Member` — a scoped enum constant read. Returns true when
-   the member expression was handled (marked as an enum constant, or diagnosed
-   as a bad member). Only bare type-name bases are considered; a variable
-   shadowing the enum name takes precedence. */
+// Resolves `EnumName.Member` — a scoped enum constant read. Returns true when
+// the member expression was handled (marked as an enum constant, or diagnosed
+// as a bad member). Only bare type-name bases are considered; a variable
+// shadowing the enum name takes precedence.
 bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
 {
     if (m->baseNode->kind != NodeIdent)
@@ -60,7 +60,7 @@ bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
 
     if (StrMapGet(scope, baseName))
     {
-        return false; /* a local shadows the enum type name */
+        return false; // a local shadows the enum type name
     }
 
     if (!TypeRegistryIsEnum(&r->registry, baseName))
@@ -92,7 +92,7 @@ bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
     return true;
 }
 
-/* Finds `memberName` in enum `ed`; returns true with `*outIndex` set. */
+// Finds `memberName` in enum `ed`; returns true with `*outIndex` set.
 static bool FindEnumMemberIndex(EnumDecl* ed, const char* memberName, size_t* outIndex)
 {
     for (size_t i = 0; i < ed->members.count; i++)
@@ -144,8 +144,8 @@ static EnumEvalStatus EnumEvalUnary(Node* n, Module* mod, size_t enumIndex, size
     case UnNeg:
         if (isUnsigned)
         {
-            /* `-1u` on an unsigned underlying wraps C-style to 0xFFFFFFFF
-               (a plain `-1` stays rejected). */
+            // `-1u` on an unsigned underlying wraps C-style to 0xFFFFFFFF
+            // (a plain `-1` stays rejected).
             if (ConstBitWidth(u->operand) == 32)
             {
                 *out = (0 - inner) & 0xFFFFFFFFULL;
@@ -238,13 +238,13 @@ static EnumEvalStatus EnumEvalBinary(Node* n, Module* mod, size_t enumIndex, siz
         *out = isUnsigned ? (l >> r) : (ConstUInt)((ConstInt)l >> (ConstInt)r);
         return EnumEvalOk;
     default:
-        return EnumEvalNotConst; /* comparisons / && / || don't fold to an integer value */
+        return EnumEvalNotConst; // comparisons / && / || don't fold to an integer value
     }
 }
 
 static EnumEvalStatus EnumEvalIdent(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, ConstUInt* out)
 {
-    /* A bare name: a reference to an EARLIER member of this enum. */
+    // A bare name: a reference to an EARLIER member of this enum.
     IdentExpr* id = (IdentExpr*)n;
     EnumDecl* ed = (EnumDecl*)VecGet(&mod->enums, enumIndex);
     size_t refIndex = 0;
@@ -265,11 +265,11 @@ static EnumEvalStatus EnumEvalIdent(Node* n, Module* mod, size_t enumIndex, size
 
 static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, ConstUInt* out)
 {
-    /* `EnumName.Member` — a scoped constant from an already-resolved enum. */
+    // `EnumName.Member` — a scoped constant from an already-resolved enum.
     MemberExpr* me = (MemberExpr*)n;
 
-    /* `int.max` — a builtin scalar pseudo-property folds to its value
-       (integral only; enums never have float underlyings). */
+    // `int.max` — a builtin scalar pseudo-property folds to its value
+    // (integral only; enums never have float underlyings).
     if (me->baseNode->kind == NodeIdent)
     {
         ConstUInt intVal = 0;
@@ -322,7 +322,7 @@ static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, siz
     return EnumEvalNotConst;
 }
 
-/* Folds an enum member value expression to a 64-bit value */
+// Folds an enum member value expression to a 64-bit value
 static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, size_t memberIndex, bool isUnsigned,
                                         ConstUInt* out)
 {
@@ -352,7 +352,7 @@ static EnumEvalStatus EnumEvalConstExpr(Node* n, Module* mod, size_t enumIndex, 
     }
 }
 
-/* Reports the error for a member whose value expression failed to fold. */
+// Reports the error for a member whose value expression failed to fold.
 static void ReportEnumValueError(DiagnosticEngine* diag, EnumMemberDecl* m, EnumEvalStatus st, const char* underlying)
 {
     switch (st)
@@ -371,10 +371,10 @@ static void ReportEnumValueError(DiagnosticEngine* diag, EnumMemberDecl* m, Enum
     }
 }
 
-/* Assigns enum member values (sequential from 0, or a folded constant
-   expression) and validates every value fits the underlying scalar integral
-   type. Emits the enum's underlying type in `registry` (registered as an alias
-   earlier). */
+// Assigns enum member values (sequential from 0, or a folded constant
+// expression) and validates every value fits the underlying scalar integral
+// type. Emits the enum's underlying type in `registry` (registered as an alias
+// earlier).
 void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* registry)
 {
     for (size_t i = 0; i < mod->enums.count; i++)

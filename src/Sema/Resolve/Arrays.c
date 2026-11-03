@@ -1,7 +1,7 @@
-/* Fixed-array initializers and array builtin resolution. */
+// Fixed-array initializers and array builtin resolution.
 #include "Sema/Resolve/ResolverInternal.h"
 
-/* True if any fixed-size array dimension (`T[N]`) appears in the type tree (even inside a box). */
+// True if any fixed-size array dimension (`T[N]`) appears in the type tree (even inside a box).
 bool TypeTreeHasFixedArray(const TypeName* t)
 {
     for (; t; t = (TypeNameIsBox(t) || TypeNameIsOptional(t)) ? t->inner : (TypeNameHasArrayShape(t) ? t->elem : NULL))
@@ -15,7 +15,7 @@ bool TypeTreeHasFixedArray(const TypeName* t)
     return false;
 }
 
-/* Returns the innermost non-fixed node and the product of leading fixed dimensions (1 if none). */
+// Returns the innermost non-fixed node and the product of leading fixed dimensions (1 if none).
 const TypeName* FixedArrayLeaf(const TypeName* t, ArrayLength* totalCount)
 {
     ArrayLength count = 1;
@@ -30,10 +30,10 @@ const TypeName* FixedArrayLeaf(const TypeName* t, ArrayLength* totalCount)
     return t;
 }
 
-/* True when `member` on `base` is one of the fat pseudo-properties: dynamic
-   arrays and strings carry `.length` and `.cap`; fixed arrays expose only a
-   compile-time `.length`. `cstring` exposes `.length` only (strlen, no `.cap`).
-   All are read-only views of runtime state. */
+// True when `member` on `base` is one of the fat pseudo-properties: dynamic
+// arrays and strings carry `.length` and `.cap`; fixed arrays expose only a
+// compile-time `.length`. `cstring` exposes `.length` only (strlen, no `.cap`).
+// All are read-only views of runtime state.
 bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* member)
 {
     bool isData = strcmp(member, "data") == 0;
@@ -50,7 +50,7 @@ bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* me
         return false;
     }
 
-    /* `.data`: the element buffer of a dynamic array or string, as a `ptr` (for FFI). */
+    // `.data`: the element buffer of a dynamic array or string, as a `ptr` (for FFI).
     if (isData)
     {
         return TypeNameIsDynamicArray(base) || TypeIsString(&r->registry, base->name);
@@ -106,8 +106,8 @@ bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExp
     return true;
 }
 
-/* Verifies a fixed-array initializer's SHAPE: nested rows for multidimensional fields, a flat list for
- * single-dimension. Returns false (with a diagnostic) on mismatch. `kind` is "field" or "local" for messages. */
+// Verifies a fixed-array initializer's SHAPE: nested rows for multidimensional fields, a flat list for
+// single-dimension. Returns false (with a diagnostic) on mismatch. `kind` is "field" or "local" for messages.
 bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai, const TypeName* leaf, const char* name,
                               const char* kind)
 {
@@ -145,8 +145,8 @@ bool CheckFixedArrayInitShape(Resolver* r, const TypeName* t, ArrayInitExpr* ai,
     return true;
 }
 
-/* True when any element of a fixed-array initializer is itself a braced
-   row (`NodeArrayInit`); NULL holes are skipped. */
+// True when any element of a fixed-array initializer is itself a braced
+// row (`NodeArrayInit`); NULL holes are skipped.
 bool HasNestedArrayInit(const ArrayInitExpr* ai)
 {
     for (size_t k = 0; k < ai->elements.count; k++)
@@ -162,8 +162,8 @@ bool HasNestedArrayInit(const ArrayInitExpr* ai)
     return false;
 }
 
-/* A fixed array passed where an extern takes a `ptr` decays to its first element, as in C:
-   `snprintf(buffer, ...)` with `byte[32] buffer`. The argument is wrapped in that `(ptr)` cast. */
+// A fixed array passed where an extern takes a `ptr` decays to its first element, as in C:
+// `snprintf(buffer, ...)` with `byte[32] buffer`. The argument is wrapped in that `(ptr)` cast.
 void DecayFixedArgsToPtr(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee || c->calleeBase)
@@ -207,7 +207,7 @@ void DecayFixedArgsToPtr(Resolver* r, CallExpr* c, StrMap* scope)
     }
 }
 
-/* Result type of array_push/pop/resize/remove, or NULL if not one. */
+// Result type of array_push/pop/resize/remove, or NULL if not one.
 const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee)
@@ -230,7 +230,7 @@ const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     Node* arg0 = c->args.count > 0 ? (Node*)VecGet(&c->args, 0) : NULL;
     const TypeName* arrType = arg0 ? InferType(r, arg0, scope) : NULL;
 
-    /* arg0 must be an array for this to be a (valid) builtin call. */
+    // arg0 must be an array for this to be a (valid) builtin call.
     const TypeName* elem = arrType ? TypeNameArrayElem(arrType) : NULL;
 
     if (!elem)
@@ -238,7 +238,7 @@ const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
         return NULL;
     }
 
-    /* Pop, remove, replace and take hand the element to the caller. */
+    // Pop, remove, replace and take hand the element to the caller.
     if (isPop || isReplace || isTake || (ArrayBuiltinFlagsOf(c->callee) & ABF_REMOVES))
     {
         return elem;
@@ -247,8 +247,8 @@ const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     return InternTypeName(r, isPush ? "uint" : "void");
 }
 
-/* An EMPTY braced value for a `T?` target is the canonical empty optional
-   (zero-fill), not a T value missing its owning fields. */
+// An EMPTY braced value for a `T?` target is the canonical empty optional
+// (zero-fill), not a T value missing its owning fields.
 bool IsEmptyBracedForOptional(const Node* n, const TypeName* target)
 {
     bool empty = (n->kind == NodeArrayInit && ((const ArrayInitExpr*)n)->elements.count == 0)
@@ -256,11 +256,6 @@ bool IsEmptyBracedForOptional(const Node* n, const TypeName* target)
 
     return empty && target && TypeNameIsOptional(target);
 }
-
-/* Types nested bare-braced field values from their field's declared type,
-   then requires every OWNING field to be covered. For literals whose type
-   arrives only AFTER the context-free pre-resolution pass (call/ctor/
-   `array_push` args), whose full checks would otherwise never run. */
 
 // True for `arr[i]` reads (casts unwrapped); the array keeps ownership.
 bool IsArrayElementBorrow(Node* n)
@@ -293,9 +288,9 @@ static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const Ty
 
     const TypeName* elemType = TypeNameArrayElem(unwrapped);
 
-    /* A bare `{...}` value takes the element's shape here — the literal
-       would otherwise never be typed: no field checks run, and codegen
-       zero-fills it (a null `^T` owning field crashes at first deref). */
+    // A bare `{...}` value takes the element's shape here — the literal
+    // would otherwise never be typed: no field checks run, and codegen
+    // zero-fills it (a null `^T` owning field crashes at first deref).
     bool bracedValue = (arg1->kind == NodeArrayInit && !((ArrayInitExpr*)arg1)->elementType)
                        || (arg1->kind == NodeStructInit && !((StructInitExpr*)arg1)->typeName);
 
@@ -337,7 +332,7 @@ static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const Ty
         }
     }
 
-    /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
+    // Pushing a borrow out of an array element would duplicate ownership; move it to a local first.
     if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
     {
         DiagErrorFmt(r->diag, arg1->range,
@@ -346,7 +341,7 @@ static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const Ty
                      valueType->name);
     }
 
-    /* Deref check before the move tracking below clears the pushed optional's fact. */
+    // Deref check before the move tracking below clears the pushed optional's fact.
     CheckCallArgOptionalDerefs(r, c, scope);
 
     // Push moves owning values in (boxes/strings/arrays AND owning
@@ -385,7 +380,7 @@ static void ResolveArrayReplace(Resolver* r, CallExpr* c, StrMap* scope, const T
 
 static void ResolveArrayResize(Resolver* r, CallExpr* c, StrMap* scope, const TypeName* unwrapped)
 {
-    /* Growing fills the new slots with zeroes, so the elements must have a valid zero value. */
+    // Growing fills the new slots with zeroes, so the elements must have a valid zero value.
     if (strcmp(c->callee, "array_resize") == 0)
     {
         const TypeName* elemType = TypeNameArrayElem(unwrapped);
@@ -416,7 +411,7 @@ static void ResolveArrayTake(Resolver* r, CallExpr* c, StrMap* scope, const Type
 {
     const TypeName* elemType = TypeNameArrayElem(unwrapped);
 
-    /* Only a string, an array or an optional has a value that means "nothing here". */
+    // Only a string, an array or an optional has a value that means "nothing here".
     if (elemType
         && !(TypeIsString(&r->registry, elemType->name) || TypeNameIsDynamicArray(elemType)
              || TypeNameIsOptional(elemType)))
@@ -439,13 +434,13 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     bool isPush = strcmp(c->callee, "array_push") == 0;
-    /* `array_reserve(a, n)` grows the capacity like a resize would, without touching the elements. */
+    // `array_reserve(a, n)` grows the capacity like a resize would, without touching the elements.
     bool isResize = strcmp(c->callee, "array_resize") == 0 || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
     bool isRemove = (ArrayBuiltinFlagsOf(c->callee) & ABF_REMOVES) != 0;
-    /* `array_replace(a, i, v)` stores `v` in slot i and hands the old element to the caller. */
+    // `array_replace(a, i, v)` stores `v` in slot i and hands the old element to the caller.
     bool isReplace = strcmp(c->callee, "array_replace") == 0;
-    /* `array_take(a, i)` moves element i out and leaves its empty value behind; the array keeps its length. */
+    // `array_take(a, i)` moves element i out and leaves its empty value behind; the array keeps its length.
     bool isTake = strcmp(c->callee, "array_take") == 0;
 
     if (!isPush && !isResize && !isPop && !isRemove && !isReplace && !isTake)
@@ -556,9 +551,9 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* True when some visible overload of `name` takes a `ref T[]` param whose
-   element matches the fixed array's — the arg can cross as a borrowed
-   stack-fat view instead of being rejected wholesale. */
+// True when some visible overload of `name` takes a `ref T[]` param whose
+// element matches the fixed array's — the arg can cross as a borrowed
+// stack-fat view instead of being rejected wholesale.
 bool OverloadTakesFixedView(Resolver* r, const char* name, const TypeName* fixedType, int fileId)
 {
     const TypeName* argElem = TypeNameArrayElem(fixedType);
@@ -598,10 +593,10 @@ bool OverloadTakesFixedView(Resolver* r, const char* name, const TypeName* fixed
     return false;
 }
 
-/* Stamps a braced literal and its nested rows with element types, top-down.
-   Call args are resolved BEFORE the overload is known (so the generic
-   inheritance walk saw a NULL elementType); the chosen param supplies the
-   types here. */
+// Stamps a braced literal and its nested rows with element types, top-down.
+// Call args are resolved BEFORE the overload is known (so the generic
+// inheritance walk saw a NULL elementType); the chosen param supplies the
+// types here.
 void StampArrayInitElemTypes(ArrayInitExpr* ai, const TypeName* elem)
 {
     if (!elem || ai->elementType)
@@ -629,7 +624,7 @@ void StampArrayInitElemTypes(ArrayInitExpr* ai, const TypeName* elem)
     }
 }
 
-/* True for `{}`: an empty braced value, which default-constructs. */
+// True for `{}`: an empty braced value, which default-constructs.
 static bool IsEmptyBraced(const Node* n)
 {
     return (n->kind == NodeArrayInit && ((const ArrayInitExpr*)n)->elements.count == 0
@@ -637,9 +632,9 @@ static bool IsEmptyBraced(const Node* n)
            || (n->kind == NodeStructInit && ((const StructInitExpr*)n)->fields.count == 0);
 }
 
-/* `{ value; count }` for a dynamic array: the count is any integer; the value is evaluated once and
-   each element is a copy of it (a `{}` value instead default-constructs each element). The value is
-   read, not moved, so a variable used as the value stays usable. */
+// `{ value; count }` for a dynamic array: the count is any integer; the value is evaluated once and
+// each element is a copy of it (a `{}` value instead default-constructs each element). The value is
+// read, not moved, so a variable used as the value stays usable.
 void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
 {
     ResolveExpr(r, ai->repeatCount, scope);
@@ -657,7 +652,7 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
     Node* value = (Node*)VecGet(&ai->elements, 0);
     const TypeName* elem = ai->elementType;
 
-    /* `{ {}; count }` zero-fills each element: the default value, built in place. */
+    // `{ {}; count }` zero-fills each element: the default value, built in place.
     if (IsEmptyBraced(value))
     {
         if (elem && !ZeroIsValid(r, elem, 0))
@@ -707,8 +702,8 @@ void ResolveIndexExpr(Resolver* r, Node* n, StrMap* scope)
     ResolveExprImpl(r, ix->baseNode, scope, true);
     ResolveExprImpl(r, ix->index, scope, false);
 
-    /* Indexing an optional array (`opt[i]`) reads its contents - the
-        same narrowing rule as a member read through a `T?`. */
+    // Indexing an optional array (`opt[i]`) reads its contents - the
+    // same narrowing rule as a member read through a `T?`.
     {
         const TypeName* baseType = InferType(r, ix->baseNode, scope);
 

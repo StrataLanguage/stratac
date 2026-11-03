@@ -1,4 +1,5 @@
 #pragma once
+// Resolver state and helpers shared by the Resolve/ source files.
 
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
@@ -22,49 +23,49 @@ typedef struct
     Module* mod;
     DiagnosticEngine* diag;
     TypeRegistry registry;
-    NodeTypes nodeTypes; /* the type InferType last gave each expression node */
+    NodeTypes nodeTypes; // the type InferType last gave each expression node
     Arena* arena;
     StrMap constVars;
     StrMap boxGlobals;
     StrMap refBoxParams;
-    StrMap refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
-    StrMap refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
-    StrMap typeCache;      /* canonical spelling -> interned TypeName tree */
-    StrMap constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
+    StrMap refLocals;      // `ref` locals: name -> the (canonical) path they alias
+    StrMap refArrayParams; // `ref T[]` param names: borrowed binding — no rebind, no push/resize
+    StrMap typeCache;      // canonical spelling -> interned TypeName tree
+    StrMap constGlobals;   // const scalar global name -> ConstGlobalVal* (manifest constants)
     const TypeName* currentReturnType;
     const FunctionDecl* currentFunction;
-    StrMap* curScope; /* the function's scope, for typing move paths (see KeyPathType) */
+    StrMap* curScope; // the function's scope, for typing move paths (see KeyPathType)
 
-    /* Vec of Vec*'s, a list of scopes and their respective symbols. */
+    // Vec of Vec*'s, a list of scopes and their respective symbols.
     Vec scopeDecls;
 
-    /* Vec of Vec*'s parallel to scopeDecls: each scope's DeferEntry*'s. */
+    // Vec of Vec*'s parallel to scopeDecls: each scope's DeferEntry*'s.
     Vec deferFrames;
 
-    /* Vec of LoopFlow*'s: break/continue targets of the enclosing loops. */
+    // Vec of LoopFlow*'s: break/continue targets of the enclosing loops.
     Vec loopFlows;
 
-    /* Nesting depth of deferred statements being walked. */
+    // Nesting depth of deferred statements being walked.
     StackMark deferWalkDepth;
 
-    /* The current path is dead (after return/break/continue). */
+    // The current path is dead (after return/break/continue).
     bool unreachable;
 } Resolver;
 
-/* A folded manifest constant: a `const` scalar global whose initializer is a
-   compile-time constant. Emits no storage — the value is inlined at every
-   use (the #define/enum alternative for C++ consumers). */
+// A folded manifest constant: a `const` scalar global whose initializer is a
+// compile-time constant. Emits no storage — the value is inlined at every
+// use (the #define/enum alternative for C++ consumers).
 typedef struct
 {
     ConstInt i;
     double f;
     bool isFloat;
-    bool isInt;       /* integer-kind type: usable as a fixed-array dimension */
-    ConstIntType ity; /* the runtime integer type `i` is normalized to (see ConstFold.h) */
+    bool isInt;       // integer-kind type: usable as a fixed-array dimension
+    ConstIntType ity; // the runtime integer type `i` is normalized to (see ConstFold.h)
 } ConstGlobalVal;
 
-/* What loops, `defer` and branches carry between paths: whether the path can be reached at all (no state
-   yet, or every contributor was dead, makes it dead). */
+// What loops, `defer` and branches carry between paths: whether the path can be reached at all (no state
+// yet, or every contributor was dead, makes it dead).
 typedef struct
 {
     bool live;
@@ -76,13 +77,13 @@ typedef struct AllowList
     int size;
 } AllowList;
 
-/* Result of folding an enum member value expression. */
+// Result of folding an enum member value expression.
 typedef enum
 {
     EnumEvalOk = 0,
-    EnumEvalNotConst,       /* not a constant integer expression (incl. div-by-zero, bad shift) */
-    EnumEvalNegForUnsigned, /* a unary minus in an expression for an unsigned underlying */
-    EnumEvalForwardRef,     /* references a member that isn't resolved yet (self/forward) */
+    EnumEvalNotConst,       // not a constant integer expression (incl. div-by-zero, bad shift)
+    EnumEvalNegForUnsigned, // a unary minus in an expression for an unsigned underlying
+    EnumEvalForwardRef,     // references a member that isn't resolved yet (self/forward)
 } EnumEvalStatus;
 
 typedef struct IntrinsicTypeDefinition
@@ -92,31 +93,31 @@ typedef struct IntrinsicTypeDefinition
     bool (*resolveFunc)(Resolver*, CallExpr*, StrMap*);
 } IntrinsicTypeDefinition;
 
-/* A `defer`red statement queued on its scope. It is checked against the flow
-   state at every exit it runs at (block end, return, break, continue). */
+// A `defer`red statement queued on its scope. It is checked against the flow
+// state at every exit it runs at (block end, return, break, continue).
 typedef struct
 {
     Node* stmt;
-    size_t frame;           /* index of the owning scope in scopeDecls */
-    StackMark declMark;     /* names the scope had declared at the `defer` */
-    DiagnosticEngine early; /* diagnostics from the walk at the `defer` itself */
+    size_t frame;           // index of the owning scope in scopeDecls
+    StackMark declMark;     // names the scope had declared at the `defer`
+    DiagnosticEngine early; // diagnostics from the walk at the `defer` itself
     bool ranAtExit;
 } DeferEntry;
 
-/* The break/continue targets of one loop iteration being walked. */
+// The break/continue targets of one loop iteration being walked.
 typedef struct
 {
-    FlowState breaks;         /* join of every `break`: part of the loop exit */
-    FlowState continues;      /* join of every `continue`: a back edge */
-    StackMark deferDepth;     /* deferFrames.count at body entry */
-    StackMark deferWalkDepth; /* deferWalkDepth when the loop began */
+    FlowState breaks;         // join of every `break`: part of the loop exit
+    FlowState continues;      // join of every `continue`: a back edge
+    StackMark deferDepth;     // deferFrames.count at body entry
+    StackMark deferWalkDepth; // deferWalkDepth when the loop began
 } LoopFlow;
 
-/* Upper bound on muted fixed-point passes per loop. The join is monotone
-   over a finite key set so it converges long before this in practice. */
+// Upper bound on muted fixed-point passes per loop. The join is monotone
+// over a finite key set so it converges long before this in practice.
 #define LOOP_MAX_PASSES 32
 
-/* Functions defined in one Resolve source file and called from another. */
+// Functions defined in one Resolve source file and called from another.
 ConstIntType SemaConstIntType(PrimitiveType p);
 bool IsEnumUnderlyingType(const char* t);
 void EnumSignedRange(const char* underlying, bool* isUnsigned, ConstInt* minVal, ConstUInt* maxVal);
