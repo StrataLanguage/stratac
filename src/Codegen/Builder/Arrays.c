@@ -696,7 +696,7 @@ Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMV
 // Copies a non-empty fat array value: fresh buffer + per-element deep copy
 // for owning element types, memcpy-style loop otherwise. Callers guard
 // empty optionals.
-Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
+Value EmitArrayValueCopy(Builder* b, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
                          LLVMValueRef oldData)
 {
     oldLen = WidenLen(b, oldLen); // the fat's u32 length, as a loop bound

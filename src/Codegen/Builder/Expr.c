@@ -291,7 +291,6 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 
         // Fixed inline array: GEP into the [N x T]; length is the compile-time dimension.
         TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
-        LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
 
