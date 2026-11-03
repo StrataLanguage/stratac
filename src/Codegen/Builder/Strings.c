@@ -248,28 +248,6 @@ LLVMValueRef EmptyStrConstant(Builder* b)
     return LLVMConstGEP2(strType, g, idx, 2);
 }
 
-// Heap-copies a NUL-terminated string so the copy can be owned and freed.
-static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
-{
-    size_t copyLen = len + 1;
-    LLVMValueRef sz = LLVMConstInt(I64Ty(b), (unsigned long long)copyLen, 0);
-    LLVMValueRef args[1] = {sz};
-    StrataAllocFn(b);
-    LLVMValueRef heap = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, args, 1, "str");
-
-    LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
-
-    for (size_t ci = 0; ci < copyLen; ci++)
-    {
-        LLVMValueRef ciVal = LLVMConstInt(I64Ty(b), (unsigned long long)ci, 0);
-        LLVMValueRef ba[1] = {ciVal};
-        LLVMValueRef byte = LLVMBuildLoad2(b->builder, i8Ty, LLVMBuildGEP2(b->builder, i8Ty, srcPtr, ba, 1, "s"), "b");
-        LLVMBuildStore(b->builder, byte, LLVMBuildGEP2(b->builder, i8Ty, heap, ba, 1, "d"));
-    }
-
-    return heap;
-}
-
 // Emits the body of strata_strdup, which allocates through strata_alloc.
 static void EmitStrataStrdupBody(Builder* b)
 {

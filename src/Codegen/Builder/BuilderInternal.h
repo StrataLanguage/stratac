@@ -204,7 +204,7 @@ LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef le
 LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, ArrayLength length, LLVMValueRef arrPtr,
                                      LLVMTypeRef arrTy, TypeDesc elemTd);
 Value EmitArrayBuiltin(Builder* b, CallExpr* n);
-Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
+Value EmitArrayValueCopy(Builder* b, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
                          LLVMValueRef oldData);
 Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer, bool borrow);
 Value EmitArrayInit(Builder* b, ArrayInitExpr* n);

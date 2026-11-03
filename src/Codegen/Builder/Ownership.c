@@ -699,7 +699,7 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
             Br(b, endBb2);
 
             PositionAtEnd(b, copyBb2);
-            Value copiedArr = EmitArrayValueCopy(b, src, td, elemTd, elemTy, oldLen, oldData);
+            Value copiedArr = EmitArrayValueCopy(b, td, elemTd, elemTy, oldLen, oldData);
             LLVMBuildStore(b->builder, copiedArr.value, slot);
             Br(b, endBb2);
 
@@ -707,7 +707,7 @@ Value EmitCopyValue(Builder* b, Value src, TypeDesc td)
             return ValueMake(LLVMBuildLoad2(b->builder, ArrayStructType(b), slot, "oaconv"), td);
         }
 
-        return EmitArrayValueCopy(b, src, td, elemTd, elemTy, oldLen, oldData);
+        return EmitArrayValueCopy(b, td, elemTd, elemTy, oldLen, oldData);
     }
 
     return src;
