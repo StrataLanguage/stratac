@@ -747,6 +747,165 @@ Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LL
     return ValueMake(arr, td);
 }
 
+/* The backing buffer for a literal's `count` elements: a fixed stack array in
+   the entry block when `stackBuffer`, else a heap allocation. */
+LLVMValueRef EmitArrayLiteralBuffer(Builder* b, LLVMTypeRef elemTy, LLVMTypeRef slotTy, size_t count, bool stackBuffer)
+{
+    LLVMValueRef dataPtr = LLVMConstNull(b->m_ptrTy);
+
+    if (stackBuffer)
+    {
+        /* Fixed-size stack buffer (count is a compile-time constant). */
+        size_t n = count;
+        LLVMTypeRef arrTy = LLVMArrayType(slotTy, (unsigned)n);
+        LLVMValueRef bufSlot = EntryAlloca(b, arrTy, "varargs");
+
+        LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
+        LLVMValueRef idx[2] = {zero, zero};
+        dataPtr = LLVMBuildGEP2(b->m_builder, arrTy, bufSlot, idx, 2, "varargsdata");
+    }
+    else
+    {
+        LLVMValueRef elemSize = SizeOfConst(b, elemTy);
+        LLVMValueRef countConst = LLVMConstInt(I64Ty(b), (unsigned long long)count, 0);
+        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, elemSize, countConst, "bytes");
+        LLVMValueRef allocArgs[1] = {totalBytes};
+        StrataAllocFn(b);
+        dataPtr = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "arrbuf");
+    }
+
+    return dataPtr;
+}
+
+/* A `ref T... rest` element with non-owning elements: the slot holds a POINTER
+   to the source argument, so element writes reach the caller. */
+void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd,
+                             LLVMTypeRef elemTy)
+{
+    /* Store a POINTER to the source argument. A box arg already
+       is the value's address; lvalues yield their address; a
+       non-lvalue is materialized into a stack temp. */
+    if (TypeDescIsBox(&v.typeDesc))
+    {
+        LLVMBuildStore(b->m_builder, v.value, elemAddr);
+    }
+    else
+    {
+        LValue lv = EmitLValue(b, eNode);
+
+        if (lv.valid)
+        {
+            LLVMBuildStore(b->m_builder, lv.ptr, elemAddr);
+        }
+        else
+        {
+            LLVMValueRef temp = EntryAlloca(b, elemTy, "aliastemp");
+            LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, temp);
+            LLVMBuildStore(b->m_builder, temp, elemAddr);
+        }
+    }
+}
+
+/* Stores one element of a literal by its element type (string, array, ^T,
+   owning struct or a plain value). Movable sources are nulled unless the rest
+   is borrowed. */
+void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd, bool borrow)
+{
+    if (elemTd.isString)
+    {
+        /* string element: literals are heap-copied (the constant is
+           borrowed; the array owns its elements); variables move. */
+        if (borrow)
+        {
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+        }
+        else if (eNode->kind == NodeStrLiteral)
+        {
+            LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, v.value, 0, "aelit.p");
+            LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, v.value, 1, "aelit.l");
+            LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), elemAddr);
+        }
+        else
+        {
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+            NullMovedSource(b, eNode);
+        }
+    }
+    else if (TypeDescHasArrayShape(&elemTd))
+    {
+        /* Array element: `v` is already the evaluated child (a nested
+           literal was built by the EmitExpr above - building it again
+           here leaked the first copy). A movable source (`{ xs }`)
+           moves in, like the string and box branches. */
+        LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
+
+        if (!borrow)
+        {
+            NullMovedSource(b, eNode);
+        }
+    }
+    else if (TypeDescIsBox(&elemTd) && elemTd.boxInner)
+    {
+        /* ^T element. */
+        bool sameOwningType = TypeDescIsBox(&v.typeDesc) && v.typeDesc.boxInner
+                              && strcmp(v.typeDesc.boxInner->name, elemTd.boxInner->name) == 0;
+
+        if (borrow)
+        {
+            /* ref rest: borrow, keep source alive. */
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+        }
+        else if (sameOwningType)
+        {
+            /* Same ^T type: move. */
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+            NullMovedSource(b, eNode);
+        }
+        else
+        {
+            /* ^T from a non-^T value: box it up. */
+            LLVMValueRef heap = EmitBoxCell(b, elemTd.boxInner, v, eNode, "abox");
+            LLVMBuildStore(b->m_builder, heap, elemAddr);
+        }
+    }
+    else if (TypeDescIsBox(&elemTd))
+    {
+        /* string element. */
+        if (borrow)
+        {
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+        }
+        else
+        {
+            LLVMValueRef owned = EmitOwnedValue(b, v, eNode, StringTypeName(b));
+            LLVMBuildStore(b->m_builder, owned, elemAddr);
+        }
+    }
+    else if (!borrow && BoxIntoInlineOwning(b, elemTd, v.typeDesc))
+    {
+        LLVMBuildStore(b->m_builder, TakeBoxContents(b, v, eNode).value, elemAddr);
+    }
+    else if (elemTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, elemTd.structTypeName))
+    {
+        /* Owning-struct element (`Rec[]` literal): temporaries (struct
+            literals, call results) transfer bitwise; movable sources
+            move and are zeroed. */
+        if (borrow)
+        {
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+        }
+        else
+        {
+            LLVMBuildStore(b->m_builder, v.value, elemAddr);
+            NullMovedSource(b, eNode);
+        }
+    }
+    else
+    {
+        LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
+    }
+}
+
 /* Builds a T[] from element exprs, shared by array literals (heap-backed) and
    typed rest params. rest=stack-backed (alloca in entry); borrow=true (ref
    rest) stores owning element pointers without nulling/moving sources. */
@@ -769,28 +928,7 @@ Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* ele
 
     if (count > 0)
     {
-        if (stackBuffer)
-        {
-            /* Fixed-size stack buffer (count is a compile-time constant). */
-            size_t n = count;
-            LLVMTypeRef arrTy = LLVMArrayType(slotTy, (unsigned)n);
-            LLVMValueRef bufSlot = EntryAlloca(b, arrTy, "varargs");
-
-            LLVMValueRef zero = LLVMConstInt(I64Ty(b), 0, 0);
-            LLVMValueRef idx[2] = {zero, zero};
-            dataPtr = LLVMBuildGEP2(b->m_builder, arrTy, bufSlot, idx, 2, "varargsdata");
-        }
-        else
-        {
-            LLVMValueRef elemSize = SizeOfConst(b, elemTy);
-            LLVMValueRef countConst = LLVMConstInt(I64Ty(b), (unsigned long long)count, 0);
-            LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, elemSize, countConst, "bytes");
-            LLVMValueRef allocArgs[1] = {totalBytes};
-            StrataAllocFn(b);
-            dataPtr = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "arrbuf");
-        }
-
-        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
+        dataPtr = EmitArrayLiteralBuffer(b, elemTy, slotTy, count, stackBuffer);
 
         for (size_t i = 0; i < count; i++)
         {
@@ -802,125 +940,11 @@ Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* ele
 
             if (aliased)
             {
-                /* Store a POINTER to the source argument. A box arg already
-                   is the value's address; lvalues yield their address; a
-                   non-lvalue is materialized into a stack temp. */
-                if (TypeDescIsBox(&v.typeDesc))
-                {
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                }
-                else
-                {
-                    LValue lv = EmitLValue(b, eNode);
-
-                    if (lv.valid)
-                    {
-                        LLVMBuildStore(b->m_builder, lv.ptr, elemAddr);
-                    }
-                    else
-                    {
-                        LLVMValueRef temp = EntryAlloca(b, elemTy, "aliastemp");
-                        LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, temp);
-                        LLVMBuildStore(b->m_builder, temp, elemAddr);
-                    }
-                }
-
+                EmitAliasedArrayElement(b, eNode, v, elemAddr, elemTd, elemTy);
                 continue;
             }
 
-            if (elemTd.isString)
-            {
-                /* string element: literals are heap-copied (the constant is
-                   borrowed; the array owns its elements); variables move. */
-                if (borrow)
-                {
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                }
-                else if (eNode->kind == NodeStrLiteral)
-                {
-                    LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, v.value, 0, "aelit.p");
-                    LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, v.value, 1, "aelit.l");
-                    LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), elemAddr);
-                }
-                else
-                {
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                    NullMovedSource(b, eNode);
-                }
-            }
-            else if (TypeDescHasArrayShape(&elemTd))
-            {
-                /* Array element: `v` is already the evaluated child (a nested
-                   literal was built by the EmitExpr above - building it again
-                   here leaked the first copy). A movable source (`{ xs }`)
-                   moves in, like the string and box branches. */
-                LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
-
-                if (!borrow)
-                {
-                    NullMovedSource(b, eNode);
-                }
-            }
-            else if (TypeDescIsBox(&elemTd) && elemTd.boxInner)
-            {
-                /* ^T element. */
-                bool sameOwningType = TypeDescIsBox(&v.typeDesc) && v.typeDesc.boxInner
-                                      && strcmp(v.typeDesc.boxInner->name, elemTd.boxInner->name) == 0;
-
-                if (borrow)
-                {
-                    /* ref rest: borrow, keep source alive. */
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                }
-                else if (sameOwningType)
-                {
-                    /* Same ^T type: move. */
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                    NullMovedSource(b, eNode);
-                }
-                else
-                {
-                    /* ^T from a non-^T value: box it up. */
-                    LLVMValueRef heap = EmitBoxCell(b, elemTd.boxInner, v, eNode, "abox");
-                    LLVMBuildStore(b->m_builder, heap, elemAddr);
-                }
-            }
-            else if (TypeDescIsBox(&elemTd))
-            {
-                /* string element. */
-                if (borrow)
-                {
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                }
-                else
-                {
-                    LLVMValueRef owned = EmitOwnedValue(b, v, eNode, StringTypeName(b));
-                    LLVMBuildStore(b->m_builder, owned, elemAddr);
-                }
-            }
-            else if (!borrow && BoxIntoInlineOwning(b, elemTd, v.typeDesc))
-            {
-                LLVMBuildStore(b->m_builder, TakeBoxContents(b, v, eNode).value, elemAddr);
-            }
-            else if (elemTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, elemTd.structTypeName))
-            {
-                /* Owning-struct element (`Rec[]` literal): temporaries (struct
-                    literals, call results) transfer bitwise; movable sources
-                    move and are zeroed. */
-                if (borrow)
-                {
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                }
-                else
-                {
-                    LLVMBuildStore(b->m_builder, v.value, elemAddr);
-                    NullMovedSource(b, eNode);
-                }
-            }
-            else
-            {
-                LLVMBuildStore(b->m_builder, Coerce(b, v, elemTd).value, elemAddr);
-            }
+            EmitArrayElementStore(b, eNode, v, elemAddr, elemTd, borrow);
         }
     }
 

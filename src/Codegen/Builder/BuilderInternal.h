@@ -349,3 +349,9 @@ Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
                     TypeDesc elemTd, LLVMTypeRef elemTy);
 Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr,
                       LLVMValueRef capPtr, TypeDesc elemTd, LLVMTypeRef elemTy);
+
+// Arrays.c dispatch (EmitArrayFromNodes)
+LLVMValueRef EmitArrayLiteralBuffer(Builder* b, LLVMTypeRef elemTy, LLVMTypeRef slotTy, size_t count, bool stackBuffer);
+void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd,
+                             LLVMTypeRef elemTy);
+void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd, bool borrow);
