@@ -62,6 +62,146 @@ HandleDecl* ParseHandleDecl(Parser* p)
     return node;
 }
 
+/* `struct Name = type;`: a type alias. It has no fields of its own. */
+static StructDecl* ParseStructAlias(Parser* p, Token nameTok)
+{
+    TypeName underlying = {0};
+    if (!ParserTryParseType(p, &underlying) || !underlying.name)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a type after '='");
+        Synchronize(p);
+        return NULL;
+    }
+
+    ParserExpect(p, TokSemicolon, "';'");
+
+    StructDecl* node = AST_NEW(p->m_arena, StructDecl);
+    node->base.kind = NodeStruct;
+    node->base.range = nameTok.range;
+    node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+    VecInit(&node->fields);
+    node->isExtern = false;
+    node->isTypeAlias = true;
+    node->underlyingType = underlying.name;
+
+    return node;
+}
+
+/* `fieldoffset(N)` before a field. `*offset` is -1 when there is none. Returns false when the
+   fieldoffset is malformed, and the caller stops reading fields. */
+static bool ParseFieldOffsetPrefix(Parser* p, bool isExtern, bool isUnion, long* offset)
+{
+    *offset = -1;
+
+    if (p->m_cur.kind != TokKwFieldoffset)
+    {
+        return true;
+    }
+
+    Token foTok = p->m_cur;
+    Advance(p);
+
+    if (!ParserConsume(p, TokLParen))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected '(' after 'fieldoffset'");
+        return false;
+    }
+
+    if (p->m_cur.kind != TokIntLit)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a byte offset inside 'fieldoffset(...)'");
+        return false;
+    }
+
+    Token lenTok = p->m_cur;
+    Advance(p);
+
+    if (!ParserConsume(p, TokRParen))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected ')' to close 'fieldoffset(...)'");
+        return false;
+    }
+
+    if (!isExtern || isUnion)
+    {
+        DiagError(p->m_diag, foTok.range, "'fieldoffset' is only allowed inside an 'extern struct'");
+    }
+
+    uint64_t value = IntLiteralValue(p, lenTok, NULL);
+
+    if (value > (uint64_t)LONG_MAX)
+    {
+        DiagError(p->m_diag, lenTok.range, "field offset is too large");
+        value = 0;
+    }
+
+    *offset = (long)value;
+
+    return true;
+}
+
+/* One `Type name [= default];` field, appended to the struct. Returns false when reading fields
+   should stop. */
+static bool ParseStructField(Parser* p, StructDecl* node, long offset, bool isUnion)
+{
+    TypeName ft = {0};
+    if (!ParserTryParseType(p, &ft))
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a field type");
+        return false;
+    }
+
+    if (p->m_cur.kind != TokIdent)
+    {
+        DiagError(p->m_diag, p->m_cur.range, "expected a field name");
+        return false;
+    }
+
+    Token fieldTok = p->m_cur;
+    Advance(p);
+
+    FieldDecl* field = AST_NEW(p->m_arena, FieldDecl);
+    field->type = ft;
+    field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldTok));
+    field->offset = offset;
+    field->nameRange = fieldTok.range;
+    VecPush(&node->fields, field);
+
+    /* `T name = expr;` — a default value, folded to a constant by sema. */
+    if (ParserConsume(p, TokAssign))
+    {
+        field->defaultValue = ParseExpr(p);
+
+        if (isUnion)
+        {
+            DiagError(p->m_diag, fieldTok.range, "union fields cannot have default values");
+        }
+    }
+
+    Token semi = ParserExpect(p, TokSemicolon, "';'");
+
+    return semi.kind == TokSemicolon;
+}
+
+/* The fields between a struct's braces. The closing '}' is left to the caller. */
+static void ParseStructFields(Parser* p, StructDecl* node, bool isExtern, bool isUnion)
+{
+    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    {
+        long offset;
+
+        if (!ParseFieldOffsetPrefix(p, isExtern, isUnion, &offset))
+        {
+            break;
+        }
+
+        if (!ParseStructField(p, node, offset, isUnion))
+        {
+            break;
+        }
+    }
+}
+
 StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 {
     bool isUnion = p->m_cur.kind == TokKwUnion;
@@ -82,29 +222,9 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
     CheckTypeNameNotHandle(p, nameTok);
     Advance(p);
 
-    /* Type alias: `struct Foo = type;` */
     if (ParserConsume(p, TokAssign))
     {
-        TypeName underlying = {0};
-        if (!ParserTryParseType(p, &underlying) || !underlying.name)
-        {
-            DiagError(p->m_diag, p->m_cur.range, "expected a type after '='");
-            Synchronize(p);
-            return NULL;
-        }
-
-        ParserExpect(p, TokSemicolon, "';'");
-
-        StructDecl* node = AST_NEW(p->m_arena, StructDecl);
-        node->base.kind = NodeStruct;
-        node->base.range = nameTok.range;
-        node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
-        VecInit(&node->fields);
-        node->isExtern = false;
-        node->isTypeAlias = true;
-        node->underlyingType = underlying.name;
-
-        return node;
+        return ParseStructAlias(p, nameTok);
     }
 
     StructDecl* node = AST_NEW(p->m_arena, StructDecl);
@@ -118,93 +238,7 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 
     if (ParserConsume(p, TokLBrace))
     {
-        while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
-        {
-            long offset = -1;
-
-            if (p->m_cur.kind == TokKwFieldoffset)
-            {
-                Token foTok = p->m_cur;
-                Advance(p);
-
-                if (!ParserConsume(p, TokLParen))
-                {
-                    DiagError(p->m_diag, p->m_cur.range, "expected '(' after 'fieldoffset'");
-                    break;
-                }
-
-                if (p->m_cur.kind != TokIntLit)
-                {
-                    DiagError(p->m_diag, p->m_cur.range, "expected a byte offset inside 'fieldoffset(...)'");
-                    break;
-                }
-
-                Token lenTok = p->m_cur;
-                Advance(p);
-
-                if (!ParserConsume(p, TokRParen))
-                {
-                    DiagError(p->m_diag, p->m_cur.range, "expected ')' to close 'fieldoffset(...)'");
-                    break;
-                }
-
-                if (!isExtern || isUnion)
-                {
-                    DiagError(p->m_diag, foTok.range, "'fieldoffset' is only allowed inside an 'extern struct'");
-                }
-
-                uint64_t value = IntLiteralValue(p, lenTok, NULL);
-
-                if (value > (uint64_t)LONG_MAX)
-                {
-                    DiagError(p->m_diag, lenTok.range, "field offset is too large");
-                    value = 0;
-                }
-
-                offset = (long)value;
-            }
-
-            TypeName ft = {0};
-            if (!ParserTryParseType(p, &ft))
-            {
-                DiagError(p->m_diag, p->m_cur.range, "expected a field type");
-                break;
-            }
-
-            if (p->m_cur.kind != TokIdent)
-            {
-                DiagError(p->m_diag, p->m_cur.range, "expected a field name");
-                break;
-            }
-
-            Token fieldTok = p->m_cur;
-            Advance(p);
-
-            FieldDecl* field = AST_NEW(p->m_arena, FieldDecl);
-            field->type = ft;
-            field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldTok));
-            field->offset = offset;
-            field->nameRange = fieldTok.range;
-            VecPush(&node->fields, field);
-
-            /* `T name = expr;` — a default value, folded to a constant by sema. */
-            if (ParserConsume(p, TokAssign))
-            {
-                field->defaultValue = ParseExpr(p);
-
-                if (isUnion)
-                {
-                    DiagError(p->m_diag, fieldTok.range, "union fields cannot have default values");
-                }
-            }
-
-            Token semi = ParserExpect(p, TokSemicolon, "';'");
-
-            if (semi.kind != TokSemicolon)
-            {
-                break;
-            }
-        }
+        ParseStructFields(p, node, isExtern, isUnion);
 
         ParserExpect(p, TokRBrace, "'}'");
     }
