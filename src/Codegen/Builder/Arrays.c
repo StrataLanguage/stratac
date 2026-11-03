@@ -1086,3 +1086,127 @@ LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, con
 
     return LLVMBuildInsertValue(b->m_builder, agg, val, (unsigned)k, "ins");
 }
+
+void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
+{
+    /* Stack-allocated fixed-size array local */
+    LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "fixarr");
+    LLVMValueRef arr = DefaultValueOf(b, &varDecl->type, typeDesc);
+
+    if (varDecl->init && varDecl->init->kind == NodeArrayInit)
+    {
+        ArrayInitExpr* ai = AsNode(ArrayInitExpr, varDecl->init);
+
+        /* Sema guarantees the leaf element type; fall back to a
+           leaf-walk of the declared type if it is missing or not a
+           leaf (a non-leaf would miscompile inserts as int<->array
+           casts). */
+        const TypeName* leafTn = ai->elementType;
+
+        if (!leafTn || (TypeNameHasArrayShape(leafTn) && leafTn->length >= 0))
+        {
+            leafTn = &varDecl->type;
+
+            while (leafTn && TypeNameHasArrayShape(leafTn) && leafTn->length >= 0)
+            {
+                leafTn = leafTn->elem;
+            }
+        }
+
+        TypeDesc elemTd = leafTn ? Resolve(b, leafTn) : Resolve(b, typeDesc.arrayInner);
+
+        if (ai->repeatCount)
+        {
+            /* `{ value; N }`: the value once, in every element. */
+            Value ev = Coerce(b, EmitExpr(b, (Node*)VecGet(&ai->elements, 0)), elemTd);
+            long total = FixedDimProduct(&varDecl->type);
+
+            for (long k = 0; k < total; k++)
+            {
+                arr = InsertFixedElem(b, arr, ev.value, &varDecl->type, k);
+            }
+        }
+
+        for (size_t k = 0; k < ai->elements.count && !ai->repeatCount; k++)
+        {
+            Node* elem = (Node*)VecGet(&ai->elements, k);
+
+            if (!elem)
+            {
+                continue;
+            }
+
+            Value ev = Coerce(b, EmitExpr(b, elem), elemTd);
+            arr = InsertFixedElem(b, arr, ev.value, &varDecl->type, (long)k);
+        }
+    }
+
+    LLVMBuildStore(b->m_builder, arr, slot);
+
+    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    sym->value = slot;
+    sym->typeDesc = typeDesc;
+
+    SymDeclare(b, varDecl->name, sym);
+}
+
+void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
+{
+    LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "arr");
+
+    if (varDecl->init)
+    {
+        if (varDecl->init->kind == NodeArrayInit)
+        {
+            LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, varDecl->init)).value;
+            LLVMBuildStore(b->m_builder, arr, slot);
+        }
+        else if (typeDesc.isString && varDecl->init->kind == NodeStrLiteral)
+        {
+            /* string from a literal: heap-copy (the constant is
+               borrowed; the binding owns its bytes). */
+            Value value = EmitExpr(b, varDecl->init);
+            LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, value.value, 0, "vslit.p");
+            LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, value.value, 1, "vslit.l");
+            LLVMValueRef owned = BuildOwnedStringFat(b, sp, sl);
+            LLVMBuildStore(b->m_builder, owned, slot);
+        }
+        else
+        {
+            /* Move from another array/string binding: copy the
+               {ptr,len} struct and zero the source (whole slot) to
+               avoid a double free. */
+            Node* movedNode = MovedSource(varDecl->init);
+            LValue src = movedNode ? EmitLValueForNullStore(b, movedNode) : (LValue){0};
+
+            Value value = EmitExpr(b, varDecl->init);
+            LLVMBuildStore(b->m_builder, Coerce(b, value, typeDesc).value, slot);
+
+            /* A piece of a temporary only exists once evaluated. */
+            if (!src.valid && movedNode && FindTempPart(b, movedNode))
+            {
+                src = EmitLValueForNullStore(b, movedNode);
+            }
+
+            if (src.valid && TypeDescHasArrayShape(&src.typeDesc))
+            {
+                LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), src.ptr);
+            }
+        }
+    }
+    else
+    {
+        LLVMBuildStore(b->m_builder, LLVMConstNull(ArrayStructType(b)), slot);
+    }
+
+    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    sym->value = slot;
+    sym->typeDesc = typeDesc;
+
+    SymDeclare(b, varDecl->name, sym);
+
+    OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+    ol->slot = slot;
+    ol->td = typeDesc;
+    VecPush(&b->m_owningLocals, ol);
+}

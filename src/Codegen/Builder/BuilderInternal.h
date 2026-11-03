@@ -327,3 +327,9 @@ Value EmitIncDec(Builder* b, IncDecExpr* inc);
 Value EmitCast(Builder* b, CastExpr* cast);
 Value EmitStrLiteral(Builder* b, StrLiteral* literal);
 Value EmitNullTest(Builder* b, NullTestExpr* nt);
+
+// Stmt.c dispatch
+void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
+void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
+void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc);
+void SymDeclare(Builder* b, const char* name, Value* sym);
