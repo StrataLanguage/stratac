@@ -1,3 +1,5 @@
+// Source text storage and line and column lookup.
+
 #include "Core/SourceLocation.h"
 #include "Core/Util.h"
 

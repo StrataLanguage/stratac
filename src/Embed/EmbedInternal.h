@@ -1,4 +1,4 @@
-/* Private declarations shared by the src/Embed/ files, which implement the public API in strata.h. */
+// Private declarations shared by the src/Embed/ files, which implement the public API in strata.h.
 #pragma once
 
 #include "strata/strata.h"
@@ -48,7 +48,7 @@ extern "C"
         size_t importDirCount;
     };
 
-    /* Defined in Pipeline.c; shared by the other src/Embed/ files. */
+    // Defined in Pipeline.c; shared by the other src/Embed/ files.
     char* ConcatOwned(const char* a, const char* b);
     void SetErrOut(const char** errOut, const char* message, const char* fallback);
     void InitModuleLoader(Arena* arena, DiagnosticEngine* diag, ModuleLoader* loader, StrataCompiler* c);

@@ -1,3 +1,5 @@
+// Parser entry: module parsing, attributes and trial-parse rollback.
+
 #include "Parse/ParserInternal.h"
 
 #include "Codegen/TypeRegistry.h"
@@ -31,9 +33,9 @@ LexerCheckpoint SaveLexerState(Parser* p)
     return c;
 }
 
-/* Rewinds to the checkpoint and drops every diagnostic the abandoned trial
-   parse reported - parser errors and lexer errors alike. Re-lexing the same
-   tokens reports lexer errors again, so each one ends up reported exactly once. */
+// Rewinds to the checkpoint and drops every diagnostic the abandoned trial
+// parse reported - parser errors and lexer errors alike. Re-lexing the same
+// tokens reports lexer errors again, so each one ends up reported exactly once.
 void RestoreLexerState(Parser* p, LexerCheckpoint c)
 {
     p->lex->pos = c.pos;
@@ -188,7 +190,7 @@ static void AddTopLevelDecl(Module* mod, Node* decl, Parser* p)
     }
 }
 
-/* `@attr... enum`: the only attribute an enum takes is @flags. */
+// `@attr... enum`: the only attribute an enum takes is @flags.
 static void ParseAttributedEnum(Parser* p, Module* mod, const Vec* attributes)
 {
     EnumDecl* ed = ParseEnumDecl(p);
@@ -220,12 +222,12 @@ static void ParseAttributedEnum(Parser* p, Module* mod, const Vec* attributes)
     }
 }
 
-/* `@attr... struct`, or `@attr... extern struct`: struct attributes are applied to the body. */
+// `@attr... struct`, or `@attr... extern struct`: struct attributes are applied to the body.
 static void ParseAttributedStruct(Parser* p, Module* mod, Vec* attributes, bool isExternStruct)
 {
     if (isExternStruct)
     {
-        Advance(p); /* 'extern' */
+        Advance(p);
     }
 
     StructDecl* sd = ParseStructDecl(p, isExternStruct);
@@ -241,7 +243,7 @@ static void ParseAttributedStruct(Parser* p, Module* mod, Vec* attributes, bool 
     }
 }
 
-/* A declaration that starts with `@`: attributes, then an enum, a struct or a function. */
+// A declaration that starts with `@`: attributes, then an enum, a struct or a function.
 static void ParseAttributedDecl(Parser* p, Module* mod)
 {
     Vec attributes;
@@ -306,10 +308,10 @@ static void ParseTopLevelStruct(Parser* p, Module* mod)
     }
 }
 
-/* `extern struct` / `extern union` with no attributes. */
+// `extern struct` / `extern union` with no attributes.
 static void ParseTopLevelExternStruct(Parser* p, Module* mod)
 {
-    Advance(p); /* 'extern' */
+    Advance(p);
 
     StructDecl* sd = ParseStructDecl(p, true);
     if (sd)
@@ -343,9 +345,9 @@ static void ParseTopLevelImpl(Parser* p, Module* mod)
     {
         VecPush(&mod->impls, impl);
 
-        /* Hoist extern methods into the module function list under
-           their qualified symbol (`Camera_GetFOV`) so module merging,
-           sema and codegen treat them like any other extern. */
+        // Hoist extern methods into the module function list under
+        // their qualified symbol (`Camera_GetFOV`) so module merging,
+        // sema and codegen treat them like any other extern.
         for (size_t i = 0; i < impl->methods.count; i++)
         {
             VecPush(&mod->functions, VecGet(&impl->methods, i));

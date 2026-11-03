@@ -1,5 +1,7 @@
 #pragma once
 
+// Parser helpers shared by the Parse/ files.
+
 #include "Parse/Parser.h"
 
 // Snapshot of lexer + parser position so a speculative parse can be undone without emitting diagnostics.

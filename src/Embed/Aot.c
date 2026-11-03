@@ -1,4 +1,4 @@
-/* Public AOT API: compile a module to an object file or to assembly. */
+// Public AOT API: compile a module to an object file or to assembly.
 #include "Embed/EmbedInternal.h"
 
 #ifdef __cplusplus
@@ -7,10 +7,10 @@ extern "C"
 #endif
 
 #if STRATA_HAS_LLVM
-    /* Target triple for an explicit architecture: the host triple with its
-       arch component swapped, so vendor/OS/environment stay the host's
-       (e.g. x86_64-w64-windows-gnu -> aarch64-w64-windows-gnu). Returns NULL
-       (use the host default) for STRATA_ARCH_AUTO. Caller frees. */
+    // Target triple for an explicit architecture: the host triple with its
+    // arch component swapped, so vendor/OS/environment stay the host's
+    // (e.g. x86_64-w64-windows-gnu -> aarch64-w64-windows-gnu). Returns NULL
+    // (use the host default) for STRATA_ARCH_AUTO. Caller frees.
     static char* ArchTargetTriple(StrataArch arch)
     {
         const char* archName = NULL;

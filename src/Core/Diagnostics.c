@@ -1,3 +1,5 @@
+// Diagnostic collection and reporting.
+
 #include "Core/Diagnostics.h"
 
 #include <stdarg.h>

@@ -1,3 +1,5 @@
+// Core helpers: arenas, strings, vectors, maps, string builders and files.
+
 #include "Core/Util.h"
 
 #include <stdarg.h>
@@ -162,7 +164,7 @@ char* ArenaStrndup(Arena* a, const char* s, size_t n)
 
 char* ArenaVFormat(Arena* a, const char* fmt, va_list args)
 {
-    /* `args` belongs to the caller (who va_ends it): only ever read copies. */
+    // `args` belongs to the caller (who va_ends it): only ever read copies.
     va_list sizeArgs;
     va_copy(sizeArgs, args);
 
@@ -476,7 +478,7 @@ void SbPrintf(Sb* sb, const char* fmt, ...)
 
 Str SbCDup(Sb* sb)
 {
-    /* Add the null terminator if it does not exist (an empty builder has none) */
+    // Add the null terminator if it does not exist (an empty builder has none)
     if (sb->len == 0 || sb->data[sb->len - 1] != '\0')
     {
         SbEnsure(sb, 1);
@@ -620,7 +622,6 @@ char* ReadWholeFile(const char* path, size_t* outLen)
 
     if (fseek(in, 0L, SEEK_SET) != 0)
     {
-        // Issue rewinding back to the beginning of the file
         fclose(in);
         return NULL;
     }

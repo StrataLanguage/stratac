@@ -1,3 +1,5 @@
+// Token kind names and keyword lookup.
+
 #include "Lex/Token.h"
 
 #include <string.h>

@@ -1,4 +1,4 @@
-/* Bake out hashes for primitive types */
+// Bake out hashes for primitive types
 
 #include <ctype.h>
 #include <inttypes.h>
@@ -19,37 +19,21 @@ uint64_t HashStr64(const char* s)
 int main()
 {
     const char* primNames[] = {
-        "void",
-        "bool",
+        "void",   "bool",
 
-        /* */
-        "int",
-        "uint",
+        "int",    "uint",
 
-        /* */
-        "long",
-        "ulong",
+        "long",   "ulong",
 
-        /* */
-        "sbyte",
-        "byte",
+        "sbyte",  "byte",
 
-        /* */
-        "short",
-        "ushort",
+        "short",  "ushort",
 
-        /* */
-        "float",
-        "double",
+        "float",  "double",
 
-        /* */
-        "string",
-        "cstring",
+        "string", "cstring",
 
-        /* */
-        "float2",
-        "float3",
-        "float4",
+        "float2", "float3",  "float4",
 
     };
 
@@ -75,8 +59,8 @@ int main()
 
         uint64_t hash = HashStr64(typeName);
 
-        /* `%p` is implementation-defined (no `0x` on the Windows CRT, 32 bits
-           on 32-bit targets): print the full 64-bit value explicitly. */
+        // `%p` is implementation-defined (no `0x` on the Windows CRT, 32 bits
+        // on 32-bit targets): print the full 64-bit value explicitly.
         printf("#define PRIM_NAME_%s 0x%016" PRIx64 "\n", buffer, hash);
     }
 }

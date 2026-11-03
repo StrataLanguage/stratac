@@ -1,4 +1,4 @@
-/* Public type-metadata API: compile type metadata without code generation, and free it. */
+// Public type-metadata API: compile type metadata without code generation, and free it.
 #include "Embed/EmbedInternal.h"
 
 #ifdef __cplusplus
@@ -6,8 +6,8 @@ extern "C"
 {
 #endif
 
-    /* Parses and checks `mod`, then serializes its components. The loader/source cleanup stays
-       with the caller. */
+    // Parses and checks `mod`, then serializes its components. The loader/source cleanup stays
+    // with the caller.
     static int TypeMetadataFromModule(Module* mod, DiagnosticEngine* diag, Arena* arena, const SourceManager* sources,
                                       size_t sourceCount, void** outBytes, size_t* outSize, const char** errOut)
     {

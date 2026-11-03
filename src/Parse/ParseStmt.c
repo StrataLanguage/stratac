@@ -1,3 +1,5 @@
+// Statement parsing: blocks, declarations, control flow and defer.
+
 #include "Parse/ParserInternal.h"
 
 #include "Codegen/TypeRegistry.h"
@@ -128,7 +130,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
     {
         TypeName type = {0};
 
-        /* `ref T x = path;` and `const ref T x = path;` bind an alias. */
+        // `ref T x = path;` and `const ref T x = path;` bind an alias.
         bool isRef = false;
         bool refConst = false;
 
@@ -265,8 +267,8 @@ static Node* ParseReturn(Parser* p)
             }
             else
             {
-                /* `return {};` through a plain, box, or optional return type
-                   initializes the INNER struct (E, never "E?" / "^E"). */
+                // `return {};` through a plain, box, or optional return type
+                // initializes the INNER struct (E, never "E?" / "^E").
                 const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : rtArr;
 
                 node->value = ParseStructInitBody(p, p->cur, rtStruct ? rtStruct->name : rtArr->name);

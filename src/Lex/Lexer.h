@@ -1,5 +1,7 @@
 #pragma once
 
+// Lexer interface.
+
 #include "Core/Diagnostics.h"
 #include "Core/SourceLocation.h"
 #include "Lex/Token.h"

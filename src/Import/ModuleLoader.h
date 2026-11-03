@@ -1,5 +1,7 @@
 #pragma once
 
+// Module loader: resolves imports from disk or a host resolver, and merges them.
+
 #include "AST/AST.h"
 #include "Core/Diagnostics.h"
 #include "Core/SourceLocation.h"

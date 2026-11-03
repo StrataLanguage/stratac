@@ -1,5 +1,7 @@
 #pragma once
 
+// Core helpers: arenas, strings, vectors, maps, string builders and files.
+
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -222,11 +224,6 @@ const char* GenerateUniqueID(char* buffer, size_t size);
 // File contents as a malloc'd NUL-terminated buffer; caller frees.
 char* ReadWholeFile(const char* path, size_t* outLen);
 
-/**
- * @brief Returns the length of a base path give a full path.
- *
- * Example:
- * `/foo/bar/hello.txt` would return the length of `/foo/bar`, 8.
- * A path that is only a filename will return 0.
- */
+// Returns the length of the base path of a full path: `/foo/bar/hello.txt` gives 8, the length of
+// `/foo/bar`. A path that is only a filename gives 0.
 size_t BasePathLength(const char* fullPath);

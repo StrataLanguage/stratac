@@ -1,3 +1,5 @@
+// Tokenizer: operators, identifiers, numbers, strings and character literals.
+
 #include "Lex/Lexer.h"
 
 #include <ctype.h>
@@ -161,7 +163,7 @@ Token LexerPeekToken(Lexer* lex)
     return lex->peeked;
 }
 
-/* `-`, `+`, `*`, `/` and `%` with their compound forms. The character has already been consumed. */
+// `-`, `+`, `*`, `/` and `%` with their compound forms. The character has already been consumed.
 static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
 {
     switch (c)
@@ -237,7 +239,7 @@ static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
     }
 }
 
-/* `=`, `!`, `&`, `|`, `<` and `>` with their compound forms. The character has already been consumed. */
+// `=`, `!`, `&`, `|`, `<` and `>` with their compound forms. The character has already been consumed.
 static Token LexComparisonOp(Lexer* lex, char c, size_t start)
 {
     switch (c)
@@ -315,8 +317,8 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     }
 }
 
-/* Operators and punctuation. The first character has already been consumed. Single-character
-   tokens and `.` / `...` are here; arithmetic and comparison heads go to their own helpers. */
+// Operators and punctuation. The first character has already been consumed. Single-character
+// tokens and `.` / `...` are here; arithmetic and comparison heads go to their own helpers.
 static Token LexPunctuation(Lexer* lex, char c, size_t start)
 {
     switch (c)
@@ -377,8 +379,8 @@ static Token LexPunctuation(Lexer* lex, char c, size_t start)
     }
 }
 
-/* Reads one token. Each token class has its own reader: identifiers and keywords, numbers, strings,
-   character literals and punctuation. Whitespace and comments are skipped first. */
+// Reads one token. Each token class has its own reader: identifiers and keywords, numbers, strings,
+// character literals and punctuation. Whitespace and comments are skipped first.
 static Token LexTokenImpl(Lexer* lex)
 {
     SkipWhitespaceAndComments(lex);
@@ -547,7 +549,7 @@ static Token LexNumber(Lexer* lex)
     }
     else if (suffix == 'u' || suffix == 'U' || suffix == 'l' || suffix == 'L')
     {
-        /* `u` (uint), `l` (long), `ul` (ulong). */
+        // `u` (uint), `l` (long), `ul` (ulong).
         ++lex->pos;
 
         if ((suffix == 'u' || suffix == 'U') && (LexerPeek(lex, 0) == 'l' || LexerPeek(lex, 0) == 'L'))
@@ -600,8 +602,8 @@ static Token LexStringLiteral(Lexer* lex)
     return Make(lex, TokStrLit, start);
 }
 
-/* `'c'`: exactly one byte — a printable ASCII character or one of the string escapes plus `\'`. The
-   parser decodes it; here only its shape is checked, so a bad literal is still one token. */
+// `'c'`: exactly one byte — a printable ASCII character or one of the string escapes plus `\'`. The
+// parser decodes it; here only its shape is checked, so a bad literal is still one token.
 static Token LexCharLiteral(Lexer* lex)
 {
     size_t start = lex->pos;
@@ -656,7 +658,7 @@ static Token LexCharLiteral(Lexer* lex)
         return Make(lex, TokCharLit, start);
     }
 
-    /* More than one character before a closing quote on this line: one error, one token. */
+    // More than one character before a closing quote on this line: one error, one token.
     size_t close = lex->pos;
 
     while (close < lex->sourceLen && lex->source[close] != '\'' && lex->source[close] != '\n')

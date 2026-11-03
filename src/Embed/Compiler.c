@@ -1,4 +1,4 @@
-/* Public compiler API: create and destroy, options, string and file compilation, result and string release. */
+// Public compiler API: create and destroy, options, compiling strings and files, releasing results.
 #include "Embed/EmbedInternal.h"
 
 #ifdef __cplusplus
@@ -143,9 +143,9 @@ extern "C"
 
         if (emit == STRATA_EMIT_LLVM_IR && (emitFlags & STRATA_EMIT_NO_SIMD))
         {
-            /* SIMD vector types always lower to native LLVM vectors; there is
-               no scalarizing backend, so refuse rather than silently emit
-               SIMD code. */
+            // SIMD vector types always lower to native LLVM vectors; there is
+            // no scalarizing backend, so refuse rather than silently emit
+            // SIMD code.
             DiagError(diag, SRC_INVALID,
                       "STRATA_EMIT_NO_SIMD is not supported: SIMD types always lower to native "
                       "vector instructions");

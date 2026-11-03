@@ -1,3 +1,5 @@
+// Declarations: structs, enums, handles, impls, functions and globals.
+
 #include "Parse/ParserInternal.h"
 
 #include "Codegen/TypeRegistry.h"
@@ -62,7 +64,7 @@ HandleDecl* ParseHandleDecl(Parser* p)
     return node;
 }
 
-/* `struct Name = type;`: a type alias. It has no fields of its own. */
+// `struct Name = type;`: a type alias. It has no fields of its own.
 static StructDecl* ParseStructAlias(Parser* p, Token nameTok)
 {
     TypeName underlying = {0};
@@ -87,8 +89,8 @@ static StructDecl* ParseStructAlias(Parser* p, Token nameTok)
     return node;
 }
 
-/* `fieldoffset(N)` before a field. `*offset` is -1 when there is none. Returns false when the
-   fieldoffset is malformed, and the caller stops reading fields. */
+// `fieldoffset(N)` before a field. `*offset` is -1 when there is none. Returns false when the
+// fieldoffset is malformed, and the caller stops reading fields.
 static bool ParseFieldOffsetPrefix(Parser* p, bool isExtern, bool isUnion, long* offset)
 {
     *offset = -1;
@@ -140,8 +142,8 @@ static bool ParseFieldOffsetPrefix(Parser* p, bool isExtern, bool isUnion, long*
     return true;
 }
 
-/* One `Type name [= default];` field, appended to the struct. Returns false when reading fields
-   should stop. */
+// One `Type name [= default];` field, appended to the struct. Returns false when reading fields
+// should stop.
 static bool ParseStructField(Parser* p, StructDecl* node, long offset, bool isUnion)
 {
     TypeName ft = {0};
@@ -167,7 +169,7 @@ static bool ParseStructField(Parser* p, StructDecl* node, long offset, bool isUn
     field->nameRange = fieldTok.range;
     VecPush(&node->fields, field);
 
-    /* `T name = expr;` — a default value, folded to a constant by sema. */
+    // `T name = expr;` — a default value, folded to a constant by sema.
     if (ParserConsume(p, TokAssign))
     {
         field->defaultValue = ParseExpr(p);
@@ -183,7 +185,7 @@ static bool ParseStructField(Parser* p, StructDecl* node, long offset, bool isUn
     return semi.kind == TokSemicolon;
 }
 
-/* The fields between a struct's braces. The closing '}' is left to the caller. */
+// The fields between a struct's braces. The closing '}' is left to the caller.
 static void ParseStructFields(Parser* p, StructDecl* node, bool isExtern, bool isUnion)
 {
     while (p->cur.kind != TokRBrace && p->cur.kind != TokEof)
@@ -254,21 +256,21 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 
     if (node->incomplete)
     {
-        /* Forward declaration: `struct Foo;` still needs the ';'. */
+        // Forward declaration: `struct Foo;` still needs the ';'.
         ParserExpect(p, TokSemicolon, "';'");
     }
     else
     {
-        /* The ';' after a struct body is optional (`struct S { ... }`). */
+        // The ';' after a struct body is optional (`struct S { ... }`).
         ParserConsume(p, TokSemicolon);
     }
 
     return node;
 }
 
-/* Parses the constant expression for an explicit enum member value (`A = expr`).
-   Expression parsing stops before the `,`/`}` that ends the member; sema folds
-   the result. */
+// Parses the constant expression for an explicit enum member value (`A = expr`).
+// Expression parsing stops before the `,`/`}` that ends the member; sema folds
+// the result.
 static Node* ParseEnumMemberValue(Parser* p)
 {
     return ParseBinary(p, 0);
@@ -277,7 +279,7 @@ static Node* ParseEnumMemberValue(Parser* p)
 EnumDecl* ParseEnumDecl(Parser* p)
 {
     Token kw = p->cur;
-    Advance(p); /* 'enum' */
+    Advance(p);
 
     if (p->cur.kind != TokIdent)
     {
@@ -298,7 +300,7 @@ EnumDecl* ParseEnumDecl(Parser* p)
     node->isFlags = false;
     VecInit(&node->members);
 
-    /* `: UnderlyingType` — optional; defaults to `int`. */
+    // `: UnderlyingType` — optional; defaults to `int`.
     if (ParserConsume(p, TokColon))
     {
         TypeName underlying = {0};
@@ -359,7 +361,7 @@ EnumDecl* ParseEnumDecl(Parser* p)
     Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
     node->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : p->cur);
 
-    /* The ';' after an enum body is optional (`enum Color { Red }`). */
+    // The ';' after an enum body is optional (`enum Color { Red }`).
     ParserConsume(p, TokSemicolon);
 
     return node;
@@ -438,7 +440,7 @@ static ParamDecl* ParseParam(Parser* p)
     return node;
 }
 
-/* Collects a run of `@name` attributes; whatever they precede decides which are valid. */
+// Collects a run of `@name` attributes; whatever they precede decides which are valid.
 void ParseAttributes(Parser* p, Vec* outAttributes)
 {
     while (p->cur.kind == TokAt)
@@ -461,7 +463,7 @@ void ParseAttributes(Parser* p, Vec* outAttributes)
     }
 }
 
-/* Function attributes: @private, @export, @noreturn. */
+// Function attributes: @private, @export, @noreturn.
 static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outIsPrivate, bool* outIsExport,
                                     bool* outIsNoReturn)
 {
@@ -498,7 +500,7 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
     return attributes->count > 0;
 }
 
-/* Struct attributes, e.g. @component. The struct takes ownership of the list. */
+// Struct attributes, e.g. @component. The struct takes ownership of the list.
 void ApplyStructAttributes(Parser* p, StructDecl* sd, Vec* attributes)
 {
     for (size_t i = 0; i < attributes->count; i++)
@@ -539,15 +541,15 @@ Node* ParseFunction(Parser* p)
     return node;
 }
 
-/* `extern`, `extern delegate` and `extern<T>` before a function or global declaration. */
+// `extern`, `extern delegate` and `extern<T>` before a function or global declaration.
 static void ParseExternPrefix(Parser* p, bool* isExtern, bool* isDelegate, char** typeParam)
 {
     *isExtern = ParserConsume(p, TokKwExtern);
 
-    /* `extern delegate R Name(params);` — a C function-pointer type. */
+    // `extern delegate R Name(params);` — a C function-pointer type.
     *isDelegate = *isExtern && ParserConsume(p, TokKwDelegate);
 
-    /* `extern<T>`: one host function serving every type T (see strata.h). */
+    // `extern<T>`: one host function serving every type T (see strata.h).
     *typeParam = NULL;
 
     if (*isExtern && p->cur.kind == TokLt)
@@ -568,8 +570,8 @@ static void ParseExternPrefix(Parser* p, bool* isExtern, bool* isDelegate, char*
     }
 }
 
-/* Attributes decorate functions and struct definitions only. Returns true when they were put on
-   something else, in which case the caller drops the declaration. */
+// Attributes decorate functions and struct definitions only. Returns true when they were put on
+// something else, in which case the caller drops the declaration.
 static bool RejectAttributesOnNonFunction(Parser* p, bool hasAttrs, SourceRange firstAttributeRange)
 {
     if (hasAttrs
@@ -583,8 +585,8 @@ static bool RejectAttributesOnNonFunction(Parser* p, bool hasAttrs, SourceRange 
     return false;
 }
 
-/* The `ReturnType name` that starts every function and global declaration. Returns false after
-   reporting the error, and the caller gives up on the declaration. */
+// The `ReturnType name` that starts every function and global declaration. Returns false after
+// reporting the error, and the caller gives up on the declaration.
 static bool ParseSignatureHead(Parser* p, TypeName* returnType, Token* nameTok)
 {
     if (!ParserTryParseType(p, returnType))
@@ -610,7 +612,7 @@ static bool ParseSignatureHead(Parser* p, TypeName* returnType, Token* nameTok)
     return true;
 }
 
-/* `Type name [= init];` at file scope, reached when no '(' follows the name. */
+// `Type name [= init];` at file scope, reached when no '(' follows the name.
 static Node* ParseGlobalDecl(Parser* p, TypeName returnType, Token nameTok, bool isExtern, bool hasAttrs,
                              SourceRange firstAttributeRange)
 {
@@ -656,8 +658,8 @@ static Node* ParseGlobalDecl(Parser* p, TypeName returnType, Token nameTok, bool
     return (Node*)gd;
 }
 
-/* The FunctionDecl for a signature that has its name, with the flags and range it carries before
-   the parameter list is read. */
+// The FunctionDecl for a signature that has its name, with the flags and range it carries before
+// the parameter list is read.
 static FunctionDecl* NewFunctionDecl(Parser* p, TypeName returnType, Token nameTok, bool isExtern, bool isDelegate,
                                      bool isPrivate, bool isExport, bool isNoReturn, char* typeParam, bool hasAttrs,
                                      SourceRange firstAttributeRange)
@@ -695,8 +697,8 @@ static FunctionDecl* NewFunctionDecl(Parser* p, TypeName returnType, Token nameT
     return node;
 }
 
-/* The parameter list after '(' through ')': the bare `...` forms, the rest and `return`
-   parameters, and the checks that depend on them. */
+// The parameter list after '(' through ')': the bare `...` forms, the rest and `return`
+// parameters, and the checks that depend on them.
 static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
 {
     if (p->cur.kind == TokDotDotDot)
@@ -721,7 +723,7 @@ static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
 
             if (ParserConsume(p, TokComma))
             {
-                /* Bare '...' (extern C-style varargs): must end the list. */
+                // Bare '...' (extern C-style varargs): must end the list.
                 if (p->cur.kind == TokDotDotDot)
                 {
                     Advance(p);
@@ -773,8 +775,8 @@ static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
                 continue;
             }
 
-            /* The Strata-level signature returns the `return` param's type;
-               at the ABI the C function is void ret + out-pointer (codegen). */
+            // The Strata-level signature returns the `return` param's type;
+            // at the ABI the C function is void ret + out-pointer (codegen).
             node->hasReturnParam = true;
             node->returnType = param->type;
             node->returnType.isConst = false;
@@ -789,8 +791,8 @@ static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
     ParserExpect(p, TokRParen, "')'");
 }
 
-/* What follows the parameter list: `;` for a declaration, or the body. Extern functions and
-   functions with neither are reported here. */
+// What follows the parameter list: `;` for a declaration, or the body. Extern functions and
+// functions with neither are reported here.
 static void ParseFunctionBody(Parser* p, FunctionDecl* node, bool isExtern)
 {
     if (ParserConsume(p, TokSemicolon))
@@ -820,9 +822,9 @@ static void ParseFunctionBody(Parser* p, FunctionDecl* node, bool isExtern)
 
     p->hasReturnStmt = false;
 
-    /* `return { ... };` infers its struct type from the return type: for ^T
-       and string it is the inner T, for T[] the whole array is kept so the
-       braced return parses as an array literal. */
+    // `return { ... };` infers its struct type from the return type: for ^T
+    // and string it is the inner T, for T[] the whole array is kept so the
+    // braced return parses as an array literal.
     p->returnType
         = node->returnType.isArray
               ? &node->returnType
@@ -837,8 +839,8 @@ static void ParseFunctionBody(Parser* p, FunctionDecl* node, bool isExtern)
     p->hasReturnStmt = false;
 }
 
-/* A function or global declaration, from its leading attributes through the body or ';'. The
-   stages are: the extern prefix, the signature, then the parameters and the body. */
+// A function or global declaration, from its leading attributes through the body or ';'. The
+// stages are: the extern prefix, the signature, then the parameters and the body.
 Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
 {
     bool isPrivate = false;
@@ -898,8 +900,8 @@ static bool ImplHasMethod(const ImplDecl* impl, const char* methodName)
     return false;
 }
 
-/* `property ReturnType Name { get = Symbol; set = Symbol; }` — `get`/`set` are
-   contextual (identifier spellings), so user code may still use them as names. */
+// `property ReturnType Name { get = Symbol; set = Symbol; }` — `get`/`set` are
+// contextual (identifier spellings), so user code may still use them as names.
 static PropertyDecl* ParsePropertyDecl(Parser* p)
 {
     Token kw = p->cur;
@@ -975,10 +977,10 @@ static PropertyDecl* ParsePropertyDecl(Parser* p)
     return prop;
 }
 
-/* `impl HandleName { extern R Method(...); property T P { get = ...; set = ...; } }`
-   Extern methods are parsed by ParseFunction (extern-only enforced here), then
-   renamed to their extern symbol `HandleName_MethodName` and collected in
-   impl->methods; ParserParseModule hoists them into Module::functions. */
+// `impl HandleName { extern R Method(...); property T P { get = ...; set = ...; } }`
+// Extern methods are parsed by ParseFunction (extern-only enforced here), then
+// renamed to their extern symbol `HandleName_MethodName` and collected in
+// impl->methods; ParserParseModule hoists them into Module::functions.
 ImplDecl* ParseImplDecl(Parser* p)
 {
     Token kw = p->cur;
@@ -1020,9 +1022,9 @@ ImplDecl* ParseImplDecl(Parser* p)
             continue;
         }
 
-        /* Methods may be extern declarations (host-provided) or defined
-           inline with a body (Strata-implemented). ParseFunction consumes an
-           optional `extern` and returns a GlobalDecl when there is no `(`. */
+        // Methods may be extern declarations (host-provided) or defined
+        // inline with a body (Strata-implemented). ParseFunction consumes an
+        // optional `extern` and returns a GlobalDecl when there is no `(`.
         Node* fnNode = ParseFunction(p);
 
         if (fnNode && fnNode->kind == NodeGlobal)
@@ -1038,7 +1040,7 @@ ImplDecl* ParseImplDecl(Parser* p)
 
         if (!fn)
         {
-            /* ParseFunction already diagnosed the malformed declaration. */
+            // ParseFunction already diagnosed the malformed declaration.
             Synchronize(p);
             continue;
         }

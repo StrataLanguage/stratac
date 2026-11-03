@@ -1,5 +1,7 @@
 #pragma once
 
+// Source positions and ranges.
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
