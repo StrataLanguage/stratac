@@ -3825,27 +3825,11 @@ static bool IsComparisonOp(BinaryOp op)
 
 /* `l op r` for integers of different signedness. Both are widened to 64 bits (sign- or zero-extended as their
    own type says); a negative signed side is below every unsigned value, otherwise the unsigned compare decides. */
-/* The enum named `name`, or NULL. */
-static const EnumDecl* FindEnumDecl(const Builder* b, const char* name)
-{
-    for (size_t i = 0; b->m_module && name && i < b->m_module->enums.count; i++)
-    {
-        const EnumDecl* ed = (const EnumDecl*)VecGet((Vec*)&b->m_module->enums, i);
-
-        if (strcmp(ed->name, name) == 0)
-        {
-            return ed;
-        }
-    }
-
-    return NULL;
-}
-
 /* `(Color)n` at run time: an integer that is not the value of some member is not a Color, so it panics instead of
    becoming a value no `switch`/comparison anticipates. Constants were checked by sema. */
 static void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc target)
 {
-    const EnumDecl* ed = FindEnumDecl(b, cast->type.name);
+    const EnumDecl* ed = ModuleFindEnum(b->m_module, cast->type.name);
 
     if (!ed || ed->members.count == 0 || !operand.value || operand.typeDesc.isFloat || target.isFloat || !target.type
         || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind

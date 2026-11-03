@@ -1,6 +1,7 @@
 #include "AST/AST.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static void DisposeVec(Vec* vec)
 {
@@ -24,6 +25,46 @@ void AstReleaseModuleLists(Module* module)
     DisposeVec(&module->impls);
     DisposeVec(&module->genericInstances);
     DisposeVec(&module->delegates);
+}
+
+const EnumDecl* ModuleFindEnum(const Module* mod, const char* name)
+{
+    if (!mod || !name)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < mod->enums.count; i++)
+    {
+        const EnumDecl* ed = (const EnumDecl*)VecGet(&mod->enums, i);
+
+        if (strcmp(ed->name, name) == 0)
+        {
+            return ed;
+        }
+    }
+
+    return NULL;
+}
+
+const ImplDecl* ModuleFindImpl(const Module* mod, const char* handleName)
+{
+    if (!mod || !handleName)
+    {
+        return NULL;
+    }
+
+    for (size_t i = 0; i < mod->impls.count; i++)
+    {
+        const ImplDecl* impl = (const ImplDecl*)VecGet(&mod->impls, i);
+
+        if (strcmp(impl->handleName, handleName) == 0)
+        {
+            return impl;
+        }
+    }
+
+    return NULL;
 }
 
 void AstDispose(Node* node)

@@ -4953,37 +4953,6 @@ static void CheckStructInitFields(Resolver* r, Node* n)
 
 // -- Impl blocks.
 
-// First impl block for a type, or NULL.
-static ImplDecl* FindImplDecl(Resolver* r, const char* handleName)
-{
-    for (size_t i = 0; i < r->m_mod->impls.count; i++)
-    {
-        ImplDecl* impl = (ImplDecl*)VecGet(&r->m_mod->impls, i);
-
-        if (strcmp(impl->handleName, handleName) == 0)
-        {
-            return impl;
-        }
-    }
-
-    return NULL;
-}
-
-static EnumDecl* FindEnum(Resolver* r, const char* name)
-{
-    for (size_t i = 0; i < r->m_mod->enums.count; i++)
-    {
-        EnumDecl* ed = (EnumDecl*)VecGet(&r->m_mod->enums, i);
-
-        if (strcmp(ed->name, name) == 0)
-        {
-            return ed;
-        }
-    }
-
-    return NULL;
-}
-
 /* Method lookup walks base handles: a `handle Player : Entity` sees impl Entity methods. */
 static FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
 {
@@ -5023,7 +4992,7 @@ static FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const c
 /* Property lookup on the exact handle (no inheritance). */
 static PropertyDecl* FindImplProperty(Resolver* r, const char* handleName, const char* name)
 {
-    ImplDecl* impl = FindImplDecl(r, handleName);
+    const ImplDecl* impl = ModuleFindImpl(r->m_mod, handleName);
 
     if (!impl)
     {
@@ -5080,7 +5049,7 @@ static bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
         return false;
     }
 
-    EnumDecl* ed = FindEnum(r, baseName);
+    const EnumDecl* ed = ModuleFindEnum(r->m_mod, baseName);
 
     if (!ed)
     {
