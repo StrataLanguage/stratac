@@ -61,7 +61,7 @@ bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!isValidCall)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "no matching call to '%s' with %zu arguments", c->callee, c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "no matching call to '%s' with %zu arguments", c->callee, c->args.count);
         return false;
     }
 
@@ -81,7 +81,7 @@ bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->args.count != 2)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects 2 arguments, got %zu", c->callee, c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' expects 2 arguments, got %zu", c->callee, c->args.count);
         return true;
     }
 
@@ -91,15 +91,15 @@ bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
     const TypeName* t0 = InferType(r, a0, scope);
     const TypeName* t1 = InferType(r, a1, scope);
 
-    const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
-    const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
+    const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->registry, t0->name) : "";
+    const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->registry, t1->name) : "";
 
     LaneCount lanes0 = IsNameSimdVector(resolved0);
     LaneCount lanes1 = IsNameSimdVector(resolved1);
 
     if (lanes0 == 0 || lanes1 == 0)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
+        DiagErrorFmt(r->diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
                      c->callee, t0 ? t0->name : "?");
 
         return true;
@@ -107,7 +107,7 @@ bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (lanes0 != lanes1)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' requires both vectors to have the same lane count ('%s' vs '%s')",
+        DiagErrorFmt(r->diag, c->base.range, "'%s' requires both vectors to have the same lane count ('%s' vs '%s')",
                      c->callee, t0->name, t1->name);
 
         return true;
@@ -126,20 +126,20 @@ bool ResolveVector1Arg(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->args.count != 1)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects 1 argument, got %zu", c->callee, c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' expects 1 argument, got %zu", c->callee, c->args.count);
         return true;
     }
 
     Node* vA = (Node*)VecGet(&c->args, 0);
     const TypeName* vAType = InferType(r, vA, scope);
 
-    const char* resolved0 = vAType ? TypeRegistryResolveAlias(&r->m_registry, vAType->name) : "";
+    const char* resolved0 = vAType ? TypeRegistryResolveAlias(&r->registry, vAType->name) : "";
 
     LaneCount lanes = IsNameSimdVector(resolved0);
 
     if (lanes == 0)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
+        DiagErrorFmt(r->diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
                      c->callee, vAType ? vAType->name : "?");
 
         return true;
@@ -168,7 +168,7 @@ const TypeName* VectorCrossBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     Node* a0 = (Node*)VecGet(&c->args, 0);
     const TypeName* a0Type = InferType(r, a0, scope);
 
-    const char* resolved = TypeRegistryResolveAlias(&r->m_registry, a0Type ? a0Type->name : "");
+    const char* resolved = TypeRegistryResolveAlias(&r->registry, a0Type ? a0Type->name : "");
     if (GetNameSimdVectorLanes(resolved) == 2)
     {
         return InternTypeName(r, "float");

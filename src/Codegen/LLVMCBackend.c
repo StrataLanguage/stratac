@@ -23,9 +23,9 @@ CodegenResult GenerateLlvmIr(const Module* mod)
         SbInit(&sb);
         SbPuts(&sb, "; LLVM back-end errors:\n");
 
-        for (size_t i = 0; i < diag.m_count; i++)
+        for (size_t i = 0; i < diag.count; i++)
         {
-            SbPrintf(&sb, ";   %s\n", diag.m_diagnostics[i].message);
+            SbPrintf(&sb, ";   %s\n", diag.diagnostics[i].message);
         }
 
         /* The caller free()s `output`, so it must be heap-owned — NOT an

@@ -19,11 +19,11 @@ typedef struct
 
 typedef struct
 {
-    Arena m_arena;
-    Diagnostic* m_diagnostics;
-    size_t m_count;
-    size_t m_cap;
-    uint32_t m_errorCount;
+    Arena arena;
+    Diagnostic* diagnostics;
+    size_t count;
+    size_t cap;
+    uint32_t errorCount;
 } DiagnosticEngine;
 
 void DiagnosticEngineInit(DiagnosticEngine* diag);

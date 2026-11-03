@@ -11,14 +11,14 @@ static bool ExprIsConstantFalse(const Node* n);
 // Reports each diagnostic of `src` that `dst` does not hold yet.
 static void ForwardNewDiagnostics(DiagnosticEngine* dst, const DiagnosticEngine* src)
 {
-    for (size_t i = 0; i < src->m_count; i++)
+    for (size_t i = 0; i < src->count; i++)
     {
-        const Diagnostic* d = &src->m_diagnostics[i];
+        const Diagnostic* d = &src->diagnostics[i];
         bool seen = false;
 
-        for (size_t j = 0; j < dst->m_count && !seen; j++)
+        for (size_t j = 0; j < dst->count && !seen; j++)
         {
-            const Diagnostic* e = &dst->m_diagnostics[j];
+            const Diagnostic* e = &dst->diagnostics[j];
 
             seen = e->severity == d->severity && e->range.start == d->range.start && e->range.length == d->range.length
                    && e->range.fileId == d->range.fileId && strcmp(e->message, d->message) == 0;
@@ -39,11 +39,11 @@ static void WalkDeferred(Resolver* r, DeferEntry* e, StrMap* scope)
     Vec hidden;
     VecInit(&hidden);
 
-    for (size_t f = e->m_frame; f < r->m_scopeDecls.count; f++)
+    for (size_t f = e->frame; f < r->scopeDecls.count; f++)
     {
-        Vec* frame = (Vec*)VecGet(&r->m_scopeDecls, f);
+        Vec* frame = (Vec*)VecGet(&r->scopeDecls, f);
 
-        for (size_t k = f == e->m_frame ? e->m_declMark : 0; k < frame->count; k++)
+        for (size_t k = f == e->frame ? e->declMark : 0; k < frame->count; k++)
         {
             const char* name = (const char*)VecGet(frame, k);
 
@@ -56,19 +56,19 @@ static void WalkDeferred(Resolver* r, DeferEntry* e, StrMap* scope)
     DiagnosticEngine scratch;
     DiagnosticEngineInit(&scratch);
 
-    DiagnosticEngine* realDiag = r->m_diag;
-    r->m_diag = &scratch;
+    DiagnosticEngine* realDiag = r->diag;
+    r->diag = &scratch;
 
-    bool wasUnreachable = r->m_unreachable;
-    r->m_deferWalkDepth++;
+    bool wasUnreachable = r->unreachable;
+    r->deferWalkDepth++;
 
-    WalkStmt(r, e->m_stmt, scope);
+    WalkStmt(r, e->stmt, scope);
 
-    r->m_deferWalkDepth--;
-    r->m_unreachable = wasUnreachable;
-    r->m_diag = realDiag;
+    r->deferWalkDepth--;
+    r->unreachable = wasUnreachable;
+    r->diag = realDiag;
 
-    ForwardNewDiagnostics(r->m_diag, &scratch);
+    ForwardNewDiagnostics(r->diag, &scratch);
     DiagnosticEngineFree(&scratch);
 
     for (size_t i = hidden.count; i >= 2; i -= 2)
@@ -78,7 +78,7 @@ static void WalkDeferred(Resolver* r, DeferEntry* e, StrMap* scope)
 
     free(hidden.items);
 
-    e->m_ranAtExit = true;
+    e->ranAtExit = true;
 }
 
 // Runs one scope's deferred statements, last `defer` first.
@@ -93,26 +93,26 @@ static void RunDeferFrame(Resolver* r, Vec* frame, StrMap* scope)
 // Runs the deferred statements of scopes [fromIndex, top), innermost first.
 static void RunDefersFrom(Resolver* r, StackMark fromIndex, StrMap* scope)
 {
-    for (size_t f = r->m_deferFrames.count; f-- > fromIndex;)
+    for (size_t f = r->deferFrames.count; f-- > fromIndex;)
     {
-        RunDeferFrame(r, (Vec*)VecGet(&r->m_deferFrames, f), scope);
+        RunDeferFrame(r, (Vec*)VecGet(&r->deferFrames, f), scope);
     }
 }
 
 // Records a `defer` on the innermost scope. Its checks happen at the exits.
 static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
 {
-    if (r->m_deferFrames.count == 0 || r->m_scopeDecls.count == 0)
+    if (r->deferFrames.count == 0 || r->scopeDecls.count == 0)
     {
         WalkStmt(r, d->stmt, scope);
         return;
     }
 
-    DeferEntry* e = (DeferEntry*)ArenaAlloc(r->m_arena, sizeof(DeferEntry));
-    e->m_stmt = d->stmt;
-    e->m_frame = r->m_scopeDecls.count - 1;
-    e->m_declMark = ((Vec*)VecGet(&r->m_scopeDecls, e->m_frame))->count;
-    e->m_ranAtExit = false;
+    DeferEntry* e = (DeferEntry*)ArenaAlloc(r->arena, sizeof(DeferEntry));
+    e->stmt = d->stmt;
+    e->frame = r->scopeDecls.count - 1;
+    e->declMark = ((Vec*)VecGet(&r->scopeDecls, e->frame))->count;
+    e->ranAtExit = false;
 
     /* Resolve it here, in the scope it was written in, but keep the flow
        state untouched: nothing in it has run yet. The diagnostics are only
@@ -121,42 +121,42 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
     FlowInit(&saved);
     FlowCapture(r, &saved);
 
-    DiagnosticEngineInit(&e->m_early);
-    DiagnosticEngine* realDiag = r->m_diag;
-    r->m_diag = &e->m_early;
-    r->m_deferWalkDepth++;
+    DiagnosticEngineInit(&e->early);
+    DiagnosticEngine* realDiag = r->diag;
+    r->diag = &e->early;
+    r->deferWalkDepth++;
 
     WalkStmt(r, d->stmt, scope);
 
-    r->m_deferWalkDepth--;
-    r->m_diag = realDiag;
+    r->deferWalkDepth--;
+    r->diag = realDiag;
 
-    r->m_unreachable = !saved.m_live;
+    r->unreachable = !saved.live;
     FlowFree(&saved);
 
-    VecPush((Vec*)VecGet(&r->m_deferFrames, r->m_deferFrames.count - 1), e);
+    VecPush((Vec*)VecGet(&r->deferFrames, r->deferFrames.count - 1), e);
 }
 
 /* `break`/`continue`: run the defers of the scopes being left, then hand the
    state to the loop's exit or back edge. The path after it is dead. */
 static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak, SourceRange range)
 {
-    LoopFlow* lf = r->m_loopFlows.count > 0 ? (LoopFlow*)VecGet(&r->m_loopFlows, r->m_loopFlows.count - 1) : NULL;
+    LoopFlow* lf = r->loopFlows.count > 0 ? (LoopFlow*)VecGet(&r->loopFlows, r->loopFlows.count - 1) : NULL;
 
     /* A deferred statement runs at scope exit, wherever that is: it cannot also jump out of a loop. */
-    if (r->m_deferWalkDepth > 0 && (!lf || lf->m_deferWalkDepth != r->m_deferWalkDepth))
+    if (r->deferWalkDepth > 0 && (!lf || lf->deferWalkDepth != r->deferWalkDepth))
     {
-        DiagErrorFmt(r->m_diag, range, "'%s' cannot leave a defer block", isBreak ? "break" : "continue");
+        DiagErrorFmt(r->diag, range, "'%s' cannot leave a defer block", isBreak ? "break" : "continue");
     }
 
     /* A jump out of a deferred statement is not modeled; it only ends the path. */
-    if (lf && lf->m_deferWalkDepth == r->m_deferWalkDepth && !r->m_unreachable)
+    if (lf && lf->deferWalkDepth == r->deferWalkDepth && !r->unreachable)
     {
-        RunDefersFrom(r, lf->m_deferDepth, scope);
-        FlowJoinCurrent(r, isBreak ? &lf->m_breaks : &lf->m_continues);
+        RunDefersFrom(r, lf->deferDepth, scope);
+        FlowJoinCurrent(r, isBreak ? &lf->breaks : &lf->continues);
     }
 
-    r->m_unreachable = true;
+    r->unreachable = true;
 }
 
 /* `if`/`while`/`for` conditions must be `bool`: no implicit truthiness for
@@ -165,9 +165,9 @@ void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope)
 {
     const TypeName* t = cond ? InferType(r, cond, scope) : NULL;
 
-    if (t && !IsBoolContextType(&r->m_registry, t))
+    if (t && !IsBoolContextType(&r->registry, t))
     {
-        DiagErrorFmt(r->m_diag, cond->range, "condition must be of type 'bool', found '%s'", t->name);
+        DiagErrorFmt(r->diag, cond->range, "condition must be of type 'bool', found '%s'", t->name);
     }
 }
 
@@ -178,10 +178,10 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
                               FlowState* exit, FlowState* back)
 {
     LoopFlow lf;
-    FlowInit(&lf.m_breaks);
-    FlowInit(&lf.m_continues);
-    lf.m_deferDepth = r->m_deferFrames.count;
-    lf.m_deferWalkDepth = r->m_deferWalkDepth;
+    FlowInit(&lf.breaks);
+    FlowInit(&lf.continues);
+    lf.deferDepth = r->deferFrames.count;
+    lf.deferWalkDepth = r->deferWalkDepth;
 
     if (condition)
     {
@@ -206,7 +206,7 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
     {
     }
 
-    VecPush(&r->m_loopFlows, &lf);
+    VecPush(&r->loopFlows, &lf);
 
     if (bodyScope)
     {
@@ -220,11 +220,11 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
         ScopePop(r, scope);
     }
 
-    VecPop(&r->m_loopFlows);
+    VecPop(&r->loopFlows);
 
     // Falling off the body end and every `continue` meet before the update.
-    FlowJoinCurrent(r, &lf.m_continues);
-    FlowApply(r, &lf.m_continues);
+    FlowJoinCurrent(r, &lf.continues);
+    FlowApply(r, &lf.continues);
 
     if (update)
     {
@@ -232,10 +232,10 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
     }
 
     FlowCapture(r, back);
-    FlowJoin(exit, &lf.m_breaks);
+    FlowJoin(exit, &lf.breaks);
 
-    FlowFree(&lf.m_breaks);
-    FlowFree(&lf.m_continues);
+    FlowFree(&lf.breaks);
+    FlowFree(&lf.continues);
 }
 
 /* Loops iterate muted until the head state (entry joined with every back
@@ -250,8 +250,8 @@ static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, boo
     DiagnosticEngine warmup;
     DiagnosticEngineInit(&warmup);
 
-    DiagnosticEngine* realDiag = r->m_diag;
-    r->m_diag = &warmup;
+    DiagnosticEngine* realDiag = r->diag;
+    r->diag = &warmup;
 
     for (int pass = 0; pass < LOOP_MAX_PASSES; pass++)
     {
@@ -282,7 +282,7 @@ static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, boo
         }
     }
 
-    r->m_diag = realDiag;
+    r->diag = realDiag;
     DiagnosticEngineFree(&warmup);
 
     FlowState exit;
@@ -304,13 +304,13 @@ static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, boo
  */
 static void ScopePush(Resolver* r)
 {
-    Vec* frame = (Vec*)ArenaAlloc(r->m_arena, sizeof(Vec));
+    Vec* frame = (Vec*)ArenaAlloc(r->arena, sizeof(Vec));
     VecInit(frame);
-    VecPush(&r->m_scopeDecls, frame);
+    VecPush(&r->scopeDecls, frame);
 
-    Vec* defers = (Vec*)ArenaAlloc(r->m_arena, sizeof(Vec));
+    Vec* defers = (Vec*)ArenaAlloc(r->arena, sizeof(Vec));
     VecInit(defers);
-    VecPush(&r->m_deferFrames, defers);
+    VecPush(&r->deferFrames, defers);
 }
 
 /**
@@ -318,11 +318,11 @@ static void ScopePush(Resolver* r)
  */
 static void ScopePop(Resolver* r, StrMap* scope)
 {
-    if (r->m_deferFrames.count > 0)
+    if (r->deferFrames.count > 0)
     {
-        Vec* defers = (Vec*)VecPop(&r->m_deferFrames);
+        Vec* defers = (Vec*)VecPop(&r->deferFrames);
 
-        if (!r->m_unreachable)
+        if (!r->unreachable)
         {
             RunDeferFrame(r, defers, scope);
         }
@@ -332,23 +332,23 @@ static void ScopePop(Resolver* r, StrMap* scope)
             DeferEntry* e = (DeferEntry*)VecGet(defers, i);
 
             /* No reachable exit ran it: keep what the `defer` site found. */
-            if (!e->m_ranAtExit)
+            if (!e->ranAtExit)
             {
-                ForwardNewDiagnostics(r->m_diag, &e->m_early);
+                ForwardNewDiagnostics(r->diag, &e->early);
             }
 
-            DiagnosticEngineFree(&e->m_early);
+            DiagnosticEngineFree(&e->early);
         }
 
         free(defers->items);
     }
 
-    if (r->m_scopeDecls.count == 0)
+    if (r->scopeDecls.count == 0)
     {
         return;
     }
 
-    Vec* frame = (Vec*)VecPop(&r->m_scopeDecls);
+    Vec* frame = (Vec*)VecPop(&r->scopeDecls);
 
     for (size_t i = 0; i < frame->count; i++)
     {
@@ -366,14 +366,14 @@ void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, S
 
     if (existing && existing != typePtr)
     {
-        DiagErrorFmt(r->m_diag, range, "redefinition of '%s'", name);
+        DiagErrorFmt(r->diag, range, "redefinition of '%s'", name);
     }
 
     StrMapPut(scope, name, typePtr);
 
-    if (r->m_scopeDecls.count > 0)
+    if (r->scopeDecls.count > 0)
     {
-        Vec* top = (Vec*)VecGet(&r->m_scopeDecls, r->m_scopeDecls.count - 1);
+        Vec* top = (Vec*)VecGet(&r->scopeDecls, r->scopeDecls.count - 1);
         VecPush(top, (void*)name);
     }
 }
@@ -388,9 +388,9 @@ static bool CheckLocalTypeKnown(Resolver* r, VarDeclStmt* vd)
     }
     if (t && t->name && !IsStringType(t->primitiveType) && !IsCStringType(t->primitiveType)
         && !IsScalarType(t->primitiveType) && !IsSimdVector(t->primitiveType)
-        && !TypeRegistryIsUserType(&r->m_registry, t->name))
+        && !TypeRegistryIsUserType(&r->registry, t->name))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "unknown type '%s'", t->name);
+        DiagErrorFmt(r->diag, vd->base.range, "unknown type '%s'", t->name);
         return false;
     }
     return true;
@@ -398,19 +398,19 @@ static bool CheckLocalTypeKnown(Resolver* r, VarDeclStmt* vd)
 
 static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
 {
-    if (IsIncompleteStruct(&r->m_registry, vd->type.name))
+    if (IsIncompleteStruct(&r->registry, vd->type.name))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
+        DiagErrorFmt(r->diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
     }
 
     /* `T?` of an alias of an optional is an optional of an optional, which `T??` is not allowed to be. */
     if (TypeNameIsOptional(&vd->type) && vd->type.inner)
     {
-        const TypeName* innerResolved = ResolveAliasedType(&r->m_registry, r->m_arena, vd->type.inner);
+        const TypeName* innerResolved = ResolveAliasedType(&r->registry, r->arena, vd->type.inner);
 
         if (innerResolved && TypeNameIsOptional(innerResolved))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range, "'%s' is an optional of an optional ('%s' already may be empty)",
+            DiagErrorFmt(r->diag, vd->base.range, "'%s' is an optional of an optional ('%s' already may be empty)",
                          vd->name, vd->type.inner->name);
         }
     }
@@ -421,9 +421,9 @@ static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
         el = el->elem;
 
         if (el && !TypeNameHasArrayShape(el) && !TypeNameIsBox(el) && !TypeNameIsOptional(el)
-            && IsIncompleteStruct(&r->m_registry, el->name))
+            && IsIncompleteStruct(&r->registry, el->name))
         {
-            DiagErrorFmt(r->m_diag, vd->base.range,
+            DiagErrorFmt(r->diag, vd->base.range,
                          "'%s' is an array of incomplete type '%s'; its element size is unknown", vd->name, el->name);
             break;
         }
@@ -436,7 +436,7 @@ static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** 
     if (!(TypeNameHasArrayShape(&vd->type) && vd->type.length >= 0))
     {
         /* e.g. `int[][4] x;` — a dynamic array of fixed arrays. */
-        DiagErrorFmt(r->m_diag, vd->base.range,
+        DiagErrorFmt(r->diag, vd->base.range,
                      "local variable '%s' has invalid fixed-size array type ('%s'); "
                      "fixed-size arrays may only be declared as 'T[N]' locals",
                      vd->name, vd->type.name);
@@ -445,8 +445,7 @@ static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** 
 
     if (vd->type.length < 1)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "fixed-size array local '%s' must have a length of at least 1",
-                     vd->name);
+        DiagErrorFmt(r->diag, vd->base.range, "fixed-size array local '%s' must have a length of at least 1", vd->name);
         return false;
     }
 
@@ -455,38 +454,37 @@ static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** 
 
     if (TypeNameHasArrayShape(leaf))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "fixed-size array local '%s' may not contain a dynamic array",
-                     vd->name);
+        DiagErrorFmt(r->diag, vd->base.range, "fixed-size array local '%s' may not contain a dynamic array", vd->name);
         return false;
     }
 
     if (TypeNameIsBox(leaf) || AliasIsOwning(r, leaf))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range,
+        DiagErrorFmt(r->diag, vd->base.range,
                      "fixed-size array local '%s' may not own its elements ('%s' is owning); "
                      "fixed-size arrays have no drop glue",
                      vd->name, leaf->name);
         return false;
     }
 
-    if (TypeRegistryIsOwningStruct(&r->m_registry, leaf->name))
+    if (TypeRegistryIsOwningStruct(&r->registry, leaf->name))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range,
+        DiagErrorFmt(r->diag, vd->base.range,
                      "fixed-size array local '%s' may not contain an owning struct ('%s'); "
                      "fixed-size arrays have no drop glue",
                      vd->name, leaf->name);
         return false;
     }
 
-    if (IsIncompleteStruct(&r->m_registry, leaf->name))
+    if (IsIncompleteStruct(&r->registry, leaf->name))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, leaf->name);
+        DiagErrorFmt(r->diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, leaf->name);
         return false;
     }
 
     if (!vd->init || vd->init->kind != NodeArrayInit)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range,
+        DiagErrorFmt(r->diag, vd->base.range,
                      "fixed-size array local '%s' must be initialized with a braced list "
                      "('{ ... }'), e.g. 'float %s[%ld] = { ... }'",
                      vd->name, vd->name, vd->type.length);
@@ -509,7 +507,7 @@ static void WalkFixedArrayRepeatInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
 
     if (!ResolvedConstIntValue(fixedInit->repeatCount, &repeat, &negative) || negative || repeat != (ConstUInt)total)
     {
-        DiagErrorFmt(r->m_diag, fixedInit->repeatCount->range,
+        DiagErrorFmt(r->diag, fixedInit->repeatCount->range,
                      "the count in '{ value; count }' for fixed-size array local '%s' must be the "
                      "constant %ld (its length)",
                      vd->name, total);
@@ -529,7 +527,7 @@ static void WalkFixedArrayRepeatInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
 
     if (valueType && !IsAssignableType(r, leaf, valueType) && !IsStrLiteralForCString(r, leaf, value))
     {
-        DiagErrorFmt(r->m_diag, value->range, "a '%s' cannot fill the '%s' elements of local '%s'", valueType->name,
+        DiagErrorFmt(r->diag, value->range, "a '%s' cannot fill the '%s' elements of local '%s'", valueType->name,
                      leaf->name, vd->name);
     }
 }
@@ -573,7 +571,7 @@ static bool FlattenFixedArrayInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* f
 
         if (!PlaceFixedArrayInit(&flat, 0, &vd->type, fixedInit))
         {
-            DiagErrorFmt(r->m_diag, vd->init->range, "too many initializers for fixed-size array local '%s' (%ld max)",
+            DiagErrorFmt(r->diag, vd->init->range, "too many initializers for fixed-size array local '%s' (%ld max)",
                          vd->name, total);
             return false;
         }
@@ -619,7 +617,7 @@ static void WalkFixedArrayBracedInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
 
         if (elemType && !IsAssignableType(r, leaf, elemType) && !IsStrLiteralForCString(r, leaf, elem))
         {
-            DiagErrorFmt(r->m_diag, elem->range, "element of type '%s' cannot initialize '%s' element of local '%s'",
+            DiagErrorFmt(r->diag, elem->range, "element of type '%s' cannot initialize '%s' element of local '%s'",
                          elemType->name, leaf->name, vd->name);
         }
     }
@@ -655,19 +653,19 @@ static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
     // Owning locals need an init (arrays/optionals exempt; a bare owning
     // struct local is rejected below with a sharper message).
     if (AliasIsOwning(r, &vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
-        && !TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name) && !vd->init)
+        && !TypeRegistryIsOwningStruct(&r->registry, vd->type.name) && !vd->init)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
+        DiagErrorFmt(r->diag, vd->base.range, "box variable '%s' must be initialized", vd->name);
     }
 
     if (vd->type.isConst && !vd->init)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "const variable '%s' must be initialized", vd->name);
+        DiagErrorFmt(r->diag, vd->base.range, "const variable '%s' must be initialized", vd->name);
     }
 
-    if (TypeRegistryIsOwningStruct(&r->m_registry, vd->type.name))
+    if (TypeRegistryIsOwningStruct(&r->registry, vd->type.name))
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "instances of '%s' must be boxed (i.e, '^%s').", vd->type.name,
+        DiagErrorFmt(r->diag, vd->base.range, "instances of '%s' must be boxed (i.e, '^%s').", vd->type.name,
                      vd->type.name);
     }
 
@@ -687,13 +685,13 @@ static void WalkVarDeclInit(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     if (initType && !ok)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name,
+        DiagErrorFmt(r->diag, vd->base.range, "'%s' cannot be initialized by expression of type '%s'", vd->type.name,
                      initType->name);
     }
     else if (ok)
     {
-        CheckLiteralFits(r->m_diag, vd->init, &vd->type);
-        CheckLossyConversion(r->m_diag, vd->init, initType, &vd->type, vd->base.range);
+        CheckLiteralFits(r->diag, vd->init, &vd->type);
+        CheckLossyConversion(r->diag, vd->init, initType, &vd->type, vd->base.range);
     }
 
     // Plain `T` from `T?` unwraps.
@@ -726,10 +724,10 @@ static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
     }
 
     /* A plain local shadows any earlier `ref` local of the same name. */
-    if (StrMapGet(&r->m_refLocals, vd->name))
+    if (StrMapGet(&r->refLocals, vd->name))
     {
-        StrMapPut(&r->m_refLocals, vd->name, NULL);
-        StrMapPut(&r->m_refBoxParams, vd->name, NULL);
+        StrMapPut(&r->refLocals, vd->name, NULL);
+        StrMapPut(&r->refBoxParams, vd->name, NULL);
     }
 
     if (!CheckLocalTypeKnown(r, vd))
@@ -768,22 +766,22 @@ static void WalkExprStmt(Resolver* r, Node* n, StrMap* scope)
     /* A call that never returns ends the path, as `return` does. */
     if (StmtIsNoReturnCall(n))
     {
-        r->m_unreachable = true;
+        r->unreachable = true;
     }
 }
 
 static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
 {
-    if (r->m_deferWalkDepth > 0)
+    if (r->deferWalkDepth > 0)
     {
-        DiagErrorFmt(r->m_diag, rs->base.range, "'return' cannot leave a defer block");
+        DiagErrorFmt(r->diag, rs->base.range, "'return' cannot leave a defer block");
     }
 
     if (rs->value)
     {
-        if (r->m_currentReturnType && r->m_currentReturnType->primitiveType == PrimVoid)
+        if (r->currentReturnType && r->currentReturnType->primitiveType == PrimVoid)
         {
-            DiagErrorFmt(r->m_diag, rs->base.range, "void function cannot return a value");
+            DiagErrorFmt(r->diag, rs->base.range, "void function cannot return a value");
         }
 
         ResolveExpr(r, rs->value, scope);
@@ -793,21 +791,21 @@ static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
 
         if (typeName && typeName->primitiveType == PrimVoid)
         {
-            DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type 'void'");
+            DiagErrorFmt(r->diag, rs->base.range, "cannot return a value of type 'void'");
         }
 
         // Check the returned value against the declared return type.
-        if (r->m_currentReturnType && r->m_currentReturnType->primitiveType != PrimVoid && typeName
-            && !IsAssignableType(r, r->m_currentReturnType, typeName)
-            && !IsStrLiteralForCString(r, r->m_currentReturnType, rs->value))
+        if (r->currentReturnType && r->currentReturnType->primitiveType != PrimVoid && typeName
+            && !IsAssignableType(r, r->currentReturnType, typeName)
+            && !IsStrLiteralForCString(r, r->currentReturnType, rs->value))
         {
-            DiagErrorFmt(r->m_diag, rs->base.range, "cannot return a value of type '%s' from a function returning '%s'",
-                         typeName->name, r->m_currentReturnType->name);
+            DiagErrorFmt(r->diag, rs->base.range, "cannot return a value of type '%s' from a function returning '%s'",
+                         typeName->name, r->currentReturnType->name);
         }
 
-        if (r->m_currentReturnType && typeName)
+        if (r->currentReturnType && typeName)
         {
-            CheckLossyConversion(r->m_diag, rs->value, typeName, r->m_currentReturnType, rs->base.range);
+            CheckLossyConversion(r->diag, rs->value, typeName, r->currentReturnType, rs->base.range);
         }
 
         // Returning `T?` from `T` unwraps.
@@ -820,7 +818,7 @@ static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
 
         if (movedReturnKey)
         {
-            bool returnsSameBox = r->m_currentReturnType && strcmp(r->m_currentReturnType->name, typeName->name) == 0;
+            bool returnsSameBox = r->currentReturnType && strcmp(r->currentReturnType->name, typeName->name) == 0;
 
             if (returnsSameBox)
             {
@@ -835,12 +833,12 @@ static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
                 const TypeName* boxInner = TypeNameBoxInner(typeName);
                 const char* boxInnerName = boxInner ? boxInner->name : NULL;
 
-                bool innerIsOwning = boxInnerName && TypeRegistryIsOwningStruct(&r->m_registry, boxInnerName);
+                bool innerIsOwning = boxInnerName && TypeRegistryIsOwningStruct(&r->registry, boxInnerName);
                 bool innerMatchesReturn
                     = boxInnerName
-                      && (r->m_currentReturnType
-                          && (strcmp(r->m_currentReturnType->name, boxInnerName) == 0
-                              || (IsNameNumeric(boxInnerName) && IsNameNumeric(r->m_currentReturnType->name))));
+                      && (r->currentReturnType
+                          && (strcmp(r->currentReturnType->name, boxInnerName) == 0
+                              || (IsNameNumeric(boxInnerName) && IsNameNumeric(r->currentReturnType->name))));
 
                 if (innerIsOwning || !innerMatchesReturn)
                 {
@@ -849,18 +847,18 @@ static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
             }
         }
     }
-    else if (r->m_currentReturnType && r->m_currentReturnType->primitiveType != PrimVoid)
+    else if (r->currentReturnType && r->currentReturnType->primitiveType != PrimVoid)
     {
-        DiagErrorFmt(r->m_diag, rs->base.range, "non-void function must return a value");
+        DiagErrorFmt(r->diag, rs->base.range, "non-void function must return a value");
     }
 
     // Every pending defer runs after the value is computed.
-    if (r->m_deferWalkDepth == 0 && !r->m_unreachable)
+    if (r->deferWalkDepth == 0 && !r->unreachable)
     {
         RunDefersFrom(r, 0, scope);
     }
 
-    r->m_unreachable = true;
+    r->unreachable = true;
 }
 
 static void WalkIfStmt(Resolver* r, IfStmt* i, StrMap* scope)
@@ -868,7 +866,7 @@ static void WalkIfStmt(Resolver* r, IfStmt* i, StrMap* scope)
     ResolveExpr(r, i->condition, scope);
     CheckBoolCondition(r, i->condition, scope);
 
-    bool entryDead = r->m_unreachable;
+    bool entryDead = r->unreachable;
 
     /* Each branch is its own lexical scope: locals declared in one
        branch are invisible in the other and after the join. */
@@ -876,8 +874,8 @@ static void WalkIfStmt(Resolver* r, IfStmt* i, StrMap* scope)
     WalkStmt(r, i->thenBranch, scope);
     ScopePop(r, scope);
 
-    bool thenDead = r->m_unreachable;
-    r->m_unreachable = entryDead;
+    bool thenDead = r->unreachable;
+    r->unreachable = entryDead;
 
     if (i->elseBranch)
     {
@@ -887,7 +885,7 @@ static void WalkIfStmt(Resolver* r, IfStmt* i, StrMap* scope)
     }
 
     /* The join is unreachable only when both arms are. An else-less if falls through on its false edge. */
-    r->m_unreachable = thenDead && r->m_unreachable;
+    r->unreachable = thenDead && r->unreachable;
 }
 
 static void WalkWhileStmt(Resolver* r, WhileStmt* w, StrMap* scope)

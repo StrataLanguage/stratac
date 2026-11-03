@@ -19,36 +19,36 @@
 
 typedef struct
 {
-    Module* m_mod;
-    DiagnosticEngine* m_diag;
-    TypeRegistry m_registry;
-    NodeTypes m_nodeTypes; /* the type InferType last gave each expression node */
-    Arena* m_arena;
-    StrMap m_constVars;
-    StrMap m_boxGlobals;
-    StrMap m_refBoxParams;
-    StrMap m_refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
-    StrMap m_refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
-    StrMap m_typeCache;      /* canonical spelling -> interned TypeName tree */
-    StrMap m_constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
-    const TypeName* m_currentReturnType;
-    const FunctionDecl* m_currentFunction;
-    StrMap* m_curScope; /* the function's scope, for typing move paths (see KeyPathType) */
+    Module* mod;
+    DiagnosticEngine* diag;
+    TypeRegistry registry;
+    NodeTypes nodeTypes; /* the type InferType last gave each expression node */
+    Arena* arena;
+    StrMap constVars;
+    StrMap boxGlobals;
+    StrMap refBoxParams;
+    StrMap refLocals;      /* `ref` locals: name -> the (canonical) path they alias */
+    StrMap refArrayParams; /* `ref T[]` param names: borrowed binding — no rebind, no push/resize */
+    StrMap typeCache;      /* canonical spelling -> interned TypeName tree */
+    StrMap constGlobals;   /* const scalar global name -> ConstGlobalVal* (manifest constants) */
+    const TypeName* currentReturnType;
+    const FunctionDecl* currentFunction;
+    StrMap* curScope; /* the function's scope, for typing move paths (see KeyPathType) */
 
     /* Vec of Vec*'s, a list of scopes and their respective symbols. */
-    Vec m_scopeDecls;
+    Vec scopeDecls;
 
-    /* Vec of Vec*'s parallel to m_scopeDecls: each scope's DeferEntry*'s. */
-    Vec m_deferFrames;
+    /* Vec of Vec*'s parallel to scopeDecls: each scope's DeferEntry*'s. */
+    Vec deferFrames;
 
     /* Vec of LoopFlow*'s: break/continue targets of the enclosing loops. */
-    Vec m_loopFlows;
+    Vec loopFlows;
 
     /* Nesting depth of deferred statements being walked. */
-    StackMark m_deferWalkDepth;
+    StackMark deferWalkDepth;
 
     /* The current path is dead (after return/break/continue). */
-    bool m_unreachable;
+    bool unreachable;
 } Resolver;
 
 /* A folded manifest constant: a `const` scalar global whose initializer is a
@@ -67,7 +67,7 @@ typedef struct
    yet, or every contributor was dead, makes it dead). */
 typedef struct
 {
-    bool m_live;
+    bool live;
 } FlowState;
 
 typedef struct AllowList
@@ -96,20 +96,20 @@ typedef struct IntrinsicTypeDefinition
    state at every exit it runs at (block end, return, break, continue). */
 typedef struct
 {
-    Node* m_stmt;
-    size_t m_frame;           /* index of the owning scope in m_scopeDecls */
-    StackMark m_declMark;     /* names the scope had declared at the `defer` */
-    DiagnosticEngine m_early; /* diagnostics from the walk at the `defer` itself */
-    bool m_ranAtExit;
+    Node* stmt;
+    size_t frame;           /* index of the owning scope in scopeDecls */
+    StackMark declMark;     /* names the scope had declared at the `defer` */
+    DiagnosticEngine early; /* diagnostics from the walk at the `defer` itself */
+    bool ranAtExit;
 } DeferEntry;
 
 /* The break/continue targets of one loop iteration being walked. */
 typedef struct
 {
-    FlowState m_breaks;         /* join of every `break`: part of the loop exit */
-    FlowState m_continues;      /* join of every `continue`: a back edge */
-    StackMark m_deferDepth;     /* m_deferFrames.count at body entry */
-    StackMark m_deferWalkDepth; /* m_deferWalkDepth when the loop began */
+    FlowState breaks;         /* join of every `break`: part of the loop exit */
+    FlowState continues;      /* join of every `continue`: a back edge */
+    StackMark deferDepth;     /* deferFrames.count at body entry */
+    StackMark deferWalkDepth; /* deferWalkDepth when the loop began */
 } LoopFlow;
 
 /* Upper bound on muted fixed-point passes per loop. The join is monotone

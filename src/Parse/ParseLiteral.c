@@ -83,7 +83,7 @@ uint64_t IntLiteralValueEx(Parser* p, Token tok, bool* outIsUnsigned, bool* outI
 
         if (value > (UINT64_MAX - digit) / base)
         {
-            DiagError(p->m_diag, tok.range, "integer literal is too large to fit in 64 bits");
+            DiagError(p->diag, tok.range, "integer literal is too large to fit in 64 bits");
             return 0;
         }
 

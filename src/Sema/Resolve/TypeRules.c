@@ -35,16 +35,16 @@ bool IsImplicitScalarConversion(PrimitiveType target, PrimitiveType value)
 /* Intern a TypeName tree per canonical spelling (shared by synthesized types). */
 const TypeName* InternTypeName(Resolver* r, const char* name)
 {
-    const TypeName* cached = (const TypeName*)StrMapGet(&r->m_typeCache, name);
+    const TypeName* cached = (const TypeName*)StrMapGet(&r->typeCache, name);
 
     if (cached)
     {
         return cached;
     }
 
-    TypeName* t = (TypeName*)ArenaAlloc(r->m_arena, sizeof(TypeName));
-    *t = TypeNameParse(r->m_arena, name);
-    StrMapPut(&r->m_typeCache, t->name, t);
+    TypeName* t = (TypeName*)ArenaAlloc(r->arena, sizeof(TypeName));
+    *t = TypeNameParse(r->arena, name);
+    StrMapPut(&r->typeCache, t->name, t);
 
     return t;
 }
@@ -106,7 +106,7 @@ const TypeName* UnwrapBoxPtr(const TypeName* t)
 /* Owning when the type itself owns, or its alias resolves to one. */
 bool AliasIsOwning(const Resolver* r, const TypeName* t)
 {
-    return TypeIsOwningResolved(&r->m_registry, r->m_arena, t);
+    return TypeIsOwningResolved(&r->registry, r->arena, t);
 }
 
 /* Owning VALUE: AliasIsOwning plus owning structs (and their aliases) — a
@@ -114,7 +114,7 @@ bool AliasIsOwning(const Resolver* r, const TypeName* t)
    legalizes `Rec[]` as inline owning storage. */
 bool AliasIsOwningValue(const Resolver* r, const TypeName* t)
 {
-    return TypeIsOwningValueResolved(&r->m_registry, r->m_arena, t);
+    return TypeIsOwningValueResolved(&r->registry, r->arena, t);
 }
 
 /* True when the type is a dynamic array, or its alias resolves to one. */
@@ -130,14 +130,14 @@ bool ResolvesToDynamicArray(const Resolver* r, const TypeName* t)
         return true;
     }
 
-    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, t->name);
+    const char* leaf = TypeRegistryResolveAlias(&r->registry, t->name);
 
     if (!leaf || strcmp(leaf, t->name) == 0)
     {
         return false;
     }
 
-    TypeName parsed = TypeNameParse(r->m_arena, leaf);
+    TypeName parsed = TypeNameParse(r->arena, leaf);
     return TypeNameIsDynamicArray(&parsed);
 }
 
@@ -145,8 +145,8 @@ bool ResolvesToDynamicArray(const Resolver* r, const TypeName* t)
    Distinct aliases never unify implicitly; explicit casts use this. */
 bool SameResolvedType(const Resolver* r, const char* a, const char* b)
 {
-    const char* la = a ? TypeRegistryResolveAlias(&r->m_registry, a) : NULL;
-    const char* lb = b ? TypeRegistryResolveAlias(&r->m_registry, b) : NULL;
+    const char* la = a ? TypeRegistryResolveAlias(&r->registry, a) : NULL;
+    const char* lb = b ? TypeRegistryResolveAlias(&r->registry, b) : NULL;
 
     return la && lb && strcmp(la, lb) == 0;
 }
@@ -194,8 +194,8 @@ const TypeName* ConditionalType(Resolver* r, ConditionalExpr* ce, StrMap* scope,
         return lt ? lt : rt;
     }
 
-    bool lCs = ce->thenExpr->kind == NodeStrLiteral || TypeIsCString(&r->m_registry, lt->name);
-    bool rCs = ce->elseExpr->kind == NodeStrLiteral || TypeIsCString(&r->m_registry, rt->name);
+    bool lCs = ce->thenExpr->kind == NodeStrLiteral || TypeIsCString(&r->registry, lt->name);
+    bool rCs = ce->elseExpr->kind == NodeStrLiteral || TypeIsCString(&r->registry, rt->name);
 
     if (lCs && rCs)
     {
@@ -206,8 +206,8 @@ const TypeName* ConditionalType(Resolver* r, ConditionalExpr* ce, StrMap* scope,
     {
         if (diagnose)
         {
-            DiagErrorFmt(r->m_diag, ce->base.range,
-                         "'?:' branches cannot be owning values ('%s' and '%s'); use if/else", lt->name, rt->name);
+            DiagErrorFmt(r->diag, ce->base.range, "'?:' branches cannot be owning values ('%s' and '%s'); use if/else",
+                         lt->name, rt->name);
         }
         return lt;
     }
@@ -235,7 +235,7 @@ const TypeName* ConditionalType(Resolver* r, ConditionalExpr* ce, StrMap* scope,
 
     if (diagnose)
     {
-        DiagErrorFmt(r->m_diag, ce->base.range, "'?:' branches have incompatible types '%s' and '%s'", lt->name,
+        DiagErrorFmt(r->diag, ce->base.range, "'?:' branches have incompatible types '%s' and '%s'", lt->name,
                      rt->name);
     }
 
@@ -252,9 +252,9 @@ bool IsCAbiScalar(Resolver* r, const TypeName* t)
         return false;
     }
 
-    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, t->name);
+    const char* leaf = TypeRegistryResolveAlias(&r->registry, t->name);
 
-    if (IsHandleType(&r->m_registry, leaf) || TypeIsCString(&r->m_registry, leaf))
+    if (IsHandleType(&r->registry, leaf) || TypeIsCString(&r->registry, leaf))
     {
         return true;
     }
@@ -272,7 +272,7 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
         return false;
     }
 
-    if (IsNumeric(type->primitiveType) || TypeIsString(&r->m_registry, type->name))
+    if (IsNumeric(type->primitiveType) || TypeIsString(&r->registry, type->name))
     {
         return true;
     }
@@ -282,9 +282,9 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
         return false;
     }
 
-    if (TypeRegistryIsUserType(&r->m_registry, type->name))
+    if (TypeRegistryIsUserType(&r->registry, type->name))
     {
-        return TypeRegistryIsOpaque(&r->m_registry, type->name);
+        return TypeRegistryIsOpaque(&r->registry, type->name);
     }
 
     return false;
@@ -299,7 +299,7 @@ bool IsCVarargCompatible(Resolver* r, const TypeName* type)
     }
 
     /* `cstring` crosses as `const char*` — always vararg-compatible. */
-    if (TypeIsCString(&r->m_registry, type->name))
+    if (TypeIsCString(&r->registry, type->name))
     {
         return true;
     }
@@ -352,7 +352,7 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
     if (destLanes && (srcLanes == 0 && IsNameNumeric(resolvedValue) && GetPrimitiveType(resolvedValue) != PrimBool))
     {
         // If the dest type is an alias, it is not assignable this way.
-        if (TypeRegistryIsTypeAlias(&r->m_registry, targetType->name))
+        if (TypeRegistryIsTypeAlias(&r->registry, targetType->name))
         {
             return false;
         }
@@ -366,7 +366,7 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
 bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {
     /* A `cstring` is a `const char*`: it passes wherever a raw `ptr` is expected. */
-    if (targetType && valueType && TypeIsCString(&r->m_registry, valueType->name)
+    if (targetType && valueType && TypeIsCString(&r->registry, valueType->name)
         && strcmp(targetType->name, STRATA_PTR_TYPE) == 0)
     {
         return true;
@@ -375,13 +375,13 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
     /* `cstring` copies into `string` (heap copy at the use site). The
        reverse is never implicit: only a string literal initializes a
        `cstring` (handled at each use site via IsStrLiteralForCString). */
-    if (targetType && valueType && TypeIsCString(&r->m_registry, valueType->name)
-        && TypeIsString(&r->m_registry, targetType->name))
+    if (targetType && valueType && TypeIsCString(&r->registry, valueType->name)
+        && TypeIsString(&r->registry, targetType->name))
     {
         return true;
     }
 
-    if (targetType && TypeIsCString(&r->m_registry, targetType->name))
+    if (targetType && TypeIsCString(&r->registry, targetType->name))
     {
         return valueType && SameResolvedType(r, valueType->name, targetType->name);
     }
@@ -421,8 +421,8 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
         return true;
     }
 
-    const char* resolvedTarget = TypeRegistryResolveAlias(&r->m_registry, targetType->name);
-    const char* resolvedValue = TypeRegistryResolveAlias(&r->m_registry, valueType->name);
+    const char* resolvedTarget = TypeRegistryResolveAlias(&r->registry, targetType->name);
+    const char* resolvedValue = TypeRegistryResolveAlias(&r->registry, valueType->name);
 
     // Check SIMD vectors for assignability
     if (IsVectorAssignableType(r, targetType, valueType, resolvedTarget, resolvedValue))
@@ -432,7 +432,7 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
 
     const TypeName* valueInner = TypeNameBoxInner(valueType);
 
-    return HandleExtendsFrom(&r->m_registry, valueType->name, targetType->name)
+    return HandleExtendsFrom(&r->registry, valueType->name, targetType->name)
            || (valueInner && strcmp(valueInner->name, targetType->name) == 0);
 }
 
@@ -444,5 +444,5 @@ bool ZeroIsValid(Resolver* r, const TypeName* t, int depth)
     (void)depth;
 
     /* Classified once, aliases resolved: a `struct PB = ^P` alias is a box like the `^P` it names. */
-    return !t || TypeClassify(&r->m_registry, r->m_arena, t).zeroValid;
+    return !t || TypeClassify(&r->registry, r->arena, t).zeroValid;
 }

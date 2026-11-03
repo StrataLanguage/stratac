@@ -27,7 +27,7 @@ bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->args.count != 1)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'copy' expects 1 argument, got %zu", c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'copy' expects 1 argument, got %zu", c->args.count);
         return true;
     }
 
@@ -36,7 +36,7 @@ bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!argType || !AliasIsOwningValue(r, argType))
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "'copy' expects an owning type (string, ^T, T[]) — not '%s'",
+        DiagErrorFmt(r->diag, arg0->range, "'copy' expects an owning type (string, ^T, T[]) — not '%s'",
                      argType ? argType->name : "");
         return true;
     }
@@ -44,17 +44,17 @@ bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     {
         const TypeName* pointee = TypeNameBoxInner(argType) ? TypeNameBoxInner(argType) : argType;
 
-        if (IsIncompleteStruct(&r->m_registry, pointee->name))
+        if (IsIncompleteStruct(&r->registry, pointee->name))
         {
-            DiagErrorFmt(r->m_diag, arg0->range, "cannot copy incomplete type '%s'; its contents are unknown",
+            DiagErrorFmt(r->diag, arg0->range, "cannot copy incomplete type '%s'; its contents are unknown",
                          pointee->name);
             return true;
         }
     }
 
-    if (TypeNameHasDrop(&r->m_registry, argType))
+    if (TypeNameHasDrop(&r->registry, argType))
     {
-        DiagErrorFmt(r->m_diag, arg0->range,
+        DiagErrorFmt(r->diag, arg0->range,
                      "cannot copy '%s': it holds a value with a Drop method, which would then be dropped twice",
                      argType->name);
         return true;
@@ -82,7 +82,7 @@ bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->args.count != 1)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'drop' expects 1 argument, got %zu", c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'drop' expects 1 argument, got %zu", c->args.count);
         return true;
     }
 
@@ -91,7 +91,7 @@ bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!argType || !AliasIsOwningValue(r, argType))
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "'drop' expects an owning type (string, ^T, T[]) — not '%s'",
+        DiagErrorFmt(r->diag, arg0->range, "'drop' expects an owning type (string, ^T, T[]) — not '%s'",
                      argType ? argType->name : "");
         return true;
     }
@@ -101,7 +101,7 @@ bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (constName)
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "cannot drop '%s'; it is immutable", constName);
+        DiagErrorFmt(r->diag, arg0->range, "cannot drop '%s'; it is immutable", constName);
         return true;
     }
 
@@ -150,9 +150,9 @@ FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId,
     FunctionDecl* found = NULL;
     *ambiguous = false;
 
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; i < r->mod->functions.count; i++)
     {
-        FunctionDecl* f = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        FunctionDecl* f = (FunctionDecl*)VecGet(&r->mod->functions, i);
 
         if (strcmp(f->name, name) != 0 || !FunctionVisibleTo(f, fileId))
         {
@@ -194,27 +194,26 @@ static bool CheckPlainDataTypeArg(Resolver* r, const CallExpr* c, const TypeName
 {
     if (!t || !t->name)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' needs a type argument (e.g. '%s<int>(...)')", c->callee,
-                     c->callee);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' needs a type argument (e.g. '%s<int>(...)')", c->callee, c->callee);
         return false;
     }
 
     if (AliasIsOwningValue(r, t)
-        || TypeRegistryIsOwningStruct(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, t->name)))
+        || TypeRegistryIsOwningStruct(&r->registry, TypeRegistryResolveAlias(&r->registry, t->name)))
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot move owning type '%s' as raw memory", c->callee, t->name);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' cannot move owning type '%s' as raw memory", c->callee, t->name);
         return false;
     }
 
-    if (TypeRegistryIsOpaque(&r->m_registry, t->name) && !IsHandleType(&r->m_registry, t->name))
+    if (TypeRegistryIsOpaque(&r->registry, t->name) && !IsHandleType(&r->registry, t->name))
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot use incomplete type '%s'", c->callee, t->name);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' cannot use incomplete type '%s'", c->callee, t->name);
         return false;
     }
 
     if (GetPrimitiveType(t->name) == PrimVoid)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' cannot use 'void'", c->callee);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' cannot use 'void'", c->callee);
         return false;
     }
 
@@ -226,9 +225,9 @@ static bool CheckPtrOperand(Resolver* r, const CallExpr* c, Node* arg, StrMap* s
 {
     const TypeName* t = InferType(r, arg, scope);
 
-    if (!t || !IsHandleType(&r->m_registry, t->name))
+    if (!t || !IsHandleType(&r->registry, t->name))
     {
-        DiagErrorFmt(r->m_diag, arg->range, "'%s' expects a 'ptr' (or other handle), not '%s'", c->callee,
+        DiagErrorFmt(r->diag, arg->range, "'%s' expects a 'ptr' (or other handle), not '%s'", c->callee,
                      t ? t->name : "");
         return false;
     }
@@ -267,7 +266,7 @@ static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->args.count != 1 || c->typeArg)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'addressof' expects 1 argument, got %zu", c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'addressof' expects 1 argument, got %zu", c->args.count);
         return true;
     }
 
@@ -281,13 +280,13 @@ static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (!fn)
         {
-            DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
+            DiagErrorFmt(r->diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
             return true;
         }
 
         if ((!fn->isExtern && !fn->isExport) || fn->typeParam)
         {
-            DiagErrorFmt(r->m_diag, arg0->range,
+            DiagErrorFmt(r->diag, arg0->range,
                          "cannot take the address of '%s': only extern and '@export' functions have a C ABI", fnName);
             return true;
         }
@@ -304,14 +303,14 @@ static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!IsLValueNode(arg0))
     {
-        DiagError(r->m_diag, arg0->range, "'addressof' expects a variable, field, element or function");
+        DiagError(r->diag, arg0->range, "'addressof' expects a variable, field, element or function");
         return true;
     }
 
     if (arg0->kind == NodeMember
         && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->baseNode, scope), ((MemberExpr*)arg0)->member))
     {
-        DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
+        DiagErrorFmt(r->diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
         return true;
     }
 
@@ -323,13 +322,13 @@ static bool ResolveSizeofBuiltin(Resolver* r, CallExpr* c, const char* name)
 {
     if (c->args.count != 0)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' takes no arguments: write '%s<T>()'", name, name);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' takes no arguments: write '%s<T>()'", name, name);
         return true;
     }
 
     if (c->typeArg && TypeNameIsDynamicArray(c->typeArg))
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' of a dynamic array is not a fixed size", name);
+        DiagErrorFmt(r->diag, c->base.range, "'%s' of a dynamic array is not a fixed size", name);
         return true;
     }
 
@@ -341,17 +340,17 @@ static bool ResolveSizeofBuiltin(Resolver* r, CallExpr* c, const char* name)
 
     const TypeName* t = c->typeArg;
     bool known = t->primitiveType != PrimNone || TypeNameHasArrayShape(t) || TypeNameIsBox(t) || TypeNameIsOptional(t)
-                 || TypeRegistryIsUserType(&r->m_registry, t->name);
+                 || TypeRegistryIsUserType(&r->registry, t->name);
 
     if (t->primitiveType == PrimVoid || !known)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "unknown type '%s'", c->typeArg->name);
+        DiagErrorFmt(r->diag, c->base.range, "unknown type '%s'", c->typeArg->name);
         return true;
     }
 
-    if (!TypeNameIsBox(t) && !TypeNameIsOptional(t) && IsIncompleteStruct(&r->m_registry, t->name))
+    if (!TypeNameIsBox(t) && !TypeNameIsOptional(t) && IsIncompleteStruct(&r->registry, t->name))
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "cannot take the %s of incomplete type '%s'; its size is unknown", name,
+        DiagErrorFmt(r->diag, c->base.range, "cannot take the %s of incomplete type '%s'; its size is unknown", name,
                      t->name);
         return true;
     }
@@ -364,7 +363,7 @@ static bool ResolveLoadBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->args.count != 1)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'load' expects 1 argument, got %zu", c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'load' expects 1 argument, got %zu", c->args.count);
         return true;
     }
 
@@ -381,7 +380,7 @@ static bool ResolveStoreBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->args.count != 2)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'store' expects 2 arguments (ptr, value), got %zu", c->args.count);
+        DiagErrorFmt(r->diag, c->base.range, "'store' expects 2 arguments (ptr, value), got %zu", c->args.count);
         return true;
     }
 
@@ -396,13 +395,13 @@ static bool ResolveStoreBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (c->typeArg && valueType && !IsAssignableType(r, c->typeArg, valueType))
     {
-        DiagErrorFmt(r->m_diag, value->range, "cannot store '%s' as '%s'", valueType->name, c->typeArg->name);
+        DiagErrorFmt(r->diag, value->range, "cannot store '%s' as '%s'", valueType->name, c->typeArg->name);
         return true;
     }
 
     if (!c->typeArg)
     {
-        c->typeArg = (TypeName*)ArenaDup(r->m_arena, valueType, sizeof(TypeName));
+        c->typeArg = (TypeName*)ArenaDup(r->arena, valueType, sizeof(TypeName));
     }
 
     c->isIntrinsicCall = true;

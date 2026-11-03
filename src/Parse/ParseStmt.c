@@ -18,12 +18,12 @@ Node* ParseBlock(Parser* p)
 {
     Token lb = ParserExpect(p, TokLBrace, "'{'");
 
-    Block* block = AST_NEW(p->m_arena, Block);
+    Block* block = AST_NEW(p->arena, Block);
     block->base.kind = NodeBlock;
     block->base.range = lb.range;
     VecInit(&block->statements);
 
-    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    while (p->cur.kind != TokRBrace && p->cur.kind != TokEof)
     {
         Node* stmt = ParseStatement(p);
 
@@ -44,7 +44,7 @@ Node* ParseBlock(Parser* p)
 
 static Node* ParseStatement(Parser* p)
 {
-    switch (p->m_cur.kind)
+    switch (p->cur.kind)
     {
     case TokLBrace:
         return ParseBlock(p);
@@ -58,18 +58,18 @@ static Node* ParseStatement(Parser* p)
         return ParseFor(p);
     case TokKwDefer:
     {
-        Token token = p->m_cur;
+        Token token = p->cur;
         Advance(p);
 
         Node* stmt = ParseStatement(p);
 
         if (!stmt || (stmt->kind == NodeExprStmt && ((ExprStmt*)stmt)->expr == NULL))
         {
-            DiagError(p->m_diag, token.range, "expected a statement after 'defer'");
+            DiagError(p->diag, token.range, "expected a statement after 'defer'");
             return NULL;
         }
 
-        DeferStmt* node = AST_NEW(p->m_arena, DeferStmt);
+        DeferStmt* node = AST_NEW(p->arena, DeferStmt);
         node->base.kind = NodeDefer;
         node->base.range = token.range;
         node->stmt = stmt;
@@ -78,12 +78,12 @@ static Node* ParseStatement(Parser* p)
     }
     case TokKwBreak:
     {
-        Token token = p->m_cur;
+        Token token = p->cur;
 
         Advance(p);
         ParserExpect(p, TokSemicolon, "';'");
 
-        BreakStmt* node = AST_NEW(p->m_arena, BreakStmt);
+        BreakStmt* node = AST_NEW(p->arena, BreakStmt);
         node->base.kind = NodeBreak;
         node->base.range = token.range;
 
@@ -91,12 +91,12 @@ static Node* ParseStatement(Parser* p)
     }
     case TokKwContinue:
     {
-        Token token = p->m_cur;
+        Token token = p->cur;
 
         Advance(p);
         ParserExpect(p, TokSemicolon, "';'");
 
-        ContinueStmt* node = AST_NEW(p->m_arena, ContinueStmt);
+        ContinueStmt* node = AST_NEW(p->arena, ContinueStmt);
         node->base.kind = NodeContinue;
         node->base.range = token.range;
 
@@ -104,11 +104,11 @@ static Node* ParseStatement(Parser* p)
     }
     case TokSemicolon:
     {
-        Token token = p->m_cur;
+        Token token = p->cur;
 
         Advance(p);
 
-        ExprStmt* node = AST_NEW(p->m_arena, ExprStmt);
+        ExprStmt* node = AST_NEW(p->arena, ExprStmt);
         node->base.kind = NodeExprStmt;
         node->base.range = token.range;
         node->expr = NULL;
@@ -122,7 +122,7 @@ static Node* ParseStatement(Parser* p)
 
 static Node* ParseVarDeclOrExprStmt(Parser* p)
 {
-    Token start = p->m_cur;
+    Token start = p->cur;
 
     if (LooksLikeVarDecl(p))
     {
@@ -132,12 +132,12 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
         bool isRef = false;
         bool refConst = false;
 
-        if (p->m_cur.kind == TokKwConst)
+        if (p->cur.kind == TokKwConst)
         {
             LexerCheckpoint saved = SaveLexerState(p);
             Advance(p);
 
-            if (p->m_cur.kind == TokKwRef)
+            if (p->cur.kind == TokKwRef)
             {
                 refConst = true;
             }
@@ -162,26 +162,26 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
             type.isConst = true;
         }
 
-        if (p->m_cur.kind != TokIdent)
+        if (p->cur.kind != TokIdent)
         {
-            DiagError(p->m_diag, p->m_cur.range, "expected a variable name");
+            DiagError(p->diag, p->cur.range, "expected a variable name");
             return NULL;
         }
 
-        Token nameTok = p->m_cur;
+        Token nameTok = p->cur;
         Advance(p);
 
-        VarDeclStmt* node = AST_NEW(p->m_arena, VarDeclStmt);
+        VarDeclStmt* node = AST_NEW(p->arena, VarDeclStmt);
         node->base.kind = NodeVarDecl;
         node->base.range = SpanFrom(start, nameTok);
         node->type = type;
-        node->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+        node->name = ToOwned(p->arena, ParserIdentText(p, nameTok));
         node->isRef = isRef;
         node->refThroughBox = false;
 
         if (ParserConsume(p, TokAssign))
         {
-            if (p->m_cur.kind == TokLBrace)
+            if (p->cur.kind == TokLBrace)
             {
                 if (type.isArray)
                 {
@@ -234,7 +234,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
 
     ParserExpect(p, TokSemicolon, "';'");
 
-    ExprStmt* node = AST_NEW(p->m_arena, ExprStmt);
+    ExprStmt* node = AST_NEW(p->arena, ExprStmt);
     node->base.kind = NodeExprStmt;
     node->base.range = start.range;
     node->expr = e;
@@ -244,24 +244,24 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
 
 static Node* ParseReturn(Parser* p)
 {
-    Token token = p->m_cur;
+    Token token = p->cur;
     Advance(p);
 
-    p->m_hasReturnStmt = true;
+    p->hasReturnStmt = true;
 
-    ReturnStmt* node = AST_NEW(p->m_arena, ReturnStmt);
+    ReturnStmt* node = AST_NEW(p->arena, ReturnStmt);
     node->base.kind = NodeReturn;
     node->base.range = token.range;
 
-    if (p->m_cur.kind != TokSemicolon)
+    if (p->cur.kind != TokSemicolon)
     {
-        if (p->m_cur.kind == TokLBrace && p->m_returnType)
+        if (p->cur.kind == TokLBrace && p->returnType)
         {
-            const TypeName* rtArr = p->m_returnType->isOptional ? p->m_returnType->inner : p->m_returnType;
+            const TypeName* rtArr = p->returnType->isOptional ? p->returnType->inner : p->returnType;
 
             if (TypeNameIsDynamicArray(rtArr))
             {
-                node->value = ParseArrayInitBody(p, p->m_cur, rtArr->elem);
+                node->value = ParseArrayInitBody(p, p->cur, rtArr->elem);
             }
             else
             {
@@ -269,7 +269,7 @@ static Node* ParseReturn(Parser* p)
                    initializes the INNER struct (E, never "E?" / "^E"). */
                 const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : rtArr;
 
-                node->value = ParseStructInitBody(p, p->m_cur, rtStruct ? rtStruct->name : rtArr->name);
+                node->value = ParseStructInitBody(p, p->cur, rtStruct ? rtStruct->name : rtArr->name);
             }
         }
         else
@@ -285,14 +285,14 @@ static Node* ParseReturn(Parser* p)
 
 static Node* ParseIf(Parser* p)
 {
-    Token token = p->m_cur;
+    Token token = p->cur;
     Advance(p);
 
     ParserExpect(p, TokLParen, "'('");
     Node* cond = ParseExpr(p);
     ParserExpect(p, TokRParen, "')'");
 
-    IfStmt* node = AST_NEW(p->m_arena, IfStmt);
+    IfStmt* node = AST_NEW(p->arena, IfStmt);
     node->base.kind = NodeIf;
     node->base.range = token.range;
     node->condition = cond;
@@ -308,14 +308,14 @@ static Node* ParseIf(Parser* p)
 
 static Node* ParseWhile(Parser* p)
 {
-    Token token = p->m_cur;
+    Token token = p->cur;
     Advance(p);
 
     ParserExpect(p, TokLParen, "'('");
     Node* cond = ParseExpr(p);
     ParserExpect(p, TokRParen, "')'");
 
-    WhileStmt* node = AST_NEW(p->m_arena, WhileStmt);
+    WhileStmt* node = AST_NEW(p->arena, WhileStmt);
     node->base.kind = NodeWhile;
     node->base.range = token.range;
     node->condition = cond;
@@ -326,7 +326,7 @@ static Node* ParseWhile(Parser* p)
 
 static Node* ParseFor(Parser* p)
 {
-    Token token = p->m_cur;
+    Token token = p->cur;
     Advance(p);
 
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
@@ -336,7 +336,7 @@ static Node* ParseFor(Parser* p)
 
     Node* init = NULL;
 
-    if (p->m_cur.kind != TokSemicolon)
+    if (p->cur.kind != TokSemicolon)
     {
         if (LooksLikeVarDecl(p))
         {
@@ -347,20 +347,20 @@ static Node* ParseFor(Parser* p)
                 return NULL;
             }
 
-            if (p->m_cur.kind != TokIdent)
+            if (p->cur.kind != TokIdent)
             {
-                DiagError(p->m_diag, p->m_cur.range, "expected a variable name");
+                DiagError(p->diag, p->cur.range, "expected a variable name");
                 return NULL;
             }
 
-            Token nameTok = p->m_cur;
+            Token nameTok = p->cur;
             Advance(p);
 
-            VarDeclStmt* vd = AST_NEW(p->m_arena, VarDeclStmt);
+            VarDeclStmt* vd = AST_NEW(p->arena, VarDeclStmt);
             vd->base.kind = NodeVarDecl;
             vd->base.range = SpanFrom(token, nameTok);
             vd->type = type;
-            vd->name = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+            vd->name = ToOwned(p->arena, ParserIdentText(p, nameTok));
 
             if (ParserConsume(p, TokAssign))
             {
@@ -378,7 +378,7 @@ static Node* ParseFor(Parser* p)
     ParserExpect(p, TokSemicolon, "';'");
 
     Node* cond = NULL;
-    if (p->m_cur.kind != TokSemicolon)
+    if (p->cur.kind != TokSemicolon)
     {
         cond = ParseExpr(p);
     }
@@ -386,14 +386,14 @@ static Node* ParseFor(Parser* p)
     ParserExpect(p, TokSemicolon, "';'");
 
     Node* update = NULL;
-    if (p->m_cur.kind != TokRParen)
+    if (p->cur.kind != TokRParen)
     {
         update = ParseExpr(p);
     }
 
     ParserExpect(p, TokRParen, "')'");
 
-    ForStmt* node = AST_NEW(p->m_arena, ForStmt);
+    ForStmt* node = AST_NEW(p->arena, ForStmt);
     node->base.kind = NodeFor;
     node->base.range = token.range;
     node->init = init;

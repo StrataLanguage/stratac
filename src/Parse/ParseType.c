@@ -9,7 +9,7 @@
 
 bool LooksLikeVarDecl(Parser* p)
 {
-    switch (p->m_cur.kind)
+    switch (p->cur.kind)
     {
     case TokKwRef:
     case TokKwConst:
@@ -42,7 +42,7 @@ bool LooksLikeVarDecl(Parser* p)
 
         if (ParserTryParseType(p, &tn) && tn.name)
         {
-            isDecl = p->m_cur.kind == TokIdent;
+            isDecl = p->cur.kind == TokIdent;
         }
 
         RestoreLexerState(p, saved);
@@ -70,9 +70,9 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
     ArrayDim dims[8];
     int dimCount = 0;
 
-    while (p->m_cur.kind == TokLBracket && dimCount < 8)
+    while (p->cur.kind == TokLBracket && dimCount < 8)
     {
-        Token next = LexerPeekToken(p->m_lex);
+        Token next = LexerPeekToken(p->lex);
         ArrayDim dim;
         bool consumed = false;
 
@@ -92,10 +92,10 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
             Advance(p); /* '[' */
 
-            Token lenTok = p->m_cur;
+            Token lenTok = p->cur;
             Advance(p);
 
-            if (p->m_cur.kind == TokRBracket)
+            if (p->cur.kind == TokRBracket)
             {
                 Advance(p); /* ']' */
 
@@ -104,7 +104,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
                 if (length > (uint64_t)LONG_MAX)
                 {
-                    DiagError(p->m_diag, lenTok.range, "array dimension is too large");
+                    DiagError(p->diag, lenTok.range, "array dimension is too large");
                     length = 1;
                 }
 
@@ -126,16 +126,16 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
             Advance(p); /* '[' */
 
-            Token nameTok = p->m_cur;
+            Token nameTok = p->cur;
             Advance(p);
 
-            if (p->m_cur.kind == TokRBracket)
+            if (p->cur.kind == TokRBracket)
             {
                 Advance(p); /* ']' */
 
                 dim.isFixed = true;
                 dim.length = -2; /* unresolved sentinel */
-                dim.lengthName = ToOwned(p->m_arena, ParserIdentText(p, nameTok));
+                dim.lengthName = ToOwned(p->arena, ParserIdentText(p, nameTok));
                 consumed = true;
             }
             else
@@ -163,8 +163,8 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
     for (int i = dimCount - 1; i >= 0; i--)
     {
-        TypeName wrapped = dims[i].isFixed ? TypeNameFixedArrayWrap(p->m_arena, *out, dims[i].length)
-                                           : TypeNameArrayWrap(p->m_arena, *out);
+        TypeName wrapped = dims[i].isFixed ? TypeNameFixedArrayWrap(p->arena, *out, dims[i].length)
+                                           : TypeNameArrayWrap(p->arena, *out);
         *out = wrapped;
 
         if (dims[i].lengthName)
@@ -196,7 +196,7 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         }
     }
 
-    out->name = SbFinish(&sb, p->m_arena);
+    out->name = SbFinish(&sb, p->arena);
     out->range = SpanToCur(p, constRange);
 }
 
@@ -208,7 +208,7 @@ static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constR
 {
     const char* name = NULL;
 
-    switch (p->m_cur.kind)
+    switch (p->cur.kind)
     {
     case TokKwVoid:
         name = "void";
@@ -265,12 +265,12 @@ static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constR
         name = "cstring";
         break;
     case TokIdent:
-        name = ToOwned(p->m_arena, ParserIdentText(p, p->m_cur));
+        name = ToOwned(p->arena, ParserIdentText(p, p->cur));
         break;
     default:
         if (isConst)
         {
-            DiagError(p->m_diag, constRange, "'const' must be followed by a type");
+            DiagError(p->diag, constRange, "'const' must be followed by a type");
         }
 
         return NULL;
@@ -283,22 +283,22 @@ static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constR
    so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
 static void ParseOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange)
 {
-    if (p->m_cur.kind == TokQuestion)
+    if (p->cur.kind == TokQuestion)
     {
         /* At this point the type is always bare (boxes and array brackets
            are parsed elsewhere), so a plain cstring is all that can get
            here. */
         if (out->primitiveType == PrimCString)
         {
-            DiagError(p->m_diag, p->m_cur.range, "type 'cstring' cannot be optional");
+            DiagError(p->diag, p->cur.range, "type 'cstring' cannot be optional");
             Advance(p);
         }
         else
         {
-            SourceRange qRange = p->m_cur.range;
+            SourceRange qRange = p->cur.range;
             Advance(p);
 
-            TypeName wrapped = TypeNameOptionalWrap(p->m_arena, *out);
+            TypeName wrapped = TypeNameOptionalWrap(p->arena, *out);
             wrapped.range = SpanToCur(p, constRange);
             (void)qRange;
             *out = wrapped;
@@ -311,13 +311,13 @@ static void ParseOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange
    optionals). Fixed-size arrays have no empty state, so cannot be optional. */
 static void ParseArrayOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange)
 {
-    if (p->m_cur.kind == TokQuestion)
+    if (p->cur.kind == TokQuestion)
     {
-        SourceRange qRange = p->m_cur.range;
+        SourceRange qRange = p->cur.range;
 
         if (out->isArray && out->length >= 0)
         {
-            DiagErrorFmt(p->m_diag, qRange, "fixed-size array '%s' cannot be optional; it is never empty", out->name);
+            DiagErrorFmt(p->diag, qRange, "fixed-size array '%s' cannot be optional; it is never empty", out->name);
             Advance(p);
         }
         else if (out->isArray)
@@ -325,14 +325,14 @@ static void ParseArrayOptionalSuffix(Parser* p, TypeName* out, SourceRange const
             Advance(p);
 
             TypeName arr = *out;
-            TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
+            TypeName optWrapped = TypeNameOptionalWrap(p->arena, arr);
             optWrapped.range = SpanToCur(p, constRange);
             *out = optWrapped;
         }
         else
         {
             /* A second `?` with no brackets (`int??`) - not a type. */
-            DiagErrorFmt(p->m_diag, qRange, "unexpected '?' after type '%s'", out->name);
+            DiagErrorFmt(p->diag, qRange, "unexpected '?' after type '%s'", out->name);
             Advance(p);
         }
     }
@@ -344,9 +344,9 @@ static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, Sou
 {
     /* `^S?` would wrap the box, which is never empty. Report it and keep
        going as `^S`, so a following `[]` still reads as an array of boxes. */
-    if (p->m_cur.kind == TokQuestion)
+    if (p->cur.kind == TokQuestion)
     {
-        DiagErrorFmt(p->m_diag, p->m_cur.range,
+        DiagErrorFmt(p->diag, p->cur.range,
                      "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
                      baseName, baseName);
         Advance(p);
@@ -356,7 +356,7 @@ static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, Sou
 
     /* A trailing `?` after brackets wraps the ARRAY in an optional
        (`^S[]?` = optional array of boxes). Fixed dims have no empty state. */
-    if (p->m_cur.kind == TokQuestion)
+    if (p->cur.kind == TokQuestion)
     {
         bool anyFixed = false;
 
@@ -367,24 +367,24 @@ static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, Sou
 
         if (!out->isArray)
         {
-            DiagErrorFmt(p->m_diag, p->m_cur.range,
+            DiagErrorFmt(p->diag, p->cur.range,
                          "'^%s' cannot be optional; a box is never empty - declare the field/variable as '%s?' instead",
                          baseName, baseName);
             Advance(p);
         }
         else if (anyFixed)
         {
-            DiagErrorFmt(p->m_diag, p->m_cur.range, "fixed-size array '%s' cannot be optional; it is never empty",
+            DiagErrorFmt(p->diag, p->cur.range, "fixed-size array '%s' cannot be optional; it is never empty",
                          out->name);
             Advance(p);
         }
         else
         {
-            SourceRange qRange = p->m_cur.range;
+            SourceRange qRange = p->cur.range;
             Advance(p);
 
             TypeName arr = *out;
-            TypeName optWrapped = TypeNameOptionalWrap(p->m_arena, arr);
+            TypeName optWrapped = TypeNameOptionalWrap(p->arena, arr);
             optWrapped.range = qRange;
             *out = optWrapped;
         }
@@ -396,36 +396,36 @@ static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, Sou
    S. The inner type is parsed bare so the suffixes are seen here. */
 static bool ParseBoxedType(Parser* p, TypeName* out, bool isConst, SourceRange constRange, bool bare)
 {
-    SourceRange caretRange = p->m_cur.range;
+    SourceRange caretRange = p->cur.range;
     Advance(p);
 
     TypeName base = {0};
 
     if (!ParseTypeImpl(p, &base, true) || !TypeNameValid(&base))
     {
-        DiagError(p->m_diag, p->m_cur.range, "expected a type after '^'");
+        DiagError(p->diag, p->cur.range, "expected a type after '^'");
         return false;
     }
 
-    TypeName wrapped = TypeNameBoxWrap(p->m_arena, base);
+    TypeName wrapped = TypeNameBoxWrap(p->arena, base);
 
     /* `^string` is redundant: `string?` is already the maybe-empty
        string, so a box that can never be empty but holds a string has
        no distinct meaning. */
     if (base.primitiveType == PrimString)
     {
-        DiagError(p->m_diag, caretRange, "redundant boxing of type 'string'");
+        DiagError(p->diag, caretRange, "redundant boxing of type 'string'");
     }
 
     /* `^cstring` is not supported: a constant string is already a
        plain pointer with no ownership to box. */
     if (base.primitiveType == PrimCString)
     {
-        DiagError(p->m_diag, caretRange, "type 'cstring' cannot be boxed");
+        DiagError(p->diag, caretRange, "type 'cstring' cannot be boxed");
     }
 
     wrapped.range
-        = (SourceRange){caretRange.start, (uint32_t)(p->m_cur.range.start - caretRange.start), caretRange.fileId};
+        = (SourceRange){caretRange.start, (uint32_t)(p->cur.range.start - caretRange.start), caretRange.fileId};
     *out = wrapped;
 
     if (bare)
@@ -449,15 +449,15 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
 {
     bool isConst = false;
     bool isVector = false;
-    SourceRange constRange = p->m_cur.range;
+    SourceRange constRange = p->cur.range;
 
-    if (p->m_cur.kind == TokKwConst)
+    if (p->cur.kind == TokKwConst)
     {
         isConst = true;
         Advance(p);
     }
 
-    if (p->m_cur.kind == TokCaret)
+    if (p->cur.kind == TokCaret)
     {
         return ParseBoxedType(p, out, isConst, constRange, bare);
     }
@@ -502,8 +502,8 @@ bool ParserTryParseType(Parser* p, TypeName* out)
    else it is an ordinary identifier (a field, local or parameter). */
 bool AtHandleDecl(Parser* p)
 {
-    return p->m_cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->m_cur), "handle")
-           && LexerPeekToken(p->m_lex).kind == TokIdent;
+    return p->cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->cur), "handle")
+           && LexerPeekToken(p->lex).kind == TokIdent;
 }
 
 /* A type named `handle` would turn every global of that type into a handle declaration. */
@@ -511,6 +511,6 @@ void CheckTypeNameNotHandle(Parser* p, Token nameTok)
 {
     if (StrEqC(ParserIdentText(p, nameTok), "handle"))
     {
-        DiagError(p->m_diag, nameTok.range, "'handle' cannot name a type; it starts handle declarations");
+        DiagError(p->diag, nameTok.range, "'handle' cannot name a type; it starts handle declarations");
     }
 }

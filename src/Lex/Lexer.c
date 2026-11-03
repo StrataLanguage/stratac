@@ -34,8 +34,8 @@ static Token Make(const Lexer* lex, TokKind kind, size_t start)
     Token t = {0};
     t.kind = kind;
     t.range.start = (uint32_t)start;
-    t.range.length = (uint32_t)(lex->m_pos - start);
-    t.range.fileId = lex->m_fileId;
+    t.range.length = (uint32_t)(lex->pos - start);
+    t.range.fileId = lex->fileId;
 
     return t;
 }
@@ -45,7 +45,7 @@ static SourceRange LexRange(const Lexer* lex, size_t pos, uint32_t len)
     SourceRange r = {0};
     r.start = (uint32_t)pos;
     r.length = len;
-    r.fileId = lex->m_fileId;
+    r.fileId = lex->fileId;
 
     return r;
 }
@@ -54,74 +54,74 @@ void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngin
 {
     *lex = (Lexer){0};
 
-    lex->m_source = source;
-    lex->m_sourceLen = sourceLen;
-    lex->m_diag = diag;
-    lex->m_pos = 0;
-    lex->m_hasPeek = false;
-    lex->m_peeked.kind = TokEof;
-    lex->m_peeked.range = SRC_INVALID;
-    lex->m_fileId = fileId;
+    lex->source = source;
+    lex->sourceLen = sourceLen;
+    lex->diag = diag;
+    lex->pos = 0;
+    lex->hasPeek = false;
+    lex->peeked.kind = TokEof;
+    lex->peeked.range = SRC_INVALID;
+    lex->fileId = fileId;
 }
 
 size_t LexerPosition(const Lexer* lex)
 {
-    return lex->m_pos;
+    return lex->pos;
 }
 
 bool LexerAtEnd(const Lexer* lex)
 {
-    return lex->m_pos >= lex->m_sourceLen;
+    return lex->pos >= lex->sourceLen;
 }
 
 Str LexerSourceText(const Lexer* lex)
 {
-    return (Str){lex->m_source, lex->m_sourceLen};
+    return (Str){lex->source, lex->sourceLen};
 }
 
 static void SkipWhitespaceAndComments(Lexer* lex)
 {
-    while (lex->m_pos < lex->m_sourceLen)
+    while (lex->pos < lex->sourceLen)
     {
-        char c = lex->m_source[lex->m_pos];
+        char c = lex->source[lex->pos];
 
         if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v')
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
         else if (c == '/' && LexerPeek(lex, 1) == '/')
         {
-            while (lex->m_pos < lex->m_sourceLen && lex->m_source[lex->m_pos] != '\n')
+            while (lex->pos < lex->sourceLen && lex->source[lex->pos] != '\n')
             {
-                ++lex->m_pos;
+                ++lex->pos;
             }
         }
         else if (c == '/' && LexerPeek(lex, 1) == '*')
         {
             int depth = 1;
-            lex->m_pos += 2;
+            lex->pos += 2;
 
-            while (lex->m_pos < lex->m_sourceLen && depth > 0)
+            while (lex->pos < lex->sourceLen && depth > 0)
             {
-                if (lex->m_source[lex->m_pos] == '/' && LexerPeek(lex, 1) == '*')
+                if (lex->source[lex->pos] == '/' && LexerPeek(lex, 1) == '*')
                 {
                     depth++;
-                    lex->m_pos += 2;
+                    lex->pos += 2;
                 }
-                else if (lex->m_source[lex->m_pos] == '*' && LexerPeek(lex, 1) == '/')
+                else if (lex->source[lex->pos] == '*' && LexerPeek(lex, 1) == '/')
                 {
                     depth--;
-                    lex->m_pos += 2;
+                    lex->pos += 2;
                 }
                 else
                 {
-                    ++lex->m_pos;
+                    ++lex->pos;
                 }
             }
 
             if (depth > 0)
             {
-                DiagError(lex->m_diag, LexRange(lex, lex->m_pos, 1), "unterminated block comment");
+                DiagError(lex->diag, LexRange(lex, lex->pos, 1), "unterminated block comment");
                 return;
             }
         }
@@ -134,13 +134,13 @@ static void SkipWhitespaceAndComments(Lexer* lex)
 
 Token LexerNextToken(Lexer* lex)
 {
-    if (lex->m_hasPeek)
+    if (lex->hasPeek)
     {
-        lex->m_hasPeek = false;
+        lex->hasPeek = false;
 
-        Token token = lex->m_peeked;
-        lex->m_peeked.kind = TokEof;
-        lex->m_peeked.range = SRC_INVALID;
+        Token token = lex->peeked;
+        lex->peeked.kind = TokEof;
+        lex->peeked.range = SRC_INVALID;
 
         return token;
     }
@@ -150,15 +150,15 @@ Token LexerNextToken(Lexer* lex)
 
 Token LexerPeekToken(Lexer* lex)
 {
-    if (lex->m_hasPeek)
+    if (lex->hasPeek)
     {
-        return lex->m_peeked;
+        return lex->peeked;
     }
 
-    lex->m_peeked = LexTokenImpl(lex);
-    lex->m_hasPeek = true;
+    lex->peeked = LexTokenImpl(lex);
+    lex->hasPeek = true;
 
-    return lex->m_peeked;
+    return lex->peeked;
 }
 
 /* `-`, `+`, `*`, `/` and `%` with their compound forms. The character has already been consumed. */
@@ -169,21 +169,21 @@ static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
     case '-':
         if (LexerPeek(lex, 0) == '-')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokDec, start);
         }
 
         if (LexerPeek(lex, 0) == '>')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokArrow, start);
         }
 
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokMinusEq, start);
         }
@@ -192,14 +192,14 @@ static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
     case '+':
         if (LexerPeek(lex, 0) == '+')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokInc, start);
         }
 
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokPlusEq, start);
         }
@@ -208,7 +208,7 @@ static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
     case '*':
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokStarEq, start);
         }
@@ -217,7 +217,7 @@ static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
     case '/':
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokSlashEq, start);
         }
@@ -226,7 +226,7 @@ static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
     case '%':
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokPercentEq, start);
         }
@@ -245,7 +245,7 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     case '=':
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokEqEq, start);
         }
@@ -254,7 +254,7 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     case '!':
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokNotEq, start);
         }
@@ -263,7 +263,7 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     case '&':
         if (LexerPeek(lex, 0) == '&')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokAmpAmp, start);
         }
@@ -272,7 +272,7 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     case '|':
         if (LexerPeek(lex, 0) == '|')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokPipePipe, start);
         }
@@ -281,14 +281,14 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     case '<':
         if (LexerPeek(lex, 0) == '<')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokShl, start);
         }
 
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokLtEq, start);
         }
@@ -297,14 +297,14 @@ static Token LexComparisonOp(Lexer* lex, char c, size_t start)
     case '>':
         if (LexerPeek(lex, 0) == '>')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokShr, start);
         }
 
         if (LexerPeek(lex, 0) == '=')
         {
-            ++lex->m_pos;
+            ++lex->pos;
 
             return Make(lex, TokGtEq, start);
         }
@@ -346,8 +346,8 @@ static Token LexPunctuation(Lexer* lex, char c, size_t start)
     case '.':
         if (LexerPeek(lex, 0) == '.' && LexerPeek(lex, 1) == '.')
         {
-            ++lex->m_pos;
-            ++lex->m_pos;
+            ++lex->pos;
+            ++lex->pos;
 
             return Make(lex, TokDotDotDot, start);
         }
@@ -371,7 +371,7 @@ static Token LexPunctuation(Lexer* lex, char c, size_t start)
     case '>':
         return LexComparisonOp(lex, c, start);
     default:
-        DiagErrorFmt(lex->m_diag, LexRange(lex, start, 1), "unexpected character '%c'", c);
+        DiagErrorFmt(lex->diag, LexRange(lex, start, 1), "unexpected character '%c'", c);
 
         return Make(lex, TokUnknown, start);
     }
@@ -383,14 +383,14 @@ static Token LexTokenImpl(Lexer* lex)
 {
     SkipWhitespaceAndComments(lex);
 
-    size_t start = lex->m_pos;
+    size_t start = lex->pos;
 
-    if (lex->m_pos >= lex->m_sourceLen)
+    if (lex->pos >= lex->sourceLen)
     {
         return Make(lex, TokEof, start);
     }
 
-    char c = lex->m_source[lex->m_pos];
+    char c = lex->source[lex->pos];
 
     if (IsIdentStart(c))
     {
@@ -417,21 +417,21 @@ static Token LexTokenImpl(Lexer* lex)
         return LexNumber(lex);
     }
 
-    ++lex->m_pos;
+    ++lex->pos;
 
     return LexPunctuation(lex, c, start);
 }
 
 static Token LexIdentOrKeyword(Lexer* lex)
 {
-    size_t start = lex->m_pos;
+    size_t start = lex->pos;
 
-    while (lex->m_pos < lex->m_sourceLen && IsIdentCont(lex->m_source[lex->m_pos]))
+    while (lex->pos < lex->sourceLen && IsIdentCont(lex->source[lex->pos]))
     {
-        ++lex->m_pos;
+        ++lex->pos;
     }
 
-    Str text = {lex->m_source + start, lex->m_pos - start};
+    Str text = {lex->source + start, lex->pos - start};
     TokKind keyword = ClassifyKeyword(text);
 
     if (keyword == TokKwTrue || keyword == TokKwFalse)
@@ -449,66 +449,66 @@ static Token LexIdentOrKeyword(Lexer* lex)
 
 static Token LexNumber(Lexer* lex)
 {
-    size_t start = lex->m_pos;
+    size_t start = lex->pos;
     bool isFloat = false;
 
-    if (lex->m_source[lex->m_pos] == '0' && (LexerPeek(lex, 1) == 'x' || LexerPeek(lex, 1) == 'X'))
+    if (lex->source[lex->pos] == '0' && (LexerPeek(lex, 1) == 'x' || LexerPeek(lex, 1) == 'X'))
     {
-        lex->m_pos += 2;
+        lex->pos += 2;
 
-        size_t digitsStart = lex->m_pos;
+        size_t digitsStart = lex->pos;
 
-        while (lex->m_pos < lex->m_sourceLen && IsHexDigit(lex->m_source[lex->m_pos]))
+        while (lex->pos < lex->sourceLen && IsHexDigit(lex->source[lex->pos]))
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
-        if (lex->m_pos == digitsStart)
+        if (lex->pos == digitsStart)
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
+            DiagError(lex->diag, LexRange(lex, start, (uint32_t)(lex->pos - start)),
                       "hexadecimal literal has no digits after '0x'");
         }
 
         if (LexerPeek(lex, 0) == 'u' || LexerPeek(lex, 0) == 'U')
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
         if (LexerPeek(lex, 0) == 'l' || LexerPeek(lex, 0) == 'L')
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
         return Make(lex, TokIntLit, start);
     }
 
-    if (lex->m_source[lex->m_pos] == '.')
+    if (lex->source[lex->pos] == '.')
     {
         isFloat = true;
 
-        ++lex->m_pos;
+        ++lex->pos;
 
-        while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
+        while (lex->pos < lex->sourceLen && IsDigit(lex->source[lex->pos]))
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
     }
     else
     {
-        while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
+        while (lex->pos < lex->sourceLen && IsDigit(lex->source[lex->pos]))
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
         if (LexerPeek(lex, 0) == '.')
         {
             isFloat = true;
 
-            ++lex->m_pos;
+            ++lex->pos;
 
-            while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
+            while (lex->pos < lex->sourceLen && IsDigit(lex->source[lex->pos]))
             {
-                ++lex->m_pos;
+                ++lex->pos;
             }
         }
     }
@@ -517,23 +517,23 @@ static Token LexNumber(Lexer* lex)
     {
         isFloat = true;
 
-        ++lex->m_pos;
+        ++lex->pos;
 
         if (LexerPeek(lex, 0) == '+' || LexerPeek(lex, 0) == '-')
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
-        size_t digitsStart = lex->m_pos;
+        size_t digitsStart = lex->pos;
 
-        while (lex->m_pos < lex->m_sourceLen && IsDigit(lex->m_source[lex->m_pos]))
+        while (lex->pos < lex->sourceLen && IsDigit(lex->source[lex->pos]))
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
-        if (lex->m_pos == digitsStart)
+        if (lex->pos == digitsStart)
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "exponent has no digits");
+            DiagError(lex->diag, LexRange(lex, start, (uint32_t)(lex->pos - start)), "exponent has no digits");
         }
     }
 
@@ -543,21 +543,21 @@ static Token LexNumber(Lexer* lex)
     {
         isFloat = true;
 
-        ++lex->m_pos;
+        ++lex->pos;
     }
     else if (suffix == 'u' || suffix == 'U' || suffix == 'l' || suffix == 'L')
     {
         /* `u` (uint), `l` (long), `ul` (ulong). */
-        ++lex->m_pos;
+        ++lex->pos;
 
         if ((suffix == 'u' || suffix == 'U') && (LexerPeek(lex, 0) == 'l' || LexerPeek(lex, 0) == 'L'))
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
 
         if (isFloat)
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)),
+            DiagError(lex->diag, LexRange(lex, start, (uint32_t)(lex->pos - start)),
                       "integer suffix is not allowed on a floating-point literal");
         }
     }
@@ -567,15 +567,15 @@ static Token LexNumber(Lexer* lex)
 
 static Token LexStringLiteral(Lexer* lex)
 {
-    size_t start = lex->m_pos;
-    ++lex->m_pos;
+    size_t start = lex->pos;
+    ++lex->pos;
 
-    while (lex->m_pos < lex->m_sourceLen)
+    while (lex->pos < lex->sourceLen)
     {
-        char c = lex->m_source[lex->m_pos];
+        char c = lex->source[lex->pos];
         if (c == '"')
         {
-            ++lex->m_pos;
+            ++lex->pos;
             return Make(lex, TokStrLit, start);
         }
 
@@ -583,21 +583,20 @@ static Token LexStringLiteral(Lexer* lex)
             && (LexerPeek(lex, 1) == '\\' || LexerPeek(lex, 1) == '"' || LexerPeek(lex, 1) == 'n'
                 || LexerPeek(lex, 1) == 't' || LexerPeek(lex, 1) == 'r' || LexerPeek(lex, 1) == '0'))
         {
-            lex->m_pos += 2;
+            lex->pos += 2;
             continue;
         }
 
         if (c == '\n')
         {
-            DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start + 1)),
-                      "unterminated string literal");
+            DiagError(lex->diag, LexRange(lex, start, (uint32_t)(lex->pos - start + 1)), "unterminated string literal");
             return Make(lex, TokStrLit, start);
         }
 
-        ++lex->m_pos;
+        ++lex->pos;
     }
 
-    DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "unterminated string literal");
+    DiagError(lex->diag, LexRange(lex, start, (uint32_t)(lex->pos - start)), "unterminated string literal");
     return Make(lex, TokStrLit, start);
 }
 
@@ -605,21 +604,21 @@ static Token LexStringLiteral(Lexer* lex)
    parser decodes it; here only its shape is checked, so a bad literal is still one token. */
 static Token LexCharLiteral(Lexer* lex)
 {
-    size_t start = lex->m_pos;
-    ++lex->m_pos;
+    size_t start = lex->pos;
+    ++lex->pos;
 
-    char c = lex->m_pos < lex->m_sourceLen ? lex->m_source[lex->m_pos] : '\n';
+    char c = lex->pos < lex->sourceLen ? lex->source[lex->pos] : '\n';
 
     if (c == '\'')
     {
-        ++lex->m_pos;
-        DiagError(lex->m_diag, LexRange(lex, start, 2), "empty character literal");
+        ++lex->pos;
+        DiagError(lex->diag, LexRange(lex, start, 2), "empty character literal");
         return Make(lex, TokCharLit, start);
     }
 
     if (c == '\n' || c == '\r')
     {
-        DiagError(lex->m_diag, LexRange(lex, start, 1), "unterminated character literal");
+        DiagError(lex->diag, LexRange(lex, start, 1), "unterminated character literal");
         return Make(lex, TokCharLit, start);
     }
 
@@ -629,51 +628,51 @@ static Token LexCharLiteral(Lexer* lex)
 
         if (e != '\\' && e != '\'' && e != '"' && e != 'n' && e != 't' && e != 'r' && e != '0')
         {
-            DiagErrorFmt(lex->m_diag, LexRange(lex, lex->m_pos, 2),
+            DiagErrorFmt(lex->diag, LexRange(lex, lex->pos, 2),
                          "unknown escape '\\%c' in character literal (use \\\\ \\' \\\" \\n \\t \\r \\0, or a number)",
                          e);
         }
 
-        lex->m_pos += 2;
+        lex->pos += 2;
     }
     else if ((unsigned char)c >= 0x80)
     {
-        DiagError(lex->m_diag, LexRange(lex, start, 1),
+        DiagError(lex->diag, LexRange(lex, start, 1),
                   "a character literal is one byte; a non-ASCII character takes several in UTF-8 - use a string");
 
-        while (lex->m_pos < lex->m_sourceLen && (unsigned char)lex->m_source[lex->m_pos] >= 0x80)
+        while (lex->pos < lex->sourceLen && (unsigned char)lex->source[lex->pos] >= 0x80)
         {
-            ++lex->m_pos;
+            ++lex->pos;
         }
     }
     else
     {
-        ++lex->m_pos;
+        ++lex->pos;
     }
 
-    if (lex->m_pos < lex->m_sourceLen && lex->m_source[lex->m_pos] == '\'')
+    if (lex->pos < lex->sourceLen && lex->source[lex->pos] == '\'')
     {
-        ++lex->m_pos;
+        ++lex->pos;
         return Make(lex, TokCharLit, start);
     }
 
     /* More than one character before a closing quote on this line: one error, one token. */
-    size_t close = lex->m_pos;
+    size_t close = lex->pos;
 
-    while (close < lex->m_sourceLen && lex->m_source[close] != '\'' && lex->m_source[close] != '\n')
+    while (close < lex->sourceLen && lex->source[close] != '\'' && lex->source[close] != '\n')
     {
         ++close;
     }
 
-    if (close < lex->m_sourceLen && lex->m_source[close] == '\'')
+    if (close < lex->sourceLen && lex->source[close] == '\'')
     {
-        DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(close - start + 1)),
+        DiagError(lex->diag, LexRange(lex, start, (uint32_t)(close - start + 1)),
                   "a character literal holds one byte; use a string for more");
-        lex->m_pos = close + 1;
+        lex->pos = close + 1;
     }
     else
     {
-        DiagError(lex->m_diag, LexRange(lex, start, (uint32_t)(lex->m_pos - start)), "unterminated character literal");
+        DiagError(lex->diag, LexRange(lex, start, (uint32_t)(lex->pos - start)), "unterminated character literal");
     }
 
     return Make(lex, TokCharLit, start);

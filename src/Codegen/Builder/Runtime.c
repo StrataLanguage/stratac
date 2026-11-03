@@ -3,7 +3,7 @@
 
 static bool HasSymbolPrefix(const Builder* b)
 {
-    return b->m_symbolPrefix && b->m_symbolPrefix[0];
+    return b->symbolPrefix && b->symbolPrefix[0];
 }
 
 /* The linker-visible name of an exported (non-extern) symbol. */
@@ -14,7 +14,7 @@ const char* ExportedSymbolName(Builder* b, const char* name)
         return name;
     }
 
-    return ArenaFormat(b->m_arena, "%s%s", b->m_symbolPrefix, name);
+    return ArenaFormat(b->arena, "%s%s", b->symbolPrefix, name);
 }
 
 /* With a symbol prefix, module-emitted runtime helpers become module-local so several objects
@@ -31,21 +31,21 @@ void MakeHelperModuleLocal(Builder* b, LLVMValueRef function)
    an `@export` function (a Strata-written runtime). */
 static LLVMValueRef RuntimeHelperFn(Builder* b, const char* name, LLVMTypeRef type)
 {
-    LLVMValueRef existing = LLVMGetNamedFunction(b->m_mod, name);
+    LLVMValueRef existing = LLVMGetNamedFunction(b->mod, name);
 
-    return existing ? existing : LLVMAddFunction(b->m_mod, name, type);
+    return existing ? existing : LLVMAddFunction(b->mod, name, type);
 }
 
 LLVMValueRef StrataAllocFn(Builder* b)
 {
-    if (!b->m_allocFn)
+    if (!b->allocFn)
     {
         LLVMTypeRef params[1] = {I64Ty(b)};
-        b->m_allocFnType = LLVMFunctionType(b->m_ptrTy, params, 1, 0);
-        b->m_allocFn = RuntimeHelperFn(b, "strata_alloc", b->m_allocFnType);
+        b->allocFnType = LLVMFunctionType(b->ptrTy, params, 1, 0);
+        b->allocFn = RuntimeHelperFn(b, "strata_alloc", b->allocFnType);
     }
 
-    return b->m_allocFn;
+    return b->allocFn;
 }
 
 /* A heap cell for a box's value of `size` bytes, returning the value's address. */
@@ -53,53 +53,53 @@ LLVMValueRef AllocBoxCell(Builder* b, LLVMValueRef size, const char* name)
 {
     LLVMValueRef args[1] = {size};
     StrataAllocFn(b);
-    return LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, args, 1, name);
+    return LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, args, 1, name);
 }
 
 LLVMValueRef StrataFreeFn(Builder* b)
 {
-    if (!b->m_freeFn)
+    if (!b->freeFn)
     {
-        LLVMTypeRef params[1] = {b->m_ptrTy};
-        b->m_freeFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
-        b->m_freeFn = RuntimeHelperFn(b, "strata_free", b->m_freeFnType);
+        LLVMTypeRef params[1] = {b->ptrTy};
+        b->freeFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), params, 1, 0);
+        b->freeFn = RuntimeHelperFn(b, "strata_free", b->freeFnType);
     }
 
-    return b->m_freeFn;
+    return b->freeFn;
 }
 
 LLVMValueRef StrataPanicFn(Builder* b)
 {
-    if (!b->m_panicFn)
+    if (!b->panicFn)
     {
-        LLVMTypeRef params[1] = {b->m_ptrTy};
-        b->m_panicFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
-        b->m_panicFn = RuntimeHelperFn(b, "strata_panic", b->m_panicFnType);
+        LLVMTypeRef params[1] = {b->ptrTy};
+        b->panicFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), params, 1, 0);
+        b->panicFn = RuntimeHelperFn(b, "strata_panic", b->panicFnType);
     }
 
-    return b->m_panicFn;
+    return b->panicFn;
 }
 
 static LLVMValueRef StrataOobFn(Builder* b)
 {
-    if (!b->m_oobFn)
+    if (!b->oobFn)
     {
-        LLVMTypeRef params[1] = {b->m_ptrTy};
-        b->m_oobFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), params, 1, 0);
-        b->m_oobFn = RuntimeHelperFn(b, "strata_oob", b->m_oobFnType);
+        LLVMTypeRef params[1] = {b->ptrTy};
+        b->oobFnType = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), params, 1, 0);
+        b->oobFn = RuntimeHelperFn(b, "strata_oob", b->oobFnType);
     }
 
-    return b->m_oobFn;
+    return b->oobFn;
 }
 
 /* A private constant global holding `message`, decayed to a char* (GEP 0,0). */
 LLVMValueRef MsgGlobalPtr(Builder* b, const char* prefix, const char* message)
 {
     size_t len = strlen(message);
-    LLVMValueRef strConst = LLVMConstStringInContext(b->m_ctx, message, (unsigned)len, 0);
+    LLVMValueRef strConst = LLVMConstStringInContext(b->ctx, message, (unsigned)len, 0);
     LLVMTypeRef strType = LLVMTypeOf(strConst);
-    char* gName = ArenaFormat(b->m_arena, "%s.%d", prefix, b->m_strLitCount++);
-    LLVMValueRef g = LLVMAddGlobal(b->m_mod, strType, gName);
+    char* gName = ArenaFormat(b->arena, "%s.%d", prefix, b->strLitCount++);
+    LLVMValueRef g = LLVMAddGlobal(b->mod, strType, gName);
     LLVMSetInitializer(g, strConst);
     LLVMSetLinkage(g, LLVMPrivateLinkage);
     LLVMSetUnnamedAddr(g, 1);
@@ -116,8 +116,8 @@ void EmitPanic(Builder* b, const char* message)
 {
     LLVMValueRef args[1] = {MsgGlobalPtr(b, ".pmsg", message)};
     StrataPanicFn(b);
-    LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args, 1, "");
-    LLVMBuildUnreachable(b->m_builder);
+    LLVMBuildCall2(b->builder, b->panicFnType, b->panicFn, args, 1, "");
+    LLVMBuildUnreachable(b->builder);
 }
 
 /* Reports a recoverable out-of-bounds access (LLVM JIT): notifies the host's
@@ -127,7 +127,7 @@ void EmitOobReport(Builder* b)
 {
     LLVMValueRef args[1] = {MsgGlobalPtr(b, ".omsg", "array index out of bounds")};
     StrataOobFn(b);
-    LLVMBuildCall2(b->m_builder, b->m_oobFnType, b->m_oobFn, args, 1, "");
+    LLVMBuildCall2(b->builder, b->oobFnType, b->oobFn, args, 1, "");
 }
 
 /* Emits a bounds check: if index >= length, call strata_panic with the given
@@ -136,21 +136,21 @@ void EmitOobReport(Builder* b)
    StrataProfile disables bounds checking. */
 void EmitBoundsCheck(Builder* b, LLVMValueRef index, LLVMValueRef length)
 {
-    if (!b->m_boundsCheck)
+    if (!b->boundsCheck)
     {
         return;
     }
 
-    LLVMValueRef oob = LLVMBuildICmp(b->m_builder, LLVMIntUGE, index, length, "oob");
+    LLVMValueRef oob = LLVMBuildICmp(b->builder, LLVMIntUGE, index, length, "oob");
     LLVMBasicBlockRef oobBB = NewBb(b, "oob");
     LLVMBasicBlockRef okBB = NewBb(b, "ok");
-    LLVMBuildCondBr(b->m_builder, oob, oobBB, okBB);
+    LLVMBuildCondBr(b->builder, oob, oobBB, okBB);
 
     PositionAtEnd(b, oobBB);
     {
         EmitPanic(b, "array index out of bounds");
     }
-    b->m_terminated = true;
+    b->terminated = true;
     PositionAtEnd(b, okBB);
 }
 
@@ -159,10 +159,10 @@ void EmitPanicIf(Builder* b, LLVMValueRef bad, const char* message)
 {
     LLVMBasicBlockRef panicBB = NewBb(b, "arith.panic");
     LLVMBasicBlockRef okBB = NewBb(b, "arith.ok");
-    LLVMBuildCondBr(b->m_builder, bad, panicBB, okBB);
+    LLVMBuildCondBr(b->builder, bad, panicBB, okBB);
 
     PositionAtEnd(b, panicBB);
     EmitPanic(b, message);
-    b->m_terminated = true;
+    b->terminated = true;
     PositionAtEnd(b, okBB);
 }

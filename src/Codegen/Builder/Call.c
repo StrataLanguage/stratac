@@ -35,11 +35,11 @@ const char* StaticExprTypeName(Builder* b, Node* n)
     case NodeIdent:
     {
         IdentExpr* id = (IdentExpr*)n;
-        Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+        Value* sym = (Value*)StrMapGet(&b->symbols, id->name);
 
         if (!sym)
         {
-            sym = (Value*)StrMapGet(&b->m_globals, id->name);
+            sym = (Value*)StrMapGet(&b->globals, id->name);
         }
 
         if (!sym)
@@ -55,7 +55,7 @@ const char* StaticExprTypeName(Builder* b, Node* n)
         }
 
         if ((TypeDescIsBox(&sym->typeDesc) || TypeDescIsOptional(&sym->typeDesc)) && sym->typeDesc.boxInner
-            && TypeRegistryIsOpaque(&b->m_registry, sym->typeDesc.boxInner->name))
+            && TypeRegistryIsOpaque(&b->registry, sym->typeDesc.boxInner->name))
         {
             return sym->typeDesc.boxInner->name; /* `T?` receiver */
         }
@@ -66,13 +66,13 @@ const char* StaticExprTypeName(Builder* b, Node* n)
     {
         const FunctionDecl* fd = ((CallExpr*)n)->resolvedDecl;
 
-        return (fd && TypeRegistryIsOpaque(&b->m_registry, fd->returnType.name)) ? fd->returnType.name : NULL;
+        return (fd && TypeRegistryIsOpaque(&b->registry, fd->returnType.name)) ? fd->returnType.name : NULL;
     }
     case NodeCast:
     {
         const TypeName* t = &((CastExpr*)n)->type;
 
-        return TypeRegistryIsOpaque(&b->m_registry, t->name) ? t->name : NULL;
+        return TypeRegistryIsOpaque(&b->registry, t->name) ? t->name : NULL;
     }
     case NodeNullTest:
         return StaticExprTypeName(b, ((NullTestExpr*)n)->operand); /* `T?` -> T */
@@ -87,11 +87,11 @@ const char* StaticExprTypeName(Builder* b, Node* n)
         if (baseNode->kind == NodeIdent)
         {
             IdentExpr* id = (IdentExpr*)baseNode;
-            Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+            Value* sym = (Value*)StrMapGet(&b->symbols, id->name);
 
             if (!sym)
             {
-                sym = (Value*)StrMapGet(&b->m_globals, id->name);
+                sym = (Value*)StrMapGet(&b->globals, id->name);
             }
 
             inner = sym ? sym->typeDesc.arrayInner : NULL;
@@ -101,20 +101,20 @@ const char* StaticExprTypeName(Builder* b, Node* n)
             MemberExpr* bm = (MemberExpr*)baseNode;
             const char* bn = StaticExprTypeName(b, bm->baseNode);
 
-            if (bn && !TypeRegistryIsOpaque(&b->m_registry, bn))
+            if (bn && !TypeRegistryIsOpaque(&b->registry, bn))
             {
-                int fidx = TypeRegistryFieldIndex(&b->m_registry, bn, bm->member);
+                int fidx = TypeRegistryFieldIndex(&b->registry, bn, bm->member);
 
                 if (fidx >= 0)
                 {
-                    const StructType* st = TypeRegistryFind(&b->m_registry, bn);
+                    const StructType* st = TypeRegistryFind(&b->registry, bn);
                     FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)fidx);
                     inner = TypeNameHasArrayShape(&field->type) ? field->type.elem : NULL;
                 }
             }
         }
 
-        return (inner && TypeRegistryIsOpaque(&b->m_registry, inner->name)) ? inner->name : NULL;
+        return (inner && TypeRegistryIsOpaque(&b->registry, inner->name)) ? inner->name : NULL;
     }
     case NodeMember:
     {
@@ -126,29 +126,29 @@ const char* StaticExprTypeName(Builder* b, Node* n)
             return NULL;
         }
 
-        if (TypeRegistryIsOpaque(&b->m_registry, baseName))
+        if (TypeRegistryIsOpaque(&b->registry, baseName))
         {
             /* Member of a handle: only an impl property continues the chain. */
             ImplPropEntry* e
-                = (ImplPropEntry*)StrMapGet(&b->m_implProps, ArenaFormat(b->m_arena, "%s.%s", baseName, m->member));
+                = (ImplPropEntry*)StrMapGet(&b->implProps, ArenaFormat(b->arena, "%s.%s", baseName, m->member));
 
-            return (e && TypeRegistryIsOpaque(&b->m_registry, e->decl->returnType.name)) ? e->decl->returnType.name
-                                                                                         : NULL;
+            return (e && TypeRegistryIsOpaque(&b->registry, e->decl->returnType.name)) ? e->decl->returnType.name
+                                                                                       : NULL;
         }
 
-        int idx = TypeRegistryFieldIndex(&b->m_registry, baseName, m->member);
+        int idx = TypeRegistryFieldIndex(&b->registry, baseName, m->member);
 
         if (idx < 0)
         {
             return NULL;
         }
 
-        const StructType* st = TypeRegistryFind(&b->m_registry, baseName);
+        const StructType* st = TypeRegistryFind(&b->registry, baseName);
         FieldDecl* field = (FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
         const TypeName* inner
             = (TypeNameIsBox(&field->type) || TypeNameIsOptional(&field->type)) ? field->type.inner : &field->type;
 
-        return (inner && TypeRegistryIsOpaque(&b->m_registry, inner->name)) ? inner->name : NULL;
+        return (inner && TypeRegistryIsOpaque(&b->registry, inner->name)) ? inner->name : NULL;
     }
     default:
         return NULL;
@@ -159,13 +159,13 @@ const char* StaticExprTypeName(Builder* b, Node* n)
    instantiation shares the generic's slot, since the host binds one function for all T. */
 LLVMValueRef ExternSlot(Builder* b, const char* name)
 {
-    LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->m_externSlots, name);
+    LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->externSlots, name);
 
     if (!slot)
     {
-        slot = LLVMAddGlobal(b->m_mod, b->m_ptrTy, ArenaFormat(b->m_arena, "__strata_ext_%s", name));
-        LLVMSetInitializer(slot, LLVMConstNull(b->m_ptrTy));
-        StrMapPut(&b->m_externSlots, name, (void*)slot);
+        slot = LLVMAddGlobal(b->mod, b->ptrTy, ArenaFormat(b->arena, "__strata_ext_%s", name));
+        LLVMSetInitializer(slot, LLVMConstNull(b->ptrTy));
+        StrMapPut(&b->externSlots, name, (void*)slot);
     }
 
     return slot;
@@ -193,7 +193,7 @@ static LLVMValueRef ArgAddress(Builder* b, Node* arg)
     }
 
     LLVMValueRef slot = EntryAlloca(b, value.typeDesc.type, "outarg");
-    LLVMBuildStore(b->m_builder, value.value, slot);
+    LLVMBuildStore(b->builder, value.value, slot);
 
     return slot;
 }
@@ -212,18 +212,18 @@ static LLVMValueRef ApplyCVarargPromotion(Builder* b, Value v)
 
     if (ty == I1Ty(b))
     {
-        return LLVMBuildZExt(b->m_builder, v.value, I32Ty(b), "vap");
+        return LLVMBuildZExt(b->builder, v.value, I32Ty(b), "vap");
     }
 
-    if (ty == LLVMInt8TypeInContext(b->m_ctx) || ty == LLVMInt16TypeInContext(b->m_ctx))
+    if (ty == LLVMInt8TypeInContext(b->ctx) || ty == LLVMInt16TypeInContext(b->ctx))
     {
-        return TypeDescIsUnsigned(&v.typeDesc) ? LLVMBuildZExt(b->m_builder, v.value, I32Ty(b), "vap")
-                                               : LLVMBuildSExt(b->m_builder, v.value, I32Ty(b), "vap");
+        return TypeDescIsUnsigned(&v.typeDesc) ? LLVMBuildZExt(b->builder, v.value, I32Ty(b), "vap")
+                                               : LLVMBuildSExt(b->builder, v.value, I32Ty(b), "vap");
     }
 
-    if (ty == LLVMFloatTypeInContext(b->m_ctx))
+    if (ty == LLVMFloatTypeInContext(b->ctx))
     {
-        return LLVMBuildFPExt(b->m_builder, v.value, LLVMDoubleTypeInContext(b->m_ctx), "vap");
+        return LLVMBuildFPExt(b->builder, v.value, LLVMDoubleTypeInContext(b->ctx), "vap");
     }
 
     return v.value;
@@ -238,14 +238,14 @@ static Value EmitAddressofBuiltin(Builder* b, CallExpr* n)
     if (fn)
     {
         /* A JIT extern is reached through its slot, which the host binds. */
-        if (b->m_jitMode && fn->isExtern)
+        if (b->jitMode && fn->isExtern)
         {
-            return ValueMake(LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ExternSlot(b, fn->name), "fnaddr"), ptrTd);
+            return ValueMake(LLVMBuildLoad2(b->builder, b->ptrTy, ExternSlot(b, fn->name), "fnaddr"), ptrTd);
         }
 
-        FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, fn->mangledName);
+        FuncInfo* info = (FuncInfo*)StrMapGet(&b->funcs, fn->mangledName);
 
-        return ValueMake(info ? info->function : LLVMConstNull(b->m_ptrTy), ptrTd);
+        return ValueMake(info ? info->function : LLVMConstNull(b->ptrTy), ptrTd);
     }
 
     Node* arg = (Node*)VecGet(&n->args, 0);
@@ -259,19 +259,19 @@ static Value EmitAddressofBuiltin(Builder* b, CallExpr* n)
 
     if (!lv.valid || lv.vectorLane)
     {
-        if (b->m_diag)
+        if (b->diag)
         {
-            DiagError(b->m_diag, arg->range, "cannot take the address of this expression");
+            DiagError(b->diag, arg->range, "cannot take the address of this expression");
         }
 
-        return ValueMake(LLVMConstNull(b->m_ptrTy), ptrTd);
+        return ValueMake(LLVMConstNull(b->ptrTy), ptrTd);
     }
 
     LLVMValueRef addr = lv.ptr;
 
     if (TypeDescIsBox(&lv.typeDesc))
     {
-        addr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "cell");
+        addr = LLVMBuildLoad2(b->builder, b->ptrTy, lv.ptr, "cell");
     }
 
     return ValueMake(addr, ptrTd);
@@ -287,10 +287,10 @@ static Value EmitSizeofBuiltin(Builder* b, CallExpr* n)
     if (strcmp(n->callee, "alignof") == 0)
     {
         /* offsetof({ i8, T }, 1) */
-        LLVMTypeRef members[2] = {LLVMInt8TypeInContext(b->m_ctx), ty};
-        LLVMTypeRef probe = LLVMStructTypeInContext(b->m_ctx, members, 2, 0);
+        LLVMTypeRef members[2] = {LLVMInt8TypeInContext(b->ctx), ty};
+        LLVMTypeRef probe = LLVMStructTypeInContext(b->ctx, members, 2, 0);
         LLVMValueRef idx[2] = {LLVMConstInt(I32Ty(b), 0, 0), LLVMConstInt(I32Ty(b), 1, 0)};
-        LLVMValueRef gep = LLVMConstGEP2(probe, LLVMConstNull(b->m_ptrTy), idx, 2);
+        LLVMValueRef gep = LLVMConstGEP2(probe, LLVMConstNull(b->ptrTy), idx, 2);
 
         return ValueMake(LLVMConstPtrToInt(gep, I64Ty(b)), ulongTd);
     }
@@ -303,7 +303,7 @@ static Value EmitLoadBuiltin(Builder* b, CallExpr* n)
 {
     TypeDesc td = Resolve(b, n->typeArg);
     Value p = EmitExpr(b, (Node*)VecGet(&n->args, 0));
-    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, td.type, p.value, "load");
+    LLVMValueRef v = LLVMBuildLoad2(b->builder, td.type, p.value, "load");
     LLVMSetAlignment(v, 1);
 
     return ValueMake(v, td);
@@ -315,10 +315,10 @@ static Value EmitStoreBuiltin(Builder* b, CallExpr* n)
     TypeDesc td = Resolve(b, n->typeArg);
     Value p = EmitExpr(b, (Node*)VecGet(&n->args, 0));
     Value v = Coerce(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)), td);
-    LLVMValueRef st = LLVMBuildStore(b->m_builder, v.value, p.value);
+    LLVMValueRef st = LLVMBuildStore(b->builder, v.value, p.value);
     LLVMSetAlignment(st, 1);
 
-    return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->m_ctx), TDF_VOID, NULL));
+    return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->ctx), TDF_VOID, NULL));
 }
 
 static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
@@ -388,8 +388,8 @@ static LLVMValueRef EmitStructInitField(Builder* b, const StructType* st, LLVMVa
        be freed without freeing a (borrowed) string constant. */
     if (TypeDescIsString(&fieldTd) && argNode->kind == NodeStrLiteral)
     {
-        LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawArg.value, 0, "fslit.p");
-        LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, rawArg.value, 1, "fslit.l");
+        LLVMValueRef sp = LLVMBuildExtractValue(b->builder, rawArg.value, 0, "fslit.p");
+        LLVMValueRef sl = LLVMBuildExtractValue(b->builder, rawArg.value, 1, "fslit.l");
         argValue = ValueMake(BuildOwnedStringFat(b, sp, sl), fieldTd);
     }
     else if (TypeDescIsBox(&fieldTd) && fieldTd.boxInner
@@ -426,7 +426,7 @@ static Value EmitStructInitCall(Builder* b, CallExpr* n)
     TypeName tn = MakeTypeName(b, n->callee);
     TypeDesc typeDesc = Resolve(b, &tn);
 
-    const StructType* st = TypeRegistryFind(&b->m_registry, n->callee);
+    const StructType* st = TypeRegistryFind(&b->registry, n->callee);
 
     /* Fields the call leaves out keep their declared defaults, as in a struct literal. */
     LLVMValueRef agg = DefaultValueOf(b, &tn, typeDesc);
@@ -457,7 +457,7 @@ static LLVMValueRef EmitTypedRestArg(Builder* b, CallExpr* n, const FunctionDecl
     if (!elemType)
     {
         TypeName empty = MakeTypeName(b, "");
-        elemType = (const TypeName*)ArenaDup(b->m_arena, &empty, sizeof(TypeName));
+        elemType = (const TypeName*)ArenaDup(b->arena, &empty, sizeof(TypeName));
     }
 
     Vec tail;
@@ -471,7 +471,7 @@ static LLVMValueRef EmitTypedRestArg(Builder* b, CallExpr* n, const FunctionDecl
     Value arr = EmitArrayFromNodes(b, elemType, &tail, true, restParam->mod == ModRef);
 
     LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "rest");
-    LLVMBuildStore(b->m_builder, arr.value, slot);
+    LLVMBuildStore(b->builder, arr.value, slot);
 
     return slot;
 }
@@ -513,7 +513,7 @@ static LLVMValueRef LowerExternArrayDecayArg(Builder* b, Node* argNode)
     LLVMValueRef arrAddr = ArgAddress(b, argNode);
     LLVMValueRef dataSlot = ArrayDataPtr(b, arrAddr);
 
-    return LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataSlot, "arrptr");
+    return LLVMBuildLoad2(b->builder, b->ptrTy, dataSlot, "arrptr");
 }
 
 /* Array literal against a dynamic-array param: the param's shape
@@ -541,11 +541,11 @@ static LLVMValueRef LowerArrayLiteralArg(Builder* b, const FunctionDecl* fd, siz
     }
 
     LLVMValueRef litSlot = EntryAlloca(b, ArrayStructType(b), "litarr");
-    LLVMBuildStore(b->m_builder, arr.value, litSlot);
+    LLVMBuildStore(b->builder, arr.value, litSlot);
 
     if (litParam->mod == ModRef)
     {
-        OwnedArgTemp* temp = (OwnedArgTemp*)ArenaAlloc(b->m_arena, sizeof(OwnedArgTemp));
+        OwnedArgTemp* temp = (OwnedArgTemp*)ArenaAlloc(b->arena, sizeof(OwnedArgTemp));
         temp->slot = litSlot;
         temp->td = arr.typeDesc;
         temp->stackOnly = true;
@@ -585,15 +585,15 @@ static LLVMValueRef TryLowerFixedArrayViewArg(Builder* b, const FunctionDecl* fd
     }
 
     LLVMValueRef zero[2] = {LLVMConstInt(I64Ty(b), 0, 0), LLVMConstInt(I64Ty(b), 0, 0)};
-    LLVMValueRef data = LLVMBuildGEP2(b->m_builder, lv.typeDesc.type, lv.ptr, zero, 2, "fixview");
+    LLVMValueRef data = LLVMBuildGEP2(b->builder, lv.typeDesc.type, lv.ptr, zero, 2, "fixview");
     LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)lv.typeDesc.fixedLength, 0);
     LLVMValueRef fat = LLVMGetUndef(ArrayStructType(b));
-    fat = LLVMBuildInsertValue(b->m_builder, fat, data, 0, "fixview.p");
-    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 1, "fixview.l");
-    fat = LLVMBuildInsertValue(b->m_builder, fat, len, 2, "fixview.c");
+    fat = LLVMBuildInsertValue(b->builder, fat, data, 0, "fixview.p");
+    fat = LLVMBuildInsertValue(b->builder, fat, len, 1, "fixview.l");
+    fat = LLVMBuildInsertValue(b->builder, fat, len, 2, "fixview.c");
 
     LLVMValueRef viewSlot = EntryAlloca(b, ArrayStructType(b), "fixview");
-    LLVMBuildStore(b->m_builder, fat, viewSlot);
+    LLVMBuildStore(b->builder, fat, viewSlot);
 
     return viewSlot;
 }
@@ -617,7 +617,7 @@ static LLVMValueRef LowerInternalStringArg(Builder* b, const FunctionDecl* fd, s
         return lv.ptr;
     }
 
-    Value av = lv.valid ? ValueMake(LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "csarg"), lv.typeDesc)
+    Value av = lv.valid ? ValueMake(LLVMBuildLoad2(b->builder, lv.typeDesc.type, lv.ptr, "csarg"), lv.typeDesc)
                         : EmitExpr(b, argNode);
 
     if (TypeDescIsCString(&av.typeDesc))
@@ -630,7 +630,7 @@ static LLVMValueRef LowerInternalStringArg(Builder* b, const FunctionDecl* fd, s
         }
 
         LLVMValueRef slot = EntryAlloca(b, ArrayStructType(b), "cs2s");
-        LLVMBuildStore(b->m_builder, owned, slot);
+        LLVMBuildStore(b->builder, owned, slot);
 
         return slot;
     }
@@ -655,7 +655,7 @@ static LLVMValueRef LowerInternalStringArg(Builder* b, const FunctionDecl* fd, s
        spill the already-computed fat (ArgAddress's
        fallback, minus a second evaluation). */
     LLVMValueRef slot = EntryAlloca(b, av.typeDesc.type, "outarg");
-    LLVMBuildStore(b->m_builder, av.value, slot);
+    LLVMBuildStore(b->builder, av.value, slot);
 
     return slot;
 }
@@ -672,13 +672,13 @@ static LLVMValueRef LowerStringLiteralParamArg(Builder* b, const FunctionDecl* f
     if (litParam && litParam->mod == ModRef)
     {
         /* A `ref string` param only reads: lend it the constant itself. */
-        LLVMBuildStore(b->m_builder, litVal.value, slot);
+        LLVMBuildStore(b->builder, litVal.value, slot);
     }
     else
     {
-        LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, litVal.value, 0, "arglit.p");
-        LLVMValueRef sl = LLVMBuildExtractValue(b->m_builder, litVal.value, 1, "arglit.l");
-        LLVMBuildStore(b->m_builder, BuildOwnedStringFat(b, sp, sl), slot);
+        LLVMValueRef sp = LLVMBuildExtractValue(b->builder, litVal.value, 0, "arglit.p");
+        LLVMValueRef sl = LLVMBuildExtractValue(b->builder, litVal.value, 1, "arglit.l");
+        LLVMBuildStore(b->builder, BuildOwnedStringFat(b, sp, sl), slot);
     }
 
     return slot;
@@ -708,7 +708,7 @@ static LLVMValueRef LowerExternStringArg(Builder* b, Value av, bool paramIsRealB
     {
         /* `string?` param: pass the RAW data pointer — NULL stays
            NULL (empty optional), preserving the C-side NULL check. */
-        return LLVMBuildExtractValue(b->m_builder, av.value, 0, "optstr");
+        return LLVMBuildExtractValue(b->builder, av.value, 0, "optstr");
     }
 
     /* Extern string param: pun the fat to char*
@@ -735,13 +735,13 @@ static LLVMValueRef TryLowerExternArrayToBoxArg(Builder* b, const TypeName* extT
 
     if (TypeDescHasArrayShape(&av.typeDesc))
     {
-        return LLVMBuildExtractValue(b->m_builder, av.value, 0, "arrptr");
+        return LLVMBuildExtractValue(b->builder, av.value, 0, "arrptr");
     }
 
     LLVMValueRef slot = ArgAddress(b, argNode);
     LLVMValueRef zero[1] = {LLVMConstInt(I64Ty(b), 0, 0)};
 
-    return LLVMBuildGEP2(b->m_builder, av.typeDesc.type, slot, zero, 1, "farr");
+    return LLVMBuildGEP2(b->builder, av.typeDesc.type, slot, zero, 1, "farr");
 }
 
 /* A plain value passed to an extern `^T` / `T?` param: a real box (or optional)
@@ -760,11 +760,11 @@ static LLVMValueRef LowerExternValueToBoxArg(Builder* b, Node* argNode, Value av
 
     LLVMValueRef owned = EmitOwnedValue(b, av, argNode, innerTn);
 
-    LLVMValueRef cellSz = SizeOfConst(b, b->m_ptrTy);
+    LLVMValueRef cellSz = SizeOfConst(b, b->ptrTy);
     LLVMValueRef cellArgs[1] = {cellSz};
     StrataAllocFn(b);
-    LLVMValueRef cell = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, cellArgs, 1, "argcell");
-    LLVMBuildStore(b->m_builder, owned, cell);
+    LLVMValueRef cell = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, cellArgs, 1, "argcell");
+    LLVMBuildStore(b->builder, owned, cell);
 
     return cell;
 }
@@ -837,7 +837,7 @@ static LLVMValueRef LowerByValueArg(Builder* b, const FunctionDecl* fd, size_t k
            and drops its copy at return, so hand it a deep
            copy — the caller's value keeps its own fields
            (C value semantics; `ref` is the zero-copy escape). */
-        if (paramTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, paramTd.structTypeName))
+        if (paramTd.structTypeName && TypeRegistryIsOwningStruct(&b->registry, paramTd.structTypeName))
         {
             v = EmitCopyValue(b, v, paramTd);
         }
@@ -870,7 +870,7 @@ static LLVMValueRef LowerByPtrPlainArg(Builder* b, const FunctionDecl* fd, size_
            second time (repeating its side effects and leaking the
            first result). */
         LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "outarg");
-        LLVMBuildStore(b->m_builder, v.value, slot);
+        LLVMBuildStore(b->builder, v.value, slot);
 
         return slot;
     }
@@ -886,7 +886,7 @@ static LLVMValueRef LowerByPtrPlainArg(Builder* b, const FunctionDecl* fd, size_
 
     if (slot.valid && !slot.vectorLane && TypeDescIsBox(&slot.typeDesc))
     {
-        return LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot.ptr, "boxarg");
+        return LLVMBuildLoad2(b->builder, b->ptrTy, slot.ptr, "boxarg");
     }
 
     if (slot.valid && !slot.vectorLane)
@@ -923,11 +923,11 @@ static bool CallArgIsBoxSource(Builder* b, Node* argNode)
 {
     if (argNode->kind == NodeIdent)
     {
-        Value* sym = (Value*)StrMapGet(&b->m_symbols, ((IdentExpr*)argNode)->name);
+        Value* sym = (Value*)StrMapGet(&b->symbols, ((IdentExpr*)argNode)->name);
 
         if (!sym)
         {
-            sym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)argNode)->name);
+            sym = (Value*)StrMapGet(&b->globals, ((IdentExpr*)argNode)->name);
         }
 
         return sym && TypeDescIsBox(&sym->typeDesc);
@@ -935,7 +935,7 @@ static bool CallArgIsBoxSource(Builder* b, Node* argNode)
 
     if (argNode->kind == NodeCall)
     {
-        FuncInfo* fi = (FuncInfo*)StrMapGet(&b->m_funcs, ((CallExpr*)argNode)->callee);
+        FuncInfo* fi = (FuncInfo*)StrMapGet(&b->funcs, ((CallExpr*)argNode)->callee);
 
         return fi && TypeDescIsBox(&fi->returnType);
     }
@@ -976,7 +976,7 @@ static LLVMValueRef EmitCallArg(Builder* b, CallExpr* n, FuncInfo* info, const F
     }
 
     if (shouldPassByPtr && paramIsBoxType && fd && k < fd->params.count && argNode->kind != NodeStrLiteral
-        && TypeIsString(&b->m_registry, ((ParamDecl*)VecGet((Vec*)&fd->params, k))->type.name))
+        && TypeIsString(&b->registry, ((ParamDecl*)VecGet((Vec*)&fd->params, k))->type.name))
     {
         return LowerInternalStringArg(b, fd, k, argNode);
     }
@@ -1039,8 +1039,8 @@ static LLVMValueRef* PrependHiddenCtxArg(Builder* b, FuncInfo* info, LLVMValueRe
     }
 
     size_t nargs = *count;
-    LLVMValueRef* finalArgs = (LLVMValueRef*)ArenaAlloc(b->m_arena, (nargs + 1) * sizeof(LLVMValueRef));
-    finalArgs[0] = b->m_curGlobalsPtr;
+    LLVMValueRef* finalArgs = (LLVMValueRef*)ArenaAlloc(b->arena, (nargs + 1) * sizeof(LLVMValueRef));
+    finalArgs[0] = b->curGlobalsPtr;
 
     if (nargs > 0)
     {
@@ -1062,7 +1062,7 @@ static LLVMValueRef* AppendTypeDescArg(Builder* b, FuncInfo* info, const Functio
     }
 
     unsigned finalCount = *count;
-    LLVMValueRef* withTypeDesc = (LLVMValueRef*)ArenaAlloc(b->m_arena, (finalCount + 1) * sizeof(LLVMValueRef));
+    LLVMValueRef* withTypeDesc = (LLVMValueRef*)ArenaAlloc(b->arena, (finalCount + 1) * sizeof(LLVMValueRef));
 
     if (finalCount > 0)
     {
@@ -1080,17 +1080,17 @@ static LLVMValueRef EmitDelegateCallee(Builder* b, CallExpr* n)
 {
     LLVMValueRef callee = EmitExpr(b, n->delegateCallee).value;
 
-    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "dlgnull");
+    LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, callee, LLVMConstNull(b->ptrTy), "dlgnull");
     LLVMBasicBlockRef nullBB = NewBb(b, "dlg.null");
     LLVMBasicBlockRef callBB = NewBb(b, "dlg.call");
-    LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
+    LLVMBuildCondBr(b->builder, isNull, nullBB, callBB);
 
     PositionAtEnd(b, nullBB);
-    LLVMValueRef panicArgs[1] = {
-        MsgGlobalPtr(b, ".pmsg", ArenaFormat(b->m_arena, "call through a null '%s' delegate", n->delegateDecl->name))};
+    LLVMValueRef panicArgs[1]
+        = {MsgGlobalPtr(b, ".pmsg", ArenaFormat(b->arena, "call through a null '%s' delegate", n->delegateDecl->name))};
     StrataPanicFn(b);
-    LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, panicArgs, 1, "");
-    LLVMBuildUnreachable(b->m_builder);
+    LLVMBuildCall2(b->builder, b->panicFnType, b->panicFn, panicArgs, 1, "");
+    LLVMBuildUnreachable(b->builder);
 
     PositionAtEnd(b, callBB);
 
@@ -1100,12 +1100,12 @@ static LLVMValueRef EmitDelegateCallee(Builder* b, CallExpr* n)
 /* A JIT extern is called through its slot, which the host binds later. */
 static LLVMValueRef ResolveJitExternCallee(Builder* b, CallExpr* n, LLVMValueRef callee, bool* slotExtern)
 {
-    if (!b->m_jitMode)
+    if (!b->jitMode)
     {
         return callee;
     }
 
-    LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->m_externSlots, n->callee);
+    LLVMValueRef slot = (LLVMValueRef)StrMapGet(&b->externSlots, n->callee);
 
     if (!slot)
     {
@@ -1114,7 +1114,7 @@ static LLVMValueRef ResolveJitExternCallee(Builder* b, CallExpr* n, LLVMValueRef
 
     *slotExtern = true;
 
-    return LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slot, "extfn");
+    return LLVMBuildLoad2(b->builder, b->ptrTy, slot, "extfn");
 }
 
 /* A JIT extern slot starts null: under nullExternCall, a call before the host
@@ -1123,31 +1123,31 @@ static LLVMValueRef ResolveJitExternCallee(Builder* b, CallExpr* n, LLVMValueRef
    JIT frame's stack walker away. */
 static void EmitNullExternGuard(Builder* b, CallExpr* n, LLVMValueRef callee)
 {
-    LLVMValueRef isNull = LLVMBuildICmp(b->m_builder, LLVMIntEQ, callee, LLVMConstNull(b->m_ptrTy), "extnull");
+    LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, callee, LLVMConstNull(b->ptrTy), "extnull");
     LLVMBasicBlockRef nullBB = NewBb(b, "ext.null");
     LLVMBasicBlockRef callBB = NewBb(b, "ext.call");
-    LLVMBuildCondBr(b->m_builder, isNull, nullBB, callBB);
-    b->m_terminated = true;
+    LLVMBuildCondBr(b->builder, isNull, nullBB, callBB);
+    b->terminated = true;
 
     PositionAtEnd(b, nullBB);
     {
         LLVMValueRef args2[1]
-            = {MsgGlobalPtr(b, ".pmsg", ArenaFormat(b->m_arena, "call to null extern function '%s'", n->callee))};
+            = {MsgGlobalPtr(b, ".pmsg", ArenaFormat(b->arena, "call to null extern function '%s'", n->callee))};
         StrataPanicFn(b);
-        LLVMBuildCall2(b->m_builder, b->m_panicFnType, b->m_panicFn, args2, 1, "");
+        LLVMBuildCall2(b->builder, b->panicFnType, b->panicFn, args2, 1, "");
 
         /* The `ret` here terminates the ENCLOSING Strata function, so it
-           must use the enclosing function's return type (m_curRet), not the
+           must use the enclosing function's return type (curRet), not the
            extern's. Returning the extern's type (e.g. a ptr for a `handle`
            return inside an i32 fn) produces malformed IR that crashes LLVM
            optimizers. */
-        if (TypeDescIsVoid(&b->m_curRet))
+        if (TypeDescIsVoid(&b->curRet))
         {
-            LLVMBuildRetVoid(b->m_builder);
+            LLVMBuildRetVoid(b->builder);
         }
         else
         {
-            LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_curRetAbi));
+            LLVMBuildRet(b->builder, LLVMConstNull(b->curRetAbi));
         }
     }
 
@@ -1158,12 +1158,12 @@ static void EmitNullExternGuard(Builder* b, CallExpr* n, LLVMValueRef callee)
 static LLVMValueRef EmitCallInstruction(Builder* b, CallExpr* n, FuncInfo* info, LLVMValueRef callee,
                                         LLVMValueRef* finalArgs, unsigned finalCount, bool slotExtern)
 {
-    if (slotExtern && b->m_nullExternCheck)
+    if (slotExtern && b->nullExternCheck)
     {
         EmitNullExternGuard(b, n, callee);
     }
 
-    return LLVMBuildCall2(b->m_builder, info->type, callee, finalArgs, finalCount, "call");
+    return LLVMBuildCall2(b->builder, info->type, callee, finalArgs, finalCount, "call");
 }
 
 /* Array-literal args: `ref T[]` temps are stack views (drop owning
@@ -1207,12 +1207,12 @@ static LLVMValueRef NarrowExternIntReturn(Builder* b, const FunctionDecl* fd, Fu
         return call;
     }
 
-    LLVMValueRef narrow = LLVMBuildTrunc(b->m_builder, call, info->retSemanticTy, "ret.narrow");
+    LLVMValueRef narrow = LLVMBuildTrunc(b->builder, call, info->retSemanticTy, "ret.narrow");
 
     bool zeroExtend = info->retSemanticUnsigned || info->retSemanticTy == I1Ty(b);
 
-    return zeroExtend ? LLVMBuildZExt(b->m_builder, narrow, abiRet, "ret.zext")
-                      : LLVMBuildSExt(b->m_builder, narrow, abiRet, "ret.sext");
+    return zeroExtend ? LLVMBuildZExt(b->builder, narrow, abiRet, "ret.zext")
+                      : LLVMBuildSExt(b->builder, narrow, abiRet, "ret.sext");
 }
 
 /* Extern `string` return: the host handed back a NUL-terminated char*;
@@ -1239,7 +1239,7 @@ static Value EmitCallResult(Builder* b, const FunctionDecl* fd, FuncInfo* info, 
        load it back as the Strata-level return value. */
     if (hasReturnParam)
     {
-        LLVMValueRef retVal = LLVMBuildLoad2(b->m_builder, returnParamTd.type, returnParamSlot, "retparam.val");
+        LLVMValueRef retVal = LLVMBuildLoad2(b->builder, returnParamTd.type, returnParamSlot, "retparam.val");
 
         return ValueMake(retVal, returnParamTd);
     }
@@ -1281,7 +1281,7 @@ static Value EmitFunctionCall(Builder* b, CallExpr* n, FuncInfo* info, bool disc
 
     if (nargs > 0)
     {
-        args = (LLVMValueRef*)ArenaAlloc(b->m_arena, nargs * sizeof(LLVMValueRef));
+        args = (LLVMValueRef*)ArenaAlloc(b->arena, nargs * sizeof(LLVMValueRef));
     }
 
     LLVMValueRef returnParamSlot = NULL;
@@ -1321,8 +1321,8 @@ Value EmitCall(Builder* b, CallExpr* n)
 {
     /* A direct expression-statement call has an unused result. Consumed here
        (cleared before any nested call) so only the outermost call sees it. */
-    bool discarded = b->m_discardCallResult;
-    b->m_discardCallResult = false;
+    bool discarded = b->discardCallResult;
+    b->discardCallResult = false;
 
     if (n->isIntrinsicCall)
     {
@@ -1336,18 +1336,18 @@ Value EmitCall(Builder* b, CallExpr* n)
     }
 
     /* Struct initializer call. */
-    if (StrMapGet(&b->m_structTypes, n->callee) != NULL)
+    if (StrMapGet(&b->structTypes, n->callee) != NULL)
     {
         return EmitStructInitCall(b, n);
     }
 
-    FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, n->callee);
+    FuncInfo* info = (FuncInfo*)StrMapGet(&b->funcs, n->callee);
 
     if (!info)
     {
-        if (b->m_diag)
+        if (b->diag)
         {
-            DiagErrorFmt(b->m_diag, n->base.range, "call to unknown function '%s'", n->callee);
+            DiagErrorFmt(b->diag, n->base.range, "call to unknown function '%s'", n->callee);
         }
 
         return ZeroInt(b);

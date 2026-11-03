@@ -272,7 +272,7 @@ bool FoldCastInit(Builder* b, Node* n, ConstInitVal* out)
 bool FoldIdentInit(Builder* b, Node* n, ConstInitVal* out)
 {
     /* Chained manifest constants: `const B = A;` */
-    ConstValueSlot* cv = (ConstValueSlot*)StrMapGet(&b->m_constValues, ((IdentExpr*)n)->name);
+    ConstValueSlot* cv = (ConstValueSlot*)StrMapGet(&b->constValues, ((IdentExpr*)n)->name);
 
     if (!cv)
     {

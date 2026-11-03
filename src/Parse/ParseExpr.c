@@ -163,19 +163,19 @@ static Node* ParseConditional(Parser* p)
 {
     Node* cond = ParseBinary(p, 0);
 
-    if (!cond || p->m_cur.kind != TokQuestion)
+    if (!cond || p->cur.kind != TokQuestion)
     {
         return cond;
     }
 
-    Token q = p->m_cur;
+    Token q = p->cur;
     Advance(p);
 
     Node* thenExpr = ParseExpr(p);
     ParserExpect(p, TokColon, "':'");
     Node* elseExpr = ParseConditional(p);
 
-    ConditionalExpr* node = AST_NEW(p->m_arena, ConditionalExpr);
+    ConditionalExpr* node = AST_NEW(p->arena, ConditionalExpr);
     node->base.kind = NodeConditional;
     node->base.range = q.range;
     node->condition = cond;
@@ -194,25 +194,25 @@ static Node* ParseAssign(Parser* p)
         return NULL;
     }
 
-    if (IsAssignOp(p->m_cur.kind))
+    if (IsAssignOp(p->cur.kind))
     {
-        AssignOp op = MapAssign(p->m_cur.kind);
+        AssignOp op = MapAssign(p->cur.kind);
 
-        Token opToken = p->m_cur;
+        Token opToken = p->cur;
         Advance(p);
 
         // Bare braces are array literals; `{ .f = ... }` is a struct literal.
         Node* rhs;
 
-        if (p->m_cur.kind == TokLBrace)
+        if (p->cur.kind == TokLBrace)
         {
-            if (LexerPeekToken(p->m_lex).kind == TokDot)
+            if (LexerPeekToken(p->lex).kind == TokDot)
             {
-                rhs = ParseStructInitBody(p, p->m_cur, NULL);
+                rhs = ParseStructInitBody(p, p->cur, NULL);
             }
             else
             {
-                rhs = ParseArrayInitBody(p, p->m_cur, NULL);
+                rhs = ParseArrayInitBody(p, p->cur, NULL);
             }
         }
         else
@@ -220,7 +220,7 @@ static Node* ParseAssign(Parser* p)
             rhs = ParseAssign(p);
         }
 
-        AssignExpr* node = AST_NEW(p->m_arena, AssignExpr);
+        AssignExpr* node = AST_NEW(p->arena, AssignExpr);
         node->base.kind = NodeAssign;
         node->base.range = opToken.range;
         node->op = op;
@@ -247,7 +247,7 @@ Node* ParseBinary(Parser* p, int minPrec)
         int prec = 0;
         BinaryOp op;
 
-        if (!BinaryInfo(p->m_cur.kind, &prec, &op))
+        if (!BinaryInfo(p->cur.kind, &prec, &op))
         {
             break;
         }
@@ -267,7 +267,7 @@ Node* ParseBinary(Parser* p, int minPrec)
             return NULL;
         }
 
-        BinaryExpr* node = AST_NEW(p->m_arena, BinaryExpr);
+        BinaryExpr* node = AST_NEW(p->arena, BinaryExpr);
         node->base.kind = NodeBinary;
         node->base.range = lhs->range;
         node->op = op;
@@ -284,7 +284,7 @@ static Node* ParseUnary(Parser* p)
 {
     UnaryOp op;
 
-    switch (p->m_cur.kind)
+    switch (p->cur.kind)
     {
     case TokMinus:
         op = UnNeg;
@@ -301,7 +301,7 @@ static Node* ParseUnary(Parser* p)
     case TokInc:
     case TokDec:
     {
-        Token token = p->m_cur;
+        Token token = p->cur;
         Advance(p);
 
         Node* operand = ParseUnary(p);
@@ -311,7 +311,7 @@ static Node* ParseUnary(Parser* p)
             return NULL;
         }
 
-        IncDecExpr* node = AST_NEW(p->m_arena, IncDecExpr);
+        IncDecExpr* node = AST_NEW(p->arena, IncDecExpr);
         node->base.kind = NodeIncDec;
         node->base.range = token.range;
         node->isDec = (token.kind == TokDec);
@@ -322,9 +322,9 @@ static Node* ParseUnary(Parser* p)
     }
     default:
     {
-        if (p->m_cur.kind == TokLParen)
+        if (p->cur.kind == TokLParen)
         {
-            Token next = LexerPeekToken(p->m_lex);
+            Token next = LexerPeekToken(p->lex);
 
             bool isScalarCast = next.kind == TokKwInt || next.kind == TokKwUint || next.kind == TokKwLong
                                 || next.kind == TokKwUlong || next.kind == TokKwByte || next.kind == TokKwSbyte
@@ -339,12 +339,12 @@ static Node* ParseUnary(Parser* p)
             {
                 LexerCheckpoint saved = SaveLexerState(p);
 
-                Token lparen = p->m_cur;
+                Token lparen = p->cur;
                 Advance(p);
 
                 TypeName castType = {0};
 
-                if (ParserTryParseType(p, &castType) && p->m_cur.kind == TokRParen)
+                if (ParserTryParseType(p, &castType) && p->cur.kind == TokRParen)
                 {
                     /* The parser has no type table (user types may be declared
                        later or imported), so `(Name)` is a cast only when the
@@ -353,7 +353,7 @@ static Node* ParseUnary(Parser* p)
                        could be either (`(x) - 1`, `(x)++`), so they parse as
                        an expression; write `(Name)(-x)` to cast a negation.
                        Keyword and box casts are unambiguous. */
-                    Token afterRparen = LexerPeekToken(p->m_lex);
+                    Token afterRparen = LexerPeekToken(p->lex);
                     bool startsOperand = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
                                          || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
                                          || afterRparen.kind == TokStrLit || afterRparen.kind == TokCharLit
@@ -376,7 +376,7 @@ static Node* ParseUnary(Parser* p)
                             return NULL;
                         }
 
-                        CastExpr* node = AST_NEW(p->m_arena, CastExpr);
+                        CastExpr* node = AST_NEW(p->arena, CastExpr);
                         node->base.kind = NodeCast;
                         node->base.range = lparen.range;
                         node->type = castType;
@@ -394,7 +394,7 @@ static Node* ParseUnary(Parser* p)
     }
     }
 
-    Token token = p->m_cur;
+    Token token = p->cur;
     Advance(p);
 
     Node* operand = ParseUnary(p);
@@ -404,7 +404,7 @@ static Node* ParseUnary(Parser* p)
         return NULL;
     }
 
-    UnaryExpr* node = AST_NEW(p->m_arena, UnaryExpr);
+    UnaryExpr* node = AST_NEW(p->arena, UnaryExpr);
     node->base.kind = NodeUnary;
     node->base.range = token.range;
     node->op = op;
@@ -418,21 +418,21 @@ static Node* ParsePostfix(Parser* p)
     Node* e = ParsePrimary(p);
 
     while (e
-           && (p->m_cur.kind == TokDot || p->m_cur.kind == TokInc || p->m_cur.kind == TokDec
-               || p->m_cur.kind == TokLBracket || p->m_cur.kind == TokQuestion))
+           && (p->cur.kind == TokDot || p->cur.kind == TokInc || p->cur.kind == TokDec || p->cur.kind == TokLBracket
+               || p->cur.kind == TokQuestion))
     {
-        if (p->m_cur.kind == TokQuestion && StartsExpression(LexerPeekToken(p->m_lex).kind))
+        if (p->cur.kind == TokQuestion && StartsExpression(LexerPeekToken(p->lex).kind))
         {
             break; // `cond ? a : b` — ParseConditional takes the `?`
         }
 
-        if (p->m_cur.kind == TokQuestion)
+        if (p->cur.kind == TokQuestion)
         {
             // `expr?` — null test (postfix). Only meaningful on a `T?`; sema rejects it everywhere else.
-            Token q = p->m_cur;
+            Token q = p->cur;
             Advance(p);
 
-            NullTestExpr* node = AST_NEW(p->m_arena, NullTestExpr);
+            NullTestExpr* node = AST_NEW(p->arena, NullTestExpr);
             node->base.kind = NodeNullTest;
             node->base.range = q.range;
             node->operand = e;
@@ -441,9 +441,9 @@ static Node* ParsePostfix(Parser* p)
             continue;
         }
 
-        if (p->m_cur.kind == TokLBracket)
+        if (p->cur.kind == TokLBracket)
         {
-            Token lbr = p->m_cur;
+            Token lbr = p->cur;
             Advance(p);
 
             Node* index = ParseExpr(p);
@@ -455,7 +455,7 @@ static Node* ParsePostfix(Parser* p)
                 return NULL;
             }
 
-            IndexExpr* node = AST_NEW(p->m_arena, IndexExpr);
+            IndexExpr* node = AST_NEW(p->arena, IndexExpr);
             node->base.kind = NodeIndex;
             node->base.range = SpanFrom(lbr, close);
             node->baseNode = e;
@@ -465,12 +465,12 @@ static Node* ParsePostfix(Parser* p)
             continue;
         }
 
-        if (p->m_cur.kind == TokInc || p->m_cur.kind == TokDec)
+        if (p->cur.kind == TokInc || p->cur.kind == TokDec)
         {
-            Token token = p->m_cur;
+            Token token = p->cur;
             Advance(p);
 
-            IncDecExpr* node = AST_NEW(p->m_arena, IncDecExpr);
+            IncDecExpr* node = AST_NEW(p->arena, IncDecExpr);
             node->base.kind = NodeIncDec;
             node->base.range = token.range;
             node->isDec = (token.kind == TokDec);
@@ -480,23 +480,23 @@ static Node* ParsePostfix(Parser* p)
             continue;
         }
 
-        Token dot = p->m_cur;
+        Token dot = p->cur;
         Advance(p);
 
-        if (p->m_cur.kind != TokIdent)
+        if (p->cur.kind != TokIdent)
         {
-            DiagError(p->m_diag, p->m_cur.range, "expected a member name after '.'");
+            DiagError(p->diag, p->cur.range, "expected a member name after '.'");
             break;
         }
 
-        Token memberTok = p->m_cur;
+        Token memberTok = p->cur;
         Advance(p);
 
         /* `ptr.null`, the null pointer, is the one constant read off a type name. */
         if (e->kind == NodeIdent && strcmp(((IdentExpr*)e)->name, STRATA_PTR_TYPE) == 0
-            && StrEqC(ParserIdentText(p, memberTok), "null") && p->m_cur.kind != TokLParen)
+            && StrEqC(ParserIdentText(p, memberTok), "null") && p->cur.kind != TokLParen)
         {
-            IdentExpr* constant = AST_NEW(p->m_arena, IdentExpr);
+            IdentExpr* constant = AST_NEW(p->arena, IdentExpr);
             constant->base.kind = NodeIdent;
             uint32_t end = SourceRangeEnd(memberTok.range);
             constant->base.range = (SourceRange){e->range.start, end - e->range.start, e->range.fileId};
@@ -505,20 +505,20 @@ static Node* ParsePostfix(Parser* p)
             continue;
         }
 
-        MemberExpr* node = AST_NEW(p->m_arena, MemberExpr);
+        MemberExpr* node = AST_NEW(p->arena, MemberExpr);
         node->base.kind = NodeMember;
         node->base.range = SpanFrom(dot, memberTok);
         node->baseNode = e;
-        node->member = ToOwned(p->m_arena, ParserIdentText(p, memberTok));
+        node->member = ToOwned(p->arena, ParserIdentText(p, memberTok));
 
         e = (Node*)node;
 
         /* `expr.Member(args)` — a method call. The callee keeps the member
            name; sema resolves it against impl blocks (prepending the base as
            the self argument for instance methods). */
-        if (p->m_cur.kind == TokLParen)
+        if (p->cur.kind == TokLParen)
         {
-            CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+            CallExpr* call = AST_NEW(p->arena, CallExpr);
             call->base.kind = NodeCall;
             call->base.range = node->base.range;
             call->callee = node->member;
@@ -527,7 +527,7 @@ static Node* ParsePostfix(Parser* p)
             VecInit(&call->args);
 
             ParseCallArgs(p, call);
-            call->base.range = SpanFrom(dot, p->m_cur);
+            call->base.range = SpanFrom(dot, p->cur);
 
             e = (Node*)call;
         }
@@ -542,7 +542,7 @@ static void ParseCallArgs(Parser* p, CallExpr* call)
 {
     Advance(p); /* '(' */
 
-    if (p->m_cur.kind != TokRParen)
+    if (p->cur.kind != TokRParen)
     {
         while (true)
         {
@@ -567,48 +567,48 @@ static void ParseCallArgs(Parser* p, CallExpr* call)
 
 Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName)
 {
-    StructInitExpr* init = AST_NEW(p->m_arena, StructInitExpr);
+    StructInitExpr* init = AST_NEW(p->arena, StructInitExpr);
     init->base.kind = NodeStructInit;
     init->base.range = startTok.range;
-    init->typeName = typeName ? ArenaStrdup(p->m_arena, typeName) : NULL;
+    init->typeName = typeName ? ArenaStrdup(p->arena, typeName) : NULL;
     VecInit(&init->fields);
 
     Advance(p);
 
-    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    while (p->cur.kind != TokRBrace && p->cur.kind != TokEof)
     {
-        StructInitField* field = AST_NEW(p->m_arena, StructInitField);
+        StructInitField* field = AST_NEW(p->arena, StructInitField);
 
-        if (p->m_cur.kind == TokDot)
+        if (p->cur.kind == TokDot)
         {
             Advance(p);
 
-            if (p->m_cur.kind != TokIdent)
+            if (p->cur.kind != TokIdent)
             {
-                DiagError(p->m_diag, p->m_cur.range, "expected a field name after '.'");
+                DiagError(p->diag, p->cur.range, "expected a field name after '.'");
                 break;
             }
 
-            Token fieldToken = p->m_cur;
+            Token fieldToken = p->cur;
             Advance(p);
 
-            field->name = ToOwned(p->m_arena, ParserIdentText(p, fieldToken));
+            field->name = ToOwned(p->arena, ParserIdentText(p, fieldToken));
 
             ParserExpect(p, TokAssign, "'='");
         }
 
-        if (p->m_cur.kind == TokLBrace)
+        if (p->cur.kind == TokLBrace)
         {
             /* `{ ... }` initializes a fixed-size array field (element type
                filled from the field in sema); a designator form is a nested
                struct literal. */
-            if (LexerPeekToken(p->m_lex).kind == TokDot)
+            if (LexerPeekToken(p->lex).kind == TokDot)
             {
-                field->value = ParseStructInitBody(p, p->m_cur, NULL);
+                field->value = ParseStructInitBody(p, p->cur, NULL);
             }
             else
             {
-                field->value = ParseArrayInitBody(p, p->m_cur, NULL);
+                field->value = ParseArrayInitBody(p, p->cur, NULL);
             }
         }
         else
@@ -626,15 +626,14 @@ Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName)
             continue;
         }
 
-        if (p->m_cur.kind == TokRBrace || p->m_cur.kind == TokEof)
+        if (p->cur.kind == TokRBrace || p->cur.kind == TokEof)
         {
             break;
         }
 
-        DiagError(p->m_diag, p->m_cur.range, "expected ',' or '}' in braced initializer");
+        DiagError(p->diag, p->cur.range, "expected ',' or '}' in braced initializer");
 
-        while (p->m_cur.kind != TokComma && p->m_cur.kind != TokDot && p->m_cur.kind != TokRBrace
-               && p->m_cur.kind != TokEof)
+        while (p->cur.kind != TokComma && p->cur.kind != TokDot && p->cur.kind != TokRBrace && p->cur.kind != TokEof)
         {
             Advance(p);
         }
@@ -650,7 +649,7 @@ Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName)
 
 Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
 {
-    ArrayInitExpr* init = AST_NEW(p->m_arena, ArrayInitExpr);
+    ArrayInitExpr* init = AST_NEW(p->arena, ArrayInitExpr);
     init->base.kind = NodeArrayInit;
     init->base.range = startTok.range;
     init->elementType = elementType;
@@ -659,7 +658,7 @@ Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
 
     Advance(p); /* consume '{' */
 
-    while (p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+    while (p->cur.kind != TokRBrace && p->cur.kind != TokEof)
     {
         Node* elem = ParseExpr(p);
 
@@ -680,14 +679,14 @@ Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
             continue;
         }
 
-        if (p->m_cur.kind == TokRBrace || p->m_cur.kind == TokEof)
+        if (p->cur.kind == TokRBrace || p->cur.kind == TokEof)
         {
             break;
         }
 
-        DiagError(p->m_diag, p->m_cur.range, "expected ',' or '}' in array initializer");
+        DiagError(p->diag, p->cur.range, "expected ',' or '}' in array initializer");
 
-        while (p->m_cur.kind != TokComma && p->m_cur.kind != TokRBrace && p->m_cur.kind != TokEof)
+        while (p->cur.kind != TokComma && p->cur.kind != TokRBrace && p->cur.kind != TokEof)
         {
             Advance(p);
         }
@@ -712,7 +711,7 @@ static Node* ParseIntLiteral(Parser* p, Token token)
     bool isLong = false;
     uint64_t val = IntLiteralValueEx(p, token, &isUnsigned, &isLong);
 
-    IntLiteral* node = AST_NEW(p->m_arena, IntLiteral);
+    IntLiteral* node = AST_NEW(p->arena, IntLiteral);
     node->base.kind = NodeIntLiteral;
     node->base.range = token.range;
     node->value = val;
@@ -734,16 +733,16 @@ static Node* ParseFloatLiteral(Parser* p, Token token)
     }
 
     // Full spelling (no fixed-size buffer), so long literals are never truncated.
-    char* text = ArenaStrndup(p->m_arena, sv.data, sv.len);
+    char* text = ArenaStrndup(p->arena, sv.data, sv.len);
     double val = strtod(text, NULL);
 
     if (isinf(val))
     {
-        DiagError(p->m_diag, token.range, "floating-point literal is out of range");
+        DiagError(p->diag, token.range, "floating-point literal is out of range");
         val = 0.0;
     }
 
-    FloatLiteral* node = AST_NEW(p->m_arena, FloatLiteral);
+    FloatLiteral* node = AST_NEW(p->arena, FloatLiteral);
     node->base.kind = NodeFloatLiteral;
     node->base.range = token.range;
     node->value = val;
@@ -758,7 +757,7 @@ static Node* ParseBoolLiteral(Parser* p, Token token)
     Str sv = ParserIdentText(p, token);
     bool val = StrEqC(sv, "true");
 
-    BoolLiteral* node = AST_NEW(p->m_arena, BoolLiteral);
+    BoolLiteral* node = AST_NEW(p->arena, BoolLiteral);
     node->base.kind = NodeBoolLiteral;
     node->base.range = token.range;
     node->value = val;
@@ -798,12 +797,12 @@ static Node* ParseCharLiteral(Parser* p, Token token)
         }
     }
 
-    IntLiteral* lit = AST_NEW(p->m_arena, IntLiteral);
+    IntLiteral* lit = AST_NEW(p->arena, IntLiteral);
     lit->base.kind = NodeIntLiteral;
     lit->base.range = token.range;
     lit->value = value;
 
-    CastExpr* node = AST_NEW(p->m_arena, CastExpr);
+    CastExpr* node = AST_NEW(p->arena, CastExpr);
     node->base.kind = NodeCast;
     node->base.range = token.range;
     node->type.name = "byte";
@@ -822,16 +821,16 @@ static Node* ParseStrLiteral(Parser* p, Token token)
 
     if (sv.len < 2)
     {
-        StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
+        StrLiteral* node = AST_NEW(p->arena, StrLiteral);
         node->base.kind = NodeStrLiteral;
         node->base.range = token.range;
-        node->value = ArenaStrndup(p->m_arena, "", 0);
+        node->value = ArenaStrndup(p->arena, "", 0);
         node->length = 0;
 
         return (Node*)node;
     }
 
-    char* raw = ArenaStrndup(p->m_arena, sv.data + 1, sv.len - 2);
+    char* raw = ArenaStrndup(p->arena, sv.data + 1, sv.len - 2);
 
     char* dst = raw;
     for (size_t i = 0; i < sv.len - 2; i++)
@@ -877,7 +876,7 @@ static Node* ParseStrLiteral(Parser* p, Token token)
     }
     *dst = '\0';
 
-    StrLiteral* node = AST_NEW(p->m_arena, StrLiteral);
+    StrLiteral* node = AST_NEW(p->arena, StrLiteral);
     node->base.kind = NodeStrLiteral;
     node->base.range = token.range;
     node->value = raw;
@@ -894,25 +893,25 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
 
     /* `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
        else starting `Name <` is a comparison, so the attempt is rolled back. */
-    if (token.kind == TokIdent && p->m_cur.kind == TokLt)
+    if (token.kind == TokIdent && p->cur.kind == TokLt)
     {
         LexerCheckpoint saved = SaveLexerState(p);
         Advance(p);
 
         TypeName typeArg = {0};
 
-        if (ParserTryParseType(p, &typeArg) && typeArg.name && p->m_cur.kind == TokGt)
+        if (ParserTryParseType(p, &typeArg) && typeArg.name && p->cur.kind == TokGt)
         {
             Advance(p);
 
-            if (p->m_cur.kind == TokLParen)
+            if (p->cur.kind == TokLParen)
             {
-                CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+                CallExpr* call = AST_NEW(p->arena, CallExpr);
                 call->base.kind = NodeCall;
                 call->base.range = token.range;
-                call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
+                call->callee = ToOwned(p->arena, ParserIdentText(p, token));
                 call->isIntrinsicCall = false;
-                call->typeArg = (TypeName*)ArenaDup(p->m_arena, &typeArg, sizeof(TypeName));
+                call->typeArg = (TypeName*)ArenaDup(p->arena, &typeArg, sizeof(TypeName));
                 VecInit(&call->args);
 
                 ParseCallArgs(p, call);
@@ -924,12 +923,12 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
         RestoreLexerState(p, saved);
     }
 
-    if (p->m_cur.kind == TokLParen)
+    if (p->cur.kind == TokLParen)
     {
-        CallExpr* call = AST_NEW(p->m_arena, CallExpr);
+        CallExpr* call = AST_NEW(p->arena, CallExpr);
         call->base.kind = NodeCall;
         call->base.range = token.range;
-        call->callee = ToOwned(p->m_arena, ParserIdentText(p, token));
+        call->callee = ToOwned(p->arena, ParserIdentText(p, token));
         call->isIntrinsicCall = false;
         VecInit(&call->args);
 
@@ -938,17 +937,17 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
         return (Node*)call;
     }
 
-    if (p->m_cur.kind == TokLBrace)
+    if (p->cur.kind == TokLBrace)
     {
         Str name = ParserIdentText(p, token);
 
-        return ParseStructInitBody(p, token, ToOwned(p->m_arena, name));
+        return ParseStructInitBody(p, token, ToOwned(p->arena, name));
     }
 
-    IdentExpr* node = AST_NEW(p->m_arena, IdentExpr);
+    IdentExpr* node = AST_NEW(p->arena, IdentExpr);
     node->base.kind = NodeIdent;
     node->base.range = token.range;
-    node->name = ToOwned(p->m_arena, ParserIdentText(p, token));
+    node->name = ToOwned(p->arena, ParserIdentText(p, token));
 
     return (Node*)node;
 }
@@ -968,7 +967,7 @@ static Node* ParseBracePrimary(Parser* p, Token token)
     /* A braced list in expression position: `{1,2,3}` as an array literal
        or `{ .field = ... }` as a struct literal (types inferred in sema).
        Statement position never reaches here — a leading `{` starts a block. */
-    if (LexerPeekToken(p->m_lex).kind == TokDot)
+    if (LexerPeekToken(p->lex).kind == TokDot)
     {
         return ParseStructInitBody(p, token, NULL);
     }
@@ -978,9 +977,9 @@ static Node* ParseBracePrimary(Parser* p, Token token)
 
 static Node* ParsePrimary(Parser* p)
 {
-    Token token = p->m_cur;
+    Token token = p->cur;
 
-    switch (p->m_cur.kind)
+    switch (p->cur.kind)
     {
     case TokIntLit:
         return ParseIntLiteral(p, token);
@@ -1020,7 +1019,7 @@ static Node* ParsePrimary(Parser* p)
         return ParseBracePrimary(p, token);
 
     default:
-        DiagErrorFmt(p->m_diag, token.range, "expected an expression but found '%s'", TokSpelling(token.kind));
+        DiagErrorFmt(p->diag, token.range, "expected an expression but found '%s'", TokSpelling(token.kind));
         return NULL;
     }
 }

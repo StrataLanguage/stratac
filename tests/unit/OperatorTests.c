@@ -14,9 +14,9 @@ static const char* ErrText(DiagnosticEngine* diag, Arena* arena)
     Sb sb;
     SbInit(&sb);
 
-    for (size_t i = 0; i < diag->m_count; i++)
+    for (size_t i = 0; i < diag->count; i++)
     {
-        SbPrintf(&sb, "%s; ", diag->m_diagnostics[i].message);
+        SbPrintf(&sb, "%s; ", diag->diagnostics[i].message);
     }
 
     return SbFinish(&sb, arena);

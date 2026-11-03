@@ -6,7 +6,7 @@
    too, since the host copies components as raw bytes. */
 static const char* ComponentFieldProblem(Resolver* r, const TypeName* type, const char** outOffender, size_t depth)
 {
-    if (!type || !type->name || depth > r->m_registry.count + 8)
+    if (!type || !type->name || depth > r->registry.count + 8)
     {
         return NULL;
     }
@@ -43,7 +43,7 @@ static const char* ComponentFieldProblem(Resolver* r, const TypeName* type, cons
         return "a cstring";
     }
 
-    const StructType* registered = TypeRegistryFind(&r->m_registry, type->name);
+    const StructType* registered = TypeRegistryFind(&r->registry, type->name);
 
     if (!registered || registered->opaque)
     {
@@ -57,7 +57,7 @@ static const char* ComponentFieldProblem(Resolver* r, const TypeName* type, cons
             return NULL;
         }
 
-        TypeName underlying = TypeNameParse(r->m_arena, registered->underlyingType);
+        TypeName underlying = TypeNameParse(r->arena, registered->underlyingType);
 
         return ComponentFieldProblem(r, &underlying, outOffender, depth + 1);
     }
@@ -91,14 +91,14 @@ static void CheckComponentFields(Resolver* r, const StructDecl* sd)
 
         if (offender && strcmp(offender, field->type.name) != 0)
         {
-            DiagErrorFmt(r->m_diag, field->type.range,
+            DiagErrorFmt(r->diag, field->type.range,
                          "component '%s' field '%s' has type '%s', which contains '%s' (%s); components may only "
                          "hold plain data: scalars, enums, float2/3/4, handles, fixed-size arrays and structs of those",
                          sd->name, field->name, field->type.name, offender, problem);
         }
         else
         {
-            DiagErrorFmt(r->m_diag, field->type.range,
+            DiagErrorFmt(r->diag, field->type.range,
                          "component '%s' field '%s' has type '%s', which is %s; components may only hold plain data: "
                          "scalars, enums, float2/3/4, handles, fixed-size arrays and structs of those",
                          sd->name, field->name, field->type.name, problem);
@@ -147,13 +147,13 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
     const TypeName* type = &field->type;
     const char* leaf = (TypeNameHasArrayShape(type) || TypeNameIsBox(type) || TypeNameIsOptional(type))
                            ? NULL
-                           : TypeRegistryResolveAlias(&r->m_registry, type->name);
+                           : TypeRegistryResolveAlias(&r->registry, type->name);
     PrimitiveType primitive = leaf ? GetPrimitiveType(leaf) : PrimNone;
     unsigned vectorLanes = leaf ? (unsigned)IsNameSimdVector(leaf) : 0;
 
     if (!leaf || (!IsNumeric(primitive) && vectorLanes == 0))
     {
-        DiagErrorFmt(r->m_diag, field->defaultValue->range,
+        DiagErrorFmt(r->diag, field->defaultValue->range,
                      "field '%s' of type '%s' can't have a default value; defaults are only supported on scalar, "
                      "enum and float2/3/4 fields",
                      field->name, type->name);
@@ -165,7 +165,7 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
 
     if (valueType && !IsAssignableType(r, type, valueType))
     {
-        DiagErrorFmt(r->m_diag, field->defaultValue->range,
+        DiagErrorFmt(r->diag, field->defaultValue->range,
                      "default value for field '%s' of type '%s' can't be of type '%s'", field->name, type->name,
                      valueType->name);
         return;
@@ -179,7 +179,7 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
         if (!FoldVectorDefaultLanes(r, field->defaultValue, folded.floatLanes, &folded.laneCount, vectorLanes)
             || folded.laneCount != vectorLanes)
         {
-            DiagErrorFmt(r->m_diag, field->defaultValue->range,
+            DiagErrorFmt(r->diag, field->defaultValue->range,
                          "default value for field '%s' must be a compile-time constant '%s(...)'", field->name, leaf);
             return;
         }
@@ -191,7 +191,7 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
 
         if (!SemaFoldConstInit(r, field->defaultValue, &value))
         {
-            DiagErrorFmt(r->m_diag, field->defaultValue->range,
+            DiagErrorFmt(r->diag, field->defaultValue->range,
                          "default value for field '%s' must be a compile-time constant", field->name);
             return;
         }
@@ -394,39 +394,39 @@ static void RejectFunctionsNamedLikeStructs(Module* mod, DiagnosticEngine* diag)
 /* Pass 1: merge extern redeclarations and mark the declarations the later passes read. */
 static void CollectDeclarations(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
-    Arena* arena = r->m_arena;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
+    Arena* arena = r->arena;
 
     MergeExternRedeclarations(mod, diag);
     MarkGrowableArrayParams(mod);
     BindDropMethods(mod, diag, arena);
 
-    TypeRegistryInit(&r->m_registry);
+    TypeRegistryInit(&r->registry);
 }
 
 static void RegisterTypeAliases(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
-    TypeRegistryRegisterAliases(&r->m_registry, mod);
-    StrMapInit(&r->m_constGlobals);
+    TypeRegistryRegisterAliases(&r->registry, mod);
+    StrMapInit(&r->constGlobals);
 }
 
 static void ResolveEnumDecls(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
 
     /* Assign enum member values and validate underlying ranges, BEFORE the
        manifest-constant fold so `const int N = (int)Color.Red;` resolves. */
-    ResolveEnums(mod, diag, &r->m_registry);
+    ResolveEnums(mod, diag, &r->registry);
 }
 
 static void FoldManifestConstants(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    Arena* arena = r->m_arena;
+    Module* mod = r->mod;
+    Arena* arena = r->arena;
 
     /* Manifest constants: fold `const` scalar global initializers FIRST, so
        `[constName]` fixed-array dimensions resolve before layouts compute.
@@ -437,33 +437,33 @@ static void FoldManifestConstants(Resolver* r)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
 
-        if (!gd->type.isConst || !gd->init || !IsManifestConstType(&r->m_registry, gd->type.name))
+        if (!gd->type.isConst || !gd->init || !IsManifestConstType(&r->registry, gd->type.name))
         {
             continue;
         }
 
         ConstGlobalVal* v = (ConstGlobalVal*)ArenaAlloc(arena, sizeof(ConstGlobalVal));
-        v->isInt = IsConstDimType(&r->m_registry, gd->type.name);
+        v->isInt = IsConstDimType(&r->registry, gd->type.name);
 
         if (SemaFoldConstInit(r, gd->init, v))
         {
             /* The constant takes its declared type: later uses read it at that width and signedness (a
                `const uint` initialized with -1 holds 0xFFFFFFFF). */
-            v->ity = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->m_registry, gd->type.name)));
+            v->ity = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->registry, gd->type.name)));
 
             if (!v->isFloat)
             {
                 v->i = (ConstInt)ConstIntNarrow((ConstUInt)v->i, v->ity);
             }
 
-            StrMapPut(&r->m_constGlobals, gd->name, v);
+            StrMapPut(&r->constGlobals, gd->name, v);
         }
     }
 }
 
 static void ResolveStructDims(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
     for (size_t i = 0; i < mod->structs.count; i++)
     {
@@ -485,22 +485,22 @@ static void ResolveStructDims(Resolver* r)
 
 static void BuildRegistryAndImpls(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
-    Arena* arena = r->m_arena;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
+    Arena* arena = r->arena;
 
-    TypeRegistryBuild(&r->m_registry, mod);
+    TypeRegistryBuild(&r->registry, mod);
     RejectFunctionsNamedLikeStructs(mod, diag);
 
     /* Validate impl targets and declare property accessor externs before the
        overload/mangling pass runs. */
-    ResolveImpls(mod, diag, arena, &r->m_registry);
+    ResolveImpls(mod, diag, arena, &r->registry);
 }
 
 static void CheckUnionFields(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
 
     /* A union's fields overlay one another, so none may own memory (nothing could tell which to drop). */
     for (size_t i = 0; i < mod->structs.count; i++)
@@ -510,9 +510,9 @@ static void CheckUnionFields(Resolver* r)
         for (size_t j = 0; sd->isUnion && j < sd->fields.count; j++)
         {
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
-            const char* leaf = TypeRegistryResolveAlias(&r->m_registry, field->type.name);
+            const char* leaf = TypeRegistryResolveAlias(&r->registry, field->type.name);
 
-            if (AliasIsOwning(r, &field->type) || TypeRegistryIsOwningStruct(&r->m_registry, leaf))
+            if (AliasIsOwning(r, &field->type) || TypeRegistryIsOwningStruct(&r->registry, leaf))
             {
                 DiagErrorFmt(diag, field->nameRange, "union field '%s' cannot have owning type '%s'", field->name,
                              field->type.name);
@@ -523,17 +523,17 @@ static void CheckUnionFields(Resolver* r)
 
 static void InitResolverState(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
-    StrMapInit(&r->m_constVars);
-    StrMapInit(&r->m_boxGlobals);
-    StrMapInit(&r->m_refBoxParams);
-    StrMapInit(&r->m_refLocals);
-    StrMapInit(&r->m_refArrayParams);
-    StrMapInit(&r->m_typeCache);
-    VecInit(&r->m_scopeDecls);
-    VecInit(&r->m_deferFrames);
-    VecInit(&r->m_loopFlows);
+    StrMapInit(&r->constVars);
+    StrMapInit(&r->boxGlobals);
+    StrMapInit(&r->refBoxParams);
+    StrMapInit(&r->refLocals);
+    StrMapInit(&r->refArrayParams);
+    StrMapInit(&r->typeCache);
+    VecInit(&r->scopeDecls);
+    VecInit(&r->deferFrames);
+    VecInit(&r->loopFlows);
 
     for (size_t i = 0; i < mod->globals.count; i++)
     {
@@ -541,16 +541,16 @@ static void InitResolverState(Resolver* r)
 
         if (AliasIsOwning(r, &gd->type))
         {
-            StrMapPut(&r->m_boxGlobals, gd->name, (void*)&gd->type);
+            StrMapPut(&r->boxGlobals, gd->name, (void*)&gd->type);
         }
     }
 }
 
 static void MangleFunctions(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
-    Arena* arena = r->m_arena;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
+    Arena* arena = r->arena;
 
     StrMap byMangled;
     StrMapInit(&byMangled);
@@ -587,7 +587,7 @@ static void MangleFunctions(Resolver* r)
 
 static void CheckDeclaredFunctions(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
@@ -641,8 +641,8 @@ static void CheckReturnPaths(DiagnosticEngine* diag, const FunctionDecl* functio
 
 static void ResolveFunctionBody(Resolver* r, FunctionDecl* functionDecl)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
 
     StrMap scope;
     StrMapInit(&scope);
@@ -654,15 +654,15 @@ static void ResolveFunctionBody(Resolver* r, FunctionDecl* functionDecl)
     }
 
     // All flow state is per function: nothing proven in one holds in the next.
-    ResetStrMap(&r->m_constVars);
-    ResetStrMap(&r->m_refBoxParams);
-    ResetStrMap(&r->m_refLocals);
-    ResetStrMap(&r->m_refArrayParams);
-    r->m_scopeDecls.count = 0;
-    r->m_deferFrames.count = 0;
-    r->m_loopFlows.count = 0;
-    r->m_deferWalkDepth = 0;
-    r->m_unreachable = false;
+    ResetStrMap(&r->constVars);
+    ResetStrMap(&r->refBoxParams);
+    ResetStrMap(&r->refLocals);
+    ResetStrMap(&r->refArrayParams);
+    r->scopeDecls.count = 0;
+    r->deferFrames.count = 0;
+    r->loopFlows.count = 0;
+    r->deferWalkDepth = 0;
+    r->unreachable = false;
 
     for (size_t j = 0; j < mod->globals.count; j++)
     {
@@ -670,7 +670,7 @@ static void ResolveFunctionBody(Resolver* r, FunctionDecl* functionDecl)
 
         if (gd->type.isConst)
         {
-            StrMapPut(&r->m_constVars, gd->name, (void*)1);
+            StrMapPut(&r->constVars, gd->name, (void*)1);
         }
     }
 
@@ -687,36 +687,36 @@ static void ResolveFunctionBody(Resolver* r, FunctionDecl* functionDecl)
 
         if (p->type.isConst)
         {
-            StrMapPut(&r->m_constVars, p->name, (void*)1);
+            StrMapPut(&r->constVars, p->name, (void*)1);
         }
 
         if (AliasIsOwning(r, &p->type) && p->mod == ModRef)
         {
-            StrMapPut(&r->m_refBoxParams, p->name, (void*)1);
+            StrMapPut(&r->refBoxParams, p->name, (void*)1);
         }
 
         /* A `ref T[]` binding may be a borrowed stack view (fixed-array
            slice): rebinds and growing writes would free caller storage. */
         if (p->mod == ModRef && TypeNameIsDynamicArray(&p->type))
         {
-            StrMapPut(&r->m_refArrayParams, p->name, (void*)1);
+            StrMapPut(&r->refArrayParams, p->name, (void*)1);
         }
     }
 
-    r->m_currentReturnType = &functionDecl->returnType;
-    r->m_currentFunction = functionDecl;
+    r->currentReturnType = &functionDecl->returnType;
+    r->currentFunction = functionDecl;
 
     WalkBlock(r, (Block*)functionDecl->body, &scope);
-    r->m_currentReturnType = NULL;
-    r->m_currentFunction = NULL;
+    r->currentReturnType = NULL;
+    r->currentFunction = NULL;
 
-    CheckReturnPaths(r->m_diag, functionDecl);
+    CheckReturnPaths(r->diag, functionDecl);
     StrMapFree(&scope);
 }
 
 static void CheckFunctionBodies(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
@@ -733,7 +733,7 @@ static void CheckFunctionBodies(Resolver* r)
 
 static void CheckFieldDefaults(Resolver* r)
 {
-    Module* mod = r->m_mod;
+    Module* mod = r->mod;
 
     StrMap defaultScope;
     StrMapInit(&defaultScope);
@@ -774,8 +774,8 @@ static void CheckFieldDefaults(Resolver* r)
 
 static void CheckStructFields(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
 
     for (size_t i = 0; i < mod->structs.count; i++)
     {
@@ -787,7 +787,7 @@ static void CheckStructFields(Resolver* r)
         }
 
         // Layout errors are computed in the registry; reported here for ranges.
-        const StructType* registered = TypeRegistryFind(&r->m_registry, sd->name);
+        const StructType* registered = TypeRegistryFind(&r->registry, sd->name);
 
         if (registered && registered->layoutError)
         {
@@ -799,10 +799,10 @@ static void CheckStructFields(Resolver* r)
             FieldDecl* field = (FieldDecl*)VecGet(&sd->fields, j);
 
             if (sd->isExtern
-                && (TypeIsString(&r->m_registry, field->type.name) || ResolvesToDynamicArray(r, &field->type)))
+                && (TypeIsString(&r->registry, field->type.name) || ResolvesToDynamicArray(r, &field->type)))
             {
                 // Strings and dynamic arrays are fats; extern structs must match C layout.
-                if (TypeIsString(&r->m_registry, field->type.name))
+                if (TypeIsString(&r->registry, field->type.name))
                 {
                     DiagErrorFmt(diag, field->type.range,
                                  "extern struct field '%s' may not have type 'string' "
@@ -818,7 +818,7 @@ static void CheckStructFields(Resolver* r)
                 }
             }
 
-            if (IsIncompleteStruct(&r->m_registry, field->type.name))
+            if (IsIncompleteStruct(&r->registry, field->type.name))
             {
                 DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name,
                              field->type.name);
@@ -847,14 +847,14 @@ static void CheckStructFields(Resolver* r)
                                  "fixed-size arrays have no drop glue",
                                  field->name, leaf->name);
                 }
-                else if (TypeRegistryIsOwningStruct(&r->m_registry, leaf->name))
+                else if (TypeRegistryIsOwningStruct(&r->registry, leaf->name))
                 {
                     DiagErrorFmt(diag, field->type.range,
                                  "fixed-size array field '%s' may not contain an owning struct ('%s'); "
                                  "fixed-size arrays have no drop glue",
                                  field->name, leaf->name);
                 }
-                else if (IsIncompleteStruct(&r->m_registry, leaf->name))
+                else if (IsIncompleteStruct(&r->registry, leaf->name))
                 {
                     DiagErrorFmt(diag, field->type.range, "field '%s' has incomplete type '%s'", field->name,
                                  leaf->name);
@@ -876,8 +876,8 @@ static void CheckStructFields(Resolver* r)
 
 static void CheckGlobalInits(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
 
     StrMap globalScope;
     StrMapInit(&globalScope);
@@ -943,7 +943,7 @@ static void CheckGlobalInits(Resolver* r)
                                  gd->type.name, initType->name);
                 }
             }
-            else if (!TypeClassify(&r->m_registry, r->m_arena, &gd->type).zeroValid)
+            else if (!TypeClassify(&r->registry, r->arena, &gd->type).zeroValid)
             {
                 /* A global starts as zeroes, and a zeroed box is a null pointer waiting to be read. */
                 DiagErrorFmt(diag, gd->base.range,
@@ -955,9 +955,9 @@ static void CheckGlobalInits(Resolver* r)
         }
 
         // String globals default to empty, like arrays.
-        bool stringLike = TypeIsString(&r->m_registry, gd->type.name)
-                          || (TypeNameIsOptional(&gd->type) && gd->type.inner
-                              && TypeIsString(&r->m_registry, gd->type.inner->name));
+        bool stringLike
+            = TypeIsString(&r->registry, gd->type.name)
+              || (TypeNameIsOptional(&gd->type) && gd->type.inner && TypeIsString(&r->registry, gd->type.inner->name));
 
         if (!gd->init)
         {
@@ -1003,8 +1003,8 @@ static void CheckGlobalInits(Resolver* r)
 
 static void CheckFunctionSignatures(Resolver* r)
 {
-    Module* mod = r->m_mod;
-    DiagnosticEngine* diag = r->m_diag;
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
 
     for (size_t i = 0; i < mod->functions.count; i++)
     {
@@ -1025,7 +1025,7 @@ static void CheckFunctionSignatures(Resolver* r)
             /* By value, an owning struct argument is deep-copied for the callee: never for a destructor. */
             if (!functionDecl->isExtern && p->mod == ModNone && !TypeNameIsBox(&p->type)
                 && !TypeNameIsOptional(&p->type) && !TypeNameHasArrayShape(&p->type)
-                && TypeNameHasDrop(&r->m_registry, &p->type))
+                && TypeNameHasDrop(&r->registry, &p->type))
             {
                 DiagErrorFmt(
                     diag, p->base.range,
@@ -1035,10 +1035,10 @@ static void CheckFunctionSignatures(Resolver* r)
 
             /* Structs (forward-declared ones included) cross to the host as pointers, so the
                declaration has to say so. */
-            const char* paramLeaf = TypeRegistryResolveAlias(&r->m_registry, p->type.name);
+            const char* paramLeaf = TypeRegistryResolveAlias(&r->registry, p->type.name);
 
             if (functionDecl->isExtern && p->mod == ModNone && TypeNameIsBare(&p->type)
-                && (IsDefinedStruct(&r->m_registry, paramLeaf) || IsIncompleteStruct(&r->m_registry, paramLeaf)))
+                && (IsDefinedStruct(&r->registry, paramLeaf) || IsIncompleteStruct(&r->registry, paramLeaf)))
             {
                 DiagErrorFmt(diag, p->base.range,
                              "extern parameter '%s' can't take struct '%s' by value; the host receives a pointer, "
@@ -1060,7 +1060,7 @@ static void CheckFunctionSignatures(Resolver* r)
            pointer) is exempt: its type comes back through the parameter,
            never in the return register. */
         if (functionDecl->isExtern && !functionDecl->hasReturnParam
-            && IsDefinedStruct(&r->m_registry, TypeRegistryResolveAlias(&r->m_registry, functionDecl->returnType.name)))
+            && IsDefinedStruct(&r->registry, TypeRegistryResolveAlias(&r->registry, functionDecl->returnType.name)))
         {
             DiagError(diag, functionDecl->base.range, "extern function cannot return a struct type by value");
         }
@@ -1070,13 +1070,13 @@ static void CheckFunctionSignatures(Resolver* r)
            caller copies into a fresh owned buffer (codegen BuildOwnedStringFromCStr). */
         if (functionDecl->isExtern && !functionDecl->hasReturnParam)
         {
-            const char* leaf = TypeRegistryResolveAlias(&r->m_registry, functionDecl->returnType.name);
-            TypeName parsed = TypeNameParse(r->m_arena, leaf);
+            const char* leaf = TypeRegistryResolveAlias(&r->registry, functionDecl->returnType.name);
+            TypeName parsed = TypeNameParse(r->arena, leaf);
 
             const TypeName* unwrapped = TypeNameIsOptional(&parsed) ? parsed.inner : &parsed;
             bool isFat
                 = (unwrapped && TypeNameIsDynamicArray(unwrapped))
-                  || (TypeNameIsOptional(&parsed) && TypeIsString(&r->m_registry, unwrapped ? unwrapped->name : NULL));
+                  || (TypeNameIsOptional(&parsed) && TypeIsString(&r->registry, unwrapped ? unwrapped->name : NULL));
 
             if (isFat)
             {
@@ -1091,7 +1091,7 @@ static void CheckFunctionSignatures(Resolver* r)
            through the pointer, which needs no size - exactly like a `ref Foo`
            parameter. The CALLER still needs a defined type to allocate the
            out slot, so the call site requires it (see ResolveCall). */
-        if (!functionDecl->hasReturnParam && IsIncompleteStruct(&r->m_registry, functionDecl->returnType.name))
+        if (!functionDecl->hasReturnParam && IsIncompleteStruct(&r->registry, functionDecl->returnType.name))
         {
             DiagErrorFmt(diag, functionDecl->base.range, "function cannot return incomplete type '%s'",
                          functionDecl->returnType.name);
@@ -1101,23 +1101,23 @@ static void CheckFunctionSignatures(Resolver* r)
 
 static void ReleaseResolverState(Resolver* r)
 {
-    StrMapFree(&r->m_constVars);
-    StrMapFree(&r->m_constGlobals);
-    StrMapFree(&r->m_boxGlobals);
-    StrMapFree(&r->m_refBoxParams);
-    StrMapFree(&r->m_refLocals);
-    StrMapFree(&r->m_refArrayParams);
-    StrMapFree(&r->m_typeCache);
-    free(r->m_deferFrames.items);
-    free(r->m_loopFlows.items);
+    StrMapFree(&r->constVars);
+    StrMapFree(&r->constGlobals);
+    StrMapFree(&r->boxGlobals);
+    StrMapFree(&r->refBoxParams);
+    StrMapFree(&r->refLocals);
+    StrMapFree(&r->refArrayParams);
+    StrMapFree(&r->typeCache);
+    free(r->deferFrames.items);
+    free(r->loopFlows.items);
 }
 
 void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     Resolver r = {0};
-    r.m_mod = mod;
-    r.m_diag = diag;
-    r.m_arena = arena;
+    r.mod = mod;
+    r.diag = diag;
+    r.arena = arena;
 
     CollectDeclarations(&r);
     RegisterTypeAliases(&r);
@@ -1136,8 +1136,8 @@ void ResolveOverloads(Module* mod, DiagnosticEngine* diag, Arena* arena)
     CheckFunctionSignatures(&r);
     ReleaseResolverState(&r);
 
-    MoveCheckModule(mod, &r.m_registry, &r.m_nodeTypes, diag, arena);
+    MoveCheckModule(mod, &r.registry, &r.nodeTypes, diag, arena);
 
-    NodeTypesFree(&r.m_nodeTypes);
-    TypeRegistryFree(&r.m_registry);
+    NodeTypesFree(&r.nodeTypes);
+    TypeRegistryFree(&r.registry);
 }

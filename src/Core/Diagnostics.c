@@ -20,52 +20,52 @@ static const char* SeverityName(DiagSeverity s)
 
 void DiagnosticEngineInit(DiagnosticEngine* diag)
 {
-    ArenaInit(&diag->m_arena, 0);
-    diag->m_diagnostics = NULL;
-    diag->m_count = 0;
-    diag->m_cap = 0;
-    diag->m_errorCount = 0;
+    ArenaInit(&diag->arena, 0);
+    diag->diagnostics = NULL;
+    diag->count = 0;
+    diag->cap = 0;
+    diag->errorCount = 0;
 }
 
 void DiagnosticEngineFree(DiagnosticEngine* diag)
 {
-    ArenaFree(&diag->m_arena);
-    free(diag->m_diagnostics);
-    diag->m_diagnostics = NULL;
-    diag->m_count = 0;
-    diag->m_cap = 0;
-    diag->m_errorCount = 0;
+    ArenaFree(&diag->arena);
+    free(diag->diagnostics);
+    diag->diagnostics = NULL;
+    diag->count = 0;
+    diag->cap = 0;
+    diag->errorCount = 0;
 }
 
 static void DiagPushBack(DiagnosticEngine* diag, Diagnostic d)
 {
-    if (diag->m_count >= diag->m_cap)
+    if (diag->count >= diag->cap)
     {
-        size_t newcap = diag->m_cap ? diag->m_cap * 2 : 16;
+        size_t newcap = diag->cap ? diag->cap * 2 : 16;
 
-        diag->m_diagnostics = (Diagnostic*)realloc(diag->m_diagnostics, newcap * sizeof(Diagnostic));
-        if (!diag->m_diagnostics)
+        diag->diagnostics = (Diagnostic*)realloc(diag->diagnostics, newcap * sizeof(Diagnostic));
+        if (!diag->diagnostics)
         {
             STRATA_OOM();
         }
 
-        diag->m_cap = newcap;
+        diag->cap = newcap;
     }
 
-    diag->m_diagnostics[diag->m_count++] = d;
+    diag->diagnostics[diag->count++] = d;
 }
 
 void DiagReport(DiagnosticEngine* diag, DiagSeverity severity, SourceRange range, const char* message)
 {
     if (severity == SevError)
     {
-        diag->m_errorCount++;
+        diag->errorCount++;
     }
 
     DiagPushBack(diag, (Diagnostic){
                            .severity = severity,
                            .range = range,
-                           .message = ArenaStrdup(&diag->m_arena, message),
+                           .message = ArenaStrdup(&diag->arena, message),
                        });
 }
 
@@ -73,12 +73,12 @@ void DiagReportFmt(DiagnosticEngine* diag, DiagSeverity severity, SourceRange ra
 {
     va_list args;
     va_start(args, fmt);
-    char* msg = ArenaVFormat(&diag->m_arena, fmt, args);
+    char* msg = ArenaVFormat(&diag->arena, fmt, args);
     va_end(args);
 
     if (severity == SevError)
     {
-        diag->m_errorCount++;
+        diag->errorCount++;
     }
 
     DiagPushBack(diag, (Diagnostic){
@@ -108,7 +108,7 @@ void DiagErrorFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ..
     va_list args;
     va_start(args, fmt);
 
-    char* msg = ArenaVFormat(&diag->m_arena, fmt, args);
+    char* msg = ArenaVFormat(&diag->arena, fmt, args);
 
     va_end(args);
 
@@ -120,7 +120,7 @@ void DiagNoteFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...
     va_list args;
     va_start(args, fmt);
 
-    char* msg = ArenaVFormat(&diag->m_arena, fmt, args);
+    char* msg = ArenaVFormat(&diag->arena, fmt, args);
 
     va_end(args);
 
@@ -129,34 +129,34 @@ void DiagNoteFmt(DiagnosticEngine* diag, SourceRange range, const char* fmt, ...
 
 uint32_t DiagErrorCount(const DiagnosticEngine* diag)
 {
-    return diag->m_errorCount;
+    return diag->errorCount;
 }
 
 bool DiagHasErrors(const DiagnosticEngine* diag)
 {
-    return diag->m_errorCount > 0;
+    return diag->errorCount > 0;
 }
 
 size_t DiagCount(const DiagnosticEngine* diag)
 {
-    return diag->m_count;
+    return diag->count;
 }
 
 void DiagClear(DiagnosticEngine* diag)
 {
-    diag->m_count = 0;
-    diag->m_errorCount = 0;
+    diag->count = 0;
+    diag->errorCount = 0;
 }
 
 void DiagTruncate(DiagnosticEngine* diag, size_t count)
 {
-    while (diag->m_count > count)
+    while (diag->count > count)
     {
-        diag->m_count--;
+        diag->count--;
 
-        if (diag->m_diagnostics[diag->m_count].severity == SevError && diag->m_errorCount > 0)
+        if (diag->diagnostics[diag->count].severity == SevError && diag->errorCount > 0)
         {
-            diag->m_errorCount--;
+            diag->errorCount--;
         }
     }
 }
@@ -166,9 +166,9 @@ char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* sources, siz
     Sb sb;
     SbInit(&sb);
 
-    for (size_t i = 0; i < diag->m_count; i++)
+    for (size_t i = 0; i < diag->count; i++)
     {
-        const Diagnostic* d = &diag->m_diagnostics[i];
+        const Diagnostic* d = &diag->diagnostics[i];
 
         const SourceManager* src = (sourceCount > 0) ? &sources[0] : NULL;
         if (d->range.fileId < sourceCount)
@@ -177,7 +177,7 @@ char* DiagFormat(const DiagnosticEngine* diag, const SourceManager* sources, siz
         }
 
         LineCol lc = src ? SourceManagerLineCol(src, d->range.start) : (LineCol){0, 0};
-        const char* fileName = src ? src->m_name : "<unknown>";
+        const char* fileName = src ? src->name : "<unknown>";
 
         SbPrintf(&sb, "%s(%u,%u): %s: ", fileName, lc.line, lc.column, SeverityName(d->severity));
         SbPuts(&sb, d->message);

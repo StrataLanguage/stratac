@@ -22,7 +22,7 @@ static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structNam
 {
     ArrayInitExpr* ai = AsNode(ArrayInitExpr, braced);
 
-    StructInitExpr* init = (StructInitExpr*)ArenaAlloc(r->m_arena, sizeof(StructInitExpr));
+    StructInitExpr* init = (StructInitExpr*)ArenaAlloc(r->arena, sizeof(StructInitExpr));
     memset(init, 0, sizeof(StructInitExpr));
     init->base.kind = NodeStructInit;
     init->base.range = ai->base.range;
@@ -31,7 +31,7 @@ static Node* BracedToStructInit(Resolver* r, Node* braced, const char* structNam
 
     for (size_t i = 0; i < ai->elements.count; i++)
     {
-        StructInitField* field = (StructInitField*)ArenaAlloc(r->m_arena, sizeof(StructInitField));
+        StructInitField* field = (StructInitField*)ArenaAlloc(r->arena, sizeof(StructInitField));
         field->name = NULL;
         field->value = (Node*)VecGet(&ai->elements, i);
         VecPush(&init->fields, field);
@@ -45,8 +45,8 @@ Node* ApplyBracedStructTarget(Resolver* r, Node* node, const TypeName* target)
 {
     const TypeName* unwrapped = UnwrapBoxPtr(target);
 
-    if (!unwrapped || !TypeRegistryIsUserType(&r->m_registry, unwrapped->name)
-        || TypeRegistryIsOpaque(&r->m_registry, unwrapped->name))
+    if (!unwrapped || !TypeRegistryIsUserType(&r->registry, unwrapped->name)
+        || TypeRegistryIsOpaque(&r->registry, unwrapped->name))
     {
         return node;
     }
@@ -68,15 +68,15 @@ void CheckStructInitFields(Resolver* r, Node* n)
 {
     StructInitExpr* init = (StructInitExpr*)n;
 
-    const StructType* structType = TypeRegistryFind(&r->m_registry, init->typeName);
+    const StructType* structType = TypeRegistryFind(&r->registry, init->typeName);
 
-    if (!structType || structType->fields.count == 0 || TypeRegistryIsOpaque(&r->m_registry, init->typeName))
+    if (!structType || structType->fields.count == 0 || TypeRegistryIsOpaque(&r->registry, init->typeName))
     {
         return;
     }
 
     size_t fieldCount = structType->fields.count;
-    bool* covered = (bool*)ArenaAlloc(r->m_arena, fieldCount * sizeof(bool));
+    bool* covered = (bool*)ArenaAlloc(r->arena, fieldCount * sizeof(bool));
     size_t positionalSeen = 0;
 
     for (size_t i = 0; i < init->fields.count; i++)
@@ -88,7 +88,7 @@ void CheckStructInitFields(Resolver* r, Node* n)
 
         if (field->name && field->name[0] != '\0')
         {
-            int named = TypeRegistryFieldIndex(&r->m_registry, init->typeName, field->name);
+            int named = TypeRegistryFieldIndex(&r->registry, init->typeName, field->name);
 
             if (named >= 0)
             {
@@ -142,9 +142,9 @@ void CheckStructInitFields(Resolver* r, Node* n)
            null, a zero-filled T[] is the canonical empty {null, 0} fat
            struct). */
         /* An alias of an optional or an array is judged as the type it names. */
-        const TypeName* fieldType = ResolveAliasedType(&r->m_registry, r->m_arena, &fd->type);
+        const TypeName* fieldType = ResolveAliasedType(&r->registry, r->arena, &fd->type);
         bool mustInit = !TypeNameIsOptional(fieldType) && !TypeNameIsDynamicArray(fieldType)
-                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->m_registry, fd->type.name));
+                        && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->registry, fd->type.name));
 
         if (mustInit && !covered[f])
         {
@@ -153,7 +153,7 @@ void CheckStructInitFields(Resolver* r, Node* n)
             const TypeName* inner = TypeNameBoxInner(&fd->type);
             const char* optSpelling = inner ? inner->name : fd->type.name;
 
-            DiagErrorFmt(r->m_diag, init->base.range,
+            DiagErrorFmt(r->diag, init->base.range,
                          "owning field '%s' of struct '%s' must be initialized "
                          "(declare it '%s?' if it may be empty)",
                          fd->name, init->typeName, optSpelling);
@@ -169,11 +169,11 @@ FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* me
     const char* hn = handleName;
     size_t depth = 0;
 
-    while (hn && depth <= r->m_registry.count)
+    while (hn && depth <= r->registry.count)
     {
-        for (size_t i = 0; i < r->m_mod->impls.count; i++)
+        for (size_t i = 0; i < r->mod->impls.count; i++)
         {
-            ImplDecl* impl = (ImplDecl*)VecGet(&r->m_mod->impls, i);
+            ImplDecl* impl = (ImplDecl*)VecGet(&r->mod->impls, i);
 
             if (strcmp(impl->handleName, hn) != 0)
             {
@@ -191,7 +191,7 @@ FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* me
             }
         }
 
-        const StructType* t = TypeRegistryFind(&r->m_registry, hn);
+        const StructType* t = TypeRegistryFind(&r->registry, hn);
         hn = (t && t->opaque && t->extendsFrom) ? t->extendsFrom : NULL;
         depth++;
     }
@@ -202,7 +202,7 @@ FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* me
 /* Property lookup on the exact handle (no inheritance). */
 static PropertyDecl* FindImplProperty(Resolver* r, const char* handleName, const char* name)
 {
-    const ImplDecl* impl = ModuleFindImpl(r->m_mod, handleName);
+    const ImplDecl* impl = ModuleFindImpl(r->mod, handleName);
 
     if (!impl)
     {
@@ -228,7 +228,7 @@ PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char
 {
     const TypeName* inner = UnwrapBoxPtr(baseType);
 
-    if (!inner || !TypeRegistryIsImplTarget(&r->m_registry, inner->name))
+    if (!inner || !TypeRegistryIsImplTarget(&r->registry, inner->name))
     {
         return NULL;
     }
@@ -259,7 +259,7 @@ bool TryResolveScalarPseudoConst(Resolver* r, MemberExpr* m)
 
     if (!ScalarPseudoConst(primitive, m->member, NULL, NULL, NULL))
     {
-        DiagErrorFmt(r->m_diag, m->base.range, "type '%s' has no member '%s'", baseName, m->member);
+        DiagErrorFmt(r->diag, m->base.range, "type '%s' has no member '%s'", baseName, m->member);
         return true;
     }
 
@@ -282,7 +282,7 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     Node* base = c->calleeBase;
 
     /* `Type.Method(args)` — static call when the base is a type name. */
-    bool isStatic = base->kind == NodeIdent && TypeRegistryIsUserType(&r->m_registry, ((IdentExpr*)base)->name);
+    bool isStatic = base->kind == NodeIdent && TypeRegistryIsUserType(&r->registry, ((IdentExpr*)base)->name);
 
     const char* handleName = NULL;
 
@@ -304,9 +304,9 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* inner = UnwrapBoxPtr(raw);
 
-        if (!inner || !TypeRegistryIsImplTarget(&r->m_registry, inner->name))
+        if (!inner || !TypeRegistryIsImplTarget(&r->registry, inner->name))
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "type '%s' has no method '%s'", raw && inner ? inner->name : "?",
+            DiagErrorFmt(r->diag, c->base.range, "type '%s' has no method '%s'", raw && inner ? inner->name : "?",
                          c->callee);
             return true;
         }
@@ -320,12 +320,12 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         if (FindImplProperty(r, handleName, c->callee))
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "'%s' is a property of '%s', not a method; access it without ()",
+            DiagErrorFmt(r->diag, c->base.range, "'%s' is a property of '%s', not a method; access it without ()",
                          c->callee, handleName);
         }
         else
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "type '%s' has no method '%s'", handleName, c->callee);
+            DiagErrorFmt(r->diag, c->base.range, "type '%s' has no method '%s'", handleName, c->callee);
         }
 
         return true;
@@ -339,8 +339,8 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
 
-        if (TypeRegistryIsImplTarget(&r->m_registry, p0->type.name)
-            && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->m_registry, handleName, p0->type.name)))
+        if (TypeRegistryIsImplTarget(&r->registry, p0->type.name)
+            && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->registry, handleName, p0->type.name)))
         {
             VecPushFront(&c->args, c->calleeBase);
         }
@@ -576,7 +576,7 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
 
             if (ai->repeatCount)
             {
-                DiagErrorFmt(r->m_diag, field->value->range,
+                DiagErrorFmt(r->diag, field->value->range,
                              "'{ value; count }' cannot initialize fixed-size array field '%s'; "
                              "list the elements, or fill the field after construction",
                              fieldDecl->name);
@@ -588,7 +588,7 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
 
             if (!PlaceFixedArrayInit(&flat, 0, &fieldDecl->type, ai))
             {
-                DiagErrorFmt(r->m_diag, field->value->range,
+                DiagErrorFmt(r->diag, field->value->range,
                              "too many initializers for fixed-size array field '%s' (%ld max)", fieldDecl->name, total);
             }
 
@@ -626,9 +626,8 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
 
             if (elemType && !IsAssignableType(r, leaf, elemType) && !IsStrLiteralForCString(r, leaf, elem))
             {
-                DiagErrorFmt(r->m_diag, elem->range,
-                             "element of type '%s' cannot initialize '%s' element of field '%s'", elemType->name,
-                             leaf->name, fieldDecl->name);
+                DiagErrorFmt(r->diag, elem->range, "element of type '%s' cannot initialize '%s' element of field '%s'",
+                             elemType->name, leaf->name, fieldDecl->name);
             }
         }
     }
@@ -649,7 +648,7 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
 
             if (elemType && !IsAssignableType(r, elem, elemType) && !IsStrLiteralForCString(r, elem, element))
             {
-                DiagErrorFmt(r->m_diag, element->range,
+                DiagErrorFmt(r->diag, element->range,
                              "element of type '%s' cannot initialize '%s' element of field '%s'", elemType->name,
                              elem->name, fieldDecl->name);
             }
@@ -657,7 +656,7 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
     }
     else
     {
-        DiagErrorFmt(r->m_diag, field->value->range,
+        DiagErrorFmt(r->diag, field->value->range,
                      "braced initializers are only supported for array fields; "
                      "field '%s' has type '%s'",
                      fieldDecl->name, fieldDecl->type.name);
@@ -675,11 +674,11 @@ static void ResolveStructInitField(Resolver* r, StructInitExpr* structInitExpr, 
 
     if (field->name && field->name[0] != '\0')
     {
-        int idx = structType ? TypeRegistryFieldIndex(&r->m_registry, structInitExpr->typeName, field->name) : -1;
+        int idx = structType ? TypeRegistryFieldIndex(&r->registry, structInitExpr->typeName, field->name) : -1;
 
         if (structType && idx < 0)
         {
-            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "struct '%s' has no field named '%s'",
+            DiagErrorFmt(r->diag, structInitExpr->base.range, "struct '%s' has no field named '%s'",
                          structInitExpr->typeName, field->name);
         }
         else if (structType)
@@ -691,7 +690,7 @@ static void ResolveStructInitField(Resolver* r, StructInitExpr* structInitExpr, 
     {
         if (structType && (*positionalCount) >= structType->fields.count)
         {
-            DiagErrorFmt(r->m_diag, structInitExpr->base.range, "too many initializers for struct '%s'",
+            DiagErrorFmt(r->diag, structInitExpr->base.range, "too many initializers for struct '%s'",
                          structInitExpr->typeName);
         }
         else if (structType)
@@ -725,7 +724,7 @@ static void ResolveStructInitField(Resolver* r, StructInitExpr* structInitExpr, 
             if (fieldValueType && !IsAssignableType(r, &fieldDecl->type, fieldValueType)
                 && !IsStrLiteralForCString(r, &fieldDecl->type, field->value))
             {
-                DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+                DiagErrorFmt(r->diag, structInitExpr->base.range,
                              "field '%s' of struct '%s' cannot be initialized by expression of type '%s'",
                              fieldDecl->name, structInitExpr->typeName, fieldValueType->name);
             }
@@ -768,25 +767,25 @@ void ResolveStructInitExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
 
-    if (!TypeRegistryIsUserType(&r->m_registry, structInitExpr->typeName))
+    if (!TypeRegistryIsUserType(&r->registry, structInitExpr->typeName))
     {
-        DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is not a known aggregate type",
+        DiagErrorFmt(r->diag, structInitExpr->base.range, "'%s' is not a known aggregate type",
                      structInitExpr->typeName);
     }
-    else if (TypeRegistryIsTypeAlias(&r->m_registry, structInitExpr->typeName))
+    else if (TypeRegistryIsTypeAlias(&r->registry, structInitExpr->typeName))
     {
-        DiagErrorFmt(r->m_diag, structInitExpr->base.range,
+        DiagErrorFmt(r->diag, structInitExpr->base.range,
                      "'%s' is a type alias and cannot be initialized with a struct literal", structInitExpr->typeName);
     }
-    else if (TypeRegistryIsOpaque(&r->m_registry, structInitExpr->typeName))
+    else if (TypeRegistryIsOpaque(&r->registry, structInitExpr->typeName))
     {
-        DiagErrorFmt(r->m_diag, structInitExpr->base.range, "'%s' is opaque and may not be instantiated",
+        DiagErrorFmt(r->diag, structInitExpr->base.range, "'%s' is opaque and may not be instantiated",
                      structInitExpr->typeName);
     }
 
     size_t positionalCount = 0;
 
-    const StructType* structType = TypeRegistryFind(&r->m_registry, structInitExpr->typeName);
+    const StructType* structType = TypeRegistryFind(&r->registry, structInitExpr->typeName);
     for (size_t i = 0; i < structInitExpr->fields.count; i++)
     {
         StructInitField* field = (StructInitField*)VecGet(&structInitExpr->fields, i);
@@ -832,7 +831,7 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
 
     const TypeName* baseType = UnwrapBoxPtr(rawBaseType);
 
-    if (baseType && TypeRegistryIsOpaque(&r->m_registry, baseType->name))
+    if (baseType && TypeRegistryIsOpaque(&r->registry, baseType->name))
     {
         /* Properties and methods work on handles AND on opaque
            (forward-declared) structs; only the "no such member" wording
@@ -843,34 +842,34 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
         {
             if (!prop->getterSymbol)
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "property '%s' is write-only", m->member);
+                DiagErrorFmt(r->diag, m->base.range, "property '%s' is write-only", m->member);
             }
         }
         else if (FindImplMethod(r, baseType->name, m->member))
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'", m->member,
+            DiagErrorFmt(r->diag, m->base.range, "method '%s' must be called: use '%s.%s(...)'", m->member,
                          baseType->name, m->member);
         }
-        else if (IsIncompleteStruct(&r->m_registry, baseType->name))
+        else if (IsIncompleteStruct(&r->registry, baseType->name))
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "cannot access a member of incomplete type '%s'", baseType->name);
+            DiagErrorFmt(r->diag, m->base.range, "cannot access a member of incomplete type '%s'", baseType->name);
         }
         else
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "handle '%s' has no member '%s'", baseType->name, m->member);
+            DiagErrorFmt(r->diag, m->base.range, "handle '%s' has no member '%s'", baseType->name, m->member);
         }
     }
 
     /* `cstring` exposes only `.length` (no `.cap`, no other members). */
-    if (baseType && TypeIsCString(&r->m_registry, baseType->name) && strcmp(m->member, "length") != 0)
+    if (baseType && TypeIsCString(&r->registry, baseType->name) && strcmp(m->member, "length") != 0)
     {
-        DiagErrorFmt(r->m_diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
+        DiagErrorFmt(r->diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
     }
 
     /* A swizzle names lanes the vector has: `float2` has x and y, no z. */
     if (baseType)
     {
-        LaneCount lanes = IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name));
+        LaneCount lanes = IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, baseType->name));
         size_t len = strlen(m->member);
         bool swizzle = lanes != 0 && len >= 1 && len <= 4;
 
@@ -885,7 +884,7 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
 
             if (lane >= lanes)
             {
-                DiagErrorFmt(r->m_diag, m->base.range, "'%s' has no lane '%c'", baseType->name, m->member[i]);
+                DiagErrorFmt(r->diag, m->base.range, "'%s' has no lane '%c'", baseType->name, m->member[i]);
                 break;
             }
         }

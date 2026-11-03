@@ -11,7 +11,7 @@ const char* ExprEnumName(Resolver* r, const Node* n, const TypeName* t)
         return ((const MemberExpr*)n)->enumTypeName;
     }
 
-    if (t && t->name && TypeRegistryIsEnum(&r->m_registry, t->name))
+    if (t && t->name && TypeRegistryIsEnum(&r->registry, t->name))
     {
         return t->name;
     }
@@ -32,7 +32,7 @@ bool IsEnumFlagsOp(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName*
         return false;
     }
 
-    const StructType* st = TypeRegistryFind(&r->m_registry, lt->name);
+    const StructType* st = TypeRegistryFind(&r->registry, lt->name);
 
     return st && st->isEnum && st->isFlagsEnum;
 }
@@ -40,7 +40,7 @@ bool IsEnumFlagsOp(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName*
 /* Is `name` an enum that is not declared `@flags`? */
 bool IsPlainEnum(const Resolver* r, const char* name)
 {
-    const StructType* st = name ? TypeRegistryFind(&r->m_registry, name) : NULL;
+    const StructType* st = name ? TypeRegistryFind(&r->registry, name) : NULL;
 
     return st && st->isEnum && !st->isFlagsEnum;
 }
@@ -63,12 +63,12 @@ bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
         return false; /* a local shadows the enum type name */
     }
 
-    if (!TypeRegistryIsEnum(&r->m_registry, baseName))
+    if (!TypeRegistryIsEnum(&r->registry, baseName))
     {
         return false;
     }
 
-    const EnumDecl* ed = ModuleFindEnum(r->m_mod, baseName);
+    const EnumDecl* ed = ModuleFindEnum(r->mod, baseName);
 
     if (!ed)
     {
@@ -88,7 +88,7 @@ bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
         }
     }
 
-    DiagErrorFmt(r->m_diag, m->base.range, "enum '%s' has no member '%s'", baseName, m->member);
+    DiagErrorFmt(r->diag, m->base.range, "enum '%s' has no member '%s'", baseName, m->member);
     return true;
 }
 

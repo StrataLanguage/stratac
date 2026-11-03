@@ -125,10 +125,10 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
     }
 
     Str callSig = GenerateCallSignatureString(r, c, scope);
-    DiagErrorFmt(r->m_diag, c->base.range, "no matching call '%s'", callSig.data);
+    DiagErrorFmt(r->diag, c->base.range, "no matching call '%s'", callSig.data);
     free((void*)callSig.data);
 
-    DiagNoteFmt(r->m_diag, c->base.range, "did you mean %s?", formatBuffer);
+    DiagNoteFmt(r->diag, c->base.range, "did you mean %s?", formatBuffer);
 
     return false;
 }
@@ -145,9 +145,9 @@ bool FunctionVisibleTo(const FunctionDecl* fd, uint16_t callerFile)
    user's `dot(Vec3, Vec3)` is never hijacked by the SIMD resolver. */
 bool ModuleHasFunctionNamed(Resolver* r, const char* name, uint16_t callerFile)
 {
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; i < r->mod->functions.count; i++)
     {
-        FunctionDecl* fd = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        FunctionDecl* fd = (FunctionDecl*)VecGet(&r->mod->functions, i);
         if (strcmp(fd->name, name) == 0 && FunctionVisibleTo(fd, callerFile))
         {
             return true;
@@ -163,34 +163,33 @@ void CheckDelegateDecl(Resolver* r, const FunctionDecl* f)
 {
     if (f->hasReturnParam)
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "delegate '%s' cannot take a 'return' parameter", f->name);
+        DiagErrorFmt(r->diag, f->base.range, "delegate '%s' cannot take a 'return' parameter", f->name);
     }
 
     for (size_t i = 0; i < f->params.count; i++)
     {
         const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
-        const char* leaf = TypeRegistryResolveAlias(&r->m_registry, p->type.name);
+        const char* leaf = TypeRegistryResolveAlias(&r->registry, p->type.name);
 
-        if (p->mod == ModNone && TypeNameIsBare(&p->type) && IsDefinedStruct(&r->m_registry, leaf))
+        if (p->mod == ModNone && TypeNameIsBare(&p->type) && IsDefinedStruct(&r->registry, leaf))
         {
-            DiagErrorFmt(r->m_diag, p->base.range,
+            DiagErrorFmt(r->diag, p->base.range,
                          "delegate parameter '%s' can't take struct '%s' by value; declare it 'const ref %s'", p->name,
                          p->type.name, p->type.name);
         }
 
         if (p->isVarargRest)
         {
-            DiagErrorFmt(r->m_diag, p->base.range, "delegate '%s' cannot have a typed rest parameter", f->name);
+            DiagErrorFmt(r->diag, p->base.range, "delegate '%s' cannot have a typed rest parameter", f->name);
         }
     }
 
-    const char* ret = TypeRegistryResolveAlias(&r->m_registry, f->returnType.name);
+    const char* ret = TypeRegistryResolveAlias(&r->registry, f->returnType.name);
 
-    if (IsDefinedStruct(&r->m_registry, ret) || TypeNameIsDynamicArray(&f->returnType)
+    if (IsDefinedStruct(&r->registry, ret) || TypeNameIsDynamicArray(&f->returnType)
         || TypeNameIsOptional(&f->returnType))
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "delegate '%s' cannot return '%s' by value", f->name,
-                     f->returnType.name);
+        DiagErrorFmt(r->diag, f->base.range, "delegate '%s' cannot return '%s' by value", f->name, f->returnType.name);
     }
 }
 
@@ -198,28 +197,28 @@ void CheckExportDecl(Resolver* r, const FunctionDecl* f)
 {
     if (f->isExtern || !f->body)
     {
-        DiagErrorFmt(r->m_diag, f->base.range,
+        DiagErrorFmt(r->diag, f->base.range,
                      "'@export' function '%s' needs a body (it is defined here, not by the host)", f->name);
         return;
     }
 
     if (f->isVariadic)
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "'@export' function '%s' cannot be variadic", f->name);
+        DiagErrorFmt(r->diag, f->base.range, "'@export' function '%s' cannot be variadic", f->name);
     }
 
     for (size_t i = 0; i < f->params.count; i++)
     {
         const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
-        const char* leaf = TypeRegistryResolveAlias(&r->m_registry, p->type.name);
+        const char* leaf = TypeRegistryResolveAlias(&r->registry, p->type.name);
 
         /* `ref T` of a plain struct is a `T*` in C. */
-        bool plainStructRef = p->mod == ModRef && IsDefinedStruct(&r->m_registry, leaf)
-                              && !TypeRegistryIsOwningStruct(&r->m_registry, leaf);
+        bool plainStructRef = p->mod == ModRef && IsDefinedStruct(&r->registry, leaf)
+                              && !TypeRegistryIsOwningStruct(&r->registry, leaf);
 
         if (!plainStructRef && (p->mod == ModRef || !IsCAbiScalar(r, &p->type)))
         {
-            DiagErrorFmt(r->m_diag, p->base.range,
+            DiagErrorFmt(r->diag, p->base.range,
                          "'@export' parameter '%s' of type '%s' has no C ABI; use numbers, bools, enums, handles, "
                          "cstring, or 'ref' to a plain struct",
                          p->name, p->type.name);
@@ -228,7 +227,7 @@ void CheckExportDecl(Resolver* r, const FunctionDecl* f)
 
     if (GetPrimitiveType(f->returnType.name) != PrimVoid && !IsCAbiScalar(r, &f->returnType))
     {
-        DiagErrorFmt(r->m_diag, f->base.range,
+        DiagErrorFmt(r->diag, f->base.range,
                      "'@export' function '%s' cannot return '%s'; return a number, bool, enum, handle or cstring",
                      f->name, f->returnType.name);
     }
@@ -246,9 +245,9 @@ static void CheckMisalignedRef(Resolver* r, Node* arg, StrMap* scope)
     MemberExpr* m = (MemberExpr*)arg;
     const TypeName* baseType = UnwrapBoxPtr(InferType(r, m->baseNode, scope));
 
-    if (baseType && baseType->name && TypeRegistryFieldMisaligned(&r->m_registry, baseType->name, m->member))
+    if (baseType && baseType->name && TypeRegistryFieldMisaligned(&r->registry, baseType->name, m->member))
     {
-        DiagErrorFmt(r->m_diag, arg->range,
+        DiagErrorFmt(r->diag, arg->range,
                      "cannot take a ref to field '%s' of '%s': its fieldoffset is misaligned for its type; read or "
                      "write it by value",
                      m->member, baseType->name);
@@ -300,7 +299,7 @@ static void CheckConstRefArgs(Resolver* r, const FunctionDecl* best, CallExpr* c
 
         if (constName)
         {
-            DiagErrorFmt(r->m_diag, arg->range,
+            DiagErrorFmt(r->diag, arg->range,
                          "'%s' is immutable and cannot be passed to non-const 'ref' parameter '%s' of '%s'", constName,
                          rp->name ? rp->name : "", best->name);
         }
@@ -348,9 +347,9 @@ void CheckCallArgOptionalDerefs(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     // Struct constructor: field slots are the targets.
-    if (TypeRegistryIsUserType(&r->m_registry, c->callee))
+    if (TypeRegistryIsUserType(&r->registry, c->callee))
     {
-        const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
+        const StructType* st = TypeRegistryFind(&r->registry, c->callee);
 
         for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
         {
@@ -399,9 +398,9 @@ static bool TypeMentionsParam(const FunctionDecl* generic, const TypeName* type)
 /* The `extern<T>` named `name` visible from `fileId`, or NULL. */
 static FunctionDecl* FindGenericExtern(Resolver* r, const char* name, uint16_t fileId)
 {
-    for (size_t i = 0; i < r->m_mod->functions.count; i++)
+    for (size_t i = 0; i < r->mod->functions.count; i++)
     {
-        FunctionDecl* candidate = (FunctionDecl*)VecGet(&r->m_mod->functions, i);
+        FunctionDecl* candidate = (FunctionDecl*)VecGet(&r->mod->functions, i);
 
         if (candidate->typeParam && strcmp(candidate->name, name) == 0 && FunctionVisibleTo(candidate, fileId))
         {
@@ -416,9 +415,9 @@ static FunctionDecl* FindGenericExtern(Resolver* r, const char* name, uint16_t f
    codegen declares it. The instantiation keeps the generic's host symbol (`name`). */
 static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic, const char* structName)
 {
-    for (size_t i = 0; i < r->m_mod->genericInstances.count; i++)
+    for (size_t i = 0; i < r->mod->genericInstances.count; i++)
     {
-        FunctionDecl* existing = (FunctionDecl*)VecGet(&r->m_mod->genericInstances, i);
+        FunctionDecl* existing = (FunctionDecl*)VecGet(&r->mod->genericInstances, i);
 
         if (existing->genericOf == generic && strcmp(existing->typeArg, structName) == 0)
         {
@@ -426,23 +425,23 @@ static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic
         }
     }
 
-    FunctionDecl* instance = AST_NEW(r->m_arena, FunctionDecl);
+    FunctionDecl* instance = AST_NEW(r->arena, FunctionDecl);
     *instance = *generic;
     instance->typeParam = NULL;
     instance->genericOf = generic;
-    instance->typeArg = ArenaStrdup(r->m_arena, structName);
-    instance->mangledName = ArenaFormat(r->m_arena, "%s<%s>", generic->name, structName);
+    instance->typeArg = ArenaStrdup(r->arena, structName);
+    instance->mangledName = ArenaFormat(r->arena, "%s<%s>", generic->name, structName);
     VecInit(&instance->params);
 
     for (size_t i = 0; i < generic->params.count; i++)
     {
         const ParamDecl* param = (const ParamDecl*)VecGet(&generic->params, i);
-        ParamDecl* copy = AST_NEW(r->m_arena, ParamDecl);
+        ParamDecl* copy = AST_NEW(r->arena, ParamDecl);
         *copy = *param;
 
         if (IsTypeParamName(generic, &param->type))
         {
-            TypeName substituted = TypeNameParse(r->m_arena, instance->typeArg);
+            TypeName substituted = TypeNameParse(r->arena, instance->typeArg);
             substituted.isConst = param->type.isConst;
             substituted.range = param->type.range;
             copy->type = substituted;
@@ -451,7 +450,7 @@ static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic
         VecPush(&instance->params, copy);
     }
 
-    VecPush(&r->m_mod->genericInstances, instance);
+    VecPush(&r->mod->genericInstances, instance);
 
     return instance;
 }
@@ -460,21 +459,21 @@ static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic
    return type, and no variadic or `return` parameters. */
 void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
 {
-    if (TypeRegistryIsUserType(&r->m_registry, f->typeParam) || GetPrimitiveType(f->typeParam) != PrimNone)
+    if (TypeRegistryIsUserType(&r->registry, f->typeParam) || GetPrimitiveType(f->typeParam) != PrimNone)
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "type parameter '%s' of '%s' has the same name as a type", f->typeParam,
+        DiagErrorFmt(r->diag, f->base.range, "type parameter '%s' of '%s' has the same name as a type", f->typeParam,
                      f->name);
     }
 
     if (TypeMentionsParam(f, &f->returnType))
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "generic extern '%s' can't return its type parameter '%s'", f->name,
+        DiagErrorFmt(r->diag, f->base.range, "generic extern '%s' can't return its type parameter '%s'", f->name,
                      f->typeParam);
     }
 
     if (f->isVariadic || f->hasReturnParam)
     {
-        DiagErrorFmt(r->m_diag, f->base.range, "generic extern '%s' can't be variadic or take a 'return' parameter",
+        DiagErrorFmt(r->diag, f->base.range, "generic extern '%s' can't be variadic or take a 'return' parameter",
                      f->name);
     }
 
@@ -484,7 +483,7 @@ void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
 
         if (TypeMentionsParam(f, &param->type) && (!IsTypeParamName(f, &param->type) || param->mod != ModRef))
         {
-            DiagErrorFmt(r->m_diag, param->base.range,
+            DiagErrorFmt(r->diag, param->base.range,
                          "parameter '%s' of generic extern '%s' must be 'const ref %s' or 'ref %s'", param->name,
                          f->name, f->typeParam, f->typeParam);
         }
@@ -506,8 +505,7 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         if (c->typeArg && !IsTypedMemoryIntrinsic(r, c))
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "'%s' is not a generic extern; it takes no type argument",
-                         c->callee);
+            DiagErrorFmt(r->diag, c->base.range, "'%s' is not a generic extern; it takes no type argument", c->callee);
             return true;
         }
 
@@ -528,27 +526,27 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (!typeArg)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "can't infer '%s' for '%s'; name it explicitly: '%s<Type>(...)'",
+        DiagErrorFmt(r->diag, c->base.range, "can't infer '%s' for '%s'; name it explicitly: '%s<Type>(...)'",
                      generic->typeParam, generic->name, generic->name);
         return true;
     }
 
-    const char* leaf = TypeRegistryResolveAlias(&r->m_registry, typeArg->name);
+    const char* leaf = TypeRegistryResolveAlias(&r->registry, typeArg->name);
     const StructType* structType
         = (TypeNameHasArrayShape(typeArg) || TypeNameIsBox(typeArg) || TypeNameIsOptional(typeArg))
               ? NULL
-              : TypeRegistryFind(&r->m_registry, leaf);
+              : TypeRegistryFind(&r->registry, leaf);
 
     if (!structType || structType->opaque || structType->isTypeAlias)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "type argument '%s' for '%s' must be a struct type", typeArg->name,
+        DiagErrorFmt(r->diag, c->base.range, "type argument '%s' for '%s' must be a struct type", typeArg->name,
                      generic->name);
         return true;
     }
 
     if (structType->owning)
     {
-        DiagErrorFmt(r->m_diag, c->base.range,
+        DiagErrorFmt(r->diag, c->base.range,
                      "type argument '%s' for '%s' must be plain data; it holds owning fields (strings, boxes, "
                      "optionals or dynamic arrays)",
                      typeArg->name, generic->name);
@@ -561,7 +559,7 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (NamedParamCount(instance) != c->args.count)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' takes %zu argument(s) but %zu were given", generic->name,
+        DiagErrorFmt(r->diag, c->base.range, "'%s' takes %zu argument(s) but %zu were given", generic->name,
                      NamedParamCount(instance), c->args.count);
         return true;
     }
@@ -574,13 +572,13 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (param->mod == ModRef && !param->type.isConst && !IsLValueNode(arg))
         {
-            DiagErrorFmt(r->m_diag, arg->range,
+            DiagErrorFmt(r->diag, arg->range,
                          "argument %zu of '%s' is passed by non-const 'ref' and must be a variable", i + 1,
                          generic->name);
         }
         else if (argType && !IsAssignableType(r, &param->type, argType))
         {
-            DiagErrorFmt(r->m_diag, arg->range, "argument %zu of '%s' has type '%s' but '%s' was expected", i + 1,
+            DiagErrorFmt(r->diag, arg->range, "argument %zu of '%s' has type '%s' but '%s' was expected", i + 1,
                          generic->name, argType->name, param->type.name);
         }
     }
@@ -610,8 +608,8 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
     if (c->calleeBase)
     {
         const TypeName* baseType = UnwrapBoxPtr(InferType(r, c->calleeBase, scope));
-        const StructType* st = baseType ? TypeRegistryFind(&r->m_registry, baseType->name) : NULL;
-        int idx = st ? TypeRegistryFieldIndex(&r->m_registry, baseType->name, c->callee) : -1;
+        const StructType* st = baseType ? TypeRegistryFind(&r->registry, baseType->name) : NULL;
+        int idx = st ? TypeRegistryFieldIndex(&r->registry, baseType->name, c->callee) : -1;
 
         if (idx < 0)
         {
@@ -620,12 +618,12 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         const FieldDecl* field = (const FieldDecl*)VecGet((Vec*)&st->fields, (size_t)idx);
 
-        if (!TypeRegistryDelegate(&r->m_registry, field->type.name))
+        if (!TypeRegistryDelegate(&r->registry, field->type.name))
         {
             return false;
         }
 
-        MemberExpr* m = AST_NEW(r->m_arena, MemberExpr);
+        MemberExpr* m = AST_NEW(r->arena, MemberExpr);
         m->base.kind = NodeMember;
         m->base.range = c->base.range;
         m->baseNode = c->calleeBase;
@@ -637,12 +635,12 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
     {
         const TypeName* varType = (const TypeName*)StrMapGet(scope, c->callee);
 
-        if (!varType || !TypeRegistryDelegate(&r->m_registry, varType->name))
+        if (!varType || !TypeRegistryDelegate(&r->registry, varType->name))
         {
             return false;
         }
 
-        IdentExpr* id = AST_NEW(r->m_arena, IdentExpr);
+        IdentExpr* id = AST_NEW(r->arena, IdentExpr);
         id->base.kind = NodeIdent;
         id->base.range = c->base.range;
         id->name = c->callee;
@@ -652,7 +650,7 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
     ResolveExpr(r, c->delegateCallee, scope);
 
     const TypeName* t = InferType(r, c->delegateCallee, scope);
-    c->delegateDecl = t ? TypeRegistryDelegate(&r->m_registry, t->name) : NULL;
+    c->delegateDecl = t ? TypeRegistryDelegate(&r->registry, t->name) : NULL;
 
     if (!c->delegateDecl)
     {
@@ -707,7 +705,7 @@ static bool RejectFixedArrayArgs(Resolver* r, CallExpr* c, StrMap* scope)
         if (argType && TypeNameIsFixedArray(argType) && !addressOf
             && !OverloadTakesFixedView(r, c->callee, argType, c->base.range.fileId))
         {
-            DiagErrorFmt(r->m_diag, arg->range,
+            DiagErrorFmt(r->diag, arg->range,
                          "cannot pass fixed-size array '%s' of type '%s' as an argument; "
                          "pass its elements instead (e.g. '%s[0]')",
                          ((IdentExpr*)arg)->name, argType->name, ((IdentExpr*)arg)->name);
@@ -723,12 +721,12 @@ static bool RejectFixedArrayArgs(Resolver* r, CallExpr* c, StrMap* scope)
    is not a struct type. */
 static bool ResolveStructCtorCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    if (!TypeRegistryIsUserType(&r->m_registry, c->callee))
+    if (!TypeRegistryIsUserType(&r->registry, c->callee))
     {
         return false;
     }
 
-    const StructType* st = TypeRegistryFind(&r->m_registry, c->callee);
+    const StructType* st = TypeRegistryFind(&r->registry, c->callee);
 
     for (size_t j = 0; j < c->args.count && st && j < st->fields.count; j++)
     {
@@ -839,7 +837,7 @@ static void RewriteBracedCallArgs(Resolver* r, CallExpr* c, FunctionDecl* best)
         {
             if (best->isExtern && param->mod != ModRef)
             {
-                DiagErrorFmt(r->m_diag, arg->range,
+                DiagErrorFmt(r->diag, arg->range,
                              "cannot pass an array literal to by-value extern array parameter '%s' of '%s'; "
                              "pass an array variable or declare the parameter as 'ref %s'",
                              param->name ? param->name : "", best->name, param->type.name);
@@ -881,9 +879,9 @@ static void FinishResolvedCall(Resolver* r, CallExpr* c, StrMap* scope, Function
     /* A `return` param's caller allocates the out slot, so the return type
        must be a defined (sized) struct at every call site. The declaration
        itself may use a forward-declared type; only the call requires it. */
-    if (FunctionHasReturnParam(best) && IsIncompleteStruct(&r->m_registry, best->returnType.name))
+    if (FunctionHasReturnParam(best) && IsIncompleteStruct(&r->registry, best->returnType.name))
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "call to '%s' has incomplete return type '%s'", best->name,
+        DiagErrorFmt(r->diag, c->base.range, "call to '%s' has incomplete return type '%s'", best->name,
                      best->returnType.name);
         return;
     }
@@ -1092,12 +1090,12 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
     {
         return false;
     }
-    else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->m_registry, paramType->name))
+    else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->registry, paramType->name))
     {
         /* String literal contextually coerces to `cstring`. */
         *score += 1;
     }
-    else if (TypeIsCString(&r->m_registry, argType->name) && TypeIsString(&r->m_registry, paramType->name))
+    else if (TypeIsCString(&r->registry, argType->name) && TypeIsString(&r->registry, paramType->name))
     {
         /* `cstring` copies into a `string` param (heap copy). */
         *score += 1;
@@ -1110,8 +1108,8 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
     else if (IsSimdVector(argType->primitiveType) && IsSimdVector(paramType->primitiveType))
     {
         // Same rule as assignment: no implicit lane-count or element-type change.
-        if (IsVectorAssignableType(r, paramType, argType, TypeRegistryResolveAlias(&r->m_registry, paramType->name),
-                                   TypeRegistryResolveAlias(&r->m_registry, argType->name)))
+        if (IsVectorAssignableType(r, paramType, argType, TypeRegistryResolveAlias(&r->registry, paramType->name),
+                                   TypeRegistryResolveAlias(&r->registry, argType->name)))
         {
             *score += 1;
         }
@@ -1120,7 +1118,7 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
             return false;
         }
     }
-    else if (HandleExtendsFrom(&r->m_registry, argType->name, paramType->name))
+    else if (HandleExtendsFrom(&r->registry, argType->name, paramType->name))
     {
         *score += 1;
     }
@@ -1247,11 +1245,11 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
         VecPush(&delegatePool, (void*)c->delegateDecl);
     }
 
-    const Vec* pool = delegateCall ? &delegatePool : &r->m_mod->functions;
+    const Vec* pool = delegateCall ? &delegatePool : &r->mod->functions;
 
     if (!HasVisibleCandidate(c, pool, delegateCall))
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "unknown function '%s'", c->callee);
+        DiagErrorFmt(r->diag, c->base.range, "unknown function '%s'", c->callee);
         free(delegatePool.items);
         return;
     }
@@ -1265,11 +1263,11 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
     {
         if (delegateCall)
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "arguments do not match delegate '%s'", c->delegateDecl->name);
+            DiagErrorFmt(r->diag, c->base.range, "arguments do not match delegate '%s'", c->delegateDecl->name);
         }
         else
         {
-            DiagErrorFmt(r->m_diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
+            DiagErrorFmt(r->diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
                          c->args.count);
         }
         return;
@@ -1277,7 +1275,7 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
 
     if (ambiguous)
     {
-        DiagErrorFmt(r->m_diag, c->base.range, "ambiguous call to overload '%s'", c->callee);
+        DiagErrorFmt(r->diag, c->base.range, "ambiguous call to overload '%s'", c->callee);
     }
 
     c->callee = best->mangledName;

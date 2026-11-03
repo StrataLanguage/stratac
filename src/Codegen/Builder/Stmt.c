@@ -7,60 +7,60 @@ static void EmitStmtInner(Builder* b, Node* n);
 /* A `defer` scope: deferred statements queued for the enclosing block's exit. */
 void PushScope(Builder* b)
 {
-    BlockScope* bs = (BlockScope*)ArenaAlloc(b->m_arena, sizeof(BlockScope));
+    BlockScope* bs = (BlockScope*)ArenaAlloc(b->arena, sizeof(BlockScope));
     VecInit(&bs->defers);
-    VecPush(&b->m_scopes, bs);
+    VecPush(&b->scopes, bs);
 }
 
 void PopScope(Builder* b)
 {
-    VecPop(&b->m_scopes);
+    VecPop(&b->scopes);
 }
 
 BlockScope* TopScope(Builder* b)
 {
-    if (b->m_scopes.count == 0)
+    if (b->scopes.count == 0)
     {
         return NULL;
     }
 
-    return (BlockScope*)VecGet(&b->m_scopes, b->m_scopes.count - 1);
+    return (BlockScope*)VecGet(&b->scopes, b->scopes.count - 1);
 }
 
 /* ---- Lexical symbol scopes ----
-   `m_symbols` is flat, so each lexical block records the locals it declares;
+   `symbols` is flat, so each lexical block records the locals it declares;
    SymPop removes exactly those again. Sema already rejects redefinitions, so
    codegen silently overwrites (invalid programs never reach emission with
    diagnostics clean, and valid ones never collide). */
 void SymPush(Builder* b)
 {
-    Vec* frame = (Vec*)ArenaAlloc(b->m_arena, sizeof(Vec));
+    Vec* frame = (Vec*)ArenaAlloc(b->arena, sizeof(Vec));
     VecInit(frame);
-    VecPush(&b->m_symDecls, frame);
+    VecPush(&b->symDecls, frame);
 }
 
 void SymPop(Builder* b)
 {
-    if (b->m_symDecls.count == 0)
+    if (b->symDecls.count == 0)
     {
         return;
     }
 
-    Vec* frame = (Vec*)VecPop(&b->m_symDecls);
+    Vec* frame = (Vec*)VecPop(&b->symDecls);
 
     for (size_t i = 0; i < frame->count; i++)
     {
-        StrMapPut(&b->m_symbols, (const char*)VecGet(frame, i), NULL);
+        StrMapPut(&b->symbols, (const char*)VecGet(frame, i), NULL);
     }
 }
 
 void SymDeclare(Builder* b, const char* name, Value* sym)
 {
-    StrMapPut(&b->m_symbols, name, sym);
+    StrMapPut(&b->symbols, name, sym);
 
-    if (b->m_symDecls.count > 0)
+    if (b->symDecls.count > 0)
     {
-        Vec* top = (Vec*)VecGet(&b->m_symDecls, b->m_symDecls.count - 1);
+        Vec* top = (Vec*)VecGet(&b->symDecls, b->symDecls.count - 1);
         VecPush(top, (void*)name);
     }
 }
@@ -75,7 +75,7 @@ void RunDefers(Builder* b, BlockScope* scope)
 
     for (size_t i = scope->defers.count; i-- > 0;)
     {
-        if (b->m_terminated)
+        if (b->terminated)
         {
             break;
         }
@@ -88,9 +88,9 @@ void RunDefers(Builder* b, BlockScope* scope)
    scope first (Zig exits inner blocks before outer ones), each scope LIFO. */
 static void RunDefersFrom(Builder* b, StackMark fromIndex)
 {
-    for (size_t s = b->m_scopes.count; s-- > fromIndex;)
+    for (size_t s = b->scopes.count; s-- > fromIndex;)
     {
-        RunDefers(b, (BlockScope*)VecGet(&b->m_scopes, s));
+        RunDefers(b, (BlockScope*)VecGet(&b->scopes, s));
     }
 }
 
@@ -98,7 +98,7 @@ static void RunDefersFrom(Builder* b, StackMark fromIndex)
    borrowed (see BorrowTemp): a full statement is the temporaries' lifetime. */
 void EmitStmt(Builder* b, Node* n)
 {
-    StackMark tempMark = b->m_temps.count;
+    StackMark tempMark = b->temps.count;
 
     EmitStmtInner(b, n);
     FlushTemps(b, tempMark);
@@ -112,29 +112,29 @@ static void EmitReturnStmt(Builder* b, ReturnStmt* r)
     {
         Value raw = EmitExpr(b, r->value);
 
-        if (TypeDescIsBox(&b->m_curRet) && !TypeDescIsBox(&raw.typeDesc))
+        if (TypeDescIsBox(&b->curRet) && !TypeDescIsBox(&raw.typeDesc))
         {
             /* Returns ^T but expr is a plain T: box it, like a local. */
-            TypeDesc innerTd = Resolve(b, b->m_curRet.boxInner);
+            TypeDesc innerTd = Resolve(b, b->curRet.boxInner);
             LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "heap");
-            LLVMBuildStore(b->m_builder, Coerce(b, raw, innerTd).value, heap);
-            v = ValueMake(heap, b->m_curRet);
+            LLVMBuildStore(b->builder, Coerce(b, raw, innerTd).value, heap);
+            v = ValueMake(heap, b->curRet);
         }
         else
         {
-            v = UnboxIfBox(b, Coerce(b, raw, b->m_curRet), b->m_curRet);
+            v = UnboxIfBox(b, Coerce(b, raw, b->curRet), b->curRet);
 
             if (TypeDescIsString(&v.typeDesc))
             {
                 /* Returning a string: construct the owned value
                    (heap-copy literal, move source). */
                 LLVMValueRef owned = EmitOwnedValue(b, v, r->value, StringTypeName(b));
-                v = ValueMake(owned, b->m_curRet);
+                v = ValueMake(owned, b->curRet);
             }
 
             Node* movedReturnNode = (TypeDescIsBox(&v.typeDesc) || TypeDescHasArrayShape(&v.typeDesc)
                                      || (v.typeDesc.structTypeName
-                                         && TypeRegistryIsOwningStruct(&b->m_registry, v.typeDesc.structTypeName)))
+                                         && TypeRegistryIsOwningStruct(&b->registry, v.typeDesc.structTypeName)))
                                         ? MovedSource(r->value)
                                         : NULL;
 
@@ -154,14 +154,14 @@ static void EmitReturnStmt(Builder* b, ReturnStmt* r)
 
     if (r->value)
     {
-        LLVMBuildRet(b->m_builder, ExtendToRetWidth(b, v.value, b->m_curRet, b->m_curRetAbi));
+        LLVMBuildRet(b->builder, ExtendToRetWidth(b, v.value, b->curRet, b->curRetAbi));
     }
     else
     {
-        LLVMBuildRetVoid(b->m_builder);
+        LLVMBuildRetVoid(b->builder);
     }
 
-    b->m_terminated = true;
+    b->terminated = true;
 }
 
 static void EmitExprStmt(Builder* b, Node* n)
@@ -172,8 +172,8 @@ static void EmitExprStmt(Builder* b, Node* n)
     /* Past a `@noreturn` call nothing runs: no drops, no defers, no fall-through return. */
     if (StmtIsNoReturnCall(n))
     {
-        LLVMBuildUnreachable(b->m_builder);
-        b->m_terminated = true;
+        LLVMBuildUnreachable(b->builder);
+        b->terminated = true;
     }
 }
 
@@ -181,14 +181,14 @@ static void EmitRefVarDecl(Builder* b, VarDeclStmt* varDecl)
 {
     TypeDesc refTd = Resolve(b, &varDecl->type);
     LValue lv = EmitLValue(b, varDecl->init);
-    LLVMValueRef addr = lv.valid ? lv.ptr : LLVMConstNull(b->m_ptrTy);
+    LLVMValueRef addr = lv.valid ? lv.ptr : LLVMConstNull(b->ptrTy);
 
     if (lv.valid && varDecl->refThroughBox)
     {
-        addr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "ref.box");
+        addr = LLVMBuildLoad2(b->builder, b->ptrTy, lv.ptr, "ref.box");
     }
 
-    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
     sym->value = addr;
     sym->typeDesc = refTd;
     SymDeclare(b, varDecl->name, sym);
@@ -201,18 +201,18 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
     if (varDecl->init)
     {
         Value value = UnboxIfBox(b, Coerce(b, EmitExpr(b, varDecl->init), typeDesc), typeDesc);
-        LLVMBuildStore(b->m_builder, value.value, slot);
+        LLVMBuildStore(b->builder, value.value, slot);
     }
     else
     {
         /* A bare `cstring` defaults to the static empty buffer (never
            NULL), mirroring the extern-boundary invariant. */
-        LLVMBuildStore(b->m_builder,
+        LLVMBuildStore(b->builder,
                        TypeDescIsCString(&typeDesc) ? EmptyNulString(b) : DefaultValueOf(b, &varDecl->type, typeDesc),
                        slot);
     }
 
-    Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
+    Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
     sym->value = slot;
     sym->typeDesc = typeDesc;
 
@@ -263,7 +263,7 @@ static void EmitDeferStmt(Builder* b, DeferStmt* d)
 
 static void EmitBlockStmt(Builder* b, Block* blk)
 {
-    StackMark mark = b->m_owningLocals.count;
+    StackMark mark = b->owningLocals.count;
 
     PushScope(b);
     SymPush(b);
@@ -272,13 +272,13 @@ static void EmitBlockStmt(Builder* b, Block* blk)
     {
         EmitStmt(b, (Node*)VecGet(&blk->statements, i));
 
-        if (b->m_terminated)
+        if (b->terminated)
         {
             break;
         }
     }
 
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
         RunDefers(b, TopScope(b));
     }
@@ -286,12 +286,12 @@ static void EmitBlockStmt(Builder* b, Block* blk)
     SymPop(b);
     PopScope(b);
 
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
         EmitDrops(b, mark);
     }
 
-    b->m_owningLocals.count = mark;
+    b->owningLocals.count = mark;
 }
 
 static void EmitIfStmt(Builder* b, IfStmt* i)
@@ -302,15 +302,15 @@ static void EmitIfStmt(Builder* b, IfStmt* i)
     LLVMBasicBlockRef endBB = NewBb(b, "if.end");
     LLVMBasicBlockRef elseBB = i->elseBranch ? NewBb(b, "if.else") : endBB;
 
-    LLVMBuildCondBr(b->m_builder, cond, thenBB, elseBB);
+    LLVMBuildCondBr(b->builder, cond, thenBB, elseBB);
 
-    b->m_terminated = true;
+    b->terminated = true;
 
     PositionAtEnd(b, thenBB);
     PushScope(b);
     SymPush(b);
     EmitStmt(b, i->thenBranch);
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
         RunDefers(b, TopScope(b));
     }
@@ -324,7 +324,7 @@ static void EmitIfStmt(Builder* b, IfStmt* i)
         PushScope(b);
         SymPush(b);
         EmitStmt(b, i->elseBranch);
-        if (!b->m_terminated)
+        if (!b->terminated)
         {
             RunDefers(b, TopScope(b));
         }
@@ -342,38 +342,38 @@ static void EmitWhileStmt(Builder* b, WhileStmt* w)
     LLVMBasicBlockRef bodyBB = NewBb(b, "while.body");
     LLVMBasicBlockRef endBB = NewBb(b, "while.end");
 
-    LLVMBuildBr(b->m_builder, condBB);
+    LLVMBuildBr(b->builder, condBB);
 
-    b->m_terminated = true;
+    b->terminated = true;
 
     PositionAtEnd(b, condBB);
 
     LLVMValueRef cond = EmitConditionI1(b, w->condition);
 
-    LLVMBuildCondBr(b->m_builder, cond, bodyBB, endBB);
+    LLVMBuildCondBr(b->builder, cond, bodyBB, endBB);
 
-    b->m_terminated = true;
+    b->terminated = true;
 
     PositionAtEnd(b, bodyBB);
 
-    Loop* loop = (Loop*)ArenaAlloc(b->m_arena, sizeof(Loop));
+    Loop* loop = (Loop*)ArenaAlloc(b->arena, sizeof(Loop));
     loop->cont = condBB;
     loop->end = endBB;
-    loop->bodyMark = b->m_owningLocals.count;
-    loop->scopeDepth = b->m_scopes.count;
-    VecPush(&b->m_loops, loop);
+    loop->bodyMark = b->owningLocals.count;
+    loop->scopeDepth = b->scopes.count;
+    VecPush(&b->loops, loop);
 
     PushScope(b);
     SymPush(b);
     EmitStmt(b, w->body);
-    bool term = b->m_terminated;
+    bool term = b->terminated;
     if (!term)
     {
         RunDefers(b, TopScope(b));
     }
     SymPop(b);
     PopScope(b);
-    VecPop(&b->m_loops);
+    VecPop(&b->loops);
 
     if (!term)
     {
@@ -385,7 +385,7 @@ static void EmitWhileStmt(Builder* b, WhileStmt* w)
 
 static void EmitForStmt(Builder* b, ForStmt* fs)
 {
-    StackMark headerMark = b->m_owningLocals.count;
+    StackMark headerMark = b->owningLocals.count;
 
     SymPush(b);
 
@@ -405,35 +405,35 @@ static void EmitForStmt(Builder* b, ForStmt* fs)
 
     if (fs->condition)
     {
-        LLVMBuildCondBr(b->m_builder, EmitConditionI1(b, fs->condition), bodyBB, endBB);
+        LLVMBuildCondBr(b->builder, EmitConditionI1(b, fs->condition), bodyBB, endBB);
     }
     else
     {
-        LLVMBuildBr(b->m_builder, bodyBB);
+        LLVMBuildBr(b->builder, bodyBB);
     }
 
-    b->m_terminated = true;
+    b->terminated = true;
 
     PositionAtEnd(b, bodyBB);
 
-    Loop* loop = (Loop*)ArenaAlloc(b->m_arena, sizeof(Loop));
+    Loop* loop = (Loop*)ArenaAlloc(b->arena, sizeof(Loop));
     loop->cont = updBB;
     loop->end = endBB;
-    loop->bodyMark = b->m_owningLocals.count;
-    loop->scopeDepth = b->m_scopes.count;
-    VecPush(&b->m_loops, loop);
+    loop->bodyMark = b->owningLocals.count;
+    loop->scopeDepth = b->scopes.count;
+    VecPush(&b->loops, loop);
 
     PushScope(b);
     SymPush(b);
     EmitStmt(b, fs->body);
-    bool term = b->m_terminated;
+    bool term = b->terminated;
     if (!term)
     {
         RunDefers(b, TopScope(b));
     }
     SymPop(b);
     PopScope(b);
-    VecPop(&b->m_loops);
+    VecPop(&b->loops);
 
     if (!term)
     {
@@ -444,7 +444,7 @@ static void EmitForStmt(Builder* b, ForStmt* fs)
 
     if (fs->update)
     {
-        StackMark tempMark = b->m_temps.count;
+        StackMark tempMark = b->temps.count;
         EmitDiscardExpr(b, fs->update);
         FlushTemps(b, tempMark);
     }
@@ -460,16 +460,16 @@ static void EmitForStmt(Builder* b, ForStmt* fs)
        whole loop and die here, on normal exit and on `break` alike (break
        only drops the body's locals, then branches here). */
     EmitDrops(b, headerMark);
-    b->m_owningLocals.count = headerMark;
+    b->owningLocals.count = headerMark;
 
     SymPop(b);
 }
 
 static void EmitBreakStmt(Builder* b, Node* n)
 {
-    if (b->m_loops.count > 0)
+    if (b->loops.count > 0)
     {
-        Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
+        Loop* loop = (Loop*)VecGet(&b->loops, b->loops.count - 1);
         RunDefersFrom(b, loop->scopeDepth);
         /* Drops only on this edge: the locals stay registered for the
            code that follows (an unbraced `if (c) break;` falls through
@@ -479,15 +479,15 @@ static void EmitBreakStmt(Builder* b, Node* n)
     }
     else
     {
-        DiagError(b->m_diag, n->range, "break statement not inside a loop");
+        DiagError(b->diag, n->range, "break statement not inside a loop");
     }
 }
 
 static void EmitContinueStmt(Builder* b, Node* n)
 {
-    if (b->m_loops.count > 0)
+    if (b->loops.count > 0)
     {
-        Loop* loop = (Loop*)VecGet(&b->m_loops, b->m_loops.count - 1);
+        Loop* loop = (Loop*)VecGet(&b->loops, b->loops.count - 1);
         RunDefersFrom(b, loop->scopeDepth);
         /* Edge-only drops, as for break. */
         EmitDrops(b, loop->bodyMark);
@@ -495,7 +495,7 @@ static void EmitContinueStmt(Builder* b, Node* n)
     }
     else
     {
-        DiagError(b->m_diag, n->range, "continue statement not inside a loop");
+        DiagError(b->diag, n->range, "continue statement not inside a loop");
     }
 }
 

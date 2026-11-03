@@ -5,13 +5,13 @@
    helper) the module's newest. NULL when the module has no instanced globals. */
 LLVMValueRef CurrentContext(Builder* b)
 {
-    if (b->m_curGlobalsPtr)
+    if (b->curGlobalsPtr)
     {
-        return b->m_curGlobalsPtr;
+        return b->curGlobalsPtr;
     }
 
-    return b->m_exportCtxGlobal ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, b->m_exportCtxGlobal, "curctx")
-                                : LLVMConstNull(b->m_ptrTy);
+    return b->exportCtxGlobal ? LLVMBuildLoad2(b->builder, b->ptrTy, b->exportCtxGlobal, "curctx")
+                              : LLVMConstNull(b->ptrTy);
 }
 
 /* Builds the getter/setter extern call for `m` (valueNode NULL = read).
@@ -22,13 +22,13 @@ Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
 
     const char* handleName = StaticExprTypeName(b, m->baseNode);
 
-    if (!handleName || !TypeRegistryIsOpaque(&b->m_registry, handleName))
+    if (!handleName || !TypeRegistryIsOpaque(&b->registry, handleName))
     {
         return ZeroInt(b);
     }
 
     ImplPropEntry* entry
-        = (ImplPropEntry*)StrMapGet(&b->m_implProps, ArenaFormat(b->m_arena, "%s.%s", handleName, m->member));
+        = (ImplPropEntry*)StrMapGet(&b->implProps, ArenaFormat(b->arena, "%s.%s", handleName, m->member));
 
     if (!entry)
     {
@@ -85,32 +85,32 @@ LLVMValueRef ToI1(Builder* b, Value v)
        the data pointer (a present value always has a non-null buffer). */
     if (TypeDescIsOptional(&v.typeDesc) && TypeDescHasArrayShape(&v.typeDesc))
     {
-        LLVMValueRef data = LLVMBuildExtractValue(b->m_builder, v.value, 0, "opt.data");
-        return LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "opt.has");
+        LLVMValueRef data = LLVMBuildExtractValue(b->builder, v.value, 0, "opt.data");
+        return LLVMBuildICmp(b->builder, LLVMIntNE, data, LLVMConstNull(b->ptrTy), "opt.has");
     }
 
     if (TypeDescIsFloat(&v.typeDesc))
     {
-        return LLVMBuildFCmp(b->m_builder, LLVMRealONE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
+        return LLVMBuildFCmp(b->builder, LLVMRealONE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
     }
 
-    return LLVMBuildICmp(b->m_builder, LLVMIntNE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
+    return LLVMBuildICmp(b->builder, LLVMIntNE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
 }
 
 static Value EmitIdent(Builder* b, IdentExpr* n)
 {
-    Value* sym = (Value*)StrMapGet(&b->m_symbols, n->name);
+    Value* sym = (Value*)StrMapGet(&b->symbols, n->name);
     bool isGlobal = false;
 
     if (!sym)
     {
-        sym = (Value*)StrMapGet(&b->m_globals, n->name);
+        sym = (Value*)StrMapGet(&b->globals, n->name);
         isGlobal = sym != NULL;
     }
 
     if (!sym)
     {
-        ConstValueSlot* cs = (ConstValueSlot*)StrMapGet(&b->m_constValues, n->name);
+        ConstValueSlot* cs = (ConstValueSlot*)StrMapGet(&b->constValues, n->name);
 
         if (cs)
         {
@@ -120,22 +120,22 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
 
         if (IsNullConstantName(n->name))
         {
-            return ValueMake(LLVMConstNull(b->m_ptrTy), ResolveByName(b, STRATA_NULL_TYPE));
+            return ValueMake(LLVMConstNull(b->ptrTy), ResolveByName(b, STRATA_NULL_TYPE));
         }
     }
 
     if (!sym)
     {
-        if (b->m_diag)
+        if (b->diag)
         {
-            DiagErrorFmt(b->m_diag, n->base.range, "unknown identifier '%s'", n->name);
+            DiagErrorFmt(b->diag, n->base.range, "unknown identifier '%s'", n->name);
         }
 
         return ZeroInt(b);
     }
 
     LLVMValueRef addr = isGlobal ? GlobalFieldPtr(b, n->name) : sym->value;
-    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, sym->typeDesc.type, addr, "id");
+    LLVMValueRef v = LLVMBuildLoad2(b->builder, sym->typeDesc.type, addr, "id");
 
     return ValueMake(v, sym->typeDesc);
 }
@@ -145,12 +145,12 @@ LValue EmitIdentLValue(Builder* b, IdentExpr* id)
 {
     LValue none = {0};
 
-    Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+    Value* sym = (Value*)StrMapGet(&b->symbols, id->name);
     bool isGlobal = false;
 
     if (!sym)
     {
-        sym = (Value*)StrMapGet(&b->m_globals, id->name);
+        sym = (Value*)StrMapGet(&b->globals, id->name);
         isGlobal = sym != NULL;
     }
 
@@ -209,11 +209,11 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
            back through it). */
         if (IsNameSimdVector(base.typeDesc.boxInner->name))
         {
-            return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box"),
+            return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "box"),
                                         Resolve(b, base.typeDesc.boxInner));
         }
 
-        structPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box");
+        structPtr = LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "box");
         structName = base.typeDesc.boxInner->name;
         structTy = Resolve(b, base.typeDesc.boxInner).type;
     }
@@ -232,14 +232,14 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
         return none;
     }
 
-    int idx = TypeRegistryFieldIndex(&b->m_registry, structName, m->member);
+    int idx = TypeRegistryFieldIndex(&b->registry, structName, m->member);
 
     if (idx < 0)
     {
         return none;
     }
 
-    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+    const StructType* st = TypeRegistryFind(&b->registry, structName);
 
     FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
     TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
@@ -250,7 +250,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     idxs[0] = IdxConst(b, 0);
     idxs[1] = IdxConst(b, physIdx);
 
-    LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "f");
+    LLVMValueRef ptr = LLVMBuildGEP2(b->builder, structTy, structPtr, idxs, 2, "f");
 
     none.valid = true;
     none.ptr = ptr;
@@ -270,10 +270,10 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
     {
         /* cstring[i]: load the pointer, bounds-check against strlen, and
            address the byte. Sema rejects writes, so this is a read view. */
-        LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "cs");
+        LLVMValueRef ptr = LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "cs");
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
         LLVMValueRef lenVal = BuildStrLen(b, ptr);
-        TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL);
+        TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->ctx), TDF_UNSIGNED, NULL);
 
         none.valid = true;
         none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, ptr, elemTd.type, elemTd, false);
@@ -302,16 +302,15 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
         return none;
     }
 
-    LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, base.ptr), "ap");
+    LLVMValueRef dataPtr = LLVMBuildLoad2(b->builder, b->ptrTy, ArrayDataPtr(b, base.ptr), "ap");
 
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
-    TypeDesc elemTd = TypeDescIsString(&base.typeDesc)
-                          ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
-                          : Resolve(b, base.typeDesc.arrayInner);
+    TypeDesc elemTd = TypeDescIsString(&base.typeDesc) ? TypeDescMake(LLVMInt8TypeInContext(b->ctx), TDF_UNSIGNED, NULL)
+                                                       : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
     LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
-    LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, base.ptr), "len"));
+    LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->builder, I32Ty(b), ArrayLenPtr(b, base.ptr), "len"));
 
     none.valid = true;
     none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, TypeDescIsAliasedArray(&base.typeDesc));
@@ -347,12 +346,12 @@ LLVMValueRef AsI64Index(Builder* b, Value v)
 {
     if (TypeDescIsFloat(&v.typeDesc))
     {
-        return LLVMBuildFPToSI(b->m_builder, v.value, I64Ty(b), "i");
+        return LLVMBuildFPToSI(b->builder, v.value, I64Ty(b), "i");
     }
 
     if (v.typeDesc.type != I64Ty(b))
     {
-        return LLVMBuildIntCast2(b->m_builder, v.value, I64Ty(b), !TypeDescIsUnsigned(&v.typeDesc), "i");
+        return LLVMBuildIntCast2(b->builder, v.value, I64Ty(b), !TypeDescIsUnsigned(&v.typeDesc), "i");
     }
 
     return v.value;
@@ -393,12 +392,12 @@ Value EmitMemberLValueRead(Builder* b, LValue lvalue)
     if (lvalue.vectorLane)
     {
         /* Single-lane vector read: load the vector, extract the lane. */
-        LLVMValueRef vec = LLVMBuildLoad2(b->m_builder, lvalue.vectorType, lvalue.ptr, "mvec");
-        LLVMValueRef v = LLVMBuildExtractElement(b->m_builder, vec, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
+        LLVMValueRef vec = LLVMBuildLoad2(b->builder, lvalue.vectorType, lvalue.ptr, "mvec");
+        LLVMValueRef v = LLVMBuildExtractElement(b->builder, vec, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
         return ValueMake(v, lvalue.typeDesc);
     }
 
-    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, lvalue.typeDesc.type, lvalue.ptr, "m");
+    LLVMValueRef v = LLVMBuildLoad2(b->builder, lvalue.typeDesc.type, lvalue.ptr, "m");
 
     return ValueMake(v, lvalue.typeDesc);
 }
@@ -407,7 +406,7 @@ Value EmitMemberLValueRead(Builder* b, LValue lvalue)
 Value EmitArrayDataMember(Builder* b, Value base)
 {
     TypeDesc ptrTd = ResolveByName(b, STRATA_PTR_TYPE);
-    LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, 0, "data");
+    LLVMValueRef v = LLVMBuildExtractValue(b->builder, base.value, 0, "data");
     BorrowTemp(b, base, ptrTd);
     return ValueMake(v, ptrTd);
 }
@@ -416,7 +415,7 @@ Value EmitArrayDataMember(Builder* b, Value base)
 Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
 {
     FieldIndex field = strcmp(n->member, "length") == 0 ? 1 : 2;
-    LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
+    LLVMValueRef v = LLVMBuildExtractValue(b->builder, base.value, field, n->member);
     TypeDesc lenTd = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL);
     BorrowTemp(b, base, lenTd);
     return ValueMake(v, lenTd);
@@ -433,7 +432,7 @@ Value EmitFixedArrayLengthMember(Builder* b, Value base)
 Value EmitCStringLengthMember(Builder* b, Value base)
 {
     LLVMValueRef len = BuildStrLen(b, base.value);
-    return ValueMake(LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
+    return ValueMake(LLVMBuildTrunc(b->builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
 }
 
 /* Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
@@ -443,18 +442,18 @@ bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
     /* A box-typed value with no addressable lvalue (e.g. a call result
         used directly: `MakeThing().field`) - GEP+load through the
         pointer instead of extracting from an aggregate value. */
-    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, base.typeDesc.boxInner->name);
-    int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.boxInner->name, n->member);
+    LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->structTypes, base.typeDesc.boxInner->name);
+    int idx = TypeRegistryFieldIndex(&b->registry, base.typeDesc.boxInner->name, n->member);
 
     if (structTy && idx >= 0)
     {
-        const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.boxInner->name);
+        const StructType* st = TypeRegistryFind(&b->registry, base.typeDesc.boxInner->name);
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
         TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
 
         LLVMValueRef idxs[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, idx))};
-        LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, base.value, idxs, 2, "f");
-        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, fieldTypeDesc.type, ptr, "m");
+        LLVMValueRef ptr = LLVMBuildGEP2(b->builder, structTy, base.value, idxs, 2, "f");
+        LLVMValueRef v = LLVMBuildLoad2(b->builder, fieldTypeDesc.type, ptr, "m");
 
         if (TypeDescIsOwning(b, &fieldTypeDesc))
         {
@@ -478,7 +477,7 @@ Value EmitBoxedVectorDeref(Builder* b, Value base)
     {
         /* Resolve a box (surrounding a vector) down to the vector type. */
         TypeDesc innerType = Resolve(b, base.typeDesc.boxInner);
-        base.value = LLVMBuildLoad2(b->m_builder, innerType.type, base.value, "boxvec");
+        base.value = LLVMBuildLoad2(b->builder, innerType.type, base.value, "boxvec");
         base.typeDesc = innerType;
     }
 
@@ -488,7 +487,7 @@ Value EmitBoxedVectorDeref(Builder* b, Value base)
 /* Lane or swizzle read of a SIMD vector value (`v.x`, `v.xy`). Returns false when the destructure does not apply. */
 bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
 {
-    LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
+    LLVMTypeRef floatType = LLVMFloatTypeInContext(b->ctx);
 
     LLVMValueRef dsValue = LSimdVectorDestructure(b, base.value, n);
 
@@ -506,11 +505,11 @@ bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
 /* Struct field read from a value. Returns false when the struct has no such field. */
 bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
 {
-    int idx = TypeRegistryFieldIndex(&b->m_registry, base.typeDesc.structTypeName, n->member);
+    int idx = TypeRegistryFieldIndex(&b->registry, base.typeDesc.structTypeName, n->member);
 
     if (idx >= 0)
     {
-        const StructType* st = TypeRegistryFind(&b->m_registry, base.typeDesc.structTypeName);
+        const StructType* st = TypeRegistryFind(&b->registry, base.typeDesc.structTypeName);
 
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
         TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
@@ -575,9 +574,9 @@ Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
         return out;
     }
 
-    if (b->m_diag)
+    if (b->diag)
     {
-        DiagErrorFmt(b->m_diag, n->base.range, "cannot access member '%s'", n->member);
+        DiagErrorFmt(b->diag, n->base.range, "cannot access member '%s'", n->member);
     }
 
     return ZeroInt(b);
@@ -630,7 +629,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 
     if (lv.valid)
     {
-        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, lv.typeDesc.type, lv.ptr, "el");
+        LLVMValueRef v = LLVMBuildLoad2(b->builder, lv.typeDesc.type, lv.ptr, "el");
 
         return ValueMake(v, lv.typeDesc);
     }
@@ -645,40 +644,39 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
         TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
 
         LLVMValueRef slot = EntryAlloca(b, base.typeDesc.type, "fxr");
-        LLVMBuildStore(b->m_builder, base.value, slot);
+        LLVMBuildStore(b->builder, base.value, slot);
 
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
 
         LLVMValueRef elemAddr
             = EmitCheckedFixedElemPtr(b, idxVal, base.typeDesc.fixedLength, slot, base.typeDesc.type, elemTd);
-        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTd.type, elemAddr, "el");
+        LLVMValueRef v = LLVMBuildLoad2(b->builder, elemTd.type, elemAddr, "el");
 
         return ValueMake(v, elemTd);
     }
 
     if (!TypeDescHasArrayShape(&base.typeDesc))
     {
-        if (b->m_diag)
+        if (b->diag)
         {
-            DiagErrorFmt(b->m_diag, n->base.range, "indexing a non-array value");
+            DiagErrorFmt(b->diag, n->base.range, "indexing a non-array value");
         }
 
         return ZeroInt(b);
     }
 
-    LLVMValueRef dataPtr = LLVMBuildExtractValue(b->m_builder, base.value, 0, "ap");
+    LLVMValueRef dataPtr = LLVMBuildExtractValue(b->builder, base.value, 0, "ap");
 
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
-    TypeDesc elemTd = TypeDescIsString(&base.typeDesc)
-                          ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
-                          : Resolve(b, base.typeDesc.arrayInner);
+    TypeDesc elemTd = TypeDescIsString(&base.typeDesc) ? TypeDescMake(LLVMInt8TypeInContext(b->ctx), TDF_UNSIGNED, NULL)
+                                                       : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
     LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
-    LLVMValueRef lenVal = WidenLen(b, LLVMBuildExtractValue(b->m_builder, base.value, 1, "len"));
+    LLVMValueRef lenVal = WidenLen(b, LLVMBuildExtractValue(b->builder, base.value, 1, "len"));
 
     LLVMValueRef elemAddr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, false);
-    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elemAddr, "el");
+    LLVMValueRef v = LLVMBuildLoad2(b->builder, elemTy, elemAddr, "el");
 
     if (TypeDescIsOwning(b, &elemTd))
     {
@@ -712,8 +710,8 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
     case UnNeg:
     {
-        LLVMValueRef ref = TypeDescIsFloat(&e.typeDesc) ? LLVMBuildFNeg(b->m_builder, e.value, "neg")
-                                                        : LLVMBuildNeg(b->m_builder, e.value, "neg");
+        LLVMValueRef ref = TypeDescIsFloat(&e.typeDesc) ? LLVMBuildFNeg(b->builder, e.value, "neg")
+                                                        : LLVMBuildNeg(b->builder, e.value, "neg");
 
         return ValueMake(ref, e.typeDesc);
     }
@@ -721,14 +719,14 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
     case UnNot:
     {
         LLVMValueRef v = ToI1(b, e);
-        LLVMValueRef ref = LLVMBuildXor(b->m_builder, v, LLVMConstInt(I1Ty(b), 1, 0), "not");
+        LLVMValueRef ref = LLVMBuildXor(b->builder, v, LLVMConstInt(I1Ty(b), 1, 0), "not");
 
         return ValueMake(ref, TypeDescMake(I1Ty(b), 0, NULL));
     }
 
     case UnBitNot:
     {
-        LLVMValueRef ref = LLVMBuildNot(b->m_builder, e.value, "bnot");
+        LLVMValueRef ref = LLVMBuildNot(b->builder, e.value, "bnot");
 
         return ValueMake(ref, e.typeDesc);
     }
@@ -744,7 +742,7 @@ LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
 {
     LLVMTypeRef ty = TypeDescHasArrayShape(&td) ? ArrayStructType(b) : td.type;
     LLVMValueRef saved = EntryAlloca(b, ty, "oldval");
-    LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, ty, slot, "old"), saved);
+    LLVMBuildStore(b->builder, LLVMBuildLoad2(b->builder, ty, slot, "old"), saved);
 
     return saved;
 }
@@ -752,7 +750,7 @@ LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
 /* One branch of `?:`, converted to the result type; its temporaries die inside the branch. */
 static LLVMValueRef EmitConditionalBranch(Builder* b, Node* n, TypeDesc td)
 {
-    StackMark tempMark = b->m_temps.count;
+    StackMark tempMark = b->temps.count;
     LLVMValueRef v;
 
     if (TypeDescIsCString(&td) && n->kind == NodeStrLiteral)
@@ -776,20 +774,20 @@ static Value EmitConditional(Builder* b, ConditionalExpr* ce)
     LLVMBasicBlockRef thenBB = NewBb(b, "cond.then");
     LLVMBasicBlockRef elseBB = NewBb(b, "cond.else");
     LLVMBasicBlockRef endBB = NewBb(b, "cond.end");
-    LLVMBuildCondBr(b->m_builder, cond, thenBB, elseBB);
+    LLVMBuildCondBr(b->builder, cond, thenBB, elseBB);
 
     PositionAtEnd(b, thenBB);
     LLVMValueRef thenValue = EmitConditionalBranch(b, ce->thenExpr, td);
-    LLVMBasicBlockRef thenEnd = LLVMGetInsertBlock(b->m_builder);
-    LLVMBuildBr(b->m_builder, endBB);
+    LLVMBasicBlockRef thenEnd = LLVMGetInsertBlock(b->builder);
+    LLVMBuildBr(b->builder, endBB);
 
     PositionAtEnd(b, elseBB);
     LLVMValueRef elseValue = EmitConditionalBranch(b, ce->elseExpr, td);
-    LLVMBasicBlockRef elseEnd = LLVMGetInsertBlock(b->m_builder);
-    LLVMBuildBr(b->m_builder, endBB);
+    LLVMBasicBlockRef elseEnd = LLVMGetInsertBlock(b->builder);
+    LLVMBuildBr(b->builder, endBB);
 
     PositionAtEnd(b, endBB);
-    LLVMValueRef phi = LLVMBuildPhi(b->m_builder, td.type, "cond");
+    LLVMValueRef phi = LLVMBuildPhi(b->builder, td.type, "cond");
     LLVMValueRef values[2] = {thenValue, elseValue};
     LLVMBasicBlockRef blocks[2] = {thenEnd, elseEnd};
     LLVMAddIncoming(phi, values, blocks, 2);
@@ -858,9 +856,9 @@ Value EmitExpr(Builder* b, Node* n)
         return EmitCast(b, (CastExpr*)n);
 
     default:
-        if (b->m_diag)
+        if (b->diag)
         {
-            DiagError(b->m_diag, n->range, "unsupported expression");
+            DiagError(b->diag, n->range, "unsupported expression");
         }
 
         return ZeroInt(b);
@@ -869,7 +867,7 @@ Value EmitExpr(Builder* b, Node* n)
 
 /* Emits an expression whose result is discarded (expression statement, `for`
    update). A direct call's OWNING result is spilled and dropped so the
-   temporary doesn't leak; an extern `string` return is flagged (m_discardCallResult)
+   temporary doesn't leak; an extern `string` return is flagged (discardCallResult)
    so its char* copy is skipped entirely. */
 void EmitDiscardExpr(Builder* b, Node* expr)
 {
@@ -879,14 +877,14 @@ void EmitDiscardExpr(Builder* b, Node* expr)
     }
 
     bool directCall = expr->kind == NodeCall;
-    b->m_discardCallResult = directCall;
+    b->discardCallResult = directCall;
     Value v = EmitExpr(b, expr);
-    b->m_discardCallResult = false;
+    b->discardCallResult = false;
 
     if (directCall && TypeDescIsOwning(b, &v.typeDesc))
     {
         LLVMValueRef slot = EntryAlloca(b, v.typeDesc.type, "discard");
-        LLVMBuildStore(b->m_builder, v.value, slot);
+        LLVMBuildStore(b->builder, v.value, slot);
         EmitDropOne(b, slot, v.typeDesc);
     }
 }
@@ -896,7 +894,7 @@ void EmitDiscardExpr(Builder* b, Node* expr)
    through like `&&`/`!` operands; an optional tests presence. */
 LLVMValueRef EmitConditionI1(Builder* b, Node* cond)
 {
-    StackMark tempMark = b->m_temps.count;
+    StackMark tempMark = b->temps.count;
     LLVMValueRef v = ToI1(b, EmitCondOperand(b, cond));
 
     FlushTemps(b, tempMark);

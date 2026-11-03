@@ -4,8 +4,8 @@
 
 typedef struct
 {
-    LLVMOrcLLJITRef m_jit;
-    Vec m_externs;
+    LLVMOrcLLJITRef jit;
+    Vec externs;
     void* allocFn; /* host-provided allocator (NULL = malloc) */
     void* freeFn;  /* host-provided deallocator (NULL = free) */
 } LLVMJit;

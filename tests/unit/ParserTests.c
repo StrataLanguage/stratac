@@ -288,9 +288,9 @@ static size_t CountDiagsContaining(const DiagnosticEngine* diag, const char* nee
 {
     size_t n = 0;
 
-    for (size_t i = 0; i < diag->m_count; i++)
+    for (size_t i = 0; i < diag->count; i++)
     {
-        if (strstr(diag->m_diagnostics[i].message, needle))
+        if (strstr(diag->diagnostics[i].message, needle))
         {
             n++;
         }

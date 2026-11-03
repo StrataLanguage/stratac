@@ -60,8 +60,8 @@ const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope)
     const char* name = ((IdentExpr*)base)->name;
     const TypeName* declared = (const TypeName*)StrMapGet(scope, name);
 
-    // Const locals are declared in `scope` (shadowing-aware); globals and params are in m_constVars.
-    if ((declared && declared->isConst) || StrMapGet(&r->m_constVars, name))
+    // Const locals are declared in `scope` (shadowing-aware); globals and params are in constVars.
+    if ((declared && declared->isConst) || StrMapGet(&r->constVars, name))
     {
         return name;
     }
@@ -85,9 +85,9 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMa
         {
             const TypeName* bt = InferType(r, tm->baseNode, scope);
 
-            if (bt && IsLengthPseudoMemberBase(&r->m_registry, bt))
+            if (bt && IsLengthPseudoMemberBase(&r->registry, bt))
             {
-                DiagErrorFmt(r->m_diag, range,
+                DiagErrorFmt(r->diag, range,
                              "cannot assign to '%s' (a read-only pseudo-member; use 'array_resize' instead)",
                              tm->member);
                 return;
@@ -99,7 +99,7 @@ static void CheckConstAssign(Resolver* r, Node* target, SourceRange range, StrMa
 
     if (name)
     {
-        DiagErrorFmt(r->m_diag, range, "'%s' is immutable", name);
+        DiagErrorFmt(r->diag, range, "'%s' is immutable", name);
     }
 }
 
@@ -156,7 +156,7 @@ bool CheckAllowListSingle(Resolver* r, CallExpr* c, StrMap* scope, const char** 
 const TypeName* InferType(Resolver* r, Node* n, StrMap* scope)
 {
     const TypeName* t = InferTypeImpl(r, n, scope);
-    NodeTypesPut(&r->m_nodeTypes, n, t);
+    NodeTypesPut(&r->nodeTypes, n, t);
     return t;
 }
 
@@ -218,9 +218,9 @@ static const TypeName* InferArithmeticType(Resolver* r, BinaryExpr* b, StrMap* s
     const char* ln2 = lt && TypeNameIsBox(lt) && lt->inner ? lt->inner->name : lt ? lt->name : "";
     const char* rn2 = rt && TypeNameIsBox(rt) && rt->inner ? rt->inner->name : rt ? rt->name : "";
 
-    if (SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0)
+    if (SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, ln2)) != 0)
     {
-        return InternTypeName(r, TypeRegistryResolveAlias(&r->m_registry, ln2));
+        return InternTypeName(r, TypeRegistryResolveAlias(&r->registry, ln2));
     }
 
     if (lp == PrimDouble || rp == PrimDouble)
@@ -323,7 +323,7 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
     }
 
     /* SIMD lane read / swizzle: `v.x` is a float, `v.xy` a float2, `v.xyz` a float3. */
-    if (IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name)) != 0)
+    if (IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, baseType->name)) != 0)
     {
         size_t lanes = strlen(m->member);
         bool swizzle = lanes >= 1 && lanes <= 4;
@@ -340,16 +340,16 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    if (TypeRegistryIsOpaque(&r->m_registry, baseType->name))
+    if (TypeRegistryIsOpaque(&r->registry, baseType->name))
     {
-        if (IsIncompleteStruct(&r->m_registry, baseType->name))
+        if (IsIncompleteStruct(&r->registry, baseType->name))
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member,
+            DiagErrorFmt(r->diag, m->base.range, "cannot access member '%s' of incomplete type '%s'", m->member,
                          baseType->name);
         }
         else
         {
-            DiagErrorFmt(r->m_diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member,
+            DiagErrorFmt(r->diag, m->base.range, "cannot access member '%s' of opaque handle '%s'", m->member,
                          baseType->name);
         }
 
@@ -364,13 +364,13 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
         return InternTypeName(r, strcmp(m->member, "data") == 0 ? STRATA_PTR_TYPE : "uint");
     }
 
-    const StructType* structType = TypeRegistryFind(&r->m_registry, baseType->name);
+    const StructType* structType = TypeRegistryFind(&r->registry, baseType->name);
     if (!structType)
     {
         return NULL;
     }
 
-    int idx = TypeRegistryFieldIndex(&r->m_registry, baseType->name, m->member);
+    int idx = TypeRegistryFieldIndex(&r->registry, baseType->name, m->member);
     if (idx < 0)
     {
         return NULL;
@@ -397,7 +397,7 @@ static const TypeName* InferCallType(Resolver* r, Node* n, StrMap* scope)
         return intrinsicType;
     }
 
-    if (TypeRegistryIsUserType(&r->m_registry, c->callee))
+    if (TypeRegistryIsUserType(&r->registry, c->callee))
     {
         return InternTypeName(r, c->callee);
     }
@@ -415,13 +415,13 @@ static const TypeName* InferIndexType(Resolver* r, Node* n, StrMap* scope)
         baseType = baseType->inner;
     }
 
-    if (baseType && TypeIsString(&r->m_registry, baseType->name))
+    if (baseType && TypeIsString(&r->registry, baseType->name))
     {
         // `s[i]` is a bounds-checked byte.
         return InternTypeName(r, "byte");
     }
 
-    if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+    if (baseType && TypeIsCString(&r->registry, baseType->name))
     {
         // `cs[i]` is a bounds-checked byte read (strlen is the length).
         return InternTypeName(r, "byte");
@@ -434,7 +434,7 @@ static const TypeName* InferArrayInitType(Resolver* r, Node* n, StrMap* scope)
 {
     const ArrayInitExpr* ai = (const ArrayInitExpr*)n;
 
-    return ai->elementType ? InternTypeName(r, ArenaFormat(r->m_arena, "%s[]", ai->elementType->name)) : NULL;
+    return ai->elementType ? InternTypeName(r, ArenaFormat(r->arena, "%s[]", ai->elementType->name)) : NULL;
 }
 
 static const TypeName* InferTypeImpl(Resolver* r, Node* n, StrMap* scope)
@@ -495,8 +495,7 @@ void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     if (!vd->init)
     {
-        DiagErrorFmt(r->m_diag, vd->base.range, "ref local '%s' must be bound to a variable, field or element",
-                     vd->name);
+        DiagErrorFmt(r->diag, vd->base.range, "ref local '%s' must be bound to a variable, field or element", vd->name);
         return;
     }
 
@@ -506,7 +505,7 @@ void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     if (!IsLValueNode(vd->init) || !key)
     {
-        DiagErrorFmt(r->m_diag, vd->init->range,
+        DiagErrorFmt(r->diag, vd->init->range,
                      "ref local '%s' must be bound to a variable, field or element, not a temporary", vd->name);
         return;
     }
@@ -526,7 +525,7 @@ void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     if (!exact && !through)
     {
-        DiagErrorFmt(r->m_diag, vd->init->range, "'ref %s %s' cannot be bound to a '%s'", vd->type.name, vd->name,
+        DiagErrorFmt(r->diag, vd->init->range, "'ref %s %s' cannot be bound to a '%s'", vd->type.name, vd->name,
                      initType->name);
         return;
     }
@@ -540,17 +539,17 @@ void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     if (constRoot && !vd->type.isConst)
     {
-        DiagErrorFmt(r->m_diag, vd->init->range,
+        DiagErrorFmt(r->diag, vd->init->range,
                      "'%s' is immutable, so a mutable ref cannot be bound into it; use 'const ref'", constRoot);
     }
 
     vd->refThroughBox = through;
-    StrMapPut(&r->m_refLocals, vd->name, (void*)CanonicalRefKey(r, key));
+    StrMapPut(&r->refLocals, vd->name, (void*)CanonicalRefKey(r, key));
 
     // Like a `ref` param: it does not own what it aliases, so it is never moved from or rebound.
     if (AliasIsOwning(r, &vd->type) || AliasIsOwningValue(r, &vd->type))
     {
-        StrMapPut(&r->m_refBoxParams, vd->name, (void*)1);
+        StrMapPut(&r->refBoxParams, vd->name, (void*)1);
     }
 }
 
@@ -571,13 +570,13 @@ static void ResolveIdentExpr(Resolver* r, Node* n, StrMap* scope)
 
     if (!varType && strcmp(ident->name, "null") == 0)
     {
-        DiagError(r->m_diag, ident->base.range,
+        DiagError(r->diag, ident->base.range,
                   "there is no 'null': a null pointer, handle or delegate is 'ptr.null', and an empty optional is "
                   "one never assigned");
     }
     else if (!varType)
     {
-        DiagErrorFmt(r->m_diag, ident->base.range, "unknown variable '%s'", ident->name);
+        DiagErrorFmt(r->diag, ident->base.range, "unknown variable '%s'", ident->name);
     }
 
     return;
@@ -595,9 +594,9 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
     {
         const TypeName* ot = InferType(r, u->operand, scope);
 
-        if (ot && IsBoolType(&r->m_registry, ot))
+        if (ot && IsBoolType(&r->registry, ot))
         {
-            DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
+            DiagErrorFmt(r->diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
         }
     }
 
@@ -609,7 +608,7 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (en && IsPlainEnum(r, en))
         {
-            DiagErrorFmt(r->m_diag, u->base.range, "'%s' is not a flags enum: declare it '@flags enum %s'", en, en);
+            DiagErrorFmt(r->diag, u->base.range, "'%s' is not a flags enum: declare it '@flags enum %s'", en, en);
         }
     }
 
@@ -618,9 +617,9 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
     {
         const TypeName* ot = InferType(r, u->operand, scope);
 
-        if (ot && TypeRegistryIsEnum(&r->m_registry, ot->name))
+        if (ot && TypeRegistryIsEnum(&r->registry, ot->name))
         {
-            DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
+            DiagErrorFmt(r->diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
         }
     }
 
@@ -629,9 +628,9 @@ static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
     {
         const TypeName* ot = InferType(r, u->operand, scope);
 
-        if (ot && !IsBoolContextType(&r->m_registry, ot))
+        if (ot && !IsBoolContextType(&r->registry, ot))
         {
-            DiagErrorFmt(r->m_diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
+            DiagErrorFmt(r->diag, u->base.range, "invalid operand to unary operator ('%s')", ot->name);
         }
     }
 
@@ -653,11 +652,11 @@ static void ResolveArithBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
 
     bool numericPair = li && ri && IsNumeric(li->primitiveType) && IsNumeric(ri->primitiveType);
     bool vectorPair
-        = SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln2)) != 0;
+        = SameResolvedType(r, ln2, rn2) && IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, ln2)) != 0;
 
     /* Bool is not numeric: `true + true` must not compute i1
        wrap-around (1+1 = 0). */
-    bool boolOperand = (lt && IsBoolType(&r->m_registry, lt)) || (rt && IsBoolType(&r->m_registry, rt));
+    bool boolOperand = (lt && IsBoolType(&r->registry, lt)) || (rt && IsBoolType(&r->registry, rt));
 
     /* `&`, `|`, `^` combine flags of one enum type (`Usage.A | Usage.B`). */
     bool flagsPair = IsEnumFlagsOp(r, b->op, lt, rt);
@@ -667,11 +666,11 @@ static void ResolveArithBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
 
     if (lt && rt && (!numericPair || boolOperand) && !vectorPair && !flagsPair && !concatPair)
     {
-        DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+        DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
     }
     else if (numericPair)
     {
-        CheckConstArith(r->m_diag, b, lt);
+        CheckConstArith(r->diag, b, lt);
     }
 
     /* Bitwise operators combine the values of a `@flags` enum; any other enum is a set of names. */
@@ -683,7 +682,7 @@ static void ResolveArithBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
 
         if (plain)
         {
-            DiagErrorFmt(r->m_diag, b->base.range,
+            DiagErrorFmt(r->diag, b->base.range,
                          "'%s' is not a flags enum: declare it '@flags enum %s' to combine its values", plain, plain);
         }
     }
@@ -704,14 +703,14 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
 
         if (le && re && strcmp(le, re) != 0)
         {
-            DiagErrorFmt(r->m_diag, b->base.range, "cannot compare '%s' with '%s': they are different enums", le, re);
+            DiagErrorFmt(r->diag, b->base.range, "cannot compare '%s' with '%s': they are different enums", le, re);
         }
     }
 
-    bool lString = lt && TypeIsString(&r->m_registry, ln);
-    bool rString = rt && TypeIsString(&r->m_registry, rn);
-    bool lCStr = lt && TypeIsCString(&r->m_registry, ln);
-    bool rCStr = rt && TypeIsCString(&r->m_registry, rn);
+    bool lString = lt && TypeIsString(&r->registry, ln);
+    bool rString = rt && TypeIsString(&r->registry, rn);
+    bool lCStr = lt && TypeIsCString(&r->registry, ln);
+    bool rCStr = rt && TypeIsCString(&r->registry, rn);
 
     /* A string literal on one side of a `cstring` comparison coerces
        to `cstring` (contextual), so `cs == "lit"` is well-typed. */
@@ -731,7 +730,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
        semantics: `true < false` computes garbage). Only `==`/`!=`
        are defined for bools. */
     bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
-    bool boolOperand = (lt && IsBoolType(&r->m_registry, lt)) || (rt && IsBoolType(&r->m_registry, rt));
+    bool boolOperand = (lt && IsBoolType(&r->registry, lt)) || (rt && IsBoolType(&r->registry, rt));
 
     /* Comparing a `T?` reads through it. Only `==`/`!=` with an
        optional LEFT side and a box/optional right side is
@@ -739,8 +738,8 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
        optional, so it must be proven non-empty first. `T[]?`
        compares as the array it wraps (empty is a zero-length fat). */
     {
-        bool lOpt = lt && TypeNameIsOptional(lt) && !TypeIsComparableAggregate(&r->m_registry, lt);
-        bool rOpt = rt && TypeNameIsOptional(rt) && !TypeIsComparableAggregate(&r->m_registry, rt);
+        bool lOpt = lt && TypeNameIsOptional(lt) && !TypeIsComparableAggregate(&r->registry, lt);
+        bool rOpt = rt && TypeNameIsOptional(rt) && !TypeIsComparableAggregate(&r->registry, rt);
         bool lNullAware = eqOp && lOpt && rt && (TypeNameIsOptional(rt) || TypeNameIsBox(rt));
         bool rNullAware = eqOp && lOpt;
     }
@@ -749,11 +748,11 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
        conversion; both sides of a bool comparison must be bool. */
     const TypeName* lScalar = TypeNameBoxInner(lt) ? TypeNameBoxInner(lt) : lt;
     const TypeName* rScalar = TypeNameBoxInner(rt) ? TypeNameBoxInner(rt) : rt;
-    bool mixedBool = lScalar && rScalar && IsBoolType(&r->m_registry, lScalar) != IsBoolType(&r->m_registry, rScalar);
+    bool mixedBool = lScalar && rScalar && IsBoolType(&r->registry, lScalar) != IsBoolType(&r->registry, rScalar);
 
     if ((boolOperand && !eqOp) || mixedBool)
     {
-        DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+        DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
         return;
     }
 
@@ -765,7 +764,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
 
     if (lString != rString)
     {
-        DiagErrorFmt(r->m_diag, b->base.range, "cannot compare 'string' with '%s'", lString ? rn : ln);
+        DiagErrorFmt(r->diag, b->base.range, "cannot compare 'string' with '%s'", lString ? rn : ln);
         return;
     }
 
@@ -777,7 +776,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     /* `cstring` compares by content like `string`. */
     if (lCStr != rCStr)
     {
-        DiagErrorFmt(r->m_diag, b->base.range, "cannot compare 'cstring' with '%s'", lCStr ? rn : ln);
+        DiagErrorFmt(r->diag, b->base.range, "cannot compare 'cstring' with '%s'", lCStr ? rn : ln);
         return;
     }
 
@@ -785,7 +784,7 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     {
         if (!eqOp)
         {
-            DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+            DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
         }
 
         return;
@@ -795,29 +794,29 @@ static void ResolveCompareBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
        compare structurally — same resolved type only, never across
        distinct struct/array types or against scalars. Ordering is
        meaningless for aggregates and rejected. */
-    if (lt && rt && (TypeIsComparableAggregate(&r->m_registry, lt) || TypeIsComparableAggregate(&r->m_registry, rt)))
+    if (lt && rt && (TypeIsComparableAggregate(&r->registry, lt) || TypeIsComparableAggregate(&r->registry, rt)))
     {
         bool eqOp = (b->op == BinEqEq || b->op == BinNotEq);
 
-        if (!eqOp || !TypeIsComparableAggregate(&r->m_registry, lt) || !TypeIsComparableAggregate(&r->m_registry, rt)
+        if (!eqOp || !TypeIsComparableAggregate(&r->registry, lt) || !TypeIsComparableAggregate(&r->registry, rt)
             || !SameResolvedType(r, ln, rn))
         {
-            DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+            DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
         }
 
         return;
     }
 
-    if (lt && rt && (!TypeIsTriviallyComparable(&r->m_registry, lt) || !TypeIsTriviallyComparable(&r->m_registry, rt)))
+    if (lt && rt && (!TypeIsTriviallyComparable(&r->registry, lt) || !TypeIsTriviallyComparable(&r->registry, rt)))
     {
-        DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+        DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
     }
     else if (lt && rt && !eqOp
-             && (IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, ln)) != 0
-                 || IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, rn)) != 0))
+             && (IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, ln)) != 0
+                 || IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, rn)) != 0))
     {
         /* Vectors are equal or not; they have no order. */
-        DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
+        DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", ln, rn);
     }
 }
 
@@ -827,10 +826,9 @@ static void ResolveLogicBinary(Resolver* r, BinaryExpr* b, StrMap* scope)
     const TypeName* lt = InferType(r, b->lhs, scope);
     const TypeName* rt = InferType(r, b->rhs, scope);
 
-    if (lt && rt && (!IsBoolContextType(&r->m_registry, lt) || !IsBoolContextType(&r->m_registry, rt)))
+    if (lt && rt && (!IsBoolContextType(&r->registry, lt) || !IsBoolContextType(&r->registry, rt)))
     {
-        DiagErrorFmt(r->m_diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", lt->name,
-                     rt->name);
+        DiagErrorFmt(r->diag, b->base.range, "invalid operands to binary operator ('%s' and '%s')", lt->name, rt->name);
     }
 }
 
@@ -901,9 +899,9 @@ static bool CheckAssignTargetForm(Resolver* r, AssignExpr* a, StrMap* scope)
         {
             const TypeName* baseType = InferType(r, base, scope);
 
-            if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+            if (baseType && TypeIsCString(&r->registry, baseType->name))
             {
-                DiagErrorFmt(r->m_diag, a->base.range, "cannot assign into a 'cstring' (a constant string)");
+                DiagErrorFmt(r->diag, a->base.range, "cannot assign into a 'cstring' (a constant string)");
                 return false;
             }
         }
@@ -917,7 +915,7 @@ static bool CheckAssignTargetForm(Resolver* r, AssignExpr* a, StrMap* scope)
 
         if (IsFatPseudoProperty(r, InferType(r, fatM->baseNode, scope), fatM->member))
         {
-            DiagErrorFmt(r->m_diag, a->base.range,
+            DiagErrorFmt(r->diag, a->base.range,
                          "cannot assign to '.%s' (read-only; arrays grow via array_push/array_resize)", fatM->member);
             return false;
         }
@@ -950,7 +948,7 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
                flow a void into the outer setter). */
             if (a->value->kind == NodeAssign && ((AssignExpr*)a->value)->isImplPropertyWrite)
             {
-                DiagErrorFmt(r->m_diag, a->base.range,
+                DiagErrorFmt(r->diag, a->base.range,
                              "cannot chain property assignment; assign each property separately");
                 return true;
             }
@@ -959,14 +957,14 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
 
             if (a->op != AssignSet)
             {
-                DiagErrorFmt(r->m_diag, a->base.range, "cannot compound-assign to property '%s'; assign it directly",
+                DiagErrorFmt(r->diag, a->base.range, "cannot compound-assign to property '%s'; assign it directly",
                              tm->member);
                 return true;
             }
 
             if (!prop->setterSymbol)
             {
-                DiagErrorFmt(r->m_diag, a->base.range, "property '%s' is read-only", tm->member);
+                DiagErrorFmt(r->diag, a->base.range, "property '%s' is read-only", tm->member);
                 return true;
             }
 
@@ -975,7 +973,7 @@ static bool ResolveAssignProperty(Resolver* r, AssignExpr* a, StrMap* scope)
             if (vt && !IsAssignableType(r, &prop->returnType, vt)
                 && !IsStrLiteralForCString(r, &prop->returnType, a->value))
             {
-                DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to property '%s' of type '%s'", vt->name,
+                DiagErrorFmt(r->diag, a->base.range, "cannot assign '%s' to property '%s' of type '%s'", vt->name,
                              tm->member, prop->returnType.name);
             }
 
@@ -1050,7 +1048,7 @@ static void ResolveAssignBracedRhs(Resolver* r, AssignExpr* a, StrMap* scope, co
         {
             const char* targetKey = MovableBoxSourceKey(r, a->target);
 
-            DiagErrorFmt(r->m_diag, a->value->range,
+            DiagErrorFmt(r->diag, a->value->range,
                          "cannot infer a struct type for the braced initializer assigned to '%s' ('%s')",
                          targetKey ? targetKey : "target", at ? at->name : "unknown");
         }
@@ -1058,8 +1056,7 @@ static void ResolveAssignBracedRhs(Resolver* r, AssignExpr* a, StrMap* scope, co
         {
             const char* targetKey = MovableBoxSourceKey(r, a->target);
 
-            DiagErrorFmt(r->m_diag, a->value->range,
-                         "cannot assign a braced initializer to '%s' of non-array type '%s'",
+            DiagErrorFmt(r->diag, a->value->range, "cannot assign a braced initializer to '%s' of non-array type '%s'",
                          targetKey ? targetKey : "target", at->name);
         }
     }
@@ -1081,7 +1078,7 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
 
     if (optionalTarget && a->op != AssignSet)
     {
-        DiagErrorFmt(r->m_diag, a->base.range,
+        DiagErrorFmt(r->diag, a->base.range,
                      "cannot compound-assign into '%s' of nullable type '%s'; it has not been blessed",
                      MovableBoxSourceKey(r, a->target), tt->name);
 
@@ -1095,8 +1092,8 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
     {
         if (IsBoxGlobalName(r, targetName))
         {
-            DiagErrorFmt(r->m_diag, a->base.range,
-                         "box global '%s' cannot be reassigned; only its fields may be mutated", targetName);
+            DiagErrorFmt(r->diag, a->base.range, "box global '%s' cannot be reassigned; only its fields may be mutated",
+                         targetName);
 
             return;
         }
@@ -1104,11 +1101,11 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
         /* A `ref ^T` is the caller's box: assign contents, not the slot. A `ref` to a `T?`
            (or a string) is the caller's slot: `=` drops what it held and
            stores the new value there, so out-params work. */
-        bool slotRef = TypeNameIsOptional(tt) || TypeIsString(&r->m_registry, tt->name) || TypeNameIsDynamicArray(tt);
+        bool slotRef = TypeNameIsOptional(tt) || TypeIsString(&r->registry, tt->name) || TypeNameIsDynamicArray(tt);
 
-        if (StrMapGet(&r->m_refBoxParams, targetName) && !slotRef)
+        if (StrMapGet(&r->refBoxParams, targetName) && !slotRef)
         {
-            DiagErrorFmt(r->m_diag, a->base.range,
+            DiagErrorFmt(r->diag, a->base.range,
                          "'%s' cannot be reassigned as it is not owned because it is bound as a ref; "
                          "assign its inner value instead",
                          targetName);
@@ -1138,7 +1135,7 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
 
         if (vt && inner && !IsAssignableType(r, inner, vt))
         {
-            DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' into '%s' '%s'", vt->name, inner->name,
+            DiagErrorFmt(r->diag, a->base.range, "cannot assign '%s' into '%s' '%s'", vt->name, inner->name,
                          targetName);
         }
 
@@ -1148,7 +1145,7 @@ static void ResolveAssignBoxTarget(Resolver* r, AssignExpr* a, StrMap* scope, co
            cell contents, so the RHS value moves in: the source is
            consumed (codegen drops the old contents, then constructs
            the new value into the cell). */
-        if (a->op == AssignSet && inner && vt && TypeRegistryIsOwningStruct(&r->m_registry, inner->name)
+        if (a->op == AssignSet && inner && vt && TypeRegistryIsOwningStruct(&r->registry, inner->name)
             && AliasIsOwningValue(r, vt))
         {
             const char* movedValueKey = MovableBoxSourceKey(r, a->value);
@@ -1226,7 +1223,7 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     // Enum constants are read-only.
     if (a->target->kind == NodeMember && ((MemberExpr*)a->target)->isEnumConst)
     {
-        DiagErrorFmt(r->m_diag, a->base.range, "cannot assign to enum constant '%s.%s'",
+        DiagErrorFmt(r->diag, a->base.range, "cannot assign to enum constant '%s.%s'",
                      ((MemberExpr*)a->target)->enumTypeName, ((MemberExpr*)a->target)->member);
         return;
     }
@@ -1235,8 +1232,8 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     if (a->target->kind == NodeMember && ((MemberExpr*)a->target)->isScalarConst)
     {
         MemberExpr* sm = (MemberExpr*)a->target;
-        DiagErrorFmt(r->m_diag, a->base.range, "cannot assign to '%s.%s' (a constant)",
-                     ((IdentExpr*)sm->baseNode)->name, sm->member);
+        DiagErrorFmt(r->diag, a->base.range, "cannot assign to '%s.%s' (a constant)", ((IdentExpr*)sm->baseNode)->name,
+                     sm->member);
         return;
     }
 
@@ -1249,7 +1246,7 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
 
         if (TypeNameIsFixedArray(mt))
         {
-            DiagErrorFmt(r->m_diag, a->base.range,
+            DiagErrorFmt(r->diag, a->base.range,
                          "cannot assign to a whole fixed-size array of type '%s'; assign its elements instead",
                          mt->name);
         }
@@ -1262,7 +1259,7 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
 
         if (vt && !IsAssignableType(r, tt, vt) && !IsStrLiteralForCString(r, tt, a->value))
         {
-            DiagErrorFmt(r->m_diag, a->base.range, "cannot assign '%s' to '%s' of type '%s'", vt->name,
+            DiagErrorFmt(r->diag, a->base.range, "cannot assign '%s' to '%s' of type '%s'", vt->name,
                          ((IdentExpr*)a->target)->name, tt->name);
         }
 
@@ -1281,7 +1278,7 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
         {
             if (vt && AliasIsOwningValue(r, vt) && IsArrayElementBorrow(a->value))
             {
-                DiagErrorFmt(r->m_diag, a->value->range,
+                DiagErrorFmt(r->diag, a->value->range,
                              "cannot assign '%s' read from an array element - it would be owned by two "
                              "arrays; move it into a variable first",
                              vt->name);
@@ -1373,10 +1370,10 @@ static void ResolveAssignExpr(Resolver* r, Node* n, StrMap* scope)
     /* A `ref T[]` param may be a borrowed stack view (fixed-array slice):
        rebinding drops/frees the old buffer — the caller's storage. */
     if (tt && a->target->kind == NodeIdent && TypeNameIsDynamicArray(tt)
-        && StrMapGet(&r->m_refArrayParams, ((IdentExpr*)a->target)->name)
+        && StrMapGet(&r->refArrayParams, ((IdentExpr*)a->target)->name)
         && !IsGrowableArrayParam(r, ((IdentExpr*)a->target)->name))
     {
-        DiagErrorFmt(r->m_diag, a->base.range,
+        DiagErrorFmt(r->diag, a->base.range,
                      "'%s' cannot be reassigned as it is not owned because it is bound as a ref array param; "
                      "mutate its elements instead",
                      ((IdentExpr*)a->target)->name);
@@ -1413,14 +1410,14 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
 
         if (PropertyOnHandle(r, InferType(r, tm->baseNode, scope), tm->member))
         {
-            DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s property '%s'; assign it explicitly instead",
+            DiagErrorFmt(r->diag, inc->base.range, "cannot %s property '%s'; assign it explicitly instead",
                          inc->isDec ? "decrement" : "increment", tm->member);
             return;
         }
 
         if (IsFatPseudoProperty(r, InferType(r, tm->baseNode, scope), tm->member))
         {
-            DiagErrorFmt(r->m_diag, inc->base.range,
+            DiagErrorFmt(r->diag, inc->base.range,
                          "cannot %s '.%s' (read-only; arrays grow via array_push/array_resize)",
                          inc->isDec ? "decrement" : "increment", tm->member);
             return;
@@ -1444,9 +1441,9 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
         {
             const TypeName* baseType = InferType(r, base, scope);
 
-            if (baseType && TypeIsCString(&r->m_registry, baseType->name))
+            if (baseType && TypeIsCString(&r->registry, baseType->name))
             {
-                DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s an element of a 'cstring' (a constant string)",
+                DiagErrorFmt(r->diag, inc->base.range, "cannot %s an element of a 'cstring' (a constant string)",
                              inc->isDec ? "decrement" : "increment");
                 return;
             }
@@ -1458,9 +1455,9 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
        wraps the i1 (true -> false). */
     const TypeName* incType = InferType(r, inc->operand, scope);
 
-    if (incType && (!IsNumeric(incType->primitiveType) || IsBoolType(&r->m_registry, incType)))
+    if (incType && (!IsNumeric(incType->primitiveType) || IsBoolType(&r->registry, incType)))
     {
-        DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
+        DiagErrorFmt(r->diag, inc->base.range, "cannot %s a value of type '%s' (expected a numeric type)",
                      inc->isDec ? "decrement" : "increment", incType->name);
     }
 
@@ -1468,8 +1465,8 @@ static void ResolveIncDecExpr(Resolver* r, Node* n, StrMap* scope)
     if (inc->operand->kind == NodeMember && ((MemberExpr*)inc->operand)->isScalarConst)
     {
         MemberExpr* sm = (MemberExpr*)inc->operand;
-        DiagErrorFmt(r->m_diag, inc->base.range, "cannot %s '%s.%s' (a constant)",
-                     inc->isDec ? "decrement" : "increment", ((IdentExpr*)sm->baseNode)->name, sm->member);
+        DiagErrorFmt(r->diag, inc->base.range, "cannot %s '%s.%s' (a constant)", inc->isDec ? "decrement" : "increment",
+                     ((IdentExpr*)sm->baseNode)->name, sm->member);
         return;
     }
 
@@ -1499,19 +1496,19 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
     const TypeName* src = InferType(r, cast->operand, scope);
     const TypeName* dst = &cast->type;
 
-    CheckConstFloatToInt(r->m_diag, cast);
+    CheckConstFloatToInt(r->diag, cast);
 
     const char* srcName = src ? src->name : "";
     const char* dstName = dst->name;
 
     /* Resolve type aliases to their underlying types for cast compatibility. */
-    const char* resolvedSrc = TypeRegistryResolveAlias(&r->m_registry, srcName);
-    const char* resolvedDst = TypeRegistryResolveAlias(&r->m_registry, dstName);
+    const char* resolvedSrc = TypeRegistryResolveAlias(&r->registry, srcName);
+    const char* resolvedDst = TypeRegistryResolveAlias(&r->registry, dstName);
 
-    bool scalarPair = src && (IsScalarLikeType(&r->m_registry, srcName) && IsScalarLikeType(&r->m_registry, dstName));
-    bool handlePair = src && IsHandleType(&r->m_registry, srcName) && IsHandleType(&r->m_registry, dstName)
-                      && (HandleExtendsFrom(&r->m_registry, dstName, srcName)
-                          || HandleExtendsFrom(&r->m_registry, srcName, dstName));
+    bool scalarPair = src && (IsScalarLikeType(&r->registry, srcName) && IsScalarLikeType(&r->registry, dstName));
+    bool handlePair
+        = src && IsHandleType(&r->registry, srcName) && IsHandleType(&r->registry, dstName)
+          && (HandleExtendsFrom(&r->registry, dstName, srcName) || HandleExtendsFrom(&r->registry, srcName, dstName));
 
     /* SIMD vector pair: same lane count (including through type aliases). */
     const LaneCount srcLanes = IsNameSimdVector(resolvedSrc);
@@ -1520,35 +1517,35 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
 
     /* ^T -> ^U only when T or U is opaque (erase/cast-back). */
     bool boxPair = src && TypeNameIsOwning(src) && TypeNameIsOwning(dst)
-                   && ((TypeNameBoxInner(src) && TypeRegistryIsOpaque(&r->m_registry, src->inner->name))
-                       || (TypeNameBoxInner(dst) && TypeRegistryIsOpaque(&r->m_registry, dst->inner->name)));
+                   && ((TypeNameBoxInner(src) && TypeRegistryIsOpaque(&r->registry, src->inner->name))
+                       || (TypeNameBoxInner(dst) && TypeRegistryIsOpaque(&r->registry, dst->inner->name)));
 
     /* Alias <-> underlying (or alias <-> alias) of the SAME resolved type:
        the explicit escape hatch for strong typedefs (`(Name)s`, `(string)n`).
        Distinct aliases still never convert implicitly. */
     bool aliasPair
         = src && SameResolvedType(r, srcName, dstName)
-          && (TypeRegistryIsTypeAlias(&r->m_registry, srcName) || TypeRegistryIsTypeAlias(&r->m_registry, dstName));
+          && (TypeRegistryIsTypeAlias(&r->registry, srcName) || TypeRegistryIsTypeAlias(&r->registry, dstName));
 
     /* `cstring` -> `string` copies (heap copy at the use site);
        a string literal casts to `cstring` (contextual `.rodata` pointer). */
     bool cstringStringPair = src
-                             && ((TypeIsCString(&r->m_registry, srcName) && TypeIsString(&r->m_registry, dstName))
-                                 || (cast->operand->kind == NodeStrLiteral && TypeIsCString(&r->m_registry, dstName)));
+                             && ((TypeIsCString(&r->registry, srcName) && TypeIsString(&r->registry, dstName))
+                                 || (cast->operand->kind == NodeStrLiteral && TypeIsCString(&r->registry, dstName)));
 
     /* Handle <-> integer: a handle reads back as its 64-bit address (`(ulong)h`, `(long)h`), and
        any integer converts to a handle (`(ptr)addr`). */
     PrimitiveType srcPrim = GetPrimitiveType(resolvedSrc);
     PrimitiveType dstPrim = GetPrimitiveType(resolvedDst);
     bool handleIntPair = src
-                         && ((IsHandleType(&r->m_registry, srcName) && (dstPrim == PrimLong || dstPrim == PrimULong))
-                             || (IsHandleType(&r->m_registry, dstName) && IsNumeric(srcPrim)
+                         && ((IsHandleType(&r->registry, srcName) && (dstPrim == PrimLong || dstPrim == PrimULong))
+                             || (IsHandleType(&r->registry, dstName) && IsNumeric(srcPrim)
                                  && !IsNameFloatType(resolvedSrc) && srcPrim != PrimBool));
 
     /* `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` the reverse. */
     bool cstringPtrPair = src
-                          && ((TypeIsCString(&r->m_registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
-                              || (TypeIsCString(&r->m_registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
+                          && ((TypeIsCString(&r->registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
+                              || (TypeIsCString(&r->registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
 
     /* Text views: a NUL-terminated `byte[N]` buffer as a `cstring` (borrowed) or a `string`
        (copied, up to the first NUL or all N bytes); a `string` as a `cstring` (borrowed). */
@@ -1557,19 +1554,19 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
                      && (strcmp(src->elem->name, "byte") == 0 || strcmp(src->elem->name, "sbyte") == 0);
     cast->textKind = CastTextNone;
 
-    if (bufferSrc && TypeIsCString(&r->m_registry, dstName))
+    if (bufferSrc && TypeIsCString(&r->registry, dstName))
     {
         cast->textKind = CastBufferToCString;
     }
-    else if (bufferSrc && TypeIsString(&r->m_registry, dstName))
+    else if (bufferSrc && TypeIsString(&r->registry, dstName))
     {
         cast->textKind = CastBufferToString;
     }
-    else if (src && cast->operand->kind != NodeStrLiteral && TypeIsString(&r->m_registry, srcName)
-             && TypeIsCString(&r->m_registry, dstName))
+    else if (src && cast->operand->kind != NodeStrLiteral && TypeIsString(&r->registry, srcName)
+             && TypeIsCString(&r->registry, dstName))
     {
         /* The cstring would point into the string's buffer and dangle once the string is dropped or grows. */
-        DiagErrorFmt(r->m_diag, cast->base.range,
+        DiagErrorFmt(r->diag, cast->base.range,
                      "a string cannot be cast to cstring: the result would dangle when the string is dropped; "
                      "pass the string itself where C expects text");
         cast->textKind = CastStringToCString;
@@ -1582,19 +1579,19 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
     if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair && !cstringStringPair && !handleIntPair
         && !cstringPtrPair && cast->textKind == CastTextNone)
     {
-        DiagErrorFmt(r->m_diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
+        DiagErrorFmt(r->diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
     }
 
     /* Casting a compile-time constant to an enum: the value must fit the
        enum's underlying range (`(Color)300` for a byte-based enum). */
-    if (TypeRegistryIsEnum(&r->m_registry, dstName))
+    if (TypeRegistryIsEnum(&r->registry, dstName))
     {
         ConstUInt mag = 0;
         bool neg = false;
 
         if (ResolvedConstIntValue(cast->operand, &mag, &neg) && !EnumConstFits(resolvedDst, mag, neg))
         {
-            DiagErrorFmt(r->m_diag, cast->base.range, "enum value does not fit in underlying type '%s'", resolvedDst);
+            DiagErrorFmt(r->diag, cast->base.range, "enum value does not fit in underlying type '%s'", resolvedDst);
         }
     }
 
@@ -1654,7 +1651,7 @@ static void ResolveNullTestExpr(Resolver* r, Node* n, StrMap* scope)
 
     if (operandType && !TypeNameIsOptional(operandType))
     {
-        DiagErrorFmt(r->m_diag, nt->base.range, "'?' test requires a nullable type ('T?'), but '%s' can never be empty",
+        DiagErrorFmt(r->diag, nt->base.range, "'?' test requires a nullable type ('T?'), but '%s' can never be empty",
                      operandType->name);
     }
 
@@ -1668,7 +1665,7 @@ void ResolveExprImpl(Resolver* r, Node* n, StrMap* scope, bool asMemberBase)
         return;
     }
 
-    r->m_curScope = scope;
+    r->curScope = scope;
 
     switch (n->kind)
     {

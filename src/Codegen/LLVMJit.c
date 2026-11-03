@@ -170,10 +170,10 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 
 void LLVMJitInit(LLVMJit* jit)
 {
-    jit->m_jit = NULL;
+    jit->jit = NULL;
     jit->allocFn = NULL;
     jit->freeFn = NULL;
-    VecInit(&jit->m_externs);
+    VecInit(&jit->externs);
 }
 
 void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn)
@@ -184,31 +184,31 @@ void LLVMJitSetAllocFree(LLVMJit* jit, void* allocFn, void* freeFn)
 
 void LLVMJitDestroy(LLVMJit* jit)
 {
-    if (jit->m_jit)
+    if (jit->jit)
     {
         /* Unlike the old per-process __strata_module_teardown, a module with
            instanced globals is never auto-torn-down here: the host may have
            created zero, one, or many __strata_context_create instances, and
            owns calling __strata_context_destroy on each (discoverable via
            strataJitGetFunction like any other exported symbol). */
-        LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(jit->m_jit);
+        LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(jit->jit);
 
         if (disposeErr)
         {
             LLVMConsumeError(disposeErr);
         }
 
-        jit->m_jit = NULL;
+        jit->jit = NULL;
     }
 
-    for (size_t i = 0; i < jit->m_externs.count; i++)
+    for (size_t i = 0; i < jit->externs.count; i++)
     {
-        char* sym = (char*)jit->m_externs.items[i];
+        char* sym = (char*)jit->externs.items[i];
         free(sym);
     }
 
-    free(jit->m_externs.items);
-    VecInit(&jit->m_externs);
+    free(jit->externs.items);
+    VecInit(&jit->externs);
 }
 
 static void JitCopyExternSymbols(LLVMJit* jit, BuiltModule* bm)
@@ -216,7 +216,7 @@ static void JitCopyExternSymbols(LLVMJit* jit, BuiltModule* bm)
     for (size_t i = 0; i < bm->externSymbols.count; i++)
     {
         const char* sym = (const char*)VecGet(&bm->externSymbols, i);
-        VecPush(&jit->m_externs, DupString(sym));
+        VecPush(&jit->externs, DupString(sym));
     }
 }
 
@@ -390,7 +390,7 @@ static bool JitAddModule(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef m
             LLVMConsumeError(disposeErr);
         }
 
-        jit->m_jit = NULL;
+        jit->jit = NULL;
 
         return false;
     }
@@ -442,7 +442,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
         return false;
     }
 
-    jit->m_jit = llj;
+    jit->jit = llj;
 
     LLVMOrcJITDylibRef mainJd = LLVMOrcLLJITGetMainJITDylib(llj);
 
@@ -454,7 +454,7 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
 bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr)
 {
-    if (!jit->m_jit || !name || !addr)
+    if (!jit->jit || !name || !addr)
     {
         return false;
     }
@@ -464,7 +464,7 @@ bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr)
 
     uint64_t slotAddr = 0;
 
-    if (!OrcLookup(jit->m_jit, slot, &slotAddr) || slotAddr == 0)
+    if (!OrcLookup(jit->jit, slot, &slotAddr) || slotAddr == 0)
     {
         return false;
     }
@@ -476,14 +476,14 @@ bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr)
 
 uint64_t LLVMJitGetAddress(LLVMJit* jit, const char* name)
 {
-    if (!jit->m_jit || !name)
+    if (!jit->jit || !name)
     {
         return 0;
     }
 
     uint64_t addr = 0;
 
-    if (!OrcLookup(jit->m_jit, name, &addr))
+    if (!OrcLookup(jit->jit, name, &addr))
     {
         return 0;
     }
@@ -498,15 +498,15 @@ size_t LLVMJitExternCount(const LLVMJit* jit)
         return 0;
     }
 
-    return jit->m_externs.count;
+    return jit->externs.count;
 }
 
 const char* LLVMJitExternName(const LLVMJit* jit, size_t index)
 {
-    if (!jit || index >= jit->m_externs.count)
+    if (!jit || index >= jit->externs.count)
     {
         return NULL;
     }
 
-    return (const char*)jit->m_externs.items[index];
+    return (const char*)jit->externs.items[index];
 }

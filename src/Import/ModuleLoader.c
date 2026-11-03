@@ -350,7 +350,7 @@ static void LoadStrataModule(ModuleLoader* loader, const char* key, const char* 
     loader->sourceCount++;
 
     Lexer lex;
-    LexerInit(&lex, sm->m_text, sm->m_textLen, loader->diag, fileId);
+    LexerInit(&lex, sm->text, sm->textLen, loader->diag, fileId);
 
     Parser parser;
     ParserInit(&parser, &lex, loader->diag, loader->arena, nameKey);

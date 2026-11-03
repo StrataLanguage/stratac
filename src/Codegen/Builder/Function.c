@@ -7,7 +7,7 @@
    as __strata_main and EmitAotEntryPoint wraps it in a real C `main` that owns the context. */
 bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f)
 {
-    if (b->m_jitMode || f->isExtern || f->isExport || f->fromImpl || !f->body || f->params.count != 0
+    if (b->jitMode || f->isExtern || f->isExport || f->fromImpl || !f->body || f->params.count != 0
         || strcmp(f->mangledName, "main") != 0)
     {
         return false;
@@ -24,7 +24,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
        host binds its name, so the JIT needs its slot. */
     if (f->typeParam)
     {
-        if (b->m_jitMode)
+        if (b->jitMode)
         {
             ExternSlot(b, f->name);
         }
@@ -32,7 +32,7 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
         return;
     }
 
-    FuncInfo* info = (FuncInfo*)ArenaAlloc(b->m_arena, sizeof(FuncInfo));
+    FuncInfo* info = (FuncInfo*)ArenaAlloc(b->arena, sizeof(FuncInfo));
 
     bool hasReturnParam = FunctionHasReturnParam(f);
 
@@ -48,10 +48,10 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
        boundary as a NUL-terminated char*: the caller copies it into a fresh
        owned buffer. `string?` (the maybe-empty fat) stays banned in sema. */
     info->externStringReturn = f->isExtern && !hasReturnParam && !TypeNameIsOptional(&f->returnType)
-                               && TypeIsString(&b->m_registry, f->returnType.name);
+                               && TypeIsString(&b->registry, f->returnType.name);
 
     size_t pcount = f->params.count;
-    info->paramByPtr = (bool*)ArenaAlloc(b->m_arena, pcount * sizeof(bool));
+    info->paramByPtr = (bool*)ArenaAlloc(b->arena, pcount * sizeof(bool));
     info->paramByPtrCount = pcount;
 
     /* Every non-extern function gets ONE hidden leading LLVM parameter (a
@@ -70,12 +70,12 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
 
     if (pcount + ctxOffset + typeDescCount > 0)
     {
-        params = (LLVMTypeRef*)ArenaAlloc(b->m_arena, (pcount + ctxOffset + typeDescCount) * sizeof(LLVMTypeRef));
+        params = (LLVMTypeRef*)ArenaAlloc(b->arena, (pcount + ctxOffset + typeDescCount) * sizeof(LLVMTypeRef));
     }
 
     if (info->hasHiddenCtxParam)
     {
-        params[0] = b->m_ptrTy;
+        params[0] = b->ptrTy;
     }
 
     for (size_t i = 0; i < pcount; i++)
@@ -89,8 +89,8 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         // Extern strings cross as char*: plain passes its buffer, optional passes raw ptr.
         bool optionalString
-            = TypeNameIsOptional(&p->type) && p->type.inner && TypeIsString(&b->m_registry, p->type.inner->name);
-        bool externStringParam = f->isExtern && (TypeIsString(&b->m_registry, p->type.name) || optionalString);
+            = TypeNameIsOptional(&p->type) && p->type.inner && TypeIsString(&b->registry, p->type.inner->name);
+        bool externStringParam = f->isExtern && (TypeIsString(&b->registry, p->type.name) || optionalString);
 
         if (byPtr && externStringParam)
         {
@@ -105,17 +105,17 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
 
         info->paramByPtr[i] = byPtr;
 
-        params[i + ctxOffset] = byPtr ? b->m_ptrTy : (externStringParam ? b->m_ptrTy : Resolve(b, &p->type).type);
+        params[i + ctxOffset] = byPtr ? b->ptrTy : (externStringParam ? b->ptrTy : Resolve(b, &p->type).type);
     }
 
     // A function with a `return` param == void ret + out-pointer. An extern
     // `string` return crosses as char* (caller copies it into an owned fat).
-    LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->m_ctx)
-                                            : (info->externStringReturn ? b->m_ptrTy : info->returnType.type);
+    LLVMTypeRef abiRetType = hasReturnParam ? LLVMVoidTypeInContext(b->ctx)
+                                            : (info->externStringReturn ? b->ptrTy : info->returnType.type);
 
     if (info->hasTypeDescParam)
     {
-        params[pcount + ctxOffset] = b->m_ptrTy;
+        params[pcount + ctxOffset] = b->ptrTy;
     }
 
     info->type
@@ -125,18 +125,18 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     if (f->isDelegate)
     {
         info->function = NULL;
-        StrMapPut(&b->m_funcs, f->mangledName, info);
+        StrMapPut(&b->funcs, f->mangledName, info);
         return;
     }
 
-    if (b->m_jitMode && f->isExtern)
+    if (b->jitMode && f->isExtern)
     {
         LLVMValueRef slot = ExternSlot(b, f->name);
 
         /* Calls to an instantiation name it by its mangled `Name<T>`. */
         if (f->genericOf)
         {
-            StrMapPut(&b->m_externSlots, f->mangledName, (void*)slot);
+            StrMapPut(&b->externSlots, f->mangledName, (void*)slot);
         }
 
         info->function = NULL;
@@ -144,8 +144,8 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
     else if (f->genericOf)
     {
         /* Every instantiation has the same ABI (T crosses as a pointer), so all share one declaration. */
-        LLVMValueRef existing = LLVMGetNamedFunction(b->m_mod, f->name);
-        info->function = existing ? existing : LLVMAddFunction(b->m_mod, f->name, info->type);
+        LLVMValueRef existing = LLVMGetNamedFunction(b->mod, f->name);
+        info->function = existing ? existing : LLVMAddFunction(b->mod, f->name, info->type);
     }
     else
     {
@@ -154,10 +154,10 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
         const char* symbol = (f->isExtern || f->isExport) ? f->mangledName
                              : IsAotEntryPoint(b, f)      ? ExportedSymbolName(b, STRATA_AOT_MAIN_SYMBOL)
                                                           : ExportedSymbolName(b, f->mangledName);
-        info->function = LLVMAddFunction(b->m_mod, symbol, info->type);
+        info->function = LLVMAddFunction(b->mod, symbol, info->type);
     }
 
-    StrMapPut(&b->m_funcs, f->mangledName, info);
+    StrMapPut(&b->funcs, f->mangledName, info);
 }
 
 void DefineFunction(Builder* b, const FunctionDecl* f)
@@ -167,34 +167,33 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
         return;
     }
 
-    StrMapClear(&b->m_symbols);
-    b->m_terminated = false;
-    b->m_curRet = Resolve(b, &f->returnType);
-    b->m_curRetAbi = WidenRetType(b, b->m_curRet.type);
-    b->m_loops.count = 0;
-    b->m_owningLocals.count = 0;
-    b->m_scopes.count = 0;
-    b->m_symDecls.count = 0;
+    StrMapClear(&b->symbols);
+    b->terminated = false;
+    b->curRet = Resolve(b, &f->returnType);
+    b->curRetAbi = WidenRetType(b, b->curRet.type);
+    b->loops.count = 0;
+    b->owningLocals.count = 0;
+    b->scopes.count = 0;
+    b->symDecls.count = 0;
     ResetTemps(b);
 
-    FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, f->mangledName);
-    b->m_curFn = info ? info->function : NULL;
+    FuncInfo* info = (FuncInfo*)StrMapGet(&b->funcs, f->mangledName);
+    b->curFn = info ? info->function : NULL;
 
     bool hasHiddenCtx = info && info->hasHiddenCtxParam;
     unsigned paramBase = hasHiddenCtx ? 1u : 0u;
-    b->m_curGlobalsPtr = hasHiddenCtx ? LLVMGetParam(b->m_curFn, 0) : NULL;
+    b->curGlobalsPtr = hasHiddenCtx ? LLVMGetParam(b->curFn, 0) : NULL;
 
-    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, "entry");
-    b->m_entryBlock = entry;
-    b->m_entryAllocaPt = NULL;
-    LLVMPositionBuilderAtEnd(b->m_builder, entry);
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(b->ctx, b->curFn, "entry");
+    b->entryBlock = entry;
+    b->entryAllocaPt = NULL;
+    LLVMPositionBuilderAtEnd(b->builder, entry);
 
     /* An `@export` body has no context parameter: it uses the module's newest context. */
     if (f->isExport)
     {
-        b->m_curGlobalsPtr = b->m_exportCtxGlobal
-                                 ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, b->m_exportCtxGlobal, "exportctx")
-                                 : LLVMConstNull(b->m_ptrTy);
+        b->curGlobalsPtr = b->exportCtxGlobal ? LLVMBuildLoad2(b->builder, b->ptrTy, b->exportCtxGlobal, "exportctx")
+                                              : LLVMConstNull(b->ptrTy);
     }
 
     for (size_t i = 0; i < f->params.count; i++)
@@ -202,19 +201,19 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
         ParamDecl* p = (ParamDecl*)VecGet(&f->params, i);
         TypeDesc typeDesc = Resolve(b, &p->type);
 
-        const char* leafName = TypeRegistryResolveAlias(&b->m_registry, p->type.name);
+        const char* leafName = TypeRegistryResolveAlias(&b->registry, p->type.name);
         bool structVal
-            = TypeRegistryIsUserType(&b->m_registry, leafName) && !TypeRegistryIsOpaque(&b->m_registry, leafName);
+            = TypeRegistryIsUserType(&b->registry, leafName) && !TypeRegistryIsOpaque(&b->registry, leafName);
         bool boxParam = BuilderIsOwningType(b, &p->type);
         /* An owning struct passed BY VALUE (non-ref, non-extern): the callee
            owns its copy's fields and drops them at return. */
-        bool owningStructParam = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->m_registry, leafName);
+        bool owningStructParam = structVal && !boxParam && TypeRegistryIsOwningStruct(&b->registry, leafName);
 
-        Value* sym = (Value*)ArenaAlloc(b->m_arena, sizeof(Value));
+        Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
 
         if (p->mod != ModNone || (f->isExtern && structVal) || boxParam)
         {
-            sym->value = LLVMGetParam(b->m_curFn, (unsigned)(i + paramBase));
+            sym->value = LLVMGetParam(b->curFn, (unsigned)(i + paramBase));
             sym->typeDesc = typeDesc;
 
             /* A `ref T... rest` with non-owning elements collects pointers to
@@ -234,32 +233,32 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
                dropped, but the caller's stack buffer is not freed. */
             if (boxParam && p->mod == ModNone)
             {
-                OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
+                OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->arena, sizeof(OwnLocal));
                 ol->slot = sym->value;
                 ol->td = typeDesc;
                 ol->stackBuffer = p->isVarargRest;
-                VecPush(&b->m_owningLocals, ol);
+                VecPush(&b->owningLocals, ol);
             }
         }
         else
         {
             LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "arg");
-            LLVMBuildStore(b->m_builder, LLVMGetParam(b->m_curFn, (unsigned)(i + paramBase)), slot);
+            LLVMBuildStore(b->builder, LLVMGetParam(b->curFn, (unsigned)(i + paramBase)), slot);
 
             sym->value = slot;
             sym->typeDesc = typeDesc;
 
             if (owningStructParam)
             {
-                OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->m_arena, sizeof(OwnLocal));
+                OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->arena, sizeof(OwnLocal));
                 ol->slot = slot;
                 ol->td = typeDesc;
                 ol->stackBuffer = false;
-                VecPush(&b->m_owningLocals, ol);
+                VecPush(&b->owningLocals, ol);
             }
         }
 
-        StrMapPut(&b->m_symbols, p->name, sym);
+        StrMapPut(&b->symbols, p->name, sym);
     }
 
     Block* blk = (Block*)f->body;
@@ -272,13 +271,13 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
         Node* s = (Node*)VecGet(&blk->statements, i);
         EmitStmt(b, s);
 
-        if (b->m_terminated)
+        if (b->terminated)
         {
             break;
         }
     }
 
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
         RunDefers(b, TopScope(b));
     }
@@ -286,17 +285,17 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
     SymPop(b);
     PopScope(b);
 
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
         EmitDrops(b, 0);
 
-        if (TypeDescIsVoid(&b->m_curRet))
+        if (TypeDescIsVoid(&b->curRet))
         {
-            LLVMBuildRetVoid(b->m_builder);
+            LLVMBuildRetVoid(b->builder);
         }
         else
         {
-            LLVMBuildRet(b->m_builder, LLVMConstNull(b->m_curRetAbi));
+            LLVMBuildRet(b->builder, LLVMConstNull(b->curRetAbi));
         }
     }
 }
@@ -304,23 +303,23 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
 /* int main(int argc, char** argv): create the context, run the Strata entry, destroy the context. */
 void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry)
 {
-    FuncInfo* info = (FuncInfo*)StrMapGet(&b->m_funcs, entry->mangledName);
-    LLVMValueRef createFn = LLVMGetNamedFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_create"));
-    LLVMValueRef destroyFn = LLVMGetNamedFunction(b->m_mod, ExportedSymbolName(b, "__strata_context_destroy"));
+    FuncInfo* info = (FuncInfo*)StrMapGet(&b->funcs, entry->mangledName);
+    LLVMValueRef createFn = LLVMGetNamedFunction(b->mod, ExportedSymbolName(b, "__strata_context_create"));
+    LLVMValueRef destroyFn = LLVMGetNamedFunction(b->mod, ExportedSymbolName(b, "__strata_context_destroy"));
 
     if (!info || !info->function || !createFn || !destroyFn)
     {
         return;
     }
 
-    LLVMTypeRef params[2] = {I32Ty(b), b->m_ptrTy};
+    LLVMTypeRef params[2] = {I32Ty(b), b->ptrTy};
     LLVMTypeRef mainTy = LLVMFunctionType(I32Ty(b), params, 2, 0);
-    LLVMValueRef mainFn = LLVMAddFunction(b->m_mod, "main", mainTy);
+    LLVMValueRef mainFn = LLVMAddFunction(b->mod, "main", mainTy);
 
-    LLVMBuilderRef builder = LLVMCreateBuilderInContext(b->m_ctx);
-    LLVMPositionBuilderAtEnd(builder, LLVMAppendBasicBlockInContext(b->m_ctx, mainFn, "entry"));
+    LLVMBuilderRef builder = LLVMCreateBuilderInContext(b->ctx);
+    LLVMPositionBuilderAtEnd(builder, LLVMAppendBasicBlockInContext(b->ctx, mainFn, "entry"));
 
-    LLVMTypeRef createTy = LLVMFunctionType(b->m_ptrTy, NULL, 0, 0);
+    LLVMTypeRef createTy = LLVMFunctionType(b->ptrTy, NULL, 0, 0);
     LLVMValueRef ctx = LLVMBuildCall2(builder, createTy, createFn, NULL, 0, "ctx");
 
     LLVMValueRef callArgs[1] = {ctx};
@@ -328,8 +327,8 @@ void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry)
     LLVMValueRef exitCode
         = GetPrimitiveType(entry->returnType.name) == PrimVoid ? LLVMConstInt(I32Ty(b), 0, 0) : result;
 
-    LLVMTypeRef destroyParams[1] = {b->m_ptrTy};
-    LLVMTypeRef destroyTy = LLVMFunctionType(LLVMVoidTypeInContext(b->m_ctx), destroyParams, 1, 0);
+    LLVMTypeRef destroyParams[1] = {b->ptrTy};
+    LLVMTypeRef destroyTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), destroyParams, 1, 0);
     LLVMBuildCall2(builder, destroyTy, destroyFn, callArgs, 1, "");
 
     LLVMBuildRet(builder, exitCode);

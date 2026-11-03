@@ -8,13 +8,13 @@
 
 typedef struct
 {
-    const char* m_source;
-    size_t m_sourceLen;
-    DiagnosticEngine* m_diag;
-    size_t m_pos;
-    bool m_hasPeek;
-    Token m_peeked;
-    uint16_t m_fileId;
+    const char* source;
+    size_t sourceLen;
+    DiagnosticEngine* diag;
+    size_t pos;
+    bool hasPeek;
+    Token peeked;
+    uint16_t fileId;
 } Lexer;
 
 void LexerInit(Lexer* lex, const char* source, size_t sourceLen, DiagnosticEngine* diag, uint16_t fileId);
@@ -32,6 +32,6 @@ Str LexerSourceText(const Lexer* lex);
 
 static inline char LexerPeek(const Lexer* lex, size_t ahead)
 {
-    size_t i = lex->m_pos + ahead;
-    return (i < lex->m_sourceLen) ? lex->m_source[i] : '\0';
+    size_t i = lex->pos + ahead;
+    return (i < lex->sourceLen) ? lex->source[i] : '\0';
 }

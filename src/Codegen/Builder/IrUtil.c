@@ -78,17 +78,17 @@ LLVMValueRef FcmpByName(LLVMBuilderRef builder, const char* pred, LLVMValueRef l
 
 LLVMTypeRef I32Ty(Builder* b)
 {
-    return LLVMInt32TypeInContext(b->m_ctx);
+    return LLVMInt32TypeInContext(b->ctx);
 }
 
 LLVMTypeRef I64Ty(Builder* b)
 {
-    return LLVMInt64TypeInContext(b->m_ctx);
+    return LLVMInt64TypeInContext(b->ctx);
 }
 
 LLVMTypeRef I1Ty(Builder* b)
 {
-    return LLVMInt1TypeInContext(b->m_ctx);
+    return LLVMInt1TypeInContext(b->ctx);
 }
 
 /*
@@ -120,61 +120,61 @@ LLVMValueRef ExtendToRetWidth(Builder* b, LLVMValueRef value, TypeDesc semantic,
 
     if (TypeDescIsUnsigned(&semantic) || semantic.type == I1Ty(b))
     {
-        return LLVMBuildZExt(b->m_builder, value, retLlvm, "ret.zext");
+        return LLVMBuildZExt(b->builder, value, retLlvm, "ret.zext");
     }
 
-    return LLVMBuildSExt(b->m_builder, value, retLlvm, "ret.sext");
+    return LLVMBuildSExt(b->builder, value, retLlvm, "ret.sext");
 }
 
 LLVMBasicBlockRef NewBb(Builder* b, const char* name)
 {
-    return LLVMAppendBasicBlockInContext(b->m_ctx, b->m_curFn, name);
+    return LLVMAppendBasicBlockInContext(b->ctx, b->curFn, name);
 }
 
 LLVMValueRef EntryAlloca(Builder* b, LLVMTypeRef type, const char* name)
 {
-    LLVMBasicBlockRef cur = LLVMGetInsertBlock(b->m_builder);
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(b->builder);
 
-    if (b->m_entryAllocaPt)
+    if (b->entryAllocaPt)
     {
-        LLVMPositionBuilderBefore(b->m_builder, b->m_entryAllocaPt);
+        LLVMPositionBuilderBefore(b->builder, b->entryAllocaPt);
     }
     else
     {
         /* The entry block may already be terminated (e.g. drop code emitted
            on a return before any alloca was created). Insert before the
            terminator so the alloca stays in the entry prologue. */
-        LLVMValueRef term = LLVMGetBasicBlockTerminator(b->m_entryBlock);
+        LLVMValueRef term = LLVMGetBasicBlockTerminator(b->entryBlock);
 
         if (term)
         {
-            LLVMPositionBuilderBefore(b->m_builder, term);
+            LLVMPositionBuilderBefore(b->builder, term);
         }
         else
         {
-            LLVMPositionBuilderAtEnd(b->m_builder, b->m_entryBlock);
+            LLVMPositionBuilderAtEnd(b->builder, b->entryBlock);
         }
     }
 
-    LLVMValueRef slot = LLVMBuildAlloca(b->m_builder, type, name);
-    b->m_entryAllocaPt = slot;
+    LLVMValueRef slot = LLVMBuildAlloca(b->builder, type, name);
+    b->entryAllocaPt = slot;
 
-    LLVMPositionBuilderAtEnd(b->m_builder, cur);
+    LLVMPositionBuilderAtEnd(b->builder, cur);
     return slot;
 }
 
 void PositionAtEnd(Builder* b, LLVMBasicBlockRef bb)
 {
-    LLVMPositionBuilderAtEnd(b->m_builder, bb);
-    b->m_terminated = false;
+    LLVMPositionBuilderAtEnd(b->builder, bb);
+    b->terminated = false;
 }
 
 void Br(Builder* b, LLVMBasicBlockRef dest)
 {
-    if (!b->m_terminated)
+    if (!b->terminated)
     {
-        LLVMBuildBr(b->m_builder, dest);
-        b->m_terminated = true;
+        LLVMBuildBr(b->builder, dest);
+        b->terminated = true;
     }
 }
 
@@ -206,7 +206,7 @@ LLVMValueRef IdxConst(Builder* b, unsigned i)
 LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
 {
     LLVMValueRef idx[1] = {LLVMConstInt(I64Ty(b), 1, 0)};
-    LLVMValueRef gep = LLVMConstGEP2(ty, LLVMConstNull(b->m_ptrTy), idx, 1);
+    LLVMValueRef gep = LLVMConstGEP2(ty, LLVMConstNull(b->ptrTy), idx, 1);
 
     return LLVMConstPtrToInt(gep, I64Ty(b));
 }
@@ -217,31 +217,31 @@ LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty)
    scratch (dropping whatever a prior OOB event left there). */
 LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name)
 {
-    LLVMValueRef before = b->m_entryAllocaPt;
+    LLVMValueRef before = b->entryAllocaPt;
     LLVMValueRef slot = EntryAlloca(b, type, name);
-    LLVMBasicBlockRef cur = LLVMGetInsertBlock(b->m_builder);
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(b->builder);
 
     /* EntryAlloca inserted the slot just before `before` (or the entry
        terminator); positioning there puts the zeroing store right after it. */
     if (before)
     {
-        LLVMPositionBuilderBefore(b->m_builder, before);
+        LLVMPositionBuilderBefore(b->builder, before);
     }
     else
     {
-        LLVMValueRef term = LLVMGetBasicBlockTerminator(b->m_entryBlock);
+        LLVMValueRef term = LLVMGetBasicBlockTerminator(b->entryBlock);
 
         if (term)
         {
-            LLVMPositionBuilderBefore(b->m_builder, term);
+            LLVMPositionBuilderBefore(b->builder, term);
         }
         else
         {
-            LLVMPositionBuilderAtEnd(b->m_builder, b->m_entryBlock);
+            LLVMPositionBuilderAtEnd(b->builder, b->entryBlock);
         }
     }
 
-    LLVMBuildStore(b->m_builder, LLVMConstNull(type), slot);
-    LLVMPositionBuilderAtEnd(b->m_builder, cur);
+    LLVMBuildStore(b->builder, LLVMConstNull(type), slot);
+    LLVMPositionBuilderAtEnd(b->builder, cur);
     return slot;
 }
