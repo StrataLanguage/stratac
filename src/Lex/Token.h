@@ -1,5 +1,7 @@
 #pragma once
 
+// Token kinds, token records and keyword classification.
+
 #include "Core/SourceLocation.h"
 #include "Core/Util.h"
 

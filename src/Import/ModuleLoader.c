@@ -1,3 +1,5 @@
+// Loads the modules an import graph reaches, once each.
+
 #include "Import/ModuleLoader.h"
 
 #include "Core/Util.h"
@@ -47,10 +49,10 @@ static const char* CanonicalizePath(Arena* arena, const char* path)
     return ArenaStrdup(arena, path);
 }
 
-/* Dedup key for an on-disk module. Elsewhere this is the canonical path. On
-   Windows `_fullpath` keeps the spelling it was given (`Util` vs `util`, or
-   an 8.3 short name), and the file system is case-insensitive, so expand
-   short names and case-fold to get one key per file. */
+// Dedup key for an on-disk module. Elsewhere this is the canonical path. On
+// Windows `_fullpath` keeps the spelling it was given (`Util` vs `util`, or
+// an 8.3 short name), and the file system is case-insensitive, so expand
+// short names and case-fold to get one key per file.
 static const char* DiskModuleKey(Arena* arena, const char* canonPath)
 {
 #ifdef STRATA_PLATFORM_WINDOWS
@@ -241,8 +243,8 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
             }
         }
 
-        /* A forward declaration may coexist with (and be satisfied by) a
-           definition in the other module - only two definitions conflict. */
+        // A forward declaration may coexist with (and be satisfied by) a
+        // definition in the other module - only two definitions conflict.
         if (hasAny && !s->incomplete && hasDefined)
         {
             DiagErrorFmt(diag, s->base.range, "redefinition of struct '%s'", s->name);
@@ -290,8 +292,8 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
         VecPush(&root->globals, g);
     }
 
-    /* Impl blocks merge wholesale; duplicate qualified method symbols across
-       impls are diagnosed in sema (duplicate signature / extern overload). */
+    // Impl blocks merge wholesale; duplicate qualified method symbols across
+    // impls are diagnosed in sema (duplicate signature / extern overload).
     for (size_t i = 0; i < src->impls.count; i++)
     {
         VecPush(&root->impls, VecGet(&src->impls, i));
@@ -303,14 +305,13 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
     }
 }
 
-// Forward declarations.
 static void LoadStrataModule(ModuleLoader* loader, const char* key, const char* name, const char* text, size_t textLen,
                              bool textOwned);
 static void ResolveImport(ModuleLoader* loader, const char* importerName, const char* importPath);
 
-/* `key` identifies the module for dedup (see DiskModuleKey); `name` is the
-   canonical name used for diagnostics and passed to the resolver as the
-   importer. */
+// `key` identifies the module for dedup (see DiskModuleKey); `name` is the
+// canonical name used for diagnostics and passed to the resolver as the
+// importer.
 static void LoadStrataModule(ModuleLoader* loader, const char* key, const char* name, const char* text, size_t textLen,
                              bool textOwned)
 {
@@ -384,10 +385,10 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
             return;
         }
 
-        /* The canonical name is the module's identity: two imports that
-           resolve to the same name are one module. Falling back to the import
-           spelling would silently merge distinct modules that happen to be
-           imported as the same path from different importers. */
+        // The canonical name is the module's identity: two imports that
+        // resolve to the same name are one module. Falling back to the import
+        // spelling would silently merge distinct modules that happen to be
+        // imported as the same path from different importers.
         if (!resolved.name || !resolved.name[0])
         {
             DiagErrorFmt(loader->diag, SRC_INVALID,
@@ -403,7 +404,7 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
     char* childPath = ResolveImportPath(loader->arena, importerName, importPath);
     const char* canonPath = CanonicalizePath(loader->arena, childPath);
 
-    /* Not next to the importer: try each import directory (`stratac -I`), in order. */
+    // Not next to the importer: try each import directory (`stratac -I`), in order.
     for (size_t i = 0; i < loader->importDirCount && !FileExists(canonPath); i++)
     {
         const char* dir = loader->importDirs[i];

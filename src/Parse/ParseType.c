@@ -1,3 +1,5 @@
+// Type syntax: builtin names, arrays, boxes, optionals and handles.
+
 #include "Parse/ParserInternal.h"
 
 #include "Codegen/TypeRegistry.h"
@@ -54,10 +56,10 @@ bool LooksLikeVarDecl(Parser* p)
     }
 }
 
-/* Consume postfix `[]`/`[N]`. A literal N declares a fixed (C-ABI inline) array;
-   non-literal indices stay intact so speculation is diagnostic-free. Wraps apply
-   inside-out and the canonical name is rebuilt in source order to round-trip C
-   dimension order (`int[2][6]` = 2 of `int[6]`). */
+// Consume postfix `[]`/`[N]`. A literal N declares a fixed (C-ABI inline) array;
+// non-literal indices stay intact so speculation is diagnostic-free. Wraps apply
+// inside-out and the canonical name is rebuilt in source order to round-trip C
+// dimension order (`int[2][6]` = 2 of `int[6]`).
 typedef struct
 {
     bool isFixed;
@@ -78,8 +80,8 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
         if (next.kind == TokRBracket)
         {
-            Advance(p); /* '[' */
-            Advance(p); /* ']' */
+            Advance(p);
+            Advance(p);
 
             dim.isFixed = false;
             dim.length = -1;
@@ -90,14 +92,14 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         {
             LexerCheckpoint saved = SaveLexerState(p);
 
-            Advance(p); /* '[' */
+            Advance(p);
 
             Token lenTok = p->cur;
             Advance(p);
 
             if (p->cur.kind == TokRBracket)
             {
-                Advance(p); /* ']' */
+                Advance(p);
 
                 // Length < 1 is diagnosed later in sema.
                 uint64_t length = IntLiteralValue(p, lenTok, NULL);
@@ -124,17 +126,17 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
             // `[constName]` — a manifest-constant dimension, resolved by sema.
             LexerCheckpoint saved = SaveLexerState(p);
 
-            Advance(p); /* '[' */
+            Advance(p);
 
             Token nameTok = p->cur;
             Advance(p);
 
             if (p->cur.kind == TokRBracket)
             {
-                Advance(p); /* ']' */
+                Advance(p);
 
                 dim.isFixed = true;
-                dim.length = -2; /* unresolved sentinel */
+                dim.length = -2; // unresolved sentinel
                 dim.lengthName = ToOwned(p->arena, ParserIdentText(p, nameTok));
                 consumed = true;
             }
@@ -157,8 +159,8 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
         return;
     }
 
-    /* Apply inside-out (last source group is the innermost array) and rebuild
-        the canonical name in source order; the pre-bracket type is the leaf. */
+    // Apply inside-out (last source group is the innermost array) and rebuild
+    // the canonical name in source order; the pre-bracket type is the leaf.
     const char* leafName = out->name;
 
     for (int i = dimCount - 1; i >= 0; i--)
@@ -202,8 +204,8 @@ static void ApplyArrayBrackets(Parser* p, TypeName* out, SourceRange constRange)
 
 static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare);
 
-/* The name of a builtin type keyword or of an identifier. The token is left for the caller to
-   consume. Returns NULL when the token starts no type. */
+// The name of a builtin type keyword or of an identifier. The token is left for the caller to
+// consume. Returns NULL when the token starts no type.
 static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constRange, bool* isVector)
 {
     const char* name = NULL;
@@ -279,15 +281,15 @@ static const char* ParseBaseTypeName(Parser* p, bool isConst, SourceRange constR
     return name;
 }
 
-/* `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
-   so `Weapon?[]` is an array of optionals. `cstring?` is not supported. */
+// `T?` — optional (maybe-empty box). Binds tighter than a trailing `[]`,
+// so `Weapon?[]` is an array of optionals. `cstring?` is not supported.
 static void ParseOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange)
 {
     if (p->cur.kind == TokQuestion)
     {
-        /* At this point the type is always bare (boxes and array brackets
-           are parsed elsewhere), so a plain cstring is all that can get
-           here. */
+        // At this point the type is always bare (boxes and array brackets
+        // are parsed elsewhere), so a plain cstring is all that can get
+        // here.
         if (out->primitiveType == PrimCString)
         {
             DiagError(p->diag, p->cur.range, "type 'cstring' cannot be optional");
@@ -306,9 +308,9 @@ static void ParseOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange
     }
 }
 
-/* A trailing `?` after brackets wraps the whole array in an optional:
-   `int[]?` (maybe-empty dynamic array) differs from `int?[]` (array of
-   optionals). Fixed-size arrays have no empty state, so cannot be optional. */
+// A trailing `?` after brackets wraps the whole array in an optional:
+// `int[]?` (maybe-empty dynamic array) differs from `int?[]` (array of
+// optionals). Fixed-size arrays have no empty state, so cannot be optional.
 static void ParseArrayOptionalSuffix(Parser* p, TypeName* out, SourceRange constRange)
 {
     if (p->cur.kind == TokQuestion)
@@ -331,19 +333,19 @@ static void ParseArrayOptionalSuffix(Parser* p, TypeName* out, SourceRange const
         }
         else
         {
-            /* A second `?` with no brackets (`int??`) - not a type. */
+            // A second `?` with no brackets (`int??`) - not a type.
             DiagErrorFmt(p->diag, qRange, "unexpected '?' after type '%s'", out->name);
             Advance(p);
         }
     }
 }
 
-/* The suffixes after `^T`, which bind to the box: a `?` right after the box is reported, `[]`
-   brackets make an array of boxes, and a `?` after those wraps the array. */
+// The suffixes after `^T`, which bind to the box: a `?` right after the box is reported, `[]`
+// brackets make an array of boxes, and a `?` after those wraps the array.
 static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, SourceRange constRange)
 {
-    /* `^S?` would wrap the box, which is never empty. Report it and keep
-       going as `^S`, so a following `[]` still reads as an array of boxes. */
+    // `^S?` would wrap the box, which is never empty. Report it and keep
+    // going as `^S`, so a following `[]` still reads as an array of boxes.
     if (p->cur.kind == TokQuestion)
     {
         DiagErrorFmt(p->diag, p->cur.range,
@@ -354,8 +356,8 @@ static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, Sou
 
     ApplyArrayBrackets(p, out, constRange);
 
-    /* A trailing `?` after brackets wraps the ARRAY in an optional
-       (`^S[]?` = optional array of boxes). Fixed dims have no empty state. */
+    // A trailing `?` after brackets wraps the ARRAY in an optional
+    // (`^S[]?` = optional array of boxes). Fixed dims have no empty state.
     if (p->cur.kind == TokQuestion)
     {
         bool anyFixed = false;
@@ -391,9 +393,9 @@ static void ParseBoxSuffixes(Parser* p, TypeName* out, const char* baseName, Sou
     }
 }
 
-/* `^T` — boxed type. `^` binds tighter than a trailing `[]` or `?`, so
-   `^S[]` is an array of boxed S and `^S[]?` an optional array of boxed
-   S. The inner type is parsed bare so the suffixes are seen here. */
+// `^T` — boxed type. `^` binds tighter than a trailing `[]` or `?`, so
+// `^S[]` is an array of boxed S and `^S[]?` an optional array of boxed
+// S. The inner type is parsed bare so the suffixes are seen here.
 static bool ParseBoxedType(Parser* p, TypeName* out, bool isConst, SourceRange constRange, bool bare)
 {
     SourceRange caretRange = p->cur.range;
@@ -409,16 +411,16 @@ static bool ParseBoxedType(Parser* p, TypeName* out, bool isConst, SourceRange c
 
     TypeName wrapped = TypeNameBoxWrap(p->arena, base);
 
-    /* `^string` is redundant: `string?` is already the maybe-empty
-       string, so a box that can never be empty but holds a string has
-       no distinct meaning. */
+    // `^string` is redundant: `string?` is already the maybe-empty
+    // string, so a box that can never be empty but holds a string has
+    // no distinct meaning.
     if (base.primitiveType == PrimString)
     {
         DiagError(p->diag, caretRange, "redundant boxing of type 'string'");
     }
 
-    /* `^cstring` is not supported: a constant string is already a
-       plain pointer with no ownership to box. */
+    // `^cstring` is not supported: a constant string is already a
+    // plain pointer with no ownership to box.
     if (base.primitiveType == PrimCString)
     {
         DiagError(p->diag, caretRange, "type 'cstring' cannot be boxed");
@@ -442,9 +444,9 @@ static bool ParseBoxedType(Parser* p, TypeName* out, bool isConst, SourceRange c
     return true;
 }
 
-/* `bare` parses only the base type (`const`, `^`, a keyword or a name) and
-   leaves any trailing `?` / `[]` for the caller: the box branch uses it so
-   that `^` binds tighter than those suffixes. */
+// `bare` parses only the base type (`const`, `^`, a keyword or a name) and
+// leaves any trailing `?` / `[]` for the caller: the box branch uses it so
+// that `^` binds tighter than those suffixes.
 static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
 {
     bool isConst = false;
@@ -498,15 +500,15 @@ bool ParserTryParseType(Parser* p, TypeName* out)
     return ParseTypeImpl(p, out, false);
 }
 
-/* `handle` is a keyword only where a declaration starts with it: `handle Name;` at top level. Anywhere
-   else it is an ordinary identifier (a field, local or parameter). */
+// `handle` is a keyword only where a declaration starts with it: `handle Name;` at top level. Anywhere
+// else it is an ordinary identifier (a field, local or parameter).
 bool AtHandleDecl(Parser* p)
 {
     return p->cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->cur), "handle")
            && LexerPeekToken(p->lex).kind == TokIdent;
 }
 
-/* A type named `handle` would turn every global of that type into a handle declaration. */
+// A type named `handle` would turn every global of that type into a handle declaration.
 void CheckTypeNameNotHandle(Parser* p, Token nameTok)
 {
     if (StrEqC(ParserIdentText(p, nameTok), "handle"))

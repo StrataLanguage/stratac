@@ -1,3 +1,5 @@
+// AST node disposal and the module-level lookups (enums, impls).
+
 #include "AST/AST.h"
 
 #include <stdlib.h>
@@ -67,8 +69,8 @@ const ImplDecl* ModuleFindImpl(const Module* mod, const char* handleName)
     return NULL;
 }
 
-/* Kinds whose disposal is more than one call get a function of their own. Kinds that dispose a
-   single child stay on one line in AstDispose. */
+// Kinds whose disposal is more than one call get a function of their own. Kinds that dispose a
+// single child stay on one line in AstDispose.
 
 static void DisposeModule(Node* node)
 {
@@ -186,8 +188,8 @@ static void DisposeCall(Node* node)
 
     DisposeVec(&expression->args);
 
-    /* Pre-sema member calls keep the base outside args; after the sema
-       rewrite it has been moved into args (and calleeBase cleared). */
+    // Pre-sema member calls keep the base outside args; after the sema
+    // rewrite it has been moved into args (and calleeBase cleared).
     AstDispose(expression->calleeBase);
 }
 
@@ -224,8 +226,8 @@ static void DisposeArrayInit(Node* node)
     DisposeVec(&ai->elements);
 }
 
-/* Method FunctionDecls are shared with Module::functions (disposed
-   there); only the impl's own membership lists go away here. */
+// Method FunctionDecls are shared with Module::functions (disposed
+// there); only the impl's own membership lists go away here.
 static void DisposeImpl(Node* node)
 {
     DisposeVec(&((ImplDecl*)node)->methods);

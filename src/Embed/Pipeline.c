@@ -1,4 +1,4 @@
-/* Shared compile-pipeline helpers: module loader setup and teardown, semantic analysis and reserved-name checks. */
+// Shared compile-pipeline helpers: module loader setup, semantic analysis and reserved-name checks.
 #include "Embed/EmbedInternal.h"
 
 #ifdef __cplusplus
@@ -49,9 +49,9 @@ extern "C"
         ArenaFree(arena);
     }
 
-    /* Symbols the runtime (or the generated module itself) defines. A user
-       function with one of these names collides with it: in the JIT as a
-       duplicate definition, in AOT at host link time. */
+    // Symbols the runtime (or the generated module itself) defines. A user
+    // function with one of these names collides with it: in the JIT as a
+    // duplicate definition, in AOT at host link time.
     static bool IsReservedRuntimeName(const char* name)
     {
         static const char* const kReserved[] = {
@@ -98,7 +98,7 @@ extern "C"
         {
             const FunctionDecl* fn = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
 
-            /* A module may supply the host hooks itself, as `@export` functions (a Strata-written runtime). */
+            // A module may supply the host hooks itself, as `@export` functions (a Strata-written runtime).
             if (fn->isExport && IsHostRuntimeHook(fn->name))
             {
                 continue;

@@ -1,3 +1,5 @@
+// stratac: the command-line driver.
+
 #include "Core/Util.h"
 #include "strata/strata.h"
 
@@ -125,7 +127,6 @@ typedef enum CommandFlags
     CF_SEPARATOR = (1 << 1),
 } CommandFlags;
 
-// One CLI option.
 typedef struct CLICommand
 {
     const char* shortCmd;
@@ -139,7 +140,6 @@ typedef struct CLICommand
     const char* description;
 } CLICommand;
 
-// Forward declarations.
 static ResultCode CmdVersion(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdHelp(State* state, StrataCompiler* compiler, const CLICommand* cmd);
 static ResultCode CmdSetOutputFilename(State* state, StrataCompiler* compiler, const CLICommand* cmd);
@@ -536,9 +536,9 @@ static ResultCode ImplJitAndRun(State* state, StrataCompiler* compiler)
         return RCIOError;
     }
 
-    /* The entry's user-visible signature must be int(void). Every non-extern
-       function additionally takes a hidden leading context pointer (see
-       strata.h), which `--run` creates, passes and destroys transparently. */
+    // The entry's user-visible signature must be int(void). Every non-extern
+    // function additionally takes a hidden leading context pointer (see
+    // strata.h), which `--run` creates, passes and destroys transparently.
     if (!strataJitHasIntVoidSignature(jit, state->entryName))
     {
         fprintf(stderr, "error: entry '%s' must be a defined int(void) function\n", state->entryName);

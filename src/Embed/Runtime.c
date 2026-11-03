@@ -1,4 +1,4 @@
-/* Public runtime hooks: panic handler, bounds-violation hook, capabilities and LLVM version. */
+// Public runtime hooks: panic handler, bounds-violation hook, capabilities and LLVM version.
 #include "Embed/EmbedInternal.h"
 
 #ifdef __cplusplus

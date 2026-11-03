@@ -1,16 +1,14 @@
 #ifndef STRATA_TYPES_H
 #define STRATA_TYPES_H
 
-/*
- * Standalone reader (no Strata library needed) for a module's type metadata: its
- * `@component` structs plus the structs/enums they use, in dependency order.
- * From strataJitGetTypeMetadata, strataCompileTypeMetadata, or the AOT symbol
- * `<prefix>__strata_types`.
- *
- * Little-endian and pointer-free: header, struct/field/attribute/enum/enum-value
- * tables, strings, then per-struct default values. Readers step by the header's
- * record sizes, so records can grow; `version` bumps only on breaking changes.
- */
+// Standalone reader (no Strata library needed) for a module's type metadata: its
+// `@component` structs plus the structs/enums they use, in dependency order.
+// From strataJitGetTypeMetadata, strataCompileTypeMetadata, or the AOT symbol
+// `<prefix>__strata_types`.
+//
+// Little-endian and pointer-free: header, struct/field/attribute/enum/enum-value
+// tables, strings, then per-struct default values. Readers step by the header's
+// record sizes, so records can grow; `version` bumps only on breaking changes.
 
 #include <stddef.h>
 #include <stdint.h>
@@ -21,11 +19,11 @@ extern "C"
 {
 #endif
 
-#define STRATA_TYPES_MAGIC 0x54525453u /* "STRT" */
+#define STRATA_TYPES_MAGIC 0x54525453u // "STRT"
 #define STRATA_TYPES_VERSION 1u
 #define STRATA_TYPES_SYMBOL "__strata_types"
 
-    /* Values are part of the format: only ever appended to. */
+    // Values are part of the format: only ever appended to.
     typedef enum StrataTypeKind
     {
         STRATA_TYPE_INVALID = 0,
@@ -40,15 +38,15 @@ extern "C"
         STRATA_TYPE_U64 = 9,
         STRATA_TYPE_F32 = 10,
         STRATA_TYPE_F64 = 11,
-        STRATA_TYPE_FLOAT2 = 12, /* 8 bytes, 8-aligned */
-        STRATA_TYPE_FLOAT3 = 13, /* 16 bytes, 16-aligned; lanes x, y, z then 4 bytes of padding */
-        STRATA_TYPE_FLOAT4 = 14, /* 16 bytes, 16-aligned */
-        STRATA_TYPE_STRUCT = 15, /* typeIndex = struct index */
-        STRATA_TYPE_ENUM = 16,   /* typeIndex = enum index; stored as the enum's underlying kind */
-        STRATA_TYPE_HANDLE = 17, /* opaque host pointer; typeName = the handle type */
+        STRATA_TYPE_FLOAT2 = 12, // 8 bytes, 8-aligned
+        STRATA_TYPE_FLOAT3 = 13, // 16 bytes, 16-aligned; lanes x, y, z then 4 bytes of padding
+        STRATA_TYPE_FLOAT4 = 14, // 16 bytes, 16-aligned
+        STRATA_TYPE_STRUCT = 15, // typeIndex = struct index
+        STRATA_TYPE_ENUM = 16,   // typeIndex = enum index; stored as the enum's underlying kind
+        STRATA_TYPE_HANDLE = 17, // opaque host pointer; typeName = the handle type
     } StrataTypeKind;
 
-    /* StrataTypesStruct::flags */
+    // StrataTypesStruct::flags
     enum StrataTypesStructFlags
     {
         STRATA_TYPES_STRUCT_NONE = (0),
@@ -57,7 +55,7 @@ extern "C"
 
 #define STRATA_TYPES_NO_INDEX 0xFFFFFFFFu
 
-    /* Minimum record sizes this reader understands (the blob may use larger ones). */
+    // Minimum record sizes this reader understands (the blob may use larger ones).
 #define STRATA_TYPES_HEADER_SIZE 96u
 #define STRATA_TYPES_STRUCT_RECORD_SIZE 48u
 #define STRATA_TYPES_FIELD_RECORD_SIZE 32u
@@ -100,19 +98,19 @@ extern "C"
         uint32_t fieldCount;
         uint32_t firstAttribute;
         uint32_t attributeCount;
-        const void* defaultValue; /* `size` bytes: the struct with its field defaults applied */
-        uint64_t layoutHash;      /* changes when the layout changes (not when only defaults do) */
+        const void* defaultValue; // `size` bytes: the struct with its field defaults applied
+        uint64_t layoutHash;      // changes when the layout changes (not when only defaults do)
     } StrataTypesStruct;
 
     typedef struct StrataTypesField
     {
         const char* name;
         uint32_t offset;
-        uint32_t size;        /* total, including every element of an array */
-        StrataTypeKind kind;  /* element kind for fixed-size arrays */
-        uint32_t arrayLength; /* 0 = not an array; nested arrays are flattened */
-        uint32_t typeIndex;   /* struct / enum index, or STRATA_TYPES_NO_INDEX */
-        const char* typeName; /* struct, enum or handle type name; "" for scalars */
+        uint32_t size;        // total, including every element of an array
+        StrataTypeKind kind;  // element kind for fixed-size arrays
+        uint32_t arrayLength; // 0 = not an array; nested arrays are flattened
+        uint32_t typeIndex;   // struct / enum index, or STRATA_TYPES_NO_INDEX
+        const char* typeName; // struct, enum or handle type name; "" for scalars
     } StrataTypesField;
 
     typedef struct StrataTypesEnum
@@ -126,7 +124,7 @@ extern "C"
     typedef struct StrataTypesEnumValue
     {
         const char* name;
-        uint64_t value; /* bit pattern in the underlying type (sign-extended for signed kinds) */
+        uint64_t value; // bit pattern in the underlying type (sign-extended for signed kinds)
     } StrataTypesEnumValue;
 
     static inline uint32_t strataTypesReadU32_(const uint8_t* p)
@@ -162,8 +160,8 @@ extern "C"
         out->offset = strataTypesReadU32_(header + at + 8);
     }
 
-    /* Validates the blob and fills `out`. Returns 1 on success, 0 when the data is truncated,
-       corrupt, or from an incompatible version. */
+    // Validates the blob and fills `out`. Returns 1 on success, 0 when the data is truncated,
+    // corrupt, or from an incompatible version.
     static inline int strataTypesOpen(StrataTypes* out, const void* data, size_t size)
     {
         const uint8_t* bytes = (const uint8_t*)data;
@@ -225,8 +223,8 @@ extern "C"
         return 1;
     }
 
-    /* A string by table offset; "" for out-of-range offsets (the table ends in a NUL, so every
-       in-range offset is terminated). */
+    // A string by table offset; "" for out-of-range offsets (the table ends in a NUL, so every
+    // in-range offset is terminated).
     static inline const char* strataTypesString_(const StrataTypes* types, uint32_t offset)
     {
         if (offset >= types->stringSize)
@@ -392,7 +390,7 @@ extern "C"
         return 1;
     }
 
-    /* Byte size of one element of `kind` (0 for STRUCT, whose size is the struct's own). */
+    // Byte size of one element of `kind` (0 for STRUCT, whose size is the struct's own).
     static inline uint32_t strataTypesKindSize(StrataTypeKind kind)
     {
         switch (kind)
@@ -426,4 +424,4 @@ extern "C"
 }
 #endif
 
-#endif /* STRATA_TYPES_H */
+#endif // STRATA_TYPES_H

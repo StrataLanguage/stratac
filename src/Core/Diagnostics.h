@@ -1,5 +1,7 @@
 #pragma once
 
+// Diagnostic severities, records and the engine that collects them.
+
 #include "Core/SourceLocation.h"
 #include "Core/Util.h"
 

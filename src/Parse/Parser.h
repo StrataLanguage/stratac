@@ -1,5 +1,7 @@
 #pragma once
 
+// Parser state and the entry points for parsing a module.
+
 #include "AST/AST.h"
 #include "Core/Diagnostics.h"
 #include "Core/Util.h"

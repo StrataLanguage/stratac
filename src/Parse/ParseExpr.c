@@ -1,3 +1,5 @@
+// Expression parsing: precedence levels, postfix forms, primaries and literals.
+
 #include "Parse/ParserInternal.h"
 
 #include "Codegen/TypeRegistry.h"
@@ -131,8 +133,8 @@ Node* ParseExpr(Parser* p)
     return ParseAssign(p);
 }
 
-/* Tokens that can begin an expression: after `?` they make it the conditional operator rather than
-   the postfix null test (`opt?` is followed by `)`, `;`, `&&`, `||`, ...). */
+// Tokens that can begin an expression: after `?` they make it the conditional operator rather than
+// the postfix null test (`opt?` is followed by `)`, `;`, `&&`, `||`, ...).
 static bool StartsExpression(TokKind k)
 {
     switch (k)
@@ -158,7 +160,7 @@ static bool StartsExpression(TokKind k)
     }
 }
 
-/* `cond ? a : b` (right-associative, binds looser than every binary operator). */
+// `cond ? a : b` (right-associative, binds looser than every binary operator).
 static Node* ParseConditional(Parser* p)
 {
     Node* cond = ParseBinary(p, 0);
@@ -346,13 +348,13 @@ static Node* ParseUnary(Parser* p)
 
                 if (ParserTryParseType(p, &castType) && p->cur.kind == TokRParen)
                 {
-                    /* The parser has no type table (user types may be declared
-                       later or imported), so `(Name)` is a cast only when the
-                       next token can start a cast operand but cannot continue
-                       an expression - the C# rule. `-`, `+`, `++` and `--`
-                       could be either (`(x) - 1`, `(x)++`), so they parse as
-                       an expression; write `(Name)(-x)` to cast a negation.
-                       Keyword and box casts are unambiguous. */
+                    // The parser has no type table (user types may be declared
+                    // later or imported), so `(Name)` is a cast only when the
+                    // next token can start a cast operand but cannot continue
+                    // an expression - the C# rule. `-`, `+`, `++` and `--`
+                    // could be either (`(x) - 1`, `(x)++`), so they parse as
+                    // an expression; write `(Name)(-x)` to cast a negation.
+                    // Keyword and box casts are unambiguous.
                     Token afterRparen = LexerPeekToken(p->lex);
                     bool startsOperand = afterRparen.kind == TokIdent || afterRparen.kind == TokIntLit
                                          || afterRparen.kind == TokFloatLit || afterRparen.kind == TokBoolLit
@@ -492,7 +494,7 @@ static Node* ParsePostfix(Parser* p)
         Token memberTok = p->cur;
         Advance(p);
 
-        /* `ptr.null`, the null pointer, is the one constant read off a type name. */
+        // `ptr.null`, the null pointer, is the one constant read off a type name.
         if (e->kind == NodeIdent && strcmp(((IdentExpr*)e)->name, STRATA_PTR_TYPE) == 0
             && StrEqC(ParserIdentText(p, memberTok), "null") && p->cur.kind != TokLParen)
         {
@@ -513,9 +515,9 @@ static Node* ParsePostfix(Parser* p)
 
         e = (Node*)node;
 
-        /* `expr.Member(args)` — a method call. The callee keeps the member
-           name; sema resolves it against impl blocks (prepending the base as
-           the self argument for instance methods). */
+        // `expr.Member(args)` — a method call. The callee keeps the member
+        // name; sema resolves it against impl blocks (prepending the base as
+        // the self argument for instance methods).
         if (p->cur.kind == TokLParen)
         {
             CallExpr* call = AST_NEW(p->arena, CallExpr);
@@ -536,11 +538,11 @@ static Node* ParsePostfix(Parser* p)
     return e;
 }
 
-/* Parses `(arg, ...)` after the opening paren has NOT yet been consumed.
-   Shared by plain calls (ParsePrimary) and member calls (ParsePostfix). */
+// Parses `(arg, ...)` after the opening paren has NOT yet been consumed.
+// Shared by plain calls (ParsePrimary) and member calls (ParsePostfix).
 static void ParseCallArgs(Parser* p, CallExpr* call)
 {
-    Advance(p); /* '(' */
+    Advance(p);
 
     if (p->cur.kind != TokRParen)
     {
@@ -599,9 +601,9 @@ Node* ParseStructInitBody(Parser* p, Token startTok, const char* typeName)
 
         if (p->cur.kind == TokLBrace)
         {
-            /* `{ ... }` initializes a fixed-size array field (element type
-               filled from the field in sema); a designator form is a nested
-               struct literal. */
+            // `{ ... }` initializes a fixed-size array field (element type
+            // filled from the field in sema); a designator form is a nested
+            // struct literal.
             if (LexerPeekToken(p->lex).kind == TokDot)
             {
                 field->value = ParseStructInitBody(p, p->cur, NULL);
@@ -656,7 +658,7 @@ Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
     init->repeatCount = NULL;
     VecInit(&init->elements);
 
-    Advance(p); /* consume '{' */
+    Advance(p);
 
     while (p->cur.kind != TokRBrace && p->cur.kind != TokEof)
     {
@@ -667,7 +669,7 @@ Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
             VecPush(&init->elements, elem);
         }
 
-        /* `{ value; count }`: count copies of one value. */
+        // `{ value; count }`: count copies of one value.
         if (init->elements.count == 1 && ParserConsume(p, TokSemicolon))
         {
             init->repeatCount = ParseExpr(p);
@@ -700,8 +702,7 @@ Node* ParseArrayInitBody(Parser* p, Token startTok, const TypeName* elementType)
     return (Node*)init;
 }
 
-/* One helper per leading token class. ParsePrimary has already read `token` and the helpers
-   consume it, so the bodies below are the original case bodies, unchanged. */
+// One helper per leading token class. ParsePrimary has already read `token`; the helpers consume it.
 
 static Node* ParseIntLiteral(Parser* p, Token token)
 {
@@ -769,9 +770,9 @@ static Node* ParseCharLiteral(Parser* p, Token token)
 {
     Advance(p);
 
-    /* `'c'` is the byte constant `(byte)N` — the same nodes as the cast, so it goes wherever that
-       does (comparisons, arithmetic, fills, enum values, global initializers). The lexer has
-       already diagnosed a malformed literal; whatever byte it starts with stands in. */
+    // `'c'` is the byte constant `(byte)N` — the same nodes as the cast, so it goes wherever that
+    // does (comparisons, arithmetic, fills, enum values, global initializers). The lexer has
+    // already diagnosed a malformed literal; whatever byte it starts with stands in.
     Str sv = ParserIdentText(p, token);
     unsigned char value = sv.len > 1 ? (unsigned char)sv.data[1] : 0;
 
@@ -793,7 +794,7 @@ static Node* ParseCharLiteral(Parser* p, Token token)
             break;
         default:
             value = (unsigned char)sv.data[2];
-            break; /* \\ \' \" */
+            break;
         }
     }
 
@@ -885,14 +886,14 @@ static Node* ParseStrLiteral(Parser* p, Token token)
     return (Node*)node;
 }
 
-/* An identifier or a builtin type keyword: a call (plain, or with an explicit `Name<Type>(...)`
-   type argument), a struct literal `Name { ... }`, or a plain identifier. */
+// An identifier or a builtin type keyword: a call (plain, or with an explicit `Name<Type>(...)`
+// type argument), a struct literal `Name { ... }`, or a plain identifier.
 static Node* ParseNamedPrimary(Parser* p, Token token)
 {
     Advance(p);
 
-    /* `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
-       else starting `Name <` is a comparison, so the attempt is rolled back. */
+    // `Name<Type>(args)`: an explicit type argument for a generic extern. Anything
+    // else starting `Name <` is a comparison, so the attempt is rolled back.
     if (token.kind == TokIdent && p->cur.kind == TokLt)
     {
         LexerCheckpoint saved = SaveLexerState(p);
@@ -964,9 +965,9 @@ static Node* ParseParenExpr(Parser* p)
 
 static Node* ParseBracePrimary(Parser* p, Token token)
 {
-    /* A braced list in expression position: `{1,2,3}` as an array literal
-       or `{ .field = ... }` as a struct literal (types inferred in sema).
-       Statement position never reaches here — a leading `{` starts a block. */
+    // A braced list in expression position: `{1,2,3}` as an array literal
+    // or `{ .field = ... }` as a struct literal (types inferred in sema).
+    // Statement position never reaches here — a leading `{` starts a block.
     if (LexerPeekToken(p->lex).kind == TokDot)
     {
         return ParseStructInitBody(p, token, NULL);

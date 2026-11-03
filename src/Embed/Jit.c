@@ -1,4 +1,4 @@
-/* Public JIT API: in-memory compilation, symbol lookup and binding, diagnostics and destruction. */
+// Public JIT API: in-memory compilation, symbol lookup and binding, diagnostics and destruction.
 #include "Embed/EmbedInternal.h"
 
 #ifdef __cplusplus
@@ -107,9 +107,8 @@ extern "C"
 
             LlvmJitExport* exp = (LlvmJitExport*)malloc(sizeof(LlvmJitExport));
             exp->name = DupString(fn->mangledName);
-            /* The user-visible signature only; every non-extern function
-               additionally takes a hidden leading context pointer (see
-               LLVMModuleBuilder.c). */
+            // The user-visible signature only. Every non-extern function also takes a hidden leading context
+            // pointer (see Codegen/Builder/Function.c).
             exp->isIntVoid = fn->returnType.primitiveType == PrimInt && fn->params.count == 0;
             VecPush(&handle->llvmExports, exp);
         }

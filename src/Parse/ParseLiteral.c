@@ -1,3 +1,5 @@
+// Integer and float literal values and their suffixes.
+
 #include "Parse/ParserInternal.h"
 
 #include "Codegen/TypeRegistry.h"
@@ -27,11 +29,11 @@ static bool StripUnsignedSuffix(Str* sv)
     return false;
 }
 
-/* The one place an integer literal's value is computed (expressions, array
-   dimensions, fieldoffset). Decimal - a leading 0 is NOT octal, so `010` is
-   ten everywhere - or `0x` hex, with an optional `u`/`U` suffix and any
-   number of digits. Values past 64 bits are diagnosed and yield 0; malformed
-   spellings such as a bare `0x` were already diagnosed by the lexer. */
+// The one place an integer literal's value is computed (expressions, array
+// dimensions, fieldoffset). Decimal - a leading 0 is NOT octal, so `010` is
+// ten everywhere - or `0x` hex, with an optional `u`/`U` suffix and any
+// number of digits. Values past 64 bits are diagnosed and yield 0; malformed
+// spellings such as a bare `0x` were already diagnosed by the lexer.
 uint64_t IntLiteralValueEx(Parser* p, Token tok, bool* outIsUnsigned, bool* outIsLong)
 {
     Str sv = ParserIdentText(p, tok);

@@ -1,12 +1,14 @@
 #pragma once
 
+// Built-in primitive types and their name hashes.
+
 #include "Core/Util.h"
 
 #include <stdint.h>
 
 typedef enum PrimitiveType
 {
-    /* Non-primitive value */
+    // Non-primitive value
     PrimNone = 0,
 
     PrimVoid,
@@ -30,8 +32,8 @@ typedef enum PrimitiveType
     PrimFloat4,
 } PrimitiveType;
 
-/* NOTE: These are prebaked to be guaranteed to match `HashStr64` and ONLY `HashStr64`.
-   Do not mix with another FNV1-A algorithm. */
+// NOTE: These are prebaked to be guaranteed to match `HashStr64` and ONLY `HashStr64`.
+// Do not mix with another FNV1-A algorithm.
 
 #define PRIM_NAME_VOID 0xd6af875602fd05dd
 #define PRIM_NAME_BOOL 0x26f69aafbc840517
@@ -63,44 +65,36 @@ static inline PrimitiveType GetPrimitiveType(const char* name)
     case PRIM_NAME_BOOL:
         return PrimBool;
 
-        /* */
     case PRIM_NAME_INT:
         return PrimInt;
     case PRIM_NAME_UINT:
         return PrimUInt;
 
-        /* */
     case PRIM_NAME_LONG:
         return PrimLong;
     case PRIM_NAME_ULONG:
         return PrimULong;
 
-        /* */
     case PRIM_NAME_SBYTE:
         return PrimSByte;
     case PRIM_NAME_BYTE:
         return PrimByte;
 
-        /* */
     case PRIM_NAME_SHORT:
         return PrimShort;
     case PRIM_NAME_USHORT:
         return PrimUShort;
 
-        /* */
     case PRIM_NAME_FLOAT:
         return PrimFloat;
     case PRIM_NAME_DOUBLE:
         return PrimDouble;
-        /* */
 
     case PRIM_NAME_STRING:
         return PrimString;
 
     case PRIM_NAME_CSTRING:
         return PrimCString;
-
-        /* */
 
     case PRIM_NAME_FLOAT2:
         return PrimFloat2;

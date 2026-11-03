@@ -1,5 +1,7 @@
 #pragma once
 
+// AST node types, and the TypeName helpers that build and query type shapes.
+
 #include "Core/SourceLocation.h"
 #include "Core/Util.h"
 
@@ -58,10 +60,10 @@ typedef struct
 #define AST_NEW(arena, type) ((type*)ArenaAlloc((arena), sizeof(type)))
 #define AS_NODE(type, node) ((type*)(node))
 
-/* Types are structural: `^T` (box), `T?` (optional), and `T[]`/`T[N]` (array)
-   wrap an inner/element TypeName. `name` is the canonical spelling ("^Foo",
-   "int[4]"), used for display/mangling/map keys — never parse it for shape.
-   A dynamic array has length < 0; a fixed `T[N]` (inline storage) >= 1. */
+// Types are structural: `^T` (box), `T?` (optional), and `T[]`/`T[N]` (array)
+// wrap an inner/element TypeName. `name` is the canonical spelling ("^Foo",
+// "int[4]"), used for display/mangling/map keys — never parse it for shape.
+// A dynamic array has length < 0; a fixed `T[N]` (inline storage) >= 1.
 typedef struct TypeName
 {
     char* name;
@@ -244,9 +246,9 @@ static inline TypeName TypeNameLeaf(char* name)
 static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_t baseLen, const char* groups,
                                            size_t groupsLen)
 {
-    /* A trailing '?' AFTER bracket groups wraps the whole type: `int[]?`
-       is an optional array (distinct from `int?[]`, an array of optionals).
-       Boxes still never wrap arrays, but an optional may. */
+    // A trailing '?' AFTER bracket groups wraps the whole type: `int[]?`
+    // is an optional array (distinct from `int?[]`, an array of optionals).
+    // Boxes still never wrap arrays, but an optional may.
     if (groupsLen > 0 && groups[groupsLen - 1] == '?')
     {
         TypeName inner = TypeNameParseGroups(arena, base, baseLen, groups, groupsLen - 1);
@@ -330,9 +332,9 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
     return t;
 }
 
-/* Rebuild a structural TypeName tree from a canonical spelling ("Foo",
-   "^Foo", "int[4]", "^Foo[]", "int[2][6]"). Only for boundary code that
-   genuinely starts from a name string; the pipeline itself carries trees. */
+// Rebuild a structural TypeName tree from a canonical spelling ("Foo",
+// "^Foo", "int[4]", "^Foo[]", "int[2][6]"). Only for boundary code that
+// genuinely starts from a name string; the pipeline itself carries trees.
 static inline TypeName TypeNameParse(Arena* arena, const char* spelling)
 {
     const char* open = strchr(spelling, '[');
@@ -377,17 +379,19 @@ typedef struct
     TypeName type;
     char* name;
     bool isVarargRest;
-    bool isReturn;   /* `return T x` — last param of an extern fn: the callee writes `x` as its
-                        out-param; the Strata-level return type becomes T. */
-    bool growsArray; /* `ref T[]` the body grows, shrinks or rebinds (sema): callers must pass a real
-                        heap array, never a stack view (fixed array, array literal, varargs rest) */
-    /* A by-value `string` / `T[]` / owning-struct param the body only reads: sema passes it as
-       `const ref` instead (callers keep their value; nothing is copied or moved). */
+    // `return T x` — last param of an extern fn: the callee writes `x` as its out-param; the
+    // Strata-level return type becomes T.
+    bool isReturn;
+    // `ref T[]` the body grows, shrinks or rebinds (sema): callers must pass a real heap array,
+    // never a stack view (fixed array, array literal, varargs rest).
+    bool growsArray;
+    // A by-value `string` / `T[]` / owning-struct param the body only reads: sema passes it as
+    // `const ref` instead (callers keep their value; nothing is copied or moved).
     bool inferredBorrow;
-    bool borrowCandidate; /* working state of that inference */
+    bool borrowCandidate; // working state of that inference
 } ParamDecl;
 
-/* A field's `= expr` default, folded by sema. Scalars use lane 0; float2/3/4 use one lane each. */
+// A field's `= expr` default, folded by sema. Scalars use lane 0; float2/3/4 use one lane each.
 typedef struct
 {
     bool isSet;
@@ -420,15 +424,15 @@ typedef struct
     char* name;
     Vec fields;
     bool incomplete;
-    bool isExtern;          // `extern struct` — mirrors a host-defined layout
-    bool isUnion;           // `union`: every field overlays byte 0 (C union layout)
-    bool isTypeAlias;       // `struct Foo = uint;` — strongly typed alias
-    char* underlyingType;   // underlying type name for type aliases (NULL for normal structs)
-    Vec attributes;         // Vec<Attribute*>
+    bool isExtern;        // `extern struct` — mirrors a host-defined layout
+    bool isUnion;         // `union`: every field overlays byte 0 (C union layout)
+    bool isTypeAlias;     // `struct Foo = uint;` — strongly typed alias
+    char* underlyingType; // underlying type name for type aliases (NULL for normal structs)
+    Vec attributes;
     bool isComponent;       // `@component`: a plain-data type the host registers (see strata_types.h)
     const char* moduleName; // module (file) the struct was declared in
-    /* The `void Drop(ref T self)` of the struct's impl, bound by sema: runs when an owned value is dropped.
-       Such a struct carries a hidden `__alive` byte (STRATA_ALIVE_FIELD) so a moved-from value is skipped. */
+    // The `void Drop(ref T self)` of the struct's impl, bound by sema: runs when an owned value is dropped.
+    // Such a struct carries a hidden `__alive` byte (STRATA_ALIVE_FIELD) so a moved-from value is skipped.
     const struct FunctionDecl* dropFunction;
 } StructDecl;
 
@@ -457,7 +461,7 @@ typedef struct
     // Underlying integral type (NULL = `int`).
     char* underlyingType;
     bool isFlags; // `@flags enum`: its values combine with `|`, `&`, `^` and `~`
-    Vec members;  // Vec<EnumMemberDecl*>
+    Vec members;
 } EnumDecl;
 
 typedef struct FunctionDecl
@@ -469,15 +473,15 @@ typedef struct FunctionDecl
     Node* body;
     bool isExtern;
     bool isPrivate;
-    /* `@export`: a defined function with the plain C ABI — no hidden context parameter and never
-       symbol-prefixed — so C code can call it by name or through `addressof(fn)` (callbacks). Its
-       body reaches the module's globals through the context created most recently. */
+    // `@export`: a defined function with the plain C ABI — no hidden context parameter and never
+    // symbol-prefixed — so C code can call it by name or through `addressof(fn)` (callbacks). Its
+    // body reaches the module's globals through the context created most recently.
     bool isExport;
-    /* `@noreturn`: never returns to its caller (exits, aborts, panics). A call to it as a statement
-       ends the path for flow typing, like `return`; its body must not reach its end or `return`. */
+    // `@noreturn`: never returns to its caller (exits, aborts, panics). A call to it as a statement
+    // ends the path for flow typing, like `return`; its body must not reach its end or `return`.
     bool isNoReturn;
-    /* `extern delegate R Name(params);`: not a function but a C function-pointer type `Name` with this
-       signature. Kept in Module::delegates; `mangledName` is the internal `__delegate_Name`. */
+    // `extern delegate R Name(params);`: not a function but a C function-pointer type `Name` with this
+    // signature. Kept in Module::delegates; `mangledName` is the internal `__delegate_Name`.
     bool isDelegate;
     bool hasReturnStmt;
     char* mangledName;
@@ -529,8 +533,8 @@ typedef struct
 {
     Node base;
     char* handleName;
-    Vec methods;    // Vec<FunctionDecl*> (also in Module::functions)
-    Vec properties; // Vec<PropertyDecl*>
+    Vec methods; // Also listed in Module::functions.
+    Vec properties;
 } ImplDecl;
 
 typedef struct
@@ -597,9 +601,9 @@ typedef struct
     TypeName type;
     char* name;
     Node* init;
-    /* `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, not a copy. */
+    // `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, not a copy.
     bool isRef;
-    /* Set by sema: the path holds a `^T` / proven `T?` and the ref aliases the value inside. */
+    // Set by sema: the path holds a `^T` / proven `T?` and the ref aliases the value inside.
     bool refThroughBox;
 } VarDeclStmt;
 
@@ -680,7 +684,7 @@ typedef struct
     AssignOp op;
     Node* target;
     Node* value;
-    bool isImplPropertyWrite; /* set by sema: target is an impl property (no assigned-value semantics) */
+    bool isImplPropertyWrite; // set by sema: target is an impl property (no assigned-value semantics)
 } AssignExpr;
 
 typedef struct
@@ -688,7 +692,7 @@ typedef struct
     Node base;
     uint64_t value;
     bool isUnsigned;
-    bool isLong; /* `l` / `ul` suffix: always 64-bit */
+    bool isLong; // `l` / `ul` suffix: always 64-bit
 } IntLiteral;
 
 typedef struct
@@ -703,8 +707,8 @@ typedef struct
     bool value;
 } BoolLiteral;
 
-/* `value` is NUL-terminated for convenience, but `\0` escapes may embed
-   NULs, so `length` (the decoded byte count) is authoritative. */
+// `value` is NUL-terminated for convenience, but `\0` escapes may embed
+// NULs, so `length` (the decoded byte count) is authoritative.
 typedef struct
 {
     Node base;
@@ -712,21 +716,21 @@ typedef struct
     size_t length;
 } StrLiteral;
 
-/* What the checker (Sema/MoveCheck.c) decided a use of a place does with the value. Set on identifier, member and
-   index expressions; UseUnknown until the checker has run over the function. */
+// What the move checker (Sema/MoveCheck/) decided a use of a place does with the value. Set on identifier,
+// member and index expressions; UseUnknown until the checker has run over the function.
 typedef enum
 {
     UseUnknown = 0,
-    UseRead, /* looked at, or borrowed: nothing moves */
-    UseMove, /* an Owning value leaves the place (an optional is left empty) */
-    UseCopy, /* the value is copied; the place keeps its own */
+    UseRead, // looked at, or borrowed: nothing moves
+    UseMove, // an Owning value leaves the place (an optional is left empty)
+    UseCopy, // the value is copied; the place keeps its own
 } UseKind;
 
 typedef struct
 {
     Node base;
     char* name;
-    UseKind useKind; /* set by the checker */
+    UseKind useKind; // set by the checker
 } IdentExpr;
 
 typedef struct CallExpr
@@ -736,19 +740,19 @@ typedef struct CallExpr
     const FunctionDecl* resolvedDecl;
     Vec args;
     bool isIntrinsicCall;
-    TypeName* typeArg; /* explicit `Name<T>(...)` type argument (generic externs), NULL otherwise */
-    /* `expr.Member(args)` — non-NULL until sema resolves the member against
-       impl blocks (then the base moves into `args` as the self argument). */
+    TypeName* typeArg; // explicit `Name<T>(...)` type argument (generic externs), NULL otherwise
+    // `expr.Member(args)` — non-NULL until sema resolves the member against
+    // impl blocks (then the base moves into `args` as the self argument).
     Node* calleeBase;
-    /* `addressof(fn)`: the extern or `@export` function whose address is taken (set by sema). */
+    // `addressof(fn)`: the extern or `@export` function whose address is taken (set by sema).
     const struct FunctionDecl* addressOfFunction;
-    /* A call through a delegate value (sema): the expression yielding the function pointer (a
-       variable, or a struct field when written `obj.field(args)`) and the delegate's signature. */
+    // A call through a delegate value (sema): the expression yielding the function pointer (a
+    // variable, or a struct field when written `obj.field(args)`) and the delegate's signature.
     Node* delegateCallee;
     const struct FunctionDecl* delegateDecl;
 } CallExpr;
 
-/* A statement that is a call to a `@noreturn` function: control never continues past it. */
+// A statement that is a call to a `@noreturn` function: control never continues past it.
 static inline bool StmtIsNoReturnCall(const Node* n)
 {
     if (!n || n->kind != NodeExprStmt)
@@ -765,12 +769,12 @@ typedef struct MemberExpr
     Node base;
     Node* baseNode;
     char* member;
-    UseKind useKind;          /* set by the checker */
-    bool isImplProperty;      /* set by sema: member names an impl property (call-like read, never a move source) */
-    bool isEnumConst;         /* set by sema: `EnumName.Member` scoped constant read */
-    uint64_t enumValue;       /* resolved bit pattern of the enum member (valid when isEnumConst) */
-    const char* enumTypeName; /* the enum's name (valid when isEnumConst) */
-    bool isScalarConst;       /* set by sema: `int.max` / `float.min` builtin scalar type pseudo-property read */
+    UseKind useKind;          // set by the checker
+    bool isImplProperty;      // set by sema: member names an impl property (call-like read, never a move source)
+    bool isEnumConst;         // set by sema: `EnumName.Member` scoped constant read
+    uint64_t enumValue;       // resolved bit pattern of the enum member (valid when isEnumConst)
+    const char* enumTypeName; // the enum's name (valid when isEnumConst)
+    bool isScalarConst;       // set by sema: `int.max` / `float.min` builtin scalar type pseudo-property read
 } MemberExpr;
 
 typedef struct
@@ -794,15 +798,15 @@ typedef struct
     Node* operand;
 } IncDecExpr;
 
-/* Casts that view or copy text (set by sema): a `byte[N]` / `sbyte[N]` buffer as a borrowed
-   `cstring` or a copied `string`, and a `string` as a borrowed `cstring`. */
+// Casts that view or copy text (set by sema): a `byte[N]` / `sbyte[N]` buffer as a borrowed
+// `cstring` or a copied `string`, and a `string` as a borrowed `cstring`.
 typedef enum
 {
     CastTextNone = 0,
     CastBufferToCString,
     CastBufferToString,
     CastStringToCString,
-    CastFixedToPtr, /* any fixed array as a `ptr` to its first element (C's array decay) */
+    CastFixedToPtr, // any fixed array as a `ptr` to its first element (C's array decay)
 } CastTextKind;
 
 typedef struct
@@ -827,7 +831,7 @@ typedef struct
     Node base;
     Node* baseNode;
     Node* index;
-    UseKind useKind; /* set by the checker */
+    UseKind useKind; // set by the checker
 } IndexExpr;
 
 // { e0, ... } array literal; elementType NULL until sema infers it.
@@ -836,7 +840,7 @@ typedef struct
     Node base;
     const TypeName* elementType;
     Vec elements;
-    /* `{ value; count }`: `count` copies of the one value in `elements`; NULL for a plain list. */
+    // `{ value; count }`: `count` copies of the one value in `elements`; NULL for a plain list.
     Node* repeatCount;
 } ArrayInitExpr;
 
