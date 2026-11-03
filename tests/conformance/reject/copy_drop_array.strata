@@ -1,5 +1,5 @@
 // expect: reject "cannot copy"
-// rule: copy() of an array whose elements have a Drop method is rejected
+// rule: copy() of an array whose elements have a drop method is rejected
 int main()
 {
     Res[] l = {};

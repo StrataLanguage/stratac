@@ -39,7 +39,7 @@ typedef struct
     bool isExtern;                           // `extern struct`: mirrors a C layout.
     bool isUnion;                            // `union`: every field at offset 0.
     const struct FunctionDecl* delegate;     // `extern delegate`: the handle's call signature
-    const struct FunctionDecl* dropFunction; // the struct's `Drop` method, NULL if none
+    const struct FunctionDecl* dropFunction; // the struct's `drop` method, NULL if none
     int unionMember;                         // union: the field the backend lays out (the most aligned, then largest);
                                              // every field's physical index is 0, a tail pad rounds out the size
     bool isTypeAlias;
@@ -111,11 +111,11 @@ bool IsLValueNode(const Node* n);
 bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base);
 bool IsHandleType(const TypeRegistry* reg, const char* name);
 
-// Whether a value of type `t` holds anything with a `Drop` method (by value, in an array or a box): such
+// Whether a value of type `t` holds anything with a `drop` method (by value, in an array or a box): such
 // values move, and are never implicitly deep-copied.
 bool TypeNameHasDrop(const TypeRegistry* reg, const TypeName* t);
 
-// Whether a `t` holds a value with a `Drop` method in its own storage (itself, or by value in a field or a
+// Whether a `t` holds a value with a `drop` method in its own storage (itself, or by value in a field or a
 // fixed array), not behind a box, optional or dynamic array. Moving such a value out leaves storage that
 // would be dropped again, so it only moves whole.
 bool TypeNameHasInlineDrop(const TypeRegistry* reg, const TypeName* t);

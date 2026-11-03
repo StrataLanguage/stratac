@@ -459,8 +459,8 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
            || (valueInner && strcmp(valueInner->name, targetType->name) == 0);
 }
 
-// The type with an Init method that a `t` holds in its own storage (itself, or by value in a field or a fixed
-// array), or NULL. Field defaults never run Init, so such storage is only valid once a value is put in it;
+// The type with an init method that a `t` holds in its own storage (itself, or by value in a field or a fixed
+// array), or NULL. Field defaults never run init, so such storage is only valid once a value is put in it;
 // what sits behind a box, an optional or a dynamic array was built on its own.
 const char* InlineInitType(Resolver* r, const TypeName* t, int depth)
 {

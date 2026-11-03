@@ -1,7 +1,7 @@
 // expect: reject "cannot move 'h.w' out on its own"
-// rule: a field whose type holds a Drop value by value, at any depth, only moves with its parent
+// rule: a field whose type holds a drop value by value, at any depth, only moves with its parent
 struct Inner { int id; };
-impl Inner { void Drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
+impl Inner { void drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
 struct W { Inner i; };
 struct H { W w; int n; };
 int main()

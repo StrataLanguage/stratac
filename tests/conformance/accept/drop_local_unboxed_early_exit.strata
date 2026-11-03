@@ -4,9 +4,9 @@
 // expect-output: drop 4
 // expect-output: drop 5
 // expect-output: drop 3
-// rule: by-value Drop locals are dropped on return, break and continue, except one returned by move
+// rule: by-value drop locals are dropped on return, break and continue, except one returned by move
 struct V { int id; };
-impl V { void Drop(ref V self) { gLive--; printf("drop %d\n", self.id); } }
+impl V { void drop(ref V self) { gLive--; printf("drop %d\n", self.id); } }
 V Mk(int id) { gLive++; return V { .id = id }; }
 int Early(bool stop) { V a = Mk(1); if (stop) { return 1; } return 0; }
 V Give() { V keep = Mk(4); V other = Mk(2); return keep; }

@@ -1,7 +1,7 @@
 // expect: run
 // expect-output: drop 1
 // expect-output: drop 2
-// rule: elements of a dynamic array of an alias of a Drop type are dropped with the array
+// rule: elements of a dynamic array of an alias of a drop type are dropped with the array
 struct RA = Res;
 int main()
 {

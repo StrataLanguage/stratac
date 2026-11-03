@@ -29,8 +29,6 @@ ulong bb_max(ulong x, ulong y)
 
 impl bytebuffer
 {
-	// TODO: init should act as a constructor without needing to be called manually.
-
 	void init(ref bytebuffer self, ulong initial_size)
 	{
 		self.request_size(initial_size);
@@ -77,7 +75,7 @@ impl bytebuffer
 		self.size += str.length;
 	}
 
-	void write_byte(ref bytebuffer self, byte b)
+	void write(ref bytebuffer self, byte b)
 	{
 		self.request_size(1);
 
@@ -87,7 +85,7 @@ impl bytebuffer
 		self.size += 1;
 	}
 
-	const *byte get(const ref bytebuffer self)
+	const *byte get_ptr(const ref bytebuffer self)
 	{
 		return self.pbuffer;
 	}
@@ -104,5 +102,10 @@ impl bytebuffer
 		self.capacity = 0;
 	}
 
-	// TODO: Drop should not be solely for boxed values. It should function like a normal destructor.
+	void drop(ref bytebuffer self)
+	{
+		self.free();
+	}
+
+	// TODO: drop should not be solely for boxed values. It should function like a normal destructor.
 }

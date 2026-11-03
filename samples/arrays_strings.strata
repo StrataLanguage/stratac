@@ -21,7 +21,7 @@ struct Res
 
 impl Res
 {
-    void Drop(ref Res self) { gLive--; }
+    void drop(ref Res self) { gLive--; }
 }
 
 struct Named
@@ -56,7 +56,7 @@ void Repeats()
            records[1].values.length, shared[2].id, shared.length, none.length, fill[0], fill[7]);
 
     gLive = 2;
-    Res[] fresh = { {}; 2u };                // Drop types default-construct
+    Res[] fresh = { {}; 2u };                // drop types default-construct
     printf("fresh: %u\n", fresh.length);
 
     int[][] grid = { {}; 2u };

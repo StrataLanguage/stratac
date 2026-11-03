@@ -2,9 +2,9 @@
 // expect-output: took 6
 // expect-output: inner drop 6
 // expect-output: inner drop 7
-// rule: a box field moves out of a struct that also holds a Drop value by value; each value is dropped once
+// rule: a box field moves out of a struct that also holds a drop value by value; each value is dropped once
 struct Inner { int id; };
-impl Inner { void Drop(ref Inner self) { gLive--; printf("inner drop %d\n", self.id); } }
+impl Inner { void drop(ref Inner self) { gLive--; printf("inner drop %d\n", self.id); } }
 struct H { Inner a; ^Inner b; };
 void Take(^Inner i) { printf("took %d\n", i.id); }
 int main()

@@ -826,7 +826,7 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 }
 
 // The value a slot holds, copied aside. Overwriting stores the NEW value first and then drops this copy, so a
-// `Drop` that writes the same slot meets a slot that already holds the new value instead of the half-destroyed
+// `drop` that writes the same slot meets a slot that already holds the new value instead of the half-destroyed
 // old one (and the value it stores is not overwritten and leaked).
 LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
 {

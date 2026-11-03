@@ -1,7 +1,7 @@
 // expect: run
-// rule: a by-value Drop local moves into a box, a field, an array, an optional and another local, and each value is dropped once
+// rule: a by-value drop local moves into a box, a field, an array, an optional and another local, and each value is dropped once
 struct V { int id; };
-impl V { void Drop(ref V self) { gLive--; } }
+impl V { void drop(ref V self) { gLive--; } }
 struct W { V v; string name; };
 struct H { V a; int n; };
 V Mk(int id) { gLive++; return V { .id = id }; }

@@ -111,7 +111,7 @@ typedef struct
 {
     bool trivial;   // bitwise copy, no drop glue
     bool owning;    // a by-value use moves; has drop glue (the complement of trivial)
-    bool userDrop;  // has a `Drop`, itself or in a field; no `copy()`
+    bool userDrop;  // has a `drop`, itself or in a field; no `copy()`
     bool zeroValid; // all-zero bits are a valid value
 } TypeProps;
 

@@ -1,5 +1,5 @@
 // expect: reject "cannot copy"
-// rule: copy() of a struct that holds a Drop value, even inside an optional, is rejected
+// rule: copy() of a struct that holds a drop value, even inside an optional, is rejected
 struct S { string a; Res? r; };
 int main()
 {

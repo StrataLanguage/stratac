@@ -1,0 +1,125 @@
+
+
+
+bool is_digit(byte ch_)
+{
+	const var ic = (int)ch_;
+	return (ic >= (int)'0' && ic <= (int)'9');
+}
+
+
+int to_int(byte ch_)
+{
+	if (!is_digit(ch_)) {
+		return 0;
+	}
+
+	return ((int)ch_) - (int)'0';
+}
+
+int to_int(cstring str_)
+{
+	// TODO: Add hexidecimal support. currently only supports decimal.
+
+	int result = 0;
+	int sign = 1;
+
+	var index = 0;
+
+	// Execute signs
+	for (index = 0; index < str_.length; index++) {
+		byte ch = str_[index];
+
+		// Break on the first digit
+		if (is_digit(ch)) {
+			break;
+		}
+
+		// Remove any preceding whitespace
+		if (ch == ' ') {
+			continue;
+		}
+
+		if (ch == '-') {
+			sign *= -1;
+		}
+		else if (ch == '+') {
+			continue;
+		}
+	}
+
+	for (; index < str_.length; index++) {
+		byte ch = str_[index];
+
+		if (!is_digit(ch)) {
+			break;
+		}
+
+		result = (result * 10) + to_int(ch);
+	}
+
+	return result * sign;
+}
+
+void reverse(*byte buffer_, int length)
+{
+	if (buffer_ == null || buffer_[0] == 0) {
+        return;
+    }
+
+    int left = 0;
+    int right = length - 1;
+    byte temp;
+
+    while (left < right) {
+        // Swap characters
+        temp = buffer_[left];
+
+        buffer_[left] = buffer_[right];
+        buffer_[right] = temp;
+
+        // Move pointers inward
+        left++;
+        right--;
+    }
+}
+
+
+
+string to_str(int value_)
+{
+	byte[64] buffer = {};
+	int buffer_index = 0;
+
+	if (value_ == 0) {
+        return "0";
+    }
+
+    bool negative = false;
+
+    long n = value_;
+
+    if (n < 0) {
+        negative = true;
+        n = -n;
+    }
+
+    // Extract digits from right to left (least significant first)
+    while (n > 0) {
+        long digit = n % 10;
+
+        buffer[buffer_index++] = (byte)('0' + digit);
+        n /= 10;
+    }
+
+    // Append negative sign
+    if (negative) {
+	    buffer[buffer_index++] = '-';
+    }
+
+    // Since digits were extracted in reverse order, reverse the string
+    reverse((*byte)buffer[0], buffer_index);
+    buffer[buffer_index] = (byte)0;
+
+    return (string)buffer;
+}

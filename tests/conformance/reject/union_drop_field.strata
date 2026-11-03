@@ -1,5 +1,5 @@
 // expect: reject "union field 'r' cannot have owning type 'Res'"
-// rule: a union field cannot be a type with a Drop method
+// rule: a union field cannot be a type with a drop method
 extern union U { Res r; long raw; };
 int main()
 {

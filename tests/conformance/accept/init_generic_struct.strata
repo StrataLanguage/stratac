@@ -1,12 +1,12 @@
 // expect: run
 // expect-output: a=1/0 b=5/9
 // expect-output: END live=0
-// rule: a generic struct's Init overloads are instantiated with it, as `holder<int>(5)` and `holder<int> h;`
+// rule: a generic struct's init overloads are instantiated with it, as `holder<int>(5)` and `holder<int> h;`
 struct holder<T> { T item; int n; }
 impl holder<T>
 {
-    void Init(ref holder<T> self) { self.item = 1; self.n = 0; }
-    void Init(ref holder<T> self, T item) { self.item = item; self.n = 9; }
+    void init(ref holder<T> self) { self.item = 1; self.n = 0; }
+    void init(ref holder<T> self, T item) { self.item = item; self.n = 9; }
 }
 int main()
 {

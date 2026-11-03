@@ -1,9 +1,9 @@
 // expect: run
 // expect-output: node drop 3
 // expect-output: drop 5
-// rule: values a Drop method adds to its own fields are dropped with those fields afterwards
+// rule: values a drop method adds to its own fields are dropped with those fields afterwards
 struct Node { int id; Res[] kids; };
-impl Node { void Drop(ref Node self) { printf("node drop %d\n", self.id); array_push(self.kids, Res.Make(5)); } }
+impl Node { void drop(ref Node self) { printf("node drop %d\n", self.id); array_push(self.kids, Res.Make(5)); } }
 int main()
 {
     { ^Node n = Node { .id = 3, .kids = {} }; }

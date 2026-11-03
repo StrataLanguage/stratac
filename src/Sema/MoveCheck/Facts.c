@@ -532,7 +532,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
     return proven;
 }
 
-// A value being dropped runs its `Drop` method (and those of its fields and elements), which may write
+// A value being dropped runs its `drop` method (and those of its fields and elements), which may write
 // globals: whatever the narrowing and refs rested on in those globals is gone.
 static void ApplyDropWrites(const Env* env, unsigned char* f, const TypeName* t, int depth)
 {
@@ -775,7 +775,7 @@ static void FactDeclare(const Env* env, unsigned char* f, const CfgOp* op, Found
 
 static void FactScopeExit(const Env* env, unsigned char* f, const CfgOp* op)
 {
-    // The locals of the block drop here, running their `Drop` methods.
+    // The locals of the block drop here, running their `drop` methods.
     const Block* blk = (const Block*)op->node;
 
     for (size_t i = 0; blk && blk->base.kind == NodeBlock && i < blk->statements.count; i++)

@@ -1,5 +1,5 @@
-// expect: reject "no Init of 'C' takes these 3 argument(s)"
-// rule: T(args) on a type with Init resolves against its Init overloads only, never its fields
+// expect: reject "no init of 'C' takes these 3 argument(s)"
+// rule: T(args) on a type with init resolves against its init overloads only, never its fields
 struct C { int n; int m; int k; };
-impl C { void Init(ref C self, int n) { self.n = n; } }
+impl C { void init(ref C self, int n) { self.n = n; } }
 int main() { C a = C(1, 2, 3); return 0; }

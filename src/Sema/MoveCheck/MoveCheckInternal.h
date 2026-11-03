@@ -45,7 +45,7 @@ typedef struct
     Locals named; // every parameter and local, whatever its type; any other root is a global
     const TypeName* fnReturn;
     const FunctionDecl* fn;
-    bool inDropMethod; // a Drop method may take its own fields apart
+    bool inDropMethod; // a drop method may take its own fields apart
     const WriteSets* ws;
     const Node** copied; // boxes handed to a bare `T`: the pointee is copied, the box stays
     size_t copiedCount;

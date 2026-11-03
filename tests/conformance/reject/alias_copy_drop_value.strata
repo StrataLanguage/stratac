@@ -1,5 +1,5 @@
-// expect: reject "cannot copy 'RA': it holds a value with a Drop method"
-// rule: copy() of an alias of a Drop type is rejected like copy() of the type itself
+// expect: reject "cannot copy 'RA': it holds a value with a drop method"
+// rule: copy() of an alias of a drop type is rejected like copy() of the type itself
 struct RA = Res;
 int main()
 {

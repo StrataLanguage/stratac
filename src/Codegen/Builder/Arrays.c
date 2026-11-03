@@ -1038,7 +1038,7 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
     if (fresh)
     {
         // The default value: empty strings, arrays and optionals, zeroed scalars (sema checked that is
-        // valid), with field defaults applied, so a Drop type's elements are alive and get dropped.
+        // valid), with field defaults applied, so a drop type's elements are alive and get dropped.
         bool plainStruct = elemTd.structTypeName && !TypeDescIsBox(&elemTd) && !TypeDescHasArrayShape(&elemTd);
         LLVMValueRef zero = plainStruct ? DefaultValueOf(b, n->elementType, elemTd) : LLVMConstNull(elemTy);
         LLVMBuildStore(b->builder, zero, slot);

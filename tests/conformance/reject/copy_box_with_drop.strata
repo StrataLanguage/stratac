@@ -1,5 +1,5 @@
 // expect: reject "cannot copy"
-// rule: copy() of a box whose value has a Drop method is rejected
+// rule: copy() of a box whose value has a drop method is rejected
 int main()
 {
     ^Res b = Box(1);

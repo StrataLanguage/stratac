@@ -2,9 +2,9 @@
 // expect-output: kept 1
 // expect-output: drop 1
 // expect-output: drop 2
-// rule: a by-value Drop local moved on one path only is dropped at scope end exactly when it was not moved
+// rule: a by-value drop local moved on one path only is dropped at scope end exactly when it was not moved
 struct V { int id; };
-impl V { void Drop(ref V self) { gLive--; printf("drop %d\n", self.id); } }
+impl V { void drop(ref V self) { gLive--; printf("drop %d\n", self.id); } }
 V Mk(int id) { gLive++; return V { .id = id }; }
 void Maybe(bool take, int id)
 {

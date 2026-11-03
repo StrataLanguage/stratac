@@ -1,6 +1,6 @@
-// ownership.strata -- destructors (`Drop`), optionals and ownership across boxes, arrays and fields.
+// ownership.strata -- destructors (`drop`), optionals and ownership across boxes, arrays and fields.
 //
-// A struct whose impl has `void Drop(ref T self)` runs it once, when its owned value goes:
+// A struct whose impl has `void drop(ref T self)` runs it once, when its owned value goes:
 // scope end, overwrite, drop(), the box, array or struct holding it being dropped, or the
 // module context being destroyed.
 
@@ -16,7 +16,7 @@ extern int  printf(cstring fmt, ...);
 
 int gLive = 0;
 
-// -- Drop ------------------------------------------------------------------------
+// -- drop ------------------------------------------------------------------------
 
 struct Res
 {
@@ -26,7 +26,7 @@ struct Res
 impl Res
 {
     Res Make(int id) { gLive++; return Res { .id = id }; }
-    void Drop(ref Res self) { gLive--; printf("drop %d\n", self.id); }
+    void drop(ref Res self) { gLive--; printf("drop %d\n", self.id); }
 }
 
 struct Holder
@@ -44,7 +44,7 @@ struct Image
 
 impl Image
 {
-    void Drop(ref Image self) { gLive--; printf("free image %d\n", self.id); }
+    void drop(ref Image self) { gLive--; printf("free image %d\n", self.id); }
 }
 
 ^Image MakeImage(int id)
@@ -61,7 +61,7 @@ struct View
 
 impl View
 {
-    void Drop(ref View self) { gLive--; printf("free view %d of image %d\n", self.mip, self.image.id); }
+    void drop(ref View self) { gLive--; printf("free view %d of image %d\n", self.mip, self.image.id); }
 }
 
 ^View MakeView(int image, int mip)
@@ -135,7 +135,7 @@ int main()
         ^Res other = Res.Make(41);
         array_push(list, other);
     }
-    printf("live after Drop tests: %d\n", gLive);
+    printf("live after drop tests: %d\n", gLive);
 
     {
         ^View[] views = {};

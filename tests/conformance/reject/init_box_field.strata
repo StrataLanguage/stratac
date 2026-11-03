@@ -1,5 +1,5 @@
-// expect: reject "make it an optional ('T?') and set it in Init"
-// rule: a type with Init starts from its field defaults, so it may not hold a non-optional box
+// expect: reject "make it an optional ('T?') and set it in init"
+// rule: a type with init starts from its field defaults, so it may not hold a non-optional box
 struct B { ^Res r; };
-impl B { void Init(ref B self) { self.r = Box(1); } }
+impl B { void init(ref B self) { self.r = Box(1); } }
 int main() { B b; return 0; }

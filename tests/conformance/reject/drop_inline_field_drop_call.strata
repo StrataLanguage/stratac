@@ -1,7 +1,7 @@
 // expect: reject "cannot move 'h.a' out on its own"
-// rule: drop() of a field holding a Drop value by value is a move out of its parent, and is rejected the same way
+// rule: drop() of a field holding a drop value by value is a move out of its parent, and is rejected the same way
 struct Inner { int id; };
-impl Inner { void Drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
+impl Inner { void drop(ref Inner self) { printf("inner drop %d\n", self.id); } }
 struct H { Inner a; int n; };
 int main()
 {

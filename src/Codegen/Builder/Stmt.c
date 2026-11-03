@@ -219,7 +219,7 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
 }
 
 // An owning struct held by value: built like a field (a box's value moves out of the box, a movable source is
-// emptied) and dropped at scope exit. One holding a Drop value inline gets a drop flag, cleared when the value
+// emptied) and dropped at scope exit. One holding a drop value inline gets a drop flag, cleared when the value
 // moves out.
 static void EmitOwningStructVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
 {

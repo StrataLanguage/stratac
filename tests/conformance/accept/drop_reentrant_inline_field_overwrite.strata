@@ -1,6 +1,6 @@
 // expect: run
 // expect-output: seen 15
-// rule: overwriting an inline Drop field stores the new value first, so a Drop that writes the same field again replaces the new value, and every value is dropped once
+// rule: overwriting an inline drop field stores the new value first, so a drop that writes the same field again replaces the new value, and every value is dropped once
 struct Pusher { int id; };
 struct Holder { Pusher p; };
 ^Holder gH = Holder { .p = Pusher { .id = 0 } };
@@ -8,7 +8,7 @@ int gSeen = 0;
 Pusher P(int id) { gLive++; return Pusher { .id = id }; }
 impl Pusher
 {
-    void Drop(ref Pusher self)
+    void drop(ref Pusher self)
     {
         gLive--;
         if ((gSeen & (1 << self.id)) != 0) { strata_panic("dropped twice"); }
@@ -21,7 +21,7 @@ int main()
     gLive++;
     gH.p = P(1);
     gH.p = P(2);
-    if (gH.p.id != 3) { strata_panic("expected the value the Drop stored"); }
+    if (gH.p.id != 3) { strata_panic("expected the value the drop stored"); }
     gH.p = P(4);
     if (gSeen != 15) { strata_panic("expected 0, 1, 2 and 3 dropped once each"); }
     printf("seen %d\n", gSeen);

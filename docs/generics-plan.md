@@ -216,7 +216,7 @@ If it reports errors, `ResolveOverloads` returns without running the rest.
   `tests/conformance/README.md` for the header format): the example above; two instances of one struct;
   multiple type parameters; nested generics (`number<number<int>>`); generic struct holding an owning type
   (`number<string>`, `number<^Res>`, checking `END live=0` via `Report()`); generic function calling another
-  generic function; impl method calling another impl method; generic `Drop` method on a generic struct;
+  generic function; impl method calling another impl method; generic `drop` method on a generic struct;
   array/optional/box wrappers inside and outside arguments; generic code from an imported module if the
   harness allows it. Reject cases for each diagnostic in phases 1 and 3, plus a body that doesn't type-check
   for one argument (`T + 1` with `T = string`).

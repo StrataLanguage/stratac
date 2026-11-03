@@ -1,10 +1,10 @@
 // expect: run
-// rule: a Drop method that refills the optional being overwritten runs cleanly and every value is dropped once
+// rule: a drop method that refills the optional being overwritten runs cleanly and every value is dropped once
 struct Pusher { int id; };
 struct Holder { Pusher? p; };
 ^Holder gH = Holder {};
 Pusher P(int id) { gLive++; return Pusher { .id = id }; }
-impl Pusher { void Drop(ref Pusher self) { gLive--; if (self.id == 1) { gH.p = P(2); } } }
+impl Pusher { void drop(ref Pusher self) { gLive--; if (self.id == 1) { gH.p = P(2); } } }
 int main()
 {
     gH.p = P(1);

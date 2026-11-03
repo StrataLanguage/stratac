@@ -19,8 +19,8 @@ typedef enum
     MoveDiagLoan,            // an operand moves or touches a place an earlier operand has loaned
     MoveDiagGlobalLoan,      // an argument borrows a global place the callee writes
     MoveDiagElement,         // an Owning value is moved out of an indexed element (not reported yet)
-    MoveDiagDropField,       // a field is moved out of a struct with a Drop method
-    MoveDiagInlineDropField, // a field holding a Drop value by value is moved out of its parent
+    MoveDiagDropField,       // a field is moved out of a struct with a drop method
+    MoveDiagInlineDropField, // a field holding a drop value by value is moved out of its parent
     MoveDiagRefParam,        // a ref parameter still has a part moved out when the function returns
     MoveDiagDangle,          // a `ref` is used after the place it refers to was written, moved or reallocated
 } MoveDiagKind;

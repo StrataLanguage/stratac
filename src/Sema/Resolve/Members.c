@@ -151,7 +151,7 @@ void CheckStructInitFields(Resolver* r, Node* n)
         if (initHeld)
         {
             DiagErrorFmt(r->diag, init->base.range,
-                         "field '%s' of struct '%s' holds a '%s', whose Init would not run: give it a value "
+                         "field '%s' of struct '%s' holds a '%s', whose init would not run: give it a value "
                          "(e.g. '.%s = %s(...)')",
                          fd->name, init->typeName, initHeld, fd->name, initHeld);
         }
@@ -448,11 +448,11 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     FunctionDecl* method = FindImplMethod(r, handleName, c->callee);
 
-    // Init runs on a value that is being built; on a live one it would overwrite fields without dropping them.
-    if (method && strcmp(c->callee, "Init") == 0 && !(r->currentFunction && r->currentFunction->isInitWrapper))
+    // init runs on a value that is being built; on a live one it would overwrite fields without dropping them.
+    if (method && strcmp(c->callee, "init") == 0 && !(r->currentFunction && r->currentFunction->isInitWrapper))
     {
         DiagErrorFmt(r->diag, c->base.range,
-                     "'Init' runs when a value is constructed; write '%s(...)' instead of calling it", handleName);
+                     "'init' runs when a value is constructed; write '%s(...)' instead of calling it", handleName);
         return true;
     }
 
