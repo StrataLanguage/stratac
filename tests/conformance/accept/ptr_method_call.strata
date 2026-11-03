@@ -1,0 +1,26 @@
+// expect: run
+// expect-output: 5 10 5
+// expect-output: 7
+// rule: `p.m()` on a `*S` passes `*p` as self: `ref` mutates the pointee, `const ref` reads it, and by-value self works on a copy
+struct Foo { int v; }
+impl Foo
+{
+    void bump(ref Foo self) { self.v = self.v + 1; }
+    int get(const ref Foo self) { return self.v; }
+    int doubled(Foo self) { self.v = self.v * 2; return self.v; }
+}
+void bumpTwice(*Foo x)
+{
+    x.bump();
+    x.bump();
+}
+int main()
+{
+    Foo f = Foo { .v = 4 };
+    *Foo p = &f;
+    p.bump();
+    printf("%d %d %d\n", p.get(), p.doubled(), f.v);
+    bumpTwice(p);
+    printf("%d\n", f.v);
+    return 0;
+}

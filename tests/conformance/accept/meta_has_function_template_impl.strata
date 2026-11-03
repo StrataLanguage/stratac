@@ -1,0 +1,28 @@
+// expect: run
+// expect-output: 11
+// rule: @has_function on a generic instance that does not exist yet looks at the impl template of its struct
+@meta bool has_drop(type T) { return @has_function(T, drop); }
+struct number<T> { T value; }
+impl number<T>
+{
+    void drop(ref number<T> self) { self.value = self.value; }
+    int get(const ref number<T> self) { return 9; }
+}
+struct plain { int v; }
+void touch<T>(ref T x)
+{
+    if (@has_drop(T)) { x.drop(); }
+}
+int main()
+{
+    number<int> n = number<int> { .value = 4 };
+    touch<number<int>>(n);
+    plain p = plain { .v = 1 };
+    touch<plain>(p);
+    int result = 0;
+    if (@has_function(number<int>, get)) { result = result + 1; }
+    if (@has_function(number<int>, drop)) { result = result + 2; }
+    if (!@has_function(plain, drop)) { result = result + 8; }
+    printf("%d\n", result);
+    return 0;
+}

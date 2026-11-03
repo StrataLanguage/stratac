@@ -1,0 +1,4 @@
+// expect: reject "expects a value for parameter 'n', but 'int' is not a value"
+// rule: a type name is never a bool or integer argument, so `@twice(int)` is an error and not a value
+@meta int twice(int n) { return n + n; }
+int main() { return @twice(int); }

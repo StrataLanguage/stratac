@@ -592,6 +592,27 @@ static Node* CloneConditional(Arena* arena, const ConditionalExpr* src, const Ty
     return (Node*)copy;
 }
 
+// A meta call's type arguments are substituted like any type (`@droppable(T)` inside a template).
+static Node* CloneMetaCall(Arena* arena, const MetaCallExpr* src, const TypeSubst* s)
+{
+    MetaCallExpr* copy = AST_NEW(arena, MetaCallExpr);
+    *copy = *src;
+
+    VecInit(&copy->args);
+
+    for (size_t i = 0; i < src->args.count; i++)
+    {
+        const MetaArg* arg = (const MetaArg*)VecGet(&src->args, i);
+        MetaArg* argCopy = AST_NEW(arena, MetaArg);
+
+        argCopy->type = arg->type ? TypeNameWrapInner(arena, TypeNameSubstitute(arena, arg->type, s)) : NULL;
+        argCopy->expr = AstCloneSubst(arena, arg->expr, s);
+        VecPush(&copy->args, argCopy);
+    }
+
+    return (Node*)copy;
+}
+
 // Expression identifiers that name a parameter (`T.max`, `sizeof(T)`) become the argument's name.
 static Node* CloneIdent(Arena* arena, const IdentExpr* src, const TypeSubst* s)
 {
@@ -695,6 +716,8 @@ Node* AstCloneSubst(Arena* arena, const Node* n, const TypeSubst* s)
         return CloneDefer(arena, (const DeferStmt*)n, s);
     case NodeConditional:
         return CloneConditional(arena, (const ConditionalExpr*)n, s);
+    case NodeMetaCall:
+        return CloneMetaCall(arena, (const MetaCallExpr*)n, s);
     }
 
     fprintf(stderr, "AstCloneSubst: node kind %d has no clone\n", (int)n->kind);

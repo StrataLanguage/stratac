@@ -1,0 +1,33 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: freed
+// expect-output: freed
+// rule: the meta plan example: a `drop` call in a generic `*T` function is dropped for a type without `drop`, and kept for one with it
+@meta
+bool droppable(type T)
+{
+    // Whether T's impl defines a method `drop`.
+    return @has_function(T, drop);
+}
+
+struct Loud { int id; }
+impl Loud { void drop(ref Loud self) { printf("drop %d\n", self.id); } }
+struct Quiet { int id; }
+
+void free_object<T>(*T ptr_value)
+{
+    if (@droppable(T))
+    {
+        ptr_value.drop();
+    }
+    printf("freed\n");
+}
+
+int main()
+{
+    Loud l = Loud { .id = 1 };
+    Quiet q = Quiet { .id = 2 };
+    free_object<Loud>(&l);
+    free_object<Quiet>(&q);
+    return 0;
+}

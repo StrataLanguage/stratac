@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: ok 8
+// rule: meta calls fold in ordinary code too, and the dead branch of a constant `if` in a non-generic function is not type-checked
+@meta bool is_int(type T) { return @is_same(T, int); }
+int main()
+{
+    if (@is_int(float))
+    {
+        int bad = "not checked";
+    }
+    int n = @is_int(int) ? 8 : 0;
+    printf("ok %d\n", n);
+    return 0;
+}

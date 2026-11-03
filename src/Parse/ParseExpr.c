@@ -139,6 +139,7 @@ static bool StartsExpression(TokKind k)
 {
     switch (k)
     {
+    case TokAt:
     case TokIdent:
     case TokIntLit:
     case TokFloatLit:
@@ -988,12 +989,101 @@ static Node* ParseBracePrimary(Parser* p, Token token)
     return ParseArrayInitBody(p, token, NULL);
 }
 
+// One argument of a meta call. It is parsed as a type first: a type followed by `,` or `)` is a type argument, and
+// anything else is re-read as an expression.
+static MetaArg* ParseMetaArg(Parser* p)
+{
+    MetaArg* arg = AST_NEW(p->arena, MetaArg);
+    arg->type = NULL;
+    arg->expr = NULL;
+
+    LexerCheckpoint saved = SaveLexerState(p);
+    TypeName type = {0};
+
+    if (ParserTryParseType(p, &type) && (p->cur.kind == TokComma || p->cur.kind == TokRParen))
+    {
+        arg->type = TypeNameWrapInner(p->arena, type);
+
+        return arg;
+    }
+
+    RestoreLexerState(p, saved);
+    arg->expr = ParseExpr(p);
+
+    return (arg->expr) ? arg : NULL;
+}
+
+// `@name(args)`, the current token being the `@`. A meta call is a primary expression. A missing name or `(` is
+// reported, and the call is still returned so the rest of the statement parses.
+static Node* ParseMetaCall(Parser* p)
+{
+    Token at = p->cur;
+    Advance(p);
+
+    MetaCallExpr* call = AST_NEW(p->arena, MetaCallExpr);
+    call->base.kind = NodeMetaCall;
+    call->name = "";
+    VecInit(&call->args);
+
+    if (p->cur.kind != TokIdent)
+    {
+        DiagError(p->diag, p->cur.range, "expected a meta function name after '@'");
+    }
+    else
+    {
+        call->name = ToOwned(p->arena, ParserIdentText(p, p->cur));
+        Advance(p);
+    }
+
+    if (p->cur.kind != TokLParen)
+    {
+        if (call->name[0] != '\0')
+        {
+            DiagErrorFmt(p->diag, p->cur.range, "expected '(' after '@%s'", call->name);
+        }
+
+        call->base.range = SpanFrom(at, at);
+
+        return (Node*)call;
+    }
+
+    Advance(p);
+
+    if (p->cur.kind != TokRParen)
+    {
+        while (true)
+        {
+            MetaArg* arg = ParseMetaArg(p);
+
+            if (arg)
+            {
+                VecPush(&call->args, arg);
+            }
+
+            if (!ParserConsume(p, TokComma))
+            {
+                break;
+            }
+        }
+    }
+
+    Token close = p->cur;
+    ParserExpect(p, TokRParen, "')'");
+
+    call->base.range = SpanFrom(at, close);
+
+    return (Node*)call;
+}
+
 static Node* ParsePrimary(Parser* p)
 {
     Token token = p->cur;
 
     switch (p->cur.kind)
     {
+    case TokAt:
+        return ParseMetaCall(p);
+
     case TokIntLit:
         return ParseIntLiteral(p, token);
 

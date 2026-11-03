@@ -1,0 +1,5 @@
+// expect: reject "type 'Foo' has no method 'nope'"
+// rule: a method called through a `*S` must exist on S, with the same diagnostic a value receiver gets
+struct Foo { int v; }
+impl Foo { int get(const ref Foo self) { return self.v; } }
+int main() { *Foo p = null; return p.nope(); }

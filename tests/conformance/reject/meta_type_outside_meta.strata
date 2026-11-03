@@ -1,0 +1,7 @@
+// expect: reject "'type' is only allowed for parameters of @meta functions"
+// rule: `type` is a contextual name for parameters of a meta function, and nowhere else
+void show(type T) { }
+int main()
+{
+    return 0;
+}

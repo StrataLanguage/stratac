@@ -170,6 +170,10 @@ static void DumpModule(Node* n, int indent, Sb* out)
         Node* impl = (Node*)VecGet(&module->impls, i);
         Dump(impl, indent + 2, out);
     }
+    for (size_t i = 0; i < module->metaFunctions.count; i++)
+    {
+        Dump((Node*)VecGet(&module->metaFunctions, i), indent + 2, out);
+    }
     return;
 }
 
@@ -291,6 +295,11 @@ static void DumpFunction(Node* n, int indent, Sb* out)
     if (functionDecl->isPrivate)
     {
         SbPuts(out, "@private\n");
+        Pad(indent, out);
+    }
+    if (functionDecl->isMeta)
+    {
+        SbPuts(out, "@meta\n");
         Pad(indent, out);
     }
     SbPuts(out, "fn ");
@@ -736,6 +745,30 @@ static void DumpDefer(Node* n, Sb* out)
     return;
 }
 
+static void DumpMetaCall(Node* n, Sb* out)
+{
+    MetaCallExpr* call = AS_NODE(MetaCallExpr, n);
+    SbPrintf(out, "(@%s", call->name);
+
+    for (size_t i = 0; i < call->args.count; i++)
+    {
+        const MetaArg* arg = (const MetaArg*)VecGet(&call->args, i);
+        SbPutc(out, ' ');
+
+        if (arg->type)
+        {
+            SbPuts(out, arg->type->name);
+        }
+        else
+        {
+            Dump(arg->expr, 0, out);
+        }
+    }
+
+    SbPutc(out, ')');
+    return;
+}
+
 static void DumpParam(Sb* out)
 {
     SbPuts(out, "(param)\n");
@@ -855,6 +888,9 @@ static void Dump(Node* n, int indent, Sb* out)
         return;
     case NodeConditional:
         DumpConditional(n, out);
+        return;
+    case NodeMetaCall:
+        DumpMetaCall(n, out);
         return;
     case NodeNullTest:
         DumpNullTest(n, out);

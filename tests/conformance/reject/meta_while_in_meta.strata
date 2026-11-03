@@ -1,0 +1,14 @@
+// expect: reject "'while' can't be evaluated at compile time in meta function '@count'"
+// rule: a meta function body is interpreted at compile time, so loops are not allowed in it
+@meta int count(int n)
+{
+    while (n > 0)
+    {
+        n = n - 1;
+    }
+    return n;
+}
+int main()
+{
+    return @count(3);
+}

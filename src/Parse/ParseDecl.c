@@ -545,13 +545,14 @@ void ParseAttributes(Parser* p, Vec* outAttributes)
     }
 }
 
-// Function attributes: @private, @export, @noreturn.
+// Function attributes: @private, @export, @noreturn, @meta.
 static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outIsPrivate, bool* outIsExport,
-                                    bool* outIsNoReturn)
+                                    bool* outIsNoReturn, bool* outIsMeta)
 {
     bool isPrivate = false;
     bool isExport = false;
     bool isNoReturn = false;
+    bool isMeta = false;
 
     for (size_t i = 0; i < attributes->count; i++)
     {
@@ -569,6 +570,10 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
         {
             isNoReturn = true;
         }
+        else if (strcmp(attribute->name, "meta") == 0)
+        {
+            isMeta = true;
+        }
         else
         {
             DiagErrorFmt(p->diag, attribute->range, "unknown attribute '@%s'", attribute->name);
@@ -578,6 +583,7 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
     *outIsPrivate = isPrivate;
     *outIsExport = isExport;
     *outIsNoReturn = isNoReturn;
+    *outIsMeta = isMeta;
 
     return attributes->count > 0;
 }
@@ -879,6 +885,23 @@ static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
     ParserExpect(p, TokRParen, "')'");
 }
 
+// The restrictions on a `@meta` function that are visible as soon as its head is read.
+static void CheckMetaFunctionHead(Parser* p, const FunctionDecl* node)
+{
+    if (node->isExtern)
+    {
+        DiagErrorFmt(p->diag, node->base.range, "a @meta function cannot be extern: '%s'", node->name);
+    }
+    else if (node->isExport)
+    {
+        DiagErrorFmt(p->diag, node->base.range, "a @meta function cannot be @export: '%s'", node->name);
+    }
+    else if (node->genericParams.count > 0)
+    {
+        DiagErrorFmt(p->diag, node->base.range, "a @meta function cannot have type parameters: '%s'", node->name);
+    }
+}
+
 // What follows the parameter list: `;` for a declaration, or the body. Extern functions and
 // functions with neither are reported here.
 static void ParseFunctionBody(Parser* p, FunctionDecl* node, bool isExtern)
@@ -934,7 +957,8 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     bool isPrivate = false;
     bool isExport = false;
     bool isNoReturn = false;
-    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate, &isExport, &isNoReturn);
+    bool isMeta = false;
+    bool hasAttrs = ApplyFunctionAttributes(p, attributes, &isPrivate, &isExport, &isNoReturn, &isMeta);
     SourceRange firstAttributeRange = hasAttrs ? ((const Attribute*)VecGet(attributes, 0))->range : SRC_INVALID;
 
     bool isExtern = false;
@@ -986,6 +1010,13 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
                      node->name);
     }
 
+    node->isMeta = isMeta;
+
+    if (isMeta)
+    {
+        CheckMetaFunctionHead(p, node);
+    }
+
     if (ParserExpect(p, TokLParen, "'('").kind != TokLParen)
     {
         return (Node*)node;
@@ -993,6 +1024,16 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
 
     ParseFunctionParams(p, node, isExtern);
     ParseFunctionBody(p, node, isExtern);
+
+    if (isMeta && !isExtern && !node->body)
+    {
+        DiagErrorFmt(p->diag, node->base.range, "a @meta function needs a body: '%s'", node->name);
+    }
+
+    if (isMeta && node->isVariadic)
+    {
+        DiagErrorFmt(p->diag, node->base.range, "a @meta function cannot be variadic: '%s'", node->name);
+    }
 
     return (Node*)node;
 }
@@ -1181,6 +1222,12 @@ ImplDecl* ParseImplDecl(Parser* p)
             DiagError(p->diag, fn->base.range, "attributes are not supported on impl methods");
             fn->isPrivate = false;
             fn->isExport = false;
+        }
+
+        if (fn->isMeta)
+        {
+            DiagErrorFmt(p->diag, fn->base.range, "a @meta function cannot be an impl method: '%s'", fn->name);
+            fn->isMeta = false;
         }
 
         fn->methodName = fn->name;

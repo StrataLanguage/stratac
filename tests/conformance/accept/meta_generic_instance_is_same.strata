@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: 1 12 2 5
+// rule: inside a generic function, `@is_same(T, ...)` compares the bound type argument with a generic instance by its canonical name
+struct number<T> { T value; }
+struct other { int v; }
+int probe<T>(int n)
+{
+    int r = 0;
+    if (@is_same(T, number<int>)) { r = r + 1; }
+    if (@is_same(T, number<float>)) { r = r + 10; }
+    if (@is_same(T, number<float>) || @is_same(T, other)) { r = r + 2; }
+    return r + n;
+}
+int main()
+{
+    printf("%d %d %d ", probe<number<int>>(0), probe<number<float>>(0), probe<other>(0));
+    printf("%d\n", probe<other>(3));
+    return 0;
+}

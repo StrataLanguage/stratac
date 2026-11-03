@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: 255
+// rule: @is_same compares canonical names: builtins, generic instances and wrappers match themselves, while a strong alias and a different array length do not
+struct Foo { int a; }
+struct myint = int;
+struct number<T> { T value; }
+int main()
+{
+    int score = 0;
+    if (@is_same(int, int)) { score = score + 1; }
+    if (!@is_same(myint, int)) { score = score + 2; }
+    if (@is_same(number<int>, number<int>)) { score = score + 4; }
+    if (!@is_same(number<int>, number<float>)) { score = score + 8; }
+    if (@is_same(const int, int)) { score = score + 16; }
+    if (!@is_same(^Foo, Foo?)) { score = score + 32; }
+    if (@is_same(int[], int[])) { score = score + 64; }
+    if (!@is_same(int[4], int[])) { score = score + 128; }
+    printf("%d\n", score);
+    return 0;
+}

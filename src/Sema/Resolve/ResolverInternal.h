@@ -237,6 +237,7 @@ bool ZeroIsValid(Resolver* r, const TypeName* t, int depth);
 void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope);
 void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope);
 void ResolveExpr(Resolver* r, Node* n, StrMap* scope);
+void ResolveAddressUnary(Resolver* r, UnaryExpr* u, StrMap* scope);
 void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope);
 void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range);
 void WalkBlock(Resolver* r, Block* b, StrMap* scope);

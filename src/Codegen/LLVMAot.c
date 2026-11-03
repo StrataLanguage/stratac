@@ -118,6 +118,12 @@ bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** err
     LLVMTargetMachineRef targetMachine = LLVMCreateTargetMachine(target, triple, "", "", LLVMCodeGenLevelDefault,
                                                                  LLVMRelocDefault, LLVMCodeModelDefault);
 
+    if (targetMachine)
+    {
+        LLVMSetTarget(bm->mod, triple);
+    }
+
+    // `triple` may point into `defaultTriple`, so it's freed only after its last use.
     if (defaultTriple)
     {
         LLVMDisposeMessage(defaultTriple);
@@ -129,8 +135,6 @@ bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** err
 
         return false;
     }
-
-    LLVMSetTarget(bm->mod, triple);
 
     LLVMTargetDataRef dataLayout = LLVMCreateTargetDataLayout(targetMachine);
     char* dataLayoutStr = LLVMCopyStringRepOfTargetData(dataLayout);
