@@ -539,6 +539,43 @@ if(STRATA_ENABLE_LLVM)
     add_test(NAME aot_arrays_strings_test COMMAND aot_arrays_strings_test)
     set_tests_properties(aot_arrays_strings_test PROPERTIES
         PASS_REGULAR_EXPRESSION "out: code failed 12\nborrow: 8 ab cde cde!\nref: main shadows 1 2\nref loop: 2 1 target 4\nbuffers: -42 1 AAAA 4 VK_LAYER_x 1 1\nrepeat: 4 0 \\| 3 1.0 \\| hi hi changed hi \\| 2 1 0 \\| 9 3 \\| 0 \\| AA\nfresh: 2\ngrid: 0 3 5 \\| 2 8\nlive after fresh: 0\nreserve: 100 99 1\nbox into field: shared 7 \\| borrowed 8 \\| direct 1")
+    # AddressSanitizer variants of the AOT samples (same expectation as the plain test; see tests/asan).
+    if(STRATA_ASAN_CLANG)
+        function(strata_asan_sample test sample host)
+            get_test_property(${test} PASS_REGULAR_EXPRESSION expect)
+            file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/asan/samples")
+            file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/asan/samples/${test}.expect" "${expect}")
+            if(host)
+                set(host_path "${CMAKE_CURRENT_SOURCE_DIR}/samples/hosts/${host}")
+            else()
+                set(host_path "")
+            endif()
+            add_test(NAME asan/${test}
+                COMMAND ${CMAKE_COMMAND}
+                    -DSTRATAC=$<TARGET_FILE:stratac>
+                    -DSAMPLE=${CMAKE_CURRENT_SOURCE_DIR}/samples/${sample}
+                    -DHOST=${host_path}
+                    -DWORK=${CMAKE_CURRENT_BINARY_DIR}/asan/samples
+                    -DEXPECT_FILE=${CMAKE_CURRENT_BINARY_DIR}/asan/samples/${test}.expect
+                    -DASAN_CLANG=${STRATA_ASAN_CLANG}
+                    -DASAN_DLL_DIR=${STRATA_ASAN_DLL_DIR}
+                    -DINCLUDE_DIR=${CMAKE_CURRENT_SOURCE_DIR}/include
+                    -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/asan/RunSample.cmake)
+            set_tests_properties(asan/${test} PROPERTIES LABELS "asan")
+        endfunction()
+
+        strata_asan_sample(aot_test engine_api.strata engine_api_host.c)
+        strata_asan_sample(aot_strings_test strings.strata strings_host.c)
+        strata_asan_sample(aot_cstring_test cstring.strata cstring_host.c)
+        strata_asan_sample(aot_arrays_test arrays.strata arrays_host.c)
+        strata_asan_sample(aot_varargs_test varargs.strata varargs_host.c)
+        strata_asan_sample(aot_extern_struct_test extern_struct.strata extern_struct_host.c)
+        strata_asan_sample(aot_extern_layout_test extern_layout.strata extern_layout_host.c)
+        strata_asan_sample(aot_opaque_struct_test opaque_struct.strata opaque_struct_host.c)
+        strata_asan_sample(aot_ffi_test ffi_pointers.strata "")
+        strata_asan_sample(aot_ownership_test ownership.strata "")
+        strata_asan_sample(aot_arrays_strings_test arrays_strings.strata "")
+    endif()
 endif()
 
 set_target_properties(stratac jit_demo engine_demo box_demo simd_demo PROPERTIES
