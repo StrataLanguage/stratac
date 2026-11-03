@@ -2343,9 +2343,11 @@ static LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
     return fn;
 }
 
+/* Drops the owning locals declared from `fromIndex` on, the last declared first, so a local can rely on every
+   local declared before it still being alive when it is dropped. */
 static void EmitDrops(Builder* b, size_t fromIndex)
 {
-    for (size_t i = fromIndex; i < b->m_owningLocals.count; i++)
+    for (size_t i = b->m_owningLocals.count; i-- > fromIndex;)
     {
         OwnLocal* ol = (OwnLocal*)VecGet(&b->m_owningLocals, i);
 

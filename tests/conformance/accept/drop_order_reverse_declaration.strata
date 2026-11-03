@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: leaving
+// expect-output: drop 3
+// expect-output: drop 2
+// expect-output: drop 1
+// expect-output: END live=0
+// rule: locals are dropped at scope end in reverse declaration order, whatever their kind
+int main()
+{
+    {
+        ^Res a = Box(1);
+        Res[] list = {};
+        array_push(list, Res.Make(2));
+        ^Res c = Box(3);
+        printf("leaving\n");
+        fflush(ptr.null);
+    }
+    Report();
+    return 0;
+}
