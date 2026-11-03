@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AST/AST.h"
+#include "Core/Types.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,7 +25,7 @@ typedef enum
    narrowing, which is also what non-integer values carry. */
 typedef struct
 {
-    unsigned bits;
+    BitWidth bits;
     bool isUnsigned;
 } ConstIntType;
 
@@ -33,22 +34,22 @@ typedef struct
 ConstIntType ConstIntTypeCommon(ConstIntType l, ConstIntType r);
 
 /* Truncates `v` to `t`'s width and extends it back to 64 bits, as the runtime value of that type reads. */
-uint64_t ConstIntNarrow(uint64_t v, ConstIntType t);
+ConstUInt ConstIntNarrow(ConstUInt v, ConstIntType t);
 
 /* Two's-complement arithmetic on 64-bit patterns. `/` and `%` use C signed semantics. Refuses division or
    modulo by zero, and shifts whose count is >= 64 (a negative count reads as one). */
-bool ConstFoldIntArith(BinaryOp op, uint64_t a, uint64_t b, ConstShrKind shr, uint64_t* out);
+bool ConstFoldIntArith(BinaryOp op, ConstUInt a, ConstUInt b, ConstShrKind shr, ConstUInt* out);
 
 /* An integer binary operator computed at type `t`, the way the runtime computes it: `a` and `b` are the operands
    already converted to `t`, the shift kind follows `t`'s signedness, a shift count must be below `t`'s width, and
    the result is kept at `t`'s width. */
-bool ConstFoldIntAt(BinaryOp op, uint64_t a, uint64_t b, ConstIntType t, uint64_t* out);
+bool ConstFoldIntAt(BinaryOp op, ConstUInt a, ConstUInt b, ConstIntType t, ConstUInt* out);
 
 /* `+ - * /` on doubles. Refuses division by zero so the fold never embeds an inf or nan literal. */
 bool ConstFoldFloatArith(BinaryOp op, double a, double b, double* out);
 
 /* Signed 64-bit comparisons. */
-bool ConstFoldIntCompare(BinaryOp op, int64_t a, int64_t b, bool* res);
+bool ConstFoldIntCompare(BinaryOp op, ConstInt a, ConstInt b, bool* res);
 
 /* Double comparisons. */
 bool ConstFoldFloatCompare(BinaryOp op, double a, double b, bool* res);

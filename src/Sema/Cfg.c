@@ -8,7 +8,7 @@ typedef struct
 {
     size_t breakTarget;
     size_t continueTarget;
-    size_t scopeDepth; /* scopes open when the loop began: break and continue leave the ones above */
+    StackMark scopeDepth; /* scopes open when the loop began: break and continue leave the ones above */
 } LoopFrame;
 
 typedef struct
@@ -27,7 +27,7 @@ typedef struct
     LoopFrame* loops;
     size_t loopCount;
     size_t loopCap;
-    int deferDepth; /* >0 while a deferred statement is being lowered: it cannot trigger the defers again */
+    StackMark deferDepth; /* >0 while a deferred statement is being lowered: it cannot trigger the defers again */
 } Builder;
 
 static size_t NewBlock(Builder* b)
@@ -117,7 +117,7 @@ static void PopScope(Builder* b)
 
 /* Runs the deferred statements of the scopes above `depth`, innermost scope and latest `defer`
    first, and emits each scope's exit. Does not pop anything: other paths still need them. */
-static void RunDefers(Builder* b, size_t depth)
+static void RunDefers(Builder* b, StackMark depth)
 {
     /* A `return`/`break` inside a defer body is a sema error; the graph just must not loop on it. */
     if (b->deferDepth > 0)

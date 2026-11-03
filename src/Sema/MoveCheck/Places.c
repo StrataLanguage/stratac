@@ -1,5 +1,7 @@
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
+#include <inttypes.h>
+
 /* The aliases of the function being checked, so that place keys can name the bound place. */
 static const Env* g_aliasEnv;
 
@@ -565,7 +567,7 @@ bool IndexSpelling(const Node* n, char* out, size_t cap)
     case NodeIndex:
         return PlaceKeyImpl(n, out, cap, &root, false);
     case NodeIntLiteral:
-        snprintf(out, cap, "%llu", (unsigned long long)((const IntLiteral*)n)->value);
+        snprintf(out, cap, "%" PRIu64, ((const IntLiteral*)n)->value);
         return true;
     case NodeCast:
         return IndexSpelling(((const CastExpr*)n)->operand, out, cap);

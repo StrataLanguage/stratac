@@ -5,15 +5,15 @@ ConstIntType ConstIntTypeCommon(ConstIntType l, ConstIntType r)
     return r.bits > l.bits ? r : l;
 }
 
-uint64_t ConstIntNarrow(uint64_t v, ConstIntType t)
+ConstUInt ConstIntNarrow(ConstUInt v, ConstIntType t)
 {
     if (t.bits == 0 || t.bits >= 64)
     {
         return v;
     }
 
-    uint64_t mask = (1ULL << t.bits) - 1;
-    uint64_t low = v & mask;
+    ConstUInt mask = (1ULL << t.bits) - 1;
+    ConstUInt low = v & mask;
 
     if (!t.isUnsigned && (low >> (t.bits - 1)) != 0)
     {
@@ -28,9 +28,9 @@ static ConstShrKind ConstShrKindOf(ConstIntType t)
     return t.isUnsigned ? ConstShrLogical : ConstShrArithmetic;
 }
 
-bool ConstFoldIntAt(BinaryOp op, uint64_t a, uint64_t b, ConstIntType t, uint64_t* out)
+bool ConstFoldIntAt(BinaryOp op, ConstUInt a, ConstUInt b, ConstIntType t, ConstUInt* out)
 {
-    unsigned width = t.bits ? t.bits : 64;
+    BitWidth width = t.bits ? t.bits : 64;
 
     if ((op == BinShl || op == BinShr) && b >= width)
     {
@@ -49,7 +49,7 @@ bool ConstFoldIntAt(BinaryOp op, uint64_t a, uint64_t b, ConstIntType t, uint64_
 /* Two's-complement integer arithmetic. `/`, `%` and `>>` apply C signed semantics, except that `>>` is a
    logical shift of the bit pattern under ConstShrLogical. Refuses division or modulo by zero, and shifts whose
    count is >= 64. */
-bool ConstFoldIntArith(BinaryOp op, uint64_t a, uint64_t b, ConstShrKind shr, uint64_t* out)
+bool ConstFoldIntArith(BinaryOp op, ConstUInt a, ConstUInt b, ConstShrKind shr, ConstUInt* out)
 {
     switch (op)
     {
@@ -68,7 +68,7 @@ bool ConstFoldIntArith(BinaryOp op, uint64_t a, uint64_t b, ConstShrKind shr, ui
             return false;
         }
 
-        *out = (uint64_t)((int64_t)a / (int64_t)b);
+        *out = (ConstUInt)((ConstInt)a / (ConstInt)b);
         return true;
     case BinMod:
         if (b == 0)
@@ -76,7 +76,7 @@ bool ConstFoldIntArith(BinaryOp op, uint64_t a, uint64_t b, ConstShrKind shr, ui
             return false;
         }
 
-        *out = (uint64_t)((int64_t)a % (int64_t)b);
+        *out = (ConstUInt)((ConstInt)a % (ConstInt)b);
         return true;
     case BinBitAnd:
         *out = a & b;
@@ -103,7 +103,7 @@ bool ConstFoldIntArith(BinaryOp op, uint64_t a, uint64_t b, ConstShrKind shr, ui
 
         if (shr == ConstShrArithmetic)
         {
-            *out = (uint64_t)((int64_t)a >> b);
+            *out = (ConstUInt)((ConstInt)a >> b);
         }
         else
         {
@@ -143,7 +143,7 @@ bool ConstFoldFloatArith(BinaryOp op, double a, double b, double* out)
     }
 }
 
-bool ConstFoldIntCompare(BinaryOp op, int64_t a, int64_t b, bool* res)
+bool ConstFoldIntCompare(BinaryOp op, ConstInt a, ConstInt b, bool* res)
 {
     switch (op)
     {
