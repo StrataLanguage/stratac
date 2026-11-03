@@ -1,0 +1,7 @@
+// expect: reject "'var' is only allowed for local variables"
+// rule: a parameter's type is always written, so var is not allowed there
+int twice(var x) { return x + x; }
+int main()
+{
+    return twice(1);
+}

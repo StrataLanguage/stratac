@@ -1,0 +1,8 @@
+// expect: reject "a 'var' local"
+// rule: a meta function is evaluated at compile time, and a var local has no written type to check
+@meta int twice(int n)
+{
+    var m = n + n;
+    return m;
+}
+int main() { return @twice(2); }

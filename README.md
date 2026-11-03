@@ -116,6 +116,32 @@ Limits: parameters are `type`, `bool` or an integer type, and the result is `boo
 body may use locals, `if`, `return`, `?:`, bool and integer operators, and other meta calls. Loops,
 ordinary function calls and member access are errors. Built-in names cannot be redefined.
 
+## Local type inference
+
+`var` declares a local whose type is the type of its initializer, like `auto` in C++. `const var` makes
+it const. A top-level `const` on the value is dropped, since a copy is mutable. `var` also works in a
+`for` initializer. Typed dynamic-array literals (`int[] { 1, 2, 3 }`, `int[] { 0; n }`) are expressions,
+so they can be used with `var` or as arguments.
+
+```c
+int get_sum(int a, int b) { return a + b; }
+
+int main()
+{
+    var some_int = 10;                      // int
+    var some_float = 10.0f;                 // float
+    var some_array = int[] { 10, 20, 30 }; // int[]
+    var result = get_sum(10, 20);           // int
+    const var limit = 64;                   // const int
+    for (var i = 0; i < 3; i++) { }         // int
+    return 0;
+}
+```
+
+`var` needs an initializer and is only for locals: not for parameters, fields, return types, globals,
+`ref` locals or `@meta` functions. The initializer must have a type, so `null`, a braced list and a
+void call are errors.
+
 ## Building
 
 Requires CMake 3.20+, Ninja, a C11 compiler, and LLVM (set `LLVM_C_DIR` in `CMakePresets.json`).

@@ -1,0 +1,7 @@
+// expect: reject "cannot infer the type of 'x' from 'null'"
+// rule: null alone names no type, so a var cannot be initialized from it
+int main()
+{
+    var x = null;
+    return 0;
+}

@@ -1,0 +1,7 @@
+// expect: reject "needs an initializer to infer its type"
+// rule: a var declaration needs an initializer, since that is where its type comes from
+int main()
+{
+    var x;
+    return 0;
+}

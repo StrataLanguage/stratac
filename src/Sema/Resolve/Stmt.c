@@ -710,11 +710,10 @@ static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
     // non-owning by construction), so nothing here sees one.
 }
 
-static void WalkVarDeclInit(Resolver* r, VarDeclStmt* vd, StrMap* scope)
+// Checks an initializer whose type is already known: `initType` comes from InferType after ResolveExpr, so
+// callers resolve the initializer exactly once.
+static void WalkVarDeclInitTyped(Resolver* r, VarDeclStmt* vd, const TypeName* initType)
 {
-    ResolveExpr(r, vd->init, scope);
-    const TypeName* initType = InferType(r, vd->init, scope);
-
     bool ok = initType && (IsAssignableType(r, &vd->type, initType) || IsStrLiteralForCString(r, &vd->type, vd->init));
 
     if (initType && !ok)
@@ -749,6 +748,80 @@ static void WalkVarDeclInit(Resolver* r, VarDeclStmt* vd, StrMap* scope)
     }
 }
 
+static void WalkVarDeclInit(Resolver* r, VarDeclStmt* vd, StrMap* scope)
+{
+    ResolveExpr(r, vd->init, scope);
+    WalkVarDeclInitTyped(r, vd, InferType(r, vd->init, scope));
+}
+
+// `var x = e;`: resolves `e` once and copies its type into the declaration. A top-level `const` on the value is
+// dropped, since a copy is mutable; `const var` keeps the `const` the parser recorded. Returns false after
+// reporting why the type cannot be inferred.
+static bool InferVarDeclType(Resolver* r, VarDeclStmt* vd, StrMap* scope, const TypeName** initTypeOut)
+{
+    if (!vd->init)
+    {
+        DiagErrorFmt(r->diag, vd->base.range, "'var' declaration of '%s' needs an initializer to infer its type",
+                     vd->name);
+        return false;
+    }
+
+    ResolveExpr(r, vd->init, scope);
+    const TypeName* initType = InferType(r, vd->init, scope);
+
+    if (vd->init->kind == NodeArrayInit && !((ArrayInitExpr*)vd->init)->elementType)
+    {
+        DiagErrorFmt(r->diag, vd->base.range,
+                     "cannot infer the type of '%s' from a braced initializer; write the type, e.g. 'int[] { ... }'",
+                     vd->name);
+        return false;
+    }
+
+    if (vd->init->kind == NodeStructInit && !((StructInitExpr*)vd->init)->typeName)
+    {
+        DiagErrorFmt(r->diag, vd->base.range,
+                     "cannot infer the type of '%s' from a braced initializer; write the type, e.g. 'int[] { ... }'",
+                     vd->name);
+        return false;
+    }
+
+    if (initType && strcmp(initType->name, STRATA_NULL_TYPE) == 0)
+    {
+        DiagErrorFmt(r->diag, vd->base.range, "cannot infer the type of '%s' from 'null'; write the type", vd->name);
+        return false;
+    }
+
+    if (initType && initType->primitiveType == PrimVoid)
+    {
+        DiagErrorFmt(r->diag, vd->base.range, "cannot infer the type of '%s': the initializer has no value", vd->name);
+        return false;
+    }
+
+    if (!initType)
+    {
+        DiagErrorFmt(r->diag, vd->base.range, "cannot infer the type of '%s' from its initializer", vd->name);
+        return false;
+    }
+
+    // A fixed-size array is inline storage that a `var` copy would have to declare as a fixed local.
+    if (TypeTreeHasFixedArray(initType))
+    {
+        DiagErrorFmt(r->diag, vd->base.range, "cannot infer the type of '%s' from a fixed-size array; write the type",
+                     vd->name);
+        return false;
+    }
+
+    bool isConst = vd->type.isConst;
+
+    vd->type = *initType;
+    vd->type.isConst = isConst;
+    vd->type.range = vd->base.range;
+
+    *initTypeOut = initType;
+
+    return true;
+}
+
 static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
     if (vd->isRef)
@@ -762,6 +835,25 @@ static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
     {
         StrMapPut(&r->refLocals, vd->name, NULL);
         StrMapPut(&r->refBoxParams, vd->name, NULL);
+    }
+
+    // `var` infers its type from the initializer, which is resolved here and not again below.
+    const TypeName* inferredInit = NULL;
+
+    if (vd->isVar && !TypeNameValid(&vd->type))
+    {
+        if (!InferVarDeclType(r, vd, scope, &inferredInit))
+        {
+            // Declare the name anyway, as int, so later uses do not add "unknown variable" errors. The init is
+            // dropped and the decl made an ordinary one, so a loop's second walk does not resolve it again.
+            vd->type = *InternTypeName(r, "int");
+            vd->type.range = vd->base.range;
+            vd->init = NULL;
+            vd->isVar = false;
+            ScopeDeclare(r, scope, vd->name, (void*)&vd->type, vd->base.range);
+
+            return;
+        }
     }
 
     if (!CheckLocalTypeKnown(r, vd))
@@ -784,7 +876,11 @@ static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     CheckNonFixedLocal(r, vd);
 
-    if (vd->init)
+    if (inferredInit)
+    {
+        WalkVarDeclInitTyped(r, vd, inferredInit);
+    }
+    else if (vd->init)
     {
         WalkVarDeclInit(r, vd, scope);
     }

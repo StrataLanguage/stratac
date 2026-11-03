@@ -1,0 +1,8 @@
+// expect: reject "the initializer has no value"
+// rule: a void call has no type to give the variable
+void nothing() { }
+int main()
+{
+    var x = nothing();
+    return 0;
+}

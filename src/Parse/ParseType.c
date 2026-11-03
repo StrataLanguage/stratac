@@ -15,6 +15,7 @@ bool LooksLikeVarDecl(Parser* p)
     {
     case TokKwRef:
     case TokKwConst:
+    case TokKwVar:
     case TokKwVoid:
     case TokKwBool:
     case TokKwUint:
@@ -633,6 +634,14 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
 
 bool ParserTryParseType(Parser* p, TypeName* out)
 {
+    // `var` carries no type: only a local with an initializer can infer one. Every other type position
+    // (parameter, field, return, global, cast) lands here, so the check is made once.
+    if (p->cur.kind == TokKwVar)
+    {
+        DiagError(p->diag, p->cur.range, "'var' is only allowed for local variables with an initializer");
+        return false;
+    }
+
     return ParseTypeImpl(p, out, false);
 }
 

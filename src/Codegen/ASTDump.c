@@ -482,7 +482,10 @@ static void DumpFor(Node* n, int indent, Sb* out)
 static void DumpVarDecl(Node* n, Sb* out)
 {
     VarDeclStmt* varDecl = AS_NODE(VarDeclStmt, n);
-    SbPrintf(out, "%s %s", varDecl->type.name, varDecl->name);
+
+    // Before sema a `var` local has no type name yet.
+    const char* typeName = TypeNameValid(&varDecl->type) ? varDecl->type.name : "var";
+    SbPrintf(out, "%s %s", typeName, varDecl->name);
 
     if (varDecl->init)
     {

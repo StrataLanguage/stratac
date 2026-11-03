@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: 30
+// rule: var takes the return type of a call
+int get_sum(int a, int b) { return a + b; }
+int main()
+{
+    var result = get_sum(10, 20);
+    printf("%d\n", result);
+    return 0;
+}

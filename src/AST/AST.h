@@ -671,6 +671,9 @@ typedef struct
     Node* init;
     // `ref T x = path;` / `const ref T x = path;`: an alias of the storage at `path`, not a copy.
     bool isRef;
+    // Set by the parser for `var x = e;`: `type` is empty (name NULL, `isConst` set for `const var`) until sema
+    // fills it in from `e`.
+    bool isVar;
     // Set by sema: the path holds a `^T` / proven `T?` and the ref aliases the value inside.
     bool refThroughBox;
     // Sema-built: a bare local that starts from its field defaults without running `Init()` (the value an

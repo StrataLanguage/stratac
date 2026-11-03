@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: 1
+// expect-output: END live=0
+// rule: a var local initialized from a box moves it, exactly as a typed declaration does
+int main()
+{
+    {
+        var b = Box(1);
+        var c = b;
+        printf("%d\n", c.id);
+    }
+    Report();
+    return 0;
+}

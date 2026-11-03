@@ -1,0 +1,8 @@
+// expect: reject "used after move"
+// rule: a var local initialized from a box moves it like a typed declaration
+int main()
+{
+    var b = Box(1);
+    var c = b;
+    return b.id;
+}

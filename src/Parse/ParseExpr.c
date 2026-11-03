@@ -1075,9 +1075,114 @@ static Node* ParseMetaCall(Parser* p)
     return (Node*)call;
 }
 
+// Whether the tokens ahead are `T[] {` or `T[N] {` (T a type name or keyword). Only the bracket pairs are
+// walked, so nothing is parsed or reported, and a plain name or keyword followed by `{` is not a literal.
+static bool StartsTypedArrayLiteral(Parser* p)
+{
+    switch (p->cur.kind)
+    {
+    case TokIdent:
+    case TokKwBool:
+    case TokKwInt:
+    case TokKwUint:
+    case TokKwLong:
+    case TokKwUlong:
+    case TokKwByte:
+    case TokKwSbyte:
+    case TokKwShort:
+    case TokKwUshort:
+    case TokKwFloat:
+    case TokKwDouble:
+    case TokKwFloat2:
+    case TokKwFloat3:
+    case TokKwFloat4:
+    case TokKwString:
+    case TokKwCstring:
+        break;
+    default:
+        return false;
+    }
+
+    LexerCheckpoint saved = SaveLexerState(p);
+
+    Advance(p);
+
+    bool sawDim = false;
+
+    while (p->cur.kind == TokLBracket)
+    {
+        Token next = LexerPeekToken(p->lex);
+
+        if (next.kind == TokRBracket)
+        {
+            Advance(p);
+            Advance(p);
+        }
+        else if (next.kind == TokIntLit || next.kind == TokIdent)
+        {
+            // `[N]` or `[constName]`: a fixed dimension.
+            Advance(p);
+            Advance(p);
+
+            if (p->cur.kind != TokRBracket)
+            {
+                break;
+            }
+
+            Advance(p);
+        }
+        else
+        {
+            break;
+        }
+
+        sawDim = true;
+    }
+
+    bool isLiteral = sawDim && p->cur.kind == TokLBrace;
+
+    RestoreLexerState(p, saved);
+
+    return isLiteral;
+}
+
+// `T[] { e, ... }` or `T[] { v; n }`: a dynamic array literal with its element type spelled out. The
+// result's type is `T[]`, as for a typed declaration's braced initializer.
+static Node* ParseTypedArrayLiteral(Parser* p)
+{
+    Token start = p->cur;
+
+    TypeName type = {0};
+
+    if (!ParserTryParseType(p, &type))
+    {
+        return NULL;
+    }
+
+    // The element type is copied out of the local `type`, so the literal owns a stable pointer.
+    const TypeName* elem = (const TypeName*)ArenaDup(p->arena, type.elem, sizeof(TypeName));
+
+    // A `[constName]` length is unresolved until sema, so it is told apart by its name.
+    bool isFixed = TypeNameArrayLength(&type) >= 0 || type.lengthName;
+
+    if (TypeNameIsArray(&type) && isFixed)
+    {
+        DiagError(p->diag, start.range,
+                  "fixed-size array literals are not supported in expressions; write 'T[N] name = { ... }'");
+    }
+
+    // The body is parsed even after the error, with its element type, so no follow-on errors appear.
+    return ParseArrayInitBody(p, start, elem);
+}
+
 static Node* ParsePrimary(Parser* p)
 {
     Token token = p->cur;
+
+    if (StartsTypedArrayLiteral(p))
+    {
+        return ParseTypedArrayLiteral(p);
+    }
 
     switch (p->cur.kind)
     {

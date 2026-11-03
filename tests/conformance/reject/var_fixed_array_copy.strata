@@ -1,0 +1,8 @@
+// expect: reject "from a fixed-size array"
+// rule: a var cannot copy a fixed-size array, which is inline storage with no type to name
+int main()
+{
+    float[3] v = { 1.0f, 2.0f, 3.0f };
+    var w = v;
+    return 0;
+}
