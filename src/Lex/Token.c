@@ -29,6 +29,7 @@ static const Spelling KEYWORDS[] = {
     {TokKwString,      "string"     },
     {TokKwCstring,     "cstring"    },
     {TokKwRef,         "ref"        },
+    {TokKwVar,         "var"        },
     {TokKwConst,       "const"      },
     {TokKwStatic,      "static"     },
     {TokKwExtern,      "extern"     },

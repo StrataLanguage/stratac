@@ -1,0 +1,7 @@
+// expect: reject "from a braced initializer"
+// rule: a braced list names no type, so a var cannot be initialized from one
+int main()
+{
+    var x = { 1, 2 };
+    return 0;
+}

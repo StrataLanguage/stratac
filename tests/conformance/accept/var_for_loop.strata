@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: 3
+// rule: a for loop initializer may be a var declaration, which infers int here
+int main()
+{
+    var total = 0;
+    for (var i = 0; i < 3; i++)
+    {
+        total += 1;
+    }
+    printf("%d\n", total);
+    return 0;
+}

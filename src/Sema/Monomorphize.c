@@ -1507,6 +1507,11 @@ static bool CheckMetaStmt(Mono* m, const FunctionDecl* fn, const Node* n)
             return MetaConstructError(m, fn, n, "a 'ref' local");
         }
 
+        if (v->isVar)
+        {
+            return MetaConstructError(m, fn, n, "a 'var' local");
+        }
+
         if (IsTypeParamType(&v->type))
         {
             DiagErrorFmt(m->diag, n->range, "'type' is only allowed for parameters of @meta functions");
@@ -2094,7 +2099,12 @@ static void RewriteNode(Mono* m, Node* n)
     {
         VarDeclStmt* v = (VarDeclStmt*)n;
 
-        RewriteType(m, &v->type);
+        // A `var` local's type is still empty before sema; there is nothing to rewrite.
+        if (TypeNameValid(&v->type))
+        {
+            RewriteType(m, &v->type);
+        }
+
         RewriteSlot(m, &v->init);
         break;
     }

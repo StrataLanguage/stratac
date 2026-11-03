@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: 7
+// expect-output: 2.500000
+// rule: a var local inside a generic body takes the type parameter's substitution in each instance
+T copy_of<T>(T a)
+{
+    var b = a;
+    return b;
+}
+int main()
+{
+    printf("%d\n", copy_of<int>(7));
+    printf("%f\n", copy_of<float>(2.5f));
+    return 0;
+}

@@ -1,0 +1,7 @@
+// expect: reject "'var' is only allowed for local variables"
+// rule: `const var` is still a local-only form, so it is not allowed as a parameter either
+int twice(const var x) { return x + x; }
+int main()
+{
+    return twice(1);
+}

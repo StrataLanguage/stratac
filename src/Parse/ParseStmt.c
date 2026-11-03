@@ -26,6 +26,66 @@ static void SetGenericInitType(Parser* p, Node* init, const TypeName* type)
     }
 }
 
+// True at `var` or `const var`. The lookahead is undone, so the caller parses the declaration itself.
+static bool StartsVarInfer(Parser* p)
+{
+    LexerCheckpoint saved = SaveLexerState(p);
+
+    ParserConsume(p, TokKwConst);
+    bool isVar = p->cur.kind == TokKwVar;
+
+    RestoreLexerState(p, saved);
+
+    return isVar;
+}
+
+// `var name = expr` (after an optional `const`): the type is left empty for sema to infer from `expr`. The
+// initializer is a plain expression, so no type-directed braced parsing applies. The caller ends the statement.
+static Node* ParseInferredVarDecl(Parser* p, Token start)
+{
+    bool isConst = ParserConsume(p, TokKwConst);
+
+    Token varTok = p->cur;
+    Advance(p);
+
+    if (p->cur.kind != TokIdent)
+    {
+        DiagError(p->diag, p->cur.range, "expected a variable name");
+        return NULL;
+    }
+
+    Token nameTok = p->cur;
+    Advance(p);
+
+    if (p->cur.kind != TokAssign)
+    {
+        Str name = ParserIdentText(p, nameTok);
+        DiagErrorFmt(p->diag, varTok.range, "'var' declaration of '%.*s' needs an initializer to infer its type",
+                     (int)name.len, name.data);
+        return NULL;
+    }
+
+    Advance(p);
+
+    Node* init = ParseExpr(p);
+
+    if (!init)
+    {
+        return NULL;
+    }
+
+    VarDeclStmt* node = AST_NEW(p->arena, VarDeclStmt);
+    node->base.kind = NodeVarDecl;
+    node->base.range = SpanFrom(start, nameTok);
+    node->type.isConst = isConst;
+    node->type.range = varTok.range;
+    node->name = ToOwned(p->arena, ParserIdentText(p, nameTok));
+    node->init = init;
+    node->isVar = true;
+
+    return (Node*)node;
+}
+
 Node* ParseBlock(Parser* p)
 {
     Token lb = ParserExpect(p, TokLBrace, "'{'");
@@ -136,6 +196,18 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
 {
     Token start = p->cur;
 
+    if (StartsVarInfer(p))
+    {
+        Node* decl = ParseInferredVarDecl(p, start);
+
+        if (decl)
+        {
+            ParserExpect(p, TokSemicolon, "';'");
+        }
+
+        return decl;
+    }
+
     if (LooksLikeVarDecl(p))
     {
         TypeName type = {0};
@@ -161,6 +233,12 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
 
         if (ParserConsume(p, TokKwRef))
         {
+            if (p->cur.kind == TokKwVar)
+            {
+                DiagError(p->diag, p->cur.range, "'ref var' is not supported; write the type");
+                return NULL;
+            }
+
             isRef = true;
         }
 
@@ -354,7 +432,16 @@ static Node* ParseFor(Parser* p)
 
     if (p->cur.kind != TokSemicolon)
     {
-        if (LooksLikeVarDecl(p))
+        if (StartsVarInfer(p))
+        {
+            init = ParseInferredVarDecl(p, token);
+
+            if (!init)
+            {
+                return NULL;
+            }
+        }
+        else if (LooksLikeVarDecl(p))
         {
             TypeName type = {0};
 

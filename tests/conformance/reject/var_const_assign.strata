@@ -1,0 +1,8 @@
+// expect: reject "'x' is immutable"
+// rule: const var makes the local const, so assigning to it is rejected
+int main()
+{
+    const var x = 1;
+    x = 2;
+    return x;
+}

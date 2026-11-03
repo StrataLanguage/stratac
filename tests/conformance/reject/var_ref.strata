@@ -1,0 +1,8 @@
+// expect: reject "'ref var' is not supported"
+// rule: a reference local must name its type, so `ref var` is not a form
+int g = 1;
+int main()
+{
+    ref var x = g;
+    return 0;
+}

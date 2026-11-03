@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: 10 10.500000 10 1 hi
+// rule: var takes the type of a literal: int, float, long, bool and string
+int main()
+{
+    var a = 10;
+    var b = 10.5f;
+    var c = 10l;
+    var d = true;
+    var s = "hi";
+    printf("%d %f %ld %d %s\n", a, b, c, (int)d, s);
+    return 0;
+}

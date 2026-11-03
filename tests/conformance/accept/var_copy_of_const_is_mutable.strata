@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: 2 1
+// rule: var drops a top-level const from its initializer, so the copy is mutable
+int main()
+{
+    const int c = 1;
+    var x = c;
+    x = 2;
+    printf("%d %d\n", x, c);
+    return 0;
+}

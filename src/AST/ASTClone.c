@@ -361,7 +361,12 @@ static Node* CloneVarDecl(Arena* arena, const VarDeclStmt* src, const TypeSubst*
     VarDeclStmt* copy = AST_NEW(arena, VarDeclStmt);
     *copy = *src;
 
-    copy->type = TypeNameSubstitute(arena, &src->type, s);
+    // A `var` local has no type until sema infers one, so there is nothing to substitute yet.
+    if (TypeNameValid(&src->type))
+    {
+        copy->type = TypeNameSubstitute(arena, &src->type, s);
+    }
+
     copy->init = AstCloneSubst(arena, src->init, s);
 
     // Set by sema.

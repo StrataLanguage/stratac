@@ -1,0 +1,7 @@
+// expect: reject "'var' is only allowed for local variables"
+// rule: a global's type is always written, so var is not allowed there
+var g = 1;
+int main()
+{
+    return g;
+}

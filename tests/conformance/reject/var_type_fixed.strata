@@ -1,0 +1,8 @@
+// expect: reject "of type 'int'"
+// rule: a var local has the type its initializer gave it and keeps that type
+int main()
+{
+    var x = 10;
+    x = "hi";
+    return x;
+}

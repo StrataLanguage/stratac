@@ -1,0 +1,9 @@
+// expect: run
+// expect-output: 64
+// rule: const var makes the inferred type const, so the local cannot be assigned
+int main()
+{
+    const var limit = 64;
+    printf("%d\n", limit);
+    return 0;
+}

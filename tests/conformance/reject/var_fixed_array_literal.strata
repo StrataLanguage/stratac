@@ -1,0 +1,7 @@
+// expect: reject "fixed-size array literals are not supported in expressions"
+// rule: a fixed-size array literal is only a declaration initializer, not an expression
+int main()
+{
+    var x = int[3] { 1, 2, 3 };
+    return 0;
+}

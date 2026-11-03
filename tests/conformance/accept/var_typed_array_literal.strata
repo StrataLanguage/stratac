@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: 20 3
+// expect-output: 1 2 9
+// expect-output: 9
+// rule: T[] { ... } is a dynamic array literal expression, usable with var, in a typed declaration and as an argument
+int sum_pair(int[] xs) { return xs[0] + xs[1]; }
+int main()
+{
+    var a = int[] { 10, 20, 30 };
+    printf("%d %d\n", a[1], a.length);
+    int[] b = int[] { 1, 2 };
+    int[] c = int[] { 9; 1 };
+    printf("%d %d %d\n", b[0], b[1], c[0]);
+    printf("%d\n", sum_pair(int[] { 4, 5 }));
+    return 0;
+}
