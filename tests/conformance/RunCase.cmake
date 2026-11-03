@@ -2,6 +2,8 @@
 # `panic` cases links and runs the object. See tests/conformance/README.md for the header format.
 #
 # Inputs: CASE, PRELUDE, STRATAC, OUTPUT_DIR, C_COMPILER, C_COMPILER_ID, EXE_SUFFIX.
+# With ASAN_CLANG (a clang for the MSVC target) and ASAN_DLL_DIR (its runtime), the program is compiled with
+# STRATA_ASAN=1, linked with -fsanitize=address and run under AddressSanitizer; any report fails the case.
 
 if(NOT DEFINED CASE OR NOT DEFINED PRELUDE OR NOT DEFINED STRATAC OR NOT DEFINED OUTPUT_DIR
    OR NOT DEFINED C_COMPILER OR NOT DEFINED C_COMPILER_ID)
@@ -53,8 +55,14 @@ else()
 endif()
 file(REMOVE "${object}")
 
+if(ASAN_CLANG)
+    set(strata_command ${CMAKE_COMMAND} -E env STRATA_ASAN=1 "${STRATAC}")
+else()
+    set(strata_command "${STRATAC}")
+endif()
+
 execute_process(
-    COMMAND "${STRATAC}" "${source}" -o "${object}"
+    COMMAND ${strata_command} "${source}" -o "${object}"
     RESULT_VARIABLE compile_result
     OUTPUT_VARIABLE compile_out
     ERROR_VARIABLE compile_err
@@ -84,7 +92,10 @@ endif()
 # -- Link and run -------------------------------------------------------------------------------
 
 set(exe "${work_dir}/${case_name}${EXE_SUFFIX}")
-if(C_COMPILER_ID STREQUAL "MSVC")
+if(ASAN_CLANG)
+    execute_process(COMMAND "${ASAN_CLANG}" --target=x86_64-pc-windows-msvc -fsanitize=address "${object}" -o "${exe}"
+                    RESULT_VARIABLE link_result OUTPUT_VARIABLE link_out ERROR_VARIABLE link_err)
+elseif(C_COMPILER_ID STREQUAL "MSVC")
     execute_process(COMMAND "${C_COMPILER}" /nologo "${object}" "/Fe:${exe}"
                     RESULT_VARIABLE link_result OUTPUT_VARIABLE link_out ERROR_VARIABLE link_err)
 else()
@@ -95,14 +106,24 @@ if(NOT link_result EQUAL 0)
     message(FATAL_ERROR "link failed:\n${link_out}${link_err}")
 endif()
 
+set(run_command "${exe}")
+if(ASAN_CLANG)
+    # The instrumented program loads clang's ASan runtime DLL.
+    set(ENV{PATH} "${ASAN_DLL_DIR};$ENV{PATH}")
+endif()
+
 execute_process(
-    COMMAND "${exe}"
+    COMMAND ${run_command}
     RESULT_VARIABLE run_result
     OUTPUT_VARIABLE run_out
     ERROR_VARIABLE run_err
     TIMEOUT 30
 )
 set(run_log "${run_out}${run_err}")
+
+if(run_log MATCHES "AddressSanitizer")
+    message(FATAL_ERROR "AddressSanitizer reported an error:\n${run_log}")
+endif()
 
 # Signs of a memory error, whatever the case expects.
 if(run_log MATCHES "-572662307" OR run_log MATCHES "!!! DOUBLE/BAD FREE")

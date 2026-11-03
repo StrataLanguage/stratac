@@ -137,6 +137,9 @@ LLVMValueRef LLVMAddGlobal(LLVMModuleRef m, LLVMTypeRef ty, const char* name);
 void LLVMSetInitializer(LLVMValueRef globalVar, LLVMValueRef constantVal);
 LLVMValueRef LLVMGetInitializer(LLVMValueRef globalVar);
 void LLVMSetLinkage(LLVMValueRef global, int linkage);
+int LLVMGetLinkage(LLVMValueRef global);
+LLVMValueRef LLVMGetFirstGlobal(LLVMModuleRef m);
+LLVMValueRef LLVMGetNextGlobal(LLVMValueRef global);
 void LLVMSetUnnamedAddr(LLVMValueRef global, LLVMBool hasUnnamedAddr);
 void LLVMSetGlobalConstant(LLVMValueRef global, LLVMBool isConstant);
 void LLVMSetAlignment(LLVMValueRef v, unsigned bytes);
@@ -224,6 +227,13 @@ void LLVMPositionBuilderBefore(LLVMBuilderRef b, LLVMValueRef inst);
 LLVMValueRef LLVMGetFirstInstruction(LLVMBasicBlockRef bb);
 LLVMValueRef LLVMGetNextInstruction(LLVMValueRef inst);
 LLVMValueRef LLVMGetFirstFunction(LLVMModuleRef m);
+typedef struct LLVMOpaqueAttributeRef* LLVMAttributeRef;
+LLVMContextRef LLVMGetModuleContext(LLVMModuleRef m);
+void LLVMParseCommandLineOptions(int argc, const char* const* argv, const char* overview);
+unsigned LLVMCountBasicBlocks(LLVMValueRef fn);
+unsigned LLVMGetEnumAttributeKindForName(const char* name, size_t len);
+LLVMAttributeRef LLVMCreateEnumAttribute(LLVMContextRef c, unsigned kindId, uint64_t value);
+void LLVMAddAttributeAtIndex(LLVMValueRef fn, unsigned index, LLVMAttributeRef attr);
 LLVMValueRef LLVMGetNextFunction(LLVMValueRef fn);
 LLVMBasicBlockRef LLVMGetFirstBasicBlock(LLVMValueRef fn);
 LLVMBasicBlockRef LLVMGetNextBasicBlock(LLVMBasicBlockRef bb);
@@ -383,6 +393,7 @@ LLVMErrorRef LLVMOrcLLJITLookup(LLVMOrcLLJITRef j, LLVMOrcExecutorAddress* outRe
 
 #define kReturnStatusAction 1
 
+#define LLVMExternalLinkage 0
 #define LLVMAppendingLinkage 7
 #define LLVMInternalLinkage 8
 #define LLVMPrivateLinkage 9

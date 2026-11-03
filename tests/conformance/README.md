@@ -45,3 +45,18 @@ foundations doc and a few words; ctest inverts the result, so the case passes wh
 open and fails once it is fixed. That failure is the cue to delete the `xfail` line.
 
 End `run` cases with `Report();` when they use `Res` or `Box`, and return 0 from `main`.
+
+## AddressSanitizer
+
+Every `accept/` case can also run under AddressSanitizer (roadmap phase 5 gate). MinGW GCC has no ASan, so this
+uses a clang for the MSVC target: `stratac` instruments the generated code when `STRATA_ASAN=1`, and the program is
+linked with `clang --target=x86_64-pc-windows-msvc -fsanitize=address`. Point CMake at the clang to get one
+`asan/accept/<case>` test per case, labelled `asan`:
+
+```
+cmake --preset default -DSTRATA_ASAN_CLANG=C:/path/to/llvm/bin/clang.exe
+ctest --preset default -L asan
+```
+
+Any AddressSanitizer report fails the case. The instrumented build makes globals external and loads the shadow
+base from the runtime (see `InstrumentAddressSanitizer` in `src/Codegen/LLVMAot.c`).

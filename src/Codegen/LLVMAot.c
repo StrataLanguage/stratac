@@ -25,6 +25,50 @@ static void EnsureTargetsInitialized(void)
     }
 }
 
+/* STRATA_ASAN=1: marks every defined function `sanitize_address` and runs LLVM's AddressSanitizer over the module,
+   so the program links against clang's ASan runtime and reports use after free, overflow and double free in the
+   generated code (roadmap phase 5 gate). */
+static void InstrumentAddressSanitizer(LLVMModuleRef mod, LLVMTargetMachineRef tm)
+{
+    /* The Windows runtime places the shadow memory itself; the code must load its address, not assume one. */
+    const char* args[] = {"strata", "-asan-force-dynamic-shadow"};
+    LLVMParseCommandLineOptions(2, args, NULL);
+
+    /* The pass gives each instrumented global an associated COMDAT, which COFF cannot attach to a local symbol.
+       Making the globals external for the instrumented build avoids that; nothing links against them. */
+    for (LLVMValueRef g = LLVMGetFirstGlobal(mod); g; g = LLVMGetNextGlobal(g))
+    {
+        int linkage = LLVMGetLinkage(g);
+
+        if (linkage == LLVMInternalLinkage || linkage == LLVMPrivateLinkage)
+        {
+            LLVMSetLinkage(g, LLVMExternalLinkage);
+        }
+    }
+
+    LLVMContextRef ctx = LLVMGetModuleContext(mod);
+    unsigned kind = LLVMGetEnumAttributeKindForName("sanitize_address", 16);
+    LLVMAttributeRef attr = LLVMCreateEnumAttribute(ctx, kind, 0);
+
+    for (LLVMValueRef fn = LLVMGetFirstFunction(mod); fn; fn = LLVMGetNextFunction(fn))
+    {
+        if (LLVMCountBasicBlocks(fn) > 0)
+        {
+            LLVMAddAttributeAtIndex(fn, (unsigned)-1, attr); /* LLVMAttributeFunctionIndex */
+        }
+    }
+
+    LLVMPassBuilderOptionsRef options = LLVMCreatePassBuilderOptions();
+    LLVMErrorRef err = LLVMRunPasses(mod, "asan", tm, options);
+
+    if (err)
+    {
+        LLVMConsumeError(err);
+    }
+
+    LLVMDisposePassBuilderOptions(options);
+}
+
 bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** errorMessage, const char* targetTriple)
 {
     if (!bm->mod)
@@ -98,6 +142,11 @@ bool EmitNativeFile(BuiltModule* bm, const char* path, bool assembly, char** err
     LLVMSetDataLayout(bm->mod, dataLayoutStr);
     LLVMDisposeMessage(dataLayoutStr);
     LLVMDisposeTargetData(dataLayout);
+
+    if (getenv("STRATA_ASAN"))
+    {
+        InstrumentAddressSanitizer(bm->mod, targetMachine);
+    }
 
     LLVMCodeGenFileType kind = assembly ? LLVMAssemblyFile : LLVMObjectFile;
 

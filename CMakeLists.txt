@@ -288,6 +288,16 @@ if(NOT STRATA_SHARED)
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli/RunCliTests.cmake
         )
 
+        # AddressSanitizer variants of the accept cases appear when this points at a clang for the MSVC target
+        # (for example C:/Users/me/llvm-x64/bin/clang.exe); its runtime directory is found next to it.
+        set(STRATA_ASAN_CLANG "" CACHE FILEPATH "clang for x86_64-pc-windows-msvc; enables the asan/ tests")
+        set(STRATA_ASAN_DLL_DIR "")
+        if(STRATA_ASAN_CLANG)
+            get_filename_component(asan_root "${STRATA_ASAN_CLANG}" DIRECTORY)
+            file(GLOB asan_dirs "${asan_root}/../lib/clang/*/lib/windows")
+            list(GET asan_dirs 0 STRATA_ASAN_DLL_DIR)
+        endif()
+
         # Conformance suite: one test per case in tests/conformance/{accept,reject}. A case marked
         # `// xfail:` is a known hole: it passes while the hole is open and fails once it is fixed,
         # so the marker gets removed (see tests/conformance/README.md).
@@ -314,6 +324,24 @@ if(NOT STRATA_SHARED)
                     -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/RunCase.cmake
             )
+            # Opt-in AddressSanitizer pass over the programs that run (roadmap phase 5 gate): the same case, built
+            # with the generated code instrumented and linked by a clang for the MSVC target.
+            if(STRATA_ASAN_CLANG AND case_kind STREQUAL "accept")
+                add_test(NAME asan/${case_kind}/${case_name}
+                    COMMAND ${CMAKE_COMMAND}
+                        -DCASE=${case}
+                        -DPRELUDE=${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/prelude.strata
+                        -DSTRATAC=$<TARGET_FILE:stratac>
+                        -DOUTPUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/asan
+                        -DC_COMPILER=${CMAKE_C_COMPILER}
+                        -DC_COMPILER_ID=${CMAKE_C_COMPILER_ID}
+                        -DEXE_SUFFIX=${CMAKE_EXECUTABLE_SUFFIX}
+                        -DASAN_CLANG=${STRATA_ASAN_CLANG}
+                        -DASAN_DLL_DIR=${STRATA_ASAN_DLL_DIR}
+                        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/conformance/RunCase.cmake
+                )
+                set_tests_properties(asan/${case_kind}/${case_name} PROPERTIES LABELS "asan")
+            endif()
             file(STRINGS "${case}" case_xfail REGEX "^// xfail:")
             if(case_xfail)
                 set_tests_properties(${test_name} PROPERTIES WILL_FAIL TRUE LABELS "conformance;xfail")
