@@ -368,6 +368,178 @@ static void ScanBorrowArg(Resolver* r, FunctionDecl* f, CallExpr* c, Node* arg, 
     }
 }
 
+static void ScanBlockBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    for (size_t i = 0; i < ((Block*)n)->statements.count; i++)
+    {
+        ScanBorrows(r, f, (Node*)VecGet(&((Block*)n)->statements, i), changed);
+    }
+}
+
+static void ScanReturnBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ConsumeIfTaken(r, f, ((ReturnStmt*)n)->value, changed);
+    ScanBorrows(r, f, ((ReturnStmt*)n)->value, changed);
+}
+
+static void ScanIfBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ScanBorrows(r, f, ((IfStmt*)n)->condition, changed);
+    ScanBorrows(r, f, ((IfStmt*)n)->thenBranch, changed);
+    ScanBorrows(r, f, ((IfStmt*)n)->elseBranch, changed);
+}
+
+static void ScanWhileBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ScanBorrows(r, f, ((WhileStmt*)n)->condition, changed);
+    ScanBorrows(r, f, ((WhileStmt*)n)->body, changed);
+}
+
+static void ScanForBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ScanBorrows(r, f, ((ForStmt*)n)->init, changed);
+    ScanBorrows(r, f, ((ForStmt*)n)->condition, changed);
+    ScanBorrows(r, f, ((ForStmt*)n)->update, changed);
+    ScanBorrows(r, f, ((ForStmt*)n)->body, changed);
+}
+
+static void ScanVarDeclBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    VarDeclStmt* vd = (VarDeclStmt*)n;
+
+    if (vd->isRef)
+    {
+        if (!vd->type.isConst)
+        {
+            ConsumeParam(BorrowRoot(f, vd->init), changed); /* a mutable alias */
+        }
+    }
+    else
+    {
+        ConsumeIfTaken(r, f, vd->init, changed);
+    }
+    ScanBorrows(r, f, vd->init, changed);
+}
+
+static void ScanBinaryBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ScanBorrows(r, f, ((BinaryExpr*)n)->lhs, changed);
+    ScanBorrows(r, f, ((BinaryExpr*)n)->rhs, changed);
+}
+
+static void ScanAssignBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ConsumeParam(BorrowRoot(f, ((AssignExpr*)n)->target), changed);
+    ConsumeIfTaken(r, f, ((AssignExpr*)n)->value, changed);
+    ScanBorrows(r, f, ((AssignExpr*)n)->target, changed);
+    ScanBorrows(r, f, ((AssignExpr*)n)->value, changed);
+}
+
+static void ScanIncDecBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ConsumeParam(BorrowRoot(f, ((IncDecExpr*)n)->operand), changed);
+    ScanBorrows(r, f, ((IncDecExpr*)n)->operand, changed);
+}
+
+static void ScanIndexBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ScanBorrows(r, f, ((IndexExpr*)n)->base_node, changed);
+    ScanBorrows(r, f, ((IndexExpr*)n)->index, changed);
+}
+
+static void ScanConditionalBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ScanBorrows(r, f, ((ConditionalExpr*)n)->condition, changed);
+    ScanBorrows(r, f, ((ConditionalExpr*)n)->thenExpr, changed);
+    ScanBorrows(r, f, ((ConditionalExpr*)n)->elseExpr, changed);
+}
+
+static void ScanArrayInitBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    ArrayInitExpr* ai = (ArrayInitExpr*)n;
+
+    for (size_t i = 0; i < ai->elements.count; i++)
+    {
+        Node* e = (Node*)VecGet(&ai->elements, i);
+
+        if (!ai->repeatCount)
+        {
+            ConsumeIfTaken(r, f, e, changed); /* `{ v; n }` copies its value */
+        }
+        ScanBorrows(r, f, e, changed);
+    }
+    ScanBorrows(r, f, ai->repeatCount, changed);
+}
+
+static void ScanStructInitBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    for (size_t i = 0; i < ((StructInitExpr*)n)->fields.count; i++)
+    {
+        Node* v = ((StructInitField*)VecGet(&((StructInitExpr*)n)->fields, i))->value;
+        ConsumeIfTaken(r, f, v, changed);
+        ScanBorrows(r, f, v, changed);
+    }
+}
+
+static void ScanCallBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
+{
+    CallExpr* c = (CallExpr*)n;
+    bool isMethod = c->calleeBase != NULL;
+
+    ScanBorrows(r, f, c->calleeBase, changed);
+
+    for (size_t i = 0; i < c->args.count; i++)
+    {
+        ScanBorrows(r, f, (Node*)VecGet(&c->args, i), changed);
+    }
+
+    if (!c->callee)
+    {
+        for (size_t i = 0; i < c->args.count; i++)
+        {
+            ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, i)), changed);
+        }
+        return;
+    }
+
+    Node* arg0 = c->args.count > 0 ? (Node*)VecGet(&c->args, 0) : NULL;
+
+    if (!isMethod
+        && (IsArrayMutator(c->callee) || strcmp(c->callee, "drop") == 0 || strcmp(c->callee, "addressof") == 0))
+    {
+        ConsumeParam(BorrowRoot(f, arg0), changed);
+
+        if (strcmp(c->callee, "array_push") == 0 && c->args.count > 1)
+        {
+            ConsumeIfTaken(r, f, (Node*)VecGet(&c->args, 1), changed);
+        }
+
+        /* `array_replace(a, i, v)` stores `v` in the array, so `v` is owned, not borrowed. */
+        if (strcmp(c->callee, "array_replace") == 0 && c->args.count > 2)
+        {
+            ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, 2)), changed);
+        }
+        return;
+    }
+
+    if (!isMethod
+        && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0 || strcmp(c->callee, "alignof") == 0
+            || strcmp(c->callee, "load") == 0 || strcmp(c->callee, "substring") == 0))
+    {
+        return; /* only read */
+    }
+
+    if (isMethod)
+    {
+        ScanBorrowArg(r, f, c, c->calleeBase, 0, true, changed);
+    }
+
+    for (size_t i = 0; i < c->args.count; i++)
+    {
+        ScanBorrowArg(r, f, c, (Node*)VecGet(&c->args, i), isMethod ? i + 1 : i, isMethod, changed);
+    }
+}
+
 static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
 {
     if (!n)
@@ -378,48 +550,23 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
     switch (n->kind)
     {
     case NodeBlock:
-        for (size_t i = 0; i < ((Block*)n)->statements.count; i++)
-        {
-            ScanBorrows(r, f, (Node*)VecGet(&((Block*)n)->statements, i), changed);
-        }
+        ScanBlockBorrows(r, f, n, changed);
         return;
     case NodeReturn:
-        ConsumeIfTaken(r, f, ((ReturnStmt*)n)->value, changed);
-        ScanBorrows(r, f, ((ReturnStmt*)n)->value, changed);
+        ScanReturnBorrows(r, f, n, changed);
         return;
     case NodeIf:
-        ScanBorrows(r, f, ((IfStmt*)n)->condition, changed);
-        ScanBorrows(r, f, ((IfStmt*)n)->thenBranch, changed);
-        ScanBorrows(r, f, ((IfStmt*)n)->elseBranch, changed);
+        ScanIfBorrows(r, f, n, changed);
         return;
     case NodeWhile:
-        ScanBorrows(r, f, ((WhileStmt*)n)->condition, changed);
-        ScanBorrows(r, f, ((WhileStmt*)n)->body, changed);
+        ScanWhileBorrows(r, f, n, changed);
         return;
     case NodeFor:
-        ScanBorrows(r, f, ((ForStmt*)n)->init, changed);
-        ScanBorrows(r, f, ((ForStmt*)n)->condition, changed);
-        ScanBorrows(r, f, ((ForStmt*)n)->update, changed);
-        ScanBorrows(r, f, ((ForStmt*)n)->body, changed);
+        ScanForBorrows(r, f, n, changed);
         return;
     case NodeVarDecl:
-    {
-        VarDeclStmt* vd = (VarDeclStmt*)n;
-
-        if (vd->isRef)
-        {
-            if (!vd->type.isConst)
-            {
-                ConsumeParam(BorrowRoot(f, vd->init), changed); /* a mutable alias */
-            }
-        }
-        else
-        {
-            ConsumeIfTaken(r, f, vd->init, changed);
-        }
-        ScanBorrows(r, f, vd->init, changed);
+        ScanVarDeclBorrows(r, f, n, changed);
         return;
-    }
     case NodeExprStmt:
         ScanBorrows(r, f, ((ExprStmt*)n)->expr, changed);
         return;
@@ -430,18 +577,13 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
         ScanBorrows(r, f, ((UnaryExpr*)n)->operand, changed);
         return;
     case NodeBinary:
-        ScanBorrows(r, f, ((BinaryExpr*)n)->lhs, changed);
-        ScanBorrows(r, f, ((BinaryExpr*)n)->rhs, changed);
+        ScanBinaryBorrows(r, f, n, changed);
         return;
     case NodeAssign:
-        ConsumeParam(BorrowRoot(f, ((AssignExpr*)n)->target), changed);
-        ConsumeIfTaken(r, f, ((AssignExpr*)n)->value, changed);
-        ScanBorrows(r, f, ((AssignExpr*)n)->target, changed);
-        ScanBorrows(r, f, ((AssignExpr*)n)->value, changed);
+        ScanAssignBorrows(r, f, n, changed);
         return;
     case NodeIncDec:
-        ConsumeParam(BorrowRoot(f, ((IncDecExpr*)n)->operand), changed);
-        ScanBorrows(r, f, ((IncDecExpr*)n)->operand, changed);
+        ScanIncDecBorrows(r, f, n, changed);
         return;
     case NodeCast:
         ScanBorrows(r, f, ((CastExpr*)n)->operand, changed);
@@ -450,101 +592,23 @@ static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
         ScanBorrows(r, f, ((MemberExpr*)n)->base_node, changed);
         return;
     case NodeIndex:
-        ScanBorrows(r, f, ((IndexExpr*)n)->base_node, changed);
-        ScanBorrows(r, f, ((IndexExpr*)n)->index, changed);
+        ScanIndexBorrows(r, f, n, changed);
         return;
     case NodeNullTest:
         ScanBorrows(r, f, ((NullTestExpr*)n)->operand, changed);
         return;
     case NodeConditional:
-        ScanBorrows(r, f, ((ConditionalExpr*)n)->condition, changed);
-        ScanBorrows(r, f, ((ConditionalExpr*)n)->thenExpr, changed);
-        ScanBorrows(r, f, ((ConditionalExpr*)n)->elseExpr, changed);
+        ScanConditionalBorrows(r, f, n, changed);
         return;
     case NodeArrayInit:
-    {
-        ArrayInitExpr* ai = (ArrayInitExpr*)n;
-
-        for (size_t i = 0; i < ai->elements.count; i++)
-        {
-            Node* e = (Node*)VecGet(&ai->elements, i);
-
-            if (!ai->repeatCount)
-            {
-                ConsumeIfTaken(r, f, e, changed); /* `{ v; n }` copies its value */
-            }
-            ScanBorrows(r, f, e, changed);
-        }
-        ScanBorrows(r, f, ai->repeatCount, changed);
+        ScanArrayInitBorrows(r, f, n, changed);
         return;
-    }
     case NodeStructInit:
-        for (size_t i = 0; i < ((StructInitExpr*)n)->fields.count; i++)
-        {
-            Node* v = ((StructInitField*)VecGet(&((StructInitExpr*)n)->fields, i))->value;
-            ConsumeIfTaken(r, f, v, changed);
-            ScanBorrows(r, f, v, changed);
-        }
+        ScanStructInitBorrows(r, f, n, changed);
         return;
     case NodeCall:
-    {
-        CallExpr* c = (CallExpr*)n;
-        bool isMethod = c->calleeBase != NULL;
-
-        ScanBorrows(r, f, c->calleeBase, changed);
-
-        for (size_t i = 0; i < c->args.count; i++)
-        {
-            ScanBorrows(r, f, (Node*)VecGet(&c->args, i), changed);
-        }
-
-        if (!c->callee)
-        {
-            for (size_t i = 0; i < c->args.count; i++)
-            {
-                ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, i)), changed);
-            }
-            return;
-        }
-
-        Node* arg0 = c->args.count > 0 ? (Node*)VecGet(&c->args, 0) : NULL;
-
-        if (!isMethod
-            && (IsArrayMutator(c->callee) || strcmp(c->callee, "drop") == 0 || strcmp(c->callee, "addressof") == 0))
-        {
-            ConsumeParam(BorrowRoot(f, arg0), changed);
-
-            if (strcmp(c->callee, "array_push") == 0 && c->args.count > 1)
-            {
-                ConsumeIfTaken(r, f, (Node*)VecGet(&c->args, 1), changed);
-            }
-
-            /* `array_replace(a, i, v)` stores `v` in the array, so `v` is owned, not borrowed. */
-            if (strcmp(c->callee, "array_replace") == 0 && c->args.count > 2)
-            {
-                ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, 2)), changed);
-            }
-            return;
-        }
-
-        if (!isMethod
-            && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0 || strcmp(c->callee, "alignof") == 0
-                || strcmp(c->callee, "load") == 0 || strcmp(c->callee, "substring") == 0))
-        {
-            return; /* only read */
-        }
-
-        if (isMethod)
-        {
-            ScanBorrowArg(r, f, c, c->calleeBase, 0, true, changed);
-        }
-
-        for (size_t i = 0; i < c->args.count; i++)
-        {
-            ScanBorrowArg(r, f, c, (Node*)VecGet(&c->args, i), isMethod ? i + 1 : i, isMethod, changed);
-        }
+        ScanCallBorrows(r, f, n, changed);
         return;
-    }
     default:
         return;
     }
