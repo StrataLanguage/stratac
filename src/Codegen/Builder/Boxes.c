@@ -184,3 +184,39 @@ Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
     LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
     return inner;
 }
+
+Value EmitNullTest(Builder* b, NullTestExpr* nt)
+{
+    /* `expr?` - test whether the optional holds anything (zero cost
+       beyond the compare; sema guarantees a nullable path). A T?/^T slot
+       tests the pointer; an optional array tests its fat struct: set =
+       non-null data OR non-zero length. */
+    LValue lv = EmitLValue(b, nt->operand);
+
+    if (lv.valid && TypeDescHasArrayShape(&lv.typeDesc))
+    {
+        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, lv.ptr, "oad");
+        LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, lv.ptr), "oal");
+
+        LLVMValueRef dataNonNull = LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "nn");
+        LLVMValueRef lenNonZero = LLVMBuildICmp(b->m_builder, LLVMIntNE, len, LLVMConstInt(I32Ty(b), 0, 0), "nz");
+
+        return ValueMake(LLVMBuildOr(b->m_builder, dataNonNull, lenNonZero, "opt"), TypeDescMake(I1Ty(b), 0, NULL));
+    }
+
+    /* Testing a temporary (`Make()?`) only reads it: the end of the statement drops it. */
+    Value tested = {0};
+
+    if (!lv.valid)
+    {
+        tested = EmitExpr(b, nt->operand);
+        ClaimTemp(b, tested);
+    }
+
+    LLVMValueRef slotPtr = lv.valid ? lv.ptr : tested.value;
+    LLVMValueRef boxPtr = lv.valid ? LLVMBuildLoad2(b->m_builder, b->m_ptrTy, slotPtr, "opt") : slotPtr;
+
+    LLVMValueRef isNonNull = LLVMBuildICmp(b->m_builder, LLVMIntNE, boxPtr, LLVMConstNull(b->m_ptrTy), "nn");
+
+    return ValueMake(isNonNull, TypeDescMake(I1Ty(b), 0, NULL));
+}

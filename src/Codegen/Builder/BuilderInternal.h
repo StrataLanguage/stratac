@@ -318,3 +318,12 @@ bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f);
 void DeclareFunction(Builder* b, const FunctionDecl* f);
 void DefineFunction(Builder* b, const FunctionDecl* f);
 void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry);
+
+// Expr.c dispatch
+Value EmitIntLiteral(Builder* b, IntLiteral* literal);
+Value EmitFloatLiteral(Builder* b, FloatLiteral* literal);
+Value EmitBoolLiteral(Builder* b, BoolLiteral* literal);
+Value EmitIncDec(Builder* b, IncDecExpr* inc);
+Value EmitCast(Builder* b, CastExpr* cast);
+Value EmitStrLiteral(Builder* b, StrLiteral* literal);
+Value EmitNullTest(Builder* b, NullTestExpr* nt);
