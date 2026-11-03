@@ -201,13 +201,9 @@ static bool FieldTypeIsOwning(const TypeRegistry* reg, Arena* scratch, const Typ
     return false;
 }
 
-void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
+/* Complete struct declarations; a duplicate name keeps the first definition, extern duplicates must match. */
+static void TypeRegistryAddStructs(TypeRegistry* reg, const Module* m)
 {
-    reg->count = 0;
-
-    TypeRegistryRegisterAliases(reg, m);
-
-    /* Structs */
     for (size_t i = 0; i < m->structs.count; i++)
     {
         StructDecl* sd = (StructDecl*)VecGet((Vec*)&m->structs, i);
@@ -252,8 +248,11 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->attributes = sd->attributes;
         t->moduleName = sd->moduleName;
     }
+}
 
-    /* Forward declarations for structs (incomplete types) */
+/* Forward declarations for structs (incomplete types). */
+static void TypeRegistryAddForwardStructs(TypeRegistry* reg, const Module* m)
+{
     for (size_t i = 0; i < m->structs.count; i++)
     {
         StructDecl* sd = (StructDecl*)VecGet((Vec*)&m->structs, i);
@@ -272,7 +271,10 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->opaque = true;
         t->incomplete = true;
     }
+}
 
+static void TypeRegistryAddHandles(TypeRegistry* reg, const Module* m)
+{
     for (size_t i = 0; i < m->handles.count; i++)
     {
         HandleDecl* hd = (HandleDecl*)VecGet((Vec*)&m->handles, i);
@@ -287,8 +289,11 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->incomplete = false;
         t->extendsFrom = hd->extendsName;
     }
+}
 
-    /* `extern delegate` types are handles too (a function pointer) that carry their signature. */
+/* `extern delegate` types are handles too (a function pointer) that carry their signature. */
+static void TypeRegistryAddDelegates(TypeRegistry* reg, const Module* m)
+{
     for (size_t i = 0; i < m->delegates.count; i++)
     {
         FunctionDecl* fd = (FunctionDecl*)VecGet((Vec*)&m->delegates, i);
@@ -303,10 +308,13 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->incomplete = false;
         t->delegate = fd;
     }
+}
 
-    /* Builtin handles: `ptr` is a raw pointer, the root every handle extends (see
-       HandleExtendsFrom); `null` is the type of the `null` constant, which converts to
-       any handle. */
+/* Builtin handles: `ptr` is a raw pointer, the root every handle extends (see
+   HandleExtendsFrom); `null` is the type of the `null` constant, which converts to
+   any handle. */
+static void TypeRegistryAddBuiltinHandles(TypeRegistry* reg)
+{
     const char* builtinHandles[2] = {STRATA_PTR_TYPE, STRATA_NULL_TYPE};
 
     for (size_t i = 0; i < 2; i++)
@@ -320,10 +328,13 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
         t->opaque = true;
         t->incomplete = false;
     }
+}
 
-    /* a struct is owning if it has a ^T field or an owning field. Alias
-       (and enum) field types are resolved first, so `struct Name = string`
-       makes a `Name` field owning too. */
+/* a struct is owning if it has a ^T field or an owning field. Alias
+   (and enum) field types are resolved first, so `struct Name = string`
+   makes a `Name` field owning too. */
+static void TypeRegistryComputeOwning(TypeRegistry* reg)
+{
     Arena scratch;
     arena_init(&scratch, 1024);
 
@@ -357,6 +368,19 @@ void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
     }
 
     arena_free(&scratch);
+}
+
+void TypeRegistryBuild(TypeRegistry* reg, const Module* m)
+{
+    reg->count = 0;
+
+    TypeRegistryRegisterAliases(reg, m);
+    TypeRegistryAddStructs(reg, m);
+    TypeRegistryAddForwardStructs(reg, m);
+    TypeRegistryAddHandles(reg, m);
+    TypeRegistryAddDelegates(reg, m);
+    TypeRegistryAddBuiltinHandles(reg);
+    TypeRegistryComputeOwning(reg);
 
     ComputeAllLayouts(reg);
 }
