@@ -214,7 +214,7 @@ static LLVMValueRef Vector4Construct2Args(struct Builder* b, CallExpr* n)
     Value y = EmitExpr(b, (Node*)n->args.items[1]);
 
     LLVMValueRef vec = LLVMGetPoison(vecType);
-    int destLanes = IsNameSimdVector(n->callee);
+    LaneCount destLanes = IsNameSimdVector(n->callee);
 
     /* float3(float2, float) */
     if (destLanes == 3 && IS_VECTOR(x) && IS_SCALAR(y))
@@ -279,7 +279,7 @@ static LLVMValueRef Vector4Construct3Args(struct Builder* b, CallExpr* n)
     Value z = EmitExpr(b, (Node*)n->args.items[2]);
 
     LLVMValueRef vec = LLVMGetPoison(vecType);
-    int destLanes = IsNameSimdVector(n->callee);
+    LaneCount destLanes = IsNameSimdVector(n->callee);
 
     /* float3(1.0, 2.0, 3.0) all scalars, implicit w = 0. */
     if (destLanes == 3 && IS_SCALAR(x) && IS_SCALAR(y) && IS_SCALAR(z))
@@ -545,14 +545,14 @@ static LLVMValueRef SimdBuildVector(struct Builder* b, LLVMValueRef* comps, unsi
     return result;
 }
 
-LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, unsigned lanes)
+LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, LaneCount lanes)
 {
     LLVMTypeRef floatType = LLVMFloatTypeInContext(b->m_ctx);
     unsigned physLanes = LLVMGetVectorSize(LLVMTypeOf(vecA));
 
-    if (lanes == 0 || lanes > physLanes)
+    if (lanes == 0 || lanes > (LaneCount)physLanes)
     {
-        lanes = physLanes;
+        lanes = (LaneCount)physLanes;
     }
 
     /* Element-wise product, then horizontal (lane-wise) sum of the logical
@@ -561,7 +561,7 @@ LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef v
 
     LLVMValueRef acc = LLVMConstReal(floatType, 0.0);
 
-    for (unsigned i = 0; i < lanes; i++)
+    for (LaneCount i = 0; i < lanes; i++)
     {
         acc = LLVMBuildFAdd(b->m_builder, acc, SimdExtract(b, vecMul, i), "dot_acc");
     }

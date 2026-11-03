@@ -2,6 +2,8 @@
 
 #include "LLVMCApi.h"
 
+#include "Core/Types.h"
+
 typedef struct CallExpr CallExpr;
 struct Builder;
 struct BinaryExpr;
@@ -32,7 +34,7 @@ LLVMValueRef LSimdVectorDestructure(struct Builder* b, LLVMValueRef vec, const s
 
 /* Dot product of two SIMD vectors: scalar float result. Sums the first
    `lanes` lane products (0 = every LLVM lane; float3 passes 3). */
-LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, unsigned lanes);
+LLVMValueRef LSimdVectorDot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB, LaneCount lanes);
 /* Cross product: float3/float4 -> a vector (float2 -> scalar z). */
 LLVMValueRef LSimdVectorCross(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);
 LLVMValueRef LSimdVector3Dot(struct Builder* b, LLVMValueRef vecA, LLVMValueRef vecB);

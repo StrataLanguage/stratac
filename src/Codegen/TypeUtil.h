@@ -11,10 +11,10 @@ typedef struct
     bool isFloat;
     bool isUnsigned;
     bool isSimdVector;
-    int bits;
+    BitWidth bits;
 
     // SIMD lane count (2/4), 0 when not a vector.
-    int lanes;
+    LaneCount lanes;
 
     char elemIr[16];
     char ir[32];
@@ -29,14 +29,14 @@ MappedType MapType(const TypeName* t);
 bool IsNumeric(PrimitiveType primType);
 bool IsNameNumeric(const char* t);
 
-int IsSimdVector(PrimitiveType prim);
+LaneCount IsSimdVector(PrimitiveType prim);
 
 /**
  * @brief Returns 0 if not a SIMD vector. Otherwise, returns the number of lanes for the vector.
  * Note that this does not represent the exact amount of lanes of the underlying vector, just the ones exposed to the
  * user. Even though a `float3` is still an `__m128` or `float32x4_t`, it will return 3 lanes.
  */
-int IsNameSimdVector(const char* t);
+LaneCount IsNameSimdVector(const char* t);
 
 #define GetSimdVectorLanes(t_) IsSimdVector(t_)
 #define GetNameSimdVectorLanes(t_) IsNameSimdVector(t_)
