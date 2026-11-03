@@ -273,6 +273,163 @@ bool IsArrayElementBorrow(Node* n)
     return n && n->kind == NodeIndex;
 }
 
+static void CheckArrayIndexArg(Resolver* r, CallExpr* c, StrMap* scope, const char* what)
+{
+    Node* arg1 = (Node*)VecGet(&c->args, 1);
+
+    const TypeName* sizeType = InferType(r, arg1, scope);
+
+    if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
+    {
+        DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee, what, sizeType->name);
+    }
+}
+
+static void CheckArrayValueArg(Resolver* r, CallExpr* c, StrMap* scope, const TypeName* arrType,
+                               const TypeName* unwrapped, bool isReplace)
+{
+    size_t valueIdx = isReplace ? 2 : 1;
+    Node* arg1 = (Node*)VecGet(&c->args, valueIdx);
+
+    const TypeName* elemType = TypeNameArrayElem(unwrapped);
+
+    /* A bare `{...}` value takes the element's shape here — the literal
+       would otherwise never be typed: no field checks run, and codegen
+       zero-fills it (a null `^T` owning field crashes at first deref). */
+    bool bracedValue = (arg1->kind == NodeArrayInit && !((ArrayInitExpr*)arg1)->elementType)
+                       || (arg1->kind == NodeStructInit && !((StructInitExpr*)arg1)->typeName);
+
+    Node* typedArg = ApplyBracedStructTarget(r, arg1, elemType);
+
+    if (typedArg != arg1)
+    {
+        VecSet(&c->args, valueIdx, typedArg);
+    }
+
+    if (bracedValue && typedArg->kind == NodeStructInit && ((StructInitExpr*)typedArg)->typeName
+        && !IsEmptyBracedForOptional(typedArg, elemType))
+    {
+        CheckStructInitFields(r, typedArg);
+    }
+
+    if (!bracedValue && elemType)
+    {
+        typedArg = typedArg;
+        VecSet(&c->args, valueIdx, typedArg);
+    }
+
+    const TypeName* valueType = InferType(r, typedArg, scope);
+
+    if (valueType && elemType && !IsAssignableType(r, elemType, valueType)
+        && !IsStrLiteralForCString(r, elemType, typedArg))
+    {
+        // A proven `T?` pushed into `^T[]` moves (source emptied).
+        const TypeName* vi = TypeNameBoxInner(valueType);
+        const TypeName* ei = TypeNameBoxInner(elemType);
+
+        bool narrowedOptIntoBox
+            = TypeNameIsOptional(valueType) && TypeNameIsBox(elemType) && vi && ei && strcmp(vi->name, ei->name) == 0;
+
+        if (!narrowedOptIntoBox)
+        {
+            DiagErrorFmt(r->m_diag, arg1->range, "cannot %s a value of type '%s' into '%s' (element type '%s')",
+                         isReplace ? "store" : "push", valueType->name, arrType->name, elemType->name);
+        }
+    }
+
+    /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
+    if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
+    {
+        DiagErrorFmt(r->m_diag, arg1->range,
+                     "cannot push '%s' read from an array element - it would be owned by two arrays; "
+                     "move it into a variable first, or push a copy() of it",
+                     valueType->name);
+    }
+
+    /* Deref check before the move tracking below clears the pushed optional's fact. */
+    CheckCallArgOptionalDerefs(r, c, scope);
+
+    // Push moves owning values in (boxes/strings/arrays AND owning
+    // structs — a `Rec` value pushed into `Rec[]` transfers ownership);
+    // optional sources end up empty.
+    if (valueType && AliasIsOwningValue(r, valueType))
+    {
+        const char* movedKey = MovableBoxSourceKey(r, arg1);
+
+        if (movedKey)
+        {
+            if (TypeNameIsOptional(valueType))
+            {
+                MoveOptionalSource(r, movedKey, c->base.range);
+            }
+            else
+            {
+                MarkMoved(r, movedKey, c->base.range);
+            }
+        }
+    }
+}
+
+static void ResolveArrayPush(Resolver* r, CallExpr* c, StrMap* scope, const TypeName* arrType,
+                             const TypeName* unwrapped)
+{
+    CheckArrayValueArg(r, c, scope, arrType, unwrapped, false);
+}
+
+static void ResolveArrayReplace(Resolver* r, CallExpr* c, StrMap* scope, const TypeName* arrType,
+                                const TypeName* unwrapped)
+{
+    CheckArrayIndexArg(r, c, scope, "index");
+    CheckArrayValueArg(r, c, scope, arrType, unwrapped, true);
+}
+
+static void ResolveArrayResize(Resolver* r, CallExpr* c, StrMap* scope, const TypeName* unwrapped)
+{
+    /* Growing fills the new slots with zeroes, so the elements must have a valid zero value. */
+    if (strcmp(c->callee, "array_resize") == 0)
+    {
+        const TypeName* elemType = TypeNameArrayElem(unwrapped);
+
+        if (elemType && !ZeroIsValid(r, elemType, 0))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range,
+                         "'array_resize' fills new elements with their zero value, which is not a valid '%s' (a box "
+                         "has no zero value; make the element type optional)",
+                         elemType->name);
+        }
+    }
+
+    CheckArrayIndexArg(r, c, scope, "size");
+}
+
+static void ResolveArrayReserve(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    CheckArrayIndexArg(r, c, scope, "capacity");
+}
+
+static void ResolveArrayRemove(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    CheckArrayIndexArg(r, c, scope, "index");
+}
+
+static void ResolveArrayTake(Resolver* r, CallExpr* c, StrMap* scope, const TypeName* unwrapped)
+{
+    const TypeName* elemType = TypeNameArrayElem(unwrapped);
+
+    /* Only a string, an array or an optional has a value that means "nothing here". */
+    if (elemType
+        && !(TypeIsString(&r->m_registry, elemType->name) || TypeNameIsDynamicArray(elemType)
+             || TypeNameIsOptional(elemType)))
+    {
+        DiagErrorFmt(r->m_diag, c->base.range,
+                     "'array_take' leaves an empty value in the slot, and '%s' has none; use array_remove, "
+                     "array_swap_remove or array_replace",
+                     elemType->name);
+    }
+
+    CheckArrayIndexArg(r, c, scope, "index");
+}
+
 // Array builtins (push/pop/resize); marks the call pseudo. True if handled.
 bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
@@ -368,134 +525,30 @@ bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    /* Growing fills the new slots with zeroes, so the elements must have a valid zero value. */
-    if (strcmp(c->callee, "array_resize") == 0)
+    // array_pop needs nothing beyond the receiver checks above.
+    if (isPush)
     {
-        const TypeName* elemType = TypeNameArrayElem(unwrapped);
-
-        if (elemType && !ZeroIsValid(r, elemType, 0))
-        {
-            DiagErrorFmt(r->m_diag, c->base.range,
-                         "'array_resize' fills new elements with their zero value, which is not a valid '%s' (a box "
-                         "has no zero value; make the element type optional)",
-                         elemType->name);
-        }
+        ResolveArrayPush(r, c, scope, arrType, unwrapped);
     }
-
-    if (isTake)
+    else if (strcmp(c->callee, "array_resize") == 0)
     {
-        const TypeName* elemType = TypeNameArrayElem(unwrapped);
-
-        /* Only a string, an array or an optional has a value that means "nothing here". */
-        if (elemType
-            && !(TypeIsString(&r->m_registry, elemType->name) || TypeNameIsDynamicArray(elemType)
-                 || TypeNameIsOptional(elemType)))
-        {
-            DiagErrorFmt(r->m_diag, c->base.range,
-                         "'array_take' leaves an empty value in the slot, and '%s' has none; use array_remove, "
-                         "array_swap_remove or array_replace",
-                         elemType->name);
-        }
+        ResolveArrayResize(r, c, scope, unwrapped);
     }
-
-    if (isResize || isRemove || isReplace || isTake)
+    else if (strcmp(c->callee, "array_reserve") == 0)
     {
-        Node* arg1 = (Node*)VecGet(&c->args, 1);
-
-        const TypeName* sizeType = InferType(r, arg1, scope);
-
-        if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
-        {
-            DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee,
-                         isRemove || isReplace || isTake
-                             ? "index"
-                             : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
-                         sizeType->name);
-        }
+        ResolveArrayReserve(r, c, scope);
     }
-
-    if (isPush || isReplace)
+    else if (isRemove)
     {
-        size_t valueIdx = isReplace ? 2 : 1;
-        Node* arg1 = (Node*)VecGet(&c->args, valueIdx);
-
-        const TypeName* elemType = TypeNameArrayElem(unwrapped);
-
-        /* A bare `{...}` value takes the element's shape here — the literal
-           would otherwise never be typed: no field checks run, and codegen
-           zero-fills it (a null `^T` owning field crashes at first deref). */
-        bool bracedValue = (arg1->kind == NodeArrayInit && !((ArrayInitExpr*)arg1)->elementType)
-                           || (arg1->kind == NodeStructInit && !((StructInitExpr*)arg1)->typeName);
-
-        Node* typedArg = ApplyBracedStructTarget(r, arg1, elemType);
-
-        if (typedArg != arg1)
-        {
-            VecSet(&c->args, valueIdx, typedArg);
-        }
-
-        if (bracedValue && typedArg->kind == NodeStructInit && ((StructInitExpr*)typedArg)->typeName
-            && !IsEmptyBracedForOptional(typedArg, elemType))
-        {
-            CheckStructInitFields(r, typedArg);
-        }
-
-        if (!bracedValue && elemType)
-        {
-            typedArg = typedArg;
-            VecSet(&c->args, valueIdx, typedArg);
-        }
-
-        const TypeName* valueType = InferType(r, typedArg, scope);
-
-        if (valueType && elemType && !IsAssignableType(r, elemType, valueType)
-            && !IsStrLiteralForCString(r, elemType, typedArg))
-        {
-            // A proven `T?` pushed into `^T[]` moves (source emptied).
-            const TypeName* vi = TypeNameBoxInner(valueType);
-            const TypeName* ei = TypeNameBoxInner(elemType);
-
-            bool narrowedOptIntoBox = TypeNameIsOptional(valueType) && TypeNameIsBox(elemType) && vi && ei
-                                      && strcmp(vi->name, ei->name) == 0;
-
-            if (!narrowedOptIntoBox)
-            {
-                DiagErrorFmt(r->m_diag, arg1->range, "cannot %s a value of type '%s' into '%s' (element type '%s')",
-                             isReplace ? "store" : "push", valueType->name, arrType->name, elemType->name);
-            }
-        }
-
-        /* Pushing a borrow out of an array element would duplicate ownership; move it to a local first. */
-        if (valueType && AliasIsOwningValue(r, valueType) && IsArrayElementBorrow(arg1))
-        {
-            DiagErrorFmt(r->m_diag, arg1->range,
-                         "cannot push '%s' read from an array element - it would be owned by two arrays; "
-                         "move it into a variable first, or push a copy() of it",
-                         valueType->name);
-        }
-
-        /* Deref check before the move tracking below clears the pushed optional's fact. */
-        CheckCallArgOptionalDerefs(r, c, scope);
-
-        // Push moves owning values in (boxes/strings/arrays AND owning
-        // structs — a `Rec` value pushed into `Rec[]` transfers ownership);
-        // optional sources end up empty.
-        if (valueType && AliasIsOwningValue(r, valueType))
-        {
-            const char* movedKey = MovableBoxSourceKey(r, arg1);
-
-            if (movedKey)
-            {
-                if (TypeNameIsOptional(valueType))
-                {
-                    MoveOptionalSource(r, movedKey, c->base.range);
-                }
-                else
-                {
-                    MarkMoved(r, movedKey, c->base.range);
-                }
-            }
-        }
+        ResolveArrayRemove(r, c, scope);
+    }
+    else if (isReplace)
+    {
+        ResolveArrayReplace(r, c, scope, arrType, unwrapped);
+    }
+    else if (isTake)
+    {
+        ResolveArrayTake(r, c, scope, unwrapped);
     }
 
     c->isIntrinsicCall = true;
