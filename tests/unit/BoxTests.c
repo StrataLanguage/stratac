@@ -2200,6 +2200,33 @@ STRATA_TEST(partial_move_field_then_use_whole_value_is_error)
     arena_free(&arena);
 }
 
+STRATA_TEST(partial_move_poisoned_diagnostic_names_the_moved_field_path)
+{
+    /* The detail is the moved place's path; it must outlive the analysis that produced it. */
+    Arena arena;
+    arena_init(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseAndResolve("struct Person { string name; int age; };\n"
+                    "int take(string s) { string kept = s; return 1; }\n"
+                    "int consume(^Person p) { return 1; }\n"
+                    "int entry() {\n"
+                    "  ^Person p = Person { .name = \"A\", .age = 1 };\n"
+                    "  take(p.name);\n"
+                    "  return consume(p);\n" /* error: p partially moved */
+                    "}\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    SourceManager sm;
+    SourceManagerInit(&sm);
+    char* d = DiagFormat(&diag, &sm, 1, &arena);
+    STRATA_CHECK(Contains(d, "'p' is poisoned: 'p.name' was moved out of it; put a value back first"));
+
+    DiagnosticEngineFree(&diag);
+    arena_free(&arena);
+}
+
 STRATA_TEST(partial_move_field_then_return_whole_is_error)
 {
     /* After p.name is moved, can't return p whole. */

@@ -40,7 +40,7 @@ static void ReportPlace(const Env* env, Found* found, const Node* node, int bloc
 
     if (d && partMoved)
     {
-        d->detail = blocked;
+        d->detail = arena_strdup(env->arena, blocked);
     }
 }
 
