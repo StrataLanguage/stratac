@@ -300,6 +300,12 @@ static Node* ParseUnary(Parser* p)
     case TokTilde:
         op = UnBitNot;
         break;
+    case TokAmp:
+        op = UnAddrOf;
+        break;
+    case TokStar:
+        op = UnDeref;
+        break;
     case TokInc:
     case TokDec:
     {
@@ -334,7 +340,7 @@ static Node* ParseUnary(Parser* p)
                                 || next.kind == TokKwDouble || next.kind == TokKwBool || next.kind == TokKwString
                                 || next.kind == TokKwCstring;
 
-            bool isHandleCast = next.kind == TokIdent;
+            bool isHandleCast = next.kind == TokIdent || next.kind == TokStar;
             bool isBoxCast = next.kind == TokCaret;
 
             if (isScalarCast || isHandleCast || isBoxCast)

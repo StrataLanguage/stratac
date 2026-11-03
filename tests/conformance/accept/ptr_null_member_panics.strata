@@ -1,0 +1,10 @@
+// expect: panic "null pointer dereference"
+// rule: reaching a field through a null `*T` panics instead of crashing
+struct Count { uint n; }
+
+int main()
+{
+    *Count c = null;
+    printf("%u\n", c.n);
+    return 0;
+}

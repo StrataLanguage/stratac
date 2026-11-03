@@ -410,7 +410,8 @@ Value EmitAssign(Builder* b, AssignExpr* n)
 
     Value rhs = EmitExpr(b, n->value);
 
-    if (n->target->kind == NodeIdent || n->target->kind == NodeMember || n->target->kind == NodeIndex)
+    if (n->target->kind == NodeIdent || n->target->kind == NodeMember || n->target->kind == NodeIndex
+        || n->target->kind == NodeUnary)
     {
         LValue lvalue = EmitLValue(b, n->target);
 

@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: 3
+// rule: two structs holding the same `*T` see each other's writes through it
+struct Count { uint n; }
+struct Handle { *Count rc; }
+
+int main()
+{
+    Count shared;
+    Handle a;
+    Handle b;
+    a.rc = &shared;
+    b.rc = &shared;
+    a.rc.n += 1u;
+    b.rc.n += 2u;
+    printf("%u\n", shared.n);
+    Report();
+    return 0;
+}

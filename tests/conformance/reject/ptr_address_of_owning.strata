@@ -1,0 +1,8 @@
+// expect: reject "cannot take the address of an owning value"
+// rule: a pointer neither moves nor drops, so it cannot point at an owning value
+int main()
+{
+    string s = "hi";
+    *string p = &s;
+    return 0;
+}

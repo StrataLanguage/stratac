@@ -1,0 +1,8 @@
+// expect: reject "cannot dereference a pointer to 'void'"
+// rule: a `*void` must be cast to a typed pointer before use
+int main()
+{
+    *void v = null;
+    *v;
+    return 0;
+}

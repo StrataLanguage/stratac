@@ -286,7 +286,7 @@ static bool ResolveFieldShape(Writer* w, const TypeName* type, FieldShape* out)
         }
 
         if (!current || !current->name || current->isArray || current->isBox || current->isOptional
-            || length > 0xFFFFFFFFull)
+            || current->isPointer || length > 0xFFFFFFFFull)
         {
             return false;
         }

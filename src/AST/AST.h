@@ -78,6 +78,7 @@ typedef struct TypeName
     bool isBox;
     struct TypeName* inner;
     bool isOptional; // `T?` — maybe-empty box; `inner` is the wrapped type
+    bool isPointer;  // `*T` — nullable, non-owning address; `inner` is the pointee
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -118,6 +119,19 @@ static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
     t.name = ArenaFormat(arena, "%s?", i->name);
     t.isConst = inner.isConst;
     t.range = inner.range;
+    return t;
+}
+
+// `*T` wraps `inner` into a pointer type: a nullable, non-owning address of a `T`.
+static inline TypeName TypeNamePointerWrap(Arena* arena, TypeName inner)
+{
+    TypeName* i = TypeNameWrapInner(arena, inner);
+
+    TypeName t = {0};
+    t.isPointer = true;
+    t.inner = i;
+    t.name = ArenaFormat(arena, "*%s", i->name);
+    t.range = i->range;
     return t;
 }
 
@@ -192,6 +206,12 @@ static inline bool TypeNameIsOptional(const TypeName* t)
     return t && t->isOptional;
 }
 
+// `*T` — a raw, nullable, non-owning pointer.
+static inline bool TypeNameIsPointer(const TypeName* t)
+{
+    return t && t->isPointer;
+}
+
 // The type has array shape (dynamic `T[]` or fixed `T[N]`); `TypeNameArrayElem` gives the element.
 static inline bool TypeNameHasArrayShape(const TypeName* t)
 {
@@ -213,7 +233,7 @@ static inline const TypeName* TypeNameBoxInner(const TypeName* t)
 // A named type that is not `^T`, `T?` or a dynamic array: `Foo`, or a fixed `Foo[N]`.
 static inline bool TypeNameIsBare(const TypeName* t)
 {
-    return t && !t->isBox && !t->isOptional && !TypeNameIsDynamicArray(t);
+    return t && !t->isPointer && !t->isBox && !t->isOptional && !TypeNameIsDynamicArray(t);
 }
 
 // Owning types: `string`, `^T`, `T?` and dynamic `T[]`. Fixed `T[N]` is plain inline storage, never owning.
@@ -287,6 +307,18 @@ static inline TypeName TypeNameParseGroups(Arena* arena, const char* base, size_
 
             TypeName t = {0};
             t.isBox = true;
+            t.inner = inner;
+            t.name = ArenaStrndup(arena, base, baseLen);
+            return t;
+        }
+
+        if (baseLen >= 2 && base[0] == '*')
+        {
+            TypeName* inner = (TypeName*)ArenaAlloc(arena, sizeof(TypeName));
+            *inner = TypeNameParseGroups(arena, base + 1, baseLen - 1, NULL, 0);
+
+            TypeName t = {0};
+            t.isPointer = true;
             t.inner = inner;
             t.name = ArenaStrndup(arena, base, baseLen);
             return t;
@@ -629,6 +661,8 @@ typedef enum
     UnPos,
     UnNot,
     UnBitNot,
+    UnAddrOf, // &place -> *T
+    UnDeref,  // *ptr  -> T, a place
 } UnaryOp;
 
 typedef struct
@@ -636,6 +670,7 @@ typedef struct
     Node base;
     UnaryOp op;
     Node* operand;
+    const TypeName* pointee; // `&place` and `*ptr`: T of the `*T`, set by sema
 } UnaryExpr;
 
 typedef enum

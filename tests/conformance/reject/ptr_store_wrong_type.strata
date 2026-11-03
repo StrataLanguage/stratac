@@ -1,0 +1,8 @@
+// expect: reject "cannot assign 'string' through a pointer to 'int'"
+// rule: a store through a `*T` checks the value against T
+int main()
+{
+    *int p = null;
+    *p = "text";
+    return 0;
+}

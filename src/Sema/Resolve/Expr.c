@@ -190,7 +190,26 @@ static const TypeName* InferUnaryType(Resolver* r, Node* n, StrMap* scope)
 {
     UnaryExpr* u = (UnaryExpr*)n;
 
-    return u->op == UnNot ? InternTypeName(r, "bool") : InferType(r, u->operand, scope);
+    if (u->op == UnNot)
+    {
+        return InternTypeName(r, "bool");
+    }
+
+    if (u->op == UnAddrOf)
+    {
+        const TypeName* ot = InferType(r, u->operand, scope);
+
+        return ot ? InternTypeName(r, ArenaFormat(r->arena, "*%s", ot->name)) : NULL;
+    }
+
+    if (u->op == UnDeref)
+    {
+        const TypeName* ot = InferType(r, u->operand, scope);
+
+        return ot && TypeNameIsPointer(ot) ? ot->inner : NULL;
+    }
+
+    return InferType(r, u->operand, scope);
 }
 
 static const TypeName* InferArithmeticType(Resolver* r, BinaryExpr* b, StrMap* scope)
@@ -567,13 +586,7 @@ static void ResolveIdentExpr(Resolver* r, Node* n, StrMap* scope)
         return;
     }
 
-    if (!varType && strcmp(ident->name, "null") == 0)
-    {
-        DiagError(r->diag, ident->base.range,
-                  "there is no 'null': a null pointer, handle or delegate is 'ptr.null', and an empty optional is "
-                  "one never assigned");
-    }
-    else if (!varType)
+    if (!varType)
     {
         DiagErrorFmt(r->diag, ident->base.range, "unknown variable '%s'", ident->name);
     }
@@ -581,11 +594,75 @@ static void ResolveIdentExpr(Resolver* r, Node* n, StrMap* scope)
     return;
 }
 
+// `&place` and `*ptr`: the operand must be a place / a pointer, and the value behind the address must not own
+// anything (a pointer neither drops nor moves what it points at).
+static void ResolveAddressUnary(Resolver* r, UnaryExpr* u, StrMap* scope)
+{
+    const TypeName* ot = InferType(r, u->operand, scope);
+
+    if (u->op == UnAddrOf)
+    {
+        bool isPlace = u->operand->kind == NodeIdent || u->operand->kind == NodeMember || u->operand->kind == NodeIndex
+                       || (u->operand->kind == NodeUnary && ((UnaryExpr*)u->operand)->op == UnDeref);
+
+        if (!isPlace)
+        {
+            DiagError(r->diag, u->base.range,
+                      "cannot take the address of this expression; '&' needs a variable, "
+                      "field, element or '*ptr'");
+            return;
+        }
+
+        u->pointee = ot;
+    }
+    else
+    {
+        if (ot && !TypeNameIsPointer(ot))
+        {
+            DiagErrorFmt(r->diag, u->base.range, "cannot dereference a value of type '%s' (expected a pointer)",
+                         ot->name);
+            return;
+        }
+
+        u->pointee = ot ? ot->inner : NULL;
+    }
+
+    const TypeName* target = u->pointee;
+
+    if (!target)
+    {
+        return;
+    }
+
+    if (u->op == UnDeref && target->primitiveType == PrimVoid)
+    {
+        DiagError(r->diag, u->base.range, "cannot dereference a pointer to 'void'; cast it to a typed pointer first");
+    }
+    else if (u->op == UnDeref && TypeRegistryIsOpaque(&r->registry, target->name))
+    {
+        DiagErrorFmt(r->diag, u->base.range, "cannot dereference a pointer to '%s' (no known layout)", target->name);
+    }
+    else if (!TypeClassify(&r->registry, r->arena, target).trivial)
+    {
+        DiagErrorFmt(r->diag, u->base.range,
+                     "%s: '%s' owns memory, and a pointer neither moves nor drops what it points at",
+                     u->op == UnAddrOf ? "cannot take the address of an owning value"
+                                       : "cannot dereference a pointer to an owning type",
+                     target->name);
+    }
+}
+
 static void ResolveUnaryExpr(Resolver* r, Node* n, StrMap* scope)
 {
     UnaryExpr* u = (UnaryExpr*)n;
 
     ResolveExpr(r, u->operand, scope);
+
+    if (u->op == UnAddrOf || u->op == UnDeref)
+    {
+        ResolveAddressUnary(r, u, scope);
+        return;
+    }
 
     // `-bool` and `~bool` compute i1 garbage (signed 1-bit neg/not).
     // Only `!` is defined for bools.
@@ -1187,6 +1264,27 @@ static void ResolveAssignPlainTarget(Resolver* r, AssignExpr* a, StrMap* scope, 
     ResolveExpr(r, a->target, scope);
     ResolveExpr(r, a->value, scope);
 
+    // `*p = v` stores into the pointee; only `*ptr` is a place among the unary forms.
+    if (a->target->kind == NodeUnary)
+    {
+        UnaryExpr* tu = (UnaryExpr*)a->target;
+
+        if (tu->op != UnDeref)
+        {
+            DiagError(r->diag, a->base.range, "cannot assign to this expression; only '*ptr' is a place");
+        }
+        else if (tu->pointee)
+        {
+            const TypeName* vt = InferType(r, a->value, scope);
+
+            if (vt && !IsAssignableType(r, tu->pointee, vt))
+            {
+                DiagErrorFmt(r->diag, a->base.range, "cannot assign '%s' through a pointer to '%s'", vt->name,
+                             tu->pointee->name);
+            }
+        }
+    }
+
     const char* writtenKey = MovableBoxSourceKey(r, a->target);
 
     // Enum constants are read-only.
@@ -1451,6 +1549,18 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
         = src && IsHandleType(&r->registry, srcName) && IsHandleType(&r->registry, dstName)
           && (HandleExtendsFrom(&r->registry, dstName, srcName) || HandleExtendsFrom(&r->registry, srcName, dstName));
 
+    // `*T` casts to and from another pointer, a `ptr`, a handle, `null` and a (non-float) integer.
+    bool pointerPair = false;
+
+    if (src && (TypeNameIsPointer(dst) || TypeNameIsPointer(src)))
+    {
+        const TypeName* other = TypeNameIsPointer(dst) ? src : dst;
+        PrimitiveType otherPrim = GetPrimitiveType(TypeRegistryResolveAlias(&r->registry, other->name));
+
+        pointerPair = TypeNameIsPointer(other) || IsHandleType(&r->registry, other->name)
+                      || (IsNumeric(otherPrim) && otherPrim != PrimBool && !IsNameFloatType(other->name));
+    }
+
     // SIMD vector pair: same lane count (including through type aliases).
     const LaneCount srcLanes = IsNameSimdVector(resolvedSrc);
     const LaneCount dstLanes = IsNameSimdVector(resolvedDst);
@@ -1518,7 +1628,7 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
     }
 
     if (src && !scalarPair && !handlePair && !simdPair && !boxPair && !aliasPair && !cstringStringPair && !handleIntPair
-        && !cstringPtrPair && cast->textKind == CastTextNone)
+        && !cstringPtrPair && !pointerPair && cast->textKind == CastTextNone)
     {
         DiagErrorFmt(r->diag, cast->base.range, "invalid cast from '%s' to '%s'", srcName, dstName);
     }

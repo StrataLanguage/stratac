@@ -82,7 +82,7 @@ bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
     return t && t->opaque && t->incomplete;
 }
 
-// Strips a leading optional then box, returning the inner type (or NULL).
+// Strips a leading optional then box or pointer, returning the inner type (or NULL).
 const TypeName* UnwrapBoxPtr(const TypeName* t)
 {
     if (!t)
@@ -95,7 +95,8 @@ const TypeName* UnwrapBoxPtr(const TypeName* t)
         t = t->inner;
     }
 
-    if (t && TypeNameIsBox(t))
+    // Member access follows a pointer, a box, or both.
+    if (t && (TypeNameIsBox(t) || TypeNameIsPointer(t)))
     {
         t = t->inner;
     }
@@ -253,6 +254,11 @@ bool IsCAbiScalar(Resolver* r, const TypeName* t)
         return false;
     }
 
+    if (TypeNameIsPointer(t))
+    {
+        return true;
+    }
+
     const char* leaf = TypeRegistryResolveAlias(&r->registry, t->name);
 
     if (IsHandleType(&r->registry, leaf) || TypeIsCString(&r->registry, leaf))
@@ -274,6 +280,11 @@ static bool IsCVarargScalarish(Resolver* r, const TypeName* type)
     }
 
     if (IsNumeric(type->primitiveType) || TypeIsString(&r->registry, type->name))
+    {
+        return true;
+    }
+
+    if (TypeNameIsPointer(type))
     {
         return true;
     }
@@ -364,6 +375,19 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
 
 bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {
+    // `*T` is a nullable address: `null` and the same `*T` convert to it, and any `*T` converts to a raw `ptr`.
+    // Getting from a `ptr` back to a `*T` takes a cast.
+    if (targetType && TypeNameIsPointer(targetType))
+    {
+        return valueType
+               && (strcmp(valueType->name, STRATA_NULL_TYPE) == 0 || strcmp(valueType->name, targetType->name) == 0);
+    }
+
+    if (targetType && valueType && TypeNameIsPointer(valueType) && strcmp(targetType->name, STRATA_PTR_TYPE) == 0)
+    {
+        return true;
+    }
+
     // A `cstring` is a `const char*`: it passes wherever a raw `ptr` is expected.
     if (targetType && valueType && TypeIsCString(&r->registry, valueType->name)
         && strcmp(targetType->name, STRATA_PTR_TYPE) == 0)

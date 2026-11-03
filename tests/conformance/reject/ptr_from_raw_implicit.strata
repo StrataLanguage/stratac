@@ -1,0 +1,8 @@
+// expect: reject "cannot be initialized by expression of type 'ptr'"
+// rule: a `ptr` reaches a `*T` only by cast
+int main()
+{
+    ptr raw = null;
+    *int p = raw;
+    return 0;
+}

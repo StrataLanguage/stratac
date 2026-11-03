@@ -1,0 +1,7 @@
+// expect: reject "unknown type 'Missing'"
+// rule: the type behind a `*` must exist
+int main()
+{
+    *Missing p = null;
+    return 0;
+}

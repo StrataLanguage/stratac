@@ -1,0 +1,8 @@
+// expect: reject "cannot be initialized by expression of type '*int'"
+// rule: a `*T` converts only to the same `*T`, `ptr` or by cast; different pointees do not mix
+int main()
+{
+    *int p = null;
+    *long q = p;
+    return 0;
+}

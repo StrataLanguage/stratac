@@ -38,6 +38,7 @@ typedef enum TypeDescFlags
     TDF_SIMD_VECTOR = (1 << 8),
     TDF_ALIASED_ARRAY = (1 << 9), // ref T... rest: slots hold pointers to sources
     TDF_FIXED_ARRAY = (1 << 10),  // T[N]: inline [N x T] (C ABI) — struct fields and stack-allocated locals
+    TDF_POINTER = (1 << 11),      // *T: nullable, non-owning address; `pointee` is T
 } TypeDescFlags;
 
 typedef struct
@@ -50,6 +51,7 @@ typedef struct
                                 // float4's 4-lane LLVM vector, so horizontal ops must not read lane 3
     const TypeName* arrayInner; // element type of T[] / T[N]
     ArrayLength fixedLength;    // N when TDF_FIXED_ARRAY
+    const TypeName* pointee;    // T of *T
 } TypeDesc;
 
 typedef struct

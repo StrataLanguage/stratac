@@ -414,7 +414,12 @@ bool TypeRegistryFieldMisaligned(const TypeRegistry* reg, const char* structName
     long align = 1;
     SizeAlign scalar = {0};
 
-    if (!f->type.isArray && !f->type.isBox && !f->type.isOptional && ScalarSizeAlign(f->type.primitiveType, &scalar))
+    if (f->type.isPointer)
+    {
+        align = 8;
+    }
+    else if (!f->type.isArray && !f->type.isBox && !f->type.isOptional
+             && ScalarSizeAlign(f->type.primitiveType, &scalar))
     {
         align = scalar.align;
     }
@@ -471,9 +476,9 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
 {
     out->packed = false;
 
-    if (t->isBox || t->isOptional)
+    if (t->isBox || t->isOptional || t->isPointer)
     {
-        // Boxes and optionals are pointer-sized slots.
+        // Boxes, optionals and pointers are pointer-sized slots.
         out->size = 8;
         out->align = 8;
         return true;
