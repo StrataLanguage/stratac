@@ -1,6 +1,7 @@
 #include "Sema/ResolveOverloads.h"
 #include "Codegen/TypeRegistry.h"
 #include "Codegen/TypeUtil.h"
+#include "Sema/ConstFold.h"
 #include "Sema/MoveCheck.h"
 #include "Sema/NodeTypes.h"
 
@@ -555,150 +556,6 @@ static bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, con
     return lit->kind == NodeFloatLiteral && (dst == PrimFloat || dst == PrimDouble);
 }
 
-/* Integer constant arithmetic (two's complement). `div`/`mod`/`>>` apply
-   C signed semantics; refuses division/modulo by zero and shifts whose
-   count is negative or >= 64. */
-static bool SemaFoldConstIntArith(BinaryOp op, unsigned long long a, unsigned long long b, long long* out)
-{
-    switch (op)
-    {
-    case BinAdd:
-        *out = (long long)(a + b);
-        return true;
-    case BinSub:
-        *out = (long long)(a - b);
-        return true;
-    case BinMul:
-        *out = (long long)(a * b);
-        return true;
-    case BinDiv:
-        if (b == 0)
-        {
-            return false;
-        }
-
-        *out = (long long)a / (long long)b;
-        return true;
-    case BinMod:
-        if (b == 0)
-        {
-            return false;
-        }
-
-        *out = (long long)a % (long long)b;
-        return true;
-    case BinBitAnd:
-        *out = (long long)(a & b);
-        return true;
-    case BinBitOr:
-        *out = (long long)(a | b);
-        return true;
-    case BinBitXor:
-        *out = (long long)(a ^ b);
-        return true;
-    case BinShl:
-        if (b >= 64)
-        {
-            return false;
-        }
-
-        *out = (long long)(a << b);
-        return true;
-    case BinShr:
-        if (b >= 64)
-        {
-            return false;
-        }
-
-        *out = (long long)(a >> b);
-        return true;
-    default:
-        return false;
-    }
-}
-
-/* Float constant arithmetic (`+ - * /`); refuses division by zero so the
-   fold never embeds an inf/nan literal. */
-static bool SemaFoldConstFloatArith(BinaryOp op, double a, double b, double* out)
-{
-    switch (op)
-    {
-    case BinAdd:
-        *out = a + b;
-        return true;
-    case BinSub:
-        *out = a - b;
-        return true;
-    case BinMul:
-        *out = a * b;
-        return true;
-    case BinDiv:
-        if (b == 0.0)
-        {
-            return false;
-        }
-
-        *out = a / b;
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool SemaFoldConstCompare(BinaryOp op, long long a, long long b, bool* res)
-{
-    switch (op)
-    {
-    case BinEqEq:
-        *res = a == b;
-        return true;
-    case BinNotEq:
-        *res = a != b;
-        return true;
-    case BinLt:
-        *res = a < b;
-        return true;
-    case BinLtEq:
-        *res = a <= b;
-        return true;
-    case BinGt:
-        *res = a > b;
-        return true;
-    case BinGtEq:
-        *res = a >= b;
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool SemaFoldConstCompareFloat(BinaryOp op, double a, double b, bool* res)
-{
-    switch (op)
-    {
-    case BinEqEq:
-        *res = a == b;
-        return true;
-    case BinNotEq:
-        *res = a != b;
-        return true;
-    case BinLt:
-        *res = a < b;
-        return true;
-    case BinLtEq:
-        *res = a <= b;
-        return true;
-    case BinGt:
-        *res = a > b;
-        return true;
-    case BinGtEq:
-        *res = a >= b;
-        return true;
-    default:
-        return false;
-    }
-}
-
 /* Applies a binary operator to two folded values with C constant-expression
    semantics: usual arithmetic conversions (int promotes to double when the
    other side is float); bitwise/shift/modulo require integers; comparisons
@@ -722,12 +579,12 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
 
             out->i = 0;
             out->isFloat = true;
-            return SemaFoldConstFloatArith(op, a, b, &out->f);
+            return ConstFoldFloatArith(op, a, b, &out->f);
         }
 
-        long long v;
+        uint64_t v;
 
-        if (!SemaFoldConstIntArith(op, (unsigned long long)l.i, (unsigned long long)r.i, &v))
+        if (!ConstFoldIntArith(op, (uint64_t)l.i, (uint64_t)r.i, ConstShrLogical, &v))
         {
             return false;
         }
@@ -749,9 +606,9 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
             return false;
         }
 
-        long long v;
+        uint64_t v;
 
-        if (!SemaFoldConstIntArith(op, (unsigned long long)l.i, (unsigned long long)r.i, &v))
+        if (!ConstFoldIntArith(op, (uint64_t)l.i, (uint64_t)r.i, ConstShrLogical, &v))
         {
             return false;
         }
@@ -775,12 +632,12 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
             double a = lFloat ? l.f : (double)l.i;
             double b = rFloat ? r.f : (double)r.i;
 
-            if (!SemaFoldConstCompareFloat(op, a, b, &res))
+            if (!ConstFoldFloatCompare(op, a, b, &res))
             {
                 return false;
             }
         }
-        else if (!SemaFoldConstCompare(op, l.i, r.i, &res))
+        else if (!ConstFoldIntCompare(op, l.i, r.i, &res))
         {
             return false;
         }

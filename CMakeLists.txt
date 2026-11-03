@@ -33,6 +33,7 @@ set(STRATA_COMMON_SOURCES
     src/Lex/Lexer.c
     src/Parse/Parser.c
     src/Sema/ResolveOverloads.c
+    src/Sema/ConstFold.c
     src/Sema/Cfg.c
     src/Sema/MoveCheck.c
     src/Sema/NodeTypes.c

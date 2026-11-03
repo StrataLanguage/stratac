@@ -4,6 +4,7 @@
 #include "Codegen/TypeDescFlags.h"
 #include "Core/Diagnostics.h"
 #include "LLVMSimd.h"
+#include "Sema/ConstFold.h"
 #include "TypeMetadata.h"
 #include "TypeRegistry.h"
 #include "TypeUtil.h"
@@ -9109,150 +9110,6 @@ static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
     return v;
 }
 
-/* Integer constant arithmetic in two's complement; `div`/`mod`/`>>` apply
- * C signed (long long) semantics; refuses division/modulo by zero and
- * shifts whose count is negative or >= 64. */
-static bool FoldConstIntArith(BinaryOp op, unsigned long long a, unsigned long long b, unsigned long long* out)
-{
-    switch (op)
-    {
-    case BinAdd:
-        *out = a + b;
-        return true;
-    case BinSub:
-        *out = a - b;
-        return true;
-    case BinMul:
-        *out = a * b;
-        return true;
-    case BinDiv:
-        if (b == 0)
-        {
-            return false;
-        }
-
-        *out = (unsigned long long)((long long)a / (long long)b);
-        return true;
-    case BinMod:
-        if (b == 0)
-        {
-            return false;
-        }
-
-        *out = (unsigned long long)((long long)a % (long long)b);
-        return true;
-    case BinBitAnd:
-        *out = a & b;
-        return true;
-    case BinBitOr:
-        *out = a | b;
-        return true;
-    case BinBitXor:
-        *out = a ^ b;
-        return true;
-    case BinShl:
-        if (b >= 64)
-        {
-            return false;
-        }
-
-        *out = a << b;
-        return true;
-    case BinShr:
-        if (b >= 64)
-        {
-            return false;
-        }
-
-        *out = (unsigned long long)((long long)a >> b);
-        return true;
-    default:
-        return false;
-    }
-}
-
-/* Float constant arithmetic (`+ - * /`); refuses division by zero so the
- * fold never embeds an inf/nan literal. */
-static bool FoldConstFloatArith(BinaryOp op, double a, double b, double* out)
-{
-    switch (op)
-    {
-    case BinAdd:
-        *out = a + b;
-        return true;
-    case BinSub:
-        *out = a - b;
-        return true;
-    case BinMul:
-        *out = a * b;
-        return true;
-    case BinDiv:
-        if (b == 0.0)
-        {
-            return false;
-        }
-
-        *out = a / b;
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool FoldConstCompare(BinaryOp op, long long a, long long b, bool* res)
-{
-    switch (op)
-    {
-    case BinEqEq:
-        *res = a == b;
-        return true;
-    case BinNotEq:
-        *res = a != b;
-        return true;
-    case BinLt:
-        *res = a < b;
-        return true;
-    case BinLtEq:
-        *res = a <= b;
-        return true;
-    case BinGt:
-        *res = a > b;
-        return true;
-    case BinGtEq:
-        *res = a >= b;
-        return true;
-    default:
-        return false;
-    }
-}
-
-static bool FoldConstCompareFloat(BinaryOp op, double a, double b, bool* res)
-{
-    switch (op)
-    {
-    case BinEqEq:
-        *res = a == b;
-        return true;
-    case BinNotEq:
-        *res = a != b;
-        return true;
-    case BinLt:
-        *res = a < b;
-        return true;
-    case BinLtEq:
-        *res = a <= b;
-        return true;
-    case BinGt:
-        *res = a > b;
-        return true;
-    case BinGtEq:
-        *res = a >= b;
-        return true;
-    default:
-        return false;
-    }
-}
-
 // Fold a global initializer; false when not a compile-time constant.
 static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
@@ -9345,12 +9202,20 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 
                 out->kind = CIK_FLOAT;
                 out->i = 0;
-                return FoldConstFloatArith(e->op, a, z, &out->f);
+                return ConstFoldFloatArith(e->op, a, z, &out->f);
             }
+
+            uint64_t v;
 
             out->kind = CIK_INT;
             out->f = 0.0;
-            return FoldConstIntArith(e->op, l.i, r.i, &out->i);
+            if (!ConstFoldIntArith(e->op, l.i, r.i, ConstShrArithmetic, &v))
+            {
+                return false;
+            }
+
+            out->i = v;
+            return true;
         }
         case BinMod:
         case BinBitAnd:
@@ -9364,9 +9229,17 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
                 return false;
             }
 
+            uint64_t v;
+
             out->kind = CIK_INT;
             out->f = 0.0;
-            return FoldConstIntArith(e->op, l.i, r.i, &out->i);
+            if (!ConstFoldIntArith(e->op, l.i, r.i, ConstShrArithmetic, &v))
+            {
+                return false;
+            }
+
+            out->i = v;
+            return true;
         }
         case BinEqEq:
         case BinNotEq:
@@ -9382,12 +9255,12 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
                 double a = lFloat ? l.f : (double)(long long)l.i;
                 double z = rFloat ? r.f : (double)(long long)r.i;
 
-                if (!FoldConstCompareFloat(e->op, a, z, &res))
+                if (!ConstFoldFloatCompare(e->op, a, z, &res))
                 {
                     return false;
                 }
             }
-            else if (!FoldConstCompare(e->op, (long long)l.i, (long long)r.i, &res))
+            else if (!ConstFoldIntCompare(e->op, (long long)l.i, (long long)r.i, &res))
             {
                 return false;
             }
