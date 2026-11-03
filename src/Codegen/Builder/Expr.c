@@ -140,6 +140,185 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
     return ValueMake(v, sym->typeDesc);
 }
 
+/* Lvalue of a name: a local symbol, else a global. */
+LValue EmitIdentLValue(Builder* b, IdentExpr* id)
+{
+    LValue none = {0};
+
+    Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
+    bool isGlobal = false;
+
+    if (!sym)
+    {
+        sym = (Value*)StrMapGet(&b->m_globals, id->name);
+        isGlobal = sym != NULL;
+    }
+
+    if (!sym)
+    {
+        return none;
+    }
+
+    none.valid = true;
+    none.ptr = isGlobal ? GlobalFieldPtr(b, id->name) : sym->value;
+    none.typeDesc = sym->typeDesc;
+    return none;
+}
+
+/* Lvalue of `base.member`: a vector lane, a struct field through a value or a box, or an array length/cap slot. */
+LValue EmitMemberLValue(Builder* b, MemberExpr* m)
+{
+    LValue none = {0};
+
+    LValue base = EmitLValue(b, m->base_node);
+
+    if (!base.valid)
+    {
+        return none;
+    }
+
+    /* array.length / array.cap — readable slots; typed uint (the fat's
+       u32 fields). Assignment is rejected in sema. */
+    if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
+    {
+        none.valid = true;
+        none.ptr = strcmp(m->member, "length") == 0 ? ArrayLenPtr(b, base.ptr) : ArrayCapPtr(b, base.ptr);
+        none.typeDesc = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL); /* uint */
+        return none;
+    }
+
+    /* Fixed-array .length is a compile-time constant, not an lvalue. */
+    if (base.typeDesc.isFixedArray && strcmp(m->member, "length") == 0)
+    {
+        return none;
+    }
+
+    LLVMValueRef structPtr;
+    LLVMTypeRef structTy;
+    const char* structName;
+
+    if (TypeDescIsBox(&base.typeDesc))
+    {
+        if (!base.typeDesc.boxInner)
+        {
+            return none;
+        }
+
+        /* A boxed SIMD vector: the cell holds the vector value itself, so
+           a lane lvalue points at the cell (load vector, insert, store
+           back through it). */
+        if (IsNameSimdVector(base.typeDesc.boxInner->name))
+        {
+            return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box"),
+                                        Resolve(b, base.typeDesc.boxInner));
+        }
+
+        structPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box");
+        structName = base.typeDesc.boxInner->name;
+        structTy = Resolve(b, base.typeDesc.boxInner).type;
+    }
+    else if (base.typeDesc.structTypeName)
+    {
+        structPtr = base.ptr;
+        structName = base.typeDesc.structTypeName;
+        structTy = base.typeDesc.type;
+    }
+    else if (base.typeDesc.isSimdVector)
+    {
+        return MakeVectorLaneLValue(b, none, m, base.ptr, base.typeDesc);
+    }
+    else
+    {
+        return none;
+    }
+
+    int idx = TypeRegistryFieldIndex(&b->m_registry, structName, m->member);
+
+    if (idx < 0)
+    {
+        return none;
+    }
+
+    const StructType* st = TypeRegistryFind(&b->m_registry, structName);
+
+    FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
+    TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
+
+    unsigned physIdx = PhysicalFieldIndex(st, idx);
+
+    LLVMValueRef idxs[2] = {0};
+    idxs[0] = IdxConst(b, 0);
+    idxs[1] = IdxConst(b, physIdx);
+
+    LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "f");
+
+    none.valid = true;
+    none.ptr = ptr;
+    none.typeDesc = fieldTypeDesc;
+
+    return none;
+}
+
+/* Lvalue of `base[index]`: a cstring byte, a fixed-array element, or a dynamic array or string element. */
+LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
+{
+    LValue none = {0};
+
+    LValue base = EmitLValue(b, ix->base_node);
+
+    if (base.valid && base.typeDesc.isCString)
+    {
+        /* cstring[i]: load the pointer, bounds-check against strlen, and
+           address the byte. Sema rejects writes, so this is a read view. */
+        LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "cs");
+        LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+        LLVMValueRef lenVal = BuildStrLen(b, ptr);
+        TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL);
+
+        none.valid = true;
+        none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, ptr, elemTd.type, elemTd, false);
+        none.typeDesc = elemTd;
+
+        return none;
+    }
+
+    if (!base.valid || !TypeDescHasArrayShape(&base.typeDesc))
+    {
+        if (!base.valid || !base.typeDesc.isFixedArray)
+        {
+            return none;
+        }
+
+        /* Fixed inline array: GEP into the [N x T]; length is the compile-time dimension. */
+        TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
+        LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
+
+        LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+
+        none.valid = true;
+        none.ptr = EmitCheckedFixedElemPtr(b, idxVal, base.typeDesc.fixedLength, base.ptr, base.typeDesc.type, elemTd);
+        none.typeDesc = elemTd;
+
+        return none;
+    }
+
+    LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, base.ptr), "ap");
+
+    /* string[i]: the element is a byte (arrayInner is unused for strings). */
+    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
+                                             : Resolve(b, base.typeDesc.arrayInner);
+    LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
+
+    LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
+    LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, base.ptr), "len"));
+
+    none.valid = true;
+    none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, base.typeDesc.aliasedArray);
+    none.typeDesc = elemTd;
+
+    return none;
+}
+
 LValue EmitLValue(Builder* b, Node* n)
 {
     LValue none = {0};
@@ -149,182 +328,17 @@ LValue EmitLValue(Builder* b, Node* n)
         return none;
     }
 
-    if (n->kind == NodeIdent)
+    switch (n->kind)
     {
-        IdentExpr* id = (IdentExpr*)n;
-        Value* sym = (Value*)StrMapGet(&b->m_symbols, id->name);
-        bool isGlobal = false;
-
-        if (!sym)
-        {
-            sym = (Value*)StrMapGet(&b->m_globals, id->name);
-            isGlobal = sym != NULL;
-        }
-
-        if (!sym)
-        {
-            return none;
-        }
-
-        none.valid = true;
-        none.ptr = isGlobal ? GlobalFieldPtr(b, id->name) : sym->value;
-        none.typeDesc = sym->typeDesc;
+    case NodeIdent:
+        return EmitIdentLValue(b, (IdentExpr*)n);
+    case NodeMember:
+        return EmitMemberLValue(b, (MemberExpr*)n);
+    case NodeIndex:
+        return EmitIndexLValue(b, (IndexExpr*)n);
+    default:
         return none;
     }
-
-    if (n->kind == NodeMember)
-    {
-        MemberExpr* m = (MemberExpr*)n;
-        LValue base = EmitLValue(b, m->base_node);
-
-        if (!base.valid)
-        {
-            return none;
-        }
-
-        /* array.length / array.cap — readable slots; typed uint (the fat's
-           u32 fields). Assignment is rejected in sema. */
-        if (TypeDescHasArrayShape(&base.typeDesc)
-            && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
-        {
-            none.valid = true;
-            none.ptr = strcmp(m->member, "length") == 0 ? ArrayLenPtr(b, base.ptr) : ArrayCapPtr(b, base.ptr);
-            none.typeDesc = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL); /* uint */
-            return none;
-        }
-
-        /* Fixed-array .length is a compile-time constant, not an lvalue. */
-        if (base.typeDesc.isFixedArray && strcmp(m->member, "length") == 0)
-        {
-            return none;
-        }
-
-        LLVMValueRef structPtr;
-        LLVMTypeRef structTy;
-        const char* structName;
-
-        if (TypeDescIsBox(&base.typeDesc))
-        {
-            if (!base.typeDesc.boxInner)
-            {
-                return none;
-            }
-
-            /* A boxed SIMD vector: the cell holds the vector value itself, so
-               a lane lvalue points at the cell (load vector, insert, store
-               back through it). */
-            if (IsNameSimdVector(base.typeDesc.boxInner->name))
-            {
-                return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box"),
-                                            Resolve(b, base.typeDesc.boxInner));
-            }
-
-            structPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "box");
-            structName = base.typeDesc.boxInner->name;
-            structTy = Resolve(b, base.typeDesc.boxInner).type;
-        }
-        else if (base.typeDesc.structTypeName)
-        {
-            structPtr = base.ptr;
-            structName = base.typeDesc.structTypeName;
-            structTy = base.typeDesc.type;
-        }
-        else if (base.typeDesc.isSimdVector)
-        {
-            return MakeVectorLaneLValue(b, none, m, base.ptr, base.typeDesc);
-        }
-        else
-        {
-            return none;
-        }
-
-        int idx = TypeRegistryFieldIndex(&b->m_registry, structName, m->member);
-
-        if (idx < 0)
-        {
-            return none;
-        }
-
-        const StructType* st = TypeRegistryFind(&b->m_registry, structName);
-
-        FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, (size_t)idx);
-        TypeDesc fieldTypeDesc = Resolve(b, &fieldDecl->type);
-
-        unsigned physIdx = PhysicalFieldIndex(st, idx);
-
-        LLVMValueRef idxs[2] = {0};
-        idxs[0] = IdxConst(b, 0);
-        idxs[1] = IdxConst(b, physIdx);
-
-        LLVMValueRef ptr = LLVMBuildGEP2(b->m_builder, structTy, structPtr, idxs, 2, "f");
-
-        none.valid = true;
-        none.ptr = ptr;
-        none.typeDesc = fieldTypeDesc;
-
-        return none;
-    }
-
-    if (n->kind == NodeIndex)
-    {
-        IndexExpr* ix = (IndexExpr*)n;
-        LValue base = EmitLValue(b, ix->base_node);
-
-        if (base.valid && base.typeDesc.isCString)
-        {
-            /* cstring[i]: load the pointer, bounds-check against strlen, and
-               address the byte. Sema rejects writes, so this is a read view. */
-            LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "cs");
-            LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
-            LLVMValueRef lenVal = BuildStrLen(b, ptr);
-            TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL);
-
-            none.valid = true;
-            none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, ptr, elemTd.type, elemTd, false);
-            none.typeDesc = elemTd;
-
-            return none;
-        }
-
-        if (!base.valid || !TypeDescHasArrayShape(&base.typeDesc))
-        {
-            if (!base.valid || !base.typeDesc.isFixedArray)
-            {
-                return none;
-            }
-
-            /* Fixed inline array: GEP into the [N x T]; length is the compile-time dimension. */
-            TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
-            LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
-
-            LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
-
-            none.valid = true;
-            none.ptr
-                = EmitCheckedFixedElemPtr(b, idxVal, base.typeDesc.fixedLength, base.ptr, base.typeDesc.type, elemTd);
-            none.typeDesc = elemTd;
-
-            return none;
-        }
-
-        LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, base.ptr), "ap");
-
-        /* string[i]: the element is a byte (arrayInner is unused for strings). */
-        TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
-                                                 : Resolve(b, base.typeDesc.arrayInner);
-        LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
-
-        LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
-        LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, base.ptr), "len"));
-
-        none.valid = true;
-        none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, base.typeDesc.aliasedArray);
-        none.typeDesc = elemTd;
-
-        return none;
-    }
-
-    return none;
 }
 
 /* Coerces an integer/float index value to an i64 GEP index. */
