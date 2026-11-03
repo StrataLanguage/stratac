@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: 1 6
+// rule: a generic impl may overload a method name; each instance gets every overload
+struct holder<T>
+{
+    T value;
+}
+
+impl holder<T>
+{
+    int get(const ref holder<T> self) { return 1; }
+    int get(const ref holder<T> self, int k) { return 2 + k; }
+}
+
+int main()
+{
+    holder<int> h = holder<int> { .value = 3 };
+    printf("%d %d\n", h.get(), h.get(4));
+    return 0;
+}

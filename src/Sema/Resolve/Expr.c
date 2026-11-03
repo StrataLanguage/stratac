@@ -387,7 +387,9 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
     // only — they have no capacity (inline storage).
     if (IsFatPseudoProperty(r, baseType, m->member))
     {
-        return InternTypeName(r, strcmp(m->member, "data") == 0 ? STRATA_PTR_TYPE : "uint");
+        bool isRawPtr = strcmp(m->member, "data") == 0 || strcmp(m->member, "ptr") == 0;
+
+        return InternTypeName(r, isRawPtr ? STRATA_PTR_TYPE : "uint");
     }
 
     const StructType* structType = TypeRegistryFind(&r->registry, baseType->name);
@@ -1600,10 +1602,11 @@ static void ResolveCastExpr(Resolver* r, Node* n, StrMap* scope)
                              || (IsHandleType(&r->registry, dstName) && IsNumeric(srcPrim)
                                  && !IsNameFloatType(resolvedSrc) && srcPrim != PrimBool));
 
-    // `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` the reverse.
+    // `(cstring)p`: view raw memory as a NUL-terminated string; `(ptr)cs` and `(*T)cs` the reverse.
     bool cstringPtrPair = src
                           && ((TypeIsCString(&r->registry, dstName) && strcmp(resolvedSrc, STRATA_PTR_TYPE) == 0)
-                              || (TypeIsCString(&r->registry, srcName) && strcmp(resolvedDst, STRATA_PTR_TYPE) == 0));
+                              || (TypeIsCString(&r->registry, srcName)
+                                  && (strcmp(resolvedDst, STRATA_PTR_TYPE) == 0 || TypeNameIsPointer(dst))));
 
     // Text views: a NUL-terminated `byte[N]` buffer as a `cstring` (borrowed) or a `string`
     // (copied, up to the first NUL or all N bytes); a `string` as a `cstring` (borrowed).

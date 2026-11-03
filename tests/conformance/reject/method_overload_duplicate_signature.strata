@@ -1,0 +1,17 @@
+// expect: reject "duplicate function signature"
+// rule: two methods in one impl cannot share a name and parameter types
+struct Thing
+{
+    int v;
+}
+
+impl Thing
+{
+    int get(const ref Thing self) { return 1; }
+    int get(const ref Thing self) { return 2; }
+}
+
+int main()
+{
+    return 0;
+}

@@ -943,6 +943,16 @@ static bool CallArgIsBoxSource(Builder* b, Node* argNode)
     return false;
 }
 
+// A string literal lent to a `ref cstring` param: the slot holds the constant's `.rodata`
+// pointer. It is borrowed, so no owned `string` temporary is made for the statement to drop.
+static LLVMValueRef LowerCStringLiteralRefArg(Builder* b, Node* argNode)
+{
+    LLVMValueRef slot = EntryAlloca(b, b->ptrTy, "cslit");
+    LLVMBuildStore(b->builder, EmitCStringLiteralPtr(b, (const StrLiteral*)argNode), slot);
+
+    return slot;
+}
+
 // The argument-only dispatcher: one call argument lowered to its slot form, by
 // which parameter kind it binds to.
 static LLVMValueRef EmitCallArg(Builder* b, CallExpr* n, FuncInfo* info, const FunctionDecl* fd, size_t k, bool cVararg,
@@ -984,6 +994,12 @@ static LLVMValueRef EmitCallArg(Builder* b, CallExpr* n, FuncInfo* info, const F
     if (shouldPassByPtr && paramIsBoxType && argNode->kind == NodeStrLiteral)
     {
         return LowerStringLiteralParamArg(b, fd, k, argNode);
+    }
+
+    if (shouldPassByPtr && fd && k < fd->params.count && argNode->kind == NodeStrLiteral
+        && TypeIsCString(&b->registry, ((ParamDecl*)VecGet((Vec*)&fd->params, k))->type.name))
+    {
+        return LowerCStringLiteralRefArg(b, argNode);
     }
 
     if (shouldPassByPtr && !paramIsBoxType && argIsBox)

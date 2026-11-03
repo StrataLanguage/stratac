@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: 72 105
+// rule: `(*T)cs` views a cstring's bytes as a typed pointer without a `(ptr)` intermediate
+int main()
+{
+    cstring cs = "Hi";
+    *byte p = (*byte)cs;
+    printf("%d %d\n", (int)*p, (int)*((*byte)((ulong)p + 1)));
+    return 0;
+}

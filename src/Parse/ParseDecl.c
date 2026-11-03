@@ -1038,21 +1038,6 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     return (Node*)node;
 }
 
-static bool ImplHasMethod(const ImplDecl* impl, const char* methodName)
-{
-    for (size_t i = 0; i < impl->methods.count; i++)
-    {
-        const FunctionDecl* fn = (const FunctionDecl*)VecGet(&impl->methods, i);
-
-        if (fn->methodName && strcmp(fn->methodName, methodName) == 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 // `property ReturnType Name { get = Symbol; set = Symbol; }` — `get`/`set` are
 // contextual (identifier spellings), so user code may still use them as names.
 static PropertyDecl* ParsePropertyDecl(Parser* p)
@@ -1207,14 +1192,6 @@ ImplDecl* ParseImplDecl(Parser* p)
         if (fn->genericParams.count > 0)
         {
             DiagErrorFmt(p->diag, fn->base.range, "type parameters go on the impl, not on method '%s'", fn->name);
-        }
-
-        if (ImplHasMethod(impl, fn->name))
-        {
-            DiagErrorFmt(p->diag, fn->base.range, "redefinition of method '%s' in impl '%s'", fn->name,
-                         impl->handleName);
-            AstDispose(fnNode); // never reaches impl->methods or Module::functions
-            continue;
         }
 
         if (fn->isPrivate || fn->isExport)

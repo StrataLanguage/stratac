@@ -32,13 +32,14 @@ const TypeName* FixedArrayLeaf(const TypeName* t, ArrayLength* totalCount)
 
 // True when `member` on `base` is one of the fat pseudo-properties: dynamic
 // arrays and strings carry `.length` and `.cap`; fixed arrays expose only a
-// compile-time `.length`. `cstring` exposes `.length` only (strlen, no `.cap`).
+// compile-time `.length`. `cstring` exposes `.length` (strlen) and `.ptr` (its bytes), no `.cap`.
 // All are read-only views of runtime state.
 bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* member)
 {
     bool isData = strcmp(member, "data") == 0;
+    bool isPtr = strcmp(member, "ptr") == 0;
 
-    if (strcmp(member, "length") != 0 && strcmp(member, "cap") != 0 && !isData)
+    if (strcmp(member, "length") != 0 && strcmp(member, "cap") != 0 && !isData && !isPtr)
     {
         return false;
     }
@@ -54,6 +55,12 @@ bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* me
     if (isData)
     {
         return TypeNameIsDynamicArray(base) || TypeIsString(&r->registry, base->name);
+    }
+
+    // `.ptr` on a cstring: its NUL-terminated bytes, as a `ptr`.
+    if (isPtr)
+    {
+        return TypeIsCString(&r->registry, base->name);
     }
 
     if (TypeNameHasArrayShape(base) && base->length >= 0)

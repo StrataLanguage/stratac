@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: Hi
+// expect-output: after Hi
+// rule: a string literal lent to a `ref cstring` param is borrowed, so the call never frees the constant
+void Show(ref cstring s)
+{
+    printf("%s\n", s);
+}
+
+int main()
+{
+    Show("Hi");
+    cstring c = "after";
+    Show(c);
+    printf("after Hi\n");
+    return 0;
+}
