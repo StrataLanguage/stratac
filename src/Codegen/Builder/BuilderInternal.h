@@ -92,15 +92,6 @@ typedef struct
     Vec defers; /* Node* (DeferStmt.stmt) in source order; run LIFO */
 } BlockScope;
 
-typedef enum TypeDescFlag
-{
-    TD_NONE = (0),
-    TD_FLOAT = (1 << 0),
-    TD_UNSIGNED = (1 << 1),
-    TD_VOID = (1 << 2),
-    TD_VECTOR = (1 << 3),
-} TypeDescFlag;
-
 // -- Impl properties (methods are rewritten to plain extern calls by sema)
 typedef struct
 {
@@ -156,7 +147,7 @@ LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty);
 LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name);
 
 /* Types.c */
-TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlag flags, const char* structTypeName);
+TypeDesc TypeDescMake(LLVMTypeRef type, TypeDescFlags flags, const char* structTypeName);
 Value ValueMake(LLVMValueRef value, TypeDesc typeDesc);
 TypeName MakeTypeName(Builder* b, const char* name);
 TypeDesc ResolveByName(Builder* b, const char* name);

@@ -21,6 +21,24 @@ typedef struct
     size_t typeMetadataSize;
 } BuiltModule;
 
+/* The shape bits of a TypeDesc. Read and written through the TypeDescIs / TypeDescSet accessors in
+   Codegen/TypeDescFlags.h. */
+typedef enum TypeDescFlags
+{
+    TDF_NONE = (0),
+    TDF_FLOAT = (1 << 0),
+    TDF_UNSIGNED = (1 << 1),
+    TDF_VOID = (1 << 2),
+    TDF_BOX = (1 << 3),
+    TDF_OPTIONAL = (1 << 4),
+    TDF_ARRAY = (1 << 5),
+    TDF_STRING = (1 << 6),
+    TDF_CSTRING = (1 << 7),
+    TDF_SIMD_VECTOR = (1 << 8),
+    TDF_ALIASED_ARRAY = (1 << 9),
+    TDF_FIXED_ARRAY = (1 << 10),
+} TypeDescFlags;
+
 typedef struct
 {
     LLVMTypeRef type;

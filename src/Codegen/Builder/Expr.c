@@ -183,7 +183,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     {
         none.valid = true;
         none.ptr = strcmp(m->member, "length") == 0 ? ArrayLenPtr(b, base.ptr) : ArrayCapPtr(b, base.ptr);
-        none.typeDesc = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL); /* uint */
+        none.typeDesc = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL); /* uint */
         return none;
     }
 
@@ -273,7 +273,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
         LLVMValueRef ptr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, base.ptr, "cs");
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
         LLVMValueRef lenVal = BuildStrLen(b, ptr);
-        TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL);
+        TypeDesc elemTd = TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL);
 
         none.valid = true;
         none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, ptr, elemTd.type, elemTd, false);
@@ -305,7 +305,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
     LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, base.ptr), "ap");
 
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
-    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
+    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
                                              : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
@@ -416,7 +416,7 @@ Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
 {
     FieldIndex field = strcmp(n->member, "length") == 0 ? 1 : 2;
     LLVMValueRef v = LLVMBuildExtractValue(b->m_builder, base.value, field, n->member);
-    TypeDesc lenTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
+    TypeDesc lenTd = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL);
     BorrowTemp(b, base, lenTd);
     return ValueMake(v, lenTd);
 }
@@ -425,14 +425,14 @@ Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
 Value EmitFixedArrayLengthMember(Builder* b, Value base)
 {
     LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)base.typeDesc.fixedLength, 0);
-    return ValueMake(len, TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
+    return ValueMake(len, TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
 }
 
 /* cstring .length: runtime strlen (NUL-terminated), typed uint. */
 Value EmitCStringLengthMember(Builder* b, Value base)
 {
     LLVMValueRef len = BuildStrLen(b, base.value);
-    return ValueMake(LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL));
+    return ValueMake(LLVMBuildTrunc(b->m_builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
 }
 
 /* Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
@@ -493,7 +493,7 @@ bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
 
     if (dsValue != NULL)
     {
-        TypeDesc dsTd = TypeDescMake(floatType, TD_FLOAT | TD_VECTOR, NULL);
+        TypeDesc dsTd = TypeDescMake(floatType, TDF_FLOAT | TDF_SIMD_VECTOR, NULL);
         size_t comps = strlen(n->member);
         dsTd.simdLanes = comps > 1 ? (LaneCount)comps : 0;
         *out = (Value){dsValue, dsTd};
@@ -668,7 +668,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     LLVMValueRef dataPtr = LLVMBuildExtractValue(b->m_builder, base.value, 0, "ap");
 
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
-    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TD_UNSIGNED, NULL)
+    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
                                              : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
