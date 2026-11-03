@@ -124,7 +124,7 @@ static void EmitReturnStmt(Builder* b, ReturnStmt* r)
         {
             v = UnboxIfBox(b, Coerce(b, raw, b->m_curRet), b->m_curRet);
 
-            if (v.typeDesc.isString)
+            if (TypeDescIsString(&v.typeDesc))
             {
                 /* Returning a string: construct the owned value
                    (heap-copy literal, move source). */
@@ -208,7 +208,8 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
         /* A bare `cstring` defaults to the static empty buffer (never
            NULL), mirroring the extern-boundary invariant. */
         LLVMBuildStore(b->m_builder,
-                       typeDesc.isCString ? EmptyNulString(b) : DefaultValueOf(b, &varDecl->type, typeDesc), slot);
+                       TypeDescIsCString(&typeDesc) ? EmptyNulString(b) : DefaultValueOf(b, &varDecl->type, typeDesc),
+                       slot);
     }
 
     Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
@@ -229,7 +230,7 @@ static void EmitVarDecl(Builder* b, VarDeclStmt* varDecl)
 
     TypeDesc typeDesc = Resolve(b, &varDecl->type);
 
-    if (typeDesc.isFixedArray)
+    if (TypeDescIsFixedArray(&typeDesc))
     {
         EmitFixedArrayVarDecl(b, varDecl, typeDesc);
         return;

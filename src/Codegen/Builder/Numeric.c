@@ -65,7 +65,7 @@ static void EmitDivisionChecks(Builder* b, TypeDesc td, LLVMValueRef lhs, LLVMVa
 
     EmitPanicIf(b, LLVMBuildICmp(b->m_builder, LLVMIntEQ, divisor, LLVMConstInt(ty, 0, 0), "div.zero"), zeroMessage);
 
-    if (!td.isUnsigned)
+    if (!TypeDescIsUnsigned(&td))
     {
         unsigned width = LLVMGetIntTypeWidth(ty);
         LLVMValueRef minVal = LLVMConstInt(ty, 1ULL << (width - 1), 0);
@@ -104,8 +104,8 @@ void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc targe
 {
     const EnumDecl* ed = ModuleFindEnum(b->m_module, cast->type.name);
 
-    if (!ed || ed->members.count == 0 || !operand.value || operand.typeDesc.isFloat || target.isFloat || !target.type
-        || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind
+    if (!ed || ed->members.count == 0 || !operand.value || TypeDescIsFloat(&operand.typeDesc)
+        || TypeDescIsFloat(&target) || !target.type || LLVMGetTypeKind(target.type) != LLVMIntegerTypeKind
         || LLVMGetTypeKind(LLVMTypeOf(operand.value)) != LLVMIntegerTypeKind || cast->operand->kind == NodeIntLiteral
         || (cast->operand->kind == NodeMember && ((MemberExpr*)cast->operand)->isEnumConst))
     {
@@ -129,7 +129,7 @@ void EmitEnumCastCheck(Builder* b, CastExpr* cast, Value operand, TypeDesc targe
 
 static Value EmitMixedSignCompare(Builder* b, BinaryOp op, Value l, Value r)
 {
-    bool leftSigned = !l.typeDesc.isUnsigned;
+    bool leftSigned = !TypeDescIsUnsigned(&l.typeDesc);
     Value sv = leftSigned ? l : r;
     Value uv = leftSigned ? r : l;
     LLVMValueRef s64 = LLVMBuildSExt(b->m_builder, sv.value, I64Ty(b), "mix.s");
@@ -280,7 +280,7 @@ static Value EmitStringEquality(Builder* b, BinaryExpr* n, Value l, Value r)
     LLVMValueRef rp;
     LLVMValueRef rl;
 
-    if (l.typeDesc.isCString)
+    if (TypeDescIsCString(&l.typeDesc))
     {
         lp = l.value;
         ll = BuildStrLen(b, l.value);
@@ -291,7 +291,7 @@ static Value EmitStringEquality(Builder* b, BinaryExpr* n, Value l, Value r)
         ll = WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "seq.ll"));
     }
 
-    if (r.typeDesc.isCString)
+    if (TypeDescIsCString(&r.typeDesc))
     {
         rp = r.value;
         rl = BuildStrLen(b, r.value);
@@ -322,12 +322,16 @@ static Value EmitStringConcat(Builder* b, Value l, Value r)
     ClaimTemp(b, l);
     ClaimTemp(b, r);
 
-    LLVMValueRef lp = l.typeDesc.isCString ? l.value : LLVMBuildExtractValue(b->m_builder, l.value, 0, "cat.l");
-    LLVMValueRef ll = l.typeDesc.isCString ? BuildStrLen(b, l.value)
-                                           : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
-    LLVMValueRef rp = r.typeDesc.isCString ? r.value : LLVMBuildExtractValue(b->m_builder, r.value, 0, "cat.r");
-    LLVMValueRef rl = r.typeDesc.isCString ? BuildStrLen(b, r.value)
-                                           : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
+    LLVMValueRef lp
+        = TypeDescIsCString(&l.typeDesc) ? l.value : LLVMBuildExtractValue(b->m_builder, l.value, 0, "cat.l");
+    LLVMValueRef ll = TypeDescIsCString(&l.typeDesc)
+                          ? BuildStrLen(b, l.value)
+                          : WidenLen(b, LLVMBuildExtractValue(b->m_builder, l.value, 1, "cat.ll"));
+    LLVMValueRef rp
+        = TypeDescIsCString(&r.typeDesc) ? r.value : LLVMBuildExtractValue(b->m_builder, r.value, 0, "cat.r");
+    LLVMValueRef rl = TypeDescIsCString(&r.typeDesc)
+                          ? BuildStrLen(b, r.value)
+                          : WidenLen(b, LLVMBuildExtractValue(b->m_builder, r.value, 1, "cat.rl"));
 
     Value result = ValueMake(BuildConcatStringFat(b, lp, ll, rp, rl), StringFatDesc(b));
     NoteFreshOwned(b, result);
@@ -358,7 +362,7 @@ static Value EmitStringBinary(Builder* b, BinaryExpr* n, Value l, Value r)
 static bool IsAggregateEqOperand(Builder* b, TypeDesc* td)
 {
     return (td->structTypeName != NULL && !TypeRegistryIsOpaque(&b->m_registry, td->structTypeName))
-           || ((TypeDescHasArrayShape(td) || td->isFixedArray) && !td->isString);
+           || ((TypeDescHasArrayShape(td) || TypeDescIsFixedArray(td)) && !TypeDescIsString(td));
 }
 
 /* Aggregate equality: structs and arrays compare structurally — a
@@ -388,10 +392,11 @@ static Value EmitAggregateEquality(Builder* b, BinaryExpr* n, Value l, Value r)
    to be coerced to: -1 < 1u is true, and a long is never equal to an ulong it merely shares bits with. */
 static bool IsMixedSignIntCompare(BinaryOp op, Value l, Value r)
 {
-    return IsComparisonOp(op) && !l.typeDesc.isFloat && !r.typeDesc.isFloat && l.typeDesc.type && r.typeDesc.type
-           && LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
+    return IsComparisonOp(op) && !TypeDescIsFloat(&l.typeDesc) && !TypeDescIsFloat(&r.typeDesc) && l.typeDesc.type
+           && r.typeDesc.type && LLVMGetTypeKind(l.typeDesc.type) == LLVMIntegerTypeKind
            && LLVMGetTypeKind(r.typeDesc.type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(l.typeDesc.type) > 1
-           && LLVMGetIntTypeWidth(r.typeDesc.type) > 1 && l.typeDesc.isUnsigned != r.typeDesc.isUnsigned;
+           && LLVMGetIntTypeWidth(r.typeDesc.type) > 1
+           && TypeDescIsUnsigned(&l.typeDesc) != TypeDescIsUnsigned(&r.typeDesc);
 }
 
 /* Brings two numeric operands to one type: a float meets a float, a mixed float / double pair computes
@@ -400,17 +405,17 @@ static TypeDesc NormalizeNumericOperands(Builder* b, Value* l, Value* r)
 {
     TypeDesc typeDesc = l->typeDesc;
 
-    if (l->typeDesc.isFloat && !r->typeDesc.isFloat)
+    if (TypeDescIsFloat(&l->typeDesc) && !TypeDescIsFloat(&r->typeDesc))
     {
         *r = Coerce(b, *r, l->typeDesc);
     }
-    else if (!l->typeDesc.isFloat && r->typeDesc.isFloat)
+    else if (!TypeDescIsFloat(&l->typeDesc) && TypeDescIsFloat(&r->typeDesc))
     {
         *l = Coerce(b, *l, r->typeDesc);
 
         typeDesc = r->typeDesc;
     }
-    else if (l->typeDesc.isFloat && r->typeDesc.isFloat && l->typeDesc.type != r->typeDesc.type)
+    else if (TypeDescIsFloat(&l->typeDesc) && TypeDescIsFloat(&r->typeDesc) && l->typeDesc.type != r->typeDesc.type)
     {
         /* float mixed with double: compute in the wider type (fpext the float
            side) - the old code left the operands at mismatched widths, which
@@ -428,8 +433,8 @@ static TypeDesc NormalizeNumericOperands(Builder* b, Value* l, Value* r)
             typeDesc = r->typeDesc;
         }
     }
-    else if (!l->typeDesc.isFloat && !r->typeDesc.isFloat && l->typeDesc.type != r->typeDesc.type && l->typeDesc.type
-             && r->typeDesc.type)
+    else if (!TypeDescIsFloat(&l->typeDesc) && !TypeDescIsFloat(&r->typeDesc) && l->typeDesc.type != r->typeDesc.type
+             && l->typeDesc.type && r->typeDesc.type)
     {
         /* Mixed integer widths: compute in the wider type (`int + byte`
            must not truncate the int to i8). Non-integer operands (pointers
@@ -529,8 +534,8 @@ static Value EmitNumericBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
         }
 
         out = flt ? LLVMBuildFDiv(b->m_builder, l.value, r.value, "div")
-                  : (typeDesc.isUnsigned ? LLVMBuildUDiv(b->m_builder, l.value, r.value, "div")
-                                         : LLVMBuildSDiv(b->m_builder, l.value, r.value, "div"));
+                  : (TypeDescIsUnsigned(&typeDesc) ? LLVMBuildUDiv(b->m_builder, l.value, r.value, "div")
+                                                   : LLVMBuildSDiv(b->m_builder, l.value, r.value, "div"));
 
         return ValueMake(out, typeDesc);
 
@@ -541,8 +546,8 @@ static Value EmitNumericBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
         }
 
         out = flt ? LLVMBuildFRem(b->m_builder, l.value, r.value, "mod")
-                  : (typeDesc.isUnsigned ? LLVMBuildURem(b->m_builder, l.value, r.value, "mod")
-                                         : LLVMBuildSRem(b->m_builder, l.value, r.value, "mod"));
+                  : (TypeDescIsUnsigned(&typeDesc) ? LLVMBuildURem(b->m_builder, l.value, r.value, "mod")
+                                                   : LLVMBuildSRem(b->m_builder, l.value, r.value, "mod"));
 
         return ValueMake(out, typeDesc);
 
@@ -583,8 +588,8 @@ static Value EmitBitwiseBinary(Builder* b, BinaryOp op, Value l, Value r, TypeDe
 
     case BinShr:
         EmitShiftCheck(b, l.value, r.value);
-        out = typeDesc.isUnsigned ? LLVMBuildLShr(b->m_builder, l.value, r.value, "shr")
-                                  : LLVMBuildAShr(b->m_builder, l.value, r.value, "shr");
+        out = TypeDescIsUnsigned(&typeDesc) ? LLVMBuildLShr(b->m_builder, l.value, r.value, "shr")
+                                            : LLVMBuildAShr(b->m_builder, l.value, r.value, "shr");
 
         return ValueMake(out, typeDesc);
 
@@ -605,7 +610,7 @@ static Value EmitComparisonBinary(Builder* b, BinaryOp op, Value l, Value r, Typ
     {
     case BinEqEq:
         out = flt ? FcmpByName(b->m_builder, "oeq", l.value, r.value)
-                  : IcmpByName(b->m_builder, "eq", typeDesc.isUnsigned, l.value, r.value);
+                  : IcmpByName(b->m_builder, "eq", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(AllLanesTrue(b, out), boolTypeDesc);
 
@@ -619,31 +624,31 @@ static Value EmitComparisonBinary(Builder* b, BinaryOp op, Value l, Value r, Typ
         }
 
         out = flt ? FcmpByName(b->m_builder, "one", l.value, r.value)
-                  : IcmpByName(b->m_builder, "ne", typeDesc.isUnsigned, l.value, r.value);
+                  : IcmpByName(b->m_builder, "ne", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(AllLanesTrue(b, out), boolTypeDesc);
 
     case BinLt:
         out = flt ? FcmpByName(b->m_builder, "olt", l.value, r.value)
-                  : IcmpByName(b->m_builder, "lt", typeDesc.isUnsigned, l.value, r.value);
+                  : IcmpByName(b->m_builder, "lt", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
     case BinLtEq:
         out = flt ? FcmpByName(b->m_builder, "ole", l.value, r.value)
-                  : IcmpByName(b->m_builder, "le", typeDesc.isUnsigned, l.value, r.value);
+                  : IcmpByName(b->m_builder, "le", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
     case BinGt:
         out = flt ? FcmpByName(b->m_builder, "ogt", l.value, r.value)
-                  : IcmpByName(b->m_builder, "gt", typeDesc.isUnsigned, l.value, r.value);
+                  : IcmpByName(b->m_builder, "gt", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
     case BinGtEq:
         out = flt ? FcmpByName(b->m_builder, "oge", l.value, r.value)
-                  : IcmpByName(b->m_builder, "ge", typeDesc.isUnsigned, l.value, r.value);
+                  : IcmpByName(b->m_builder, "ge", TypeDescIsUnsigned(&typeDesc), l.value, r.value);
 
         return ValueMake(out, boolTypeDesc);
 
@@ -671,7 +676,8 @@ Value EmitBinary(Builder* b, BinaryExpr* n)
     l = DerefBoxValue(b, l);
     r = DerefBoxValue(b, r);
 
-    if (l.typeDesc.isString || r.typeDesc.isString || l.typeDesc.isCString || r.typeDesc.isCString)
+    if (TypeDescIsString(&l.typeDesc) || TypeDescIsString(&r.typeDesc) || TypeDescIsCString(&l.typeDesc)
+        || TypeDescIsCString(&r.typeDesc))
     {
         return EmitStringBinary(b, n, l, r);
     }
@@ -688,7 +694,7 @@ Value EmitBinary(Builder* b, BinaryExpr* n)
     }
 
     TypeDesc typeDesc = NormalizeNumericOperands(b, &l, &r);
-    bool flt = typeDesc.isFloat;
+    bool flt = TypeDescIsFloat(&typeDesc);
 
     PromotePointerComparison(b, n->op, &l, &r, &typeDesc, &flt);
 
@@ -798,12 +804,12 @@ Value EmitIncDec(Builder* b, IncDecExpr* inc)
     }
 
     LLVMValueRef cur = LLVMBuildLoad2(b->m_builder, valTd.type, valPtr, "inc");
-    LLVMValueRef one = valTd.isFloat ? LLVMConstReal(valTd.type, 1.0) : LLVMConstInt(valTd.type, 1, 0);
+    LLVMValueRef one = TypeDescIsFloat(&valTd) ? LLVMConstReal(valTd.type, 1.0) : LLVMConstInt(valTd.type, 1, 0);
 
-    LLVMValueRef newVal = inc->isDec ? (valTd.isFloat ? LLVMBuildFSub(b->m_builder, cur, one, "dec")
-                                                      : LLVMBuildSub(b->m_builder, cur, one, "dec"))
-                                     : (valTd.isFloat ? LLVMBuildFAdd(b->m_builder, cur, one, "inc")
-                                                      : LLVMBuildAdd(b->m_builder, cur, one, "inc"));
+    LLVMValueRef newVal = inc->isDec ? (TypeDescIsFloat(&valTd) ? LLVMBuildFSub(b->m_builder, cur, one, "dec")
+                                                                : LLVMBuildSub(b->m_builder, cur, one, "dec"))
+                                     : (TypeDescIsFloat(&valTd) ? LLVMBuildFAdd(b->m_builder, cur, one, "inc")
+                                                                : LLVMBuildAdd(b->m_builder, cur, one, "inc"));
 
     LLVMBuildStore(b->m_builder, newVal, valPtr);
 
@@ -826,7 +832,7 @@ Value EmitCast(Builder* b, CastExpr* cast)
        heap-copy the static literal (drop glue frees real memory, never
        the constant pool). Movable sources stay a retag - the consumer
        nulls the source, exactly like `string t = s;`. */
-    if (target.isString && cast->operand->kind == NodeStrLiteral)
+    if (TypeDescIsString(&target) && cast->operand->kind == NodeStrLiteral)
     {
         LLVMValueRef srcPtr = LLVMBuildExtractValue(b->m_builder, operand.value, 0, "clit.p");
         LLVMValueRef lenVal = LLVMBuildExtractValue(b->m_builder, operand.value, 1, "clit.l");
@@ -835,7 +841,8 @@ Value EmitCast(Builder* b, CastExpr* cast)
         return ValueMake(owned, target);
     }
 
-    if ((TypeDescIsBox(&operand.typeDesc) && TypeDescIsBox(&target)) || (operand.typeDesc.isString && target.isString))
+    if ((TypeDescIsBox(&operand.typeDesc) && TypeDescIsBox(&target))
+        || (TypeDescIsString(&operand.typeDesc) && TypeDescIsString(&target)))
     {
         /* Retag with the destination type; Coerce would keep the source's. */
         return ValueMake(operand.value, target);

@@ -89,7 +89,7 @@ LLVMValueRef ToI1(Builder* b, Value v)
         return LLVMBuildICmp(b->m_builder, LLVMIntNE, data, LLVMConstNull(b->m_ptrTy), "opt.has");
     }
 
-    if (v.typeDesc.isFloat)
+    if (TypeDescIsFloat(&v.typeDesc))
     {
         return LLVMBuildFCmp(b->m_builder, LLVMRealONE, v.value, LLVMConstNull(v.typeDesc.type), "tobool");
     }
@@ -188,7 +188,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     }
 
     /* Fixed-array .length is a compile-time constant, not an lvalue. */
-    if (base.typeDesc.isFixedArray && strcmp(m->member, "length") == 0)
+    if (TypeDescIsFixedArray(&base.typeDesc) && strcmp(m->member, "length") == 0)
     {
         return none;
     }
@@ -223,7 +223,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
         structName = base.typeDesc.structTypeName;
         structTy = base.typeDesc.type;
     }
-    else if (base.typeDesc.isSimdVector)
+    else if (TypeDescIsSimdVector(&base.typeDesc))
     {
         return MakeVectorLaneLValue(b, none, m, base.ptr, base.typeDesc);
     }
@@ -266,7 +266,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 
     LValue base = EmitLValue(b, ix->base_node);
 
-    if (base.valid && base.typeDesc.isCString)
+    if (base.valid && TypeDescIsCString(&base.typeDesc))
     {
         /* cstring[i]: load the pointer, bounds-check against strlen, and
            address the byte. Sema rejects writes, so this is a read view. */
@@ -284,7 +284,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 
     if (!base.valid || !TypeDescHasArrayShape(&base.typeDesc))
     {
-        if (!base.valid || !base.typeDesc.isFixedArray)
+        if (!base.valid || !TypeDescIsFixedArray(&base.typeDesc))
         {
             return none;
         }
@@ -305,15 +305,16 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
     LLVMValueRef dataPtr = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, base.ptr), "ap");
 
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
-    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
-                                             : Resolve(b, base.typeDesc.arrayInner);
+    TypeDesc elemTd = TypeDescIsString(&base.typeDesc)
+                          ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
+                          : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
     LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
     LLVMValueRef lenVal = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, base.ptr), "len"));
 
     none.valid = true;
-    none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, base.typeDesc.aliasedArray);
+    none.ptr = EmitCheckedElemPtr(b, idxVal, lenVal, dataPtr, elemTy, elemTd, TypeDescIsAliasedArray(&base.typeDesc));
     none.typeDesc = elemTd;
 
     return none;
@@ -344,14 +345,14 @@ LValue EmitLValue(Builder* b, Node* n)
 /* Coerces an integer/float index value to an i64 GEP index. */
 LLVMValueRef AsI64Index(Builder* b, Value v)
 {
-    if (v.typeDesc.isFloat)
+    if (TypeDescIsFloat(&v.typeDesc))
     {
         return LLVMBuildFPToSI(b->m_builder, v.value, I64Ty(b), "i");
     }
 
     if (v.typeDesc.type != I64Ty(b))
     {
-        return LLVMBuildIntCast2(b->m_builder, v.value, I64Ty(b), !v.typeDesc.isUnsigned, "i");
+        return LLVMBuildIntCast2(b->m_builder, v.value, I64Ty(b), !TypeDescIsUnsigned(&v.typeDesc), "i");
     }
 
     return v.value;
@@ -535,7 +536,7 @@ bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
 /* Member read from a non-lvalue base value, dispatched by member kind. */
 Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
 {
-    if ((TypeDescHasArrayShape(&base.typeDesc) || base.typeDesc.isString) && strcmp(n->member, "data") == 0)
+    if ((TypeDescHasArrayShape(&base.typeDesc) || TypeDescIsString(&base.typeDesc)) && strcmp(n->member, "data") == 0)
     {
         return EmitArrayDataMember(b, base);
     }
@@ -545,12 +546,12 @@ Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
         return EmitArrayLengthMember(b, n, base);
     }
 
-    if (base.typeDesc.isFixedArray && strcmp(n->member, "length") == 0)
+    if (TypeDescIsFixedArray(&base.typeDesc) && strcmp(n->member, "length") == 0)
     {
         return EmitFixedArrayLengthMember(b, base);
     }
 
-    if (base.typeDesc.isCString && strcmp(n->member, "length") == 0)
+    if (TypeDescIsCString(&base.typeDesc) && strcmp(n->member, "length") == 0)
     {
         return EmitCStringLengthMember(b, base);
     }
@@ -564,7 +565,7 @@ Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
 
     base = EmitBoxedVectorDeref(b, base);
 
-    if (base.typeDesc.isSimdVector && TryEmitSimdLaneMember(b, n, base, &out))
+    if (TypeDescIsSimdVector(&base.typeDesc) && TryEmitSimdLaneMember(b, n, base, &out))
     {
         return out;
     }
@@ -638,7 +639,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
        result), e.g. {1,2,3}[0] or MakeArr()[2]. */
     Value base = EmitExpr(b, n->base_node);
 
-    if (base.typeDesc.isFixedArray)
+    if (TypeDescIsFixedArray(&base.typeDesc))
     {
         /* Fixed inline array rvalue: park in an entry alloca so a runtime index can address it. */
         TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
@@ -668,8 +669,9 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     LLVMValueRef dataPtr = LLVMBuildExtractValue(b->m_builder, base.value, 0, "ap");
 
     /* string[i]: the element is a byte (arrayInner is unused for strings). */
-    TypeDesc elemTd = base.typeDesc.isString ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
-                                             : Resolve(b, base.typeDesc.arrayInner);
+    TypeDesc elemTd = TypeDescIsString(&base.typeDesc)
+                          ? TypeDescMake(LLVMInt8TypeInContext(b->m_ctx), TDF_UNSIGNED, NULL)
+                          : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
     LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, n->index));
@@ -710,8 +712,8 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
 
     case UnNeg:
     {
-        LLVMValueRef ref = e.typeDesc.isFloat ? LLVMBuildFNeg(b->m_builder, e.value, "neg")
-                                              : LLVMBuildNeg(b->m_builder, e.value, "neg");
+        LLVMValueRef ref = TypeDescIsFloat(&e.typeDesc) ? LLVMBuildFNeg(b->m_builder, e.value, "neg")
+                                                        : LLVMBuildNeg(b->m_builder, e.value, "neg");
 
         return ValueMake(ref, e.typeDesc);
     }
@@ -753,7 +755,7 @@ static LLVMValueRef EmitConditionalBranch(Builder* b, Node* n, TypeDesc td)
     StackMark tempMark = b->m_temps.count;
     LLVMValueRef v;
 
-    if (td.isCString && n->kind == NodeStrLiteral)
+    if (TypeDescIsCString(&td) && n->kind == NodeStrLiteral)
     {
         v = EmitCStringLiteralPtr(b, (const StrLiteral*)n);
     }

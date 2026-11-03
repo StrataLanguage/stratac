@@ -161,17 +161,17 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
        compile-time constant copy. */
     bool csCopyInit = false;
 
-    if (typeDesc.isCString && gd->init && gd->init->kind == NodeIdent)
+    if (TypeDescIsCString(&typeDesc) && gd->init && gd->init->kind == NodeIdent)
     {
         Value* srcSym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)gd->init)->name);
 
-        if (srcSym && srcSym->typeDesc.isCString)
+        if (srcSym && TypeDescIsCString(&srcSym->typeDesc))
         {
             csCopyInit = true;
         }
     }
 
-    if (typeDesc.isCString && (!gd->init || gd->init->kind == NodeStrLiteral || csCopyInit))
+    if (TypeDescIsCString(&typeDesc) && (!gd->init || gd->init->kind == NodeStrLiteral || csCopyInit))
     {
         FieldIndex index = (FieldIndex)(*ctxFieldCount);
         ctxFieldTypes[(*ctxFieldCount)++] = typeDesc.type;
@@ -210,8 +210,8 @@ static void ClassifyGlobal(Builder* b, GlobalDecl* gd, LLVMTypeRef* ctxFieldType
     if (gd->type.isConst && folded)
     {
         ConstInitVal castVal = CastConstVal(b, foldedVal, typeDesc);
-        LLVMValueRef constant
-            = typeDesc.isFloat ? LLVMConstReal(typeDesc.type, castVal.f) : ConstIntTrunc(typeDesc.type, castVal.i);
+        LLVMValueRef constant = TypeDescIsFloat(&typeDesc) ? LLVMConstReal(typeDesc.type, castVal.f)
+                                                           : ConstIntTrunc(typeDesc.type, castVal.i);
 
         ConstValueSlot* cs = (ConstValueSlot*)arena_alloc(b->m_arena, sizeof(ConstValueSlot));
         cs->civ = castVal;
@@ -345,7 +345,7 @@ static void InitOwningContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
         LLVMValueRef arr = EmitArrayInit(b, AsNode(ArrayInitExpr, gd->init)).value;
         LLVMBuildStore(b->m_builder, arr, fieldPtr);
     }
-    else if (td.isString)
+    else if (TypeDescIsString(&td))
     {
         /* string / alias-of-string global: construct the owned
            value directly into the field (heap-copy a literal;
@@ -392,8 +392,8 @@ static void InitCStringContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LL
     if (gd->init && gd->init->kind == NodeIdent)
     {
         Value* srcSym = (Value*)StrMapGet(&b->m_globals, ((IdentExpr*)gd->init)->name);
-        csCopyInit
-            = srcSym && srcSym->typeDesc.isCString && StrMapGet(&b->m_globalFieldIndex, ((IdentExpr*)gd->init)->name);
+        csCopyInit = srcSym && TypeDescIsCString(&srcSym->typeDesc)
+                     && StrMapGet(&b->m_globalFieldIndex, ((IdentExpr*)gd->init)->name);
     }
 
     LLVMValueRef value;
@@ -434,7 +434,7 @@ static void InitScalarContextGlobal(Builder* b, GlobalDecl* gd, TypeDesc td, LLV
     if (folded)
     {
         foldedVal = CastConstVal(b, foldedVal, td);
-        value = td.isFloat ? LLVMConstReal(td.type, foldedVal.f) : ConstIntTrunc(td.type, foldedVal.i);
+        value = TypeDescIsFloat(&td) ? LLVMConstReal(td.type, foldedVal.f) : ConstIntTrunc(td.type, foldedVal.i);
     }
 
     LLVMBuildStore(b->m_builder, value, fieldPtr);
@@ -455,7 +455,7 @@ static void InitContextGlobal(Builder* b, GlobalDecl* gd)
     {
         InitOwningContextGlobal(b, gd, td, fieldPtr);
     }
-    else if (td.isCString)
+    else if (TypeDescIsCString(&td))
     {
         InitCStringContextGlobal(b, gd, td, fieldPtr);
     }

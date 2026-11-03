@@ -22,7 +22,7 @@
    and JIT behave identically. */
 static bool TypeDescIsByteEq(Builder* b, const TypeDesc* td)
 {
-    if (td->isString || td->isCString || TypeDescHasArrayShape(td) || td->isFloat)
+    if (TypeDescIsString(td) || TypeDescIsCString(td) || TypeDescHasArrayShape(td) || TypeDescIsFloat(td))
     {
         return false;
     }
@@ -57,7 +57,7 @@ static bool TypeDescIsByteEq(Builder* b, const TypeDesc* td)
         return true;
     }
 
-    if (td->isFixedArray)
+    if (TypeDescIsFixedArray(td))
     {
         TypeDesc elemTd = Resolve(b, td->arrayInner);
         return TypeDescIsByteEq(b, &elemTd);
@@ -73,12 +73,12 @@ static const char* EqHelperKey(Builder* b, const TypeDesc* td)
         return td->structTypeName;
     }
 
-    if (td->isString)
+    if (TypeDescIsString(td))
     {
         return "string";
     }
 
-    if (td->isFixedArray)
+    if (TypeDescIsFixedArray(td))
     {
         TypeDesc elemTd = Resolve(b, td->arrayInner);
         return arena_format(b->m_arena, "%s[%ld]", EqHelperKey(b, &elemTd), td->fixedLength);
@@ -236,7 +236,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
 {
     LLVMValueRef eq;
 
-    if (td->isString)
+    if (TypeDescIsString(td))
     {
         LLVMValueRef aData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, ArrayDataPtr(b, aPtr), "eq.sa");
         LLVMValueRef aLen = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), ArrayLenPtr(b, aPtr), "eq.sla"));
@@ -248,7 +248,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.str");
         eq = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "eq.str.b");
     }
-    else if (td->isCString)
+    else if (TypeDescIsCString(td))
     {
         /* `cstring` field/element: CONTENT equality (strata_cstrlen +
            strata_str_eq) — never a raw pointer compare (two identical
@@ -264,7 +264,7 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
         LLVMValueRef wide = LLVMBuildCall2(b->m_builder, b->m_strEqFnType, b->m_strEqFn, args, 4, "eq.cs");
         eq = LLVMBuildICmp(b->m_builder, LLVMIntNE, wide, LLVMConstInt(I32Ty(b), 0, 0), "eq.cs.b");
     }
-    else if (td->structTypeName || TypeDescHasArrayShape(td) || td->isFixedArray)
+    else if (td->structTypeName || TypeDescHasArrayShape(td) || TypeDescIsFixedArray(td))
     {
         LLVMValueRef helper = EnsureEqHelper(b, td, externBoxCtx);
         LLVMTypeRef params[2] = {b->m_ptrTy, b->m_ptrTy};
@@ -295,8 +295,8 @@ static LLVMBasicBlockRef EmitEqLeaf(Builder* b, LLVMValueRef fn, LLVMValueRef aP
            with fcmp oeq — IEEE-754, matching C). */
         LLVMValueRef av = LLVMBuildLoad2(b->m_builder, td->type, aPtr, "eq.av");
         LLVMValueRef bv = LLVMBuildLoad2(b->m_builder, td->type, bPtr, "eq.bv");
-        eq = td->isFloat ? FcmpByName(b->m_builder, "oeq", av, bv)
-                         : LLVMBuildICmp(b->m_builder, LLVMIntEQ, av, bv, "eq");
+        eq = TypeDescIsFloat(td) ? FcmpByName(b->m_builder, "oeq", av, bv)
+                                 : LLVMBuildICmp(b->m_builder, LLVMIntEQ, av, bv, "eq");
     }
 
     LLVMBasicBlockRef next = LLVMAppendBasicBlockInContext(b->m_ctx, fn, "eq.next");
@@ -342,7 +342,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
 
         LLVMBuildBr(b->m_builder, done);
     }
-    else if (td->isFixedArray)
+    else if (TypeDescIsFixedArray(td))
     {
         /* Fixed array: unrolled element-wise compare. */
         TypeDesc elemTd = Resolve(b, td->arrayInner);

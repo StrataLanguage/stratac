@@ -347,7 +347,8 @@ bool FieldInitMovesSource(Builder* b, TypeDesc fieldTd, TypeDesc valueTd, const 
         return false;
     }
 
-    return ((TypeDescIsBox(&fieldTd) || fieldTd.isString) && (TypeDescIsBox(&valueTd) || valueTd.isString))
+    return ((TypeDescIsBox(&fieldTd) || TypeDescIsString(&fieldTd))
+            && (TypeDescIsBox(&valueTd) || TypeDescIsString(&valueTd)))
            || (TypeDescHasArrayShape(&fieldTd) && TypeDescHasArrayShape(&valueTd))
            || (fieldTd.structTypeName && TypeRegistryIsOwningStruct(&b->m_registry, fieldTd.structTypeName)
                && valueTd.structTypeName && strcmp(fieldTd.structTypeName, valueTd.structTypeName) == 0);
@@ -395,7 +396,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
         FieldDecl* fieldDecl = (FieldDecl*)VecGet(&st->fields, idx);
         TypeDesc fieldTd = Resolve(b, &fieldDecl->type);
 
-        if (fieldTd.isFixedArray && field->value->kind == NodeArrayInit)
+        if (TypeDescIsFixedArray(&fieldTd) && field->value->kind == NodeArrayInit)
         {
             /* Fixed-size array field from a braced literal: the flat list
                 carries row-major elements (sema placed nested rows at their
@@ -425,7 +426,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
         Value rawField = EmitExpr(b, field->value);
         Value fieldValue;
 
-        if (fieldTd.isString && field->value->kind == NodeStrLiteral)
+        if (TypeDescIsString(&fieldTd) && field->value->kind == NodeStrLiteral)
         {
             /* string field from a literal -> heap copy (safe to free). */
             LLVMValueRef sp = LLVMBuildExtractValue(b->m_builder, rawField.value, 0, "fslit.p");
