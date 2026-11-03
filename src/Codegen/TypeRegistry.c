@@ -568,7 +568,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
 
 /* Union layout: every field overlays byte 0; the backend lays out one representative member plus a tail pad. */
 static bool ComputeUnionStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx, long* offsets,
-                                     int* physical, StructPad* pads)
+                                     FieldIndex* physical, StructPad* pads)
 {
     StructType* st = &reg->types[idx];
     size_t n = st->fields.count;
@@ -643,12 +643,12 @@ static bool ComputeUnionStructLayout(TypeRegistry* reg, unsigned char* state, Ar
 /* Places each field of a struct (non-union) at its offset, recording the pads. Returns false, with the layout error
  * set, when a field has no size or an explicit offset overlaps. */
 static bool LayoutStructFields(TypeRegistry* reg, unsigned char* state, Arena* scratch, StructType* st, long* offsets,
-                               int* physical, StructPad* pads, size_t* padCount, long* cursor, long* maxAlign,
+                               FieldIndex* physical, StructPad* pads, size_t* padCount, long* cursor, long* maxAlign,
                                bool* packed)
 {
     size_t n = st->fields.count;
     bool ok = true;
-    int nextPhysical = 0;
+    FieldIndex nextPhysical = 0;
 
     for (size_t i = 0; i < n && ok; i++)
     {
@@ -717,7 +717,7 @@ static bool LayoutStructFields(TypeRegistry* reg, unsigned char* state, Arena* s
 }
 
 /* Finishes a laid-out struct: packed layouts keep the explicit pads, natural layouts drop them. */
-static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx, long* offsets, int* physical,
+static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx, long* offsets, FieldIndex* physical,
                                StructPad* pads, size_t padCount, long cursor, long maxAlign, bool packed)
 {
     size_t n = st->fields.count;
@@ -750,7 +750,7 @@ static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx,
 
         for (size_t i = 0; i < n; i++)
         {
-            physical[i] = (int)i;
+            physical[i] = (FieldIndex)i;
         }
     }
 
@@ -780,7 +780,7 @@ static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* 
 
     size_t n = st->fields.count;
     long* offsets = (long*)malloc(n * sizeof(long));
-    int* physical = (int*)malloc(n * sizeof(int));
+    FieldIndex* physical = (FieldIndex*)malloc(n * sizeof(FieldIndex));
     StructPad* pads = (StructPad*)malloc((n + 1) * sizeof(StructPad));
 
     if (st->isUnion)

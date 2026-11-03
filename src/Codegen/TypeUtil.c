@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static inline void BuildLLVMIrType(MappedType* mappedType, int numLanes, const char* elemIr)
+static inline void BuildLLVMIrType(MappedType* mappedType, LaneCount numLanes, const char* elemIr)
 {
     assert(numLanes >= 1);
 
@@ -22,7 +22,7 @@ static inline void BuildLLVMIrType(MappedType* mappedType, int numLanes, const c
     }
 }
 
-static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const char* elemIr)
+static MappedType MakePrimitive(bool isFloat, bool isUnsigned, BitWidth bits, const char* elemIr)
 {
     MappedType m = {0};
 
@@ -37,7 +37,7 @@ static MappedType MakePrimitive(bool isFloat, bool isUnsigned, int bits, const c
     return m;
 }
 
-static MappedType MakeSimdVector(bool isFloat, int bits, int lanes, const char* elemIr)
+static MappedType MakeSimdVector(bool isFloat, BitWidth bits, LaneCount lanes, const char* elemIr)
 {
     assert(bits >= 32);
 
@@ -81,7 +81,7 @@ MappedType MapType(const TypeName* t)
         // const char* name;
         bool isFloat;
         bool isUnsigned;
-        int bits;
+        BitWidth bits;
         const char* ir;
     } kPrims[] = {
         {PrimBool,   false, false, 1,  "i1"    },
@@ -145,7 +145,7 @@ bool IsNameNumeric(const char* t)
     return t && IsNumeric(GetPrimitiveType(t));
 }
 
-int IsSimdVector(const PrimitiveType prim)
+LaneCount IsSimdVector(const PrimitiveType prim)
 {
     switch (prim)
     {
@@ -161,7 +161,7 @@ int IsSimdVector(const PrimitiveType prim)
     return 0;
 }
 
-int IsNameSimdVector(const char* t)
+LaneCount IsNameSimdVector(const char* t)
 {
     return t ? IsSimdVector(GetPrimitiveType(t)) : 0;
 }

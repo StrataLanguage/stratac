@@ -58,8 +58,8 @@ typedef struct
     bool packedLayout; /* any explicit fieldoffset — backends emit packed */
     long sizeBytes;
     long alignBytes;
-    long* fieldOffsets; /* logical field index -> byte offset */
-    int* physicalIndex; /* logical field index -> physical member index */
+    long* fieldOffsets;        /* logical field index -> byte offset */
+    FieldIndex* physicalIndex; /* logical field index -> physical member index */
     StructPad* pads;
     size_t padCount;
     size_t physicalCount; /* fields + pads */

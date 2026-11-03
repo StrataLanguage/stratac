@@ -35,12 +35,12 @@ typedef struct
     bool isString;  /* string / alias-of-string: fat {ptr, len, cap} with a NUL at [len] */
     bool isCString; /* cstring / alias-of-cstring: single `const char*` to `.rodata` (borrowed) */
     bool isSimdVector;
-    int simdLanes;              /* logical lanes of a SIMD vector (2/3/4), 0 if unknown: float3 shares
-                                   float4's 4-lane LLVM vector, so horizontal ops must not read lane 3 */
+    LaneCount simdLanes;        /* logical lanes of a SIMD vector (2/3/4), 0 if unknown: float3 shares
+                             float4's 4-lane LLVM vector, so horizontal ops must not read lane 3 */
     const TypeName* arrayInner; /* element type of T[] / T[N] */
     bool aliasedArray;          /* ref T... rest: slots hold pointers to sources */
     bool isFixedArray;          /* T[N]: inline [N x T] (C ABI) — struct fields and stack-allocated locals */
-    long fixedLength;           /* N when isFixedArray */
+    ArrayLength fixedLength;    /* N when isFixedArray */
 } TypeDesc;
 
 typedef struct
