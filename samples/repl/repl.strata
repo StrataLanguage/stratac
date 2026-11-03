@@ -1,11 +1,23 @@
-
 import ../../std/bytebuffer;
-
 import ../../std/math;
 
 extern int printf(string fmt, ...);
 
+struct test { int value; }
 
+impl test {
+	void Init(ref test self, int value)
+	{
+		self.value = value;
+		printf("Hello\n");
+	}
+
+	void Drop(ref test self) {
+		printf("goodbye %d\n", self.value);
+	}
+
+
+}
 
 int main()
 {
@@ -13,6 +25,8 @@ int main()
 	const float res = sign(x);
 
 	printf("res: %f\n", res);
+
+	var t = test(20);
 
 /*
 	bytebuffer bb;
