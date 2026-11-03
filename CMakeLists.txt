@@ -542,6 +542,7 @@ if(STRATA_ENABLE_LLVM)
     # AddressSanitizer variants of the AOT samples (same expectation as the plain test; see tests/asan).
     if(STRATA_ASAN_CLANG)
         function(strata_asan_sample test sample host)
+            set(prefixes "${ARGN}")
             get_test_property(${test} PASS_REGULAR_EXPRESSION expect)
             file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/asan/samples")
             file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/asan/samples/${test}.expect" "${expect}")
@@ -555,6 +556,7 @@ if(STRATA_ENABLE_LLVM)
                     -DSTRATAC=$<TARGET_FILE:stratac>
                     -DSAMPLE=${CMAKE_CURRENT_SOURCE_DIR}/samples/${sample}
                     -DHOST=${host_path}
+                    "-DPREFIXES=${prefixes}"
                     -DWORK=${CMAKE_CURRENT_BINARY_DIR}/asan/samples
                     -DEXPECT_FILE=${CMAKE_CURRENT_BINARY_DIR}/asan/samples/${test}.expect
                     -DASAN_CLANG=${STRATA_ASAN_CLANG}
@@ -573,6 +575,7 @@ if(STRATA_ENABLE_LLVM)
         strata_asan_sample(aot_extern_layout_test extern_layout.strata extern_layout_host.c)
         strata_asan_sample(aot_opaque_struct_test opaque_struct.strata opaque_struct_host.c)
         strata_asan_sample(aot_ffi_test ffi_pointers.strata "")
+        strata_asan_sample(aot_components_test components.strata components_host.c Alpha_ Beta_)
         strata_asan_sample(aot_ownership_test ownership.strata "")
         strata_asan_sample(aot_arrays_strings_test arrays_strings.strata "")
     endif()

@@ -27,7 +27,8 @@ static void EnsureTargetsInitialized(void)
 
 /* STRATA_ASAN=1: marks every defined function `sanitize_address` and runs LLVM's AddressSanitizer over the module,
    so the program links against clang's ASan runtime and reports use after free, overflow and double free in the
-   generated code (roadmap phase 5 gate). */
+   generated code (roadmap phase 5 gate). The variable's value, when it is not "1", is appended to the names of the
+   globals made external, so objects built from one source with different tags still link together. */
 static void InstrumentAddressSanitizer(LLVMModuleRef mod, LLVMTargetMachineRef tm)
 {
     /* The Windows runtime places the shadow memory itself; the code must load its address, not assume one. */
@@ -43,6 +44,18 @@ static void InstrumentAddressSanitizer(LLVMModuleRef mod, LLVMTargetMachineRef t
         if (linkage == LLVMInternalLinkage || linkage == LLVMPrivateLinkage)
         {
             LLVMSetLinkage(g, LLVMExternalLinkage);
+
+            const char* tag = getenv("STRATA_ASAN");
+            size_t length = 0;
+            const char* name = LLVMGetValueName2(g, &length);
+
+            if (tag && strcmp(tag, "1") != 0 && length > 0)
+            {
+                char renamed[512];
+
+                snprintf(renamed, sizeof renamed, "%.*s.%s", (int)length, name, tag);
+                LLVMSetValueName2(g, renamed, strlen(renamed));
+            }
         }
     }
 

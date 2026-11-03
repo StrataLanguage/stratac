@@ -227,6 +227,8 @@ void LLVMPositionBuilderBefore(LLVMBuilderRef b, LLVMValueRef inst);
 LLVMValueRef LLVMGetFirstInstruction(LLVMBasicBlockRef bb);
 LLVMValueRef LLVMGetNextInstruction(LLVMValueRef inst);
 LLVMValueRef LLVMGetFirstFunction(LLVMModuleRef m);
+const char* LLVMGetValueName2(LLVMValueRef v, size_t* length);
+void LLVMSetValueName2(LLVMValueRef v, const char* name, size_t length);
 typedef struct LLVMOpaqueAttributeRef* LLVMAttributeRef;
 LLVMContextRef LLVMGetModuleContext(LLVMModuleRef m);
 void LLVMParseCommandLineOptions(int argc, const char* const* argv, const char* overview);
