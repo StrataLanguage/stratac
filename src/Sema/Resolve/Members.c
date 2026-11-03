@@ -550,7 +550,7 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
     if (TypeNameHasArrayShape(&fieldDecl->type) && fieldDecl->type.length >= 0)
     {
         // Fixed arrays need matching shape; rows lay out row-major.
-        long total = 0;
+        ArrayLength total = 0;
         const TypeName* leaf = FixedArrayLeaf(&fieldDecl->type, &total);
 
         if (!ai->elementType)
@@ -569,7 +569,7 @@ static bool ResolveBracedFieldInit(Resolver* r, FieldDecl* fieldDecl, StructInit
             Vec flat;
             VecInit(&flat);
 
-            for (long z = 0; z < total; z++)
+            for (ArrayLength z = 0; z < total; z++)
             {
                 VecPush(&flat, NULL);
             }
@@ -870,7 +870,7 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
     /* A swizzle names lanes the vector has: `float2` has x and y, no z. */
     if (baseType)
     {
-        int lanes = IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name));
+        LaneCount lanes = IsNameSimdVector(TypeRegistryResolveAlias(&r->m_registry, baseType->name));
         size_t len = strlen(m->member);
         bool swizzle = lanes != 0 && len >= 1 && len <= 4;
 

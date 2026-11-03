@@ -45,7 +45,7 @@ typedef struct
     Vec m_loopFlows;
 
     /* Nesting depth of deferred statements being walked. */
-    int m_deferWalkDepth;
+    StackMark m_deferWalkDepth;
 
     /* The current path is dead (after return/break/continue). */
     bool m_unreachable;
@@ -56,7 +56,7 @@ typedef struct
    use (the #define/enum alternative for C++ consumers). */
 typedef struct
 {
-    long long i;
+    ConstInt i;
     double f;
     bool isFloat;
     bool isInt;       /* integer-kind type: usable as a fixed-array dimension */
@@ -98,7 +98,7 @@ typedef struct
 {
     Node* m_stmt;
     size_t m_frame;           /* index of the owning scope in m_scopeDecls */
-    size_t m_declMark;        /* names the scope had declared at the `defer` */
+    StackMark m_declMark;     /* names the scope had declared at the `defer` */
     DiagnosticEngine m_early; /* diagnostics from the walk at the `defer` itself */
     bool m_ranAtExit;
 } DeferEntry;
@@ -106,10 +106,10 @@ typedef struct
 /* The break/continue targets of one loop iteration being walked. */
 typedef struct
 {
-    FlowState m_breaks;    /* join of every `break`: part of the loop exit */
-    FlowState m_continues; /* join of every `continue`: a back edge */
-    size_t m_deferDepth;   /* m_deferFrames.count at body entry */
-    int m_deferWalkDepth;  /* m_deferWalkDepth when the loop began */
+    FlowState m_breaks;         /* join of every `break`: part of the loop exit */
+    FlowState m_continues;      /* join of every `continue`: a back edge */
+    StackMark m_deferDepth;     /* m_deferFrames.count at body entry */
+    StackMark m_deferWalkDepth; /* m_deferWalkDepth when the loop began */
 } LoopFlow;
 
 /* Upper bound on muted fixed-point passes per loop. The join is monotone
@@ -119,10 +119,10 @@ typedef struct
 /* Functions defined in one Resolve source file and called from another. */
 ConstIntType SemaConstIntType(PrimitiveType p);
 bool IsEnumUnderlyingType(const char* t);
-void EnumSignedRange(const char* underlying, bool* isUnsigned, int64_t* minVal, uint64_t* maxVal);
-bool EnumSignedValue(uint64_t mag, bool isNegative, int64_t* out);
-bool ResolvedConstIntValue(Node* n, uint64_t* mag, bool* isNegative);
-bool EnumConstFits(const char* underlying, uint64_t mag, bool isNegative);
+void EnumSignedRange(const char* underlying, bool* isUnsigned, ConstInt* minVal, ConstUInt* maxVal);
+bool EnumSignedValue(ConstUInt mag, bool isNegative, ConstInt* out);
+bool ResolvedConstIntValue(Node* n, ConstUInt* mag, bool* isNegative);
+bool EnumConstFits(const char* underlying, ConstUInt mag, bool isNegative);
 void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName* target);
 void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName* lt);
 void CheckConstFloatToInt(DiagnosticEngine* diag, const CastExpr* cast);
@@ -143,7 +143,7 @@ bool IsIncompleteStruct(const TypeRegistry* reg, const char* name);
 void ResetStrMap(StrMap* m);
 size_t NamedParamCount(const FunctionDecl* f);
 bool TypeTreeHasFixedArray(const TypeName* t);
-const TypeName* FixedArrayLeaf(const TypeName* t, long* totalCount);
+const TypeName* FixedArrayLeaf(const TypeName* t, ArrayLength* totalCount);
 const TypeName* UnwrapBoxPtr(const TypeName* t);
 bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* member);
 bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExpr* ai);
@@ -216,7 +216,7 @@ PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char
 bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope);
 bool TryResolveScalarPseudoConst(Resolver* r, MemberExpr* m);
 bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope);
-unsigned ConstBitWidth(const Node* n);
+BitWidth ConstBitWidth(const Node* n);
 void ResolveEnums(Module* mod, DiagnosticEngine* diag, const TypeRegistry* registry);
 void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, const TypeRegistry* registry);
 bool OverloadTakesFixedView(Resolver* r, const char* name, const TypeName* fixedType, int fileId);

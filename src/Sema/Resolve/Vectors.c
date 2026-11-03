@@ -38,7 +38,7 @@ static bool SimdVector4ConstructValidate(Resolver* r, CallExpr* c, StrMap* scope
 bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // The function name is the same as the type name, so we can use TypeUtil functions on it.
-    int numLanes = IsNameSimdVector(c->callee);
+    LaneCount numLanes = IsNameSimdVector(c->callee);
     if (numLanes == 0)
     {
         return false;
@@ -94,8 +94,8 @@ bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
     const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
     const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
 
-    int lanes0 = IsNameSimdVector(resolved0);
-    int lanes1 = IsNameSimdVector(resolved1);
+    LaneCount lanes0 = IsNameSimdVector(resolved0);
+    LaneCount lanes1 = IsNameSimdVector(resolved1);
 
     if (lanes0 == 0 || lanes1 == 0)
     {
@@ -135,7 +135,7 @@ bool ResolveVector1Arg(Resolver* r, CallExpr* c, StrMap* scope)
 
     const char* resolved0 = vAType ? TypeRegistryResolveAlias(&r->m_registry, vAType->name) : "";
 
-    int lanes = IsNameSimdVector(resolved0);
+    LaneCount lanes = IsNameSimdVector(resolved0);
 
     if (lanes == 0)
     {

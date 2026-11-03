@@ -16,9 +16,9 @@ bool TypeTreeHasFixedArray(const TypeName* t)
 }
 
 /* Returns the innermost non-fixed node and the product of leading fixed dimensions (1 if none). */
-const TypeName* FixedArrayLeaf(const TypeName* t, long* totalCount)
+const TypeName* FixedArrayLeaf(const TypeName* t, ArrayLength* totalCount)
 {
-    long count = 1;
+    ArrayLength count = 1;
 
     while (t && TypeNameHasArrayShape(t) && t->length >= 0)
     {
@@ -73,7 +73,7 @@ bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* me
 bool PlaceFixedArrayInit(Vec* flat, size_t base, const TypeName* t, ArrayInitExpr* ai)
 {
     const TypeName* rowType = t->elem;
-    long innerTotal = 0;
+    ArrayLength innerTotal = 0;
 
     FixedArrayLeaf(rowType, &innerTotal);
 
