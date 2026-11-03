@@ -301,7 +301,7 @@ static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultV
         return LLVMConstReal(typeDesc.type, value->floatLanes[0]);
     }
 
-    return ConstIntTrunc(typeDesc.type, (unsigned long long)value->intValue);
+    return ConstIntTrunc(typeDesc.type, (ConstUInt)value->intValue);
 }
 
 /* `structName` with its field defaults applied, or NULL when that is all-zero. */
@@ -339,7 +339,7 @@ static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
         const FieldDecl* field = (const FieldDecl*)VecGet(&st->fields, i);
         LLVMValueRef value = field->folded.isSet ? FoldedDefaultConstant(Resolve(b, &field->type), &field->folded)
                                                  : TypeDefaultConstant(b, &field->type);
-        unsigned member = PhysicalFieldIndex(st, (int)i);
+        FieldIndex member = PhysicalFieldIndex(st, (int)i);
 
         if (value && member < memberCount)
         {
@@ -384,7 +384,7 @@ static LLVMValueRef TypeDefaultConstant(Builder* b, const TypeName* type)
 
         LLVMValueRef* elements = (LLVMValueRef*)arena_alloc(b->m_arena, (size_t)type->length * sizeof(LLVMValueRef));
 
-        for (long i = 0; i < type->length; i++)
+        for (ArrayLength i = 0; i < type->length; i++)
         {
             elements[i] = element;
         }

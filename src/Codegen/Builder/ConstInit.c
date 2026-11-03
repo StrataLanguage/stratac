@@ -36,7 +36,7 @@ ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
         ConstInitVal r;
         r.kind = CIK_FLOAT;
         r.i = 0;
-        r.f = (double)(long long)v.i;
+        r.f = (double)(ConstInt)v.i;
         r.ity = (ConstIntType){0, false};
         return r;
     }
@@ -46,7 +46,7 @@ ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
     r.kind = CIK_INT;
     if (v.kind == CIK_FLOAT)
     {
-        r.i = (unsigned long long)(long long)v.f;
+        r.i = (ConstUInt)(ConstInt)v.f;
     }
     r.f = 0.0;
     r.ity = ConstIntTypeOfTd(td);
@@ -171,8 +171,8 @@ bool FoldBinaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
     {
         if (lFloat || rFloat)
         {
-            double a = lFloat ? l.f : (double)(long long)l.i;
-            double z = rFloat ? r.f : (double)(long long)r.i;
+            double a = lFloat ? l.f : (double)(ConstInt)l.i;
+            double z = rFloat ? r.f : (double)(ConstInt)r.i;
 
             out->kind = CIK_FLOAT;
             out->i = 0;
@@ -207,15 +207,15 @@ bool FoldBinaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 
         if (lFloat || rFloat)
         {
-            double a = lFloat ? l.f : (double)(long long)l.i;
-            double z = rFloat ? r.f : (double)(long long)r.i;
+            double a = lFloat ? l.f : (double)(ConstInt)l.i;
+            double z = rFloat ? r.f : (double)(ConstInt)r.i;
 
             if (!ConstFoldFloatCompare(e->op, a, z, &res))
             {
                 return false;
             }
         }
-        else if (!ConstFoldIntCompare(e->op, (long long)l.i, (long long)r.i, &res))
+        else if (!ConstFoldIntCompare(e->op, (ConstInt)l.i, (ConstInt)r.i, &res))
         {
             return false;
         }

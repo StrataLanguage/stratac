@@ -3,14 +3,14 @@
 
 /* LLVM member index for logical field `idx` of a struct, mapping through the
    computed layout (explicit fieldoffsets insert padding members). */
-unsigned PhysicalFieldIndex(const StructType* st, int idx)
+FieldIndex PhysicalFieldIndex(const StructType* st, int idx)
 {
     if (st && st->hasLayout && st->physicalIndex && idx >= 0 && (size_t)idx < st->fields.count)
     {
-        return (unsigned)st->physicalIndex[idx];
+        return st->physicalIndex[idx];
     }
 
-    return (unsigned)(idx < 0 ? 0 : idx);
+    return (FieldIndex)(idx < 0 ? 0 : idx);
 }
 
 /* `agg` with logical field `idx` set to `value`. A union's fields all overlay byte 0, so they go
@@ -210,7 +210,7 @@ LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName)
 LLVMValueRef GlobalFieldPtr(Builder* b, const char* name)
 {
     void* raw = StrMapGet(&b->m_globalFieldIndex, name);
-    unsigned index = (unsigned)((uintptr_t)raw - 1);
+    FieldIndex index = (FieldIndex)((uintptr_t)raw - 1);
     LLVMValueRef idx[2] = {IdxConst(b, 0), IdxConst(b, index)};
     return LLVMBuildGEP2(b->m_builder, b->m_globalsStructTy, b->m_curGlobalsPtr, idx, 2, "gfld");
 }
@@ -415,7 +415,7 @@ Value EmitStructInit(Builder* b, StructInitExpr* n)
                 }
 
                 Value ev = Coerce(b, EmitExpr(b, elem), elemTd);
-                arr = InsertFixedElem(b, arr, ev.value, &fieldDecl->type, (long)k);
+                arr = InsertFixedElem(b, arr, ev.value, &fieldDecl->type, (ArrayLength)k);
             }
 
             agg = InsertStructField(b, st, agg, (int)idx, arr);

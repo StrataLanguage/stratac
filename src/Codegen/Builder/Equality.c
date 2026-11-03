@@ -348,7 +348,7 @@ static void EmitEqHelperBody(Builder* b, LLVMValueRef fn, const TypeDesc* td, bo
         TypeDesc elemTd = Resolve(b, td->arrayInner);
         LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
-        for (long k = 0; k < td->fixedLength; k++)
+        for (ArrayLength k = 0; k < td->fixedLength; k++)
         {
             LLVMValueRef idx[1] = {IdxConst(b, (unsigned)k)};
             LLVMValueRef ka = LLVMBuildGEP2(b->m_builder, elemTy, a, idx, 1, "eq.ka");

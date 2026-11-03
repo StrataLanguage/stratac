@@ -45,9 +45,9 @@ typedef enum
 typedef struct
 {
     ConstInitKind kind;
-    unsigned long long i; // Int/bool payload.
-    double f;             // Float payload.
-    ConstIntType ity;     // Runtime integer type of `i` (see ConstFold.h); bits 0 = no narrowing.
+    ConstUInt i;      // Int/bool payload.
+    double f;         // Float payload.
+    ConstIntType ity; // Runtime integer type of `i` (see ConstFold.h); bits 0 = no narrowing.
 } ConstInitVal;
 
 // A `const` scalar global: no LLVM global emitted, uses inline the value.
@@ -81,9 +81,9 @@ typedef struct
 {
     LLVMBasicBlockRef cont;
     LLVMBasicBlockRef end;
-    size_t bodyMark;   /* owning-locals count before the loop body (dropped on break/continue;
-                          a `for` header's own locals are dropped at for.end) */
-    size_t scopeDepth; /* number of active defer scopes when the loop began (defers exit on break/continue) */
+    StackMark bodyMark;   /* owning-locals count before the loop body (dropped on break/continue;
+                            a `for` header's own locals are dropped at for.end) */
+    StackMark scopeDepth; /* number of active defer scopes when the loop began (defers exit on break/continue) */
 } Loop;
 
 /* A `defer` scope: holds the statements queued to run at the block's exit. */
@@ -118,7 +118,7 @@ typedef struct TempPart
     const Node* node;
     LLVMValueRef addr;
     TypeDesc td;
-    size_t tempIdx; /* index in m_temps of the owning temporary */
+    StackMark tempIdx; /* index in m_temps of the owning temporary */
 } TempPart;
 
 typedef struct PseudoCallDefinition
@@ -149,7 +149,7 @@ LLVMBasicBlockRef NewBb(Builder* b, const char* name);
 LLVMValueRef EntryAlloca(Builder* b, LLVMTypeRef type, const char* name);
 void PositionAtEnd(Builder* b, LLVMBasicBlockRef bb);
 void Br(Builder* b, LLVMBasicBlockRef dest);
-LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, unsigned long long v);
+LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, ConstUInt v);
 LLVMValueRef IdxConst(Builder* b, unsigned i);
 LLVMValueRef SizeOfConst(Builder* b, LLVMTypeRef ty);
 LLVMValueRef EntryAllocaZeroed(Builder* b, LLVMTypeRef type, const char* name);
@@ -208,15 +208,15 @@ LLVMValueRef ArrayCapPtr(Builder* b, LLVMValueRef slot);
 LLVMValueRef WidenLen(Builder* b, LLVMValueRef v);
 LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef lenVal, LLVMValueRef dataPtr,
                                 LLVMTypeRef elemTy, TypeDesc elemTd, bool aliased);
-LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, long length, LLVMValueRef arrPtr,
+LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, ArrayLength length, LLVMValueRef arrPtr,
                                      LLVMTypeRef arrTy, TypeDesc elemTd);
 Value EmitArrayBuiltin(Builder* b, CallExpr* n);
 Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
                          LLVMValueRef oldData);
 Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer, bool borrow);
 Value EmitArrayInit(Builder* b, ArrayInitExpr* n);
-long FixedDimProduct(const TypeName* t);
-LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, long k);
+ArrayLength FixedDimProduct(const TypeName* t);
+LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, ArrayLength k);
 
 /* Boxes.c */
 Value DerefBoxValue(Builder* b, Value value);
@@ -229,7 +229,7 @@ bool BoxIntoInlineOwning(Builder* b, TypeDesc targetTd, TypeDesc valueTd);
 Value TakeBoxContents(Builder* b, Value box, Node* srcNode);
 
 /* Structs.c */
-unsigned PhysicalFieldIndex(const StructType* st, int idx);
+FieldIndex PhysicalFieldIndex(const StructType* st, int idx);
 LLVMValueRef InsertStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMValueRef value);
 LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMTypeRef fieldTy);
 LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
@@ -246,15 +246,15 @@ bool ElemNeedsScratchDummy(Builder* b, TypeDesc td);
 void EmitDummyInit(Builder* b, LLVMValueRef slot, TypeDesc td);
 void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
 void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td);
-void EmitDrops(Builder* b, size_t fromIndex);
+void EmitDrops(Builder* b, StackMark fromIndex);
 void NoteFreshOwned(Builder* b, Value v);
 const TempPart* FindTempPart(Builder* b, const Node* node);
 void BorrowTempPart(Builder* b, Value base, const Node* baseNode, const Node* node, TypeDesc pieceTd,
-                    LLVMValueRef heapAddr, LLVMTypeRef structTy, int fieldIdx);
+                    LLVMValueRef heapAddr, LLVMTypeRef structTy, FieldIndex fieldIdx);
 void BorrowTemp(Builder* b, Value src, TypeDesc resultTd);
 LLVMValueRef ClaimTemp(Builder* b, Value src);
 LLVMValueRef ParkTemp(Builder* b, Value v);
-void FlushTemps(Builder* b, size_t mark);
+void FlushTemps(Builder* b, StackMark mark);
 void ResetTemps(Builder* b);
 Node* MovedSource(Node* n);
 void NullMovedSource(Builder* b, Node* n);

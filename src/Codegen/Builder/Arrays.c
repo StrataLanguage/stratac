@@ -146,7 +146,7 @@ static LLVMValueRef FixedElemPtr(Builder* b, LLVMValueRef arrPtr, LLVMValueRef i
 /* Bounds-checked variant for fixed arrays. The length is the compile-time
    dimension; elements are never owning (enforced by sema), so the JIT dummy
    is a shared slot and never needs per-site scratch. */
-LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, long length, LLVMValueRef arrPtr,
+LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, ArrayLength length, LLVMValueRef arrPtr,
                                      LLVMTypeRef arrTy, TypeDesc elemTd)
 {
     LLVMValueRef lenVal = LLVMConstInt(I64Ty(b), (unsigned long long)(length < 0 ? 0 : length), 0);
@@ -1123,9 +1123,9 @@ Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
 
 /* Product of the fixed dimensions at/below `t` (1 once a non-fixed node is
    reached). Used to map a flat literal index onto nested array dimensions. */
-long FixedDimProduct(const TypeName* t)
+ArrayLength FixedDimProduct(const TypeName* t)
 {
-    long count = 1;
+    ArrayLength count = 1;
 
     while (t && TypeNameHasArrayShape(t) && t->length >= 0)
     {
@@ -1139,7 +1139,7 @@ long FixedDimProduct(const TypeName* t)
 /* Inserts element `k` (a FLAT index, C-initialized-array style) of a
    (possibly nested) fixed array value, descending through inner fixed
    dimensions with extract/insert pairs. */
-LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, long k)
+LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, ArrayLength k)
 {
     if (!(TypeNameHasArrayShape(arrType) && arrType->length >= 0))
     {
@@ -1148,16 +1148,16 @@ LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, con
 
     if (arrType->elem && TypeNameHasArrayShape(arrType->elem) && arrType->elem->length >= 0)
     {
-        long innerCount = FixedDimProduct(arrType->elem);
-        long outer = innerCount > 0 ? k / innerCount : 0;
-        long inner = innerCount > 0 ? k % innerCount : 0;
+        ArrayLength innerCount = FixedDimProduct(arrType->elem);
+        ArrayLength outer = innerCount > 0 ? k / innerCount : 0;
+        ArrayLength inner = innerCount > 0 ? k % innerCount : 0;
 
-        LLVMValueRef sub = LLVMBuildExtractValue(b->m_builder, agg, (unsigned)outer, "sub");
+        LLVMValueRef sub = LLVMBuildExtractValue(b->m_builder, agg, (FieldIndex)outer, "sub");
         sub = InsertFixedElem(b, sub, val, arrType->elem, inner);
-        return LLVMBuildInsertValue(b->m_builder, agg, sub, (unsigned)outer, "ins");
+        return LLVMBuildInsertValue(b->m_builder, agg, sub, (FieldIndex)outer, "ins");
     }
 
-    return LLVMBuildInsertValue(b->m_builder, agg, val, (unsigned)k, "ins");
+    return LLVMBuildInsertValue(b->m_builder, agg, val, (FieldIndex)k, "ins");
 }
 
 void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
@@ -1192,9 +1192,9 @@ void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
         {
             /* `{ value; N }`: the value once, in every element. */
             Value ev = Coerce(b, EmitExpr(b, (Node*)VecGet(&ai->elements, 0)), elemTd);
-            long total = FixedDimProduct(&varDecl->type);
+            ArrayLength total = FixedDimProduct(&varDecl->type);
 
-            for (long k = 0; k < total; k++)
+            for (ArrayLength k = 0; k < total; k++)
             {
                 arr = InsertFixedElem(b, arr, ev.value, &varDecl->type, k);
             }
@@ -1210,7 +1210,7 @@ void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
             }
 
             Value ev = Coerce(b, EmitExpr(b, elem), elemTd);
-            arr = InsertFixedElem(b, arr, ev.value, &varDecl->type, (long)k);
+            arr = InsertFixedElem(b, arr, ev.value, &varDecl->type, (ArrayLength)k);
         }
     }
 

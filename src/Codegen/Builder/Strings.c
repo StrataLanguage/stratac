@@ -612,7 +612,7 @@ Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
 }
 
 /* The length of the text in a `byte[N]` buffer: up to its first NUL, or all N bytes. */
-static LLVMValueRef BuildBoundedStrLen(Builder* b, LLVMValueRef data, long capacity)
+static LLVMValueRef BuildBoundedStrLen(Builder* b, LLVMValueRef data, ArrayLength capacity)
 {
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
     LLVMValueRef limit = LLVMConstInt(I64Ty(b), (unsigned long long)capacity, 0);
@@ -660,7 +660,7 @@ Value EmitTextCast(Builder* b, CastExpr* cast)
 
     LValue lv = EmitLValue(b, cast->operand);
     LLVMValueRef data;
-    long capacity;
+    ArrayLength capacity;
 
     if (lv.valid && !lv.vectorLane)
     {

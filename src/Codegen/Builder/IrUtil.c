@@ -182,7 +182,7 @@ void Br(Builder* b, LLVMBasicBlockRef dest)
    64 bits; LLVMConstInt(ty, v, 0) on a narrower type then leaves the bits above the width set in the constant's
    internal representation. It prints as the right value but compares unequal to the canonical constant, so the
    optimizer folds `icmp eq` of the two to false. Masking to the type's width keeps it canonical. */
-LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, unsigned long long v)
+LLVMValueRef ConstIntTrunc(LLVMTypeRef ty, ConstUInt v)
 {
     unsigned width = LLVMGetIntTypeWidth(ty);
 
