@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "Core/Types.h"
+
 // -- Macros
 
 #define STRATA_CRASH(msg)                                                                                              \
