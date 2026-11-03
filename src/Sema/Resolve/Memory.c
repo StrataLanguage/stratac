@@ -263,6 +263,152 @@ const TypeName* MemoryBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
     return NULL; /* store: void */
 }
 
+static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->args.count != 1 || c->typeArg)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'addressof' expects 1 argument, got %zu", c->args.count);
+        return true;
+    }
+
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+
+    if (IsAddressOfFunctionArg(r, c, scope))
+    {
+        bool ambiguous = false;
+        const char* fnName = ((IdentExpr*)arg0)->name;
+        FunctionDecl* fn = FindSingleFunction(r, fnName, c->base.range.fileId, &ambiguous);
+
+        if (!fn)
+        {
+            DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
+            return true;
+        }
+
+        if ((!fn->isExtern && !fn->isExport) || fn->typeParam)
+        {
+            DiagErrorFmt(r->m_diag, arg0->range,
+                         "cannot take the address of '%s': only extern and '@export' functions have a C ABI", fnName);
+            return true;
+        }
+
+        c->addressOfFunction = fn;
+        c->isIntrinsicCall = true;
+        return true;
+    }
+
+    while (arg0->kind == NodeCast)
+    {
+        arg0 = ((CastExpr*)arg0)->operand;
+    }
+
+    if (!IsLValueNode(arg0))
+    {
+        DiagError(r->m_diag, arg0->range, "'addressof' expects a variable, field, element or function");
+        return true;
+    }
+
+    if (arg0->kind == NodeMember
+        && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->base_node, scope), ((MemberExpr*)arg0)->member))
+    {
+        DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
+        return true;
+    }
+
+    c->isIntrinsicCall = true;
+    return true;
+}
+
+static bool ResolveSizeofBuiltin(Resolver* r, CallExpr* c, const char* name)
+{
+    if (c->args.count != 0)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' takes no arguments: write '%s<T>()'", name, name);
+        return true;
+    }
+
+    if (c->typeArg && TypeNameIsDynamicArray(c->typeArg))
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'%s' of a dynamic array is not a fixed size", name);
+        return true;
+    }
+
+    if (!c->typeArg)
+    {
+        CheckPlainDataTypeArg(r, c, NULL);
+        return true;
+    }
+
+    const TypeName* t = c->typeArg;
+    bool known = t->primitiveType != PrimNone || TypeNameHasArrayShape(t) || TypeNameIsBox(t) || TypeNameIsOptional(t)
+                 || TypeRegistryIsUserType(&r->m_registry, t->name);
+
+    if (t->primitiveType == PrimVoid || !known)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "unknown type '%s'", c->typeArg->name);
+        return true;
+    }
+
+    if (!TypeNameIsBox(t) && !TypeNameIsOptional(t) && IsIncompleteStruct(&r->m_registry, t->name))
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "cannot take the %s of incomplete type '%s'; its size is unknown", name,
+                     t->name);
+        return true;
+    }
+
+    c->isIntrinsicCall = true;
+    return true;
+}
+
+static bool ResolveLoadBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->args.count != 1)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'load' expects 1 argument, got %zu", c->args.count);
+        return true;
+    }
+
+    if (!CheckPlainDataTypeArg(r, c, c->typeArg) || !CheckPtrOperand(r, c, (Node*)VecGet(&c->args, 0), scope))
+    {
+        return true;
+    }
+
+    c->isIntrinsicCall = true;
+    return true;
+}
+
+static bool ResolveStoreBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    if (c->args.count != 2)
+    {
+        DiagErrorFmt(r->m_diag, c->base.range, "'store' expects 2 arguments (ptr, value), got %zu", c->args.count);
+        return true;
+    }
+
+    Node* value = (Node*)VecGet(&c->args, 1);
+    const TypeName* valueType = InferType(r, value, scope);
+    const TypeName* t = c->typeArg ? c->typeArg : valueType;
+
+    if (!CheckPlainDataTypeArg(r, c, t) || !CheckPtrOperand(r, c, (Node*)VecGet(&c->args, 0), scope))
+    {
+        return true;
+    }
+
+    if (c->typeArg && valueType && !IsAssignableType(r, c->typeArg, valueType))
+    {
+        DiagErrorFmt(r->m_diag, value->range, "cannot store '%s' as '%s'", valueType->name, c->typeArg->name);
+        return true;
+    }
+
+    if (!c->typeArg)
+    {
+        c->typeArg = (TypeName*)arena_dup(r->m_arena, valueType, sizeof(TypeName));
+    }
+
+    c->isIntrinsicCall = true;
+    return true;
+}
+
 /* addressof(x) -> ptr        the address of a variable, field or element (a box: its cell), or of an
                               extern / `@export` function
    sizeof<T>() / alignof<T>() -> ulong
@@ -280,149 +426,22 @@ bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     if (strcmp(name, "addressof") == 0)
     {
-        if (c->args.count != 1 || c->typeArg)
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "'addressof' expects 1 argument, got %zu", c->args.count);
-            return true;
-        }
-
-        Node* arg0 = (Node*)VecGet(&c->args, 0);
-
-        if (IsAddressOfFunctionArg(r, c, scope))
-        {
-            bool ambiguous = false;
-            const char* fnName = ((IdentExpr*)arg0)->name;
-            FunctionDecl* fn = FindSingleFunction(r, fnName, c->base.range.fileId, &ambiguous);
-
-            if (!fn)
-            {
-                DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
-                return true;
-            }
-
-            if ((!fn->isExtern && !fn->isExport) || fn->typeParam)
-            {
-                DiagErrorFmt(r->m_diag, arg0->range,
-                             "cannot take the address of '%s': only extern and '@export' functions have a C ABI",
-                             fnName);
-                return true;
-            }
-
-            c->addressOfFunction = fn;
-            c->isIntrinsicCall = true;
-            return true;
-        }
-
-        while (arg0->kind == NodeCast)
-        {
-            arg0 = ((CastExpr*)arg0)->operand;
-        }
-
-        if (!IsLValueNode(arg0))
-        {
-            DiagError(r->m_diag, arg0->range, "'addressof' expects a variable, field, element or function");
-            return true;
-        }
-
-        if (arg0->kind == NodeMember
-            && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->base_node, scope), ((MemberExpr*)arg0)->member))
-        {
-            DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
-            return true;
-        }
-
-        c->isIntrinsicCall = true;
-        return true;
+        return ResolveAddressOfBuiltin(r, c, scope);
     }
 
     if (strcmp(name, "sizeof") == 0 || strcmp(name, "alignof") == 0)
     {
-        if (c->args.count != 0)
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "'%s' takes no arguments: write '%s<T>()'", name, name);
-            return true;
-        }
-
-        if (c->typeArg && TypeNameIsDynamicArray(c->typeArg))
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "'%s' of a dynamic array is not a fixed size", name);
-            return true;
-        }
-
-        if (!c->typeArg)
-        {
-            CheckPlainDataTypeArg(r, c, NULL);
-            return true;
-        }
-
-        const TypeName* t = c->typeArg;
-        bool known = t->primitiveType != PrimNone || TypeNameHasArrayShape(t) || TypeNameIsBox(t)
-                     || TypeNameIsOptional(t) || TypeRegistryIsUserType(&r->m_registry, t->name);
-
-        if (t->primitiveType == PrimVoid || !known)
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "unknown type '%s'", c->typeArg->name);
-            return true;
-        }
-
-        if (!TypeNameIsBox(t) && !TypeNameIsOptional(t) && IsIncompleteStruct(&r->m_registry, t->name))
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "cannot take the %s of incomplete type '%s'; its size is unknown",
-                         name, t->name);
-            return true;
-        }
-
-        c->isIntrinsicCall = true;
-        return true;
+        return ResolveSizeofBuiltin(r, c, name);
     }
 
     if (strcmp(name, "load") == 0)
     {
-        if (c->args.count != 1)
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "'load' expects 1 argument, got %zu", c->args.count);
-            return true;
-        }
-
-        if (!CheckPlainDataTypeArg(r, c, c->typeArg) || !CheckPtrOperand(r, c, (Node*)VecGet(&c->args, 0), scope))
-        {
-            return true;
-        }
-
-        c->isIntrinsicCall = true;
-        return true;
+        return ResolveLoadBuiltin(r, c, scope);
     }
 
     if (strcmp(name, "store") == 0)
     {
-        if (c->args.count != 2)
-        {
-            DiagErrorFmt(r->m_diag, c->base.range, "'store' expects 2 arguments (ptr, value), got %zu", c->args.count);
-            return true;
-        }
-
-        Node* value = (Node*)VecGet(&c->args, 1);
-        const TypeName* valueType = InferType(r, value, scope);
-        const TypeName* t = c->typeArg ? c->typeArg : valueType;
-
-        if (!CheckPlainDataTypeArg(r, c, t) || !CheckPtrOperand(r, c, (Node*)VecGet(&c->args, 0), scope))
-        {
-            return true;
-        }
-
-        if (c->typeArg && valueType && !IsAssignableType(r, c->typeArg, valueType))
-        {
-            DiagErrorFmt(r->m_diag, value->range, "cannot store '%s' as '%s'", valueType->name, c->typeArg->name);
-            return true;
-        }
-
-        if (!c->typeArg)
-        {
-            c->typeArg = (TypeName*)arena_dup(r->m_arena, valueType, sizeof(TypeName));
-        }
-
-        c->isIntrinsicCall = true;
-        return true;
+        return ResolveStoreBuiltin(r, c, scope);
     }
 
     return false;
