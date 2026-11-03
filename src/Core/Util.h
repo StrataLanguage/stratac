@@ -59,12 +59,12 @@ typedef struct ArenaChunk
 typedef struct Arena
 {
     ArenaChunk* head;
-    size_t default_chunk;
+    size_t defaultChunk;
     char* ptr;
     char* end;
 } Arena;
 
-void ArenaInit(Arena* a, size_t initial_chunk);
+void ArenaInit(Arena* a, size_t initialChunk);
 void ArenaFree(Arena* a);
 void* ArenaAlloc(Arena* a, size_t size);
 void* ArenaAllocAligned(Arena* a, size_t size, size_t align);

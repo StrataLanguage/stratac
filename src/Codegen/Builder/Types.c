@@ -274,7 +274,7 @@ LLVMValueRef ZeroOf(TypeDesc typeDesc)
 }
 
 // Marks "computed, no defaults" (and "being computed") in m_structDefaults.
-static char s_noStructDefault;
+static char noStructDefault;
 
 /* A field default folded by sema, as a constant of the field's own type. */
 static LLVMValueRef FoldedDefaultConstant(TypeDesc typeDesc, const FieldDefaultValue* value)
@@ -308,10 +308,10 @@ static LLVMValueRef StructDefaultConstant(Builder* b, const char* structName)
 
     if (cached)
     {
-        return cached == &s_noStructDefault ? NULL : (LLVMValueRef)cached;
+        return cached == &noStructDefault ? NULL : (LLVMValueRef)cached;
     }
 
-    StrMapPut(&b->m_structDefaults, structName, &s_noStructDefault);
+    StrMapPut(&b->m_structDefaults, structName, &noStructDefault);
 
     const StructType* st = TypeRegistryFind(&b->m_registry, structName);
     LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->m_structTypes, structName);

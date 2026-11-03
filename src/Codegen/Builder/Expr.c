@@ -20,7 +20,7 @@ Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
 {
     *found = false;
 
-    const char* handleName = StaticExprTypeName(b, m->base_node);
+    const char* handleName = StaticExprTypeName(b, m->baseNode);
 
     if (!handleName || !TypeRegistryIsOpaque(&b->m_registry, handleName))
     {
@@ -51,7 +51,7 @@ Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
     tmp.callee = (char*)acc->mangledName;
     tmp.resolvedDecl = acc;
     VecInit(&tmp.args);
-    VecPush(&tmp.args, m->base_node);
+    VecPush(&tmp.args, m->baseNode);
 
     if (valueNode)
     {
@@ -170,7 +170,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
 {
     LValue none = {0};
 
-    LValue base = EmitLValue(b, m->base_node);
+    LValue base = EmitLValue(b, m->baseNode);
 
     if (!base.valid)
     {
@@ -264,7 +264,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 {
     LValue none = {0};
 
-    LValue base = EmitLValue(b, ix->base_node);
+    LValue base = EmitLValue(b, ix->baseNode);
 
     if (base.valid && TypeDescIsCString(&base.typeDesc))
     {
@@ -371,7 +371,7 @@ Value EmitEnumConstMember(Builder* b, MemberExpr* n)
  * Returns false when the name is not one, so the caller falls through. */
 bool TryEmitScalarPseudoMember(Builder* b, MemberExpr* n, Value* out)
 {
-    TypeName tn = TypeNameLeaf((char*)((IdentExpr*)n->base_node)->name);
+    TypeName tn = TypeNameLeaf((char*)((IdentExpr*)n->baseNode)->name);
     TypeDesc td = Resolve(b, &tn);
 
     uint64_t intVal = 0;
@@ -458,7 +458,7 @@ bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
 
         if (TypeDescIsOwning(b, &fieldTypeDesc))
         {
-            BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, ptr, NULL, 0);
+            BorrowTempPart(b, base, n->baseNode, (Node*)n, fieldTypeDesc, ptr, NULL, 0);
         }
         else
         {
@@ -519,7 +519,7 @@ bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
 
         if (TypeDescIsOwning(b, &fieldTypeDesc))
         {
-            BorrowTempPart(b, base, n->base_node, (Node*)n, fieldTypeDesc, NULL, base.typeDesc.type,
+            BorrowTempPart(b, base, n->baseNode, (Node*)n, fieldTypeDesc, NULL, base.typeDesc.type,
                            PhysicalFieldIndex(st, idx));
         }
         else
@@ -618,7 +618,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         return EmitMemberLValueRead(b, lvalue);
     }
 
-    Value base = EmitExpr(b, n->base_node);
+    Value base = EmitExpr(b, n->baseNode);
 
     return EmitMemberOfValue(b, n, base);
 }
@@ -637,7 +637,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 
     /* Fallback: base is a non-addressable array rvalue (literal or call
        result), e.g. {1,2,3}[0] or MakeArr()[2]. */
-    Value base = EmitExpr(b, n->base_node);
+    Value base = EmitExpr(b, n->baseNode);
 
     if (TypeDescIsFixedArray(&base.typeDesc))
     {
@@ -682,7 +682,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 
     if (TypeDescIsOwning(b, &elemTd))
     {
-        BorrowTempPart(b, base, n->base_node, (Node*)n, elemTd, elemAddr, NULL, 0);
+        BorrowTempPart(b, base, n->baseNode, (Node*)n, elemTd, elemAddr, NULL, 0);
     }
     else
     {

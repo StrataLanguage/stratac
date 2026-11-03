@@ -188,25 +188,25 @@ static void DumpImport(Node* n, Sb* out)
 
 static void DumpHandle(Node* n, Sb* out)
 {
-    HandleDecl* handle_decl = AsNode(HandleDecl, n);
-    SbPrintf(out, "handle %s  ; opaque\n", handle_decl->name);
+    HandleDecl* handleDecl = AsNode(HandleDecl, n);
+    SbPrintf(out, "handle %s  ; opaque\n", handleDecl->name);
     return;
 }
 
 static void DumpEnum(Node* n, int indent, Sb* out)
 {
-    EnumDecl* enum_decl = AsNode(EnumDecl, n);
-    SbPrintf(out, "enum %s", enum_decl->name);
+    EnumDecl* enumDecl = AsNode(EnumDecl, n);
+    SbPrintf(out, "enum %s", enumDecl->name);
 
-    if (enum_decl->underlyingType)
+    if (enumDecl->underlyingType)
     {
-        SbPrintf(out, " : %s", enum_decl->underlyingType);
+        SbPrintf(out, " : %s", enumDecl->underlyingType);
     }
 
     SbPuts(out, " {\n");
-    for (size_t i = 0; i < enum_decl->members.count; i++)
+    for (size_t i = 0; i < enumDecl->members.count; i++)
     {
-        EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&enum_decl->members, i);
+        EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&enumDecl->members, i);
         Pad(indent + 4, out);
 
         if (member->hasExplicitValue)
@@ -226,21 +226,21 @@ static void DumpEnum(Node* n, int indent, Sb* out)
 
 static void DumpStruct(Node* n, int indent, Sb* out)
 {
-    StructDecl* struct_decl = AsNode(StructDecl, n);
-    if (struct_decl->isTypeAlias)
+    StructDecl* structDecl = AsNode(StructDecl, n);
+    if (structDecl->isTypeAlias)
     {
-        SbPrintf(out, "struct %s = %s;\n", struct_decl->name, struct_decl->underlyingType);
+        SbPrintf(out, "struct %s = %s;\n", structDecl->name, structDecl->underlyingType);
         return;
     }
-    if (struct_decl->incomplete)
+    if (structDecl->incomplete)
     {
-        SbPrintf(out, "struct %s;  ; forward\n", struct_decl->name);
+        SbPrintf(out, "struct %s;  ; forward\n", structDecl->name);
         return;
     }
-    SbPrintf(out, "%sstruct %s {\n", struct_decl->isExtern ? "extern " : "", struct_decl->name);
-    for (size_t i = 0; i < struct_decl->fields.count; i++)
+    SbPrintf(out, "%sstruct %s {\n", structDecl->isExtern ? "extern " : "", structDecl->name);
+    for (size_t i = 0; i < structDecl->fields.count; i++)
     {
-        FieldDecl* field = (FieldDecl*)VecGet(&struct_decl->fields, i);
+        FieldDecl* field = (FieldDecl*)VecGet(&structDecl->fields, i);
         Pad(indent + 4, out);
         if (field->offset >= 0)
         {
@@ -255,30 +255,30 @@ static void DumpStruct(Node* n, int indent, Sb* out)
 
 static void DumpFunction(Node* n, int indent, Sb* out)
 {
-    FunctionDecl* function_decl = AsNode(FunctionDecl, n);
-    if (function_decl->isPrivate)
+    FunctionDecl* functionDecl = AsNode(FunctionDecl, n);
+    if (functionDecl->isPrivate)
     {
         SbPuts(out, "@private\n");
         Pad(indent, out);
     }
     SbPuts(out, "fn ");
 
-    if (function_decl->isExtern)
+    if (functionDecl->isExtern)
     {
         SbPuts(out, "extern ");
     }
 
-    SbPrintf(out, "%s %s(", function_decl->returnType.name,
-             function_decl->methodName ? function_decl->methodName : function_decl->name);
+    SbPrintf(out, "%s %s(", functionDecl->returnType.name,
+             functionDecl->methodName ? functionDecl->methodName : functionDecl->name);
 
-    for (size_t i = 0; i < function_decl->params.count; i++)
+    for (size_t i = 0; i < functionDecl->params.count; i++)
     {
         if (i > 0)
         {
             SbPuts(out, ", ");
         }
 
-        ParamDecl* param = (ParamDecl*)VecGet(&function_decl->params, i);
+        ParamDecl* param = (ParamDecl*)VecGet(&functionDecl->params, i);
 
         if (param->isVarargRest)
         {
@@ -318,14 +318,14 @@ static void DumpFunction(Node* n, int indent, Sb* out)
         SbPrintf(out, "%s %s", param->type.name, param->name);
     }
 
-    if (function_decl->isCVararg)
+    if (functionDecl->isCVararg)
     {
         SbPuts(out, ", ...");
     }
 
     SbPutc(out, ')');
 
-    if (!function_decl->body)
+    if (!functionDecl->body)
     {
         SbPuts(out, ";\n");
 
@@ -333,7 +333,7 @@ static void DumpFunction(Node* n, int indent, Sb* out)
     }
 
     SbPutc(out, '\n');
-    Dump(function_decl->body, indent + 2, out);
+    Dump(functionDecl->body, indent + 2, out);
 
     return;
 }
@@ -357,14 +357,14 @@ static void DumpBlock(Node* n, int indent, Sb* out)
 
 static void DumpReturn(Node* n, Sb* out)
 {
-    ReturnStmt* return_stmt = AsNode(ReturnStmt, n);
+    ReturnStmt* returnStmt = AsNode(ReturnStmt, n);
     SbPuts(out, "return");
 
-    if (return_stmt->value)
+    if (returnStmt->value)
     {
         SbPutc(out, ' ');
 
-        Dump(return_stmt->value, 0, out);
+        Dump(returnStmt->value, 0, out);
     }
     else
     {
@@ -406,45 +406,45 @@ static void DumpWhile(Node* n, int indent, Sb* out)
 
 static void DumpFor(Node* n, int indent, Sb* out)
 {
-    ForStmt* for_stmt = AsNode(ForStmt, n);
+    ForStmt* forStmt = AsNode(ForStmt, n);
     SbPuts(out, "for (");
 
-    if (for_stmt->init)
+    if (forStmt->init)
     {
-        Dump(for_stmt->init, 0, out);
+        Dump(forStmt->init, 0, out);
     }
     else
     {
         SbPuts(out, "; ");
     }
 
-    if (for_stmt->condition)
+    if (forStmt->condition)
     {
-        Dump(for_stmt->condition, 0, out);
+        Dump(forStmt->condition, 0, out);
     }
 
     SbPuts(out, "; ");
 
-    if (for_stmt->update)
+    if (forStmt->update)
     {
-        Dump(for_stmt->update, 0, out);
+        Dump(forStmt->update, 0, out);
     }
 
     SbPuts(out, ")\n");
-    Dump(for_stmt->body, indent + 2, out);
+    Dump(forStmt->body, indent + 2, out);
 
     return;
 }
 
 static void DumpVarDecl(Node* n, Sb* out)
 {
-    VarDeclStmt* var_decl = AsNode(VarDeclStmt, n);
-    SbPrintf(out, "%s %s", var_decl->type.name, var_decl->name);
+    VarDeclStmt* varDecl = AsNode(VarDeclStmt, n);
+    SbPrintf(out, "%s %s", varDecl->type.name, varDecl->name);
 
-    if (var_decl->init)
+    if (varDecl->init)
     {
         SbPuts(out, " = ");
-        Dump(var_decl->init, 0, out);
+        Dump(varDecl->init, 0, out);
     }
     else
     {
@@ -523,52 +523,52 @@ static void DumpIdent(Node* n, Sb* out)
 
 static void DumpUnary(Node* n, Sb* out)
 {
-    UnaryExpr* unary_expr = AsNode(UnaryExpr, n);
-    SbPrintf(out, "(%s ", UnaryOpSpelling(unary_expr->op));
-    Dump(unary_expr->operand, 0, out);
+    UnaryExpr* unaryExpr = AsNode(UnaryExpr, n);
+    SbPrintf(out, "(%s ", UnaryOpSpelling(unaryExpr->op));
+    Dump(unaryExpr->operand, 0, out);
 
     return;
 }
 
 static void DumpBinary(Node* n, Sb* out)
 {
-    BinaryExpr* binary_expr = AsNode(BinaryExpr, n);
-    SbPrintf(out, "(%s ", BinaryOpSpelling(binary_expr->op));
-    Dump(binary_expr->lhs, 0, out);
+    BinaryExpr* binaryExpr = AsNode(BinaryExpr, n);
+    SbPrintf(out, "(%s ", BinaryOpSpelling(binaryExpr->op));
+    Dump(binaryExpr->lhs, 0, out);
     Pad(0, out);
-    Dump(binary_expr->rhs, 0, out);
+    Dump(binaryExpr->rhs, 0, out);
 
     return;
 }
 
 static void DumpAssign(Node* n, Sb* out)
 {
-    AssignExpr* assign_expr = AsNode(AssignExpr, n);
-    SbPrintf(out, "(%s ", AssignOpSpelling(assign_expr->op));
-    Dump(assign_expr->target, 0, out);
-    Dump(assign_expr->value, 0, out);
+    AssignExpr* assignExpr = AsNode(AssignExpr, n);
+    SbPrintf(out, "(%s ", AssignOpSpelling(assignExpr->op));
+    Dump(assignExpr->target, 0, out);
+    Dump(assignExpr->value, 0, out);
 
     return;
 }
 
 static void DumpCall(Node* n, Sb* out)
 {
-    CallExpr* call_expr = AsNode(CallExpr, n);
+    CallExpr* callExpr = AsNode(CallExpr, n);
 
-    if (call_expr->calleeBase)
+    if (callExpr->calleeBase)
     {
         /* Pre-sema member call: `base.Member(args...)`. */
-        SbPrintf(out, "(callmethod %s ", call_expr->callee);
-        Dump(call_expr->calleeBase, 0, out);
+        SbPrintf(out, "(callmethod %s ", callExpr->callee);
+        Dump(callExpr->calleeBase, 0, out);
     }
     else
     {
-        SbPrintf(out, "(call %s", call_expr->callee);
+        SbPrintf(out, "(call %s", callExpr->callee);
     }
 
-    for (size_t i = 0; i < call_expr->args.count; i++)
+    for (size_t i = 0; i < callExpr->args.count; i++)
     {
-        Node* arg = (Node*)VecGet(&call_expr->args, i);
+        Node* arg = (Node*)VecGet(&callExpr->args, i);
         SbPutc(out, ' ');
         Dump(arg, 0, out);
     }
@@ -578,9 +578,9 @@ static void DumpCall(Node* n, Sb* out)
 
 static void DumpMember(Node* n, Sb* out)
 {
-    MemberExpr* member_expr = AsNode(MemberExpr, n);
-    SbPrintf(out, "(. %s ", member_expr->member);
-    Dump(member_expr->base_node, 0, out);
+    MemberExpr* memberExpr = AsNode(MemberExpr, n);
+    SbPrintf(out, "(. %s ", memberExpr->member);
+    Dump(memberExpr->baseNode, 0, out);
 
     return;
 }
@@ -649,7 +649,7 @@ static void DumpIndex(Node* n, Sb* out)
 {
     IndexExpr* idx = AsNode(IndexExpr, n);
     SbPuts(out, "([] ");
-    Dump(idx->base_node, 0, out);
+    Dump(idx->baseNode, 0, out);
     SbPutc(out, ' ');
     Dump(idx->index, 0, out);
     SbPutc(out, ')');

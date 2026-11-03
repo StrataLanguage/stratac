@@ -31,13 +31,13 @@ extern "C"
         return capabilities;
     }
 
-    static StrataPanicHandler s_panicHandler = NULL;
+    static StrataPanicHandler panicHandler = NULL;
 
     void strata_panic(const char* msg)
     {
-        if (s_panicHandler)
+        if (panicHandler)
         {
-            s_panicHandler(msg);
+            panicHandler(msg);
         }
         else
         {
@@ -53,9 +53,9 @@ extern "C"
         // Reports a recoverable out-of-bounds access (LLVM JIT, boundsCheck on): the panic
         // handler (if any) is notified, but execution continues — the caller gets a dummy
         // element / the write is absorbed. A handler that longjmps still stops the program.
-        if (s_panicHandler)
+        if (panicHandler)
         {
-            s_panicHandler(msg);
+            panicHandler(msg);
         }
         else
         {
@@ -67,7 +67,7 @@ extern "C"
 
     void strataSetPanicHandler(StrataPanicHandler handler)
     {
-        s_panicHandler = handler;
+        panicHandler = handler;
     }
 
 #ifdef __cplusplus

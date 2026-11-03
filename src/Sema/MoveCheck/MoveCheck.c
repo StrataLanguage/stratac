@@ -31,7 +31,7 @@ static void ReportPlace(const Env* env, Found* found, const Node* node, int bloc
     /* A member's own range starts at its dot; the use is at the variable. */
     while (node->kind == NodeMember)
     {
-        node = ((const MemberExpr*)node)->base_node;
+        node = ((const MemberExpr*)node)->baseNode;
     }
 
     /* A use after move names the moved place; a poisoned whole names itself. */
@@ -70,7 +70,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
             const char* root;
 
             /* An element of a temporary (`Make()[0]`) goes away with it; nothing is left to hole. */
-            if (!PlaceKeyImpl(((const IndexExpr*)cur)->base_node, buf, sizeof(buf), &root, true))
+            if (!PlaceKeyImpl(((const IndexExpr*)cur)->baseNode, buf, sizeof(buf), &root, true))
             {
                 return;
             }
@@ -80,7 +80,7 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
             return;
         }
 
-        cur = ((const MemberExpr*)cur)->base_node;
+        cur = ((const MemberExpr*)cur)->baseNode;
     }
 }
 
@@ -101,9 +101,9 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
         return;
     }
 
-    for (const Node* cur = n; cur && cur->kind == NodeMember; cur = ((const MemberExpr*)cur)->base_node)
+    for (const Node* cur = n; cur && cur->kind == NodeMember; cur = ((const MemberExpr*)cur)->baseNode)
     {
-        const TypeName* bt = ValueType(env, ((const MemberExpr*)cur)->base_node);
+        const TypeName* bt = ValueType(env, ((const MemberExpr*)cur)->baseNode);
 
         while (bt && TypeNameIsBox(bt) && bt->inner)
         {
@@ -147,7 +147,7 @@ static void AnnotateUse(const Env* env, const CfgOp* op)
     /* An element of an array whose type is known has the array's element type. */
     if (!t && n->kind == NodeIndex)
     {
-        const Node* base = ((const IndexExpr*)n)->base_node;
+        const Node* base = ((const IndexExpr*)n)->baseNode;
         const TypeName* bt = base ? ValueType(env, base) : NULL;
         t = bt ? TypeNameArrayElem(bt) : NULL;
     }
@@ -560,10 +560,10 @@ static void WalkInit(const InitCtx* c, const Node* n)
         TouchGlobal(c, ((const IdentExpr*)n)->name, n->range, false);
         break;
     case NodeMember:
-        WalkInit(c, ((const MemberExpr*)n)->base_node);
+        WalkInit(c, ((const MemberExpr*)n)->baseNode);
         break;
     case NodeIndex:
-        WalkInit(c, ((const IndexExpr*)n)->base_node);
+        WalkInit(c, ((const IndexExpr*)n)->baseNode);
         WalkInit(c, ((const IndexExpr*)n)->index);
         break;
     case NodeBinary:

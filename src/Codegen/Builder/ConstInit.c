@@ -307,14 +307,14 @@ bool FoldMemberInit(Builder* b, Node* n, ConstInitVal* out)
         double floatVal = 0.0;
         bool isFloat = false;
 
-        if (m->base_node->kind == NodeIdent
-            && ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal,
+        if (m->baseNode->kind == NodeIdent
+            && ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->baseNode)->name), m->member, &intVal, &floatVal,
                                  &isFloat))
         {
             *out = isFloat ? (ConstInitVal){CIK_FLOAT, .i = 0, .f = floatVal}
                            : (ConstInitVal){CIK_INT, .i = intVal, .f = 0.0};
             /* Typed as the base scalar itself, as EmitMember emits it. */
-            TypeName baseTn = TypeNameLeaf((char*)((IdentExpr*)m->base_node)->name);
+            TypeName baseTn = TypeNameLeaf((char*)((IdentExpr*)m->baseNode)->name);
             out->ity = ConstIntTypeOfTd(Resolve(b, &baseTn));
             return true;
         }

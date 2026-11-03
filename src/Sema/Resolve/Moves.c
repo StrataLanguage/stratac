@@ -261,10 +261,10 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
         // `.length` of a local only.
         MemberExpr* m = (MemberExpr*)n;
 
-        if (strcmp(m->member, "length") == 0 && m->base_node->kind == NodeIdent
-            && !IsModuleGlobalName(r, ((IdentExpr*)m->base_node)->name))
+        if (strcmp(m->member, "length") == 0 && m->baseNode->kind == NodeIdent
+            && !IsModuleGlobalName(r, ((IdentExpr*)m->baseNode)->name))
         {
-            return ArenaFormat(r->m_arena, "%s.length", ((IdentExpr*)m->base_node)->name);
+            return ArenaFormat(r->m_arena, "%s.length", ((IdentExpr*)m->baseNode)->name);
         }
 
         return NULL;
@@ -274,7 +274,7 @@ static char* IndexExprSpelling(Resolver* r, Node* n)
     {
         // Nested index: spell both sides.
         IndexExpr* ix = (IndexExpr*)n;
-        char* baseSpell = IndexExprSpelling(r, ix->base_node);
+        char* baseSpell = IndexExprSpelling(r, ix->baseNode);
         char* inner = IndexExprSpelling(r, ix->index);
 
         if (!baseSpell || !inner)
@@ -391,7 +391,7 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
     if (moved->kind == NodeMember)
     {
         const MemberExpr* m = (const MemberExpr*)moved;
-        const char* baseKey = MovableBoxSourceKey(r, m->base_node);
+        const char* baseKey = MovableBoxSourceKey(r, m->baseNode);
 
         return baseKey ? ArenaFormat(r->m_arena, "%s.%s", baseKey, m->member) : NULL;
     }
@@ -399,7 +399,7 @@ const char* MovableBoxSourceKey(Resolver* r, Node* n)
     if (moved->kind == NodeIndex)
     {
         const IndexExpr* ix = (const IndexExpr*)moved;
-        const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
+        const char* baseKey = MovableBoxSourceKey(r, ix->baseNode);
 
         if (!baseKey)
         {

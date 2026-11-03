@@ -51,12 +51,12 @@ bool IsPlainEnum(const Resolver* r, const char* name)
    shadowing the enum name takes precedence. */
 bool TryResolveEnumMember(Resolver* r, MemberExpr* m, StrMap* scope)
 {
-    if (m->base_node->kind != NodeIdent)
+    if (m->baseNode->kind != NodeIdent)
     {
         return false;
     }
 
-    const char* baseName = ((IdentExpr*)m->base_node)->name;
+    const char* baseName = ((IdentExpr*)m->baseNode)->name;
 
     if (StrMapGet(scope, baseName))
     {
@@ -270,12 +270,12 @@ static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, siz
 
     /* `int.max` — a builtin scalar pseudo-property folds to its value
        (integral only; enums never have float underlyings). */
-    if (me->base_node->kind == NodeIdent)
+    if (me->baseNode->kind == NodeIdent)
     {
         ConstUInt intVal = 0;
         bool isFloat = false;
 
-        if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)me->base_node)->name), me->member, &intVal, NULL, &isFloat))
+        if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)me->baseNode)->name), me->member, &intVal, NULL, &isFloat))
         {
             if (isFloat)
             {
@@ -287,12 +287,12 @@ static EnumEvalStatus EnumEvalMember(Node* n, Module* mod, size_t enumIndex, siz
         }
     }
 
-    if (me->base_node->kind != NodeIdent)
+    if (me->baseNode->kind != NodeIdent)
     {
         return EnumEvalNotConst;
     }
 
-    const char* enumName = ((IdentExpr*)me->base_node)->name;
+    const char* enumName = ((IdentExpr*)me->baseNode)->name;
 
     for (size_t i = 0; i < mod->enums.count; i++)
     {

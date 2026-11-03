@@ -309,7 +309,7 @@ static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     if (arg0->kind == NodeMember
-        && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->base_node, scope), ((MemberExpr*)arg0)->member))
+        && IsFatPseudoProperty(r, InferType(r, ((MemberExpr*)arg0)->baseNode, scope), ((MemberExpr*)arg0)->member))
     {
         DiagErrorFmt(r->m_diag, arg0->range, "cannot take the address of '.%s'", ((MemberExpr*)arg0)->member);
         return true;

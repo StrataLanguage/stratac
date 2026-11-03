@@ -3,7 +3,7 @@
 #include <inttypes.h>
 
 /* The aliases of the function being checked, so that place keys can name the bound place. */
-static const Env* g_aliasEnv;
+static const Env* aliasEnv;
 
 int FindLocal(const Locals* ls, const char* name)
 {
@@ -89,7 +89,7 @@ bool PlaceOf(const Node* n, char* buf, size_t cap, const char** root)
 
     const MemberExpr* m = (const MemberExpr*)n;
 
-    if (m->isImplProperty || m->isEnumConst || m->isScalarConst || !PlaceOf(m->base_node, buf, cap, root))
+    if (m->isImplProperty || m->isEnumConst || m->isScalarConst || !PlaceOf(m->baseNode, buf, cap, root))
     {
         return false;
     }
@@ -208,7 +208,7 @@ const TypeName* PlaceType(const Env* env, const Node* n)
     if (n->kind == NodeMember)
     {
         const MemberExpr* m = (const MemberExpr*)n;
-        return FieldType(env, PlaceType(env, m->base_node), m->member);
+        return FieldType(env, PlaceType(env, m->baseNode), m->member);
     }
 
     return NULL;
@@ -496,14 +496,14 @@ void FreeAliases(Env* env)
     free(env->aliasTarget);
     env->aliasName = env->aliasTarget = NULL;
     env->aliasCount = env->aliasCap = 0;
-    g_aliasEnv = NULL;
+    aliasEnv = NULL;
 }
 
 void BuildAliases(Env* env, const Cfg* g)
 {
     char buf[256];
     const char* root;
-    g_aliasEnv = env;
+    aliasEnv = env;
 
     for (size_t b = 0; b < g->count; b++)
     {
@@ -541,7 +541,7 @@ const FnWrites* FindWrites(const WriteSets* ws, const FunctionDecl* d)
    is a variable or an integer literal; any other index is no place. */
 const char* AliasTarget(const char* name)
 {
-    const Env* env = g_aliasEnv;
+    const Env* env = aliasEnv;
 
     for (size_t i = 0; env && i < env->aliasCount; i++)
     {

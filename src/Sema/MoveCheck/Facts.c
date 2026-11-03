@@ -50,13 +50,13 @@ bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool 
             return false;
         }
 
-        base = m->base_node;
+        base = m->baseNode;
         snprintf(suffix, sizeof(suffix), ".%s", m->member);
     }
     else if (n->kind == NodeIndex)
     {
         const IndexExpr* ix = (const IndexExpr*)n;
-        base = ix->base_node;
+        base = ix->baseNode;
         char spelling[140];
 
         if (IndexSpelling(ix->index, spelling, sizeof(spelling)))
@@ -206,11 +206,11 @@ static void AddOptionalChain(Env* env, const Node* n)
 
         if (n->kind == NodeMember)
         {
-            n = ((const MemberExpr*)n)->base_node;
+            n = ((const MemberExpr*)n)->baseNode;
         }
         else if (n->kind == NodeIndex)
         {
-            n = ((const IndexExpr*)n)->base_node;
+            n = ((const IndexExpr*)n)->baseNode;
         }
         else
         {
@@ -726,7 +726,7 @@ const IdentExpr* RootIdent(const Node* n)
 {
     while (n && (n->kind == NodeMember || n->kind == NodeIndex))
     {
-        n = n->kind == NodeMember ? ((const MemberExpr*)n)->base_node : ((const IndexExpr*)n)->base_node;
+        n = n->kind == NodeMember ? ((const MemberExpr*)n)->baseNode : ((const IndexExpr*)n)->baseNode;
     }
 
     return n && n->kind == NodeIdent ? (const IdentExpr*)n : NULL;
@@ -819,7 +819,7 @@ static void FactAssign(const Env* env, unsigned char* f, Found* found, const Nod
     for (const Node* cur = a->target; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
     {
         const Node* base
-            = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node : ((const IndexExpr*)cur)->base_node;
+            = cur->kind == NodeMember ? ((const MemberExpr*)cur)->baseNode : ((const IndexExpr*)cur)->baseNode;
         const TypeName* bt = base ? ValueType(env, base) : NULL;
 
         if (bt && TypeNameIsOptional(bt))
@@ -884,7 +884,7 @@ static void FactMemberIndex(const Env* env, unsigned char* f, Found* found, cons
     for (const Node* cur = n; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
     {
         const Node* base
-            = cur->kind == NodeMember ? ((const MemberExpr*)cur)->base_node : ((const IndexExpr*)cur)->base_node;
+            = cur->kind == NodeMember ? ((const MemberExpr*)cur)->baseNode : ((const IndexExpr*)cur)->baseNode;
         const TypeName* bt = base ? ValueType(env, base) : NULL;
 
         if (bt && TypeNameIsOptional(bt))

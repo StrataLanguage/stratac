@@ -704,17 +704,17 @@ void ResolveIndexExpr(Resolver* r, Node* n, StrMap* scope)
 {
     IndexExpr* ix = (IndexExpr*)n;
 
-    ResolveExprImpl(r, ix->base_node, scope, true);
+    ResolveExprImpl(r, ix->baseNode, scope, true);
     ResolveExprImpl(r, ix->index, scope, false);
 
     /* Indexing an optional array (`opt[i]`) reads its contents - the
         same narrowing rule as a member read through a `T?`. */
     {
-        const TypeName* baseType = InferType(r, ix->base_node, scope);
+        const TypeName* baseType = InferType(r, ix->baseNode, scope);
 
         if (baseType && TypeNameIsOptional(baseType))
         {
-            const char* baseKey = MovableBoxSourceKey(r, ix->base_node);
+            const char* baseKey = MovableBoxSourceKey(r, ix->baseNode);
         }
     }
 
