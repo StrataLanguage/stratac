@@ -1,9 +1,9 @@
-/* Compile-time constant evaluation, literal range checks and lossless-conversion checks. */
+// Compile-time constant evaluation, literal range checks and lossless-conversion checks.
 #include "Sema/Resolve/ResolverInternal.h"
 
 #include <inttypes.h>
 
-/* The runtime integer type of a scalar. Anything that is not an integer carries no narrowing. */
+// The runtime integer type of a scalar. Anything that is not an integer carries no narrowing.
 ConstIntType SemaConstIntType(PrimitiveType p)
 {
     switch (p)
@@ -29,7 +29,7 @@ ConstIntType SemaConstIntType(PrimitiveType p)
     }
 }
 
-/* The scalar integral types an enum may be based on. */
+// The scalar integral types an enum may be based on.
 bool IsEnumUnderlyingType(const char* t)
 {
     if (!t)
@@ -54,7 +54,7 @@ bool IsEnumUnderlyingType(const char* t)
     return false;
 }
 
-/* Signed bounds for the enum underlying types. */
+// Signed bounds for the enum underlying types.
 void EnumSignedRange(const char* underlying, bool* isUnsigned, ConstInt* minVal, ConstUInt* maxVal)
 {
     switch (GetPrimitiveType(underlying))
@@ -97,14 +97,14 @@ void EnumSignedRange(const char* underlying, bool* isUnsigned, ConstInt* minVal,
     default:;
     }
 
-    /* "long" (and any fallback) */
+    // "long" (and any fallback)
     *isUnsigned = false;
     *minVal = LLONG_MIN;
     *maxVal = (ConstUInt)LLONG_MAX;
 }
 
-/* Interprets `mag` (with sign) as a signed value; false when the magnitude
-   cannot be represented in int64 (only reachable for `long` underlying). */
+// Interprets `mag` (with sign) as a signed value; false when the magnitude
+// cannot be represented in int64 (only reachable for `long` underlying).
 bool EnumSignedValue(ConstUInt mag, bool isNegative, ConstInt* out)
 {
     if (isNegative)
@@ -133,8 +133,8 @@ bool EnumSignedValue(ConstUInt mag, bool isNegative, ConstInt* out)
     return true;
 }
 
-/* Extracts a compile-time integer value from a RESOLVED constant expression:
-   an integer literal, a +/- literal, or an enum constant. */
+// Extracts a compile-time integer value from a RESOLVED constant expression:
+// an integer literal, a +/- literal, or an enum constant.
 bool ResolvedConstIntValue(Node* n, ConstUInt* mag, bool* isNegative)
 {
     *mag = 0;
@@ -152,8 +152,8 @@ bool ResolvedConstIntValue(Node* n, ConstUInt* mag, bool* isNegative)
         return true;
     }
 
-    /* `int.max` / `float.min`: integral pseudo-properties fold to their
-       bit pattern (floats are not integer constants). */
+    // `int.max` / `float.min`: integral pseudo-properties fold to their
+    // bit pattern (floats are not integer constants).
     if (n->kind == NodeMember && ((MemberExpr*)n)->isScalarConst)
     {
         MemberExpr* m = (MemberExpr*)n;
@@ -201,7 +201,7 @@ bool ResolvedConstIntValue(Node* n, ConstUInt* mag, bool* isNegative)
     return false;
 }
 
-/* Range-checks a constant value against a scalar integral type name. */
+// Range-checks a constant value against a scalar integral type name.
 bool EnumConstFits(const char* underlying, ConstUInt mag, bool isNegative)
 {
     bool isUnsigned = false;
@@ -218,7 +218,7 @@ bool EnumConstFits(const char* underlying, ConstUInt mag, bool isNegative)
     return EnumSignedValue(mag, isNegative, &sv) && sv >= minVal && (ConstUInt)sv <= maxVal;
 }
 
-/* Does the constant (magnitude `mag`, sign `negative`) fit the integer type named `typeName`? */
+// Does the constant (magnitude `mag`, sign `negative`) fit the integer type named `typeName`?
 static bool IntegerConstFits(const char* typeName, ConstUInt mag, bool negative)
 {
     bool isUnsigned = false;
@@ -226,12 +226,12 @@ static bool IntegerConstFits(const char* typeName, ConstUInt mag, bool negative)
     ConstUInt maxVal = 0;
     EnumSignedRange(typeName, &isUnsigned, &minVal, &maxVal);
 
-    /* A negative constant fits when its magnitude is within |min|; a positive one within max. */
+    // A negative constant fits when its magnitude is within |min|; a positive one within max.
     return negative ? (!isUnsigned && mag <= (ConstUInt)(-(minVal + 1)) + 1ULL) : mag <= maxVal;
 }
 
-/* A literal that initializes a scalar must fit it: `byte b = 300`, `uint u = -1` and `float f = 1e40` are errors
-   rather than silent truncation or infinity. Only plain literals (and a negated one) are checked here. */
+// A literal that initializes a scalar must fit it: `byte b = 300`, `uint u = -1` and `float f = 1e40` are errors
+// rather than silent truncation or infinity. Only plain literals (and a negated one) are checked here.
 void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName* target)
 {
     if (!value || !target || !target->name || !TypeNameIsBare(target))
@@ -273,8 +273,8 @@ void CheckLiteralFits(DiagnosticEngine* diag, const Node* value, const TypeName*
     }
 }
 
-/* The value of a constant integer expression built from literals, negation, parentheses and + - *; false when
-   it is anything else (or overflows 64 bits). */
+// The value of a constant integer expression built from literals, negation, parentheses and + - *; false when
+// it is anything else (or overflows 64 bits).
 static bool EvalConstInt(const Node* n, ConstInt* out)
 {
     if (n->kind == NodeIntLiteral)
@@ -315,7 +315,7 @@ static bool EvalConstInt(const Node* n, ConstInt* out)
     return false;
 }
 
-/* Bit width of an integer scalar type, 0 for anything else. */
+// Bit width of an integer scalar type, 0 for anything else.
 static BitWidth ScalarBitWidth(PrimitiveType p)
 {
     switch (p)
@@ -337,8 +337,8 @@ static BitWidth ScalarBitWidth(PrimitiveType p)
     }
 }
 
-/* Constant operands that can only trap at run time are compile errors: `7 / 0`, `5 % 0`, `1 << 40`,
-   `INT_MIN / -1`. `lt` is the left operand's type. */
+// Constant operands that can only trap at run time are compile errors: `7 / 0`, `5 % 0`, `1 << 40`,
+// `INT_MIN / -1`. `lt` is the left operand's type.
 void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName* lt)
 {
     ConstInt rv = 0;
@@ -379,7 +379,7 @@ void CheckConstArith(DiagnosticEngine* diag, const BinaryExpr* b, const TypeName
     }
 }
 
-/* `(int)3.0e10`: a constant float that cannot be represented in the integer type it is cast to. */
+// `(int)3.0e10`: a constant float that cannot be represented in the integer type it is cast to.
 void CheckConstFloatToInt(DiagnosticEngine* diag, const CastExpr* cast)
 {
     const Node* op = cast->operand;
@@ -415,8 +415,8 @@ void CheckConstFloatToInt(DiagnosticEngine* diag, const CastExpr* cast)
     }
 }
 
-/* Does every value of `src` survive conversion to `dst`? Widening within a signedness, an unsigned type into a
-   wider signed one, and exact conversions to float/double. Nothing else converts silently. */
+// Does every value of `src` survive conversion to `dst`? Widening within a signedness, an unsigned type into a
+// wider signed one, and exact conversions to float/double. Nothing else converts silently.
 static bool NumericConversionIsLossless(PrimitiveType src, PrimitiveType dst)
 {
     if (src == dst)
@@ -447,8 +447,8 @@ static bool NumericConversionIsLossless(PrimitiveType src, PrimitiveType dst)
     }
 }
 
-/* A value that would lose information in an implicit numeric conversion needs a cast. A literal is judged by
-   its value (CheckLiteralFits), so `byte b = 200` and `float f = 1.5` stay legal. */
+// A value that would lose information in an implicit numeric conversion needs a cast. A literal is judged by
+// its value (CheckLiteralFits), so `byte b = 200` and `float f = 1.5` stay legal.
 void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeName* srcType, const TypeName* target,
                           SourceRange range)
 {
@@ -468,7 +468,7 @@ void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeN
         return;
     }
 
-    /* Constants are judged by value, not by the type they were written in. */
+    // Constants are judged by value, not by the type they were written in.
     ConstInt ignored = 0;
     const Node* lit = value;
 
@@ -486,8 +486,8 @@ void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeN
                  target->name);
 }
 
-/* An argument converts to a scalar parameter silently only if nothing is lost: a widening conversion, or a
-   constant whose value fits. Otherwise the overload is not a candidate (the caller can cast). */
+// An argument converts to a scalar parameter silently only if nothing is lost: a widening conversion, or a
+// constant whose value fits. Otherwise the overload is not a candidate (the caller can cast).
 bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, const TypeName* paramType)
 {
     PrimitiveType src = argType->primitiveType;
@@ -518,12 +518,12 @@ bool ArgConvertsWithoutLoss(const Node* arg, const TypeName* argType, const Type
         return IntegerConstFits(paramType->name, ((const IntLiteral*)lit)->value, negative);
     }
 
-    /* A float literal is written in no particular width: it fits `float`, never an integer. */
+    // A float literal is written in no particular width: it fits `float`, never an integer.
     return lit->kind == NodeFloatLiteral && (dst == PrimFloat || dst == PrimDouble);
 }
 
-/* Folds an integer operator at the type the runtime computes it in: both operands are converted to that type
-   first, so `>>` picks the same shift the emitted code does. */
+// Folds an integer operator at the type the runtime computes it in: both operands are converted to that type
+// first, so `>>` picks the same shift the emitted code does.
 static bool SemaFoldIntBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r, ConstGlobalVal* out)
 {
     ConstIntType t = ConstIntTypeCommon(l.ity, r.ity);
@@ -541,10 +541,10 @@ static bool SemaFoldIntBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r, C
     return true;
 }
 
-/* Applies a binary operator to two folded values with C constant-expression
-   semantics: usual arithmetic conversions (int promotes to double when the
-   other side is float); bitwise/shift/modulo require integers; comparisons
-   and logical ops yield 0/1. */
+// Applies a binary operator to two folded values with C constant-expression
+// semantics: usual arithmetic conversions (int promotes to double when the
+// other side is float); bitwise/shift/modulo require integers; comparisons
+// and logical ops yield 0/1.
 static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r, ConstGlobalVal* out)
 {
     bool lFloat = l.isFloat;
@@ -633,7 +633,7 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
 
 static bool FoldIntLiteral(Node* n, ConstGlobalVal* out)
 {
-    /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
+    // Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit.
     const IntLiteral* lit = (const IntLiteral*)n;
 
     out->i = (ConstInt)lit->value;
@@ -734,13 +734,13 @@ static bool FoldCast(Resolver* r, Node* n, ConstGlobalVal* out)
         return false;
     }
 
-    /* `isInt` describes the DECLARED type (set by the caller before the
-       fold); the value copy must not clobber it. */
+    // `isInt` describes the DECLARED type (set by the caller before the
+    // fold); the value copy must not clobber it.
     bool wasInt = out->isInt;
     *out = inner;
     out->isInt = wasInt;
 
-    /* An integer target takes the value at its own width (`(byte)-8` is 248) and converts a float operand. */
+    // An integer target takes the value at its own width (`(byte)-8` is 248) and converts a float operand.
     const char* castName = ((CastExpr*)n)->type.name;
     ConstIntType target = {0, false};
 
@@ -782,8 +782,8 @@ static bool FoldIdent(Resolver* r, Node* n, ConstGlobalVal* out)
 
 static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
 {
-    /* `int.max` / `float.min` — builtin scalar pseudo-properties fold
-       to their constants, exactly like enum constants. */
+    // `int.max` / `float.min` — builtin scalar pseudo-properties fold
+    // to their constants, exactly like enum constants.
     MemberExpr* m = (MemberExpr*)n;
 
     if (m->baseNode->kind != NodeIdent)
@@ -806,8 +806,8 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
         return true;
     }
 
-    /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
-       BEFORE the main resolution marks members, so scan the module. */
+    // `EnumName.Member` — a scoped enum constant folds to its value. Runs
+    // BEFORE the main resolution marks members, so scan the module.
     if (!TypeRegistryIsEnum(&r->registry, ((IdentExpr*)m->baseNode)->name))
     {
         return false;
@@ -835,7 +835,7 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
                 out->f = 0.0;
                 out->isFloat = false;
                 out->isInt = wasInt;
-                /* An enum member is typed by its underlying integer type (`int` when none is spelled). */
+                // An enum member is typed by its underlying integer type (`int` when none is spelled).
                 out->ity = SemaConstIntType(GetPrimitiveType(
                     TypeRegistryResolveAlias(&r->registry, ed->underlyingType ? ed->underlyingType : "int")));
                 return true;
@@ -848,10 +848,10 @@ static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
     return false;
 }
 
-/* Folds a const-global initializer to a compile-time value. Handles int/
-   float/bool literals, unary ops, scalar casts, the C constant-expression
-   operators over folded operands, and references to earlier manifest
-   constants (`const B = A | (1 << 2);`). */
+// Folds a const-global initializer to a compile-time value. Handles int/
+// float/bool literals, unary ops, scalar casts, the C constant-expression
+// operators over folded operands, and references to earlier manifest
+// constants (`const B = A | (1 << 2);`).
 bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
 {
     if (!n)
@@ -882,8 +882,8 @@ bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
     }
 }
 
-/* True when the (alias-resolved) type is an integer kind usable as a fixed
-   array dimension. */
+// True when the (alias-resolved) type is an integer kind usable as a fixed
+// array dimension.
 bool IsConstDimType(const TypeRegistry* reg, const char* name)
 {
     const char* leaf = TypeRegistryResolveAlias(reg, name);
@@ -910,15 +910,15 @@ bool IsConstDimType(const TypeRegistry* reg, const char* name)
     return false;
 }
 
-/* A `const` scalar global of any numeric type folds into the manifest table
-   (floats/bools inline at uses too — they just cannot size arrays). */
+// A `const` scalar global of any numeric type folds into the manifest table
+// (floats/bools inline at uses too — they just cannot size arrays).
 bool IsManifestConstType(const TypeRegistry* reg, const char* name)
 {
     return IsNameNumeric(TypeRegistryResolveAlias(reg, name));
 }
 
-/* Resolves `[constName]` fixed-array dimensions on a type tree against the
-   manifest-constant table. */
+// Resolves `[constName]` fixed-array dimensions on a type tree against the
+// manifest-constant table.
 bool SemaResolveConstDims(Resolver* r, TypeName* t)
 {
     if (!t)
@@ -950,7 +950,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
             return false;
         }
 
-        /* Rebuild the canonical spelling with the resolved dimension. */
+        // Rebuild the canonical spelling with the resolved dimension.
         char* open = strchr(t->name, '[');
 
         if (open)
@@ -972,7 +972,7 @@ bool SemaResolveConstDims(Resolver* r, TypeName* t)
     return true;
 }
 
-/* Width of a constant expression: 32-bit if it bottoms out in a 32-bit literal. */
+// Width of a constant expression: 32-bit if it bottoms out in a 32-bit literal.
 BitWidth ConstBitWidth(const Node* n)
 {
     while (n && n->kind == NodeCast)

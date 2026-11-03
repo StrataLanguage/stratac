@@ -1,3 +1,4 @@
+// Storage for the types sema infers per expression node.
 #include "Sema/NodeTypes.h"
 
 #include <stdint.h>

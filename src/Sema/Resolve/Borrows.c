@@ -1,9 +1,9 @@
-/* Borrow and growth inference for array and ref parameters. */
+// Borrow and growth inference for array and ref parameters.
 #include "Sema/Resolve/ResolverInternal.h"
 
 static void ScanBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed);
 
-//-- Growable `ref T[]` parameters.
+// -- Growable `ref T[]` parameters.
 //
 // A `ref T[]` argument may be a stack view: a fixed-size array, an array literal or a varargs
 // rest. Growing or rebinding such a binding would realloc/free stack memory, so a parameter the
@@ -23,7 +23,7 @@ static ParamDecl* RefArrayParamNamed(const FunctionDecl* f, const char* name)
     return NULL;
 }
 
-/* Does any function callable as `callee` (an impl method when `isMethod`) grow its parameter `index`? */
+// Does any function callable as `callee` (an impl method when `isMethod`) grow its parameter `index`?
 static bool CalleeGrowsParam(const Module* mod, const char* callee, bool isMethod, size_t index)
 {
     for (size_t i = 0; i < mod->functions.count; i++)
@@ -158,7 +158,7 @@ static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* change
             MarkGrowth(f, (Node*)VecGet(&c->args, 0), changed);
         }
 
-        /* A receiver passed as a method's `self`. */
+        // A receiver passed as a method's `self`.
         if (isMethod && c->callee && CalleeGrowsParam(mod, c->callee, true, 0))
         {
             MarkGrowth(f, c->calleeBase, changed);
@@ -182,7 +182,7 @@ static void ScanGrowth(const Module* mod, FunctionDecl* f, Node* n, bool* change
     }
 }
 
-//-- Read-only by-value parameters borrow.
+// -- Read-only by-value parameters borrow.
 //
 // A by-value `string`, `T[]` or owning-struct parameter would take its argument (move it out of
 // the caller). When the body never consumes it - never moves it or a part of it anywhere, never
@@ -202,7 +202,7 @@ static bool BorrowCandidateType(Resolver* r, const TypeName* t)
            || (name && TypeRegistryIsOwningStruct(&r->registry, name) && !TypeNameHasDrop(&r->registry, t));
 }
 
-/* The candidate parameter at the root of a path (`p`, `p.a[i].b`), or NULL. */
+// The candidate parameter at the root of a path (`p`, `p.a[i].b`), or NULL.
 static ParamDecl* BorrowRoot(FunctionDecl* f, Node* n)
 {
     while (n && (n->kind == NodeMember || n->kind == NodeIndex || n->kind == NodeCast))
@@ -230,8 +230,8 @@ static ParamDecl* BorrowRoot(FunctionDecl* f, Node* n)
     return NULL;
 }
 
-/* The declared type at the end of a path rooted at a parameter; NULL when it is not an owning value
-   (a scalar, `.length`, ...). Unknown shapes count as owning. */
+// The declared type at the end of a path rooted at a parameter; NULL when it is not an owning value
+// (a scalar, `.length`, ...). Unknown shapes count as owning.
 static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
 {
     if (n->kind == NodeIdent)
@@ -241,7 +241,7 @@ static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
 
     if (n->kind == NodeCast)
     {
-        return &((CastExpr*)n)->type; /* `(Alias)p` retags; `(cstring)p` only views */
+        return &((CastExpr*)n)->type; // `(Alias)p` retags; `(cstring)p` only views
     }
 
     const TypeName* t = NULL;
@@ -275,7 +275,7 @@ static const TypeName* BorrowPathType(Resolver* r, ParamDecl* root, Node* n)
 
     if (!st)
     {
-        return NULL; /* `.length`, `.data`, swizzles: not owning */
+        return NULL; // `.length`, `.data`, swizzles: not owning
     }
 
     for (size_t i = 0; i < st->fields.count; i++)
@@ -300,7 +300,7 @@ static void ConsumeParam(ParamDecl* p, bool* changed)
     }
 }
 
-/* `n` is used where an owning value is taken (moved): consumes its root if it is an owning path. */
+// `n` is used where an owning value is taken (moved): consumes its root if it is an owning path.
 static void ConsumeIfTaken(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
 {
     ParamDecl* p = BorrowRoot(f, n);
@@ -316,7 +316,7 @@ static void ConsumeIfTaken(Resolver* r, FunctionDecl* f, Node* n, bool* changed)
     }
 }
 
-/* An argument passed to parameter `index` of whatever `callee` names. */
+// An argument passed to parameter `index` of whatever `callee` names.
 static void ScanBorrowArg(Resolver* r, FunctionDecl* f, CallExpr* c, Node* arg, size_t index, bool isMethod,
                           bool* changed)
 {
@@ -345,7 +345,7 @@ static void ScanBorrowArg(Resolver* r, FunctionDecl* f, CallExpr* c, Node* arg, 
         {
             if (!g->isCVararg)
             {
-                ConsumeIfTaken(r, f, arg, changed); /* a typed rest takes its elements */
+                ConsumeIfTaken(r, f, arg, changed); // a typed rest takes its elements
             }
             continue;
         }
@@ -354,17 +354,17 @@ static void ScanBorrowArg(Resolver* r, FunctionDecl* f, CallExpr* c, Node* arg, 
 
         if (q->mod == ModRef && !q->type.isConst)
         {
-            ConsumeParam(root, changed); /* written through */
+            ConsumeParam(root, changed); // written through
         }
         else if (q->mod == ModNone && !g->isExtern && !q->borrowCandidate && !q->inferredBorrow)
         {
-            ConsumeIfTaken(r, f, arg, changed); /* taken */
+            ConsumeIfTaken(r, f, arg, changed); // taken
         }
     }
 
     if (!found)
     {
-        ConsumeParam(root, changed); /* a delegate, or something unknown */
+        ConsumeParam(root, changed); // a delegate, or something unknown
     }
 }
 
@@ -411,7 +411,7 @@ static void ScanVarDeclBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* chan
     {
         if (!vd->type.isConst)
         {
-            ConsumeParam(BorrowRoot(f, vd->init), changed); /* a mutable alias */
+            ConsumeParam(BorrowRoot(f, vd->init), changed); // a mutable alias
         }
     }
     else
@@ -464,7 +464,7 @@ static void ScanArrayInitBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* ch
 
         if (!ai->repeatCount)
         {
-            ConsumeIfTaken(r, f, e, changed); /* `{ v; n }` copies its value */
+            ConsumeIfTaken(r, f, e, changed); // `{ v; n }` copies its value
         }
         ScanBorrows(r, f, e, changed);
     }
@@ -514,7 +514,7 @@ static void ScanCallBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed
             ConsumeIfTaken(r, f, (Node*)VecGet(&c->args, 1), changed);
         }
 
-        /* `array_replace(a, i, v)` stores `v` in the array, so `v` is owned, not borrowed. */
+        // `array_replace(a, i, v)` stores `v` in the array, so `v` is owned, not borrowed.
         if (strcmp(c->callee, "array_replace") == 0 && c->args.count > 2)
         {
             ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, 2)), changed);
@@ -526,7 +526,7 @@ static void ScanCallBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed
         && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0 || strcmp(c->callee, "alignof") == 0
             || strcmp(c->callee, "load") == 0 || strcmp(c->callee, "substring") == 0))
     {
-        return; /* only read */
+        return; // only read
     }
 
     if (isMethod)
@@ -667,8 +667,8 @@ void InferBorrowedParams(Resolver* r)
     }
 }
 
-/* Marks every growing `ref T[]` parameter, to a fixpoint: passing a parameter on to a callee that
-   grows it grows it too. */
+// Marks every growing `ref T[]` parameter, to a fixpoint: passing a parameter on to a callee that
+// grows it grows it too.
 void MarkGrowableArrayParams(Module* mod)
 {
     bool changed = true;
@@ -692,7 +692,7 @@ bool IsGrowableArrayParam(const Resolver* r, const char* name)
     return p && p->growsArray;
 }
 
-/* A growing `ref T[]` parameter needs a heap array: reject stack views at the call site. */
+// A growing `ref T[]` parameter needs a heap array: reject stack views at the call site.
 void CheckGrowableArrayArgs(Resolver* r, const FunctionDecl* best, CallExpr* c, StrMap* scope)
 {
     for (size_t i = 0; i < best->params.count && i < c->args.count; i++)

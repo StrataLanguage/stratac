@@ -1,10 +1,10 @@
-/* Call resolution: overloads, intrinsics, generic externs, delegates and export checks. */
+// Call resolution: overloads, intrinsics, generic externs, delegates and export checks.
 #include "Sema/Resolve/ResolverInternal.h"
 
 static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope);
 
-/* Count of params a call actually passes arguments for: excludes the
-   trailing typed-rest param and the implicit `return` out-param of externs. */
+// Count of params a call actually passes arguments for: excludes the
+// trailing typed-rest param and the implicit `return` out-param of externs.
 size_t NamedParamCount(const FunctionDecl* f)
 {
     bool typedRest = f->isVariadic && !f->isCVararg;
@@ -61,10 +61,10 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
         }
     }
 
-    /* No valid format found, build an error message */
+    // No valid format found, build an error message
 
     const int formatBufferSize = 2048;
-    char formatBuffer[2048]; /* literal: a VLA under MSVC */
+    char formatBuffer[2048]; // literal: a VLA under MSVC
 
     char* tmpBuffer = formatBuffer;
 
@@ -73,7 +73,7 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
     {
         const AllowList* al = &allowed[i];
 
-        /* Only add the prototypes with the matching amount of arguments */
+        // Only add the prototypes with the matching amount of arguments
         if (al->size != c->args.count)
         {
             continue;
@@ -88,7 +88,7 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
     {
         const AllowList* al = &allowed[i];
 
-        /* Only add the prototypes with the matching amount of arguments */
+        // Only add the prototypes with the matching amount of arguments
         if (al->size != c->args.count)
         {
             continue;
@@ -133,16 +133,16 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
     return false;
 }
 
-/* Private functions are visible only in the file that defines them */
+// Private functions are visible only in the file that defines them
 bool FunctionVisibleTo(const FunctionDecl* fd, uint16_t callerFile)
 {
     return !fd->isPrivate || fd->base.range.fileId == callerFile;
 }
 
-/* Returns true if the module declares any user-defined function with `name`
-   that is visible to `callerFile`.
-   `dot`/`cross` are only intrinsic fallbacks when no user overload exists, so a
-   user's `dot(Vec3, Vec3)` is never hijacked by the SIMD resolver. */
+// Returns true if the module declares any user-defined function with `name`
+// that is visible to `callerFile`.
+// `dot`/`cross` are only intrinsic fallbacks when no user overload exists, so a
+// user's `dot(Vec3, Vec3)` is never hijacked by the SIMD resolver.
 bool ModuleHasFunctionNamed(Resolver* r, const char* name, uint16_t callerFile)
 {
     for (size_t i = 0; i < r->mod->functions.count; i++)
@@ -156,9 +156,9 @@ bool ModuleHasFunctionNamed(Resolver* r, const char* name, uint16_t callerFile)
     return false;
 }
 
-//-- `extern delegate` types.
+// -- `extern delegate` types.
 
-/* A delegate is called with the extern ABI, so its signature follows the extern rules. */
+// A delegate is called with the extern ABI, so its signature follows the extern rules.
 void CheckDelegateDecl(Resolver* r, const FunctionDecl* f)
 {
     if (f->hasReturnParam)
@@ -212,7 +212,7 @@ void CheckExportDecl(Resolver* r, const FunctionDecl* f)
         const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
         const char* leaf = TypeRegistryResolveAlias(&r->registry, p->type.name);
 
-        /* `ref T` of a plain struct is a `T*` in C. */
+        // `ref T` of a plain struct is a `T*` in C.
         bool plainStructRef = p->mod == ModRef && IsDefinedStruct(&r->registry, leaf)
                               && !TypeRegistryIsOwningStruct(&r->registry, leaf);
 
@@ -233,8 +233,7 @@ void CheckExportDecl(Resolver* r, const FunctionDecl* f)
     }
 }
 
-// Move owned args into params; drop facts a real call could break.
-/* A ref is a pointer to the place, so it cannot point at a field whose `fieldoffset` breaks its alignment. */
+// A ref is a pointer to the place, so it cannot point at a field whose `fieldoffset` breaks its alignment.
 static void CheckMisalignedRef(Resolver* r, Node* arg, StrMap* scope)
 {
     if (!arg || arg->kind != NodeMember)
@@ -254,7 +253,7 @@ static void CheckMisalignedRef(Resolver* r, Node* arg, StrMap* scope)
     }
 }
 
-/* Arguments bound to `ref` / `const ref` parameters are passed by address. */
+// Arguments bound to `ref` / `const ref` parameters are passed by address.
 static void CheckRefArgAlignment(Resolver* r, const FunctionDecl* best, CallExpr* c, StrMap* scope)
 {
     size_t named = NamedParamCount(best);
@@ -395,7 +394,7 @@ static bool TypeMentionsParam(const FunctionDecl* generic, const TypeName* type)
     return false;
 }
 
-/* The `extern<T>` named `name` visible from `fileId`, or NULL. */
+// The `extern<T>` named `name` visible from `fileId`, or NULL.
 static FunctionDecl* FindGenericExtern(Resolver* r, const char* name, uint16_t fileId)
 {
     for (size_t i = 0; i < r->mod->functions.count; i++)
@@ -411,8 +410,8 @@ static FunctionDecl* FindGenericExtern(Resolver* r, const char* name, uint16_t f
     return NULL;
 }
 
-/* `generic` with T replaced by `structName`, created once per type and kept on the module so
-   codegen declares it. The instantiation keeps the generic's host symbol (`name`). */
+// `generic` with T replaced by `structName`, created once per type and kept on the module so
+// codegen declares it. The instantiation keeps the generic's host symbol (`name`).
 static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic, const char* structName)
 {
     for (size_t i = 0; i < r->mod->genericInstances.count; i++)
@@ -455,8 +454,8 @@ static FunctionDecl* GetGenericInstance(Resolver* r, const FunctionDecl* generic
     return instance;
 }
 
-/* What `extern<T>` allows: T only as a whole `ref` / `const ref` parameter type, never in the
-   return type, and no variadic or `return` parameters. */
+// What `extern<T>` allows: T only as a whole `ref` / `const ref` parameter type, never in the
+// return type, and no variadic or `return` parameters.
 void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
 {
     if (TypeRegistryIsUserType(&r->registry, f->typeParam) || GetPrimitiveType(f->typeParam) != PrimNone)
@@ -490,8 +489,8 @@ void CheckGenericExternDecl(Resolver* r, const FunctionDecl* f)
     }
 }
 
-/* A call to an `extern<T>`: infers or reads T, instantiates the extern for it, and checks the
-   arguments against the instantiation. Returns false when the callee isn't generic. */
+// A call to an `extern<T>`: infers or reads T, instantiates the extern for it, and checks the
+// arguments against the instantiation. Returns false when the callee isn't generic.
 static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->resolvedDecl)
@@ -591,8 +590,8 @@ static bool ResolveGenericExternCall(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* A call through a value of an `extern delegate` type: `fn(args)` names a variable, `obj.field(args)` a
-   struct field. Fills c->delegateCallee / c->delegateDecl; false when the call is something else. */
+// A call through a value of an `extern delegate` type: `fn(args)` names a variable, `obj.field(args)` a
+// struct field. Fills c->delegateCallee / c->delegateDecl; false when the call is something else.
 static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->delegateDecl)
@@ -661,10 +660,10 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* `expr.Member(args)` / `Type.Static(args)` — resolve against impl blocks.
-   On success the call is rewritten to the extern symbol (the receiver is
-   prepended as the first argument for instance methods) and resolution
-   falls through to the normal overload machinery. */
+// Resolves `expr.Member(args)` / `Type.Static(args)` against impl blocks, and calls to `extern<T>`.
+// Returns true when that handled the call (a diagnostic, or a generic instance checked), so ResolveCall
+// stops there. A member call rewritten to its extern symbol returns false, as does any other call; those
+// go on through the rest of ResolveCall.
 static bool ResolveCalleeLookup(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (c->calleeBase && ResolveMemberCall(r, c, scope))
@@ -675,12 +674,12 @@ static bool ResolveCalleeLookup(Resolver* r, CallExpr* c, StrMap* scope)
     return ResolveGenericExternCall(r, c, scope);
 }
 
-/* A whole fixed-size array *local* cannot be passed as a call argument —
-   only its elements (`values[i]`, `values.length`) — UNLESS some overload
-   borrows it as a `ref T[]` slice/view (a stack fat is built at the call
-   site; the callee never drops the binding). Locals are named by a bare
-   identifier, so an Ident arg with a fixed type is always a local;
-   field-sourced fixed arrays (`b.data`) keep the extern `^T` decay below. */
+// A whole fixed-size array *local* cannot be passed as a call argument —
+// only its elements (`values[i]`, `values.length`) — UNLESS some overload
+// borrows it as a `ref T[]` slice/view (a stack fat is built at the call
+// site; the callee never drops the binding). Locals are named by a bare
+// identifier, so an Ident arg with a fixed type is always a local;
+// field-sourced fixed arrays (`b.data`) keep the extern `^T` decay below.
 static bool RejectFixedArrayArgs(Resolver* r, CallExpr* c, StrMap* scope)
 {
     DecayFixedArgsToPtr(r, c, scope);
@@ -698,7 +697,7 @@ static bool RejectFixedArrayArgs(Resolver* r, CallExpr* c, StrMap* scope)
 
         const TypeName* argType = InferType(r, arg, scope);
 
-        /* Taking the address of a fixed array is what `addressof` is for. */
+        // Taking the address of a fixed array is what `addressof` is for.
         bool addressOf = c->callee && strcmp(c->callee, "addressof") == 0
                          && !ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId);
 
@@ -716,9 +715,9 @@ static bool RejectFixedArrayArgs(Resolver* r, CallExpr* c, StrMap* scope)
     return fixedArgError;
 }
 
-/* Struct constructor call: owning fields from owning sources move, and braced
-   arguments take the field's struct or array shape. Returns false when the callee
-   is not a struct type. */
+// Struct constructor call: owning fields from owning sources move, and braced
+// arguments take the field's struct or array shape. Returns false when the callee
+// is not a struct type.
 static bool ResolveStructCtorCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!TypeRegistryIsUserType(&r->registry, c->callee))
@@ -806,7 +805,7 @@ static bool ResolveStructCtorCall(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* Braced arg against a struct param is a positional struct init; rewrite before checks. */
+// Braced arg against a struct param is a positional struct init; rewrite before checks.
 static void RewriteBracedCallArgs(Resolver* r, CallExpr* c, FunctionDecl* best)
 {
     bool typedRest = best->isVariadic && !best->isCVararg;
@@ -826,13 +825,13 @@ static void RewriteBracedCallArgs(Resolver* r, CallExpr* c, FunctionDecl* best)
 
         const ParamDecl* param = (ParamDecl*)VecGet(&best->params, j);
 
-        /* Braced array literal against a dynamic-array param: stamp the
-           element types (the assign path does the same) so the literal
-           constructs. A `ref T[]` binding BORROWS a stack-constructed
-           temp; a by-value param takes ownership of a normal heap array
-           the callee drops. Extern by-value arrays decay to T* — the
-           host could never free a Strata temp, so literals are
-           rejected there. */
+        // Braced array literal against a dynamic-array param: stamp the
+        // element types (the assign path does the same) so the literal
+        // constructs. A `ref T[]` binding BORROWS a stack-constructed
+        // temp; a by-value param takes ownership of a normal heap array
+        // the callee drops. Extern by-value arrays decay to T* — the
+        // host could never free a Strata temp, so literals are
+        // rejected there.
         if (arg->kind == NodeArrayInit && TypeNameIsDynamicArray(&param->type) && !((ArrayInitExpr*)arg)->elementType)
         {
             if (best->isExtern && param->mod != ModRef)
@@ -862,7 +861,7 @@ static void RewriteBracedCallArgs(Resolver* r, CallExpr* c, FunctionDecl* best)
     }
 }
 
-/* Facts before moves: the checks read what the call would move, so they run first. */
+// Facts before moves: the checks read what the call would move, so they run first.
 static void CheckResolvedCallArgs(Resolver* r, const FunctionDecl* best, CallExpr* c, StrMap* scope)
 {
     CheckCallArgOptionalDerefs(r, c, scope);
@@ -872,13 +871,13 @@ static void CheckResolvedCallArgs(Resolver* r, const FunctionDecl* best, CallExp
     TrackCallArgMoves(r, best, c);
 }
 
-/* Result checks for the chosen overload: its return type, braced arguments, then the
-   per-argument facts and moves. */
+// Result checks for the chosen overload: its return type, braced arguments, then the
+// per-argument facts and moves.
 static void FinishResolvedCall(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl* best)
 {
-    /* A `return` param's caller allocates the out slot, so the return type
-       must be a defined (sized) struct at every call site. The declaration
-       itself may use a forward-declared type; only the call requires it. */
+    // A `return` param's caller allocates the out slot, so the return type
+    // must be a defined (sized) struct at every call site. The declaration
+    // itself may use a forward-declared type; only the call requires it.
     if (FunctionHasReturnParam(best) && IsIncompleteStruct(&r->registry, best->returnType.name))
     {
         DiagErrorFmt(r->diag, c->base.range, "call to '%s' has incomplete return type '%s'", best->name,
@@ -890,8 +889,8 @@ static void FinishResolvedCall(Resolver* r, CallExpr* c, StrMap* scope, Function
     CheckResolvedCallArgs(r, best, c, scope);
 }
 
-/* Call already resolved (e.g. warmup): reuse the cached decl and rerun the checks and
-   move tracking. Returns false when the cache does not apply. */
+// Call already resolved (e.g. warmup): reuse the cached decl and rerun the checks and
+// move tracking. Returns false when the cache does not apply.
 static bool ReuseCachedOverload(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->resolvedDecl)
@@ -901,7 +900,7 @@ static bool ReuseCachedOverload(Resolver* r, CallExpr* c, StrMap* scope)
 
     const FunctionDecl* best = c->resolvedDecl;
 
-    /* A cached `@private` decl must not leak across files. */
+    // A cached `@private` decl must not leak across files.
     if (!FunctionVisibleTo(best, c->base.range.fileId))
     {
         c->resolvedDecl = NULL;
@@ -912,7 +911,7 @@ static bool ReuseCachedOverload(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* A call needs one visible candidate with its name (a delegate call has its own). */
+// A call needs one visible candidate with its name (a delegate call has its own).
 static bool HasVisibleCandidate(const CallExpr* c, const Vec* pool, bool delegateCall)
 {
     if (delegateCall)
@@ -933,12 +932,12 @@ static bool HasVisibleCandidate(const CallExpr* c, const Vec* pool, bool delegat
     return false;
 }
 
-/* Arity filter: a variadic candidate needs its fixed params, any other needs an exact count. */
+// Arity filter: a variadic candidate needs its fixed params, any other needs an exact count.
 static bool CandidateArityMatches(const CallExpr* c, const FunctionDecl* functionDecl)
 {
     if (functionDecl->isVariadic)
     {
-        /* Extern `...` adds no param; a typed rest counts as one, so min args is one fewer. */
+        // Extern `...` adds no param; a typed rest counts as one, so min args is one fewer.
         size_t minArgs = functionDecl->isCVararg ? functionDecl->params.count : functionDecl->params.count - 1;
 
         return c->args.count >= minArgs;
@@ -947,17 +946,17 @@ static bool CandidateArityMatches(const CallExpr* c, const FunctionDecl* functio
     return NamedParamCount(functionDecl) == c->args.count;
 }
 
-/* Scores an argument against a box, owned or view parameter (array decay at the extern boundary, optional smart casts,
- * `ref T[]` views, owned tails). Anything else is not viable. */
+// Scores an argument against a box, owned or view parameter (array decay at the extern boundary, optional smart casts,
+// `ref T[]` views, owned tails). Anything else is not viable.
 static bool ScoreOwnedOrViewArgument(const TypeName* argType, const TypeName* paramType, const ParamDecl* param,
                                      bool isTail, bool mutableRef, bool isExtern, int* score)
 {
     if (isExtern && TypeNameIsOwning(paramType) && (TypeNameIsDynamicArray(argType) || TypeNameIsFixedArray(argType)))
     {
-        /* Array decay at the extern boundary: a T[] / T[N] argument
-           satisfies a ^T param by passing a pointer to its first
-           element (the host sees T*). Checked before the generic
-           owning-arg rule: dynamic arrays are owning too. */
+        // Array decay at the extern boundary: a T[] / T[N] argument
+        // satisfies a ^T param by passing a pointer to its first
+        // element (the host sees T*). Checked before the generic
+        // owning-arg rule: dynamic arrays are owning too.
         const TypeName* paramInner = TypeNameBoxInner(paramType);
         const TypeName* argElem = TypeNameArrayElem(argType);
 
@@ -974,13 +973,13 @@ static bool ScoreOwnedOrViewArgument(const TypeName* argType, const TypeName* pa
              && TypeNameBoxInner(argType)
              && strcmp(TypeNameBoxInner(paramType)->name, TypeNameBoxInner(argType)->name) == 0)
     {
-        /* Smart cast: a proven `T?` passes as `^T` (proof checked by
-           CheckCallArgOptionalDerefs once the overload is picked). */
+        // Smart cast: a proven `T?` passes as `^T` (proof checked by
+        // CheckCallArgOptionalDerefs once the overload is picked).
         *score += 1;
     }
     else if (TypeNameIsOwning(argType))
     {
-        /* ^T coerces to T (implicit deref). */
+        // ^T coerces to T (implicit deref).
         const TypeName* argInner = TypeNameBoxInner(argType);
 
         if (argInner && strcmp(argInner->name, paramType->name) == 0)
@@ -994,10 +993,10 @@ static bool ScoreOwnedOrViewArgument(const TypeName* argType, const TypeName* pa
     }
     else if (!isTail && param->mod == ModRef && TypeNameIsDynamicArray(paramType) && TypeNameIsFixedArray(argType))
     {
-        /* Fixed → `ref T[]` slice/view: the fixed inline storage is
-           borrowed as a stack fat {&fixed[0], N, N} — no copy, no
-           allocation; a ref callee mutates elements, never drops or
-           frees the binding (ref params are exempt from teardown). */
+        // Fixed → `ref T[]` slice/view: the fixed inline storage is
+        // borrowed as a stack fat {&fixed[0], N, N} — no copy, no
+        // allocation; a ref callee mutates elements, never drops or
+        // frees the binding (ref params are exempt from teardown).
         const TypeName* argElem = TypeNameArrayElem(argType);
         const TypeName* paramElem = TypeNameArrayElem(paramType);
 
@@ -1032,8 +1031,8 @@ static bool ScoreOwnedOrViewArgument(const TypeName* argType, const TypeName* pa
     return true;
 }
 
-/* Scores one argument against one candidate: exact and implicit conversions add to the score, a mismatch rules the
- * candidate out. */
+// Scores one argument against one candidate: exact and implicit conversions add to the score, a mismatch rules the
+// candidate out.
 static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl* functionDecl, size_t j, int* score)
 {
     Node* arg = (Node*)VecGet(&c->args, j);
@@ -1075,11 +1074,11 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
         }
     }
 
-    /* A mutable `ref` binds the caller's storage itself: a converted
-       temporary would silently lose the callee's writes (and a wider
-       handle/optional slot could be written with a value the
-       caller's type cannot hold). Only exact types, box contents and
-       fixed-array views bind. */
+    // A mutable `ref` binds the caller's storage itself: a converted
+    // temporary would silently lose the callee's writes (and a wider
+    // handle/optional slot could be written with a value the
+    // caller's type cannot hold). Only exact types, box contents and
+    // fixed-array views bind.
     bool mutableRef = !isTail && param->mod == ModRef && !paramType->isConst;
 
     if (strcmp(argType->name, paramType->name) == 0)
@@ -1092,12 +1091,12 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
     }
     else if (arg->kind == NodeStrLiteral && TypeIsCString(&r->registry, paramType->name))
     {
-        /* String literal contextually coerces to `cstring`. */
+        // String literal contextually coerces to `cstring`.
         *score += 1;
     }
     else if (TypeIsCString(&r->registry, argType->name) && TypeIsString(&r->registry, paramType->name))
     {
-        /* `cstring` copies into a `string` param (heap copy). */
+        // `cstring` copies into a `string` param (heap copy).
         *score += 1;
     }
     else if (!mutableRef && IsImplicitScalarConversion(paramType->primitiveType, argType->primitiveType)
@@ -1134,7 +1133,7 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
             const TypeName* argInner = TypeNameBoxInner(argType);
 
             optMatch = argInner != NULL ? strcmp(argInner->name, paramInner) == 0
-                                        : strcmp("string", paramInner) == 0; /* bare ^string */
+                                        : strcmp("string", paramInner) == 0; // bare ^string
         }
         else if (paramInner)
         {
@@ -1158,12 +1157,12 @@ static bool ScoreArgument(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl*
     return true;
 }
 
-/* Scores a candidate over all arguments. Returns false when it is not viable. */
+// Scores a candidate over all arguments. Returns false when it is not viable.
 static bool ScoreCandidate(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl* functionDecl, int* scoreOut)
 {
     int score = 0;
 
-    /* Variadic candidates are a lower-priority fallback. */
+    // Variadic candidates are a lower-priority fallback.
     if (functionDecl->isVariadic)
     {
         score += 1;
@@ -1181,7 +1180,7 @@ static bool ScoreCandidate(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl
     return true;
 }
 
-/* Picks the best-scoring viable candidate. A tie with the best makes the call ambiguous. */
+// Picks the best-scoring viable candidate. A tie with the best makes the call ambiguous.
 static FunctionDecl* SelectBestOverload(Resolver* r, CallExpr* c, StrMap* scope, const Vec* pool, bool delegateCall,
                                         bool* ambiguousOut)
 {
@@ -1228,7 +1227,7 @@ static FunctionDecl* SelectBestOverload(Resolver* r, CallExpr* c, StrMap* scope,
     return best;
 }
 
-/* Overload selection: a cached decl from an earlier pass, or the best viable candidate. */
+// Overload selection: a cached decl from an earlier pass, or the best viable candidate.
 static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool delegateCall)
 {
     if (ReuseCachedOverload(r, c, scope))
@@ -1236,7 +1235,7 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
         return;
     }
 
-    /* A delegate call has exactly one candidate: its signature. */
+    // A delegate call has exactly one candidate: its signature.
     Vec delegatePool;
     VecInit(&delegatePool);
 
@@ -1292,7 +1291,7 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
 
 void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    /* Calls through delegate values pick their one signature directly. */
+    // Calls through delegate values pick their one signature directly.
     bool delegateCall = DetectDelegateCall(r, c, scope);
 
     if (!delegateCall)
@@ -1321,12 +1320,12 @@ void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
     ResolveOverloadCall(r, c, scope, delegateCall);
 }
 
-// -- Instrinsics
+// -- Intrinsics
 
 // NOTE: Make sure there are matching definitions for any new intrinsics added at `EmitIntrinsicCall()` in
-// LLVMModuleBuilder.c.
+// src/Codegen/Builder/Call.c.
 static const IntrinsicTypeDefinition INTRINSICS[] = {
-    /* Array calls */
+    // Array calls
     {"array_push",        ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_pop",         ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_resize",      ArrayBuiltinType,           ResolveArrayBuiltin    },
@@ -1336,7 +1335,7 @@ static const IntrinsicTypeDefinition INTRINSICS[] = {
     {"array_replace",     ArrayBuiltinType,           ResolveArrayBuiltin    },
     {"array_take",        ArrayBuiltinType,           ResolveArrayBuiltin    },
 
-    /* Memory */
+    // Memory
     {"copy",              CopyBuiltinType,            ResolveCopyBuiltin     },
     {"drop",              DropBuiltinType,            ResolveDropBuiltin     },
     {"addressof",         MemoryBuiltinType,          ResolveMemoryBuiltin   },
@@ -1345,10 +1344,10 @@ static const IntrinsicTypeDefinition INTRINSICS[] = {
     {"load",              MemoryBuiltinType,          ResolveMemoryBuiltin   },
     {"store",             MemoryBuiltinType,          ResolveMemoryBuiltin   },
 
-    /* Strings */
+    // Strings
     {"substring",         SubstringBuiltinType,       ResolveSubstringBuiltin},
 
-    /* Vectors */
+    // Vectors
     {"float2",            VectorConstructBuiltinType, ResolveVectorConstruct },
     {"float3",            VectorConstructBuiltinType, ResolveVectorConstruct },
     {"float4",            VectorConstructBuiltinType, ResolveVectorConstruct },
@@ -1376,7 +1375,6 @@ static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)
             // This call expr was resolved as a call to an intrinsic, mark and return true
             if (result)
             {
-                // Mark this call expression as an intrinsic call
                 c->isIntrinsicCall = true;
                 return true;
             }
@@ -1409,7 +1407,7 @@ void ResolveCallExpr(Resolver* r, Node* n, StrMap* scope)
 {
     CallExpr* c = (CallExpr*)n;
 
-    /* `addressof(fn)`'s argument names a function, not a value. */
+    // `addressof(fn)`'s argument names a function, not a value.
     bool argIsFunction = IsAddressOfFunctionArg(r, c, scope);
 
     for (size_t i = 0; i < c->args.count && !argIsFunction; i++)

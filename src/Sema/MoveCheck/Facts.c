@@ -1,6 +1,7 @@
+// Narrowing and ref facts: which optional places are proven non-empty, and what a write invalidates.
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
-/* What a value is handed to when only "not an optional" matters: a C vararg, a `substring` operand. */
+// What a value is handed to when only "not an optional" matters: a C vararg, a `substring` operand.
 static const TypeName PLAIN_TARGET = {.name = "?"};
 
 static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
@@ -8,7 +9,7 @@ static bool FactPlaceOf(const Node* n, char* buf, size_t cap, const char** root)
     return PlaceKeyImpl(n, buf, cap, root, false);
 }
 
-/* With `lax`, an index that is neither a variable nor a literal is `[?]`, which may be any element. */
+// With `lax`, an index that is neither a variable nor a literal is `[?]`, which may be any element.
 bool PlaceKeyImpl(const Node* n, char* buf, size_t cap, const char** root, bool lax)
 {
     if (!n)
@@ -165,7 +166,7 @@ size_t SplitPlace(const char* path, Seg* segs)
     return count;
 }
 
-/* Can the two segments name the same thing? Different literal indices cannot; a variable index can be anything. */
+// Can the two segments name the same thing? Different literal indices cannot; a variable index can be anything.
 bool SegsAlias(Seg a, Seg b)
 {
     if (a.p[0] == '[' && b.p[0] == '[' && !(a.p[1] >= '0' && a.p[1] <= '9' && b.p[1] >= '0' && b.p[1] <= '9'))
@@ -176,7 +177,7 @@ bool SegsAlias(Seg a, Seg b)
     return a.n == b.n && memcmp(a.p, b.p, a.n) == 0;
 }
 
-/* The type of a value: what sema inferred, else a call's declared return type. */
+// The type of a value: what sema inferred, else a call's declared return type.
 const TypeName* ValueType(const Env* env, const Node* n)
 {
     const TypeName* t = NodeTypesGet(env->types, n);
@@ -189,7 +190,7 @@ const TypeName* ValueType(const Env* env, const Node* n)
     return t;
 }
 
-/* Registers every optional place on the chain `n`, `n`'s base, and so on. */
+// Registers every optional place on the chain `n`, `n`'s base, and so on.
 static void AddOptionalChain(Env* env, const Node* n)
 {
     char buf[256];
@@ -260,16 +261,14 @@ static void SetFact(const Env* env, unsigned char* f, const char* path, unsigned
     }
 }
 
-/* `key` was written or moved out of: forget what was proven about it, about what is under it, and about
-   every place that may be the same (`a[j]` for `a[i]`). With `selfToo` false only what is under it. */
-/* A `ref` local stays valid until what it was bound to changes. Its state follows the facts in the array. */
+// The ref-state bytes of a fact array: they follow the facts in it.
 static unsigned char* RefStates(const Env* env, unsigned char* f)
 {
     return f + env->factCount;
 }
 
-/* A write to `key` (or, with `selfToo`, to `key` itself) kills the refs bound there or under it, and the
-   refs bound to any place that may be the same. */
+// A write to `key` (or, with `selfToo`, to `key` itself) kills the refs bound there or under it, and the
+// refs bound to any place that may be the same.
 static void KillRefs(const Env* env, unsigned char* f, const char* key, bool selfToo)
 {
     Seg a[MaxSegs];
@@ -318,7 +317,7 @@ static void KillFacts(const Env* env, unsigned char* f, const char* key, bool se
     }
 }
 
-/* The variable `name` changed: facts about elements indexed by it no longer hold. */
+// The variable `name` changed: facts about elements indexed by it no longer hold.
 static void KillIndexVar(const Env* env, unsigned char* f, const char* name)
 {
     size_t len = strlen(name);
@@ -344,7 +343,7 @@ static void KillIndexVar(const Env* env, unsigned char* f, const char* name)
     }
 }
 
-/* A call may write any global. */
+// A call may write any global.
 static void KillGlobals(const Env* env, unsigned char* f)
 {
     for (size_t i = 0; i < env->aliasCount; i++)
@@ -382,8 +381,8 @@ static void KillGlobals(const Env* env, unsigned char* f)
     }
 }
 
-/* Applies what `c` evaluating to `whenTrue` proves: `x?` terms joined by `&&` (all hold when true) or
-   `||` (all hold when false), under any number of `!`. */
+// Applies what `c` evaluating to `whenTrue` proves: `x?` terms joined by `&&` (all hold when true) or
+// `||` (all hold when false), under any number of `!`.
 void ApplyCond(const Env* env, unsigned char* f, const Node* c, bool whenTrue, bool loopExit)
 {
     while (c && c->kind == NodeUnary && ((const UnaryExpr*)c)->op == UnNot)
@@ -404,7 +403,7 @@ void ApplyCond(const Env* env, unsigned char* f, const Node* c, bool whenTrue, b
 
         if (FactPlaceOf(((const NullTestExpr*)c)->operand, buf, sizeof(buf), &root))
         {
-            /* A loop that ends because its test failed says nothing worth a "definitely empty". */
+            // A loop that ends because its test failed says nothing worth a "definitely empty".
             SetFact(env, f, buf, whenTrue ? FactNonEmpty : loopExit ? FactNone : FactEmpty);
         }
     }
@@ -427,7 +426,7 @@ static const char* PlaceKey(const Env* env, const Node* n)
     return FactPlaceOf(n, buf, sizeof(buf), &root) ? ArenaStrdup(env->arena, buf) : "<expression>";
 }
 
-/* Reports a read of the optional `value` that lacks the proof. `k` is its fact, if it has one. */
+// Reports a read of the optional `value` that lacks the proof. `k` is its fact, if it has one.
 static void ReportUnproven(const Env* env, const unsigned char* f, Found* found, const Node* value, SourceRange range,
                            int k)
 {
@@ -443,7 +442,7 @@ static void ReportUnproven(const Env* env, const unsigned char* f, Found* found,
     }
     else if (PlaceKeyImpl(value, buf, sizeof(buf), &root, true))
     {
-        /* An index that is neither a variable nor a literal: show it erased, as `a[]`. */
+        // An index that is neither a variable nor a literal: show it erased, as `a[]`.
         char* q = strstr(buf, "[?]");
 
         while (q)
@@ -472,7 +471,7 @@ static void ReportUnproven(const Env* env, const unsigned char* f, Found* found,
     }
 }
 
-/* Reading through a `T?` needs the proof. */
+// Reading through a `T?` needs the proof.
 static void RequireProof(const Env* env, const unsigned char* f, Found* found, const Node* value, SourceRange range)
 {
     char buf[256];
@@ -485,8 +484,8 @@ static void RequireProof(const Env* env, const unsigned char* f, Found* found, c
     }
 }
 
-/* `value` is handed to something of type `target` (NULL: unknown, so no proof is wanted). Returns whether
-   the target may count it as non-empty. A moved optional leaves its source empty. */
+// `value` is handed to something of type `target` (NULL: unknown, so no proof is wanted). Returns whether
+// the target may count it as non-empty. A moved optional leaves its source empty.
 static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const Node* value, const TypeName* target,
                          SourceRange range, bool move)
 {
@@ -499,7 +498,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 
     if (!vt || !TypeNameIsOptional(vt))
     {
-        /* Moving an owning value out ends every `ref` into it. */
+        // Moving an owning value out ends every `ref` into it.
         char moved[256];
         const char* movedRoot;
 
@@ -525,7 +524,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 
     if (move && TypeOwns(env, vt))
     {
-        /* A move through an index we cannot follow may empty any element it could be. */
+        // A move through an index we cannot follow may empty any element it could be.
         if (haveKey || PlaceKeyImpl(value, buf, sizeof(buf), &root, true))
         {
             KillFacts(env, f, buf, true);
@@ -540,8 +539,8 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
     return proven;
 }
 
-/* A value being dropped runs its `Drop` method (and those of its fields and elements), which may write
-   globals: whatever the narrowing and refs rested on in those globals is gone. */
+// A value being dropped runs its `Drop` method (and those of its fields and elements), which may write
+// globals: whatever the narrowing and refs rested on in those globals is gone.
 static void ApplyDropWrites(const Env* env, unsigned char* f, const TypeName* t, int depth)
 {
     while (t && (TypeNameIsBox(t) || TypeNameIsOptional(t) || TypeNameHasArrayShape(t)))
@@ -591,6 +590,9 @@ static void ApplyDropWrites(const Env* env, unsigned char* f, const TypeName* t,
     }
 }
 
+// `key` was written or moved out of: forget what was proven about it, about what is under it, and about
+// every place that may be the same (`a[j]` for `a[i]`). With `selfToo` false only what is under it.
+// A `ref` local stays valid until what it was bound to changes. Its state follows the facts in the array.
 static void KillPlaceOf(const Env* env, unsigned char* f, const Node* n, bool selfToo)
 {
     char buf[256];
@@ -606,7 +608,7 @@ static void KillPlaceOf(const Env* env, unsigned char* f, const Node* n, bool se
         }
         else
         {
-            /* Writing `other[0]` may change what `foo[other[bar]]` names. */
+            // Writing `other[0]` may change what `foo[other[bar]]` names.
             Seg segs[MaxSegs];
 
             if (SplitPlace(buf, segs) > 0 && segs[0].n < sizeof(buf))
@@ -654,8 +656,8 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
 
         if (arg0 && IsArrayMutator(e->callee))
         {
-            /* Pushing or reserving moves no element: only a place indexed by the array's length goes. The
-               others change what the elements are. The array itself stays set either way. */
+            // Pushing or reserving moves no element: only a place indexed by the array's length goes. The
+            // others change what the elements are. The array itself stays set either way.
             bool keepsElements = (ArrayBuiltinFlagsOf(e->callee) & ABF_KEEPS_ELEMENTS) != 0;
             const char* name = arg0->kind == NodeIdent    ? ((const IdentExpr*)arg0)->name
                                : arg0->kind == NodeMember ? ((const MemberExpr*)arg0)->member
@@ -666,7 +668,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
                 KillIndexVar(env, f, name);
             }
 
-            /* Growing can move the buffer, so refs into the elements go either way. */
+            // Growing can move the buffer, so refs into the elements go either way.
             if (keepsElements)
             {
                 char key[256];
@@ -702,7 +704,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
 
         if (p && p->mod == ModRef && !p->type.isConst)
         {
-            /* Only a `ref T?` can empty the optional itself; a `ref T` changes what is inside. */
+            // Only a `ref T?` can empty the optional itself; a `ref T` changes what is inside.
             KillPlaceOf(env, f, arg, TypeNameIsOptional(&p->type));
         }
     }
@@ -721,7 +723,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
     }
 }
 
-/* The name at the root of `n`: the variable a place expression starts from. */
+// The name at the root of `n`: the variable a place expression starts from.
 const IdentExpr* RootIdent(const Node* n)
 {
     while (n && (n->kind == NodeMember || n->kind == NodeIndex))
@@ -732,7 +734,7 @@ const IdentExpr* RootIdent(const Node* n)
     return n && n->kind == NodeIdent ? (const IdentExpr*)n : NULL;
 }
 
-/* Using a `ref` after what it was bound to changed. */
+// Using a `ref` after what it was bound to changed.
 void DanglingCheck(const Env* env, const unsigned char* f, Found* found, const Node* n)
 {
     const IdentExpr* id = NULL;
@@ -780,7 +782,7 @@ static void FactDeclare(const Env* env, unsigned char* f, const CfgOp* op, Found
 
 static void FactScopeExit(const Env* env, unsigned char* f, const CfgOp* op)
 {
-    /* The locals of the block drop here, running their `Drop` methods. */
+    // The locals of the block drop here, running their `Drop` methods.
     const Block* blk = (const Block*)op->node;
 
     for (size_t i = 0; blk && blk->base.kind == NodeBlock && i < blk->statements.count; i++)
@@ -815,7 +817,7 @@ static void FactAssign(const Env* env, unsigned char* f, Found* found, const Nod
     const TypeName* targetType = NodeTypesGet(env->types, a->target);
     bool proves = false;
 
-    /* Writing through a `T?` base needs the proof, like reading through it. */
+    // Writing through a `T?` base needs the proof, like reading through it.
     for (const Node* cur = a->target; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
     {
         const Node* base
@@ -835,7 +837,7 @@ static void FactAssign(const Env* env, unsigned char* f, Found* found, const Nod
         proves = ConsumeValue(env, f, found, a->value, targetType, a->value->range, true);
     }
 
-    /* Overwriting an owning value drops the old one. */
+    // Overwriting an owning value drops the old one.
     if (a->op == AssignSet && targetType && TypeOwns(env, targetType))
     {
         ApplyDropWrites(env, f, targetType, 0);
@@ -866,7 +868,7 @@ static void FactBinary(const Env* env, unsigned char* f, Found* found, const Nod
 
     if (b->op != BinLogicAnd && b->op != BinLogicOr)
     {
-        /* `a == b` of two optionals compares them whole; anything else reads the value. */
+        // `a == b` of two optionals compares them whole; anything else reads the value.
         if (lo && (relational || !ro))
         {
             RequireProof(env, f, found, b->lhs, b->lhs->range);
@@ -963,7 +965,7 @@ static void FactEval(const Env* env, unsigned char* f, const CfgOp* op, Found* f
     }
 }
 
-/* The effect of one op on the narrowing facts; with `found` set, reads that lack the proof are reported. */
+// The effect of one op on the narrowing facts; with `found` set, reads that lack the proof are reported.
 void FactStep(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
 {
     if (op->kind == CfgDeclare)

@@ -1,3 +1,4 @@
+// Global write sets per function, for the checks on global arguments.
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
 static bool WritesAdd(FnWrites* w, const char* key)
@@ -77,7 +78,7 @@ static void NoteCallee(FnWrites* w, const FunctionDecl* d)
     w->callees[w->calleeCount++] = d;
 }
 
-/* What `fn` writes by itself, and whom it calls. */
+// What `fn` writes by itself, and whom it calls.
 static void ScanWrites(const Env* shared, FnWrites* w, const FunctionDecl* fn)
 {
     Env env = {.reg = shared->reg, .types = shared->types, .arena = shared->arena};
@@ -243,7 +244,7 @@ void WriteSetsFree(WriteSets* ws)
     }
 }
 
-/* Does a call to `d` possibly write a place overlapping `key`? Unknown callees may write anything global. */
+// Does a call to `d` possibly write a place overlapping `key`? Unknown callees may write anything global.
 static bool CalleeWrites(const Env* env, const FunctionDecl* d, const char* key)
 {
     const FnWrites* w = FindWrites(env->ws, d);
@@ -264,7 +265,7 @@ static bool CalleeWrites(const Env* env, const FunctionDecl* d, const char* key)
     return w->all;
 }
 
-/* An argument that borrows a global place must not be one the callee writes. */
+// An argument that borrows a global place must not be one the callee writes.
 void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e)
 {
     const FunctionDecl* d = e->resolvedDecl;
@@ -288,7 +289,7 @@ void CheckGlobalArgs(const Env* env, Found* found, const CallExpr* e)
     }
 }
 
-/* A global is built in declaration order, so its initializer may use only the globals before it. */
+// A global is built in declaration order, so its initializer may use only the globals before it.
 void TouchGlobal(const InitCtx* c, const char* name, SourceRange range, bool write)
 {
     for (size_t j = c->self + 1; j < c->mod->globals.count; j++)

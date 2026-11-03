@@ -1,4 +1,4 @@
-/* Statement walking, scopes, defer handling and loop flow. */
+// Statement walking, scopes, defer handling and loop flow.
 #include "Sema/Resolve/ResolverInternal.h"
 
 static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, bool bodyScope, StrMap* scope);
@@ -31,9 +31,9 @@ static void ForwardNewDiagnostics(DiagnosticEngine* dst, const DiagnosticEngine*
     }
 }
 
-/* Walks a deferred statement at one of its exits. Names declared after the
-   `defer` are hidden, and repeats of a diagnostic from another exit are
-   dropped. */
+// Walks a deferred statement at one of its exits. Names declared after the
+// `defer` are hidden, and repeats of a diagnostic from another exit are
+// dropped.
 static void WalkDeferred(Resolver* r, DeferEntry* e, StrMap* scope)
 {
     Vec hidden;
@@ -114,9 +114,9 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
     e->declMark = ((Vec*)VecGet(&r->scopeDecls, e->frame))->count;
     e->ranAtExit = false;
 
-    /* Resolve it here, in the scope it was written in, but keep the flow
-       state untouched: nothing in it has run yet. The diagnostics are only
-       used if no reachable exit ever runs the statement. */
+    // Resolve it here, in the scope it was written in, but keep the flow
+    // state untouched: nothing in it has run yet. The diagnostics are only
+    // used if no reachable exit ever runs the statement.
     FlowState saved;
     FlowInit(&saved);
     FlowCapture(r, &saved);
@@ -137,19 +137,19 @@ static void QueueDefer(Resolver* r, DeferStmt* d, StrMap* scope)
     VecPush((Vec*)VecGet(&r->deferFrames, r->deferFrames.count - 1), e);
 }
 
-/* `break`/`continue`: run the defers of the scopes being left, then hand the
-   state to the loop's exit or back edge. The path after it is dead. */
+// `break`/`continue`: run the defers of the scopes being left, then hand the
+// state to the loop's exit or back edge. The path after it is dead.
 static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak, SourceRange range)
 {
     LoopFlow* lf = r->loopFlows.count > 0 ? (LoopFlow*)VecGet(&r->loopFlows, r->loopFlows.count - 1) : NULL;
 
-    /* A deferred statement runs at scope exit, wherever that is: it cannot also jump out of a loop. */
+    // A deferred statement runs at scope exit, wherever that is: it cannot also jump out of a loop.
     if (r->deferWalkDepth > 0 && (!lf || lf->deferWalkDepth != r->deferWalkDepth))
     {
         DiagErrorFmt(r->diag, range, "'%s' cannot leave a defer block", isBreak ? "break" : "continue");
     }
 
-    /* A jump out of a deferred statement is not modeled; it only ends the path. */
+    // A jump out of a deferred statement is not modeled; it only ends the path.
     if (lf && lf->deferWalkDepth == r->deferWalkDepth && !r->unreachable)
     {
         RunDefersFrom(r, lf->deferDepth, scope);
@@ -159,8 +159,8 @@ static void WalkLoopJump(Resolver* r, StrMap* scope, bool isBreak, SourceRange r
     r->unreachable = true;
 }
 
-/* `if`/`while`/`for` conditions must be `bool`: no implicit truthiness for
-   numerics (`if (x)` on a float is a != 0.0 test, rarely what was meant). */
+// `if`/`while`/`for` conditions must be `bool`: no implicit truthiness for
+// numerics (`if (x)` on a float is a != 0.0 test, rarely what was meant).
 void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope)
 {
     const TypeName* t = cond ? InferType(r, cond, scope) : NULL;
@@ -171,9 +171,9 @@ void CheckBoolCondition(Resolver* r, Node* cond, StrMap* scope)
     }
 }
 
-/* One trip around the loop from the current (loop head) state: condition,
-   body, continue join, update. `exit` receives the condition-false and break
-   states, `back` the state flowing back to the head. */
+// One trip around the loop from the current (loop head) state: condition,
+// body, continue join, update. `exit` receives the condition-false and break
+// states, `back` the state flowing back to the head.
 static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* body, bool bodyScope, StrMap* scope,
                               FlowState* exit, FlowState* back)
 {
@@ -238,9 +238,9 @@ static void WalkLoopIteration(Resolver* r, Node* condition, Node* update, Node* 
     FlowFree(&lf.continues);
 }
 
-/* Loops iterate muted until the head state (entry joined with every back
-   edge) is stable, then walk once more from that state for diagnostics. The
-   state after the loop joins the condition-false exit with every `break`. */
+// Loops iterate muted until the head state (entry joined with every back
+// edge) is stable, then walk once more from that state for diagnostics. The
+// state after the loop joins the condition-false exit with every `break`.
 static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, bool bodyScope, StrMap* scope)
 {
     FlowState head;
@@ -299,9 +299,7 @@ static void WalkLoop(Resolver* r, Node* condition, Node* update, Node* body, boo
     FlowFree(&back);
 }
 
-/**
- * @brief Pushes a new scope to the scopeDecls stack.
- */
+// Pushes a new scope to the scopeDecls stack.
 static void ScopePush(Resolver* r)
 {
     Vec* frame = (Vec*)ArenaAlloc(r->arena, sizeof(Vec));
@@ -313,9 +311,7 @@ static void ScopePush(Resolver* r)
     VecPush(&r->deferFrames, defers);
 }
 
-/**
- * @brief Runs the scope's defers (when its end is reachable) and invalidates all symbols in it.
- */
+// Runs the scope's defers (when its end is reachable) and invalidates all symbols in it.
 static void ScopePop(Resolver* r, StrMap* scope)
 {
     if (r->deferFrames.count > 0)
@@ -331,7 +327,7 @@ static void ScopePop(Resolver* r, StrMap* scope)
         {
             DeferEntry* e = (DeferEntry*)VecGet(defers, i);
 
-            /* No reachable exit ran it: keep what the `defer` site found. */
+            // No reachable exit ran it: keep what the `defer` site found.
             if (!e->ranAtExit)
             {
                 ForwardNewDiagnostics(r->diag, &e->early);
@@ -357,9 +353,7 @@ static void ScopePop(Resolver* r, StrMap* scope)
     }
 }
 
-/**
- * @brief Declares a new symbol `name` in the scope `scope`.
- */
+// Declares a new symbol `name` in the scope `scope`.
 void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, SourceRange range)
 {
     void* existing = StrMapGet(scope, name);
@@ -378,7 +372,7 @@ void ScopeDeclare(Resolver* r, StrMap* scope, const char* name, void* typePtr, S
     }
 }
 
-/* Unknown types must fail here so codegen is skipped. Returns false after reporting. */
+// Unknown types must fail here so codegen is skipped. Returns false after reporting.
 static bool CheckLocalTypeKnown(Resolver* r, VarDeclStmt* vd)
 {
     const TypeName* t = &vd->type;
@@ -403,7 +397,7 @@ static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
         DiagErrorFmt(r->diag, vd->base.range, "variable '%s' has incomplete type '%s'", vd->name, vd->type.name);
     }
 
-    /* `T?` of an alias of an optional is an optional of an optional, which `T??` is not allowed to be. */
+    // `T?` of an alias of an optional is an optional of an optional, which `T??` is not allowed to be.
     if (TypeNameIsOptional(&vd->type) && vd->type.inner)
     {
         const TypeName* innerResolved = ResolveAliasedType(&r->registry, r->arena, vd->type.inner);
@@ -415,7 +409,7 @@ static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
         }
     }
 
-    /* An array of an incomplete struct has elements of unknown size. */
+    // An array of an incomplete struct has elements of unknown size.
     for (const TypeName* el = vd->type.name ? &vd->type : NULL; el && TypeNameHasArrayShape(el);)
     {
         el = el->elem;
@@ -430,12 +424,12 @@ static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
     }
 }
 
-/* Shape checks for a fixed-size array local. Reports and returns false on the first problem. */
+// Shape checks for a fixed-size array local. Reports and returns false on the first problem.
 static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** leafOut, ArrayLength* totalOut)
 {
     if (!(TypeNameHasArrayShape(&vd->type) && vd->type.length >= 0))
     {
-        /* e.g. `int[][4] x;` — a dynamic array of fixed arrays. */
+        // e.g. `int[][4] x;` — a dynamic array of fixed arrays.
         DiagErrorFmt(r->diag, vd->base.range,
                      "local variable '%s' has invalid fixed-size array type ('%s'); "
                      "fixed-size arrays may only be declared as 'T[N]' locals",
@@ -495,7 +489,7 @@ static bool CheckFixedArrayLocal(Resolver* r, VarDeclStmt* vd, const TypeName** 
     return true;
 }
 
-/* `{ value; N }`: every element (of every row) is the value; N must be the full length. */
+// `{ value; N }`: every element (of every row) is the value; N must be the full length.
 static void WalkFixedArrayRepeatInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* fixedInit, const TypeName* leaf,
                                      ArrayLength total, StrMap* scope)
 {
@@ -535,15 +529,15 @@ static void WalkFixedArrayRepeatInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
 static bool FlattenFixedArrayInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* fixedInit, const TypeName* leaf,
                                   ArrayLength total)
 {
-    /* Loop bodies walk twice (muted warmup + real); a multidim init
-       flattened by the first pass must not fail the shape check on
-       the second. An already-flat init is the output of this very
-       processing — detect it BEFORE stamping elementType below (a
-       user-written flat multidim init still carries the parser's
-       intermediate element type, so it is correctly NOT skipped and
-       fails the shape check). Error paths never mutate the init, so
-       re-walks reproduce their diagnostics loudly instead of
-       converging silent. */
+    // Loop bodies walk twice (muted warmup + real); a multidim init
+    // flattened by the first pass must not fail the shape check on
+    // the second. An already-flat init is the output of this very
+    // processing — detect it BEFORE stamping elementType below (a
+    // user-written flat multidim init still carries the parser's
+    // intermediate element type, so it is correctly NOT skipped and
+    // fails the shape check). Error paths never mutate the init, so
+    // re-walks reproduce their diagnostics loudly instead of
+    // converging silent.
     bool alreadyFlat = fixedInit->elementType == leaf && fixedInit->elements.count == (size_t)total
                        && !HasNestedArrayInit(fixedInit);
 
@@ -554,13 +548,13 @@ static bool FlattenFixedArrayInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* f
             return false;
         }
 
-        /* The parser pre-fills elementType with the immediate element
-           (`int[2]` for `int[2][2]`); codegen needs the LEAF (`int`),
-           like struct-field inits (which parse with NULL and get the
-           leaf here). */
+        // The parser pre-fills elementType with the immediate element
+        // (`int[2]` for `int[2][2]`); codegen needs the LEAF (`int`),
+        // like struct-field inits (which parse with NULL and get the
+        // leaf here).
         fixedInit->elementType = leaf;
 
-        /* Short rows leave holes that zero-fill. */
+        // Short rows leave holes that zero-fill.
         Vec flat;
         VecInit(&flat);
 
@@ -586,7 +580,7 @@ static bool FlattenFixedArrayInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* f
 static void WalkFixedArrayBracedInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr* fixedInit, const TypeName* leaf,
                                      StrMap* scope)
 {
-    /* Bare-brace leaves are struct inits of the leaf type. */
+    // Bare-brace leaves are struct inits of the leaf type.
     for (size_t k = 0; k < fixedInit->elements.count; k++)
     {
         Node* elem = (Node*)VecGet(&fixedInit->elements, k);
@@ -623,9 +617,9 @@ static void WalkFixedArrayBracedInit(Resolver* r, VarDeclStmt* vd, ArrayInitExpr
     }
 }
 
-/* Stack-allocated fixed-size array locals (`float v[10] = { ... };`):
-   inline `[N x T]` storage, braced initialization only. Params,
-   returns and globals keep their bans (checked after all functions). */
+// Stack-allocated fixed-size array locals (`float v[10] = { ... };`):
+// inline `[N x T]` storage, braced initialization only. Params,
+// returns and globals keep their bans (checked after all functions).
 static void WalkFixedArrayLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 {
     ArrayLength total = 0;
@@ -723,7 +717,7 @@ static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
         return;
     }
 
-    /* A plain local shadows any earlier `ref` local of the same name. */
+    // A plain local shadows any earlier `ref` local of the same name.
     if (StrMapGet(&r->refLocals, vd->name))
     {
         StrMapPut(&r->refLocals, vd->name, NULL);
@@ -737,9 +731,9 @@ static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
     CheckLocalDeclTypes(r, vd);
 
-    /* Resolve `[constName]` dimensions before the fixed-array checks below
-       (idempotent: lengthName is cleared once resolved, so loop warmups
-       re-resolving the same declaration are harmless). */
+    // Resolve `[constName]` dimensions before the fixed-array checks below
+    // (idempotent: lengthName is cleared once resolved, so loop warmups
+    // re-resolving the same declaration are harmless).
     SemaResolveConstDims(r, &vd->type);
 
     if (TypeTreeHasFixedArray(&vd->type))
@@ -763,7 +757,7 @@ static void WalkVarDeclStmt(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 static void WalkExprStmt(Resolver* r, Node* n, StrMap* scope)
 {
     ResolveExpr(r, ((ExprStmt*)n)->expr, scope);
-    /* A call that never returns ends the path, as `return` does. */
+    // A call that never returns ends the path, as `return` does.
     if (StmtIsNoReturnCall(n))
     {
         r->unreachable = true;
@@ -826,10 +820,10 @@ static void WalkReturnStmt(Resolver* r, ReturnStmt* rs, StrMap* scope)
             }
             else
             {
-                /* Owning values without a box inner (string, T[]) have
-                    nothing to "read out" into a differently-typed return,
-                    so boxInner is NULL and no inner matching applies. The
-                    type-mismatch diagnostic was already emitted above. */
+                // Owning values without a box inner (string, T[]) have
+                // nothing to "read out" into a differently-typed return,
+                // so boxInner is NULL and no inner matching applies. The
+                // type-mismatch diagnostic was already emitted above.
                 const TypeName* boxInner = TypeNameBoxInner(typeName);
                 const char* boxInnerName = boxInner ? boxInner->name : NULL;
 
@@ -868,8 +862,8 @@ static void WalkIfStmt(Resolver* r, IfStmt* i, StrMap* scope)
 
     bool entryDead = r->unreachable;
 
-    /* Each branch is its own lexical scope: locals declared in one
-       branch are invisible in the other and after the join. */
+    // Each branch is its own lexical scope: locals declared in one
+    // branch are invisible in the other and after the join.
     ScopePush(r);
     WalkStmt(r, i->thenBranch, scope);
     ScopePop(r, scope);
@@ -884,22 +878,22 @@ static void WalkIfStmt(Resolver* r, IfStmt* i, StrMap* scope)
         ScopePop(r, scope);
     }
 
-    /* The join is unreachable only when both arms are. An else-less if falls through on its false edge. */
+    // The join is unreachable only when both arms are. An else-less if falls through on its false edge.
     r->unreachable = thenDead && r->unreachable;
 }
 
 static void WalkWhileStmt(Resolver* r, WhileStmt* w, StrMap* scope)
 {
-    /* The loop body is its own scope (covers non-block bodies too;
-       block bodies nest a second scope harmlessly). */
+    // The loop body is its own scope (covers non-block bodies too;
+    // block bodies nest a second scope harmlessly).
     WalkLoop(r, w->condition, NULL, w->body, true, scope);
 }
 
 static void WalkForStmt(Resolver* r, ForStmt* fs, StrMap* scope)
 {
-    /* The whole loop (init, condition, update, body) is one scope so a
-       `for (int i ...)` header variable is visible in the body but does
-       not leak after the loop. */
+    // The whole loop (init, condition, update, body) is one scope so a
+    // `for (int i ...)` header variable is visible in the body but does
+    // not leak after the loop.
     ScopePush(r);
 
     if (fs->init)
@@ -987,7 +981,7 @@ void WalkBlock(Resolver* r, Block* b, StrMap* scope)
     ScopePop(r, scope);
 }
 
-/* ---- Missing-return flow analysis ---- */
+// -- Missing-return flow analysis
 static bool ExprIsConstantTrue(const Node* n)
 {
     if (!n)
@@ -1034,9 +1028,9 @@ static bool ExprIsConstantFalse(const Node* n)
     }
 }
 
-/* True if a `break` targeting the loop at `targetDepth` can be reached on some
-   path through `n`, where `depth` is the current loop-nesting depth. A `break`
-   inside a nested loop targets that loop, not ours. */
+// True if a `break` targeting the loop at `targetDepth` can be reached on some
+// path through `n`, where `depth` is the current loop-nesting depth. A `break`
+// inside a nested loop targets that loop, not ours.
 static bool BodyCanBreak(const Node* n, int depth, int targetDepth)
 {
     if (!n)
@@ -1074,8 +1068,8 @@ static bool BodyCanBreak(const Node* n, int depth, int targetDepth)
     }
 }
 
-/* True if control can reach the statement after `n` (fall off its end) on some
-   path. `depth` is the current loop-nesting depth. */
+// True if control can reach the statement after `n` (fall off its end) on some
+// path. `depth` is the current loop-nesting depth.
 bool StmtFallsThrough(const Node* n, int depth)
 {
     if (!n)
@@ -1102,7 +1096,7 @@ bool StmtFallsThrough(const Node* n, int depth)
         {
             if (!StmtFallsThrough((const Node*)VecGet(&b->statements, i), depth))
             {
-                return false; /* terminating statement hit; rest is dead */
+                return false; // terminating statement hit; rest is dead
             }
         }
         return true;
@@ -1121,7 +1115,7 @@ bool StmtFallsThrough(const Node* n, int depth)
         }
         if (!s->elseBranch)
         {
-            return true; /* false branch always falls through */
+            return true; // false branch always falls through
         }
         return StmtFallsThrough(s->thenBranch, depth) || StmtFallsThrough(s->elseBranch, depth);
     }
@@ -1131,10 +1125,10 @@ bool StmtFallsThrough(const Node* n, int depth)
         const WhileStmt* s = (const WhileStmt*)n;
         if (ExprIsConstantTrue(s->condition))
         {
-            /* Infinite unless the body breaks out. */
+            // Infinite unless the body breaks out.
             return BodyCanBreak(s->body, depth + 1, depth + 1);
         }
-        /* May run zero times -> control reaches after the loop. */
+        // May run zero times -> control reaches after the loop.
         return true;
     }
 
@@ -1143,7 +1137,7 @@ bool StmtFallsThrough(const Node* n, int depth)
         const ForStmt* s = (const ForStmt*)n;
         if (!s->condition || ExprIsConstantTrue(s->condition))
         {
-            /* for(;;) or for(;true;) : infinite unless body breaks. */
+            // for(;;) or for(;true;) : infinite unless body breaks.
             return BodyCanBreak(s->body, depth + 1, depth + 1);
         }
         return true;

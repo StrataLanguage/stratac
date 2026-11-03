@@ -1,3 +1,4 @@
+// Integer and float arithmetic for constant folding.
 #include "Sema/ConstFold.h"
 
 ConstIntType ConstIntTypeCommon(ConstIntType l, ConstIntType r)
@@ -46,9 +47,9 @@ bool ConstFoldIntAt(BinaryOp op, ConstUInt a, ConstUInt b, ConstIntType t, Const
     return true;
 }
 
-/* Two's-complement integer arithmetic. `/`, `%` and `>>` apply C signed semantics, except that `>>` is a
-   logical shift of the bit pattern under ConstShrLogical. Refuses division or modulo by zero, and shifts whose
-   count is >= 64. */
+// Two's-complement integer arithmetic. `/`, `%` and `>>` apply C signed semantics, except that `>>` is a
+// logical shift of the bit pattern under ConstShrLogical. Refuses division or modulo by zero, and shifts whose
+// count is >= 64.
 bool ConstFoldIntArith(BinaryOp op, ConstUInt a, ConstUInt b, ConstShrKind shr, ConstUInt* out)
 {
     switch (op)
@@ -116,7 +117,7 @@ bool ConstFoldIntArith(BinaryOp op, ConstUInt a, ConstUInt b, ConstShrKind shr, 
     }
 }
 
-/* Float constant arithmetic (`+ - * /`); refuses division by zero so the fold never embeds an inf/nan literal. */
+// Float constant arithmetic (`+ - * /`); refuses division by zero so the fold never embeds an inf/nan literal.
 bool ConstFoldFloatArith(BinaryOp op, double a, double b, double* out)
 {
     switch (op)

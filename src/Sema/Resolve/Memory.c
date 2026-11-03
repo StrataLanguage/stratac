@@ -1,9 +1,9 @@
-/* Raw memory intrinsics and the copy/drop builtins. */
+// Raw memory intrinsics and the copy/drop builtins.
 #include "Sema/Resolve/ResolverInternal.h"
 
-//-- Array intrinsics.
+// -- copy() and drop()
 
-/* Result type of `copy(arg)`, or NULL if not a copy call. */
+// Result type of `copy(arg)`, or NULL if not a copy call.
 const TypeName* CopyBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee || strcmp(c->callee, "copy") != 0)
@@ -64,7 +64,7 @@ bool ResolveCopyBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* Result type of `drop(arg)` - always void (NULL TypeName). */
+// Result type of `drop(arg)` - always void (NULL TypeName).
 const TypeName* DropBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     (void)r;
@@ -107,9 +107,9 @@ bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
     c->isIntrinsicCall = true;
 
-    /* Move the source — the box is invalidated after drop(). An optional
-       source is left definitely EMPTY (legal to test later), never poisoned,
-       like any other move out of a T?. */
+    // Move the source — the box is invalidated after drop(). An optional
+    // source is left definitely EMPTY (legal to test later), never poisoned,
+    // like any other move out of a T?.
     const char* movedKey = MovableBoxSourceKey(r, arg0);
     if (movedKey)
     {
@@ -126,7 +126,9 @@ bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* `sizeof<T>()`, `alignof<T>()`, `load<T>(p)`, `store<T>(p, v)`: intrinsics that take a type argument. */
+// -- Memory intrinsics: raw `ptr` access for FFI.
+
+// `sizeof<T>()`, `alignof<T>()`, `load<T>(p)`, `store<T>(p, v)`: intrinsics that take a type argument.
 bool IsTypedMemoryIntrinsic(Resolver* r, const CallExpr* c)
 {
     static const char* const names[] = {"sizeof", "alignof", "load", "store"};
@@ -142,9 +144,7 @@ bool IsTypedMemoryIntrinsic(Resolver* r, const CallExpr* c)
     return false;
 }
 
-//-- Memory intrinsics: raw `ptr` access for FFI.
-
-/* The only function named `name` visible from `fileId`; NULL (with *ambiguous set) when overloaded. */
+// The only function named `name` visible from `fileId`; NULL (with *ambiguous set) when overloaded.
 FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId, bool* ambiguous)
 {
     FunctionDecl* found = NULL;
@@ -171,7 +171,7 @@ FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId,
     return found;
 }
 
-/* `addressof(f)` names a function, not a variable: a bare identifier that is no local/global. */
+// `addressof(f)` names a function, not a variable: a bare identifier that is no local/global.
 bool IsAddressOfFunctionArg(Resolver* r, const CallExpr* c, StrMap* scope)
 {
     if (!c->callee || strcmp(c->callee, "addressof") != 0 || c->args.count != 1)
@@ -189,7 +189,7 @@ bool IsAddressOfFunctionArg(Resolver* r, const CallExpr* c, StrMap* scope)
     return ModuleHasFunctionNamed(r, ((const IdentExpr*)arg)->name, c->base.range.fileId);
 }
 
-/* A `T` that load/store/sizeof may move as raw bytes: no owning parts. */
+// A `T` that load/store/sizeof may move as raw bytes: no owning parts.
 static bool CheckPlainDataTypeArg(Resolver* r, const CallExpr* c, const TypeName* t)
 {
     if (!t || !t->name)
@@ -220,7 +220,7 @@ static bool CheckPlainDataTypeArg(Resolver* r, const CallExpr* c, const TypeName
     return true;
 }
 
-/* A pointer operand: any handle (they all convert to `ptr`). */
+// A pointer operand: any handle (they all convert to `ptr`).
 static bool CheckPtrOperand(Resolver* r, const CallExpr* c, Node* arg, StrMap* scope)
 {
     const TypeName* t = InferType(r, arg, scope);
@@ -259,7 +259,7 @@ const TypeName* MemoryBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
         return c->typeArg;
     }
 
-    return NULL; /* store: void */
+    return NULL; // store: void
 }
 
 static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
@@ -408,14 +408,14 @@ static bool ResolveStoreBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* addressof(x) -> ptr        the address of a variable, field or element (a box: its cell), or of an
-                              extern / `@export` function
-   sizeof<T>() / alignof<T>() -> ulong
-   load<T>(p) -> T            reads a T at p
-   store(p, v) / store<T>(p, v) writes v (as T) at p */
+// addressof(x) -> ptr        the address of a variable, field or element (a box: its cell), or of an
+// extern / `@export` function
+// sizeof<T>() / alignof<T>() -> ulong
+// load<T>(p) -> T            reads a T at p
+// store(p, v) / store<T>(p, v) writes v (as T) at p
 bool ResolveMemoryBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 {
-    /* These names are not reserved: a module's own function of the same name wins. */
+    // These names are not reserved: a module's own function of the same name wins.
     if (!c->callee || ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId))
     {
         return false;

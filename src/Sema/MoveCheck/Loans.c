@@ -1,3 +1,4 @@
+// Loan conflicts between the operands of one expression.
 #include "Sema/MoveCheck/MoveCheckInternal.h"
 
 bool NonTrivial(const Env* env, const Node* n)
@@ -33,7 +34,7 @@ static void AddAccess(const Env* env, Accesses* acc, const Node* n, LoanMode mod
     a->node = n;
 }
 
-/* Could the two places share storage? One is a prefix of the other, index groups matching loosely. */
+// Could the two places share storage? One is a prefix of the other, index groups matching loosely.
 bool PlacesOverlap(const char* a, const char* b)
 {
     Seg sa[MaxSegs];
@@ -52,7 +53,6 @@ bool PlacesOverlap(const char* a, const char* b)
     return true;
 }
 
-/* How call argument `i` is taken. */
 LoanMode ArgMode(const CallExpr* e, size_t i)
 {
     if (e->isIntrinsicCall)
@@ -82,7 +82,7 @@ LoanMode ArgMode(const CallExpr* e, size_t i)
     return !d->isExtern && !p->inferredBorrow && !p->isVarargRest ? LoanMove : LoanShared;
 }
 
-/* Every non-trivial place `n` touches while it is evaluated, with how. `mode` is how `n` itself is taken. */
+// Every non-trivial place `n` touches while it is evaluated, with how. `mode` is how `n` itself is taken.
 static void CollectAccesses(const Env* env, Accesses* acc, const Node* n, LoanMode mode)
 {
     if (!n)
@@ -96,7 +96,7 @@ static void CollectAccesses(const Env* env, Accesses* acc, const Node* n, LoanMo
     {
         AddAccess(env, acc, n, mode);
 
-        /* An index that is itself an expression runs too. */
+        // An index that is itself an expression runs too.
         for (const Node* cur = n; cur && (cur->kind == NodeMember || cur->kind == NodeIndex);)
         {
             if (cur->kind == NodeIndex)
@@ -196,7 +196,7 @@ static void CollectAccesses(const Env* env, Accesses* acc, const Node* n, LoanMo
     }
 }
 
-/* The operands of `n` in evaluation order, with how each is taken; false when `n` has no such structure. */
+// The operands of `n` in evaluation order, with how each is taken; false when `n` has no such structure.
 static bool Operands(const Node* n, const Node** ops, LoanMode* modes, size_t* count, const CallExpr** call)
 {
     *call = NULL;
@@ -264,7 +264,7 @@ static void CheckOperandPair(const Env* env, Found* found, const Node* earlier, 
     free(effects.items);
 }
 
-/* Checks the loans that the operands of expression `n` take against each other. */
+// Checks the loans that the operands of expression `n` take against each other.
 void LoanCheck(const Env* env, Found* found, const Node* n)
 {
     const Node* ops[MaxSegs];

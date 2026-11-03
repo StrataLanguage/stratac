@@ -1,9 +1,9 @@
-/* String builtins: substring resolution and string literal and concatenation rules. */
+// String builtins: substring resolution and string literal and concatenation rules.
 #include "Sema/Resolve/ResolverInternal.h"
 
-/* Result type of `substring(s, start, len)` — always string, or NULL if not
-   a substring call. An optional `string?` source unwraps here; the resolve
-   half still demands the narrowing fact via CheckOptionalDeref. */
+// Result type of `substring(s, start, len)` — always string, or NULL if not
+// a substring call. An optional `string?` source unwraps here; the resolve
+// half still demands the narrowing fact via CheckOptionalDeref.
 const TypeName* SubstringBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
 {
     if (!c->callee || strcmp(c->callee, "substring") != 0)
@@ -66,8 +66,8 @@ bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    /* Reading through a `string?` needs the narrowing fact, like any
-       other optional read. */
+    // Reading through a `string?` needs the narrowing fact, like any
+    // other optional read.
 
     const char* indexNames[2] = {"start", "len"};
 
@@ -88,7 +88,7 @@ bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
-/* `a + b` where both sides are a string, cstring or string literal: a new owned string. */
+// `a + b` where both sides are a string, cstring or string literal: a new owned string.
 bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName* rt)
 {
     if (op != BinAdd || !lt || !rt || TypeNameIsOptional(lt) || TypeNameIsOptional(rt))
@@ -102,8 +102,8 @@ bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName
     return lStr && rStr;
 }
 
-/* A string literal contextually coerces to `cstring` (a `.rodata` pointer).
-   A `string`-typed value never converts to `cstring` implicitly. */
+// A string literal contextually coerces to `cstring` (a `.rodata` pointer).
+// A `string`-typed value never converts to `cstring` implicitly.
 bool IsStrLiteralForCString(const Resolver* r, const TypeName* targetType, const Node* valueNode)
 {
     return targetType && valueNode && valueNode->kind == NodeStrLiteral

@@ -1,4 +1,4 @@
-/* Type predicates, interning, mangling and assignability rules. */
+// Type predicates, interning, mangling and assignability rules.
 #include "Sema/Resolve/ResolverInternal.h"
 
 bool IsBoolType(const TypeRegistry* reg, const TypeName* t)
@@ -11,9 +11,9 @@ bool IsBoolType(const TypeRegistry* reg, const TypeName* t)
     return GetPrimitiveType(TypeRegistryResolveAlias(reg, t->name)) == PrimBool;
 }
 
-/* Types a boolean context (`if`/`while`/`for`, `!`, `&&`, `||`) accepts:
-   `bool`, `^bool` (reads through), and any `T?` (truthiness is presence).
-   Numerics are not: `if (x)` on a float is a hidden != 0.0 test. */
+// Types a boolean context (`if`/`while`/`for`, `!`, `&&`, `||`) accepts:
+// `bool`, `^bool` (reads through), and any `T?` (truthiness is presence).
+// Numerics are not: `if (x)` on a float is a hidden != 0.0 test.
 bool IsBoolContextType(const TypeRegistry* reg, const TypeName* t)
 {
     if (t && TypeNameIsOptional(t))
@@ -24,15 +24,15 @@ bool IsBoolContextType(const TypeRegistry* reg, const TypeName* t)
     return IsBoolType(reg, t && TypeNameIsBox(t) && t->inner ? t->inner : t);
 }
 
-/* Scalars convert implicitly among themselves, except across the bool
-   boundary: `bool b = 0.5` (a != 0 test) or `int n = flag` is almost always
-   a bug, so numeric <-> bool needs an explicit cast. */
+// Scalars convert implicitly among themselves, except across the bool
+// boundary: `bool b = 0.5` (a != 0 test) or `int n = flag` is almost always
+// a bug, so numeric <-> bool needs an explicit cast.
 bool IsImplicitScalarConversion(PrimitiveType target, PrimitiveType value)
 {
     return IsNumeric(target) && IsNumeric(value) && (target == PrimBool) == (value == PrimBool);
 }
 
-/* Intern a TypeName tree per canonical spelling (shared by synthesized types). */
+// Intern a TypeName tree per canonical spelling (shared by synthesized types).
 const TypeName* InternTypeName(Resolver* r, const char* name)
 {
     const TypeName* cached = (const TypeName*)StrMapGet(&r->typeCache, name);
@@ -61,7 +61,7 @@ char* Mangle(Arena* arena, const FunctionDecl* f)
         SbPutc(&sb, '$');
         SbPuts(&sb, p->type.name);
 
-        /* Distinguish a variadic tail (T...) from a plain T[] param. */
+        // Distinguish a variadic tail (T...) from a plain T[] param.
         if (p->isVarargRest)
         {
             SbPuts(&sb, "...");
@@ -82,7 +82,7 @@ bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
     return t && t->opaque && t->incomplete;
 }
 
-/* Strips a leading optional then box, returning the inner type (or NULL). */
+// Strips a leading optional then box, returning the inner type (or NULL).
 const TypeName* UnwrapBoxPtr(const TypeName* t)
 {
     if (!t)
@@ -103,21 +103,21 @@ const TypeName* UnwrapBoxPtr(const TypeName* t)
     return t;
 }
 
-/* Owning when the type itself owns, or its alias resolves to one. */
+// Owning when the type itself owns, or its alias resolves to one.
 bool AliasIsOwning(const Resolver* r, const TypeName* t)
 {
     return TypeIsOwningResolved(&r->registry, r->arena, t);
 }
 
-/* Owning VALUE: AliasIsOwning plus owning structs (and their aliases) — a
-   `Rec` value owns its fields, so it moves like a box when consumed and
-   legalizes `Rec[]` as inline owning storage. */
+// Owning VALUE: AliasIsOwning plus owning structs (and their aliases) — a
+// `Rec` value owns its fields, so it moves like a box when consumed and
+// legalizes `Rec[]` as inline owning storage.
 bool AliasIsOwningValue(const Resolver* r, const TypeName* t)
 {
     return TypeIsOwningValueResolved(&r->registry, r->arena, t);
 }
 
-/* True when the type is a dynamic array, or its alias resolves to one. */
+// True when the type is a dynamic array, or its alias resolves to one.
 bool ResolvesToDynamicArray(const Resolver* r, const TypeName* t)
 {
     if (!t || !t->name)
@@ -141,8 +141,8 @@ bool ResolvesToDynamicArray(const Resolver* r, const TypeName* t)
     return TypeNameIsDynamicArray(&parsed);
 }
 
-/* True when both names resolve to the same underlying type.
-   Distinct aliases never unify implicitly; explicit casts use this. */
+// True when both names resolve to the same underlying type.
+// Distinct aliases never unify implicitly; explicit casts use this.
 bool SameResolvedType(const Resolver* r, const char* a, const char* b)
 {
     const char* la = a ? TypeRegistryResolveAlias(&r->registry, a) : NULL;
@@ -151,7 +151,6 @@ bool SameResolvedType(const Resolver* r, const char* a, const char* b)
     return la && lb && strcmp(la, lb) == 0;
 }
 
-//-- Conditional expressions.
 static int NumericRank(PrimitiveType p)
 {
     switch (p)
@@ -181,9 +180,11 @@ static int NumericRank(PrimitiveType p)
     }
 }
 
-/* The type of `c ? a : b`: two string literals (or cstrings) give a borrowed `cstring`; otherwise the
-   branch types must agree (or one convert to the other, numbers widening). Owning branches are
-   rejected: one path's value would have to be dropped and the other's moved. */
+// -- Conditional expressions
+
+// The type of `c ? a : b`: two string literals (or cstrings) give a borrowed `cstring`; otherwise the
+// branch types must agree (or one convert to the other, numbers widening). Owning branches are
+// rejected: one path's value would have to be dropped and the other's moved.
 const TypeName* ConditionalType(Resolver* r, ConditionalExpr* ce, StrMap* scope, bool diagnose)
 {
     const TypeName* lt = InferType(r, ce->thenExpr, scope);
@@ -242,9 +243,9 @@ const TypeName* ConditionalType(Resolver* r, ConditionalExpr* ce, StrMap* scope,
     return lt;
 }
 
-//-- `@export` functions: the plain C ABI.
+// -- `@export` functions: the plain C ABI.
 
-/* A value that crosses a C call in one register: a number, bool, enum, handle or cstring. */
+// A value that crosses a C call in one register: a number, bool, enum, handle or cstring.
 bool IsCAbiScalar(Resolver* r, const TypeName* t)
 {
     if (!t || !t->name || TypeNameIsOwning(t) || TypeNameHasArrayShape(t))
@@ -298,7 +299,7 @@ bool IsCVarargCompatible(Resolver* r, const TypeName* type)
         return false;
     }
 
-    /* `cstring` crosses as `const char*` — always vararg-compatible. */
+    // `cstring` crosses as `const char*` — always vararg-compatible.
     if (TypeIsCString(&r->registry, type->name))
     {
         return true;
@@ -317,13 +318,11 @@ bool IsCVarargCompatible(Resolver* r, const TypeName* type)
     return false;
 }
 
-/**
- * @brief Checks to see if a vector is assignable to another vector type.
- */
+// Checks whether a vector is assignable to another vector type.
 bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType,
                             const char* resolvedTarget, const char* resolvedValue)
 {
-    // Ethan's SIMD vector rules:
+    // SIMD vector assignability rules:
     //
     // - Identical vector types are of course valid.
     //
@@ -365,16 +364,16 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
 
 bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType)
 {
-    /* A `cstring` is a `const char*`: it passes wherever a raw `ptr` is expected. */
+    // A `cstring` is a `const char*`: it passes wherever a raw `ptr` is expected.
     if (targetType && valueType && TypeIsCString(&r->registry, valueType->name)
         && strcmp(targetType->name, STRATA_PTR_TYPE) == 0)
     {
         return true;
     }
 
-    /* `cstring` copies into `string` (heap copy at the use site). The
-       reverse is never implicit: only a string literal initializes a
-       `cstring` (handled at each use site via IsStrLiteralForCString). */
+    // `cstring` copies into `string` (heap copy at the use site). The
+    // reverse is never implicit: only a string literal initializes a
+    // `cstring` (handled at each use site via IsStrLiteralForCString).
     if (targetType && valueType && TypeIsCString(&r->registry, valueType->name)
         && TypeIsString(&r->registry, targetType->name))
     {
@@ -398,8 +397,8 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
             return strcmp(inner->name, valueInner->name) == 0;
         }
 
-        /* Smart cast: a `T?` goes where `^T` is wanted once flow typing
-           proves it non-empty; CheckOptionalDeref demands the proof at each use site. */
+        // Smart cast: a `T?` goes where `^T` is wanted once flow typing
+        // proves it non-empty; CheckOptionalDeref demands the proof at each use site.
         if (!TypeNameIsOptional(targetType) && TypeNameIsBox(targetType) && TypeNameIsOptional(valueType) && inner
             && valueInner)
         {
@@ -436,13 +435,13 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
            || (valueInner && strcmp(valueInner->name, targetType->name) == 0);
 }
 
-/* Whether all-zero bytes are a valid `t`: what `{ {}; count }` and array_resize fill with. Empty
-   strings, arrays and optionals and zeroed scalars are; a `^T` (which must point at
-   something) is not, nor is a struct holding one. */
+// Whether all-zero bytes are a valid `t`: what `{ {}; count }` and array_resize fill with. Empty
+// strings, arrays and optionals and zeroed scalars are; a `^T` (which must point at
+// something) is not, nor is a struct holding one.
 bool ZeroIsValid(Resolver* r, const TypeName* t, int depth)
 {
     (void)depth;
 
-    /* Classified once, aliases resolved: a `struct PB = ^P` alias is a box like the `^P` it names. */
+    // Classified once, aliases resolved: a `struct PB = ^P` alias is a box like the `^P` it names.
     return !t || TypeClassify(&r->registry, r->arena, t).zeroValid;
 }

@@ -1,4 +1,5 @@
 #pragma once
+// Array builtin names and what each one does to the array it is given.
 
 #include <stdbool.h>
 
@@ -17,5 +18,4 @@ typedef enum ArrayBuiltinFlags ArrayBuiltinFlags;
 // The flags of an array builtin by name, or ABF_NONE when `name` is not one.
 ArrayBuiltinFlags ArrayBuiltinFlagsOf(const char* name);
 
-// Does the builtin `name` write its array argument?
 bool IsArrayMutator(const char* name);

@@ -1,4 +1,4 @@
-/* Member access, impl resolution, accessor synthesis and struct initializers. */
+// Member access, impl resolution, accessor synthesis and struct initializers.
 #include "Sema/Resolve/ResolverInternal.h"
 
 bool IsLengthPseudoMemberBase(const TypeRegistry* reg, const TypeName* t)
@@ -103,13 +103,13 @@ void CheckStructInitFields(Resolver* r, Node* n)
         }
         else
         {
-            positionalSeen++; /* too many initializers: reported elsewhere */
+            positionalSeen++; // too many initializers: reported elsewhere
         }
 
         if (field->value)
         {
-            /* Type a nested bare-braced value from the field's declared type
-               (`{ {} }`); already-typed values pass through unchanged. */
+            // Type a nested bare-braced value from the field's declared type
+            // (`{ {} }`); already-typed values pass through unchanged.
             if (fd && (field->value->kind == NodeArrayInit || field->value->kind == NodeStructInit))
             {
                 field->value = ApplyBracedStructTarget(r, field->value, &fd->type);
@@ -137,19 +137,19 @@ void CheckStructInitFields(Resolver* r, Node* n)
     {
         FieldDecl* fd = (FieldDecl*)VecGet((Vec*)&structType->fields, f);
 
-        /* Every OWNING field (`^T`, owning struct, `string`) must be
-           initialized; optionals and dynamic arrays may stay empty (a T? is
-           null, a zero-filled T[] is the canonical empty {null, 0} fat
-           struct). */
-        /* An alias of an optional or an array is judged as the type it names. */
+        // Every OWNING field (`^T`, owning struct, `string`) must be
+        // initialized; optionals and dynamic arrays may stay empty (a T? is
+        // null, a zero-filled T[] is the canonical empty {null, 0} fat
+        // struct).
+        // An alias of an optional or an array is judged as the type it names.
         const TypeName* fieldType = ResolveAliasedType(&r->registry, r->arena, &fd->type);
         bool mustInit = !TypeNameIsOptional(fieldType) && !TypeNameIsDynamicArray(fieldType)
                         && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->registry, fd->type.name));
 
         if (mustInit && !covered[f])
         {
-            /* Suggest the optional spelling of the inner type. A `^string`
-               field's optional is spelled `string?`. */
+            // Suggest the optional spelling of the inner type. A `^string`
+            // field's optional is spelled `string?`.
             const TypeName* inner = TypeNameBoxInner(&fd->type);
             const char* optSpelling = inner ? inner->name : fd->type.name;
 
@@ -163,7 +163,7 @@ void CheckStructInitFields(Resolver* r, Node* n)
 
 // -- Impl blocks.
 
-/* Method lookup walks base handles: a `handle Player : Entity` sees impl Entity methods. */
+// Method lookup walks base handles: a `handle Player : Entity` sees impl Entity methods.
 FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* methodName)
 {
     const char* hn = handleName;
@@ -199,7 +199,7 @@ FunctionDecl* FindImplMethod(Resolver* r, const char* handleName, const char* me
     return NULL;
 }
 
-/* Property lookup on the exact handle (no inheritance). */
+// Property lookup on the exact handle (no inheritance).
 static PropertyDecl* FindImplProperty(Resolver* r, const char* handleName, const char* name)
 {
     const ImplDecl* impl = ModuleFindImpl(r->mod, handleName);
@@ -222,8 +222,8 @@ static PropertyDecl* FindImplProperty(Resolver* r, const char* handleName, const
     return NULL;
 }
 
-/* If `n` is a property read on an impl target (after unwrapping `T?`/`^T`),
-   returns the property; NULL when the member is not an impl property. */
+// If `n` is a property read on an impl target (after unwrapping `T?`/`^T`),
+// returns the property; NULL when the member is not an impl property.
 PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char* member)
 {
     const TypeName* inner = UnwrapBoxPtr(baseType);
@@ -236,12 +236,12 @@ PropertyDecl* PropertyOnHandle(Resolver* r, const TypeName* baseType, const char
     return FindImplProperty(r, inner->name, member);
 }
 
-/* Resolves `int.max` / `float.min` — a pseudo-property read on a BUILTIN
-   scalar type name (aliases and user types are excluded; only the builtin
-   spellings carry the C-limit constants). Returns true when the base names
-   a scalar pseudo type, meaning the member expression was fully handled:
-   a valid `max`/`min` marks the member as a constant; an invalid member is
-   diagnosed. Anything else (value bases, non-scalar bases) returns false. */
+// Resolves `int.max` / `float.min` — a pseudo-property read on a BUILTIN
+// scalar type name (aliases and user types are excluded; only the builtin
+// spellings carry the C-limit constants). Returns true when the base names
+// a scalar pseudo type, meaning the member expression was fully handled:
+// a valid `max`/`min` marks the member as a constant; an invalid member is
+// diagnosed. Anything else (value bases, non-scalar bases) returns false.
 bool TryResolveScalarPseudoConst(Resolver* r, MemberExpr* m)
 {
     if (m->baseNode->kind != NodeIdent)
@@ -274,14 +274,14 @@ static void VecPushFront(Vec* v, void* item)
     v->items[0] = item;
 }
 
-/* Resolves `expr.Member(args...)` / `Type.Member(args...)` against impl blocks.
-   Returns true when the call was fully handled (diagnostic emitted); false
-   after a successful rewrite (fall through to normal overload resolution). */
+// Resolves `expr.Member(args...)` / `Type.Member(args...)` against impl blocks.
+// Returns true when the call was fully handled (diagnostic emitted); false
+// after a successful rewrite (fall through to normal overload resolution).
 bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 {
     Node* base = c->calleeBase;
 
-    /* `Type.Method(args)` — static call when the base is a type name. */
+    // `Type.Method(args)` — static call when the base is a type name.
     bool isStatic = base->kind == NodeIdent && TypeRegistryIsUserType(&r->registry, ((IdentExpr*)base)->name);
 
     const char* handleName = NULL;
@@ -298,7 +298,7 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (raw && TypeNameIsOptional(raw))
         {
-            /* Reading through a `T?` receiver needs a narrowing fact. */
+            // Reading through a `T?` receiver needs a narrowing fact.
             const char* key = MovableBoxSourceKey(r, base);
         }
 
@@ -331,10 +331,10 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         return true;
     }
 
-    /* Instance call: when the method's first parameter is the receiver slot
-       (the impl type the receiver's type extends or equals), prepend the base
-       expression as the self argument. Parameterless methods (factories) and
-       static calls map arguments 1:1. */
+    // Instance call: when the method's first parameter is the receiver slot
+    // (the impl type the receiver's type extends or equals), prepend the base
+    // expression as the self argument. Parameterless methods (factories) and
+    // static calls map arguments 1:1.
     if (!isStatic && method->params.count > 0)
     {
         const ParamDecl* p0 = (const ParamDecl*)VecGet(&method->params, 0);
@@ -348,14 +348,14 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     c->calleeBase = NULL;
     c->isIntrinsicCall = false;
-    c->callee = method->name; /* qualified extern symbol, e.g. Camera_GetFOV */
+    c->callee = method->name; // qualified extern symbol, e.g. Camera_GetFOV
 
     return false;
 }
 
-/* Synthesizes the extern declaration a property accessor refers to. When a
-   function with that name already exists (e.g. a flat extern), its signature
-   is validated against the accessor shape instead. */
+// Synthesizes the extern declaration a property accessor refers to. When a
+// function with that name already exists (e.g. a flat extern), its signature
+// is validated against the accessor shape instead.
 static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, const TypeName* propType,
                                const char* handleName, bool selfByRef, bool isSetter, SourceRange range,
                                DiagnosticEngine* diag)
@@ -378,9 +378,9 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
     if (matchCount > 1)
     {
-        /* An accessor must name a unique function: with overloads there is no
-           way to tell which one `get`/`set` refers to, and first-match binding
-           would silently depend on declaration order. */
+        // An accessor must name a unique function: with overloads there is no
+        // way to tell which one `get`/`set` refers to, and first-match binding
+        // would silently depend on declaration order.
         DiagErrorFmt(diag, range,
                      "property %s '%s' is ambiguous: %zu functions share that name; "
                      "property accessors must name a unique function",
@@ -390,12 +390,12 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
 
     if (match)
     {
-        /* Validate the pre-existing declaration against the accessor shape:
-           getter (self) -> propType; setter (self, value propType) -> void.
-           A getter may return the value via a plain return OR a trailing
-           `return propType` out-param (`void Get(self, return T c)`) — the
-           parser folds the out-param's type into fn->returnType and
-           NamedParamCount excludes it, so the checks below cover both forms. */
+        // Validate the pre-existing declaration against the accessor shape:
+        // getter (self) -> propType; setter (self, value propType) -> void.
+        // A getter may return the value via a plain return OR a trailing
+        // `return propType` out-param (`void Get(self, return T c)`) — the
+        // parser folds the out-param's type into fn->returnType and
+        // NamedParamCount excludes it, so the checks below cover both forms.
         size_t wantParams = isSetter ? 2 : 1;
 
         if (NamedParamCount(match) != wantParams)
@@ -459,7 +459,7 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
         fn->returnType = *propType;
     }
 
-    /* A struct receiver crosses as a pointer, like any extern struct param; a getter only reads it. */
+    // A struct receiver crosses as a pointer, like any extern struct param; a getter only reads it.
     ParamDecl* self = AST_NEW(arena, ParamDecl);
     self->base.kind = NodeParam;
     self->base.range = range;
@@ -483,8 +483,8 @@ static void SynthesizeAccessor(Module* mod, Arena* arena, const char* symbol, co
     VecPush(&mod->functions, fn);
 }
 
-/* Validates impl targets and materializes property accessor externs (before
-   the overload/mangling pass, so accessors flow through the normal pipeline). */
+// Validates impl targets and materializes property accessor externs (before
+// the overload/mangling pass, so accessors flow through the normal pipeline).
 void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, const TypeRegistry* registry)
 {
     for (size_t i = 0; i < mod->impls.count; i++)
@@ -508,10 +508,10 @@ void ResolveImpls(Module* mod, DiagnosticEngine* diag, Arena* arena, const TypeR
                 continue;
             }
 
-            /* 'void' has no value to get/set; a dynamic `T[]` crosses extern
-               as a fat {ptr,len} struct no C thunk can sanely implement for a
-               single accessor. Fixed `T[N]` is rejected later by the
-               function-level fixed-array rules (synthesized getter/setter). */
+            // 'void' has no value to get/set; a dynamic `T[]` crosses extern
+            // as a fat {ptr,len} struct no C thunk can sanely implement for a
+            // single accessor. Fixed `T[N]` is rejected later by the
+            // function-level fixed-array rules (synthesized getter/setter).
             if (prop->returnType.primitiveType == PrimVoid)
             {
                 DiagErrorFmt(diag, prop->range, "property '%s' may not have type 'void'", prop->name);
@@ -729,10 +729,10 @@ static void ResolveStructInitField(Resolver* r, StructInitExpr* structInitExpr, 
                              fieldDecl->name, structInitExpr->typeName, fieldValueType->name);
             }
 
-            /* A plain `T` field initialized from a `T?` unwraps it. */
+            // A plain `T` field initialized from a `T?` unwraps it.
         }
 
-        /* A ^T field moves its source only when that source is itself owning. */
+        // A ^T field moves its source only when that source is itself owning.
         const TypeName* fieldValueType2 = InferType(r, field->value, scope);
 
         const char* movedFieldKey
@@ -751,7 +751,7 @@ void ResolveStructInitExpr(Resolver* r, Node* n, StrMap* scope)
 {
     StructInitExpr* structInitExpr = (StructInitExpr*)n;
 
-    /* A context-free braced literal has no type yet - resolve field values; full checks run later. */
+    // A context-free braced literal has no type yet - resolve field values; full checks run later.
     if (!structInitExpr->typeName)
     {
         for (size_t i = 0; i < structInitExpr->fields.count; i++)
@@ -792,8 +792,8 @@ void ResolveStructInitExpr(Resolver* r, Node* n, StrMap* scope)
         ResolveStructInitField(r, structInitExpr, structType, field, &positionalCount, scope);
     }
 
-    /* Non-optional `^T` fields must be initialized (NULL would trip every use); `T?` may stay empty.
-       Also types any nested bare-braced field values. */
+    // Non-optional `^T` fields must be initialized (NULL would trip every use); `T?` may stay empty.
+    // Also types any nested bare-braced field values.
     CheckStructInitFields(r, n);
 
     return;
@@ -803,14 +803,14 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
 {
     MemberExpr* m = (MemberExpr*)n;
 
-    /* Scoped enum constant: `EnumName.Member` reads a constant — the base
-       is a type name, not a value, so skip the normal member path. */
+    // Scoped enum constant: `EnumName.Member` reads a constant — the base
+    // is a type name, not a value, so skip the normal member path.
     if (TryResolveEnumMember(r, m, scope))
     {
         return;
     }
 
-    /* Builtin scalar pseudo-property: `int.max` / `float.min`. */
+    // Builtin scalar pseudo-property: `int.max` / `float.min`.
     if (TryResolveScalarPseudoConst(r, m))
     {
         return;
@@ -820,10 +820,10 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
 
     const TypeName* rawBaseType = InferType(r, m->baseNode, scope);
 
-    /* Impl property reads are call-like: no lvalue, no move source. */
+    // Impl property reads are call-like: no lvalue, no move source.
     m->isImplProperty = PropertyOnHandle(r, rawBaseType, m->member) != NULL;
 
-    /* Reading a possibly-empty optional needs a narrowing fact. */
+    // Reading a possibly-empty optional needs a narrowing fact.
     if (rawBaseType && TypeNameIsOptional(rawBaseType))
     {
         const char* baseKey = MovableBoxSourceKey(r, m->baseNode);
@@ -833,9 +833,9 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
 
     if (baseType && TypeRegistryIsOpaque(&r->registry, baseType->name))
     {
-        /* Properties and methods work on handles AND on opaque
-           (forward-declared) structs; only the "no such member" wording
-           differs. */
+        // Properties and methods work on handles AND on opaque
+        // (forward-declared) structs; only the "no such member" wording
+        // differs.
         PropertyDecl* prop = PropertyOnHandle(r, rawBaseType, m->member);
 
         if (prop)
@@ -860,13 +860,13 @@ void ResolveMemberExpr(Resolver* r, Node* n, StrMap* scope)
         }
     }
 
-    /* `cstring` exposes only `.length` (no `.cap`, no other members). */
+    // `cstring` exposes only `.length` (no `.cap`, no other members).
     if (baseType && TypeIsCString(&r->registry, baseType->name) && strcmp(m->member, "length") != 0)
     {
         DiagErrorFmt(r->diag, m->base.range, "cstring has no member '%s' (only '.length')", m->member);
     }
 
-    /* A swizzle names lanes the vector has: `float2` has x and y, no z. */
+    // A swizzle names lanes the vector has: `float2` has x and y, no z.
     if (baseType)
     {
         LaneCount lanes = IsNameSimdVector(TypeRegistryResolveAlias(&r->registry, baseType->name));
