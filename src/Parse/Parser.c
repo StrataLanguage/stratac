@@ -188,6 +188,175 @@ static void AddTopLevelDecl(Module* mod, Node* decl, Parser* p)
     }
 }
 
+/* `@attr... enum`: the only attribute an enum takes is @flags. */
+static void ParseAttributedEnum(Parser* p, Module* mod, const Vec* attributes)
+{
+    EnumDecl* ed = ParseEnumDecl(p);
+
+    for (size_t i = 0; i < attributes->count; i++)
+    {
+        const Attribute* attribute = (const Attribute*)VecGet(attributes, i);
+
+        if (strcmp(attribute->name, "flags") == 0)
+        {
+            if (ed)
+            {
+                ed->isFlags = true;
+            }
+        }
+        else
+        {
+            DiagError(p->m_diag, attribute->range, "the only attribute an enum takes is @flags");
+        }
+    }
+
+    if (ed)
+    {
+        VecPush(&mod->enums, ed);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+/* `@attr... struct`, or `@attr... extern struct`: struct attributes are applied to the body. */
+static void ParseAttributedStruct(Parser* p, Module* mod, Vec* attributes, bool isExternStruct)
+{
+    if (isExternStruct)
+    {
+        Advance(p); /* 'extern' */
+    }
+
+    StructDecl* sd = ParseStructDecl(p, isExternStruct);
+
+    if (sd)
+    {
+        ApplyStructAttributes(p, sd, attributes);
+        VecPush(&mod->structs, sd);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+/* A declaration that starts with `@`: attributes, then an enum, a struct or a function. */
+static void ParseAttributedDecl(Parser* p, Module* mod)
+{
+    Vec attributes;
+    VecInit(&attributes);
+    ParseAttributes(p, &attributes);
+
+    TokKind afterExtern = LexerPeekToken(p->m_lex).kind;
+    bool isExternStruct = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
+
+    if (p->m_cur.kind == TokKwEnum)
+    {
+        ParseAttributedEnum(p, mod, &attributes);
+    }
+    else if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion || isExternStruct)
+    {
+        ParseAttributedStruct(p, mod, &attributes, isExternStruct);
+    }
+    else
+    {
+        AddTopLevelDecl(mod, ParseFunctionWithAttributes(p, &attributes), p);
+    }
+
+    free(attributes.items);
+}
+
+static void ParseTopLevelImport(Parser* p, Module* mod)
+{
+    ImportDecl* imp = ParseImport(p);
+    if (imp)
+    {
+        VecPush(&mod->imports, imp);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+static void ParseTopLevelHandle(Parser* p, Module* mod)
+{
+    HandleDecl* hd = ParseHandleDecl(p);
+    if (hd)
+    {
+        VecPush(&mod->handles, hd);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+static void ParseTopLevelStruct(Parser* p, Module* mod)
+{
+    StructDecl* sd = ParseStructDecl(p, false);
+    if (sd)
+    {
+        VecPush(&mod->structs, sd);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+/* `extern struct` / `extern union` with no attributes. */
+static void ParseTopLevelExternStruct(Parser* p, Module* mod)
+{
+    Advance(p); /* 'extern' */
+
+    StructDecl* sd = ParseStructDecl(p, true);
+    if (sd)
+    {
+        VecPush(&mod->structs, sd);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+static void ParseTopLevelEnum(Parser* p, Module* mod)
+{
+    EnumDecl* ed = ParseEnumDecl(p);
+    if (ed)
+    {
+        VecPush(&mod->enums, ed);
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
+static void ParseTopLevelImpl(Parser* p, Module* mod)
+{
+    ImplDecl* impl = ParseImplDecl(p);
+
+    if (impl)
+    {
+        VecPush(&mod->impls, impl);
+
+        /* Hoist extern methods into the module function list under
+           their qualified symbol (`Camera_GetFOV`) so module merging,
+           sema and codegen treat them like any other extern. */
+        for (size_t i = 0; i < impl->methods.count; i++)
+        {
+            VecPush(&mod->functions, VecGet(&impl->methods, i));
+        }
+    }
+    else
+    {
+        Synchronize(p);
+    }
+}
+
 Module* ParserParseModule(Parser* p)
 {
     Module* mod = AST_NEW(p->m_arena, Module);
@@ -213,171 +382,44 @@ Module* ParserParseModule(Parser* p)
 
         if (p->m_cur.kind == TokAt)
         {
-            Vec attributes;
-            VecInit(&attributes);
-            ParseAttributes(p, &attributes);
-
-            TokKind afterExtern = LexerPeekToken(p->m_lex).kind;
-            bool isExternStruct
-                = p->m_cur.kind == TokKwExtern && (afterExtern == TokKwStruct || afterExtern == TokKwUnion);
-
-            if (p->m_cur.kind == TokKwEnum)
-            {
-                EnumDecl* ed = ParseEnumDecl(p);
-
-                for (size_t i = 0; i < attributes.count; i++)
-                {
-                    const Attribute* attribute = (const Attribute*)VecGet(&attributes, i);
-
-                    if (strcmp(attribute->name, "flags") == 0)
-                    {
-                        if (ed)
-                        {
-                            ed->isFlags = true;
-                        }
-                    }
-                    else
-                    {
-                        DiagError(p->m_diag, attribute->range, "the only attribute an enum takes is @flags");
-                    }
-                }
-
-                if (ed)
-                {
-                    VecPush(&mod->enums, ed);
-                }
-                else
-                {
-                    Synchronize(p);
-                }
-            }
-            else if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion || isExternStruct)
-            {
-                if (isExternStruct)
-                {
-                    Advance(p); /* 'extern' */
-                }
-
-                StructDecl* sd = ParseStructDecl(p, isExternStruct);
-
-                if (sd)
-                {
-                    ApplyStructAttributes(p, sd, &attributes);
-                    VecPush(&mod->structs, sd);
-                }
-                else
-                {
-                    Synchronize(p);
-                }
-            }
-            else
-            {
-                AddTopLevelDecl(mod, ParseFunctionWithAttributes(p, &attributes), p);
-            }
-
-            free(attributes.items);
+            ParseAttributedDecl(p, mod);
             continue;
         }
 
         if (p->m_cur.kind == TokKwImport)
         {
-            ImportDecl* imp = ParseImport(p);
-            if (imp)
-            {
-                VecPush(&mod->imports, imp);
-            }
-            else
-            {
-                Synchronize(p);
-            }
-
+            ParseTopLevelImport(p, mod);
             continue;
         }
 
         if (AtHandleDecl(p))
         {
-            HandleDecl* hd = ParseHandleDecl(p);
-            if (hd)
-            {
-                VecPush(&mod->handles, hd);
-            }
-            else
-            {
-                Synchronize(p);
-            }
-
+            ParseTopLevelHandle(p, mod);
             continue;
         }
 
         if (p->m_cur.kind == TokKwStruct || p->m_cur.kind == TokKwUnion)
         {
-            StructDecl* sd = ParseStructDecl(p, false);
-            if (sd)
-            {
-                VecPush(&mod->structs, sd);
-            }
-            else
-            {
-                Synchronize(p);
-            }
-
+            ParseTopLevelStruct(p, mod);
             continue;
         }
 
         if (p->m_cur.kind == TokKwEnum)
         {
-            EnumDecl* ed = ParseEnumDecl(p);
-            if (ed)
-            {
-                VecPush(&mod->enums, ed);
-            }
-            else
-            {
-                Synchronize(p);
-            }
-
+            ParseTopLevelEnum(p, mod);
             continue;
         }
 
         if (p->m_cur.kind == TokKwImpl)
         {
-            ImplDecl* impl = ParseImplDecl(p);
-
-            if (impl)
-            {
-                VecPush(&mod->impls, impl);
-
-                /* Hoist extern methods into the module function list under
-                   their qualified symbol (`Camera_GetFOV`) so module merging,
-                   sema and codegen treat them like any other extern. */
-                for (size_t i = 0; i < impl->methods.count; i++)
-                {
-                    VecPush(&mod->functions, VecGet(&impl->methods, i));
-                }
-            }
-            else
-            {
-                Synchronize(p);
-            }
-
+            ParseTopLevelImpl(p, mod);
             continue;
         }
 
         if (p->m_cur.kind == TokKwExtern
             && (LexerPeekToken(p->m_lex).kind == TokKwStruct || LexerPeekToken(p->m_lex).kind == TokKwUnion))
         {
-            Advance(p); /* 'extern' */
-
-            StructDecl* sd = ParseStructDecl(p, true);
-            if (sd)
-            {
-                VecPush(&mod->structs, sd);
-            }
-            else
-            {
-                Synchronize(p);
-            }
-
+            ParseTopLevelExternStruct(p, mod);
             continue;
         }
 
