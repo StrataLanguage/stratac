@@ -447,9 +447,8 @@ static bool NumericConversionIsLossless(PrimitiveType src, PrimitiveType dst)
 
 /* A value that would lose information in an implicit numeric conversion needs a cast. A literal is judged by
    its value (CheckLiteralFits), so `byte b = 200` and `float f = 1.5` stay legal. */
-// clang-format off
-void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeName* srcType,
-                                 const TypeName* target, SourceRange range)
+void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeName* srcType, const TypeName* target,
+                          SourceRange range)
 {
     if (!value || !srcType || !target || !TypeNameIsBare(target) || !TypeNameIsBare(srcType) || !srcType->name
         || !target->name)
@@ -484,7 +483,6 @@ void CheckLossyConversion(DiagnosticEngine* diag, const Node* value, const TypeN
     DiagErrorFmt(diag, range, "implicit conversion from '%s' to '%s' may lose information; use a cast", srcType->name,
                  target->name);
 }
-// clang-format on
 
 /* An argument converts to a scalar parameter silently only if nothing is lost: a widening conversion, or a
    constant whose value fits. Otherwise the overload is not a candidate (the caller can cast). */

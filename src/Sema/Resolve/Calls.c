@@ -49,9 +49,7 @@ static Str GenerateCallSignatureString(Resolver* r, CallExpr* c, StrMap* scope)
     return finalStr;
 }
 
-// clang-format off
-bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const AllowList* allowed,
-                                   const int allowedSize)
+bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const AllowList* allowed, const int allowedSize)
 {
     for (int i = 0; i < allowedSize; i++)
     {
@@ -134,7 +132,6 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
 
     return false;
 }
-// clang-format on
 
 /* Private functions are visible only in the file that defines them */
 bool FunctionVisibleTo(const FunctionDecl* fd, uint16_t callerFile)

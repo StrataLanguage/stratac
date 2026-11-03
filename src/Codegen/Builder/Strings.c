@@ -117,9 +117,8 @@ static void EmitByteCopy(Builder* b, LLVMValueRef dst, LLVMValueRef src, LLVMVal
 }
 
 /* A new owned string holding a[0..alen) then b[0..blen), NUL-terminated. */
-// clang-format off
 LLVMValueRef BuildConcatStringFat(Builder* b, LLVMValueRef aPtr, LLVMValueRef aLen, LLVMValueRef bPtr,
-                                         LLVMValueRef bLen)
+                                  LLVMValueRef bLen)
 {
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->m_ctx);
     LLVMValueRef total = LLVMBuildAdd(b->m_builder, aLen, bLen, "cat.len");
@@ -134,7 +133,6 @@ LLVMValueRef BuildConcatStringFat(Builder* b, LLVMValueRef aPtr, LLVMValueRef aL
 
     return MakeStringFatValue(b, heap, total);
 }
-// clang-format on
 
 /* Computes the NUL-terminated length of `s` (an i64 byte loop). */
 LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)

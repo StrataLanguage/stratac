@@ -6,9 +6,7 @@
    write is load-vector / insert-lane / store-vector. Multi-component swizzle
    members return invalid: reads still work through the destructure path, but
    writes need a whole-vector rebuild. */
-// clang-format off
-LValue MakeVectorLaneLValue(Builder* b, LValue none, const MemberExpr* m, LLVMValueRef vecAddr,
-                                   TypeDesc vectorTd)
+LValue MakeVectorLaneLValue(Builder* b, LValue none, const MemberExpr* m, LLVMValueRef vecAddr, TypeDesc vectorTd)
 {
     const char* member = m->member;
     unsigned lane;
@@ -50,7 +48,6 @@ LValue MakeVectorLaneLValue(Builder* b, LValue none, const MemberExpr* m, LLVMVa
 
     return none;
 }
-// clang-format on
 
 Value EmitVectorConstruct(Builder* b, CallExpr* n)
 {

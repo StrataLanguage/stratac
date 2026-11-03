@@ -65,9 +65,8 @@ static LLVMValueRef PlainElemPtr(Builder* b, LLVMValueRef dataPtr, LLVMValueRef 
    GEP; AOT -> panic branch; JIT -> no abort, report via strata_oob and
    continue with a dummy slot (reads yield a dummy, writes absorbed). Owning
    elements rebuild scratch per event; null-store re-resolution skips that. */
-// clang-format off
 LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef lenVal, LLVMValueRef dataPtr,
-                                       LLVMTypeRef elemTy, TypeDesc elemTd, bool aliased)
+                                LLVMTypeRef elemTy, TypeDesc elemTd, bool aliased)
 {
     if (!b->m_boundsCheck)
     {
@@ -136,7 +135,6 @@ LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef le
     LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
     return phi;
 }
-// clang-format on
 
 /* Element address in a fixed inline [N x T]; the leading 0 walks into the array. */
 static LLVMValueRef FixedElemPtr(Builder* b, LLVMValueRef arrPtr, LLVMValueRef idxVal, LLVMTypeRef arrTy)
@@ -148,9 +146,8 @@ static LLVMValueRef FixedElemPtr(Builder* b, LLVMValueRef arrPtr, LLVMValueRef i
 /* Bounds-checked variant for fixed arrays. The length is the compile-time
    dimension; elements are never owning (enforced by sema), so the JIT dummy
    is a shared slot and never needs per-site scratch. */
-// clang-format off
 LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, long length, LLVMValueRef arrPtr,
-                                            LLVMTypeRef arrTy, TypeDesc elemTd)
+                                     LLVMTypeRef arrTy, TypeDesc elemTd)
 {
     LLVMValueRef lenVal = LLVMConstInt(I64Ty(b), (unsigned long long)(length < 0 ? 0 : length), 0);
 
@@ -197,7 +194,6 @@ LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, long lengt
     LLVMAddIncoming(phi, incomingVals, incomingBlocks, 2);
     return phi;
 }
-// clang-format on
 
 /* Copies `count` elements from srcData to dstData. */
 static void EmitArrayCopyLoop(Builder* b, LLVMValueRef dstData, LLVMValueRef srcData, LLVMValueRef count,
@@ -653,9 +649,8 @@ Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 /* Copies a non-empty fat array value: fresh buffer + per-element deep copy
    for owning element types, memcpy-style loop otherwise. Callers guard
    empty optionals. */
-// clang-format off
-Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy,
-                                LLVMValueRef oldLen, LLVMValueRef oldData)
+Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
+                         LLVMValueRef oldData)
 {
     oldLen = WidenLen(b, oldLen); /* the fat's u32 length, as a loop bound */
     LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), oldLen, "cby");
@@ -702,14 +697,11 @@ Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LL
     arr = LLVMBuildInsertValue(b->m_builder, arr, LLVMBuildTrunc(b->m_builder, oldLen, I32Ty(b), "cc32"), 2, "cc");
     return ValueMake(arr, td);
 }
-// clang-format on
 
 /* Builds a T[] from element exprs, shared by array literals (heap-backed) and
    typed rest params. rest=stack-backed (alloca in entry); borrow=true (ref
    rest) stores owning element pointers without nulling/moving sources. */
-// clang-format off
-Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer,
-                                bool borrow)
+Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer, bool borrow)
 {
     TypeDesc elemTd = Resolve(b, elementType);
 
@@ -896,7 +888,6 @@ Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* ele
 
     return ValueMake(arr, td);
 }
-// clang-format on
 
 /* True for `{}` once typed: an empty braced value, which default-constructs. */
 static bool IsEmptyBracedNode(const Node* n)

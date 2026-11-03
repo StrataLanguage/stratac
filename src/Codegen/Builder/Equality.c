@@ -175,9 +175,8 @@ static LLVMValueRef BuildHandleCellEq(Builder* b, LLVMValueRef aCell, LLVMValueR
    compared. `isOptional` adds null-awareness: empty == empty, empty !=
    non-empty. Branches to failBB on inequality; positions the builder at the
    end of (and returns) the equal-continuation block. */
-// clang-format off
 LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell, LLVMValueRef bCell,
-                                       const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB)
+                                const TypeDesc* innerTd, bool isOptional, LLVMBasicBlockRef failBB)
 {
     bool opaqueInner = innerTd->structTypeName && TypeRegistryIsOpaque(&b->m_registry, innerTd->structTypeName);
     bool handleInner = opaqueInner && IsHandleType(&b->m_registry, innerTd->structTypeName);
@@ -224,7 +223,6 @@ LLVMBasicBlockRef EmitBoxCellEq(Builder* b, LLVMValueRef fn, LLVMValueRef aCell,
     LLVMPositionBuilderAtEnd(b->m_builder, next);
     return next;
 }
-// clang-format on
 
 /* Compares two values AT aPtr/bPtr of type `td`: branches to failBB on
    inequality and returns (with the builder positioned at its end) the block
