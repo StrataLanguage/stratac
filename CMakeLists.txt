@@ -40,7 +40,11 @@ set(STRATA_COMMON_SOURCES
     src/Sema/ResolveOverloads.c
     src/Sema/ConstFold.c
     src/Sema/Cfg.c
-    src/Sema/MoveCheck.c
+    src/Sema/MoveCheck/Places.c
+    src/Sema/MoveCheck/Facts.c
+    src/Sema/MoveCheck/Loans.c
+    src/Sema/MoveCheck/WriteSets.c
+    src/Sema/MoveCheck/MoveCheck.c
     src/Sema/NodeTypes.c
     src/Sema/Builtins.c
     src/Codegen/TypeRegistry.c
