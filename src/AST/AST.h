@@ -83,11 +83,18 @@ static inline bool TypeNameValid(const TypeName* t)
     return t->name != NULL && t->name[0] != '\0';
 }
 
+// Arena copy of `inner` that a wrapper type points at.
+static inline TypeName* TypeNameWrapInner(Arena* arena, TypeName inner)
+{
+    TypeName* copy = (TypeName*)arena_alloc(arena, sizeof(TypeName));
+    *copy = inner;
+    return copy;
+}
+
 // `^T` wraps `inner` into a boxed type; the inner node keeps its own const flags.
 static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
 {
-    TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
-    *i = inner;
+    TypeName* i = TypeNameWrapInner(arena, inner);
 
     TypeName t = {0};
     t.isBox = true;
@@ -100,8 +107,7 @@ static inline TypeName TypeNameBoxWrap(Arena* arena, TypeName inner)
 // `T?` wraps `inner`; same representation as `^T`, sema tells them apart.
 static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
 {
-    TypeName* i = (TypeName*)arena_alloc(arena, sizeof(TypeName));
-    *i = inner;
+    TypeName* i = TypeNameWrapInner(arena, inner);
     i->isOptional = false;
 
     TypeName t = {0};
@@ -116,8 +122,7 @@ static inline TypeName TypeNameOptionalWrap(Arena* arena, TypeName inner)
 // `T[]` — wraps `elem` into a dynamic (fat pointer) array type.
 static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
 {
-    TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
-    *e = elem;
+    TypeName* e = TypeNameWrapInner(arena, elem);
 
     TypeName t = {0};
     t.isArray = true;
@@ -132,8 +137,7 @@ static inline TypeName TypeNameArrayWrap(Arena* arena, TypeName elem)
 // `T[N]` — wraps `elem` into a fixed-size inline array type (C ABI).
 static inline TypeName TypeNameFixedArrayWrap(Arena* arena, TypeName elem, long length)
 {
-    TypeName* e = (TypeName*)arena_alloc(arena, sizeof(TypeName));
-    *e = elem;
+    TypeName* e = TypeNameWrapInner(arena, elem);
 
     TypeName t = {0};
     t.isArray = true;
