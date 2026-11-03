@@ -1,3 +1,4 @@
+// LLVM ORC JIT: session setup, module loading and symbol lookup.
 #include "LLVMJit.h"
 #include "Codegen/LLVMCApi.h"
 #include "LLVMTargets.h"
@@ -6,9 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Strata heap runtime backing for the LLVM JIT (host malloc/free). Generated
-   code calls strata_alloc(i64): the size parameter must be 64-bit on every
-   target (`unsigned long` is 32-bit on Win64). */
+// Strata heap runtime backing for the LLVM JIT (host malloc/free). Generated
+// code calls strata_alloc(i64): the size parameter must be 64-bit on every
+// target (`unsigned long` is 32-bit on Win64).
 static void* strata_alloc_impl(uint64_t n)
 {
     return malloc((size_t)n);
@@ -22,10 +23,10 @@ static void strata_free_impl(void* p)
 extern void strata_panic(const char* msg);
 extern void strata_oob(const char* msg);
 
-/* Converts an LLVMErrorRef into a malloc-owned string (freed by the caller
-   with free(), matching this file's errorMessage out-param convention),
-   consuming/disposing the LLVM-owned message. Returns NULL for a null/success
-   error. */
+// Converts an LLVMErrorRef into a malloc-owned string (freed by the caller
+// with free(), matching this file's errorMessage out-param convention),
+// consuming/disposing the LLVM-owned message. Returns NULL for a null/success
+// error.
 static char* TakeOrcError(LLVMErrorRef err)
 {
     if (!err)
@@ -44,8 +45,8 @@ static char* TakeOrcError(LLVMErrorRef err)
     return copy;
 }
 
-/* Formats an LLVMErrorRef into a malloc'd errorMessage (caller frees), then
-   disposes the error. */
+// Formats an LLVMErrorRef into a malloc'd errorMessage (caller frees), then
+// disposes the error.
 static void SetOrcError(char** errorMessage, LLVMErrorRef err, const char* fmt)
 {
     char* msg = TakeOrcError(err);
@@ -57,12 +58,12 @@ static void SetOrcError(char** errorMessage, LLVMErrorRef err, const char* fmt)
 }
 
 #ifdef _WIN32
-/* Overrides LLJIT's default object layer. The legacy RuntimeDyld/COFF stack
-   allocates each section with its own VirtualAlloc, and Win64 .pdata/.xdata
-   unwind info carries IMAGE_REL_AMD64_ADDR32NB relocations that fatal-error
-   whenever a module's sections land more than 2GB apart — intermittent in
-   hosts that allocate gigabytes (llvm/llvm-project#65641). The ReserveAlloc
-   section memory manager carves all sections out of one reserved region. */
+// Overrides LLJIT's default object layer. The legacy RuntimeDyld/COFF stack
+// allocates each section with its own VirtualAlloc, and Win64 .pdata/.xdata
+// unwind info carries IMAGE_REL_AMD64_ADDR32NB relocations that fatal-error
+// whenever a module's sections land more than 2GB apart — intermittent in
+// hosts that allocate gigabytes (llvm/llvm-project#65641). The ReserveAlloc
+// section memory manager carves all sections out of one reserved region.
 static LLVMOrcObjectLayerRef ReserveAllocObjectLayerCreator(void* ctx, LLVMOrcExecutionSessionRef es,
                                                             const char* triple)
 {
@@ -73,7 +74,7 @@ static LLVMOrcObjectLayerRef ReserveAllocObjectLayerCreator(void* ctx, LLVMOrcEx
 }
 #endif
 
-/* Disposes the module/context held by a BuiltModule after a failed load. */
+// Disposes the module/context held by a BuiltModule after a failed load.
 static void DisposeBuiltModuleOnError(BuiltModule* bm)
 {
     LLVMDisposeModule(bm->mod);
@@ -99,11 +100,11 @@ static bool OrcLookup(LLVMOrcLLJITRef jit, const char* name, uint64_t* outAddr)
     return true;
 }
 
-/* The triple the JIT compiles for, valid for the life of the process. On x86-64 Windows that is the host's with ELF
-   objects instead of COFF: COFF puts every floating-point and vector constant in a COMDAT section (`__real@...`,
-   `__xmm@...`) that the reserve-allocating RuntimeDyld layer intermittently fails to load ("Failed to
-   materialize symbols"), where ELF objects keep constants in plain read-only sections. The calling convention
-   stays Win64. STRATA_JIT_COFF=1 keeps the host's own object format. */
+// The triple the JIT compiles for, valid for the life of the process. On x86-64 Windows that is the host's with ELF
+// objects instead of COFF: COFF puts every floating-point and vector constant in a COMDAT section (`__real@...`,
+// `__xmm@...`) that the reserve-allocating RuntimeDyld layer intermittently fails to load ("Failed to
+// materialize symbols"), where ELF objects keep constants in plain read-only sections. The calling convention
+// stays Win64. STRATA_JIT_COFF=1 keeps the host's own object format.
 static const char* JitTriple(void)
 {
     static char* hostTriple = NULL;
@@ -123,10 +124,10 @@ static const char* JitTriple(void)
     return hostTriple;
 }
 
-/* Creates an execution TargetMachine for the host CPU: every feature the
-   processor supports enabled, aggressive codegen level, PIC. The module's
-   triple/data layout should be pinned to this machine before IR passes run.
-   Returns NULL and sets *errorMessage (malloc-owned) on failure. */
+// Creates an execution TargetMachine for the host CPU: every feature the
+// processor supports enabled, aggressive codegen level, PIC. The module's
+// triple/data layout should be pinned to this machine before IR passes run.
+// Returns NULL and sets *errorMessage (malloc-owned) on failure.
 static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 {
     const char* triple = JitTriple();
@@ -144,7 +145,7 @@ static LLVMTargetMachineRef CreateHostTargetMachine(char** errorMessage)
 
         if (targetErr)
         {
-            /* A plain LLVM message (not from LLVMGetErrorMessage). */
+            // A plain LLVM message (not from LLVMGetErrorMessage).
             LLVMDisposeMessage(targetErr);
         }
 
@@ -186,11 +187,9 @@ void LLVMJitDestroy(LLVMJit* jit)
 {
     if (jit->jit)
     {
-        /* Unlike the old per-process __strata_module_teardown, a module with
-           instanced globals is never auto-torn-down here: the host may have
-           created zero, one, or many __strata_context_create instances, and
-           owns calling __strata_context_destroy on each (discoverable via
-           strataJitGetFunction like any other exported symbol). */
+        // A module with instanced globals is never auto-torn-down here: the host may have created zero, one,
+        // or many __strata_context_create instances, and owns calling __strata_context_destroy on each
+        // (discoverable via strataJitGetFunction like any other exported symbol).
         LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(jit->jit);
 
         if (disposeErr)
@@ -251,8 +250,8 @@ static void JitPinTargetLayout(BuiltModule* bm, LLVMTargetMachineRef tm)
 
 static bool JitRunOptimizationPipeline(BuiltModule* bm, LLVMTargetMachineRef tm, char** errorMessage)
 {
-    /* STRATA_OPT_PIPELINE overrides the pass pipeline (e.g. "default<O2>")
-       for experimentation; "default<O3>" is the shipped default. */
+    // STRATA_OPT_PIPELINE overrides the pass pipeline (e.g. "default<O2>")
+    // for experimentation; "default<O3>" is the shipped default.
     const char* pipeline = getenv("STRATA_OPT_PIPELINE");
     if (!pipeline || !pipeline[0])
     {
@@ -284,7 +283,7 @@ static bool JitRunOptimizationPipeline(BuiltModule* bm, LLVMTargetMachineRef tm,
 
 static LLVMOrcLLJITRef JitCreateLLJIT(LLVMTargetMachineRef tm, BuiltModule* bm, char** errorMessage)
 {
-    /* Transfers ownership of tm to the builder. */
+    // Transfers ownership of tm to the builder.
     LLVMOrcJITTargetMachineBuilderRef jtmb = LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(tm);
 
     LLVMOrcLLJITBuilderRef builder = LLVMOrcCreateLLJITBuilder();
@@ -309,9 +308,9 @@ static LLVMOrcLLJITRef JitCreateLLJIT(LLVMTargetMachineRef tm, BuiltModule* bm, 
     return llj;
 }
 
-/* Reflect process symbols (e.g. libcalls like memcpy/memset that LLVM
-   may lower struct-copy or vector code into) into the main dylib, since
-   a bare JITDylib does not resolve these automatically. */
+// Reflect process symbols (e.g. libcalls like memcpy/memset that LLVM
+// may lower struct-copy or vector code into) into the main dylib, since
+// a bare JITDylib does not resolve these automatically.
 static void JitAddProcessSymbolGenerator(LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef mainJd)
 {
     LLVMOrcDefinitionGeneratorRef gen = NULL;
@@ -328,8 +327,8 @@ static void JitAddProcessSymbolGenerator(LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef
     }
 }
 
-/* Map the compiler-internal heap runtime to the host so generated box
-   code can allocate without the user binding symbols. */
+// Map the compiler-internal heap runtime to the host so generated box
+// code can allocate without the user binding symbols.
 static void JitDefineHeapSymbols(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef mainJd)
 {
     LLVMOrcCSymbolMapPair pairs[4];
@@ -359,7 +358,7 @@ static void JitDefineHeapSymbols(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDy
 
     if (defineErr)
     {
-        /* On failure the caller keeps ownership of the unit. */
+        // On failure the caller keeps ownership of the unit.
         LLVMConsumeError(defineErr);
         LLVMOrcDisposeMaterializationUnit(mu);
     }
@@ -380,8 +379,8 @@ static bool JitAddModule(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef m
     {
         SetOrcError(errorMessage, err, "could not add module to execution engine: %s");
 
-        /* LLVMOrcLLJITAddLLVMIRModule takes ownership of tsm even on
-           failure, so it must not be disposed again here. */
+        // LLVMOrcLLJITAddLLVMIRModule takes ownership of tsm even on
+        // failure, so it must not be disposed again here.
 
         LLVMErrorRef disposeErr = LLVMOrcDisposeLLJIT(llj);
 
@@ -395,10 +394,8 @@ static bool JitAddModule(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef m
         return false;
     }
 
-    /* Every module now exports __strata_context_create
-       (see LLVMModuleBuilder.c) instead of auto-running a single per-process
-       __strata_module_init: the host calls it explicitly, as many times as
-       it wants independent instances, exactly like any other symbol. */
+    // Every module exports __strata_context_create and __strata_context_destroy, which the host calls
+    // explicitly, as many times as it wants independent instances, like any other symbol.
 
     return true;
 }
@@ -416,11 +413,11 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
     JitCopyExternSymbols(jit, bm);
 
-    /* Build an execution TargetMachine for the host CPU (all features,
-       aggressive codegen level), pin the module's triple/data layout to it,
-       and run the full IR optimization pipeline before handing the module to
-       ORC. Without this the JIT materialized codegen output directly: no
-       mem2reg/SROA, no inliner, no GVN, no vectorization. */
+    // Build an execution TargetMachine for the host CPU (all features,
+    // aggressive codegen level), pin the module's triple/data layout to it,
+    // and run the full IR optimization pipeline before handing the module to
+    // ORC. Without this the JIT materialized codegen output directly: no
+    // mem2reg/SROA, no inliner, no GVN, no vectorization.
     LLVMTargetMachineRef tm = JitCreateTargetMachine(bm, errorMessage);
 
     if (!tm)

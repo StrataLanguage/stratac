@@ -1,3 +1,4 @@
+// Registry of the module's struct, alias, enum and delegate types with computed layouts.
 #include "Codegen/TypeRegistry.h"
 
 #include <assert.h>
@@ -117,7 +118,7 @@ static bool FieldsIdentical(const Vec* a, const Vec* b)
 
 void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
 {
-    /* Type aliases — registered early so other types can reference them. */
+    // Type aliases — registered early so other types can reference them.
     for (size_t i = 0; i < m->structs.count; i++)
     {
         StructDecl* sd = (StructDecl*)VecGet((Vec*)&m->structs, i);
@@ -140,7 +141,7 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
         t->incomplete = false;
     }
 
-    /* Enums are strong aliases too (underlying defaults to `int`). */
+    // Enums are strong aliases too (underlying defaults to `int`).
     for (size_t i = 0; i < m->enums.count; i++)
     {
         EnumDecl* ed = (EnumDecl*)VecGet((Vec*)&m->enums, i);
@@ -161,9 +162,9 @@ void TypeRegistryRegisterAliases(TypeRegistry* reg, const Module* m)
     }
 }
 
-/* True when a field of type `t` owns heap storage: structurally owning
-   (`string`, `^T`, `T?`, `T[]`), an owning struct, or an alias/enum whose
-   resolved underlying type is either of those. */
+// True when a field of type `t` owns heap storage: structurally owning
+// (`string`, `^T`, `T?`, `T[]`), an owning struct, or an alias/enum whose
+// resolved underlying type is either of those.
 static bool FieldTypeIsOwning(const TypeRegistry* reg, Arena* scratch, const TypeName* t)
 {
     size_t depth = 0;
@@ -201,7 +202,7 @@ static bool FieldTypeIsOwning(const TypeRegistry* reg, Arena* scratch, const Typ
     return false;
 }
 
-/* Complete struct declarations; a duplicate name keeps the first definition, extern duplicates must match. */
+// Complete struct declarations; a duplicate name keeps the first definition, extern duplicates must match.
 static void TypeRegistryAddStructs(TypeRegistry* reg, const Module* m)
 {
     for (size_t i = 0; i < m->structs.count; i++)
@@ -217,8 +218,8 @@ static void TypeRegistryAddStructs(TypeRegistry* reg, const Module* m)
 
         if (existing >= 0)
         {
-            /* Extern structs mirror host layouts, so a divergent duplicate
-               is a hard error (plain structs keep first-wins behavior). */
+            // Extern structs mirror host layouts, so a divergent duplicate
+            // is a hard error (plain structs keep first-wins behavior).
             StructType* ex = &reg->types[existing];
 
             if (ex->isExtern || sd->isExtern)
@@ -243,14 +244,14 @@ static void TypeRegistryAddStructs(TypeRegistry* reg, const Module* m)
         t->isExtern = sd->isExtern;
         t->isUnion = sd->isUnion;
         t->dropFunction = sd->dropFunction;
-        t->owning = sd->dropFunction != NULL; /* a destructor makes the struct an owner */
+        t->owning = sd->dropFunction != NULL; // a destructor makes the struct an owner
         t->isComponent = sd->isComponent;
         t->attributes = sd->attributes;
         t->moduleName = sd->moduleName;
     }
 }
 
-/* Forward declarations for structs (incomplete types). */
+// Forward declarations for structs (incomplete types).
 static void TypeRegistryAddForwardStructs(TypeRegistry* reg, const Module* m)
 {
     for (size_t i = 0; i < m->structs.count; i++)
@@ -291,7 +292,7 @@ static void TypeRegistryAddHandles(TypeRegistry* reg, const Module* m)
     }
 }
 
-/* `extern delegate` types are handles too (a function pointer) that carry their signature. */
+// `extern delegate` types are handles too (a function pointer) that carry their signature.
 static void TypeRegistryAddDelegates(TypeRegistry* reg, const Module* m)
 {
     for (size_t i = 0; i < m->delegates.count; i++)
@@ -310,9 +311,9 @@ static void TypeRegistryAddDelegates(TypeRegistry* reg, const Module* m)
     }
 }
 
-/* Builtin handles: `ptr` is a raw pointer, the root every handle extends (see
-   HandleExtendsFrom); `null` is the type of the `null` constant, which converts to
-   any handle. */
+// Builtin handles: `ptr` is a raw pointer, the root every handle extends (see
+// HandleExtendsFrom); `null` is the type of the `null` constant, which converts to
+// any handle.
 static void TypeRegistryAddBuiltinHandles(TypeRegistry* reg)
 {
     const char* builtinHandles[2] = {STRATA_PTR_TYPE, STRATA_NULL_TYPE};
@@ -330,9 +331,9 @@ static void TypeRegistryAddBuiltinHandles(TypeRegistry* reg)
     }
 }
 
-/* a struct is owning if it has a ^T field or an owning field. Alias
-   (and enum) field types are resolved first, so `struct Name = string`
-   makes a `Name` field owning too. */
+// a struct is owning if it has a ^T field or an owning field. Alias
+// (and enum) field types are resolved first, so `struct Name = string`
+// makes a `Name` field owning too.
 static void TypeRegistryComputeOwning(TypeRegistry* reg)
 {
     Arena scratch;
@@ -389,11 +390,11 @@ typedef struct
 {
     long size;
     long align;
-    bool packed; /* backend emits this type packed (LLVM alignment 1) */
+    bool packed; // backend emits this type packed (LLVM alignment 1)
 } SizeAlign;
 
-/* Transient per-struct layout state: 0 = new, 1 = computing, 2 = done,
-   3 = failed. Stored in a parallel array owned by ComputeAllLayouts. */
+// Transient per-struct layout state: 0 = new, 1 = computing, 2 = done,
+// 3 = failed. Stored in a parallel array owned by ComputeAllLayouts.
 
 static bool ComputeStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx);
 
@@ -472,7 +473,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
 
     if (t->isBox || t->isOptional)
     {
-        /* Boxes and optionals are pointer-sized slots. */
+        // Boxes and optionals are pointer-sized slots.
         out->size = 8;
         out->align = 8;
         return true;
@@ -482,7 +483,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
     {
         if (t->length < 0)
         {
-            /* Dynamic array is fat pointer: {ptr, u32 len, u32 cap}. */
+            // Dynamic array is fat pointer: {ptr, u32 len, u32 cap}.
             out->size = 16;
             out->align = 8;
             return true;
@@ -524,7 +525,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
 
     if (st->isTypeAlias)
     {
-        /* Aliases and enums lay out exactly like their underlying type. */
+        // Aliases and enums lay out exactly like their underlying type.
         if (!st->underlyingType || depth > reg->count)
         {
             return false;
@@ -551,7 +552,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
 
     if (state[idx] != 0)
     {
-        /* computing (by-value cycle) or previously failed */
+        // computing (by-value cycle) or previously failed
         return false;
     }
 
@@ -566,7 +567,7 @@ static bool FieldSizeAlign(TypeRegistry* reg, unsigned char* state, Arena* scrat
     return true;
 }
 
-/* Union layout: every field overlays byte 0; the backend lays out one representative member plus a tail pad. */
+// Union layout: every field overlays byte 0; the backend lays out one representative member plus a tail pad.
 static bool ComputeUnionStructLayout(TypeRegistry* reg, unsigned char* state, Arena* scratch, size_t idx, long* offsets,
                                      FieldIndex* physical, StructPad* pads)
 {
@@ -575,8 +576,8 @@ static bool ComputeUnionStructLayout(TypeRegistry* reg, unsigned char* state, Ar
     size_t padCount = 0;
     bool ok = true;
 
-    /* Every field overlays byte 0; the backend lays out one representative member plus a
-       tail pad, so all fields share physical index 0. */
+    // Every field overlays byte 0; the backend lays out one representative member plus a
+    // tail pad, so all fields share physical index 0.
     long maxSize = 0;
     long maxAlign = 1;
     long repSize = 0;
@@ -640,8 +641,8 @@ static bool ComputeUnionStructLayout(TypeRegistry* reg, unsigned char* state, Ar
     return true;
 }
 
-/* Places each field of a struct (non-union) at its offset, recording the pads. Returns false, with the layout error
- * set, when a field has no size or an explicit offset overlaps. */
+// Places each field of a struct (non-union) at its offset, recording the pads. Returns false, with the layout error
+// set, when a field has no size or an explicit offset overlaps.
 static bool LayoutStructFields(TypeRegistry* reg, unsigned char* state, Arena* scratch, StructType* st, long* offsets,
                                FieldIndex* physical, StructPad* pads, size_t* padCount, long* cursor, long* maxAlign,
                                bool* packed)
@@ -685,9 +686,9 @@ static bool LayoutStructFields(TypeRegistry* reg, unsigned char* state, Arena* s
             off = AlignUp((*cursor), sa.align);
         }
 
-        /* A member the backend emits packed (alignment 1) would not be
-           placed at its C alignment by natural backend padding, so the
-           enclosing struct needs explicit pads as well. */
+        // A member the backend emits packed (alignment 1) would not be
+        // placed at its C alignment by natural backend padding, so the
+        // enclosing struct needs explicit pads as well.
         if (sa.packed)
         {
             (*packed) = true;
@@ -716,7 +717,7 @@ static bool LayoutStructFields(TypeRegistry* reg, unsigned char* state, Arena* s
     return ok;
 }
 
-/* Finishes a laid-out struct: packed layouts keep the explicit pads, natural layouts drop them. */
+// Finishes a laid-out struct: packed layouts keep the explicit pads, natural layouts drop them.
 static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx, long* offsets, FieldIndex* physical,
                                StructPad* pads, size_t padCount, long cursor, long maxAlign, bool packed)
 {
@@ -724,10 +725,10 @@ static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx,
 
     if (packed)
     {
-        /* Explicit offsets: pads encode the full layout, so backends emit
-           packed. Size and alignment still match C for the same
-           declaration: natural alignment is the max field alignment and
-           a tail pad rounds the size up to it (so T[N] strides agree). */
+        // Explicit offsets: pads encode the full layout, so backends emit
+        // packed. Size and alignment still match C for the same
+        // declaration: natural alignment is the max field alignment and
+        // a tail pad rounds the size up to it (so T[N] strides agree).
         long size = AlignUp(cursor, maxAlign);
 
         if (size > cursor)
@@ -742,8 +743,8 @@ static void FinishStructLayout(StructType* st, unsigned char* state, size_t idx,
     }
     else
     {
-        /* Natural layout: backend padding yields the same offsets, so drop
-           the bookkeeping pads and use identity member indices. */
+        // Natural layout: backend padding yields the same offsets, so drop
+        // the bookkeeping pads and use identity member indices.
         st->sizeBytes = AlignUp(cursor, maxAlign);
         st->alignBytes = maxAlign;
         padCount = 0;
@@ -830,7 +831,7 @@ void ComputeAllLayouts(TypeRegistry* reg)
 
 bool TypeRegistryIsOwningStruct(const TypeRegistry* reg, const char* name)
 {
-    /* An alias is the type it names. */
+    // An alias is the type it names.
     const StructType* t = TypeRegistryFind(reg, TypeRegistryResolveAlias(reg, name));
 
     return t && !t->opaque && t->owning;
@@ -902,8 +903,8 @@ bool TypeRegistryIsUserType(const TypeRegistry* reg, const char* name)
 
 bool TypeRegistryIsImplTarget(const TypeRegistry* reg, const char* name)
 {
-    /* Handles, defined structs, forward-declared structs, and type aliases are
-       all valid impl targets. Only undeclared names are rejected. */
+    // Handles, defined structs, forward-declared structs, and type aliases are
+    // all valid impl targets. Only undeclared names are rejected.
     return TypeRegistryIsUserType(reg, name);
 }
 
@@ -939,7 +940,7 @@ int TypeRegistryFieldIndex(const TypeRegistry* reg, const char* structName, cons
 
 bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char* base)
 {
-    /* Every handle is a pointer underneath: it converts to `ptr`, and `null` converts to any handle. */
+    // Every handle is a pointer underneath: it converts to `ptr`, and `null` converts to any handle.
     if (strcmp(derived, base) != 0 && IsHandleType(reg, derived) && IsHandleType(reg, base)
         && (strcmp(base, STRATA_PTR_TYPE) == 0 || strcmp(derived, STRATA_NULL_TYPE) == 0))
     {
@@ -958,7 +959,7 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
 
         t = TypeRegistryFind(reg, t->extendsFrom);
 
-        /* Guard against circular base chains (e.g. `handle A : B; handle B : A;`). */
+        // Guard against circular base chains (e.g. `handle A : B; handle B : A;`).
         if (++depth > reg->count)
         {
             return false;
@@ -968,9 +969,9 @@ bool HandleExtendsFrom(const TypeRegistry* reg, const char* derived, const char*
     return false;
 }
 
-/* Whether copying a `t` would copy a value with a Drop method (which would then be dropped twice).
-   Structs already looked into during one TypeNameHasDrop query: each is walked once, so types that
-   reach themselves along several paths (a tree of boxes) cost linear, not exponential, time. */
+// Whether copying a `t` would copy a value with a Drop method (which would then be dropped twice).
+// Structs already looked into during one TypeNameHasDrop query: each is walked once, so types that
+// reach themselves along several paths (a tree of boxes) cost linear, not exponential, time.
 typedef struct
 {
     const StructType** items;
@@ -1006,7 +1007,7 @@ static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, Dro
     {
         if (seen->items[i] == st)
         {
-            return false; /* already looked into (or being looked into): found nothing there */
+            return false; // already looked into (or being looked into): found nothing there
         }
     }
 

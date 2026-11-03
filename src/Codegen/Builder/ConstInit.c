@@ -1,7 +1,7 @@
-/* Builder: Constant folding for global initializers. */
+// Builder: Constant folding for global initializers.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* The runtime integer type of a scalar TypeDesc. Non-integers (and i1 bools) carry no narrowing. */
+// The runtime integer type of a scalar TypeDesc. Non-integers (and i1 bools) carry no narrowing.
 static ConstIntType ConstIntTypeOfTd(TypeDesc td)
 {
     if (td.type && !TypeDescIsFloat(&td) && LLVMGetTypeKind(td.type) == LLVMIntegerTypeKind
@@ -13,11 +13,11 @@ static ConstIntType ConstIntTypeOfTd(TypeDesc td)
     return (ConstIntType){0, false};
 }
 
-/* Convert a folded constant to `td` (const-level mirror of Coerce). An integer target narrows the value to its
- * width and signedness, as the emitted conversion does. */
+// Convert a folded constant to `td` (const-level mirror of Coerce). An integer target narrows the value to its
+// width and signedness, as the emitted conversion does.
 ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
 {
-    if (td.type == I1Ty(b)) /* conversion to bool is a (non)zero test */
+    if (td.type == I1Ty(b)) // conversion to bool is a (non)zero test
     {
         ConstInitVal r;
         r.kind = CIK_BOOL;
@@ -55,7 +55,7 @@ ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
     return r;
 }
 
-/* Folds an integer operator at the type EmitBinary computes in: both operands are converted to it first. */
+// Folds an integer operator at the type EmitBinary computes in: both operands are converted to it first.
 static bool FoldIntBinary(BinaryOp op, ConstInitVal l, ConstInitVal r, ConstInitVal* out)
 {
     ConstIntType t = ConstIntTypeCommon(l.ity, r.ity);
@@ -75,7 +75,7 @@ static bool FoldIntBinary(BinaryOp op, ConstInitVal l, ConstInitVal r, ConstInit
 
 bool FoldIntLiteralInit(Node* n, ConstInitVal* out)
 {
-    /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
+    // Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit.
     IntLiteral* lit = AS_NODE(IntLiteral, n);
 
     *out = (ConstInitVal){CIK_INT, .i = lit->value, .f = 0.0};
@@ -95,7 +95,7 @@ bool FoldBoolLiteralInit(Node* n, ConstInitVal* out)
     return true;
 }
 
-/* Unary operators over a folded operand. */
+// Unary operators over a folded operand.
 bool FoldUnaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
     UnaryExpr* u = AS_NODE(UnaryExpr, n);
@@ -148,7 +148,7 @@ bool FoldUnaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
     return true;
 }
 
-/* Binary operators over two folded operands, computed in the type EmitBinary uses. */
+// Binary operators over two folded operands, computed in the type EmitBinary uses.
 bool FoldBinaryInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 {
     BinaryExpr* e = AS_NODE(BinaryExpr, n);
@@ -262,16 +262,16 @@ bool FoldCastInit(Builder* b, Node* n, ConstInitVal* out)
         return false;
     }
 
-    /* The cast's own target type is the only conversion here (the truncation the user asked for, e.g.
-       `(byte)-8`). The enclosing global's type is applied by the caller: converting here would retype a
-       nested cast, as in `(uint)-1 >> 1` inside an `int` constant. */
+    // The cast's own target type is the only conversion here (the truncation the user asked for, e.g.
+    // `(byte)-8`). The enclosing global's type is applied by the caller: converting here would retype a
+    // nested cast, as in `(uint)-1 >> 1` inside an `int` constant.
     *out = CastConstVal(b, inner, innerTd);
     return true;
 }
 
 bool FoldIdentInit(Builder* b, Node* n, ConstInitVal* out)
 {
-    /* Chained manifest constants: `const B = A;` */
+    // Chained manifest constants: `const B = A;`
     ConstValueSlot* cv = (ConstValueSlot*)StrMapGet(&b->constValues, ((IdentExpr*)n)->name);
 
     if (!cv)
@@ -285,13 +285,13 @@ bool FoldIdentInit(Builder* b, Node* n, ConstInitVal* out)
 
 bool FoldMemberInit(Builder* b, Node* n, ConstInitVal* out)
 {
-    /* Scoped enum constant: `EnumName.Member` folds to its underlying
-       integer value (marked by sema). */
+    // Scoped enum constant: `EnumName.Member` folds to its underlying
+    // integer value (marked by sema).
     MemberExpr* m = (MemberExpr*)n;
 
     if (m->isEnumConst)
     {
-        /* Typed by the enum's underlying integer type, as EmitMember emits it. */
+        // Typed by the enum's underlying integer type, as EmitMember emits it.
         TypeName enumTn = TypeNameLeaf((char*)m->enumTypeName);
 
         *out = (ConstInitVal){CIK_INT, .i = m->enumValue, .f = 0.0};
@@ -299,8 +299,8 @@ bool FoldMemberInit(Builder* b, Node* n, ConstInitVal* out)
         return true;
     }
 
-    /* Builtin scalar pseudo-property: `int.max` / `float.min` (marked by
-       sema) folds to the C-limit constant. */
+    // Builtin scalar pseudo-property: `int.max` / `float.min` (marked by
+    // sema) folds to the C-limit constant.
     if (m->isScalarConst)
     {
         uint64_t intVal = 0;
@@ -313,7 +313,7 @@ bool FoldMemberInit(Builder* b, Node* n, ConstInitVal* out)
         {
             *out = isFloat ? (ConstInitVal){CIK_FLOAT, .i = 0, .f = floatVal}
                            : (ConstInitVal){CIK_INT, .i = intVal, .f = 0.0};
-            /* Typed as the base scalar itself, as EmitMember emits it. */
+            // Typed as the base scalar itself, as EmitMember emits it.
             TypeName baseTn = TypeNameLeaf((char*)((IdentExpr*)m->baseNode)->name);
             out->ity = ConstIntTypeOfTd(Resolve(b, &baseTn));
             return true;

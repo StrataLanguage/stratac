@@ -1,3 +1,4 @@
+// Serialized type metadata (strata_types.h) for @component structs.
 #include "Codegen/TypeMetadata.h"
 
 #include "Codegen/TypeUtil.h"
@@ -183,7 +184,7 @@ static uint32_t InternString(Writer* w, const char* text)
 
     size_t length = strlen(text);
 
-    /* Linear scan: metadata holds a handful of names, not thousands. */
+    // Linear scan: metadata holds a handful of names, not thousands.
     for (size_t offset = 1; offset < w->strings.size;)
     {
         const char* existing = (const char*)w->strings.data + offset;
@@ -265,8 +266,8 @@ static uint32_t StructIndex(Writer* w, const StructType* type)
     return STRATA_TYPES_NO_INDEX;
 }
 
-/* What a field's type looks like to the host. False for types the format can't describe
-   (owning types, which components reject). */
+// What a field's type looks like to the host. False for types the format can't describe
+// (owning types, which components reject).
 static bool ResolveFieldShape(Writer* w, const TypeName* type, FieldShape* out)
 {
     *out = (FieldShape){STRATA_TYPE_INVALID, 0, 0, NULL, NULL};
@@ -379,7 +380,7 @@ static void AddEnum(Writer* w, const char* name)
     VecPush(&w->enums, entry);
 }
 
-/* Depth-first, so every struct is listed after the structs it holds by value. */
+// Depth-first, so every struct is listed after the structs it holds by value.
 static bool VisitStruct(Writer* w, const StructType* type)
 {
     if (StructIndex(w, type) != STRATA_TYPES_NO_INDEX)
@@ -391,7 +392,7 @@ static bool VisitStruct(Writer* w, const StructType* type)
     {
         if (VecGet(&w->visiting, i) == type)
         {
-            return false; /* by-value cycle: already a layout error */
+            return false; // by-value cycle: already a layout error
         }
     }
 
@@ -411,7 +412,7 @@ static bool VisitStruct(Writer* w, const StructType* type)
 
         if (!ResolveFieldShape(w, &field->type, &shape))
         {
-            continue; /* written as STRATA_TYPE_INVALID */
+            continue; // written as STRATA_TYPE_INVALID
         }
 
         if (shape.kind == STRATA_TYPE_STRUCT)
@@ -715,7 +716,7 @@ bool TypeMetadataBuild(const TypeRegistry* reg, const Module* mod, uint8_t** out
         PutU16(blob + 4, STRATA_TYPES_VERSION);
         PutU16(blob + 6, STRATA_TYPES_HEADER_SIZE);
         PutU32(blob + 8, totalSize);
-        blob[12] = 8; /* pointer size: handles are 64-bit on every supported target */
+        blob[12] = 8; // pointer size: handles are 64-bit on every supported target
         WriteTable(blob, 16, (uint32_t)w.structs.count, STRATA_TYPES_STRUCT_RECORD_SIZE, structOffset);
         WriteTable(blob, 28, w.fieldCount, STRATA_TYPES_FIELD_RECORD_SIZE, fieldOffset);
         WriteTable(blob, 40, w.attributeCount, STRATA_TYPES_ATTRIBUTE_RECORD_SIZE, attributeOffset);

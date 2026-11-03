@@ -1,8 +1,8 @@
-/* Builder: Expressions: identifiers, lvalues, members, indexing, unary, conditionals. */
+// Builder: Expressions: identifiers, lvalues, members, indexing, unary, conditionals.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* The context the code being emitted runs against: the function's own, or (in code with none, such as a
-   helper) the module's newest. NULL when the module has no instanced globals. */
+// The context the code being emitted runs against: the function's own, or (in code with none, such as a
+// helper) the module's newest. NULL when the module has no instanced globals.
 LLVMValueRef CurrentContext(Builder* b)
 {
     if (b->curGlobalsPtr)
@@ -14,8 +14,8 @@ LLVMValueRef CurrentContext(Builder* b)
                               : LLVMConstNull(b->ptrTy);
 }
 
-/* Builds the getter/setter extern call for `m` (valueNode NULL = read).
-   `found` reports whether `m` is an impl property at all. */
+// Builds the getter/setter extern call for `m` (valueNode NULL = read).
+// `found` reports whether `m` is an impl property at all.
 Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
 {
     *found = false;
@@ -62,9 +62,9 @@ Value EmitImplProperty(Builder* b, MemberExpr* m, Node* valueNode, bool* found)
 
     if (valueNode)
     {
-        /* The setter returns void; the assignment-expression value is a
-           well-typed zero of the property type so any use stays valid IR
-           (sema rejects the chained-assignment form outright). */
+        // The setter returns void; the assignment-expression value is a
+        // well-typed zero of the property type so any use stays valid IR
+        // (sema rejects the chained-assignment form outright).
         TypeDesc td = Resolve(b, &entry->decl->returnType);
 
         return ValueMake(ZeroOf(td), td);
@@ -80,9 +80,9 @@ LLVMValueRef ToI1(Builder* b, Value v)
         return v.value;
     }
 
-    /* An optional's truthiness is PRESENCE. A `T?` box is its (nullable)
-       cell pointer; a `string?` / `T[]?` fat is empty as {null, 0}, so test
-       the data pointer (a present value always has a non-null buffer). */
+    // An optional's truthiness is PRESENCE. A `T?` box is its (nullable)
+    // cell pointer; a `string?` / `T[]?` fat is empty as {null, 0}, so test
+    // the data pointer (a present value always has a non-null buffer).
     if (TypeDescIsOptional(&v.typeDesc) && TypeDescHasArrayShape(&v.typeDesc))
     {
         LLVMValueRef data = LLVMBuildExtractValue(b->builder, v.value, 0, "opt.data");
@@ -114,7 +114,7 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
 
         if (cs)
         {
-            /* Manifest constant: inline the value, no load. */
+            // Manifest constant: inline the value, no load.
             return ValueMake(cs->constant, cs->td);
         }
 
@@ -140,7 +140,7 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
     return ValueMake(v, sym->typeDesc);
 }
 
-/* Lvalue of a name: a local symbol, else a global. */
+// Lvalue of a name: a local symbol, else a global.
 LValue EmitIdentLValue(Builder* b, IdentExpr* id)
 {
     LValue none = {0};
@@ -165,7 +165,7 @@ LValue EmitIdentLValue(Builder* b, IdentExpr* id)
     return none;
 }
 
-/* Lvalue of `base.member`: a vector lane, a struct field through a value or a box, or an array length/cap slot. */
+// Lvalue of `base.member`: a vector lane, a struct field through a value or a box, or an array length/cap slot.
 LValue EmitMemberLValue(Builder* b, MemberExpr* m)
 {
     LValue none = {0};
@@ -177,17 +177,17 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
         return none;
     }
 
-    /* array.length / array.cap — readable slots; typed uint (the fat's
-       u32 fields). Assignment is rejected in sema. */
+    // array.length / array.cap — readable slots; typed uint (the fat's
+    // u32 fields). Assignment is rejected in sema.
     if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(m->member, "length") == 0 || strcmp(m->member, "cap") == 0))
     {
         none.valid = true;
         none.ptr = strcmp(m->member, "length") == 0 ? ArrayLenPtr(b, base.ptr) : ArrayCapPtr(b, base.ptr);
-        none.typeDesc = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL); /* uint */
+        none.typeDesc = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL); // uint
         return none;
     }
 
-    /* Fixed-array .length is a compile-time constant, not an lvalue. */
+    // Fixed-array .length is a compile-time constant, not an lvalue.
     if (TypeDescIsFixedArray(&base.typeDesc) && strcmp(m->member, "length") == 0)
     {
         return none;
@@ -204,9 +204,9 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
             return none;
         }
 
-        /* A boxed SIMD vector: the cell holds the vector value itself, so
-           a lane lvalue points at the cell (load vector, insert, store
-           back through it). */
+        // A boxed SIMD vector: the cell holds the vector value itself, so
+        // a lane lvalue points at the cell (load vector, insert, store
+        // back through it).
         if (IsNameSimdVector(base.typeDesc.boxInner->name))
         {
             return MakeVectorLaneLValue(b, none, m, LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "box"),
@@ -259,7 +259,7 @@ LValue EmitMemberLValue(Builder* b, MemberExpr* m)
     return none;
 }
 
-/* Lvalue of `base[index]`: a cstring byte, a fixed-array element, or a dynamic array or string element. */
+// Lvalue of `base[index]`: a cstring byte, a fixed-array element, or a dynamic array or string element.
 LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 {
     LValue none = {0};
@@ -268,8 +268,8 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 
     if (base.valid && TypeDescIsCString(&base.typeDesc))
     {
-        /* cstring[i]: load the pointer, bounds-check against strlen, and
-           address the byte. Sema rejects writes, so this is a read view. */
+        // cstring[i]: load the pointer, bounds-check against strlen, and
+        // address the byte. Sema rejects writes, so this is a read view.
         LLVMValueRef ptr = LLVMBuildLoad2(b->builder, b->ptrTy, base.ptr, "cs");
         LLVMValueRef idxVal = AsI64Index(b, EmitExpr(b, ix->index));
         LLVMValueRef lenVal = BuildStrLen(b, ptr);
@@ -289,7 +289,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
             return none;
         }
 
-        /* Fixed inline array: GEP into the [N x T]; length is the compile-time dimension. */
+        // Fixed inline array: GEP into the [N x T]; length is the compile-time dimension.
         TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
         LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
@@ -304,7 +304,7 @@ LValue EmitIndexLValue(Builder* b, IndexExpr* ix)
 
     LLVMValueRef dataPtr = LLVMBuildLoad2(b->builder, b->ptrTy, ArrayDataPtr(b, base.ptr), "ap");
 
-    /* string[i]: the element is a byte (arrayInner is unused for strings). */
+    // string[i]: the element is a byte (arrayInner is unused for strings).
     TypeDesc elemTd = TypeDescIsString(&base.typeDesc) ? TypeDescMake(LLVMInt8TypeInContext(b->ctx), TDF_UNSIGNED, NULL)
                                                        : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
@@ -341,7 +341,7 @@ LValue EmitLValue(Builder* b, Node* n)
     }
 }
 
-/* Coerces an integer/float index value to an i64 GEP index. */
+// Coerces an integer/float index value to an i64 GEP index.
 LLVMValueRef AsI64Index(Builder* b, Value v)
 {
     if (TypeDescIsFloat(&v.typeDesc))
@@ -357,7 +357,7 @@ LLVMValueRef AsI64Index(Builder* b, Value v)
     return v.value;
 }
 
-/* Scoped enum constant `EnumName.Member`: the underlying constant value, inline. */
+// Scoped enum constant `EnumName.Member`: the underlying constant value, inline.
 Value EmitEnumConstMember(Builder* b, MemberExpr* n)
 {
     TypeName tn = TypeNameLeaf((char*)n->enumTypeName);
@@ -366,8 +366,8 @@ Value EmitEnumConstMember(Builder* b, MemberExpr* n)
     return ValueMake(v, td);
 }
 
-/* Builtin scalar pseudo-property `int.max` / `float.min`: a compile-time constant of the base scalar's own type.
- * Returns false when the name is not one, so the caller falls through. */
+// Builtin scalar pseudo-property `int.max` / `float.min`: a compile-time constant of the base scalar's own type.
+// Returns false when the name is not one, so the caller falls through.
 bool TryEmitScalarPseudoMember(Builder* b, MemberExpr* n, Value* out)
 {
     TypeName tn = TypeNameLeaf((char*)((IdentExpr*)n->baseNode)->name);
@@ -386,12 +386,11 @@ bool TryEmitScalarPseudoMember(Builder* b, MemberExpr* n, Value* out)
     return false;
 }
 
-/* Read of an addressable member: a single-lane vector load plus extract, or a plain load. */
+// Read of an addressable member: a single-lane vector load plus extract, or a plain load.
 Value EmitMemberLValueRead(Builder* b, LValue lvalue)
 {
     if (lvalue.vectorLane)
     {
-        /* Single-lane vector read: load the vector, extract the lane. */
         LLVMValueRef vec = LLVMBuildLoad2(b->builder, lvalue.vectorType, lvalue.ptr, "mvec");
         LLVMValueRef v = LLVMBuildExtractElement(b->builder, vec, LLVMConstInt(I32Ty(b), lvalue.lane, 0), "m");
         return ValueMake(v, lvalue.typeDesc);
@@ -402,7 +401,7 @@ Value EmitMemberLValueRead(Builder* b, LValue lvalue)
     return ValueMake(v, lvalue.typeDesc);
 }
 
-/* array.data / string.data: the element buffer as a raw `ptr` (NULL when empty). */
+// array.data / string.data: the element buffer as a raw `ptr` (NULL when empty).
 Value EmitArrayDataMember(Builder* b, Value base)
 {
     TypeDesc ptrTd = ResolveByName(b, STRATA_PTR_TYPE);
@@ -411,7 +410,7 @@ Value EmitArrayDataMember(Builder* b, Value base)
     return ValueMake(v, ptrTd);
 }
 
-/* array.length / array.cap on a non-lvalue array (e.g. MakeArr().length). */
+// array.length / array.cap on a non-lvalue array (e.g. MakeArr().length).
 Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
 {
     FieldIndex field = strcmp(n->member, "length") == 0 ? 1 : 2;
@@ -421,27 +420,27 @@ Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base)
     return ValueMake(v, lenTd);
 }
 
-/* Fixed-array .length: the compile-time dimension as a constant. */
+// Fixed-array .length: the compile-time dimension as a constant.
 Value EmitFixedArrayLengthMember(Builder* b, Value base)
 {
     LLVMValueRef len = LLVMConstInt(I32Ty(b), (unsigned long long)base.typeDesc.fixedLength, 0);
     return ValueMake(len, TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
 }
 
-/* cstring .length: runtime strlen (NUL-terminated), typed uint. */
+// cstring .length: runtime strlen (NUL-terminated), typed uint.
 Value EmitCStringLengthMember(Builder* b, Value base)
 {
     LLVMValueRef len = BuildStrLen(b, base.value);
     return ValueMake(LLVMBuildTrunc(b->builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
 }
 
-/* Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
- * struct has no such field. */
+// Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
+// struct has no such field.
 bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
 {
-    /* A box-typed value with no addressable lvalue (e.g. a call result
-        used directly: `MakeThing().field`) - GEP+load through the
-        pointer instead of extracting from an aggregate value. */
+    // A box-typed value with no addressable lvalue (e.g. a call result
+    // used directly: `MakeThing().field`) - GEP+load through the
+    // pointer instead of extracting from an aggregate value.
     LLVMTypeRef structTy = (LLVMTypeRef)StrMapGet(&b->structTypes, base.typeDesc.boxInner->name);
     int idx = TypeRegistryFieldIndex(&b->registry, base.typeDesc.boxInner->name, n->member);
 
@@ -470,12 +469,12 @@ bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
     return false;
 }
 
-/* A box around a SIMD vector resolves down to the vector value, so lane and swizzle reads see the vector. */
+// A box around a SIMD vector resolves down to the vector value, so lane and swizzle reads see the vector.
 Value EmitBoxedVectorDeref(Builder* b, Value base)
 {
     if (TypeDescIsBox(&base.typeDesc) && base.typeDesc.boxInner && IsNameSimdVector(base.typeDesc.boxInner->name))
     {
-        /* Resolve a box (surrounding a vector) down to the vector type. */
+        // Resolve a box (surrounding a vector) down to the vector type.
         TypeDesc innerType = Resolve(b, base.typeDesc.boxInner);
         base.value = LLVMBuildLoad2(b->builder, innerType.type, base.value, "boxvec");
         base.typeDesc = innerType;
@@ -484,7 +483,7 @@ Value EmitBoxedVectorDeref(Builder* b, Value base)
     return base;
 }
 
-/* Lane or swizzle read of a SIMD vector value (`v.x`, `v.xy`). Returns false when the destructure does not apply. */
+// Lane or swizzle read of a SIMD vector value (`v.x`, `v.xy`). Returns false when the destructure does not apply.
 bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
 {
     LLVMTypeRef floatType = LLVMFloatTypeInContext(b->ctx);
@@ -502,7 +501,7 @@ bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out)
     return false;
 }
 
-/* Struct field read from a value. Returns false when the struct has no such field. */
+// Struct field read from a value. Returns false when the struct has no such field.
 bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
 {
     int idx = TypeRegistryFieldIndex(&b->registry, base.typeDesc.structTypeName, n->member);
@@ -532,7 +531,7 @@ bool TryEmitStructFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
     return false;
 }
 
-/* Member read from a non-lvalue base value, dispatched by member kind. */
+// Member read from a non-lvalue base value, dispatched by member kind.
 Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
 {
     if ((TypeDescHasArrayShape(&base.typeDesc) || TypeDescIsString(&base.typeDesc)) && strcmp(n->member, "data") == 0)
@@ -584,15 +583,15 @@ Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
 
 static Value EmitMember(Builder* b, MemberExpr* n)
 {
-    /* Scoped enum constant: `EnumName.Member` — emit the underlying constant
-       value inline. */
+    // Scoped enum constant: `EnumName.Member` — emit the underlying constant
+    // value inline.
     if (n->isEnumConst)
     {
         return EmitEnumConstMember(b, n);
     }
 
-    /* Builtin scalar pseudo-property: `int.max` / `float.min` — a compile
-       time constant of the base scalar's own type. */
+    // Builtin scalar pseudo-property: `int.max` / `float.min` — a compile
+    // time constant of the base scalar's own type.
     Value scalar;
 
     if (n->isScalarConst && TryEmitScalarPseudoMember(b, n, &scalar))
@@ -600,8 +599,8 @@ static Value EmitMember(Builder* b, MemberExpr* n)
         return scalar;
     }
 
-    /* Impl property read: lower to the getter extern call. Checked first —
-       handles have no fields, so the lvalue path could never serve them. */
+    // Impl property read: lower to the getter extern call. Checked first —
+    // handles have no fields, so the lvalue path could never serve them.
     bool isProp = false;
     Value prop = EmitImplProperty(b, n, NULL, &isProp);
 
@@ -624,7 +623,7 @@ static Value EmitMember(Builder* b, MemberExpr* n)
 
 static Value EmitIndex(Builder* b, IndexExpr* n)
 {
-    /* Prefer the addressable path: arr[i], obj.field[i], etc. */
+    // Prefer the addressable path: arr[i], obj.field[i], etc.
     LValue lv = EmitLValue(b, (Node*)n);
 
     if (lv.valid)
@@ -634,13 +633,13 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
         return ValueMake(v, lv.typeDesc);
     }
 
-    /* Fallback: base is a non-addressable array rvalue (literal or call
-       result), e.g. {1,2,3}[0] or MakeArr()[2]. */
+    // Fallback: base is a non-addressable array rvalue (literal or call
+    // result), e.g. {1,2,3}[0] or MakeArr()[2].
     Value base = EmitExpr(b, n->baseNode);
 
     if (TypeDescIsFixedArray(&base.typeDesc))
     {
-        /* Fixed inline array rvalue: park in an entry alloca so a runtime index can address it. */
+        // Fixed inline array rvalue: park in an entry alloca so a runtime index can address it.
         TypeDesc elemTd = Resolve(b, base.typeDesc.arrayInner);
 
         LLVMValueRef slot = EntryAlloca(b, base.typeDesc.type, "fxr");
@@ -667,7 +666,7 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
 
     LLVMValueRef dataPtr = LLVMBuildExtractValue(b->builder, base.value, 0, "ap");
 
-    /* string[i]: the element is a byte (arrayInner is unused for strings). */
+    // string[i]: the element is a byte (arrayInner is unused for strings).
     TypeDesc elemTd = TypeDescIsString(&base.typeDesc) ? TypeDescMake(LLVMInt8TypeInContext(b->ctx), TDF_UNSIGNED, NULL)
                                                        : Resolve(b, base.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
@@ -690,9 +689,9 @@ static Value EmitIndex(Builder* b, IndexExpr* n)
     return ValueMake(v, elemTd);
 }
 
-/* Evaluates a boolean-context operand (`&&`, `||`, `!`). An optional stays
-   un-dereferenced so ToI1 tests presence, exactly like `if (o)`; loading an
-   empty optional's cell would dereference null. Other boxes read through. */
+// Evaluates a boolean-context operand (`&&`, `||`, `!`). An optional stays
+// un-dereferenced so ToI1 tests presence, exactly like `if (o)`; loading an
+// empty optional's cell would dereference null. Other boxes read through.
 Value EmitCondOperand(Builder* b, Node* n)
 {
     Value v = EmitExpr(b, n);
@@ -735,9 +734,9 @@ static Value EmitUnary(Builder* b, UnaryExpr* n)
     return e;
 }
 
-/* The value a slot holds, copied aside. Overwriting stores the NEW value first and then drops this copy, so a
-   `Drop` that writes the same slot meets a slot that already holds the new value instead of the half-destroyed
-   old one (and the value it stores is not overwritten and leaked). */
+// The value a slot holds, copied aside. Overwriting stores the NEW value first and then drops this copy, so a
+// `Drop` that writes the same slot meets a slot that already holds the new value instead of the half-destroyed
+// old one (and the value it stores is not overwritten and leaked).
 LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
 {
     LLVMTypeRef ty = TypeDescHasArrayShape(&td) ? ArrayStructType(b) : td.type;
@@ -747,7 +746,7 @@ LLVMValueRef SaveOldValue(Builder* b, LLVMValueRef slot, TypeDesc td)
     return saved;
 }
 
-/* One branch of `?:`, converted to the result type; its temporaries die inside the branch. */
+// One branch of `?:`, converted to the result type; its temporaries die inside the branch.
 static LLVMValueRef EmitConditionalBranch(Builder* b, Node* n, TypeDesc td)
 {
     StackMark tempMark = b->temps.count;
@@ -865,10 +864,10 @@ Value EmitExpr(Builder* b, Node* n)
     }
 }
 
-/* Emits an expression whose result is discarded (expression statement, `for`
-   update). A direct call's OWNING result is spilled and dropped so the
-   temporary doesn't leak; an extern `string` return is flagged (discardCallResult)
-   so its char* copy is skipped entirely. */
+// Emits an expression whose result is discarded (expression statement, `for`
+// update). A direct call's OWNING result is spilled and dropped so the
+// temporary doesn't leak; an extern `string` return is flagged (discardCallResult)
+// so its char* copy is skipped entirely.
 void EmitDiscardExpr(Builder* b, Node* expr)
 {
     if (!expr)
@@ -889,9 +888,9 @@ void EmitDiscardExpr(Builder* b, Node* expr)
     }
 }
 
-/* A branch/loop condition as i1, with its borrowed temporaries dropped
-   before the branch (the i1 no longer refers to them). `^bool` reads
-   through like `&&`/`!` operands; an optional tests presence. */
+// A branch/loop condition as i1, with its borrowed temporaries dropped
+// before the branch (the i1 no longer refers to them). `^bool` reads
+// through like `&&`/`!` operands; an optional tests presence.
 LLVMValueRef EmitConditionI1(Builder* b, Node* cond)
 {
     StackMark tempMark = b->temps.count;

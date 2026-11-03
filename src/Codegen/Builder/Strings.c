@@ -1,9 +1,9 @@
-/* Builder: String and cstring values: fat strings, concat, len, copies, strdup/streq/cstrlen helpers, text casts. */
+// Builder: String and cstring values: fat strings, concatenation, copies, equality helpers, text casts.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* Emits a string literal as a `.rodata` constant and returns the `i8*`
-   pointer to its first byte (with NUL terminator). Shared by every
-   `cstring` literal use site. */
+// Emits a string literal as a `.rodata` constant and returns the `i8*`
+// pointer to its first byte (with NUL terminator). Shared by every
+// `cstring` literal use site.
 LLVMValueRef EmitCStringLiteralPtr(Builder* b, const StrLiteral* literal)
 {
     size_t len = strlen(literal->value);
@@ -22,9 +22,9 @@ LLVMValueRef EmitCStringLiteralPtr(Builder* b, const StrLiteral* literal)
     return LLVMConstGEP2(strType, global, idx, 2);
 }
 
-/* Assembles a fat string value from a data pointer and a length (i32 or
-   i64; widened/truncated as needed). cap = len+1: the buffer's NUL slot
-   counts as capacity. */
+// Assembles a fat string value from a data pointer and a length (i32 or
+// i64; widened/truncated as needed). cap = len+1: the buffer's NUL slot
+// counts as capacity.
 static LLVMValueRef MakeStringFatValue(Builder* b, LLVMValueRef dataPtr, LLVMValueRef lenVal)
 {
     LLVMValueRef len = WidenLen(b, lenVal);
@@ -35,7 +35,7 @@ static LLVMValueRef MakeStringFatValue(Builder* b, LLVMValueRef dataPtr, LLVMVal
     return LLVMBuildInsertValue(b->builder, fat, LLVMBuildTrunc(b->builder, cap, I32Ty(b), "sfat.c32"), 2, "sfat.c");
 }
 
-/* The TypeDesc of a `string` value: fat {ptr, len, cap}, like T[]. */
+// The TypeDesc of a `string` value: fat {ptr, len, cap}, like T[].
 TypeDesc StringFatDesc(Builder* b)
 {
     TypeDesc td = {0};
@@ -45,20 +45,19 @@ TypeDesc StringFatDesc(Builder* b)
     return td;
 }
 
-/* Builds an OWNED fat string value from srcPtr[0..len): allocates len+1
-   bytes, copies, and writes the NUL terminator at [len] — the invariant
-   the extern-boundary pun (fat -> char*) relies on. */
+// Builds an OWNED fat string value from srcPtr[0..len): allocates len+1
+// bytes, copies, and writes the NUL terminator at [len] — the invariant
+// the extern-boundary pun (fat -> char*) relies on.
 LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMValueRef lenVal)
 {
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
     LLVMValueRef one = LLVMConstInt(I64Ty(b), 1, 0);
-    lenVal = WidenLen(b, lenVal); /* callers may hand a u32 fat length */
+    lenVal = WidenLen(b, lenVal); // callers may hand a u32 fat length
     LLVMValueRef copyBytes = LLVMBuildAdd(b->builder, lenVal, one, "slen");
     LLVMValueRef allocArgs[1] = {copyBytes};
     StrataAllocFn(b);
     LLVMValueRef heap = LLVMBuildCall2(b->builder, b->allocFnType, b->allocFn, allocArgs, 1, "sbuf");
 
-    /* Copy loop: heap[i] = srcPtr[i] for i in [0, len). */
     LLVMBasicBlockRef cond = NewBb(b, "scpy.cond");
     LLVMBasicBlockRef body = NewBb(b, "scpy.body");
     LLVMBasicBlockRef done = NewBb(b, "scpy.done");
@@ -80,14 +79,14 @@ LLVMValueRef BuildOwnedStringFat(Builder* b, LLVMValueRef srcPtr, LLVMValueRef l
     Br(b, cond);
 
     PositionAtEnd(b, done);
-    /* NUL terminator at [len]. */
+    // NUL terminator at [len].
     LLVMValueRef termIdx[1] = {lenVal};
     LLVMBuildStore(b->builder, LLVMConstNull(i8Ty), LLVMBuildGEP2(b->builder, i8Ty, heap, termIdx, 1, "sterm"));
 
     return MakeStringFatValue(b, heap, lenVal);
 }
 
-/* dst[i] = src[i] for i in [0, len): an i64 byte loop. */
+// dst[i] = src[i] for i in [0, len): an i64 byte loop.
 static void EmitByteCopy(Builder* b, LLVMValueRef dst, LLVMValueRef src, LLVMValueRef len)
 {
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
@@ -114,7 +113,7 @@ static void EmitByteCopy(Builder* b, LLVMValueRef dst, LLVMValueRef src, LLVMVal
     PositionAtEnd(b, done);
 }
 
-/* A new owned string holding a[0..alen) then b[0..blen), NUL-terminated. */
+// A new owned string holding a[0..alen) then b[0..blen), NUL-terminated.
 LLVMValueRef BuildConcatStringFat(Builder* b, LLVMValueRef aPtr, LLVMValueRef aLen, LLVMValueRef bPtr,
                                   LLVMValueRef bLen)
 {
@@ -132,7 +131,7 @@ LLVMValueRef BuildConcatStringFat(Builder* b, LLVMValueRef aPtr, LLVMValueRef aL
     return MakeStringFatValue(b, heap, total);
 }
 
-/* Computes the NUL-terminated length of `s` (an i64 byte loop). */
+// Computes the NUL-terminated length of `s` (an i64 byte loop).
 LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)
 {
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
@@ -147,8 +146,8 @@ LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)
     LLVMBasicBlockRef done = NewBb(b, "cstrlen.done");
     LLVMBasicBlockRef nullBB = NewBb(b, "cstrlen.null");
 
-    /* A NULL pointer has length 0 (defensive: a zero-initialized `cstring`
-       struct field or omitted field init is NULL, never a valid buffer). */
+    // A NULL pointer has length 0 (defensive: a zero-initialized `cstring`
+    // struct field or omitted field init is NULL, never a valid buffer).
     LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, s, LLVMConstNull(b->ptrTy), "cstrlen.null");
     LLVMBuildCondBr(b->builder, isNull, nullBB, cond);
     b->terminated = true;
@@ -172,9 +171,9 @@ LLVMValueRef BuildStrLen(Builder* b, LLVMValueRef s)
     return LLVMBuildLoad2(b->builder, I64Ty(b), iSlot, "cstrlen.len");
 }
 
-/* Converts a host-owned NUL-terminated char* (an extern `string` return) into
-   an OWNED fat string: allocates len+1 bytes, copies, NUL-terminates. A NULL
-   pointer yields the canonical empty {null, 0, 0}. */
+// Converts a host-owned NUL-terminated char* (an extern `string` return) into
+// an OWNED fat string: allocates len+1 bytes, copies, NUL-terminates. A NULL
+// pointer yields the canonical empty {null, 0, 0}.
 LLVMValueRef BuildOwnedStringFromCStr(Builder* b, LLVMValueRef cstr)
 {
     LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, cstr, LLVMConstNull(b->ptrTy), "cstr.null");
@@ -202,7 +201,7 @@ LLVMValueRef BuildOwnedStringFromCStr(Builder* b, LLVMValueRef cstr)
     return phi;
 }
 
-/* Cached static NUL byte: a valid empty C string for the extern pun. */
+// Cached static NUL byte: a valid empty C string for the extern pun.
 LLVMValueRef EmptyNulString(Builder* b)
 {
     if (!b->emptyNul)
@@ -223,9 +222,9 @@ LLVMValueRef EmptyNulString(Builder* b)
     return b->emptyNul;
 }
 
-/* Extracts the char* the C ABI sees for a string value: the data pointer,
-   with a valid empty NUL-terminated buffer substituted when the string is
-   the canonical empty {null, 0} (passing NULL to C string APIs is UB). */
+// Extracts the char* the C ABI sees for a string value: the data pointer,
+// with a valid empty NUL-terminated buffer substituted when the string is
+// the canonical empty {null, 0} (passing NULL to C string APIs is UB).
 LLVMValueRef BuildExternStringPtr(Builder* b, Value v)
 {
     LLVMValueRef dataPtr = LLVMBuildExtractValue(b->builder, v.value, 0, "sptr");
@@ -249,7 +248,7 @@ LLVMValueRef EmptyStrConstant(Builder* b)
     return LLVMConstGEP2(strType, g, idx, 2);
 }
 
-/* Heap-copies a NUL-terminated string so the copy can be owned and freed. */
+// Heap-copies a NUL-terminated string so the copy can be owned and freed.
 static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
 {
     size_t copyLen = len + 1;
@@ -271,7 +270,7 @@ static LLVMValueRef HeapCopyString(Builder* b, LLVMValueRef srcPtr, size_t len)
     return heap;
 }
 
-/* Emits the body of strata_strdup. Uses host defined strata_jit and strata_free */
+// Emits the body of strata_strdup, which allocates through strata_alloc.
 static void EmitStrataStrdupBody(Builder* b)
 {
     LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->builder);
@@ -291,9 +290,9 @@ static void EmitStrataStrdupBody(Builder* b)
     LLVMValueRef zero = LLVMConstInt(i64Ty, 0, 0);
     LLVMValueRef one = LLVMConstInt(i64Ty, 1, 0);
 
-    /* Both loop counters are allocas in the ENTRY block - an alloca in a
-       non-entry block makes LLVM's x86 codegen treat the frame as dynamic and
-       emit a __chkstk stack probe. */
+    // Both loop counters are allocas in the ENTRY block - an alloca in a
+    // non-entry block makes LLVM's x86 codegen treat the frame as dynamic and
+    // emit a __chkstk stack probe.
     LLVMPositionBuilderAtEnd(b->builder, entry);
     LLVMValueRef iSlot = LLVMBuildAlloca(b->builder, i64Ty, "i");
     LLVMValueRef jSlot = LLVMBuildAlloca(b->builder, i64Ty, "j");
@@ -354,15 +353,15 @@ LLVMValueRef StrataStrdupFn(Builder* b)
     return b->strdupFn;
 }
 
-/* Emits the body of strata_str_eq(a, alen, b, blen) -> bool: CONTENT
-   equality for string `==`/`!=`. Never compares the fat pointers directly:
-   lengths mismatch first (fast out), then pointer identity (fast in —
-   covers the same literal/alias, moves, and both-empty {null, 0}), then a
-   byte-wise loop over the shared length. Self-contained: no alloc, no free,
-   no host symbols — works identically in AOT and JIT. The ABI return type is
-   widened to i32 like every user function returning a sub-32-bit scalar (see
-   WidenRetType): the full register always holds 0/1, so the helper is
-   callable from C hosts and from JIT'd code under the one convention. */
+// Emits the body of strata_str_eq(a, alen, b, blen) -> bool: CONTENT
+// equality for string `==`/`!=`. Never compares the fat pointers directly:
+// lengths mismatch first (fast out), then pointer identity (fast in —
+// covers the same literal/alias, moves, and both-empty {null, 0}), then a
+// byte-wise loop over the shared length. Self-contained: no alloc, no free,
+// no host symbols — works identically in AOT and JIT. The ABI return type is
+// widened to i32 like every user function returning a sub-32-bit scalar (see
+// WidenRetType): the full register always holds 0/1, so the helper is
+// callable from C hosts and from JIT'd code under the one convention.
 static void EmitStrataStrEqBody(Builder* b)
 {
     LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->builder);
@@ -385,17 +384,17 @@ static void EmitStrataStrEqBody(Builder* b)
     LLVMValueRef zero = LLVMConstInt(i64Ty, 0, 0);
     LLVMValueRef one = LLVMConstInt(i64Ty, 1, 0);
 
-    /* Length fast-out: unequal lengths can never be equal. */
+    // Length fast-out: unequal lengths can never be equal.
     LLVMPositionBuilderAtEnd(b->builder, entry);
     LLVMValueRef lenMatch = LLVMBuildICmp(b->builder, LLVMIntEQ, alen, blen, "lenm");
     LLVMBuildCondBr(b->builder, lenMatch, lenEq, falseBB);
 
-    /* Pointer identity fast-in: the same buffer is trivially equal. */
+    // Pointer identity fast-in: the same buffer is trivially equal.
     LLVMPositionBuilderAtEnd(b->builder, lenEq);
     LLVMValueRef sameBuf = LLVMBuildICmp(b->builder, LLVMIntEQ, a, bb, "sambuf");
     LLVMBuildCondBr(b->builder, sameBuf, trueBB, loopCond);
 
-    /* Byte-wise compare over [0, alen). */
+    // Byte-wise compare over [0, alen).
     LLVMPositionBuilderAtEnd(b->builder, loopCond);
     LLVMValueRef iPhi = LLVMBuildPhi(b->builder, i64Ty, "i");
     LLVMValueRef iNext = LLVMBuildAdd(b->builder, iPhi, one, "i1");
@@ -428,9 +427,9 @@ LLVMValueRef StrataStrEqFn(Builder* b)
 {
     if (!b->strEqFn)
     {
-        /* Widened i32 ABI return (WidenRetWidth convention), not i1: the
-           full register holds 0/1. Callers narrow back to i1 with an
-           `icmp ne` so branches/PHIs stay i1. */
+        // Widened i32 ABI return (WidenRetWidth convention), not i1: the
+        // full register holds 0/1. Callers narrow back to i1 with an
+        // `icmp ne` so branches/PHIs stay i1.
         LLVMTypeRef params[4] = {b->ptrTy, I64Ty(b), b->ptrTy, I64Ty(b)};
         b->strEqFnType = LLVMFunctionType(I32Ty(b), params, 4, 0);
         b->strEqFn = LLVMAddFunction(b->mod, "strata_str_eq", b->strEqFnType);
@@ -440,12 +439,12 @@ LLVMValueRef StrataStrEqFn(Builder* b)
     return b->strEqFn;
 }
 
-/* Declares (once) the module-local helper `i64 @strata_cstrlen(ptr)`:
-   NUL-terminated length, NULL -> 0. Out-of-line (unlike BuildStrLen's
-   inlined loop) because equality helpers are emitted into their OWN
-   function bodies — an inlined loop would allocate/branch in the wrong
-   function. Self-contained like strata_str_eq: no host symbols, identical
-   in AOT and JIT. */
+// Declares (once) the module-local helper `i64 @strata_cstrlen(ptr)`:
+// NUL-terminated length, NULL -> 0. Out-of-line (unlike BuildStrLen's
+// inlined loop) because equality helpers are emitted into their OWN
+// function bodies — an inlined loop would allocate/branch in the wrong
+// function. Self-contained like strata_str_eq: no host symbols, identical
+// in AOT and JIT.
 static void EmitStrataCStrLenBody(Builder* b)
 {
     LLVMBasicBlockRef savedBlock = LLVMGetInsertBlock(b->builder);
@@ -463,7 +462,7 @@ static void EmitStrataCStrLenBody(Builder* b)
     LLVMValueRef zero = LLVMConstInt(i64Ty, 0, 0);
     LLVMValueRef one = LLVMConstInt(i64Ty, 1, 0);
 
-    /* A NULL pointer has length 0 (a zero-initialized `cstring` field). */
+    // A NULL pointer has length 0 (a zero-initialized `cstring` field).
     LLVMPositionBuilderAtEnd(b->builder, entry);
     LLVMValueRef isNull = LLVMBuildICmp(b->builder, LLVMIntEQ, s, LLVMConstNull(b->ptrTy), "isnull");
     LLVMBuildCondBr(b->builder, isNull, nullBB, loopCond);
@@ -512,19 +511,19 @@ LLVMValueRef StrataCStrLenFn(Builder* b)
     return b->csLenFn;
 }
 
-/* Emits substring(s, start, len) — a NEW owned string copying s[start ..
-   start+len). The source is borrowed, so literals, locals, and array
-   elements all work, and the source stays live. Out-of-range slices panic
-   under AOT; under the JIT they report through strata_oob and yield an
-   empty string, mirroring element indexing. Indices cross as i64, so
-   negative values fail the unsigned range check below. */
+// Emits substring(s, start, len) — a NEW owned string copying s[start ..
+// start+len). The source is borrowed, so literals, locals, and array
+// elements all work, and the source stays live. Out-of-range slices panic
+// under AOT; under the JIT they report through strata_oob and yield an
+// empty string, mirroring element indexing. Indices cross as i64, so
+// negative values fail the unsigned range check below.
 Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
 {
     Node* arg0 = (Node*)VecGet(&n->args, 0);
     Value v = EmitExpr(b, arg0);
 
-    /* The source is only read: a fresh `substring(make_str(), ...)` source is
-       a temporary (the slice is a separate copy). */
+    // The source is only read: a fresh `substring(make_str(), ...)` source is
+    // a temporary (the slice is a separate copy).
     BorrowTemp(b, v, TypeDescMake(I32Ty(b), 0, NULL));
 
     if (!TypeDescIsString(&v.typeDesc))
@@ -550,8 +549,8 @@ Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
         return ValueMake(BuildOwnedStringFat(b, directPtr, len), StringFatDesc(b));
     }
 
-    /* Unsigned range check: start > slen, or len > slen - start (the
-       subtraction wraps when start > slen, but badStart is already set). */
+    // Unsigned range check: start > slen, or len > slen - start (the
+    // subtraction wraps when start > slen, but badStart is already set).
     LLVMValueRef badStart = LLVMBuildICmp(b->builder, LLVMIntUGT, start, slen, "sub.oob1");
     LLVMValueRef remain = LLVMBuildSub(b->builder, slen, start, "sub.rem");
     LLVMValueRef badLen = LLVMBuildICmp(b->builder, LLVMIntUGT, len, remain, "sub.oob2");
@@ -582,8 +581,8 @@ Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
 
     PositionAtEnd(b, oobBB);
 
-    /* A bookkeeping re-resolution of the same expression (null-the-source
-       after a move) is not a new access: the access itself already reported. */
+    // A bookkeeping re-resolution of the same expression (null-the-source
+    // after a move) is not a new access: the access itself already reported.
     if (!b->nullStoreLValue)
     {
         EmitOobReport(b);
@@ -608,7 +607,7 @@ Value EmitSubstringBuiltin(Builder* b, CallExpr* n)
     return ValueMake(phi, StringFatDesc(b));
 }
 
-/* The length of the text in a `byte[N]` buffer: up to its first NUL, or all N bytes. */
+// The length of the text in a `byte[N]` buffer: up to its first NUL, or all N bytes.
 static LLVMValueRef BuildBoundedStrLen(Builder* b, LLVMValueRef data, ArrayLength capacity)
 {
     LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
@@ -641,7 +640,7 @@ static LLVMValueRef BuildBoundedStrLen(Builder* b, LLVMValueRef data, ArrayLengt
     return LLVMBuildLoad2(b->builder, I64Ty(b), iSlot, "bsl.len");
 }
 
-/* `(cstring)buf`, `(string)buf` and `(cstring)s` (see CastTextKind). */
+// `(cstring)buf`, `(string)buf` and `(cstring)s` (see CastTextKind).
 Value EmitTextCast(Builder* b, CastExpr* cast)
 {
     TypeDesc target = Resolve(b, &cast->type);
@@ -649,7 +648,7 @@ Value EmitTextCast(Builder* b, CastExpr* cast)
     if (cast->textKind == CastStringToCString)
     {
         Value s = EmitExpr(b, cast->operand);
-        /* A temporary string lives to the end of the statement, like a comparison operand. */
+        // A temporary string lives to the end of the statement, like a comparison operand.
         BorrowTemp(b, s, target);
         return ValueMake(BuildExternStringPtr(b, s), target);
     }
@@ -682,8 +681,8 @@ Value EmitTextCast(Builder* b, CastExpr* cast)
 Value EmitStrLiteral(Builder* b, StrLiteral* literal)
 {
     size_t len = literal->length;
-    /* The constant carries its NUL terminator (flag 0 in this LLVM
-       build), upholding the fat-string invariant: NUL at [len]. */
+    // The constant carries its NUL terminator (flag 0 in this LLVM
+    // build), upholding the fat-string invariant: NUL at [len].
     LLVMValueRef strConst = LLVMConstStringInContext(b->ctx, literal->value, (unsigned)len, 0);
     LLVMTypeRef strType = LLVMTypeOf(strConst);
 
@@ -698,9 +697,9 @@ Value EmitStrLiteral(Builder* b, StrLiteral* literal)
     LLVMValueRef idx[2] = {zero, zero};
     LLVMValueRef gep = LLVMConstGEP2(strType, global, idx, 2);
 
-    /* A literal is a borrowed fat {ptr, len, cap}: no allocation, NUL at
-       [len]. cap is len+1 (the constant carries the terminator byte).
-       Owning consumers heap-copy via EmitOwnedValue. */
+    // A literal is a borrowed fat {ptr, len, cap}: no allocation, NUL at
+    // [len]. cap is len+1 (the constant carries the terminator byte).
+    // Owning consumers heap-copy via EmitOwnedValue.
     TypeDesc td = StringFatDesc(b);
     LLVMValueRef fat = LLVMConstNamedStruct(ArrayStructType(b),
                                             (LLVMValueRef[3]){gep, LLVMConstInt(I32Ty(b), (unsigned long long)len, 0),

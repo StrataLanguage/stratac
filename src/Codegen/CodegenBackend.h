@@ -1,4 +1,5 @@
 #pragma once
+// Interface shared by the C and LLVM code generators.
 
 #include "AST/AST.h"
 #include "Core/Util.h"

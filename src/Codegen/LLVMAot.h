@@ -1,4 +1,5 @@
 #pragma once
+// AOT object emission from a built LLVM module.
 
 #include "LLVMModuleBuilder.h"
 

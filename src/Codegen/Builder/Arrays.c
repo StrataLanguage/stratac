@@ -1,9 +1,9 @@
-/* Builder: Dynamic and fixed arrays: layout, element access, copy/zero/drop loops, literals. */
+// Builder: Dynamic and fixed arrays: layout, element access, copy/zero/drop loops, literals.
 #include "Codegen/Builder/BuilderInternal.h"
 
-/* The shared {ptr, u32 len, u32 cap} fat struct for every T[] and string
-   (cached so all arrays share one type). len/cap are u64-truncated views:
-   `.length`/`.cap` are `uint`, so 16 bytes covers both fields. */
+// The shared {ptr, u32 len, u32 cap} fat struct for every T[] and string
+// (cached so all arrays share one type). len/cap are u64-truncated views:
+// `.length`/`.cap` are `uint`, so 16 bytes covers both fields.
 LLVMTypeRef ArrayStructType(Builder* b)
 {
     if (!b->arrayType)
@@ -15,7 +15,7 @@ LLVMTypeRef ArrayStructType(Builder* b)
     return b->arrayType;
 }
 
-/* GEP helpers for the three array-slot fields: 0 = data ptr, 1 = length, 2 = capacity. */
+// GEP helpers for the three array-slot fields: 0 = data ptr, 1 = length, 2 = capacity.
 LLVMValueRef ArrayDataPtr(Builder* b, LLVMValueRef slot)
 {
     LLVMValueRef idx[2] = {IdxConst(b, 0), IdxConst(b, 0)};
@@ -34,8 +34,8 @@ LLVMValueRef ArrayCapPtr(Builder* b, LLVMValueRef slot)
     return LLVMBuildGEP2(b->builder, ArrayStructType(b), slot, idx, 2, "acap");
 }
 
-/* Widens a u32 length/capacity value to the i64 used by GEP indices, byte
-   counts and loop bounds (zero-extend: lengths are never negative). */
+// Widens a u32 length/capacity value to the i64 used by GEP indices, byte
+// counts and loop bounds (zero-extend: lengths are never negative).
 LLVMValueRef WidenLen(Builder* b, LLVMValueRef v)
 {
     if (LLVMTypeOf(v) == I64Ty(b))
@@ -46,7 +46,7 @@ LLVMValueRef WidenLen(Builder* b, LLVMValueRef v)
     return LLVMBuildZExt(b->builder, v, I64Ty(b), "wlen");
 }
 
-/* In-bounds element address; aliased rest arrays hold T* slots, so load the slot. */
+// In-bounds element address; aliased rest arrays hold T* slots, so load the slot.
 static LLVMValueRef PlainElemPtr(Builder* b, LLVMValueRef dataPtr, LLVMValueRef idxVal, LLVMTypeRef elemTy,
                                  bool aliased)
 {
@@ -61,10 +61,10 @@ static LLVMValueRef PlainElemPtr(Builder* b, LLVMValueRef dataPtr, LLVMValueRef 
     return LLVMBuildGEP2(b->builder, elemTy, dataPtr, idxArgs, 1, "ai");
 }
 
-/* Resolves arr[idx] under the profile bounds check: boundsCheck off -> raw
-   GEP; AOT -> panic branch; JIT -> no abort, report via strata_oob and
-   continue with a dummy slot (reads yield a dummy, writes absorbed). Owning
-   elements rebuild scratch per event; null-store re-resolution skips that. */
+// Resolves arr[idx] under the profile bounds check: boundsCheck off -> raw
+// GEP; AOT -> panic branch; JIT -> no abort, report via strata_oob and
+// continue with a dummy slot (reads yield a dummy, writes absorbed). Owning
+// elements rebuild scratch per event; null-store re-resolution skips that.
 LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef lenVal, LLVMValueRef dataPtr,
                                 LLVMTypeRef elemTy, TypeDesc elemTd, bool aliased)
 {
@@ -96,8 +96,8 @@ LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef le
 
     PositionAtEnd(b, oobBB);
 
-    /* A bookkeeping re-resolution of the same expression (null-the-source
-       after a move) is not a new access: the access itself already reported. */
+    // A bookkeeping re-resolution of the same expression (null-the-source
+    // after a move) is not a new access: the access itself already reported.
     if (!b->nullStoreLValue)
     {
         EmitOobReport(b);
@@ -136,16 +136,16 @@ LLVMValueRef EmitCheckedElemPtr(Builder* b, LLVMValueRef idxVal, LLVMValueRef le
     return phi;
 }
 
-/* Element address in a fixed inline [N x T]; the leading 0 walks into the array. */
+// Element address in a fixed inline [N x T]; the leading 0 walks into the array.
 static LLVMValueRef FixedElemPtr(Builder* b, LLVMValueRef arrPtr, LLVMValueRef idxVal, LLVMTypeRef arrTy)
 {
     LLVMValueRef idxArgs[2] = {IdxConst(b, 0), idxVal};
     return LLVMBuildGEP2(b->builder, arrTy, arrPtr, idxArgs, 2, "ai");
 }
 
-/* Bounds-checked variant for fixed arrays. The length is the compile-time
-   dimension; elements are never owning (enforced by sema), so the JIT dummy
-   is a shared slot and never needs per-site scratch. */
+// Bounds-checked variant for fixed arrays. The length is the compile-time
+// dimension; elements are never owning (enforced by sema), so the JIT dummy
+// is a shared slot and never needs per-site scratch.
 LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, ArrayLength length, LLVMValueRef arrPtr,
                                      LLVMTypeRef arrTy, TypeDesc elemTd)
 {
@@ -195,7 +195,6 @@ LLVMValueRef EmitCheckedFixedElemPtr(Builder* b, LLVMValueRef idxVal, ArrayLengt
     return phi;
 }
 
-/* Copies `count` elements from srcData to dstData. */
 static void EmitArrayCopyLoop(Builder* b, LLVMValueRef dstData, LLVMValueRef srcData, LLVMValueRef count,
                               LLVMTypeRef elemTy)
 {
@@ -225,7 +224,7 @@ static void EmitArrayCopyLoop(Builder* b, LLVMValueRef dstData, LLVMValueRef src
     PositionAtEnd(b, end);
 }
 
-/* Zero-initializes elements [start, end) of data (nulls owning slots safely). */
+// Zero-initializes elements [start, end) of data (nulls owning slots safely).
 static void EmitArrayZeroLoop(Builder* b, LLVMValueRef data, LLVMValueRef start, LLVMValueRef end, LLVMTypeRef elemTy)
 {
     LLVMBasicBlockRef cond = NewBb(b, "az.cond");
@@ -253,7 +252,7 @@ static void EmitArrayZeroLoop(Builder* b, LLVMValueRef data, LLVMValueRef start,
     PositionAtEnd(b, endBb);
 }
 
-/* Drops owning elements [start, end) of data before the buffer is freed. */
+// Drops owning elements [start, end) of data before the buffer is freed.
 static void EmitArrayDropRange(Builder* b, LLVMValueRef data, LLVMValueRef start, LLVMValueRef end, TypeDesc elemTd,
                                LLVMTypeRef elemTy)
 {
@@ -282,8 +281,8 @@ static void EmitArrayDropRange(Builder* b, LLVMValueRef data, LLVMValueRef start
     PositionAtEnd(b, endBb);
 }
 
-/* Stores `v` (the value of `valNode`) into the array slot `elAddr` of element type `elemTd`, moving it in:
-   a movable source is emptied, a literal or borrowed value is copied or boxed as the element needs. */
+// Stores `v` (the value of `valNode`) into the array slot `elAddr` of element type `elemTd`, moving it in:
+// a movable source is emptied, a literal or borrowed value is copied or boxed as the element needs.
 static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* valNode, TypeDesc elemTd)
 {
     bool sameOwningType = TypeDescIsBox(&v.typeDesc)
@@ -293,7 +292,7 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
                           && valNode->kind != NodeStrLiteral;
 
     bool stringMove = TypeDescIsString(&elemTd) && TypeDescIsString(&v.typeDesc) && valNode->kind != NodeStrLiteral;
-    /* An array pushed into an array of arrays moves: the source is emptied, or both would free it. */
+    // An array pushed into an array of arrays moves: the source is emptied, or both would free it.
     bool arrayMove = TypeDescHasArrayShape(&elemTd) && !TypeDescIsString(&elemTd) && TypeDescHasArrayShape(&v.typeDesc)
                      && !TypeDescIsString(&v.typeDesc);
 
@@ -304,9 +303,9 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
     }
     else if (TypeDescIsBox(&elemTd) && elemTd.boxInner)
     {
-        /* ^T element from a non-^T value (bare T, string literal
-           into ^string): allocate a T slot, construct the owned
-           inner value, store it. */
+        // ^T element from a non-^T value (bare T, string literal
+        // into ^string): allocate a T slot, construct the owned
+        // inner value, store it.
         TypeDesc innerTd = Resolve(b, elemTd.boxInner);
         LLVMValueRef heap = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "abox");
         LLVMValueRef inner = EmitOwnedValue(b, v, valNode, elemTd.boxInner);
@@ -315,7 +314,7 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
     }
     else if (TypeDescIsString(&elemTd))
     {
-        /* string element: heap-copy literal, move source. */
+        // string element: heap-copy literal, move source.
         LLVMValueRef owned = EmitOwnedValue(b, v, valNode, StringTypeName(b));
         LLVMBuildStore(b->builder, owned, elAddr);
     }
@@ -327,9 +326,9 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
              && strcmp(elemTd.structTypeName, v.typeDesc.structTypeName) == 0
              && TypeRegistryIsOwningStruct(&b->registry, elemTd.structTypeName))
     {
-        /* Owning-struct element (`Rec[]`): bitwise store = ownership
-           transfer; a movable source is zeroed (a struct literal is a
-           fresh temporary whose fields the array now owns). */
+        // Owning-struct element (`Rec[]`): bitwise store = ownership
+        // transfer; a movable source is zeroed (a struct literal is a
+        // fresh temporary whose fields the array now owns).
         LLVMBuildStore(b->builder, v.value, elAddr);
         NullMovedSource(b, valNode);
     }
@@ -339,10 +338,10 @@ static void StoreMovedElement(Builder* b, LLVMValueRef elAddr, Value v, Node* va
     }
 }
 
-/* Inline array helpers: array_push / array_pop / array_resize.
-   Each mutates the array through its lvalue and returns push->uint (the
-   new length), pop->T, resize->void. Push/resize grow the backing buffer
-   geometrically: doubling the capacity when out of room (seed 4). */
+// Inline array helpers: array_push / array_pop / array_resize.
+// Each mutates the array through its lvalue and returns push->uint (the
+// new length), pop->T, resize->void. Push/resize grow the backing buffer
+// geometrically: doubling the capacity when out of room (seed 4).
 Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 {
     Node* arg0 = (Node*)VecGet(&n->args, 0);
@@ -388,7 +387,7 @@ Value EmitArrayBuiltin(Builder* b, CallExpr* n)
     return EmitArrayResize(b, n, arr.typeDesc.arrayInner, dataPtrPtr, lenPtr, capPtr, elemTd, elemTy);
 }
 
-/* array_pop: the popped element goes to the caller; an empty array stays empty. */
+// array_pop: the popped element goes to the caller; an empty array stays empty.
 Value EmitArrayPop(Builder* b, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd, LLVMTypeRef elemTy)
 {
     LLVMValueRef len = LLVMBuildLoad2(b->builder, I32Ty(b), lenPtr, "len");
@@ -396,32 +395,31 @@ Value EmitArrayPop(Builder* b, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, Typ
     LLVMValueRef lm1 = LLVMBuildSub(b->builder, len, one, "lm1");
     LLVMValueRef data = LLVMBuildLoad2(b->builder, b->ptrTy, dataPtrPtr, "data");
 
-    /* Popping an empty array is an out-of-bounds read of index len-1
-       (wraps to 0xFFFFFFFF): route it through the same bounds check as
-       `a[i]` (AOT panics; JIT reports via strata_oob and yields a dummy). */
+    // Popping an empty array is an out-of-bounds read of index len-1
+    // (wraps to 0xFFFFFFFF): route it through the same bounds check as
+    // `a[i]` (AOT panics; JIT reports via strata_oob and yields a dummy).
     LLVMValueRef elAddr = EmitCheckedElemPtr(b, WidenLen(b, lm1), WidenLen(b, len), data, elemTy, elemTd, false);
     LLVMValueRef v = LLVMBuildLoad2(b->builder, elemTy, elAddr, "popped");
 
-    /* The popped value now belongs to the caller: clear the vacated slot
-       (or the JIT's OOB scratch dummy) so no later drop of it frees the
-       value a second time. */
+    // The popped value now belongs to the caller: clear the vacated slot
+    // (or the JIT's OOB scratch dummy) so no later drop of it frees the
+    // value a second time.
     if (ElemNeedsScratchDummy(b, elemTd))
     {
         LLVMBuildStore(b->builder, LLVMConstNull(elemTy), elAddr);
     }
 
-    /* Never underflow: an empty array stays empty. */
+    // Never underflow: an empty array stays empty.
     LLVMValueRef isEmpty = LLVMBuildICmp(b->builder, LLVMIntEQ, len, LLVMConstInt(I32Ty(b), 0, 0), "pop.empty");
     LLVMBuildStore(b->builder, LLVMBuildSelect(b->builder, isEmpty, len, lm1, "pop.len"), lenPtr);
 
     return ValueMake(v, elemTd);
 }
 
-/* array_reserve(a, want): grows the capacity to at least `want`; the length and elements are unchanged. */
+// array_reserve(a, want): grows the capacity to at least `want`; the length and elements are unchanged.
 Value EmitArrayReserve(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
                        LLVMTypeRef elemTy)
 {
-    /* Grows the capacity to at least `want`; the length and elements are unchanged. */
     LLVMValueRef want = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
     LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->builder, I32Ty(b), lenPtr, "len"));
     LLVMValueRef cap64 = WidenLen(b, LLVMBuildLoad2(b->builder, I32Ty(b), capPtr, "cap"));
@@ -448,27 +446,27 @@ Value EmitArrayReserve(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMVal
     return ValueMake(NULL, TypeDescMake(NULL, TDF_VOID, NULL));
 }
 
-/* array_remove / array_swap_remove(a, i): the element at `i` goes to the caller; swap_remove fills the hole with the
- * last element. */
+// array_remove / array_swap_remove(a, i): the element at `i` goes to the caller; swap_remove fills the hole with the
+// last element.
 Value EmitArrayRemove(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
                       LLVMTypeRef elemTy)
 {
     bool swap = strcmp(n->callee, "array_swap_remove") == 0;
 
-    /* The index first: evaluating it may change the array. */
+    // The index first: evaluating it may change the array.
     LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
     LLVMValueRef len = LLVMBuildLoad2(b->builder, I32Ty(b), lenPtr, "len");
     LLVMValueRef len64 = WidenLen(b, len);
     LLVMValueRef data = LLVMBuildLoad2(b->builder, b->ptrTy, dataPtrPtr, "data");
 
-    /* Out of range is the bounds error `a[i]` would be (AOT panics; the JIT reports it), and then
-       nothing is removed. */
+    // Out of range is the bounds error `a[i]` would be (AOT panics; the JIT reports it), and then
+    // nothing is removed.
     EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
     LLVMValueRef inRange = LLVMBuildICmp(b->builder, LLVMIntULT, index, len64, "rm.in");
     LLVMBasicBlockRef doBb = NewBb(b, "rm.do");
     LLVMBasicBlockRef endBb = NewBb(b, "rm.end");
 
-    /* The removed element goes to the caller, who drops it (or keeps it). Out of range yields a zero. */
+    // The removed element goes to the caller, who drops it (or keeps it). Out of range yields a zero.
     LLVMValueRef removedSlot = EntryAlloca(b, elemTy, "rm.out");
     LLVMBuildStore(b->builder, LLVMConstNull(elemTy), removedSlot);
 
@@ -480,7 +478,7 @@ Value EmitArrayRemove(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValu
     LLVMValueRef next = LLVMBuildAdd(b->builder, index, one64, "rm.next");
     LLVMValueRef last = LLVMBuildSub(b->builder, len64, one64, "rm.last");
 
-    /* The survivors move bitwise: ownership goes with them. */
+    // The survivors move bitwise: ownership goes with them.
     LLVMValueRef holeIdx[1] = {index};
     LLVMValueRef hole = LLVMBuildGEP2(b->builder, elemTy, data, holeIdx, 1, "rm.hole");
     LLVMBuildStore(b->builder, LLVMBuildLoad2(b->builder, elemTy, hole, "rm.taken"), removedSlot);
@@ -505,11 +503,11 @@ Value EmitArrayRemove(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValu
     return ValueMake(LLVMBuildLoad2(b->builder, elemTy, removedSlot, "rm.value"), elemTd);
 }
 
-/* array_replace(a, i, v): stores `v` at `i` and returns the old element. */
+// array_replace(a, i, v): stores `v` at `i` and returns the old element.
 Value EmitArrayReplace(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
                        LLVMTypeRef elemTy)
 {
-    /* Left to right: the index, then the value (either may change the array). */
+    // Left to right: the index, then the value (either may change the array).
     LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
     Node* valNode = (Node*)VecGet(&n->args, 2);
     Value v = EmitExpr(b, valNode);
@@ -518,13 +516,13 @@ Value EmitArrayReplace(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMVal
     LLVMValueRef data = LLVMBuildLoad2(b->builder, b->ptrTy, dataPtrPtr, "data");
     LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
 
-    /* The old element goes to the caller; the new one takes its place, ownership and all. */
+    // The old element goes to the caller; the new one takes its place, ownership and all.
     LLVMValueRef old = LLVMBuildLoad2(b->builder, elemTy, elAddr, "repl.old");
     StoreMovedElement(b, elAddr, v, valNode, elemTd);
     return ValueMake(old, elemTd);
 }
 
-/* array_take(a, i): moves the element at `i` out and leaves the empty value in its slot. */
+// array_take(a, i): moves the element at `i` out and leaves the empty value in its slot.
 Value EmitArrayTake(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
                     LLVMTypeRef elemTy)
 {
@@ -533,21 +531,21 @@ Value EmitArrayTake(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
     LLVMValueRef data = LLVMBuildLoad2(b->builder, b->ptrTy, dataPtrPtr, "data");
     LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
 
-    /* The element goes to the caller; the slot keeps the empty value (all zero for a string, array or optional). */
+    // The element goes to the caller; the slot keeps the empty value (all zero for a string, array or optional).
     LLVMValueRef taken = LLVMBuildLoad2(b->builder, elemTy, elAddr, "take.value");
     LLVMBuildStore(b->builder, LLVMConstNull(elemTy), elAddr);
     return ValueMake(taken, elemTd);
 }
 
-/* array_push(a, v): appends `v` and returns the new length. */
+// array_push(a, v): appends `v` and returns the new length.
 Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
                     TypeDesc elemTd, LLVMTypeRef elemTy)
 {
     TypeDesc uintTd = TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL);
 
-    /* Evaluate the pushed value first: it may read the array itself
-       (`array_push(a, a[0])`), and the grow path below frees the old
-       buffer. */
+    // Evaluate the pushed value first: it may read the array itself
+    // (`array_push(a, a[0])`), and the grow path below frees the old
+    // buffer.
     Node* valNode = (Node*)VecGet(&n->args, 1);
     Value v = EmitExpr(b, valNode);
 
@@ -557,9 +555,9 @@ Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
     LLVMValueRef oldCap = LLVMBuildLoad2(b->builder, I32Ty(b), capPtr, "cap");
     LLVMValueRef oldData = LLVMBuildLoad2(b->builder, b->ptrTy, dataPtrPtr, "data");
 
-    /* Room left: write in place (no realloc). Out of room: double the
-       capacity, moving the elements (bitwise — ownership transfers)
-       and freeing the old buffer. Doubling off cap 0 seeds 4. */
+    // Room left: write in place (no realloc). Out of room: double the
+    // capacity, moving the elements (bitwise — ownership transfers)
+    // and freeing the old buffer. Doubling off cap 0 seeds 4.
     LLVMValueRef hasRoom = LLVMBuildICmp(b->builder, LLVMIntULT, oldLen, oldCap, "room");
     LLVMBasicBlockRef roomBb = NewBb(b, "push.room");
     LLVMBasicBlockRef growBb = NewBb(b, "push.grow");
@@ -586,8 +584,8 @@ Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
     StrataFreeFn(b);
     LLVMBuildCall2(b->builder, b->freeFnType, b->freeFn, freeArgs, 1, "");
 
-    /* The copy loop leaves the builder in its own `end` block — that
-       block (not push.grow) is the direct predecessor of the join. */
+    // The copy loop leaves the builder in its own `end` block — that
+    // block (not push.grow) is the direct predecessor of the join.
     LLVMBasicBlockRef growEnd = LLVMGetInsertBlock(b->builder);
     Br(b, joinBb);
 
@@ -613,14 +611,14 @@ Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueR
     return ValueMake(newLen, uintTd);
 }
 
-/* array_resize: within cap it mutates in place (zero the grown tail /
-   drop the shrunken owning tail); beyond cap it reallocates to
-   max(newLen, cap*2, 4) and moves the prefix. */
+// array_resize: within cap it mutates in place (zero the grown tail /
+// drop the shrunken owning tail); beyond cap it reallocates to
+// max(newLen, cap*2, 4) and moves the prefix.
 Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr,
                       LLVMValueRef capPtr, TypeDesc elemTd, LLVMTypeRef elemTy)
 {
-    /* New length first, for the same reason as array_push: evaluating it
-       may mutate the array. */
+    // New length first, for the same reason as array_push: evaluating it
+    // may mutate the array.
     LLVMValueRef newLen = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
     LLVMValueRef oldLen = LLVMBuildLoad2(b->builder, I32Ty(b), lenPtr, "len");
     LLVMValueRef oldLen64 = WidenLen(b, oldLen);
@@ -695,13 +693,13 @@ Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMV
     return ValueMake(NULL, TypeDescMake(NULL, TDF_VOID, NULL));
 }
 
-/* Copies a non-empty fat array value: fresh buffer + per-element deep copy
-   for owning element types, memcpy-style loop otherwise. Callers guard
-   empty optionals. */
+// Copies a non-empty fat array value: fresh buffer + per-element deep copy
+// for owning element types, memcpy-style loop otherwise. Callers guard
+// empty optionals.
 Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LLVMTypeRef elemTy, LLVMValueRef oldLen,
                          LLVMValueRef oldData)
 {
-    oldLen = WidenLen(b, oldLen); /* the fat's u32 length, as a loop bound */
+    oldLen = WidenLen(b, oldLen); // the fat's u32 length, as a loop bound
     LLVMValueRef totalBytes = LLVMBuildMul(b->builder, SizeOfConst(b, elemTy), oldLen, "cby");
     LLVMValueRef allocArgs[1] = {totalBytes};
     StrataAllocFn(b);
@@ -747,15 +745,15 @@ Value EmitArrayValueCopy(Builder* b, Value src, TypeDesc td, TypeDesc elemTd, LL
     return ValueMake(arr, td);
 }
 
-/* The backing buffer for a literal's `count` elements: a fixed stack array in
-   the entry block when `stackBuffer`, else a heap allocation. */
+// The backing buffer for a literal's `count` elements: a fixed stack array in
+// the entry block when `stackBuffer`, else a heap allocation.
 LLVMValueRef EmitArrayLiteralBuffer(Builder* b, LLVMTypeRef elemTy, LLVMTypeRef slotTy, size_t count, bool stackBuffer)
 {
     LLVMValueRef dataPtr = LLVMConstNull(b->ptrTy);
 
     if (stackBuffer)
     {
-        /* Fixed-size stack buffer (count is a compile-time constant). */
+        // Fixed-size stack buffer (count is a compile-time constant).
         size_t n = count;
         LLVMTypeRef arrTy = LLVMArrayType(slotTy, (unsigned)n);
         LLVMValueRef bufSlot = EntryAlloca(b, arrTy, "varargs");
@@ -777,14 +775,14 @@ LLVMValueRef EmitArrayLiteralBuffer(Builder* b, LLVMTypeRef elemTy, LLVMTypeRef 
     return dataPtr;
 }
 
-/* A `ref T... rest` element with non-owning elements: the slot holds a POINTER
-   to the source argument, so element writes reach the caller. */
+// A `ref T... rest` element with non-owning elements: the slot holds a POINTER
+// to the source argument, so element writes reach the caller.
 void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd,
                              LLVMTypeRef elemTy)
 {
-    /* Store a POINTER to the source argument. A box arg already
-       is the value's address; lvalues yield their address; a
-       non-lvalue is materialized into a stack temp. */
+    // Store a POINTER to the source argument. A box arg already
+    // is the value's address; lvalues yield their address; a
+    // non-lvalue is materialized into a stack temp.
     if (TypeDescIsBox(&v.typeDesc))
     {
         LLVMBuildStore(b->builder, v.value, elemAddr);
@@ -806,15 +804,15 @@ void EmitAliasedArrayElement(Builder* b, Node* eNode, Value v, LLVMValueRef elem
     }
 }
 
-/* Stores one element of a literal by its element type (string, array, ^T,
-   owning struct or a plain value). Movable sources are nulled unless the rest
-   is borrowed. */
+// Stores one element of a literal by its element type (string, array, ^T,
+// owning struct or a plain value). Movable sources are nulled unless the rest
+// is borrowed.
 void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAddr, TypeDesc elemTd, bool borrow)
 {
     if (TypeDescIsString(&elemTd))
     {
-        /* string element: literals are heap-copied (the constant is
-           borrowed; the array owns its elements); variables move. */
+        // string element: literals are heap-copied (the constant is
+        // borrowed; the array owns its elements); variables move.
         if (borrow)
         {
             LLVMBuildStore(b->builder, v.value, elemAddr);
@@ -833,10 +831,10 @@ void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAd
     }
     else if (TypeDescHasArrayShape(&elemTd))
     {
-        /* Array element: `v` is already the evaluated child (a nested
-           literal was built by the EmitExpr above - building it again
-           here leaked the first copy). A movable source (`{ xs }`)
-           moves in, like the string and box branches. */
+        // Array element: `v` is already the evaluated child (a nested
+        // literal was built by the EmitExpr above - building it again
+        // here leaked the first copy). A movable source (`{ xs }`)
+        // moves in, like the string and box branches.
         LLVMBuildStore(b->builder, Coerce(b, v, elemTd).value, elemAddr);
 
         if (!borrow)
@@ -846,31 +844,29 @@ void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAd
     }
     else if (TypeDescIsBox(&elemTd) && elemTd.boxInner)
     {
-        /* ^T element. */
         bool sameOwningType = TypeDescIsBox(&v.typeDesc) && v.typeDesc.boxInner
                               && strcmp(v.typeDesc.boxInner->name, elemTd.boxInner->name) == 0;
 
         if (borrow)
         {
-            /* ref rest: borrow, keep source alive. */
+            // ref rest: borrow, keep source alive.
             LLVMBuildStore(b->builder, v.value, elemAddr);
         }
         else if (sameOwningType)
         {
-            /* Same ^T type: move. */
+            // Same ^T type: move.
             LLVMBuildStore(b->builder, v.value, elemAddr);
             NullMovedSource(b, eNode);
         }
         else
         {
-            /* ^T from a non-^T value: box it up. */
+            // ^T from a non-^T value: box it up.
             LLVMValueRef heap = EmitBoxCell(b, elemTd.boxInner, v, eNode, "abox");
             LLVMBuildStore(b->builder, heap, elemAddr);
         }
     }
     else if (TypeDescIsBox(&elemTd))
     {
-        /* string element. */
         if (borrow)
         {
             LLVMBuildStore(b->builder, v.value, elemAddr);
@@ -887,9 +883,9 @@ void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAd
     }
     else if (elemTd.structTypeName && TypeRegistryIsOwningStruct(&b->registry, elemTd.structTypeName))
     {
-        /* Owning-struct element (`Rec[]` literal): temporaries (struct
-            literals, call results) transfer bitwise; movable sources
-            move and are zeroed. */
+        // Owning-struct element (`Rec[]` literal): temporaries (struct
+        // literals, call results) transfer bitwise; movable sources
+        // move and are zeroed.
         if (borrow)
         {
             LLVMBuildStore(b->builder, v.value, elemAddr);
@@ -906,20 +902,20 @@ void EmitArrayElementStore(Builder* b, Node* eNode, Value v, LLVMValueRef elemAd
     }
 }
 
-/* Builds a T[] from element exprs, shared by array literals (heap-backed) and
-   typed rest params. rest=stack-backed (alloca in entry); borrow=true (ref
-   rest) stores owning element pointers without nulling/moving sources. */
+// Builds a T[] from element exprs, shared by array literals (heap-backed) and
+// typed rest params. rest=stack-backed (alloca in entry); borrow=true (ref
+// rest) stores owning element pointers without nulling/moving sources.
 Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* elements, bool stackBuffer, bool borrow)
 {
     TypeDesc elemTd = Resolve(b, elementType);
 
-    /* The LLVM type of one element slot in the backing buffer. Arrays and
-        boxes/strings both reduce to a pointer; structs/scalars use their
-        own type. */
+    // The LLVM type of one element slot in the backing buffer. Arrays and
+    // boxes/strings both reduce to a pointer; structs/scalars use their
+    // own type.
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
 
-    /* A `ref T... rest` with non-owning elements holds POINTERS to the source
-        arguments (aliased), so element writes propagate to the caller. */
+    // A `ref T... rest` with non-owning elements holds POINTERS to the source
+    // arguments (aliased), so element writes propagate to the caller.
     bool aliased = stackBuffer && borrow && !BuilderIsOwningType(b, elementType);
     LLVMTypeRef slotTy = aliased ? b->ptrTy : elemTy;
 
@@ -962,7 +958,7 @@ Value EmitArrayFromNodes(Builder* b, const TypeName* elementType, const Vec* ele
     return ValueMake(arr, td);
 }
 
-/* True for `{}` once typed: an empty braced value, which default-constructs. */
+// True for `{}` once typed: an empty braced value, which default-constructs.
 static bool IsEmptyBracedNode(const Node* n)
 {
     return (n->kind == NodeArrayInit && ((const ArrayInitExpr*)n)->elements.count == 0
@@ -970,9 +966,9 @@ static bool IsEmptyBracedNode(const Node* n)
            || (n->kind == NodeStructInit && ((const StructInitExpr*)n)->fields.count == 0);
 }
 
-/* `{ value; count }` for a dynamic array: `count` elements, each a copy of the value (evaluated
-   once), or each zero for a `{}` value. A variable used as the value is only read;
-   a temporary is built once, copied, and dropped. */
+// `{ value; count }` for a dynamic array: `count` elements, each a copy of the value (evaluated
+// once), or each zero for a `{}` value. A variable used as the value is only read;
+// a temporary is built once, copied, and dropped.
 static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
 {
     TypeDesc elemTd = Resolve(b, n->elementType);
@@ -984,11 +980,11 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
 
     LLVMValueRef count = AsI64Index(b, EmitExpr(b, n->repeatCount));
 
-    /* A negative count would size the buffer as a huge unsigned one. */
+    // A negative count would size the buffer as a huge unsigned one.
     EmitPanicIf(b, LLVMBuildICmp(b->builder, LLVMIntSLT, count, LLVMConstInt(I64Ty(b), 0, 0), "fill.neg"),
                 "array fill count is negative");
 
-    /* The value, once: read in place, or owned by a one-element temporary array. */
+    // The value, once: read in place, or owned by a one-element temporary array.
     Value source = {0};
     LLVMValueRef tempData = NULL;
 
@@ -998,7 +994,7 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
         {
             source = EmitExpr(b, valueNode);
 
-            /* `{ boxed; n }` for a bare element type copies what the box points at, not the box pointer. */
+            // `{ boxed; n }` for a bare element type copies what the box points at, not the box pointer.
             if (TypeDescIsBox(&source.typeDesc) && !TypeDescIsBox(&elemTd) && !TypeDescHasArrayShape(&elemTd)
                 && !TypeDescIsString(&elemTd))
             {
@@ -1015,7 +1011,7 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
         }
     }
 
-    /* At least one byte, so the buffer is never null for a non-empty fat. */
+    // At least one byte, so the buffer is never null for a non-empty fat.
     LLVMValueRef bytes = LLVMBuildMul(b->builder, SizeOfConst(b, elemTy), count, "rep.bytes");
     LLVMValueRef isZero = LLVMBuildICmp(b->builder, LLVMIntEQ, bytes, LLVMConstInt(I64Ty(b), 0, 0), "rep.z");
     bytes = LLVMBuildSelect(b->builder, isZero, LLVMConstInt(I64Ty(b), 1, 0), bytes, "rep.alloc");
@@ -1041,8 +1037,8 @@ static Value EmitArrayRepeat(Builder* b, ArrayInitExpr* n)
 
     if (fresh)
     {
-        /* The default value: empty strings, arrays and optionals, zeroed scalars (sema checked that is
-           valid), with field defaults applied, so a Drop type's elements are alive and get dropped. */
+        // The default value: empty strings, arrays and optionals, zeroed scalars (sema checked that is
+        // valid), with field defaults applied, so a Drop type's elements are alive and get dropped.
         bool plainStruct = elemTd.structTypeName && !TypeDescIsBox(&elemTd) && !TypeDescHasArrayShape(&elemTd);
         LLVMValueRef zero = plainStruct ? DefaultValueOf(b, n->elementType, elemTd) : LLVMConstNull(elemTy);
         LLVMBuildStore(b->builder, zero, slot);
@@ -1090,9 +1086,9 @@ Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
         return EmitArrayRepeat(b, n);
     }
 
-    /* An untyped non-empty literal means no context ever supplied an
-        element type (a gap in inference) - diagnose instead of crashing
-        on a NULL type. */
+    // An untyped non-empty literal means no context ever supplied an
+    // element type (a gap in inference) - diagnose instead of crashing
+    // on a NULL type.
     if (!n->elementType && n->elements.count > 0)
     {
         if (b->diag)
@@ -1103,8 +1099,8 @@ Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
         n->elements.count = 0;
     }
 
-    /* An empty braced literal with no contextual element type (`FooBar("x", {})`)
-        is the canonical empty array - nothing to resolve or allocate. */
+    // An empty braced literal with no contextual element type (`FooBar("x", {})`)
+    // is the canonical empty array - nothing to resolve or allocate.
     if (!n->elementType && n->elements.count == 0)
     {
         LLVMValueRef arr = LLVMGetUndef(ArrayStructType(b));
@@ -1121,8 +1117,8 @@ Value EmitArrayInit(Builder* b, ArrayInitExpr* n)
     return EmitArrayFromNodes(b, n->elementType, &n->elements, false, false);
 }
 
-/* Product of the fixed dimensions at/below `t` (1 once a non-fixed node is
-   reached). Used to map a flat literal index onto nested array dimensions. */
+// Product of the fixed dimensions at/below `t` (1 once a non-fixed node is
+// reached). Used to map a flat literal index onto nested array dimensions.
 ArrayLength FixedDimProduct(const TypeName* t)
 {
     ArrayLength count = 1;
@@ -1136,9 +1132,9 @@ ArrayLength FixedDimProduct(const TypeName* t)
     return count;
 }
 
-/* Inserts element `k` (a FLAT index, C-initialized-array style) of a
-   (possibly nested) fixed array value, descending through inner fixed
-   dimensions with extract/insert pairs. */
+// Inserts element `k` (a FLAT index, C-initialized-array style) of a
+// (possibly nested) fixed array value, descending through inner fixed
+// dimensions with extract/insert pairs.
 LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, const TypeName* arrType, ArrayLength k)
 {
     if (!(TypeNameHasArrayShape(arrType) && arrType->length >= 0))
@@ -1162,7 +1158,6 @@ LLVMValueRef InsertFixedElem(Builder* b, LLVMValueRef agg, LLVMValueRef val, con
 
 void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
 {
-    /* Stack-allocated fixed-size array local */
     LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "fixarr");
     LLVMValueRef arr = DefaultValueOf(b, &varDecl->type, typeDesc);
 
@@ -1170,10 +1165,10 @@ void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
     {
         ArrayInitExpr* ai = AS_NODE(ArrayInitExpr, varDecl->init);
 
-        /* Sema guarantees the leaf element type; fall back to a
-           leaf-walk of the declared type if it is missing or not a
-           leaf (a non-leaf would miscompile inserts as int<->array
-           casts). */
+        // Sema guarantees the leaf element type; fall back to a
+        // leaf-walk of the declared type if it is missing or not a
+        // leaf (a non-leaf would miscompile inserts as int<->array
+        // casts).
         const TypeName* leafTn = ai->elementType;
 
         if (!leafTn || (TypeNameHasArrayShape(leafTn) && leafTn->length >= 0))
@@ -1190,7 +1185,7 @@ void EmitFixedArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
 
         if (ai->repeatCount)
         {
-            /* `{ value; N }`: the value once, in every element. */
+            // `{ value; N }`: the value once, in every element.
             Value ev = Coerce(b, EmitExpr(b, (Node*)VecGet(&ai->elements, 0)), elemTd);
             ArrayLength total = FixedDimProduct(&varDecl->type);
 
@@ -1236,8 +1231,8 @@ void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
         }
         else if (TypeDescIsString(&typeDesc) && varDecl->init->kind == NodeStrLiteral)
         {
-            /* string from a literal: heap-copy (the constant is
-               borrowed; the binding owns its bytes). */
+            // string from a literal: heap-copy (the constant is
+            // borrowed; the binding owns its bytes).
             Value value = EmitExpr(b, varDecl->init);
             LLVMValueRef sp = LLVMBuildExtractValue(b->builder, value.value, 0, "vslit.p");
             LLVMValueRef sl = LLVMBuildExtractValue(b->builder, value.value, 1, "vslit.l");
@@ -1246,16 +1241,16 @@ void EmitArrayVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
         }
         else
         {
-            /* Move from another array/string binding: copy the
-               {ptr,len} struct and zero the source (whole slot) to
-               avoid a double free. */
+            // Move from another array/string binding: copy the
+            // {ptr,len} struct and zero the source (whole slot) to
+            // avoid a double free.
             Node* movedNode = MovedSource(varDecl->init);
             LValue src = movedNode ? EmitLValueForNullStore(b, movedNode) : (LValue){0};
 
             Value value = EmitExpr(b, varDecl->init);
             LLVMBuildStore(b->builder, Coerce(b, value, typeDesc).value, slot);
 
-            /* A piece of a temporary only exists once evaluated. */
+            // A piece of a temporary only exists once evaluated.
             if (!src.valid && movedNode && FindTempPart(b, movedNode))
             {
                 src = EmitLValueForNullStore(b, movedNode);

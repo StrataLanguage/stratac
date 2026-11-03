@@ -1,3 +1,4 @@
+// AOT object emission and AddressSanitizer instrumentation.
 #include "LLVMAot.h"
 #include "Codegen/LLVMCApi.h"
 #include "LLVMTargets.h"
@@ -6,18 +7,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* STRATA_ASAN=1: marks every defined function `sanitize_address` and runs LLVM's AddressSanitizer over the module,
-   so the program links against clang's ASan runtime and reports use after free, overflow and double free in the
-   generated code (roadmap phase 5 gate). The variable's value, when it is not "1", is appended to the names of the
-   globals made external, so objects built from one source with different tags still link together. */
+// STRATA_ASAN=1: marks every defined function `sanitize_address` and runs LLVM's AddressSanitizer over the module,
+// so the program links against clang's ASan runtime and reports use after free, overflow and double free in the
+// generated code. The variable's value, when it is not "1", is appended to the names of the
+// globals made external, so objects built from one source with different tags still link together.
 static void InstrumentAddressSanitizer(LLVMModuleRef mod, LLVMTargetMachineRef tm)
 {
-    /* The Windows runtime places the shadow memory itself; the code must load its address, not assume one. */
+    // The Windows runtime places the shadow memory itself; the code must load its address, not assume one.
     const char* args[] = {"strata", "-asan-force-dynamic-shadow"};
     LLVMParseCommandLineOptions(2, args, NULL);
 
-    /* The pass gives each instrumented global an associated COMDAT, which COFF cannot attach to a local symbol.
-       Making the globals external for the instrumented build avoids that; nothing links against them. */
+    // The pass gives each instrumented global an associated COMDAT, which COFF cannot attach to a local symbol.
+    // Making the globals external for the instrumented build avoids that; nothing links against them.
     for (LLVMValueRef g = LLVMGetFirstGlobal(mod); g; g = LLVMGetNextGlobal(g))
     {
         int linkage = LLVMGetLinkage(g);
@@ -48,7 +49,7 @@ static void InstrumentAddressSanitizer(LLVMModuleRef mod, LLVMTargetMachineRef t
     {
         if (LLVMCountBasicBlocks(fn) > 0)
         {
-            LLVMAddAttributeAtIndex(fn, (unsigned)-1, attr); /* LLVMAttributeFunctionIndex */
+            LLVMAddAttributeAtIndex(fn, (unsigned)-1, attr); // LLVMAttributeFunctionIndex
         }
     }
 
