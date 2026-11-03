@@ -211,28 +211,17 @@ void LLVMJitDestroy(LLVMJit* jit)
     VecInit(&jit->m_externs);
 }
 
-bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
+static void JitCopyExternSymbols(LLVMJit* jit, BuiltModule* bm)
 {
-    EnsureTargetsInitialized();
-
-    if (!bm->mod)
-    {
-        *errorMessage = DupString("no module to JIT");
-
-        return false;
-    }
-
     for (size_t i = 0; i < bm->externSymbols.count; i++)
     {
         const char* sym = (const char*)VecGet(&bm->externSymbols, i);
         VecPush(&jit->m_externs, DupString(sym));
     }
+}
 
-    /* Build an execution TargetMachine for the host CPU (all features,
-       aggressive codegen level), pin the module's triple/data layout to it,
-       and run the full IR optimization pipeline before handing the module to
-       ORC. Without this the JIT materialized codegen output directly: no
-       mem2reg/SROA, no inliner, no GVN, no vectorization. */
+static LLVMTargetMachineRef JitCreateTargetMachine(BuiltModule* bm, char** errorMessage)
+{
     char* tmError = NULL;
     LLVMTargetMachineRef tm = CreateHostTargetMachine(&tmError);
 
@@ -242,50 +231,59 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
         DisposeBuiltModuleOnError(bm);
 
+        return NULL;
+    }
+
+    return tm;
+}
+
+static void JitPinTargetLayout(BuiltModule* bm, LLVMTargetMachineRef tm)
+{
+    const char* triple = JitTriple();
+
+    LLVMSetTarget(bm->mod, triple);
+
+    LLVMTargetDataRef td = LLVMCreateTargetDataLayout(tm);
+
+    LLVMSetModuleDataLayout(bm->mod, td);
+    LLVMDisposeTargetData(td);
+}
+
+static bool JitRunOptimizationPipeline(BuiltModule* bm, LLVMTargetMachineRef tm, char** errorMessage)
+{
+    /* STRATA_OPT_PIPELINE overrides the pass pipeline (e.g. "default<O2>")
+       for experimentation; "default<O3>" is the shipped default. */
+    const char* pipeline = getenv("STRATA_OPT_PIPELINE");
+    if (!pipeline || !pipeline[0])
+    {
+        pipeline = "default<O3>";
+    }
+
+    LLVMPassBuilderOptionsRef pbOptions = LLVMCreatePassBuilderOptions();
+
+    LLVMPassBuilderOptionsSetLoopVectorization(pbOptions, 1);
+    LLVMPassBuilderOptionsSetSLPVectorization(pbOptions, 1);
+
+    LLVMErrorRef passErr = LLVMRunPasses(bm->mod, pipeline, tm, pbOptions);
+
+    LLVMDisposePassBuilderOptions(pbOptions);
+
+    if (passErr)
+    {
+        SetOrcError(errorMessage, passErr, "could not optimize module: %s");
+
+        LLVMDisposeTargetMachine(tm);
+
+        DisposeBuiltModuleOnError(bm);
+
         return false;
     }
 
-    {
-        const char* triple = JitTriple();
+    return true;
+}
 
-        LLVMSetTarget(bm->mod, triple);
-
-        LLVMTargetDataRef td = LLVMCreateTargetDataLayout(tm);
-
-        LLVMSetModuleDataLayout(bm->mod, td);
-        LLVMDisposeTargetData(td);
-    }
-
-    {
-        /* STRATA_OPT_PIPELINE overrides the pass pipeline (e.g. "default<O2>")
-           for experimentation; "default<O3>" is the shipped default. */
-        const char* pipeline = getenv("STRATA_OPT_PIPELINE");
-        if (!pipeline || !pipeline[0])
-        {
-            pipeline = "default<O3>";
-        }
-
-        LLVMPassBuilderOptionsRef pbOptions = LLVMCreatePassBuilderOptions();
-
-        LLVMPassBuilderOptionsSetLoopVectorization(pbOptions, 1);
-        LLVMPassBuilderOptionsSetSLPVectorization(pbOptions, 1);
-
-        LLVMErrorRef passErr = LLVMRunPasses(bm->mod, pipeline, tm, pbOptions);
-
-        LLVMDisposePassBuilderOptions(pbOptions);
-
-        if (passErr)
-        {
-            SetOrcError(errorMessage, passErr, "could not optimize module: %s");
-
-            LLVMDisposeTargetMachine(tm);
-
-            DisposeBuiltModuleOnError(bm);
-
-            return false;
-        }
-    }
-
+static LLVMOrcLLJITRef JitCreateLLJIT(LLVMTargetMachineRef tm, BuiltModule* bm, char** errorMessage)
+{
     /* Transfers ownership of tm to the builder. */
     LLVMOrcJITTargetMachineBuilderRef jtmb = LLVMOrcJITTargetMachineBuilderCreateFromTargetMachine(tm);
 
@@ -305,76 +303,78 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
 
         DisposeBuiltModuleOnError(bm);
 
-        return false;
+        return NULL;
     }
 
-    jit->m_jit = llj;
+    return llj;
+}
 
-    LLVMOrcJITDylibRef mainJd = LLVMOrcLLJITGetMainJITDylib(llj);
+/* Reflect process symbols (e.g. libcalls like memcpy/memset that LLVM
+   may lower struct-copy or vector code into) into the main dylib, since
+   a bare JITDylib does not resolve these automatically. */
+static void JitAddProcessSymbolGenerator(LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef mainJd)
+{
+    LLVMOrcDefinitionGeneratorRef gen = NULL;
+    LLVMErrorRef genErr
+        = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(&gen, LLVMOrcLLJITGetGlobalPrefix(llj), NULL, NULL);
 
-    /* Reflect process symbols (e.g. libcalls like memcpy/memset that LLVM
-       may lower struct-copy or vector code into) into the main dylib, since
-       a bare JITDylib does not resolve these automatically. */
+    if (!genErr)
     {
-        LLVMOrcDefinitionGeneratorRef gen = NULL;
-        LLVMErrorRef genErr
-            = LLVMOrcCreateDynamicLibrarySearchGeneratorForProcess(&gen, LLVMOrcLLJITGetGlobalPrefix(llj), NULL, NULL);
-
-        if (!genErr)
-        {
-            LLVMOrcJITDylibAddGenerator(mainJd, gen);
-        }
-        else
-        {
-            LLVMConsumeError(genErr);
-        }
+        LLVMOrcJITDylibAddGenerator(mainJd, gen);
     }
-
-    /* Map the compiler-internal heap runtime to the host so generated box
-       code can allocate without the user binding symbols. */
+    else
     {
-        LLVMOrcCSymbolMapPair pairs[4];
-
-        pairs[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_alloc");
-        pairs[0].Sym.Address
-            = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
-        pairs[0].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
-        pairs[0].Sym.Flags.TargetFlags = 0;
-
-        pairs[1].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_free");
-        pairs[1].Sym.Address
-            = (LLVMOrcExecutorAddress)(uintptr_t)(jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
-        pairs[1].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
-        pairs[1].Sym.Flags.TargetFlags = 0;
-
-        pairs[2].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_panic");
-        pairs[2].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&strata_panic;
-        pairs[2].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
-        pairs[2].Sym.Flags.TargetFlags = 0;
-
-        pairs[3].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_oob");
-        pairs[3].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&strata_oob;
-        pairs[3].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
-        pairs[3].Sym.Flags.TargetFlags = 0;
-
-        LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 4);
-        LLVMErrorRef defineErr = LLVMOrcJITDylibDefine(mainJd, mu);
-
-        if (defineErr)
-        {
-            /* On failure the caller keeps ownership of the unit. */
-            LLVMConsumeError(defineErr);
-            LLVMOrcDisposeMaterializationUnit(mu);
-        }
+        LLVMConsumeError(genErr);
     }
+}
 
+/* Map the compiler-internal heap runtime to the host so generated box
+   code can allocate without the user binding symbols. */
+static void JitDefineHeapSymbols(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef mainJd)
+{
+    LLVMOrcCSymbolMapPair pairs[4];
+
+    pairs[0].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_alloc");
+    pairs[0].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->allocFn ? jit->allocFn : (void*)&strata_alloc_impl);
+    pairs[0].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+    pairs[0].Sym.Flags.TargetFlags = 0;
+
+    pairs[1].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_free");
+    pairs[1].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(jit->freeFn ? jit->freeFn : (void*)&strata_free_impl);
+    pairs[1].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+    pairs[1].Sym.Flags.TargetFlags = 0;
+
+    pairs[2].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_panic");
+    pairs[2].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&strata_panic;
+    pairs[2].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+    pairs[2].Sym.Flags.TargetFlags = 0;
+
+    pairs[3].Name = LLVMOrcLLJITMangleAndIntern(llj, "strata_oob");
+    pairs[3].Sym.Address = (LLVMOrcExecutorAddress)(uintptr_t)(void*)&strata_oob;
+    pairs[3].Sym.Flags.GenericFlags = LLVMJITSymbolGenericFlagsExported;
+    pairs[3].Sym.Flags.TargetFlags = 0;
+
+    LLVMOrcMaterializationUnitRef mu = LLVMOrcAbsoluteSymbols(pairs, 4);
+    LLVMErrorRef defineErr = LLVMOrcJITDylibDefine(mainJd, mu);
+
+    if (defineErr)
+    {
+        /* On failure the caller keeps ownership of the unit. */
+        LLVMConsumeError(defineErr);
+        LLVMOrcDisposeMaterializationUnit(mu);
+    }
+}
+
+static bool JitAddModule(LLVMJit* jit, LLVMOrcLLJITRef llj, LLVMOrcJITDylibRef mainJd, BuiltModule* bm,
+                         char** errorMessage)
+{
     LLVMOrcThreadSafeContextRef tsCtx = LLVMOrcCreateNewThreadSafeContextFromLLVMContext(bm->ctx);
     LLVMOrcThreadSafeModuleRef tsm = LLVMOrcCreateNewThreadSafeModule(bm->mod, tsCtx);
     LLVMOrcDisposeThreadSafeContext(tsCtx);
     bm->ctx = NULL;
     bm->mod = NULL;
 
-    err = LLVMOrcLLJITAddLLVMIRModule(llj, mainJd, tsm);
+    LLVMErrorRef err = LLVMOrcLLJITAddLLVMIRModule(llj, mainJd, tsm);
 
     if (err)
     {
@@ -401,6 +401,55 @@ bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
        it wants independent instances, exactly like any other symbol. */
 
     return true;
+}
+
+bool LLVMJitLoad(LLVMJit* jit, BuiltModule* bm, char** errorMessage)
+{
+    EnsureTargetsInitialized();
+
+    if (!bm->mod)
+    {
+        *errorMessage = DupString("no module to JIT");
+
+        return false;
+    }
+
+    JitCopyExternSymbols(jit, bm);
+
+    /* Build an execution TargetMachine for the host CPU (all features,
+       aggressive codegen level), pin the module's triple/data layout to it,
+       and run the full IR optimization pipeline before handing the module to
+       ORC. Without this the JIT materialized codegen output directly: no
+       mem2reg/SROA, no inliner, no GVN, no vectorization. */
+    LLVMTargetMachineRef tm = JitCreateTargetMachine(bm, errorMessage);
+
+    if (!tm)
+    {
+        return false;
+    }
+
+    JitPinTargetLayout(bm, tm);
+
+    if (!JitRunOptimizationPipeline(bm, tm, errorMessage))
+    {
+        return false;
+    }
+
+    LLVMOrcLLJITRef llj = JitCreateLLJIT(tm, bm, errorMessage);
+
+    if (!llj)
+    {
+        return false;
+    }
+
+    jit->m_jit = llj;
+
+    LLVMOrcJITDylibRef mainJd = LLVMOrcLLJITGetMainJITDylib(llj);
+
+    JitAddProcessSymbolGenerator(llj, mainJd);
+    JitDefineHeapSymbols(jit, llj, mainJd);
+
+    return JitAddModule(jit, llj, mainJd, bm, errorMessage);
 }
 
 bool LLVMJitAddSymbol(LLVMJit* jit, const char* name, void* addr)
