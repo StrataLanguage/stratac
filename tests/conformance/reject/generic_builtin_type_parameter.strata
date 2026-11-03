@@ -1,0 +1,7 @@
+// expect: reject "'int' is a builtin type and cannot be a type parameter"
+// rule: a type parameter cannot take the name of a builtin type
+struct box<int> { int value; }
+int main()
+{
+    return 0;
+}

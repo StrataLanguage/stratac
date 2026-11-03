@@ -1,0 +1,7 @@
+// expect: reject "extern or @export function 'take' cannot have type parameters"
+// rule: an extern function has one symbol name, so it cannot be generic
+extern int take<T>(T value);
+int main()
+{
+    return 0;
+}

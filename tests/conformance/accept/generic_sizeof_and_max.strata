@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: 4 2147483647
+// rule: sizeof<T>() and T.max inside a generic function see the argument, so they match the same code written for it
+int bytes_of<T>() { return (int)sizeof<T>(); }
+T largest<T>() { return T.max; }
+int main()
+{
+    printf("%d %d\n", bytes_of<int>(), largest<int>());
+    return 0;
+}

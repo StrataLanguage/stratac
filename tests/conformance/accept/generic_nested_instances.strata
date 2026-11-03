@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 9
+// rule: a type argument may be a generic use itself: number<number<int>> is its own struct
+struct number<T> { T value; }
+impl number<T> { T get_value(const ref number<T> self) { return self.value; } }
+int main()
+{
+    number<number<int>> n = number<number<int>> { .value = number<int> { .value = 9 } };
+    number<int> inner = n.get_value();
+    printf("%d\n", inner.get_value());
+    return 0;
+}

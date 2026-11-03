@@ -100,6 +100,29 @@ static void Pad(int indent, Sb* out)
     }
 }
 
+// `<T, U>` after a declaration's name; nothing for a non-generic declaration.
+static void DumpTypeParams(const Vec* params, Sb* out)
+{
+    if (params->count == 0)
+    {
+        return;
+    }
+
+    SbPutc(out, '<');
+
+    for (size_t i = 0; i < params->count; i++)
+    {
+        if (i > 0)
+        {
+            SbPuts(out, ", ");
+        }
+
+        SbPuts(out, (const char*)VecGet(params, i));
+    }
+
+    SbPutc(out, '>');
+}
+
 static void DumpModule(Node* n, int indent, Sb* out)
 {
     Module* module = AS_NODE(Module, n);
@@ -153,7 +176,9 @@ static void DumpModule(Node* n, int indent, Sb* out)
 static void DumpImpl(Node* n, int indent, Sb* out)
 {
     ImplDecl* impl = AS_NODE(ImplDecl, n);
-    SbPrintf(out, "impl %s {\n", impl->handleName);
+    SbPrintf(out, "impl %s", impl->handleName);
+    DumpTypeParams(&impl->genericParams, out);
+    SbPuts(out, " {\n");
 
     for (size_t i = 0; i < impl->methods.count; i++)
     {
@@ -242,7 +267,9 @@ static void DumpStruct(Node* n, int indent, Sb* out)
         SbPrintf(out, "struct %s;  ; forward\n", structDecl->name);
         return;
     }
-    SbPrintf(out, "%sstruct %s {\n", structDecl->isExtern ? "extern " : "", structDecl->name);
+    SbPrintf(out, "%sstruct %s", structDecl->isExtern ? "extern " : "", structDecl->name);
+    DumpTypeParams(&structDecl->genericParams, out);
+    SbPuts(out, " {\n");
     for (size_t i = 0; i < structDecl->fields.count; i++)
     {
         FieldDecl* field = (FieldDecl*)VecGet(&structDecl->fields, i);
@@ -273,8 +300,10 @@ static void DumpFunction(Node* n, int indent, Sb* out)
         SbPuts(out, "extern ");
     }
 
-    SbPrintf(out, "%s %s(", functionDecl->returnType.name,
+    SbPrintf(out, "%s %s", functionDecl->returnType.name,
              functionDecl->methodName ? functionDecl->methodName : functionDecl->name);
+    DumpTypeParams(&functionDecl->genericParams, out);
+    SbPutc(out, '(');
 
     for (size_t i = 0; i < functionDecl->params.count; i++)
     {

@@ -1,0 +1,11 @@
+// expect: reject "type parameters go on the impl, not on method 'get'"
+// rule: a method inside a generic impl takes no type parameters of its own; they belong to the impl
+struct number<T> { T value; }
+impl number<T>
+{
+    T get<U>(const ref number<T> self) { return self.value; }
+}
+int main()
+{
+    return 0;
+}

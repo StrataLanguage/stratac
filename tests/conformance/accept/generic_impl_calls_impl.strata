@@ -1,0 +1,17 @@
+// expect: run
+// expect-output: 8
+// rule: a method of a generic impl calls another method of the same instance
+struct counter<T> { T value; }
+impl counter<T>
+{
+    T get(const ref counter<T> self) { return self.value; }
+    T doubled(const ref counter<T> self) { T v = self.get(); return v + v; }
+}
+int main()
+{
+    counter<int> c = counter<int> { .value = 4 };
+    counter<float> d = counter<float> { .value = 1.25 };
+    float x = d.doubled();
+    if (x > 2.0) { printf("%d\n", c.doubled()); }
+    return 0;
+}

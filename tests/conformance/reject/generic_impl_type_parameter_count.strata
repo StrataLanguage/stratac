@@ -1,0 +1,11 @@
+// expect: reject "binds 2 type parameter(s), but struct 'number' has 1"
+// rule: an impl of a generic struct binds exactly the struct's type parameters
+struct number<T> { T value; }
+impl number<A, B>
+{
+    A get_value(const ref number<A> self) { return self.value; }
+}
+int main()
+{
+    return 0;
+}

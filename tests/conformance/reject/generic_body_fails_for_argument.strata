@@ -1,0 +1,12 @@
+// expect: reject "invalid operands to binary operator"
+// rule: a generic body that does not type-check for one argument is an error at the template
+struct number<T> { T value; }
+T plus_one<T>(T v)
+{
+    return v + 1;
+}
+int main()
+{
+    string s = plus_one<string>("x");
+    return 0;
+}

@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: 2 3 5
+// rule: a generic struct literal names its type arguments, lists fields in any order, and nests with >> in its type
+struct pair<A, B> { A first; B second; }
+int main()
+{
+    pair<int, float> p = pair<int, float> { .second = 1.5, .first = 2 };
+    pair<int, pair<int, int>> nested = pair<int, pair<int, int>> { .first = 1, .second = pair<int, int> { .first = 2, .second = 3 } };
+    printf("%d %d %d\n", p.first, (int)(p.second * 2.0), nested.second.first + nested.second.second);
+    return 0;
+}

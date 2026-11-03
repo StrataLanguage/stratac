@@ -16,6 +16,16 @@ static Node* ParseIf(Parser* p);
 static Node* ParseWhile(Parser* p);
 static Node* ParseFor(Parser* p);
 
+// A `{ ... }` initializer of a generic type (`number<T> x = { ... }`) carries the full type, so that cloning a
+// generic body can substitute its type arguments.
+static void SetGenericInitType(Parser* p, Node* init, const TypeName* type)
+{
+    if (init && init->kind == NodeStructInit && type && type->typeArgCount > 0)
+    {
+        ((StructInitExpr*)init)->genericType = TypeNameWrapInner(p->arena, *type);
+    }
+}
+
 Node* ParseBlock(Parser* p)
 {
     Token lb = ParserExpect(p, TokLBrace, "'{'");
@@ -198,10 +208,12 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
                 {
                     // Box inits infer the inner T.
                     const char* initTypeName = NULL;
+                    const TypeName* initType = &type;
 
                     if ((type.isBox || type.isOptional) && type.inner)
                     {
                         initTypeName = type.inner->name;
+                        initType = type.inner;
                     }
                     else
                     {
@@ -214,6 +226,7 @@ static Node* ParseVarDeclOrExprStmt(Parser* p)
                     }
 
                     node->init = ParseStructInitBody(p, start, initTypeName);
+                    SetGenericInitType(p, node->init, initType);
                 }
             }
             else
@@ -272,6 +285,7 @@ static Node* ParseReturn(Parser* p)
                 const TypeName* rtStruct = rtArr && rtArr->isBox ? rtArr->inner : rtArr;
 
                 node->value = ParseStructInitBody(p, p->cur, rtStruct ? rtStruct->name : rtArr->name);
+                SetGenericInitType(p, node->value, rtStruct);
             }
         }
         else

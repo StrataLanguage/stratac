@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: bits 42
+// expect-output: half 3
+// rule: a generic union overlays its fields at the instantiated type, one instance per type argument
+union slot<T> { T value; int bits; }
+int main()
+{
+    slot<int> s;
+    s.value = 41;
+    printf("bits %d\n", s.bits + 1);
+
+    slot<float> f;
+    f.value = 1.5;
+    printf("half %d\n", (int)(f.value * 2.0));
+    return 0;
+}

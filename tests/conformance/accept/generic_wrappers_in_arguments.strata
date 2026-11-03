@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: 10
+// rule: optional, dynamic array and fixed array wrappers work inside and around type arguments
+struct number<T> { T value; }
+struct bag<T> { T[2] items; }
+int main()
+{
+    ^number<int?> boxed = { .value = 5 };
+    ^number<int[]> arr = { .value = { 1, 2, 3 } };
+    int total = 0;
+    if (boxed.value) { total = total + 2; }
+    total = total + arr.value[2];
+    bag<int> b;
+    b.items[1] = 4;
+    number<int[2]> fixedArg = number<int[2]> { .value = { 0, 0 } };
+    printf("%d\n", total + b.items[1] + fixedArg.value[0] + 1);
+    return 0;
+}

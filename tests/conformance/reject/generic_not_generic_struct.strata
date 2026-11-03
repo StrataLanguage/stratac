@@ -1,0 +1,8 @@
+// expect: reject "'plain' is not a generic struct, so it takes no type arguments"
+// rule: type arguments on a struct with no type parameters are an error
+struct plain { int x; }
+int main()
+{
+    plain<int> p;
+    return 0;
+}

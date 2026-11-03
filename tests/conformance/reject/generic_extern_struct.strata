@@ -1,0 +1,7 @@
+// expect: reject "an extern struct cannot have type parameters"
+// rule: an extern struct mirrors a host layout, so it cannot be generic
+extern struct host<T> { int id; }
+int main()
+{
+    return 0;
+}

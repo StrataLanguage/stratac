@@ -1,0 +1,50 @@
+// generics.strata -- generic structs, impls and functions.
+//
+// Each distinct list of type arguments gets its own copy of the struct, its impl methods
+// and the function: number<int> and number<float> below are two separate structs.
+//
+// Run with: stratac --run samples/generics.strata   (exits with 7)
+
+struct number<T>
+{
+    T value;
+};
+
+impl number<T>
+{
+    T get_value(const ref number<T> self) { return self.value; }
+    void set_value(ref number<T> self, T value) { self.value = value; }
+}
+
+number<T> make_number<T>(T value)
+{
+    number<T> num;
+    num.set_value(value);
+    return num;
+}
+
+// Two type parameters: each one is independent of the other.
+struct pair<A, B>
+{
+    A first;
+    B second;
+};
+
+impl pair<A, B>
+{
+    A get_first(const ref pair<A, B> self) { return self.first; }
+    B get_second(const ref pair<A, B> self) { return self.second; }
+}
+
+int main()
+{
+    // Type arguments are written at the use: explicit on calls, and in struct literals.
+    number<int> a = make_number<int>(3);
+    number<float> b = number<float> { .value = 1.5 };
+
+    a.set_value(a.get_value() + 1);
+
+    pair<int, float> p = pair<int, float> { .first = a.get_value(), .second = b.get_value() };
+
+    return p.get_first() + (int)(p.get_second() * 2.0);   // 4 + 3
+}

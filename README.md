@@ -42,6 +42,49 @@ int main()
 }
 ```
 
+## Generics
+
+Structs, `impl` blocks and functions take type parameters. Each distinct list of type arguments is
+compiled as its own copy, so `number<int>` and `number<float>` are separate types.
+
+```c
+struct number<T>
+{
+    T value;
+}
+
+impl number<T>
+{
+    T get_value(const ref number<T> self) { return self.value; }
+    void set_value(ref number<T> self, T value) { self.value = value; }
+}
+
+number<T> make_number<T>(T value)
+{
+    number<T> num;
+    num.set_value(value);
+    return num;
+}
+
+int main()
+{
+    number<int> a = make_number<int>(3);
+    number<float> b = number<float> { .value = 1.5 };
+    return a.get_value();
+}
+```
+
+v1 limits:
+
+- Type arguments are always written: `make_number<int>(3)`, not `make_number(3)`.
+- Methods cannot have type parameters of their own; they belong to the `impl`.
+- There are no constraints. A body is checked for each argument it is instantiated with, so an
+  operation that one argument does not support is an error for that instance.
+- Every method of a generic `impl` is instantiated for each instance of the struct, so each must
+  type-check for that argument.
+- Extern functions, `@component` structs, `extern struct`, struct aliases and handles cannot be generic.
+- Properties and extern methods are not allowed in a generic `impl`.
+
 ## Building
 
 Requires CMake 3.20+, Ninja, a C11 compiler, and LLVM (set `LLVM_C_DIR` in `CMakePresets.json`).
