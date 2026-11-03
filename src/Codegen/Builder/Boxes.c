@@ -220,3 +220,59 @@ Value EmitNullTest(Builder* b, NullTestExpr* nt)
 
     return ValueMake(isNonNull, TypeDescMake(I1Ty(b), 0, NULL));
 }
+
+void EmitBoxVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
+{
+    LLVMValueRef slot = EntryAlloca(b, b->m_ptrTy, "box");
+
+    if (varDecl->init)
+    {
+        Value value = EmitExpr(b, varDecl->init);
+        bool isLiteral = varDecl->init->kind == NodeStrLiteral;
+
+        /* Direct move: source and destination are the same owning type
+           (string=string, ^T=^T). Copy the pointer, null the
+           source. No allocation needed. */
+        bool sameOwningType = TypeDescIsBox(&value.typeDesc) && !isLiteral
+                              && ((typeDesc.boxInner == NULL && value.typeDesc.boxInner == NULL)
+                                  || (typeDesc.boxInner && value.typeDesc.boxInner
+                                      && strcmp(typeDesc.boxInner->name, value.typeDesc.boxInner->name) == 0));
+
+        if (sameOwningType)
+        {
+            LLVMBuildStore(b->m_builder, value.value, slot);
+            NullMovedSource(b, varDecl->init);
+        }
+        else if (typeDesc.boxInner)
+        {
+            /* ^T: allocate a T slot, construct the owned inner into it,
+               store. For ^string this is: construct a string (heap-copy
+               literal / move source), then box it up - identical to ^int
+               but the inner happens to be owning. */
+            LLVMValueRef heap = EmitBoxCell(b, typeDesc.boxInner, value, varDecl->init, "heap");
+            LLVMBuildStore(b->m_builder, heap, slot);
+        }
+        else
+        {
+            /* string (owning primitive, no box inner): construct the
+                owned value directly into the slot. */
+            LLVMValueRef owned = EmitOwnedValue(b, value, varDecl->init, StringTypeName(b));
+            LLVMBuildStore(b->m_builder, owned, slot);
+        }
+    }
+    else
+    {
+        LLVMBuildStore(b->m_builder, LLVMConstNull(b->m_ptrTy), slot);
+    }
+
+    Value* sym = (Value*)arena_alloc(b->m_arena, sizeof(Value));
+    sym->value = slot;
+    sym->typeDesc = typeDesc;
+
+    SymDeclare(b, varDecl->name, sym);
+
+    OwnLocal* ol = (OwnLocal*)arena_alloc(b->m_arena, sizeof(OwnLocal));
+    ol->slot = slot;
+    ol->td = typeDesc;
+    VecPush(&b->m_owningLocals, ol);
+}
