@@ -1,5 +1,51 @@
 #include "Sema/ConstFold.h"
 
+ConstIntType ConstIntTypeCommon(ConstIntType l, ConstIntType r)
+{
+    return r.bits > l.bits ? r : l;
+}
+
+uint64_t ConstIntNarrow(uint64_t v, ConstIntType t)
+{
+    if (t.bits == 0 || t.bits >= 64)
+    {
+        return v;
+    }
+
+    uint64_t mask = (1ULL << t.bits) - 1;
+    uint64_t low = v & mask;
+
+    if (!t.isUnsigned && (low >> (t.bits - 1)) != 0)
+    {
+        return low | ~mask;
+    }
+
+    return low;
+}
+
+static ConstShrKind ConstShrKindOf(ConstIntType t)
+{
+    return t.isUnsigned ? ConstShrLogical : ConstShrArithmetic;
+}
+
+bool ConstFoldIntAt(BinaryOp op, uint64_t a, uint64_t b, ConstIntType t, uint64_t* out)
+{
+    unsigned width = t.bits ? t.bits : 64;
+
+    if ((op == BinShl || op == BinShr) && b >= width)
+    {
+        return false;
+    }
+
+    if (!ConstFoldIntArith(op, a, b, ConstShrKindOf(t), out))
+    {
+        return false;
+    }
+
+    *out = ConstIntNarrow(*out, t);
+    return true;
+}
+
 /* Two's-complement integer arithmetic. `/`, `%` and `>>` apply C signed semantics, except that `>>` is a
    logical shift of the bit pattern under ConstShrLogical. Refuses division or modulo by zero, and shifts whose
    count is >= 64. */

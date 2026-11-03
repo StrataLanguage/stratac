@@ -45,6 +45,7 @@ typedef struct
     ConstInitKind kind;
     unsigned long long i; // Int/bool payload.
     double f;             // Float payload.
+    ConstIntType ity;     // Runtime integer type of `i` (see ConstFold.h); bits 0 = no narrowing.
 } ConstInitVal;
 
 // A `const` scalar global: no LLVM global emitted, uses inline the value.
@@ -9071,8 +9072,19 @@ static void EmitStmtInner(Builder* b, Node* n)
     }
 }
 
-/* Convert a folded constant to `td` (const-level mirror of Coerce). Integer
- * width truncation is left to LLVMConstInt (same as direct literal lowering). */
+/* The runtime integer type of a scalar TypeDesc. Non-integers (and i1 bools) carry no narrowing. */
+static ConstIntType ConstIntTypeOfTd(TypeDesc td)
+{
+    if (td.type && !td.isFloat && LLVMGetTypeKind(td.type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(td.type) > 1)
+    {
+        return (ConstIntType){LLVMGetIntTypeWidth(td.type), td.isUnsigned};
+    }
+
+    return (ConstIntType){0, false};
+}
+
+/* Convert a folded constant to `td` (const-level mirror of Coerce). An integer target narrows the value to its
+ * width and signedness, as the emitted conversion does. */
 static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
 {
     if (td.type == I1Ty(b)) /* conversion to bool is a (non)zero test */
@@ -9081,6 +9093,7 @@ static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
         r.kind = CIK_BOOL;
         r.i = (v.kind == CIK_FLOAT ? v.f != 0.0 : v.i != 0) ? 1 : 0;
         r.f = 0.0;
+        r.ity = (ConstIntType){0, false};
         return r;
     }
 
@@ -9095,19 +9108,39 @@ static ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td)
         r.kind = CIK_FLOAT;
         r.i = 0;
         r.f = (double)(long long)v.i;
+        r.ity = (ConstIntType){0, false};
         return r;
     }
 
+    ConstInitVal r = v;
+
+    r.kind = CIK_INT;
     if (v.kind == CIK_FLOAT)
     {
-        ConstInitVal r;
-        r.kind = CIK_INT;
         r.i = (unsigned long long)(long long)v.f;
-        r.f = 0.0;
-        return r;
+    }
+    r.f = 0.0;
+    r.ity = ConstIntTypeOfTd(td);
+    r.i = ConstIntNarrow(r.i, r.ity);
+    return r;
+}
+
+/* Folds an integer operator at the type EmitBinary computes in: both operands are converted to it first. */
+static bool FoldIntBinary(BinaryOp op, ConstInitVal l, ConstInitVal r, ConstInitVal* out)
+{
+    ConstIntType t = ConstIntTypeCommon(l.ity, r.ity);
+    uint64_t v;
+
+    if (!ConstFoldIntAt(op, ConstIntNarrow(l.i, t), ConstIntNarrow(r.i, t), t, &v))
+    {
+        return false;
     }
 
-    return v;
+    out->kind = CIK_INT;
+    out->i = v;
+    out->f = 0.0;
+    out->ity = t;
+    return true;
 }
 
 // Fold a global initializer; false when not a compile-time constant.
@@ -9116,8 +9149,14 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
     switch (n->kind)
     {
     case NodeIntLiteral:
-        *out = (ConstInitVal){CIK_INT, .i = ((IntLiteral*)n)->value, .f = 0.0};
+    {
+        /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
+        IntLiteral* lit = AsNode(IntLiteral, n);
+
+        *out = (ConstInitVal){CIK_INT, .i = lit->value, .f = 0.0};
+        out->ity = (ConstIntType){lit->isLong || lit->value > 0x7FFFFFFFULL ? 64u : 32u, lit->isUnsigned};
         return true;
+    }
     case NodeFloatLiteral:
         *out = (ConstInitVal){CIK_FLOAT, .i = 0, .f = ((FloatLiteral*)n)->value};
         return true;
@@ -9143,7 +9182,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             }
             else
             {
-                inner.i = 0ULL - inner.i;
+                inner.i = ConstIntNarrow(0ULL - inner.i, inner.ity);
             }
 
             break;
@@ -9156,6 +9195,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             inner.kind = CIK_INT;
             inner.i = isZero;
             inner.f = 0.0;
+            inner.ity = (ConstIntType){0, false};
             break;
         }
         case UnBitNot:
@@ -9165,7 +9205,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             }
 
             inner.kind = CIK_INT;
-            inner.i = ~inner.i;
+            inner.i = ConstIntNarrow(~inner.i, inner.ity);
             break;
         default:
             return false;
@@ -9202,20 +9242,11 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 
                 out->kind = CIK_FLOAT;
                 out->i = 0;
+                out->ity = (ConstIntType){0, false};
                 return ConstFoldFloatArith(e->op, a, z, &out->f);
             }
 
-            uint64_t v;
-
-            out->kind = CIK_INT;
-            out->f = 0.0;
-            if (!ConstFoldIntArith(e->op, l.i, r.i, ConstShrArithmetic, &v))
-            {
-                return false;
-            }
-
-            out->i = v;
-            return true;
+            return FoldIntBinary(e->op, l, r, out);
         }
         case BinMod:
         case BinBitAnd:
@@ -9229,17 +9260,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
                 return false;
             }
 
-            uint64_t v;
-
-            out->kind = CIK_INT;
-            out->f = 0.0;
-            if (!ConstFoldIntArith(e->op, l.i, r.i, ConstShrArithmetic, &v))
-            {
-                return false;
-            }
-
-            out->i = v;
-            return true;
+            return FoldIntBinary(e->op, l, r, out);
         }
         case BinEqEq:
         case BinNotEq:
@@ -9268,6 +9289,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             out->kind = CIK_INT;
             out->i = res ? 1 : 0;
             out->f = 0.0;
+            out->ity = (ConstIntType){0, false};
             return true;
         }
         case BinLogicAnd:
@@ -9279,6 +9301,7 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             out->kind = CIK_INT;
             out->i = (e->op == BinLogicAnd) ? (a && z) : (a || z);
             out->f = 0.0;
+            out->ity = (ConstIntType){0, false};
             return true;
         }
         default:
@@ -9303,10 +9326,10 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             return false;
         }
 
-        /* First to the cast's own target type (the truncation/narrowing the
-           user asked for, e.g. `(int)1.5`), then to the declared global
-           type. */
-        *out = CastConstVal(b, CastConstVal(b, inner, innerTd), td);
+        /* The cast's own target type is the only conversion here (the truncation the user asked for, e.g.
+           `(byte)-8`). The enclosing global's type is applied by the caller: converting here would retype a
+           nested cast, as in `(uint)-1 >> 1` inside an `int` constant. */
+        *out = CastConstVal(b, inner, innerTd);
         return true;
     }
     case NodeIdent:
@@ -9330,7 +9353,11 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
 
         if (m->isEnumConst)
         {
+            /* Typed by the enum's underlying integer type, as EmitMember emits it. */
+            TypeName enumTn = TypeNameLeaf((char*)m->enumTypeName);
+
             *out = (ConstInitVal){CIK_INT, .i = m->enumValue, .f = 0.0};
+            out->ity = ConstIntTypeOfTd(Resolve(b, &enumTn));
             return true;
         }
 
@@ -9348,6 +9375,9 @@ static bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out)
             {
                 *out = isFloat ? (ConstInitVal){CIK_FLOAT, .i = 0, .f = floatVal}
                                : (ConstInitVal){CIK_INT, .i = intVal, .f = 0.0};
+                /* Typed as the base scalar itself, as EmitMember emits it. */
+                TypeName baseTn = TypeNameLeaf((char*)((IdentExpr*)m->base_node)->name);
+                out->ity = ConstIntTypeOfTd(Resolve(b, &baseTn));
                 return true;
             }
         }
