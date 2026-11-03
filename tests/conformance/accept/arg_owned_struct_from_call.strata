@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: 3 4
+// expect-output: drop 3
+// expect-output: drop 4
+// rule: an owning call result passed by value is dropped by the callee, not the caller
+int Take(^Res r) { return r.id; }
+int main()
+{
+    int a = Take(Box(3));
+    int b = Take(Box(4));
+    printf("%d %d\n", a, b);
+    Report();
+    return 0;
+}

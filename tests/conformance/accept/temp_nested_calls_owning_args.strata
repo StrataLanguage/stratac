@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 6
+// rule: owning results passed through nested calls, a const ref and a by-value pass-through are each dropped once
+^Res Id(^Res r) { return r; }
+int Read(const ref ^Res r) { return r.id; }
+int main()
+{
+    int v = Read(Id(Id(Box(6))));
+    printf("%d\n", v);
+    Report();
+    return 0;
+}

@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: n=3
+// rule: a temporary in a loop condition is dropped on every iteration and on exit
+int Count(int i) { return i; }
+int main()
+{
+    int n = 0;
+    while (Box(n).id < 3)
+    {
+        n++;
+    }
+    printf("n=%d\n", n);
+    Report();
+    return 0;
+}

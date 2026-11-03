@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: 9
+// rule: a temporary read in a return expression is dropped before the function returns
+int F() { return Box(4).id + Box(5).id; }
+int main()
+{
+    printf("%d\n", F());
+    Report();
+    return 0;
+}

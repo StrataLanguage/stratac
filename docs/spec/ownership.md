@@ -83,4 +83,6 @@ pointee owns something.
   null to a tag for inline layouts.
 - Roadmap phase 5: codegen follows the use annotations for moves, and every `accept/` case plus twelve AOT samples
   also run under AddressSanitizer (see `tests/conformance/README.md`).
-  Drop glue, temporaries and argument passing still use codegen's own rules.
+  Drop glue, temporaries and argument passing stay in codegen: a temporary is parked in a zeroed slot and dropped at
+  the end of its statement, so its drop is decided by the slot at run time, not by a static fact the checker could
+  annotate. The `temp_*` and `arg_owned_*` cases pin them under AddressSanitizer and the live-count check.

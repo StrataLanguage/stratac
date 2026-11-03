@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 5 7
+// rule: a temporary created in only one arm of a conditional expression is dropped only when it was created
+int main()
+{
+    int a = 1;
+    int x = a > 0 ? Box(5).id : Box(6).id;
+    int y = a < 0 ? Box(6).id : Box(7).id;
+    printf("%d %d\n", x, y);
+    Report();
+    return 0;
+}

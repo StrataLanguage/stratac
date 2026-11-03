@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: drop 2
+// expect-output: 24
+// rule: a call mixing an owned argument, a ref argument and a temporary const ref frees each exactly once
+int Mix(^Res a, ref ^Res b, const ref ^Res c) { b.id = b.id + 1; return a.id + b.id + c.id; }
+int main()
+{
+    {
+        ^Res b = Box(20);
+        int v = Mix(Box(1), b, Box(2));
+        printf("%d\n", v);
+    }
+    Report();
+    return 0;
+}

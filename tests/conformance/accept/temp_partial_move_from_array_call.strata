@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: 8
+// expect-output: drop 8
+// rule: moving one element out of a temporary array leaves the rest to the end-of-statement drop
+^Res[] Make() { ^Res[] rs = {}; array_push(rs, Box(8)); array_push(rs, Box(50)); return rs; }
+int main()
+{
+    {
+        ^Res r = Make()[0];
+        printf("%d\n", r.id);
+    }
+    Report();
+    return 0;
+}

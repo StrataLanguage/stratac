@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: 7
+// rule: temporaries in a deferred statement and in a returned expression are each dropped once on every exit path
+int Pick(int k)
+{
+    defer { int unused = Box(30).id; }
+    if (k > 0) { return Box(7).id; }
+    return Box(8).id;
+}
+int main()
+{
+    printf("%d\n", Pick(1));
+    int z = Pick(0);
+    Report();
+    return z - 8;
+}
