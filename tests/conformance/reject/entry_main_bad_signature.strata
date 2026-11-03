@@ -1,0 +1,6 @@
+// expect: reject "the program entry must be"
+// rule: a program's main takes no parameters, `int argc`, or `int argc, ptr argv`; anything else has no C entry to bind to
+int main(float x)
+{
+    return 0;
+}

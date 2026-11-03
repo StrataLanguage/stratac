@@ -76,6 +76,9 @@ typedef struct
     LLVMValueRef slot;
     TypeDesc td;
     bool stackBuffer; // array backing is caller's stack: drop elems, not buffer
+    // An i1 slot, set while the local holds its value, for a struct holding a Drop value inline: a move
+    // leaves zeroed storage that nothing else marks. NULL when zeroing alone disarms the drop.
+    LLVMValueRef dropFlag;
 } OwnLocal;
 
 typedef struct
@@ -226,6 +229,7 @@ FieldIndex PhysicalFieldIndex(const StructType* st, int idx);
 LLVMValueRef InsertStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMValueRef value);
 LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef agg, int idx, LLVMTypeRef fieldTy);
 LLVMValueRef GetOrCreateStructDropFn(Builder* b, const char* structName);
+void EmitDropStructFieldsEx(Builder* b, LLVMValueRef structPtr, const char* structName, bool runDrop);
 LLVMValueRef GlobalFieldPtr(Builder* b, const char* name);
 Value EmitStructValueCopy(Builder* b, Value src, TypeDesc td);
 LLVMValueRef GetOrCreateStructCopyFn(Builder* b, const char* structName);
@@ -239,6 +243,9 @@ bool ElemNeedsScratchDummy(Builder* b, TypeDesc td);
 void EmitDummyInit(Builder* b, LLVMValueRef slot, TypeDesc td);
 void EmitDropOne(Builder* b, LLVMValueRef slot, TypeDesc td);
 void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td);
+LLVMValueRef DropFlagOf(Builder* b, LLVMValueRef slot);
+void SetDropFlag(Builder* b, LLVMValueRef slot, bool set);
+void EmitDropOneIf(Builder* b, LLVMValueRef slot, TypeDesc td, LLVMValueRef set);
 void EmitDrops(Builder* b, StackMark fromIndex);
 void NoteFreshOwned(Builder* b, Value v);
 const TempPart* FindTempPart(Builder* b, const Node* node);
@@ -308,6 +315,7 @@ ConstInitVal CastConstVal(Builder* b, ConstInitVal v, TypeDesc td);
 bool FoldConstInit(Builder* b, TypeDesc td, Node* n, ConstInitVal* out);
 
 // -- Function.c
+bool IsAotMain(const Builder* b, const FunctionDecl* f);
 bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f);
 void DeclareFunction(Builder* b, const FunctionDecl* f);
 void DefineFunction(Builder* b, const FunctionDecl* f);

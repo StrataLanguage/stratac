@@ -137,6 +137,11 @@ static Value EmitIdent(Builder* b, IdentExpr* n)
     LLVMValueRef addr = isGlobal ? GlobalFieldPtr(b, n->name) : sym->value;
     LLVMValueRef v = LLVMBuildLoad2(b->builder, sym->typeDesc.type, addr, "id");
 
+    if (!isGlobal && n->useKind == UseMove)
+    {
+        SetDropFlag(b, addr, false); // the value leaves the local: nothing is left for its scope to drop
+    }
+
     return ValueMake(v, sym->typeDesc);
 }
 

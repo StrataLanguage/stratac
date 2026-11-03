@@ -620,6 +620,22 @@ static bool DetectDelegateCall(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+// First module function named `name`, or NULL.
+static const FunctionDecl* FindModuleFunctionByName(const Module* mod, const char* name)
+{
+    for (size_t i = 0; name && i < mod->functions.count; i++)
+    {
+        const FunctionDecl* f = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
+
+        if (f->name && strcmp(f->name, name) == 0)
+        {
+            return f;
+        }
+    }
+
+    return NULL;
+}
+
 // Resolves `expr.Member(args)` / `Type.Static(args)` against impl blocks, and calls to `extern<T>`.
 // Returns true when that handled the call (a diagnostic, or a generic instance checked), so ResolveCall
 // stops there. A member call rewritten to its extern symbol returns false, as does any other call; those
@@ -629,6 +645,17 @@ static bool ResolveCalleeLookup(Resolver* r, CallExpr* c, StrMap* scope)
     if (c->calleeBase && ResolveMemberCall(r, c, scope))
     {
         return true;
+    }
+
+    // `T(args)` for a type with Init methods constructs through them, never field by field.
+    if (!c->calleeBase && c->callee)
+    {
+        const char* wrapper = (const char*)StrMapGet(&r->initWrappers, c->callee);
+
+        if (wrapper)
+        {
+            c->callee = (char*)wrapper;
+        }
     }
 
     return ResolveGenericExternCall(r, c, scope);
@@ -1233,8 +1260,18 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
         }
         else
         {
-            DiagErrorFmt(r->diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
-                         c->args.count);
+            const FunctionDecl* any = FindModuleFunctionByName(r->mod, c->callee);
+
+            if (any && any->isInitWrapper)
+            {
+                DiagErrorFmt(r->diag, c->base.range, "no Init of '%s' takes these %zu argument(s)",
+                             any->returnType.name, c->args.count);
+            }
+            else
+            {
+                DiagErrorFmt(r->diag, c->base.range, "no matching overload for '%s' with %zu argument(s)", c->callee,
+                             c->args.count);
+            }
         }
         return;
     }

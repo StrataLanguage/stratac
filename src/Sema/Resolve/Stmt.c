@@ -639,8 +639,41 @@ static void WalkFixedArrayLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope)
 
 static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
 {
+    // A bare local of a type with Init is built by its argument-free Init.
+    if (!vd->init && !vd->rawDefault && StrMapGet(&r->initWrappers, vd->type.name))
+    {
+        const char* wrapper = (const char*)StrMapGet(&r->defaultInits, vd->type.name);
+
+        if (!wrapper)
+        {
+            DiagErrorFmt(r->diag, vd->base.range, "'%s' has no Init without arguments; construct '%s' with '%s(...)'",
+                         vd->type.name, vd->name, vd->type.name);
+        }
+        else
+        {
+            CallExpr* call = AST_NEW(r->arena, CallExpr);
+            call->base.kind = NodeCall;
+            call->base.range = vd->base.range;
+            call->callee = (char*)wrapper;
+            VecInit(&call->args);
+            vd->init = (Node*)call;
+        }
+    }
+
+    if (!vd->init && !vd->rawDefault)
+    {
+        const char* initHeld = InlineInitType(r, &vd->type, 0);
+
+        if (initHeld)
+        {
+            DiagErrorFmt(r->diag, vd->base.range,
+                         "'%s' holds a '%s' by value, whose Init would not run on field defaults: initialize '%s'",
+                         vd->type.name, initHeld, vd->name);
+        }
+    }
+
     // Owning locals need an init (arrays/optionals exempt; a bare owning
-    // struct local is rejected below with a sharper message).
+    // struct local starts from its field defaults, like any struct).
     if (AliasIsOwning(r, &vd->type) && !TypeNameIsDynamicArray(&vd->type) && !TypeNameIsOptional(&vd->type)
         && !TypeRegistryIsOwningStruct(&r->registry, vd->type.name) && !vd->init)
     {
@@ -652,10 +685,23 @@ static void CheckNonFixedLocal(Resolver* r, VarDeclStmt* vd)
         DiagErrorFmt(r->diag, vd->base.range, "const variable '%s' must be initialized", vd->name);
     }
 
-    if (TypeRegistryIsOwningStruct(&r->registry, vd->type.name))
+    // A bare owning struct local starts from its field defaults, and a box has none.
+    if (!vd->init && TypeRegistryIsOwningStruct(&r->registry, vd->type.name)
+        && !TypeClassify(&r->registry, r->arena, &vd->type).zeroValid)
     {
-        DiagErrorFmt(r->diag, vd->base.range, "instances of '%s' must be boxed (i.e, '^%s').", vd->type.name,
-                     vd->type.name);
+        if (vd->rawDefault)
+        {
+            DiagErrorFmt(r->diag, vd->base.range,
+                         "'%s' has an Init method, so its fields start from their defaults before Init runs; a "
+                         "box field has none: make it an optional ('T?') and set it in Init",
+                         vd->type.name);
+        }
+        else
+        {
+            DiagErrorFmt(r->diag, vd->base.range,
+                         "variable '%s' of type '%s' must be initialized: it holds a box, which has no zero value",
+                         vd->name, vd->type.name);
+        }
     }
 
     // Dynamic arrays of owning structs (`Rec[]`) are legal: the fat owns

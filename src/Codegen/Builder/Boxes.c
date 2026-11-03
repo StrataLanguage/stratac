@@ -91,6 +91,7 @@ void NullOwningSlot(Builder* b, LValue src)
     else if (src.typeDesc.structTypeName && TypeRegistryIsOwningStruct(&b->registry, src.typeDesc.structTypeName))
     {
         LLVMBuildStore(b->builder, LLVMConstNull(src.typeDesc.type), src.ptr);
+        SetDropFlag(b, src.ptr, false);
     }
     else
     {

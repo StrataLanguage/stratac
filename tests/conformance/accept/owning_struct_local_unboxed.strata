@@ -1,0 +1,13 @@
+// expect: run
+// expect-output: a='' b='hi'
+// rule: a local of a struct with owning fields may be held by value; a bare one starts from its field defaults
+struct S { string s; };
+int main()
+{
+    {
+        S a;
+        S b = S { .s = "hi" };
+        printf("a='%s' b='%s'\n", a.s, b.s);
+    }
+    return 0;
+}

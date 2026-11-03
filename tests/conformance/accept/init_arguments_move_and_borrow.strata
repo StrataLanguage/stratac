@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: k=5 n=4 tag=moved
+// rule: Init arguments are passed like any call's: a by-value owning argument moves, a ref argument is borrowed
+struct C { int n; string tag; };
+impl C
+{
+    void Init(ref C self, string tag, ref int counter) { self.n = counter; counter++; self.tag = tag; gLive++; }
+    void Drop(ref C self) { gLive--; }
+}
+int main()
+{
+    {
+        int k = 4;
+        string t = "moved";
+        C a = C(t, k);
+        printf("k=%d n=%d tag=%s\n", k, a.n, a.tag);
+    }
+    Report();
+    return 0;
+}

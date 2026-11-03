@@ -1,0 +1,27 @@
+// expect: run
+// rule: a by-value Drop local moves into a box, a field, an array, an optional and another local, and each value is dropped once
+struct V { int id; };
+impl V { void Drop(ref V self) { gLive--; } }
+struct W { V v; string name; };
+struct H { V a; int n; };
+V Mk(int id) { gLive++; return V { .id = id }; }
+int main()
+{
+    {
+        ^V bx = Mk(4);
+        V u = bx;
+        V p = Mk(5);
+        ^H h = H { .a = p, .n = 1 };
+        V q = Mk(6);
+        V[] arr = {};
+        array_push(arr, q);
+        V r = Mk(7);
+        V? o = r;
+        W w = W { .v = Mk(8), .name = "w" };
+        W w2 = w;
+        V s = Mk(9);
+        V t = s;
+    }
+    Report();
+    return 0;
+}

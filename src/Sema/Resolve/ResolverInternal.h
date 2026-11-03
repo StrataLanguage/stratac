@@ -32,6 +32,8 @@ typedef struct
     StrMap refArrayParams; // `ref T[]` param names: borrowed binding — no rebind, no push/resize
     StrMap typeCache;      // canonical spelling -> interned TypeName tree
     StrMap constGlobals;   // const scalar global name -> ConstGlobalVal* (manifest constants)
+    StrMap initWrappers;   // struct name -> the name of its Init wrappers (`__init_T`), for types with Init
+    StrMap defaultInits;   // struct names with an `Init` that takes no arguments besides self
     const TypeName* currentReturnType;
     const FunctionDecl* currentFunction;
     StrMap* curScope; // the function's scope, for typing move paths (see KeyPathType)
@@ -234,6 +236,7 @@ bool IsVectorAssignableType(const Resolver* r, const TypeName* targetType, const
                             const char* resolvedTarget, const char* resolvedValue);
 bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeName* valueType);
 bool ZeroIsValid(Resolver* r, const TypeName* t, int depth);
+const char* InlineInitType(Resolver* r, const TypeName* t, int depth);
 void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope);
 void ResolveRefLocal(Resolver* r, VarDeclStmt* vd, StrMap* scope);
 void ResolveExpr(Resolver* r, Node* n, StrMap* scope);

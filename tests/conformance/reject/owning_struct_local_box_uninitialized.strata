@@ -1,0 +1,10 @@
+// expect: reject "must be initialized: it holds a box"
+// rule: a bare by-value local starts from its field defaults, and a non-optional box field has none
+struct P { int x; };
+struct H { int a; ^P b; };
+int main()
+{
+    H h;
+    printf("%d\n", h.b.x);
+    return 0;
+}

@@ -571,6 +571,13 @@ static void EmitAotEntryPoints(Builder* b, const Module* module)
         {
             EmitAotEntryPoint(b, f);
         }
+        else if (IsAotMain(b, f) && b->diag)
+        {
+            // Any other `main` would become the C symbol with the hidden context in front of its parameters.
+            DiagErrorFmt(b->diag, f->base.range,
+                         "the program entry must be 'int main()', 'int main(int argc)' or "
+                         "'int main(int argc, ptr argv)' ('void' may replace 'int')");
+        }
     }
 }
 

@@ -391,7 +391,16 @@ static void ResolveArrayResize(Resolver* r, CallExpr* c, StrMap* scope, const Ty
     {
         const TypeName* elemType = TypeNameArrayElem(unwrapped);
 
-        if (elemType && !ZeroIsValid(r, elemType, 0))
+        const char* initHeld = elemType ? InlineInitType(r, elemType, 0) : NULL;
+
+        if (initHeld)
+        {
+            DiagErrorFmt(r->diag, c->base.range,
+                         "'array_resize' fills new elements from their field defaults, which never runs '%s's Init; "
+                         "push constructed values instead",
+                         initHeld);
+        }
+        else if (elemType && !ZeroIsValid(r, elemType, 0))
         {
             DiagErrorFmt(r->diag, c->base.range,
                          "'array_resize' fills new elements with their zero value, which is not a valid '%s' (a box "
@@ -640,7 +649,16 @@ void ResolveArrayRepeat(Resolver* r, ArrayInitExpr* ai, StrMap* scope)
     // `{ {}; count }` zero-fills each element: the default value, built in place.
     if (IsEmptyBraced(value))
     {
-        if (elem && !ZeroIsValid(r, elem, 0))
+        const char* initHeld = elem ? InlineInitType(r, elem, 0) : NULL;
+
+        if (initHeld)
+        {
+            DiagErrorFmt(r->diag, value->range,
+                         "'{ {}; count }' fills each element from its field defaults, which never runs '%s's Init; "
+                         "push constructed values instead",
+                         initHeld);
+        }
+        else if (elem && !ZeroIsValid(r, elem, 0))
         {
             DiagErrorFmt(r->diag, value->range,
                          "'{ {}; count }' fills each element with its zero value, which is not a valid '%s' (a "

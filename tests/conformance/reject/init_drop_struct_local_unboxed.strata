@@ -1,8 +1,0 @@
-// expect: reject "instances of 'Res' must be boxed"
-// rule: a local of a Drop type must be boxed
-int main()
-{
-    Res r = Res.Make(5);
-    Report();
-    return 0;
-}

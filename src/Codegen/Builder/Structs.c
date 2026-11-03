@@ -47,6 +47,12 @@ LLVMValueRef ExtractStructField(Builder* b, const StructType* st, LLVMValueRef a
 // Drops the owning fields of a struct at `structPtr`.
 static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char* structName)
 {
+    EmitDropStructFieldsEx(b, structPtr, structName, true);
+}
+
+// Without `runDrop`, only the fields go: the struct's own Drop method is the one running.
+void EmitDropStructFieldsEx(Builder* b, LLVMValueRef structPtr, const char* structName, bool runDrop)
+{
     // A field typed as an alias (`struct RA = Res;`) is dropped as the struct it names.
     structName = TypeRegistryResolveAlias(&b->registry, structName);
     const StructType* st = TypeRegistryFind(&b->registry, structName);
@@ -63,30 +69,13 @@ static void EmitDropStructFields(Builder* b, LLVMValueRef structPtr, const char*
         return;
     }
 
-    // The struct's Drop method, while the value is alive: cleared first, so a re-drop is a no-op.
+    // The struct's Drop method, then its fields.
     FuncInfo* dropInfo = st->dropFunction ? (FuncInfo*)StrMapGet(&b->funcs, st->dropFunction->mangledName) : NULL;
-    int aliveIndex = TypeRegistryFieldIndex(&b->registry, structName, STRATA_ALIVE_FIELD);
 
-    if (dropInfo && dropInfo->function && aliveIndex >= 0)
+    if (runDrop && dropInfo && dropInfo->function)
     {
-        LLVMTypeRef i8Ty = LLVMInt8TypeInContext(b->ctx);
-        LLVMValueRef aliveIdx[2] = {IdxConst(b, 0), IdxConst(b, PhysicalFieldIndex(st, aliveIndex))};
-        LLVMValueRef aliveAddr = LLVMBuildGEP2(b->builder, structTy, structPtr, aliveIdx, 2, "alive");
-        LLVMValueRef alive = LLVMBuildLoad2(b->builder, i8Ty, aliveAddr, "isalive");
-        LLVMValueRef live = LLVMBuildICmp(b->builder, LLVMIntNE, alive, LLVMConstInt(i8Ty, 0, 0), "live");
-
-        LLVMBasicBlockRef callBB = NewBb(b, "udrop.call");
-        LLVMBasicBlockRef doneBB = NewBb(b, "udrop.done");
-        LLVMBuildCondBr(b->builder, live, callBB, doneBB);
-        b->terminated = true;
-
-        PositionAtEnd(b, callBB);
-        LLVMBuildStore(b->builder, LLVMConstInt(i8Ty, 0, 0), aliveAddr);
         LLVMValueRef dropArgs[2] = {CurrentContext(b), structPtr};
         LLVMBuildCall2(b->builder, dropInfo->type, dropInfo->function, dropArgs, 2, "");
-        Br(b, doneBB);
-
-        PositionAtEnd(b, doneBB);
     }
 
     for (size_t j = 0; j < st->fields.count; j++)

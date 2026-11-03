@@ -270,29 +270,62 @@ static Value EmitBoxContentAssign(Builder* b, AssignExpr* n, Value rhs, LValue l
     return result;
 }
 
-// Element write into an owning-element array (`Rec[]`, `string[]`) or an inline owning field: drop the old
-// element in place, then construct the owned value into the slot (heap-copy a string literal, move a
-// movable source, take a temporary bitwise).
-static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
+// `self` inside the Drop method of its own type: assigning it drops the old fields, not the old value, whose Drop
+// is the one running.
+static bool IsDropSelf(Builder* b, const Node* target, TypeDesc td)
 {
-    if (BoxIntoInlineOwning(b, lvalue.typeDesc, rhs.typeDesc))
-    {
-        // `holder.field = box;` with an inline owning field: the value moves out of its box.
-        EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
-        Value moved = TakeBoxContents(b, rhs, n->value);
-        LLVMBuildStore(b->builder, moved.value, lvalue.ptr);
+    const FunctionDecl* f = b->curDecl;
 
-        return ValueMake(moved.value, lvalue.typeDesc);
+    if (!f || target->kind != NodeIdent || !td.structTypeName || f->params.count != 1)
+    {
+        return false;
     }
 
-    EmitDropOne(b, lvalue.ptr, lvalue.typeDesc);
+    const StructType* st = TypeRegistryFind(&b->registry, TypeRegistryResolveAlias(&b->registry, td.structTypeName));
+    const ParamDecl* self = (const ParamDecl*)VecGet((Vec*)&f->params, 0);
 
-    TypeName elemTn
-        = TypeDescIsString(&lvalue.typeDesc) ? *StringTypeName(b) : TypeNameLeaf((char*)lvalue.typeDesc.structTypeName);
-    LLVMValueRef owned = EmitOwnedValue(b, rhs, n->value, &elemTn);
-    LLVMBuildStore(b->builder, owned, lvalue.ptr);
+    return st && st->dropFunction == f && strcmp(((const IdentExpr*)target)->name, self->name) == 0;
+}
 
-    return ValueMake(owned, lvalue.typeDesc);
+// Element write into an owning-element array (`Rec[]`, `string[]`) or an inline owning field: construct the owned
+// value (heap-copy a string literal, move a movable source, take a temporary bitwise, move a box's value out of
+// it), store it, then drop the old element, so a Drop method that reaches this slot again sees the new value.
+static Value EmitOwningElementAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)
+{
+    Value owned;
+
+    if (BoxIntoInlineOwning(b, lvalue.typeDesc, rhs.typeDesc))
+    {
+        owned = TakeBoxContents(b, rhs, n->value);
+    }
+    else
+    {
+        TypeName elemTn = TypeDescIsString(&lvalue.typeDesc) ? *StringTypeName(b)
+                                                             : TypeNameLeaf((char*)lvalue.typeDesc.structTypeName);
+        owned = ValueMake(EmitOwnedValue(b, rhs, n->value, &elemTn), lvalue.typeDesc);
+    }
+
+    // A local moved out of earlier holds nothing to drop: its drop flag says so.
+    LLVMValueRef flag = DropFlagOf(b, lvalue.ptr);
+    LLVMValueRef wasSet = flag ? LLVMBuildLoad2(b->builder, LLVMInt1TypeInContext(b->ctx), flag, "wasset") : NULL;
+    LLVMValueRef old = SaveOldValue(b, lvalue.ptr, lvalue.typeDesc);
+    LLVMBuildStore(b->builder, owned.value, lvalue.ptr);
+    SetDropFlag(b, lvalue.ptr, true);
+
+    if (IsDropSelf(b, n->target, lvalue.typeDesc))
+    {
+        EmitDropStructFieldsEx(b, old, lvalue.typeDesc.structTypeName, false);
+    }
+    else if (wasSet)
+    {
+        EmitDropOneIf(b, old, lvalue.typeDesc, wasSet);
+    }
+    else
+    {
+        EmitDropOne(b, old, lvalue.typeDesc);
+    }
+
+    return ValueMake(owned.value, lvalue.typeDesc);
 }
 
 static Value EmitScalarStoreAssign(Builder* b, AssignExpr* n, Value rhs, LValue lvalue)

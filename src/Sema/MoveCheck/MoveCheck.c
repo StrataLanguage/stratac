@@ -85,12 +85,14 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
-// A value with a `Drop` method is moved whole or not at all: `Drop` expects every field to be there.
+// A value with a `Drop` method is moved whole or not at all: `Drop` expects every field to be there. And a field
+// holding a `Drop` value in its own storage never moves out on its own, not even in a Drop method: nothing marks
+// the storage it leaves behind, which is dropped with the parent.
 static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
 {
     const Node* n = op->node;
 
-    if (!op->consumed || IsCopied(env, n) || n->kind != NodeMember || env->inDropMethod)
+    if (!op->consumed || IsCopied(env, n) || n->kind != NodeMember)
     {
         return;
     }
@@ -98,6 +100,27 @@ static void DropFieldMoveCheck(const Env* env, Found* found, const CfgOp* op)
     const TypeName* t = ValueType(env, n);
 
     if (!t || TypeNameIsOptional(t) || !TypeOwns(env, t))
+    {
+        return;
+    }
+
+    if (TypeNameHasInlineDrop(env->reg, t))
+    {
+        char buf[256];
+        const char* root;
+        MoveDiag* d = ReportAs(found, MoveDiagInlineDropField, n->range,
+                               PlaceKeyImpl(n, buf, sizeof(buf), &root, true) ? ArenaStrdup(env->arena, buf)
+                                                                              : ((const MemberExpr*)n)->member);
+
+        if (d)
+        {
+            d->type = t->name;
+        }
+
+        return;
+    }
+
+    if (env->inDropMethod)
     {
         return;
     }
@@ -538,6 +561,12 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
     case MoveDiagDropField:
         DiagErrorFmt(diag, d->range, "cannot move '%s' out of a type with a Drop method; move the whole value",
                      d->name);
+        break;
+    case MoveDiagInlineDropField:
+        DiagErrorFmt(diag, d->range,
+                     "cannot move '%s' out on its own: '%s' holds a value with a Drop method by value; move the "
+                     "whole value, or make the field a box '^%s' or an optional '%s?'",
+                     d->name, d->type, d->type, d->type);
         break;
     case MoveDiagElement:
         DiagErrorFmt(diag, d->range,

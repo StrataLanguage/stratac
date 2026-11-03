@@ -217,9 +217,8 @@ static void ResolveFieldDefault(Resolver* r, FieldDecl* field, StrMap* scope)
     field->folded = folded;
 }
 
-// `void Drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct and gives the
-// struct its hidden `__alive` byte (default 1): moves zero the source, so a moved-from value reads 0
-// and is not dropped twice. Runs before the type registry is built, so the field is in every layout.
+// `void Drop(ref T self)` in a struct's impl is T's destructor. Binds it to the struct; runs before the
+// type registry is built, so every layout knows which structs own.
 static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
 {
     for (size_t i = 0; i < mod->impls.count; i++)
@@ -279,16 +278,151 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
             }
 
             sd->dropFunction = method;
+        }
+    }
+}
 
-            FieldDecl* alive = AST_NEW(arena, FieldDecl);
-            alive->type = TypeNameLeaf((char*)"byte");
-            alive->name = (char*)STRATA_ALIVE_FIELD;
-            alive->offset = -1;
-            alive->nameRange = sd->base.range;
-            alive->folded.isSet = true;
-            alive->folded.laneCount = 1;
-            alive->folded.intValue = 1;
-            VecPush(&sd->fields, alive);
+// `void Init(ref T self, ...)` in a struct's impl is a constructor; it may be overloaded. For each one sema
+// builds `T __init_T(...) { T self; self.Init(...); return self; }` (the local starting from its field
+// defaults), so `T(args)` is an ordinary call that overload resolution, the move checker and codegen already
+// understand. Runs before overloads are mangled, so the wrappers mangle like any overload set.
+static void BindInitMethods(Resolver* r)
+{
+    Module* mod = r->mod;
+    DiagnosticEngine* diag = r->diag;
+    Arena* arena = r->arena;
+    size_t implCount = mod->impls.count;
+
+    for (size_t i = 0; i < implCount; i++)
+    {
+        ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, i);
+        StructDecl* sd = NULL;
+
+        for (size_t k = 0; k < mod->structs.count; k++)
+        {
+            StructDecl* candidate = (StructDecl*)VecGet(&mod->structs, k);
+
+            if (!candidate->incomplete && !candidate->isTypeAlias && strcmp(candidate->name, impl->handleName) == 0)
+            {
+                sd = candidate;
+                break;
+            }
+        }
+
+        for (size_t j = 0; j < impl->methods.count; j++)
+        {
+            FunctionDecl* method = (FunctionDecl*)VecGet(&impl->methods, j);
+
+            if (!method->methodName || strcmp(method->methodName, "Init") != 0)
+            {
+                continue;
+            }
+
+            if (!sd)
+            {
+                DiagErrorFmt(diag, method->base.range, "'Init' is only allowed in the impl of a struct with a body");
+                continue;
+            }
+
+            const ParamDecl* self = method->params.count >= 1 ? (const ParamDecl*)VecGet(&method->params, 0) : NULL;
+            bool shape = self && self->mod == ModRef && !self->type.isConst && strcmp(self->type.name, sd->name) == 0
+                         && GetPrimitiveType(method->returnType.name) == PrimVoid && method->body
+                         && !method->isVariadic;
+
+            if (!shape)
+            {
+                DiagErrorFmt(diag, method->base.range,
+                             "a constructor must be declared 'void Init(ref %s self, ...) { ... }'", sd->name);
+                continue;
+            }
+
+            if (sd->isExtern || sd->isUnion || sd->isComponent)
+            {
+                DiagErrorFmt(diag, method->base.range,
+                             "'%s' cannot have an Init method: extern structs, unions and components are plain data",
+                             sd->name);
+                continue;
+            }
+
+            SourceRange at = method->base.range;
+            char* wrapperName = ArenaFormat(arena, "__init_%s", sd->name);
+            char* selfName = (char*)"__self";
+
+            FunctionDecl* w = AST_NEW(arena, FunctionDecl);
+            w->base.kind = NodeFunction;
+            w->base.range = at;
+            w->name = wrapperName;
+            w->mangledName = wrapperName;
+            w->returnType = TypeNameLeaf(sd->name);
+            w->returnType.range = at;
+            w->hasReturnStmt = true;
+            w->isInitWrapper = true;
+            VecInit(&w->params);
+
+            Block* body = AST_NEW(arena, Block);
+            body->base.kind = NodeBlock;
+            body->base.range = at;
+            VecInit(&body->statements);
+
+            VarDeclStmt* local = AST_NEW(arena, VarDeclStmt);
+            local->base.kind = NodeVarDecl;
+            local->base.range = at;
+            local->type = TypeNameLeaf(sd->name);
+            local->type.range = at;
+            local->name = selfName;
+            local->rawDefault = true;
+            VecPush(&body->statements, local);
+
+            IdentExpr* receiver = AST_NEW(arena, IdentExpr);
+            receiver->base.kind = NodeIdent;
+            receiver->base.range = at;
+            receiver->name = selfName;
+
+            CallExpr* call = AST_NEW(arena, CallExpr);
+            call->base.kind = NodeCall;
+            call->base.range = at;
+            call->callee = (char*)"Init";
+            call->calleeBase = (Node*)receiver;
+            VecInit(&call->args);
+
+            for (size_t p = 1; p < method->params.count; p++)
+            {
+                ParamDecl* param = (ParamDecl*)ArenaDup(arena, VecGet(&method->params, p), sizeof(ParamDecl));
+                VecPush(&w->params, param);
+
+                IdentExpr* arg = AST_NEW(arena, IdentExpr);
+                arg->base.kind = NodeIdent;
+                arg->base.range = at;
+                arg->name = param->name;
+                VecPush(&call->args, arg);
+            }
+
+            ExprStmt* callStmt = AST_NEW(arena, ExprStmt);
+            callStmt->base.kind = NodeExprStmt;
+            callStmt->base.range = at;
+            callStmt->expr = (Node*)call;
+            VecPush(&body->statements, callStmt);
+
+            IdentExpr* result = AST_NEW(arena, IdentExpr);
+            result->base.kind = NodeIdent;
+            result->base.range = at;
+            result->name = selfName;
+
+            ReturnStmt* ret = AST_NEW(arena, ReturnStmt);
+            ret->base.kind = NodeReturn;
+            ret->base.range = at;
+            ret->value = (Node*)result;
+            VecPush(&body->statements, ret);
+
+            w->body = (Node*)body;
+            VecPush(&mod->functions, w);
+
+            StrMapPut(&r->initWrappers, sd->name, wrapperName);
+
+            if (method->params.count == 1)
+            {
+                StrMapPut(&r->defaultInits, sd->name, wrapperName);
+            }
         }
     }
 }
@@ -402,6 +536,9 @@ static void CollectDeclarations(Resolver* r)
     MergeExternRedeclarations(mod, diag);
     MarkGrowableArrayParams(mod);
     BindDropMethods(mod, diag, arena);
+    StrMapInit(&r->initWrappers);
+    StrMapInit(&r->defaultInits);
+    BindInitMethods(r);
 
     TypeRegistryInit(&r->registry);
 }
@@ -1109,6 +1246,8 @@ static void ReleaseResolverState(Resolver* r)
     StrMapFree(&r->refLocals);
     StrMapFree(&r->refArrayParams);
     StrMapFree(&r->typeCache);
+    StrMapFree(&r->initWrappers);
+    StrMapFree(&r->defaultInits);
     free(r->deferFrames.items);
     free(r->loopFlows.items);
 }

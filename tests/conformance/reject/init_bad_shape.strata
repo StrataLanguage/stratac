@@ -1,0 +1,5 @@
+// expect: reject "a constructor must be declared 'void Init(ref C self, ...)"
+// rule: Init returns void and takes its value as `ref T self` first
+struct C { int n; };
+impl C { int Init(ref C self) { return 0; } }
+int main() { return 0; }

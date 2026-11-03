@@ -11,9 +11,6 @@
 #define STRATA_PTR_TYPE "ptr"
 #define STRATA_NULL_TYPE "null"
 
-// The hidden field of a struct with a `Drop` method: 1 while it holds a live value, 0 once moved or dropped.
-#define STRATA_ALIVE_FIELD "__alive"
-
 // `ptr.null`, the null pointer: of type `null`, which converts to `ptr`, any handle, any delegate and any `*T`.
 // The parser turns `ptr.null` into an identifier of this name, which no variable can have. A bare `null`
 // names the same constant wherever no variable of that name is in scope.
@@ -117,6 +114,11 @@ bool IsHandleType(const TypeRegistry* reg, const char* name);
 // Whether a value of type `t` holds anything with a `Drop` method (by value, in an array or a box): such
 // values move, and are never implicitly deep-copied.
 bool TypeNameHasDrop(const TypeRegistry* reg, const TypeName* t);
+
+// Whether a `t` holds a value with a `Drop` method in its own storage (itself, or by value in a field or a
+// fixed array), not behind a box, optional or dynamic array. Moving such a value out leaves storage that
+// would be dropped again, so it only moves whole.
+bool TypeNameHasInlineDrop(const TypeRegistry* reg, const TypeName* t);
 
 // The signature of an `extern delegate` type, or NULL when `name` is not one.
 const struct FunctionDecl* TypeRegistryDelegate(const TypeRegistry* reg, const char* name);

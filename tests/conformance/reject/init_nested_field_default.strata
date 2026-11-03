@@ -1,0 +1,6 @@
+// expect: reject "whose Init would not run"
+// rule: field defaults never run Init, so a struct holding an Init type by value must be given that field
+struct C { int n; };
+impl C { void Init(ref C self) { self.n = 42; } }
+struct Outer { C c; int k; };
+int main() { Outer o = Outer { .k = 1 }; return 0; }

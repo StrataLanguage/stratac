@@ -3,14 +3,44 @@
 
 #define STRATA_AOT_MAIN_SYMBOL "__strata_main"
 
-// An AOT module's `int main()` (or `void main()`) is the program entry: its Strata body is emitted
-// as __strata_main and EmitAotEntryPoint wraps it in a real C `main` that owns the context.
-bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f)
+// A function the C `main` would be: a plain, defined `main` in an AOT module.
+bool IsAotMain(const Builder* b, const FunctionDecl* f)
 {
-    if (b->jitMode || f->isExtern || f->isExport || f->fromImpl || !f->body || f->params.count != 0
-        || strcmp(f->mangledName, "main") != 0)
+    return !b->jitMode && !f->isExtern && !f->isExport && !f->fromImpl && f->body
+           && strcmp(f->mangledName, "main") == 0;
+}
+
+// Parameter `i` of an entry point is spelled `int argc` (i == 0) or `ptr argv` (i == 1), taken by value.
+static bool IsEntryParam(const FunctionDecl* f, size_t i)
+{
+    const ParamDecl* p = (const ParamDecl*)VecGet((Vec*)&f->params, i);
+    const TypeName* t = &p->type;
+
+    if (p->mod != ModNone || p->isVarargRest || TypeNameHasArrayShape(t) || TypeNameIsBox(t) || TypeNameIsOptional(t)
+        || !t->name)
     {
         return false;
+    }
+
+    return i == 0 ? GetPrimitiveType(t->name) == PrimInt : strcmp(t->name, STRATA_PTR_TYPE) == 0;
+}
+
+// An AOT module's `int main()`, `int main(int argc)` or `int main(int argc, ptr argv)` (or the `void` forms) is
+// the program entry: its Strata body is emitted as __strata_main and EmitAotEntryPoint wraps it in a real C
+// `main` that owns the context and forwards argc and argv.
+bool IsAotEntryPoint(const Builder* b, const FunctionDecl* f)
+{
+    if (!IsAotMain(b, f) || f->params.count > 2 || f->isVariadic)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < f->params.count; i++)
+    {
+        if (!IsEntryParam(f, i))
+        {
+            return false;
+        }
     }
 
     PrimitiveType ret = GetPrimitiveType(f->returnType.name);
@@ -169,6 +199,7 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
 
     StrMapClear(&b->symbols);
     b->terminated = false;
+    b->curDecl = f;
     b->curRet = Resolve(b, &f->returnType);
     b->curRetAbi = WidenRetType(b, b->curRet.type);
     b->loops.count = 0;
@@ -300,7 +331,8 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
     }
 }
 
-// int main(int argc, char** argv): create the context, run the Strata entry, destroy the context.
+// int main(int argc, char** argv): create the context, run the Strata entry (passing on argc and argv when it
+// takes them), destroy the context.
 void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry)
 {
     FuncInfo* info = (FuncInfo*)StrMapGet(&b->funcs, entry->mangledName);
@@ -322,14 +354,15 @@ void EmitAotEntryPoint(Builder* b, const FunctionDecl* entry)
     LLVMTypeRef createTy = LLVMFunctionType(b->ptrTy, NULL, 0, 0);
     LLVMValueRef ctx = LLVMBuildCall2(builder, createTy, createFn, NULL, 0, "ctx");
 
-    LLVMValueRef callArgs[1] = {ctx};
-    LLVMValueRef result = LLVMBuildCall2(builder, info->type, info->function, callArgs, 1, "");
+    LLVMValueRef callArgs[3] = {ctx, LLVMGetParam(mainFn, 0), LLVMGetParam(mainFn, 1)};
+    LLVMValueRef result
+        = LLVMBuildCall2(builder, info->type, info->function, callArgs, (unsigned)(1 + entry->params.count), "");
     LLVMValueRef exitCode
         = GetPrimitiveType(entry->returnType.name) == PrimVoid ? LLVMConstInt(I32Ty(b), 0, 0) : result;
 
     LLVMTypeRef destroyParams[1] = {b->ptrTy};
     LLVMTypeRef destroyTy = LLVMFunctionType(LLVMVoidTypeInContext(b->ctx), destroyParams, 1, 0);
-    LLVMBuildCall2(builder, destroyTy, destroyFn, callArgs, 1, "");
+    LLVMBuildCall2(builder, destroyTy, destroyFn, &ctx, 1, "");
 
     LLVMBuildRet(builder, exitCode);
     LLVMDisposeBuilder(builder);

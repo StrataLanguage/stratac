@@ -281,6 +281,47 @@ void EmitDropOneStack(Builder* b, LLVMValueRef slot, TypeDesc td)
     EmitDropOneInternal(b, slot, td, false);
 }
 
+// The drop flag of the owning local stored at `slot`, or NULL when it has none.
+LLVMValueRef DropFlagOf(Builder* b, LLVMValueRef slot)
+{
+    for (size_t i = b->owningLocals.count; i-- > 0;)
+    {
+        OwnLocal* ol = (OwnLocal*)VecGet(&b->owningLocals, i);
+
+        if (ol->slot == slot)
+        {
+            return ol->dropFlag;
+        }
+    }
+
+    return NULL;
+}
+
+void SetDropFlag(Builder* b, LLVMValueRef slot, bool set)
+{
+    LLVMValueRef flag = slot ? DropFlagOf(b, slot) : NULL;
+
+    if (flag)
+    {
+        LLVMBuildStore(b->builder, LLVMConstInt(LLVMInt1TypeInContext(b->ctx), set ? 1 : 0, 0), flag);
+    }
+}
+
+// Drops the value at `slot` when the i1 `set` is true.
+void EmitDropOneIf(Builder* b, LLVMValueRef slot, TypeDesc td, LLVMValueRef set)
+{
+    LLVMBasicBlockRef dropBB = NewBb(b, "dflag.drop");
+    LLVMBasicBlockRef doneBB = NewBb(b, "dflag.done");
+    LLVMBuildCondBr(b->builder, set, dropBB, doneBB);
+    b->terminated = true;
+
+    PositionAtEnd(b, dropBB);
+    EmitDropOne(b, slot, td);
+    Br(b, doneBB);
+
+    PositionAtEnd(b, doneBB);
+}
+
 // Drops the owning locals declared from `fromIndex` on, the last declared first, so a local can rely on every
 // local declared before it still being alive when it is dropped.
 void EmitDrops(Builder* b, StackMark fromIndex)
@@ -289,7 +330,12 @@ void EmitDrops(Builder* b, StackMark fromIndex)
     {
         OwnLocal* ol = (OwnLocal*)VecGet(&b->owningLocals, i);
 
-        if (ol->stackBuffer)
+        if (ol->dropFlag)
+        {
+            LLVMValueRef set = LLVMBuildLoad2(b->builder, LLVMInt1TypeInContext(b->ctx), ol->dropFlag, "dflag");
+            EmitDropOneIf(b, ol->slot, ol->td, set);
+        }
+        else if (ol->stackBuffer)
         {
             EmitDropOneStack(b, ol->slot, ol->td);
         }
@@ -739,6 +785,7 @@ Value EmitDropBuiltin(Builder* b, CallExpr* n)
         if (src.valid)
         {
             EmitDropOne(b, src.ptr, src.typeDesc);
+            SetDropFlag(b, src.ptr, false);
         }
         else
         {

@@ -1744,7 +1744,7 @@ STRATA_TEST(type_alias_owning_field_registry)
     ArenaFree(&arena);
 }
 
-STRATA_TEST(type_alias_owning_field_must_be_boxed)
+STRATA_TEST(type_alias_owning_field_local_by_value)
 {
     StrataCompiler* c = strataCompilerCreate();
     StrataResult r = strataCompileString(c,
@@ -1752,8 +1752,7 @@ STRATA_TEST(type_alias_owning_field_must_be_boxed)
                                          "struct P { Name n; int k; };\n"
                                          "int entry() { P a = P { .n = (Name)\"hi\", .k = 1 }; return a.k; }\n",
                                          "alias_owning", STRATA_EMIT_LLVM_IR, 0);
-    STRATA_CHECK(!r.ok);
-    STRATA_CHECK(r.diagnostics && strstr(r.diagnostics, "must be boxed") != NULL);
+    STRATA_CHECK(r.ok);
     strataResultFree(&r);
     strataCompilerDestroy(c);
 }

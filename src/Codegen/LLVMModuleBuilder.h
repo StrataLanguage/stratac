@@ -84,6 +84,7 @@ typedef struct Builder
     StrMap dropFns;   // structName -> LLVMValueRef, per-type struct-field drop helper
     StrMap copyFns;   // structName -> LLVMValueRef, per-type struct deep-copy helper
     Vec externNames;
+    const struct FunctionDecl* curDecl; // the function being defined
     TypeDesc curRet;
     LLVMTypeRef curRetAbi; // widened signature return type (i32 for sub-word ints)
     bool terminated;

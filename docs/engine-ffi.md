@@ -30,8 +30,15 @@ explicitly.
 ## Ownership
 
 **`Drop`.** A struct whose `impl` has `void Drop(ref T self)` runs it exactly once, when its owned
-value goes away (scope end, overwrite, `drop()`, its owner dropping). Such values cannot be
-`copy()`d or passed by value.
+value goes away (scope end, overwrite, `drop()`, its owner dropping). The struct keeps the layout
+it declares. Such values cannot be `copy()`d or passed by value (pass `ref T` or a box `^T`), but a
+local may hold one by value (`T v = T { ... };`, or `T v;` for its field defaults). A field that
+holds one by value only moves with its parent; declare it `^T` or `T?` to move it out on its own.
+
+**`Init`.** `void Init(ref T self, ...)` in the impl is a constructor, and may be overloaded: `T(args)` builds a
+value from the field defaults and runs the matching `Init` on it, and `T v;` runs the one without arguments. A
+type with `Init` loses its positional `T(a, b)` field constructor (braced `T { .a = ... }` still works), cannot
+hold a non-optional `^T` field (use `T?` and set it in `Init`), and its `Init` is never called directly.
 
 **Globals are never moved out of.** No function owns a global, so reading an owning global by
 value — a `string`, array, box, optional, or any such field of a global struct — is an error

@@ -218,6 +218,56 @@ static void EmitScalarVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDes
     SymDeclare(b, varDecl->name, sym);
 }
 
+// An owning struct held by value: built like a field (a box's value moves out of the box, a movable source is
+// emptied) and dropped at scope exit. One holding a Drop value inline gets a drop flag, cleared when the value
+// moves out.
+static void EmitOwningStructVarDecl(Builder* b, VarDeclStmt* varDecl, TypeDesc typeDesc)
+{
+    LLVMValueRef slot = EntryAlloca(b, typeDesc.type, "v");
+    LLVMValueRef flag = TypeNameHasInlineDrop(&b->registry, &varDecl->type)
+                            ? EntryAlloca(b, LLVMInt1TypeInContext(b->ctx), "v.dflag")
+                            : NULL;
+    LLVMValueRef owned;
+
+    if (varDecl->init)
+    {
+        Value value = EmitExpr(b, varDecl->init);
+
+        if (BoxIntoInlineOwning(b, typeDesc, value.typeDesc))
+        {
+            owned = TakeBoxContents(b, value, varDecl->init).value;
+        }
+        else
+        {
+            owned = EmitOwnedValue(b, Coerce(b, value, typeDesc), varDecl->init, &varDecl->type);
+        }
+    }
+    else
+    {
+        owned = DefaultValueOf(b, &varDecl->type, typeDesc);
+    }
+
+    LLVMBuildStore(b->builder, owned, slot);
+
+    if (flag)
+    {
+        LLVMBuildStore(b->builder, LLVMConstInt(LLVMInt1TypeInContext(b->ctx), 1, 0), flag);
+    }
+
+    Value* sym = (Value*)ArenaAlloc(b->arena, sizeof(Value));
+    sym->value = slot;
+    sym->typeDesc = typeDesc;
+
+    SymDeclare(b, varDecl->name, sym);
+
+    OwnLocal* ol = (OwnLocal*)ArenaAlloc(b->arena, sizeof(OwnLocal));
+    ol->slot = slot;
+    ol->td = typeDesc;
+    ol->stackBuffer = false;
+    ol->dropFlag = flag;
+    VecPush(&b->owningLocals, ol);
+}
+
 static void EmitVarDecl(Builder* b, VarDeclStmt* varDecl)
 {
     // `ref T x = path;`: the symbol is the address of the storage itself, never dropped here.
@@ -244,6 +294,12 @@ static void EmitVarDecl(Builder* b, VarDeclStmt* varDecl)
     if (TypeDescIsBox(&typeDesc))
     {
         EmitBoxVarDecl(b, varDecl, typeDesc);
+        return;
+    }
+
+    if (typeDesc.structTypeName && TypeRegistryIsOwningStruct(&b->registry, typeDesc.structTypeName))
+    {
+        EmitOwningStructVarDecl(b, varDecl, typeDesc);
         return;
     }
 

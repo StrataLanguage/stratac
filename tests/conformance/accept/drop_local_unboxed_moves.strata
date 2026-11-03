@@ -1,0 +1,33 @@
+// expect: run
+// expect-output: drop 4
+// expect-output: drop 6
+// expect-output: drop 9
+// expect-output: end of scope
+// rule: a by-value Drop local is dropped once: not at scope end after a move or drop(), again once refilled
+struct V { int id; };
+impl V { void Drop(ref V self) { gLive--; printf("drop %d\n", self.id); } }
+V Mk(int id) { gLive++; return V { .id = id }; }
+V Pass(int id) { V v = Mk(id); return v; }
+int main()
+{
+    {
+        V a;
+        gLive++;
+        V b = Mk(1);
+        V c = Mk(2);
+        ^V boxed = c;
+        V e = Mk(4);
+        drop(e);
+        e = Mk(5);
+        V f = Mk(6);
+        { ^V k = f; }
+        f = Mk(7);
+        V g = Pass(8);
+        V h = Mk(9);
+        h = Mk(10);
+        for (int i = 0; i < 2; i++) { V l = Mk(20 + i); if (i == 1) { break; } }
+        printf("end of scope\n");
+    }
+    Report();
+    return 0;
+}

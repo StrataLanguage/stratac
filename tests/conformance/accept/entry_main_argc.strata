@@ -1,0 +1,9 @@
+// expect: run
+// expect-output: argc=1 g=7
+// rule: `int main(int argc)` is the program entry and receives the real argc, with globals set up
+int gCount = 7;
+int main(int argc)
+{
+    printf("argc=%d g=%d\n", argc, gCount);
+    return 0;
+}

@@ -96,11 +96,11 @@ STRATA_TEST(optional_extern_param_and_return_abi)
 
 /* ---- The canonical example ----------------------------------------------
    struct Weapon { string name; };
-   Weapon w;          -> illegal: owning struct must live in a box
+   Weapon w;          -> legal:   a by-value local, 'name' starts as an empty string
    ^Weapon w = {};    -> illegal: 'name' must be initialized
    ^Weapon w = { "" } -> legal:   name is an owned empty string            */
 
-STRATA_TEST(optional_plain_owning_struct_local_is_illegal)
+STRATA_TEST(optional_plain_owning_struct_local_is_legal)
 {
     Arena arena;
     ArenaInit(&arena, 0);
@@ -109,12 +109,7 @@ STRATA_TEST(optional_plain_owning_struct_local_is_illegal)
     ParseAndResolve("struct Weapon { string name; };\n"
                     "int main() { Weapon w; return 0; }\n",
                     &diag, &arena);
-    STRATA_CHECK(DiagHasErrors(&diag));
-
-    SourceManager sm;
-    SourceManagerInit(&sm);
-    char* d = DiagFormat(&diag, &sm, 1, &arena);
-    STRATA_CHECK(Contains(d, "instances of 'Weapon' must be boxed (i.e, '^Weapon')."));
+    STRATA_CHECK(!DiagHasErrors(&diag));
 
     DiagnosticEngineFree(&diag);
     ArenaFree(&arena);

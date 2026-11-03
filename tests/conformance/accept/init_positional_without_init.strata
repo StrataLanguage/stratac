@@ -1,0 +1,5 @@
+// expect: run
+// expect-output: 1 2
+// rule: a type without Init keeps its positional field constructor
+struct P { int x; int y; };
+int main() { P p = P(1, 2); printf("%d %d\n", p.x, p.y); return 0; }

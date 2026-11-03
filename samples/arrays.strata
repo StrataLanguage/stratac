@@ -11,9 +11,9 @@
  * double the capacity (seeding 4 off an empty array); push otherwise writes
  * in place.
  *
- * A struct holding any owning field (string/^T/T[]) is itself "owning" and
- * must be boxed - so an array of FooBars is written ^FooBar[]. Dropping a
- * ^FooBar frees the FooBar's string field recursively.
+ * A struct holding any owning field (string/^T/T[]) is itself "owning": it
+ * moves instead of copying. This sample keeps FooBars boxed, in ^FooBar[];
+ * dropping a ^FooBar frees the FooBar's string field recursively.
  */
 
 int sum(ref int[] a)

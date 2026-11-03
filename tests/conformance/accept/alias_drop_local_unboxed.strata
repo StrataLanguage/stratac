@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: drop 1
+// rule: a by-value local of a Drop type named through an alias is dropped as the struct it names
+struct RA = Res;
+int main()
+{
+    {
+        RA a = (RA)Res.Make(1);
+    }
+    Report();
+    return 0;
+}

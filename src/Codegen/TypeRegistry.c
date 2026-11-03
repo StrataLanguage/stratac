@@ -984,10 +984,17 @@ typedef struct
     size_t cap;
 } DropVisit;
 
-static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, DropVisit* seen)
+/* With `inlineOnly`, boxes, optionals and dynamic arrays are not looked through: what they hold is
+   behind a pointer, which a move nulls. */
+static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, bool inlineOnly, DropVisit* seen)
 {
     while (t && (t->isArray || t->isBox || t->isOptional))
     {
+        if (inlineOnly && !TypeNameIsFixedArray(t))
+        {
+            return false;
+        }
+
         t = t->isArray ? t->elem : t->inner;
     }
 
@@ -1025,7 +1032,7 @@ static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, Dro
 
     for (size_t i = 0; i < st->fields.count; i++)
     {
-        if (TypeNameHasDropVisit(reg, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, seen))
+        if (TypeNameHasDropVisit(reg, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, inlineOnly, seen))
         {
             return true;
         }
@@ -1037,7 +1044,15 @@ static bool TypeNameHasDropVisit(const TypeRegistry* reg, const TypeName* t, Dro
 bool TypeNameHasDrop(const TypeRegistry* reg, const TypeName* t)
 {
     DropVisit seen = {0};
-    bool found = TypeNameHasDropVisit(reg, t, &seen);
+    bool found = TypeNameHasDropVisit(reg, t, false, &seen);
+    free((void*)seen.items);
+    return found;
+}
+
+bool TypeNameHasInlineDrop(const TypeRegistry* reg, const TypeName* t)
+{
+    DropVisit seen = {0};
+    bool found = TypeNameHasDropVisit(reg, t, true, &seen);
     free((void*)seen.items);
     return found;
 }

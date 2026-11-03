@@ -459,6 +459,43 @@ bool IsAssignableType(const Resolver* r, const TypeName* targetType, const TypeN
            || (valueInner && strcmp(valueInner->name, targetType->name) == 0);
 }
 
+// The type with an Init method that a `t` holds in its own storage (itself, or by value in a field or a fixed
+// array), or NULL. Field defaults never run Init, so such storage is only valid once a value is put in it;
+// what sits behind a box, an optional or a dynamic array was built on its own.
+const char* InlineInitType(Resolver* r, const TypeName* t, int depth)
+{
+    t = t ? ResolveAliasedType(&r->registry, r->arena, t) : NULL;
+
+    while (t && TypeNameIsFixedArray(t))
+    {
+        t = TypeNameArrayElem(t);
+    }
+
+    if (!t || !t->name || depth > 32 || TypeNameHasArrayShape(t) || TypeNameIsBox(t) || TypeNameIsOptional(t))
+    {
+        return NULL;
+    }
+
+    if (StrMapGet(&r->initWrappers, t->name))
+    {
+        return t->name;
+    }
+
+    const StructType* st = TypeRegistryFind(&r->registry, t->name);
+
+    for (size_t i = 0; st && !st->opaque && i < st->fields.count; i++)
+    {
+        const char* held = InlineInitType(r, &((const FieldDecl*)VecGet((Vec*)&st->fields, i))->type, depth + 1);
+
+        if (held)
+        {
+            return held;
+        }
+    }
+
+    return NULL;
+}
+
 // Whether all-zero bytes are a valid `t`: what `{ {}; count }` and array_resize fill with. Empty
 // strings, arrays and optionals and zeroed scalars are; a `^T` (which must point at
 // something) is not, nor is a struct holding one.

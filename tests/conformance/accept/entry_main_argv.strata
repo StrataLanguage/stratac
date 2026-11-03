@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: argc=1 argv0 set
+// rule: `int main(int argc, ptr argv)` receives the C argv; argv[0] is the program name
+extern ulong strlen(ptr s);
+int main(int argc, ptr argv)
+{
+    ptr first = load<ptr>(argv);
+    if (first != ptr.null && strlen(first) > 0ul) { printf("argc=%d argv0 set\n", argc); }
+    return 0;
+}

@@ -1,5 +1,5 @@
-// expect: reject
-// rule: an owning struct must be boxed even when it is named through an alias
+// expect: reject "used after move"
+// rule: assigning a by-value owning local to another moves it, also when its type is named through an alias
 struct S { string s; };
 struct SA = S;
 int main()

@@ -146,6 +146,16 @@ void CheckStructInitFields(Resolver* r, Node* n)
         bool mustInit = !TypeNameIsOptional(fieldType) && !TypeNameIsDynamicArray(fieldType)
                         && (AliasIsOwning(r, &fd->type) || TypeRegistryIsOwningStruct(&r->registry, fd->type.name));
 
+        const char* initHeld = !covered[f] && !mustInit ? InlineInitType(r, &fd->type, 0) : NULL;
+
+        if (initHeld)
+        {
+            DiagErrorFmt(r->diag, init->base.range,
+                         "field '%s' of struct '%s' holds a '%s', whose Init would not run: give it a value "
+                         "(e.g. '.%s = %s(...)')",
+                         fd->name, init->typeName, initHeld, fd->name, initHeld);
+        }
+
         if (mustInit && !covered[f])
         {
             // Suggest the optional spelling of the inner type. A `^string`
@@ -437,6 +447,14 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     }
 
     FunctionDecl* method = FindImplMethod(r, handleName, c->callee);
+
+    // Init runs on a value that is being built; on a live one it would overwrite fields without dropping them.
+    if (method && strcmp(c->callee, "Init") == 0 && !(r->currentFunction && r->currentFunction->isInitWrapper))
+    {
+        DiagErrorFmt(r->diag, c->base.range,
+                     "'Init' runs when a value is constructed; write '%s(...)' instead of calling it", handleName);
+        return true;
+    }
 
     if (!method)
     {
