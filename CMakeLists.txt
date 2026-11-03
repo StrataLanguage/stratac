@@ -63,7 +63,24 @@ set(STRATA_COMMON_SOURCES
 set(STRATA_LLVM_SOURCES
     src/Codegen/LLVMSimd.c
     src/Codegen/LLVMCBackend.c
-    src/Codegen/LLVMModuleBuilder.c
+    src/Codegen/Builder/Arrays.c
+    src/Codegen/Builder/Assign.c
+    src/Codegen/Builder/Boxes.c
+    src/Codegen/Builder/Call.c
+    src/Codegen/Builder/ConstInit.c
+    src/Codegen/Builder/Equality.c
+    src/Codegen/Builder/Expr.c
+    src/Codegen/Builder/Function.c
+    src/Codegen/Builder/IrUtil.c
+    src/Codegen/Builder/Module.c
+    src/Codegen/Builder/Numeric.c
+    src/Codegen/Builder/Ownership.c
+    src/Codegen/Builder/Runtime.c
+    src/Codegen/Builder/Stmt.c
+    src/Codegen/Builder/Strings.c
+    src/Codegen/Builder/Structs.c
+    src/Codegen/Builder/Types.c
+    src/Codegen/Builder/Vectors.c
     src/Codegen/LLVMAot.c
     src/Codegen/LLVMJit.c
     src/Codegen/LLVMTargets.c
