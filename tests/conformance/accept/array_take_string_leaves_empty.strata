@@ -1,0 +1,10 @@
+// expect: run
+// expect-output: took b len 3 left [a][][c]
+// rule: array_take moves an element out and leaves its empty value, so the array keeps its length and drops the rest once
+int main()
+{
+    string[] names = { "a", "b", "c" };
+    string t = array_take(names, 1u);
+    printf("took %s len %u left [%s][%s][%s]\n", t, names.length, names[0], names[1], names[2]);
+    return 0;
+}

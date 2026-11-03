@@ -52,7 +52,7 @@ use after move, partial moves, narrowing, loans and `ref` validity. The rest are
 | Rules | Enforced by |
 | --- | --- |
 | Rule O1, O2 | CFG checker: per-place move state, join at branches and loops. A part taken out of a `ref` parameter must be back before return; a `Drop` method may take its own value apart. |
-| Rule O3 | CFG checker: an element of an array is never moved out (E0508). `array_remove`, `array_swap_remove` and `array_replace` return the element; `array_take` is not built yet. A field of a value with its own `Drop` method is never moved out. |
+| Rule O3 | CFG checker: an element of an array is never moved out (E0508). `array_remove`, `array_swap_remove`, `array_replace` and `array_take` return the element; `array_take(a, i)` moves out a `string`, array or optional element and leaves its empty value in the slot. A field of a value with its own `Drop` method is never moved out. |
 | Rule O4 | CFG checker: narrowing facts are must-facts, killed by writes, moves, `ref` arguments, array mutators, calls that write the global (transitive write sets) and by `Drop` calls (`drop()`, overwrite, scope end). |
 | Rule O5, O6, O7 | CFG checker: loans within one expression, callee write sets for borrowed globals, `ref` locals die when their target changes. |
 | Rule O8 | Backend: overwrite stores the new value before dropping the old, so a re-entrant `Drop` is safe; globals are destroyed in reverse order, including the fields of struct globals; temporaries tested with `x?` or lent to a `ref` are dropped at statement end. |
@@ -76,7 +76,6 @@ pointee owns something.
 - Casting a box through an opaque marker and back is allowed because the round trip is intended
   (`box_cast_via_opaque_marker_round_trips`). Retyping a box through the marker (hole 17) needs the checker
   to know what the opaque box carries.
-- `array_take` for element types with an empty value.
 - The value-optional layout (Foundations, "Value optionals") will change O4's runtime drop flag from
   null to a tag for inline layouts.
 - Roadmap phase 5: codegen follows the use annotations for moves, and every `accept/` case plus twelve AOT samples

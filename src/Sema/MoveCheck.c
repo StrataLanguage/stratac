@@ -1278,7 +1278,7 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
 static bool IsArrayMutator(const char* callee)
 {
     static const char* const names[] = {"array_pop",     "array_push",   "array_remove",
-                                        "array_reserve", "array_resize", "array_swap_remove", "array_replace"};
+                                        "array_reserve", "array_resize", "array_swap_remove", "array_replace", "array_take"};
 
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
     {
@@ -2781,7 +2781,7 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
     case MoveDiagElement:
         DiagErrorFmt(diag, d->range,
                      "cannot move out of '%s': an element stays in its array; take it with array_remove, "
-                     "array_swap_remove or array_replace",
+                     "array_swap_remove, array_replace or array_take",
                      d->name);
         break;
     }

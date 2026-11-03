@@ -5084,6 +5084,19 @@ static Value EmitArrayBuiltin(Builder* b, CallExpr* n)
         return ValueMake(old, elemTd);
     }
 
+    if (strcmp(n->callee, "array_take") == 0)
+    {
+        LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+        LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
+        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+        LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
+
+        /* The element goes to the caller; the slot keeps the empty value (all zero for a string, array or optional). */
+        LLVMValueRef taken = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "take.value");
+        LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), elAddr);
+        return ValueMake(taken, elemTd);
+    }
+
     if (strcmp(n->callee, "array_push") == 0)
     {
         /* Evaluate the pushed value first: it may read the array itself
@@ -6669,6 +6682,7 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
         {"array_reserve", EmitArrayBuiltin   },
         {"array_swap_remove", EmitArrayBuiltin },
         {"array_replace", EmitArrayBuiltin },
+        {"array_take", EmitArrayBuiltin },
 
         /* Misc */
         {"copy",         EmitCopyBuiltin     },

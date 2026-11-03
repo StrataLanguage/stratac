@@ -1,0 +1,9 @@
+// expect: panic
+// rule: array_take with an index past the end panics like any other element access
+int main()
+{
+    string[] names = { "a", "b" };
+    string t = array_take(names, 5u);
+    printf("t=%s\n", t);
+    return 0;
+}

@@ -117,6 +117,7 @@ right-hand side.
 | Fixed fill | `byte[256] fill = { 0xFF; 256 };` — the count must be the length |
 | Capacity | `array_reserve(list, 100u);` |
 | Removal | `array_remove(a, i)` keeps order; `array_swap_remove(a, i)` moves the last element into the hole; both drop the removed element |
+| Take | `array_take(a, i)` moves a `string`, array or optional element out and leaves its empty value; the length stays |
 | Concatenation | `"effect '" + name + "': " + message` |
 | Text comparison | `string == string`, `string == cstring`, `cstring == cstring` all compare text |
 | Character literals | `'/'`, `'\\'`, `'\''`, `'\n'` — a `byte` constant (exactly `(byte)47`); one ASCII byte or one of the string escapes. Arithmetic between bytes stays `byte` and wraps: widen first (`int c = 'a';`) |

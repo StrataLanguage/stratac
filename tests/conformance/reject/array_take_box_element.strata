@@ -1,0 +1,9 @@
+// expect: reject "has none"
+// rule: array_take needs an element type with an empty value; a box has none, so use array_remove or array_replace
+int main()
+{
+    ^Res[] rs = {};
+    array_push(rs, Box(1));
+    ^Res r = array_take(rs, 0u);
+    return 0;
+}

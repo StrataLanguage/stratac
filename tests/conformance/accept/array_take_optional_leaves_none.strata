@@ -1,0 +1,16 @@
+// expect: run
+// expect-output: drop 1
+// expect-output: taken 1 left 0 1
+// rule: array_take on an optional element leaves it empty, so the array's own drop skips it
+int main()
+{
+    {
+        Res?[] slots = {};
+        array_push(slots, Res.Make(1));
+        array_push(slots, Res.Make(2));
+        Res? t = array_take(slots, 0u);
+        printf("taken %d left %d %d\n", t? ? 1 : 0, slots[0]? ? 1 : 0, slots[1]? ? 1 : 0);
+    }
+    Report();
+    return 0;
+}

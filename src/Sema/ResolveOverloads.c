@@ -4189,8 +4189,9 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
                     || strcmp(c->callee, "array_reserve") == 0;
     bool isPop = strcmp(c->callee, "array_pop") == 0;
     bool isReplace = strcmp(c->callee, "array_replace") == 0;
+    bool isTake = strcmp(c->callee, "array_take") == 0;
 
-    if (!isPush && !isResize && !isPop && !isReplace)
+    if (!isPush && !isResize && !isPop && !isReplace && !isTake)
     {
         return NULL;
     }
@@ -4206,8 +4207,8 @@ static const TypeName* ArrayBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
         return NULL;
     }
 
-    /* Pop and remove hand the element to the caller. */
-    if (isPop || isReplace || IsArrayRemoveName(c->callee))
+    /* Pop, remove, replace and take hand the element to the caller. */
+    if (isPop || isReplace || isTake || IsArrayRemoveName(c->callee))
     {
         return elem;
     }
@@ -4273,8 +4274,10 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     bool isRemove = IsArrayRemoveName(c->callee);
     /* `array_replace(a, i, v)` stores `v` in slot i and hands the old element to the caller. */
     bool isReplace = strcmp(c->callee, "array_replace") == 0;
+    /* `array_take(a, i)` moves element i out and leaves its empty value behind; the array keeps its length. */
+    bool isTake = strcmp(c->callee, "array_take") == 0;
 
-    if (!isPush && !isResize && !isPop && !isRemove && !isReplace)
+    if (!isPush && !isResize && !isPop && !isRemove && !isReplace && !isTake)
     {
         return false;
     }
@@ -4365,7 +4368,22 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         }
     }
 
-    if (isResize || isRemove || isReplace)
+    if (isTake)
+    {
+        const TypeName* elemType = TypeNameArrayElem(unwrapped);
+
+        /* Only a string, an array or an optional has a value that means "nothing here". */
+        if (elemType && !(TypeIsString(&r->m_registry, elemType->name) || TypeNameIsDynamicArray(elemType)
+                          || TypeNameIsOptional(elemType)))
+        {
+            DiagErrorFmt(r->m_diag, c->base.range,
+                         "'array_take' leaves an empty value in the slot, and '%s' has none; use array_remove, "
+                         "array_swap_remove or array_replace",
+                         elemType->name);
+        }
+    }
+
+    if (isResize || isRemove || isReplace || isTake)
     {
         Node* arg1 = (Node*)VecGet(&c->args, 1);
 
@@ -4374,7 +4392,7 @@ static bool ResolveArrayBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
         if (sizeType && (!IsNumeric(sizeType->primitiveType) || sizeType->primitiveType == PrimBool))
         {
             DiagErrorFmt(r->m_diag, arg1->range, "'%s' %s must be an integer, not '%s'", c->callee,
-                         isRemove || isReplace ? "index" : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
+                         isRemove || isReplace || isTake ? "index" : (strcmp(c->callee, "array_reserve") == 0 ? "capacity" : "size"),
                          sizeType->name);
         }
     }
@@ -6815,6 +6833,7 @@ static const IntrinsicTypeDefinition intrinsics[] = {
     {"array_reserve", ArrayBuiltinType,          ResolveArrayBuiltin    },
     {"array_swap_remove", ArrayBuiltinType,      ResolveArrayBuiltin    },
     {"array_replace", ArrayBuiltinType,          ResolveArrayBuiltin    },
+    {"array_take", ArrayBuiltinType,             ResolveArrayBuiltin    },
 
     /* Memory */
     {"copy",         CopyBuiltinType,            ResolveCopyBuiltin     },
