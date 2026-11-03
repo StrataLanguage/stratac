@@ -161,80 +161,11 @@ Token LexerPeekToken(Lexer* lex)
     return lex->m_peeked;
 }
 
-static Token LexTokenImpl(Lexer* lex)
+/* `-`, `+`, `*`, `/` and `%` with their compound forms. The character has already been consumed. */
+static Token LexArithmeticOp(Lexer* lex, char c, size_t start)
 {
-    SkipWhitespaceAndComments(lex);
-
-    size_t start = lex->m_pos;
-
-    if (lex->m_pos >= lex->m_sourceLen)
-    {
-        return Make(lex, TokEof, start);
-    }
-
-    char c = lex->m_source[lex->m_pos];
-
-    if (IsIdentStart(c))
-    {
-        return LexIdentOrKeyword(lex);
-    }
-
-    if (c == '"')
-    {
-        return LexStringLiteral(lex);
-    }
-
-    if (c == '\'')
-    {
-        return LexCharLiteral(lex);
-    }
-
-    if (IsDigit(c))
-    {
-        return LexNumber(lex);
-    }
-
-    if (c == '.' && IsDigit(LexerPeek(lex, 1)))
-    {
-        return LexNumber(lex);
-    }
-
-    ++lex->m_pos;
-
     switch (c)
     {
-    case '(':
-        return Make(lex, TokLParen, start);
-    case ')':
-        return Make(lex, TokRParen, start);
-    case '{':
-        return Make(lex, TokLBrace, start);
-    case '}':
-        return Make(lex, TokRBrace, start);
-    case '[':
-        return Make(lex, TokLBracket, start);
-    case ']':
-        return Make(lex, TokRBracket, start);
-    case ',':
-        return Make(lex, TokComma, start);
-    case ';':
-        return Make(lex, TokSemicolon, start);
-    case ':':
-        return Make(lex, TokColon, start);
-    case '~':
-        return Make(lex, TokTilde, start);
-    case '^':
-        return Make(lex, TokCaret, start);
-    case '.':
-        if (LexerPeek(lex, 0) == '.' && LexerPeek(lex, 1) == '.')
-        {
-            ++lex->m_pos;
-            ++lex->m_pos;
-
-            return Make(lex, TokDotDotDot, start);
-        }
-
-        return Make(lex, TokDot, start);
     case '-':
         if (LexerPeek(lex, 0) == '-')
         {
@@ -258,24 +189,6 @@ static Token LexTokenImpl(Lexer* lex)
         }
 
         return Make(lex, TokMinus, start);
-    case '=':
-        if (LexerPeek(lex, 0) == '=')
-        {
-            ++lex->m_pos;
-
-            return Make(lex, TokEqEq, start);
-        }
-
-        return Make(lex, TokAssign, start);
-    case '!':
-        if (LexerPeek(lex, 0) == '=')
-        {
-            ++lex->m_pos;
-
-            return Make(lex, TokNotEq, start);
-        }
-
-        return Make(lex, TokBang, start);
     case '+':
         if (LexerPeek(lex, 0) == '+')
         {
@@ -319,6 +232,34 @@ static Token LexTokenImpl(Lexer* lex)
         }
 
         return Make(lex, TokPercent, start);
+    default:
+        return Make(lex, TokUnknown, start);
+    }
+}
+
+/* `=`, `!`, `&`, `|`, `<` and `>` with their compound forms. The character has already been consumed. */
+static Token LexComparisonOp(Lexer* lex, char c, size_t start)
+{
+    switch (c)
+    {
+    case '=':
+        if (LexerPeek(lex, 0) == '=')
+        {
+            ++lex->m_pos;
+
+            return Make(lex, TokEqEq, start);
+        }
+
+        return Make(lex, TokAssign, start);
+    case '!':
+        if (LexerPeek(lex, 0) == '=')
+        {
+            ++lex->m_pos;
+
+            return Make(lex, TokNotEq, start);
+        }
+
+        return Make(lex, TokBang, start);
     case '&':
         if (LexerPeek(lex, 0) == '&')
         {
@@ -369,15 +310,116 @@ static Token LexTokenImpl(Lexer* lex)
         }
 
         return Make(lex, TokGt, start);
+    default:
+        return Make(lex, TokUnknown, start);
+    }
+}
+
+/* Operators and punctuation. The first character has already been consumed. Single-character
+   tokens and `.` / `...` are here; arithmetic and comparison heads go to their own helpers. */
+static Token LexPunctuation(Lexer* lex, char c, size_t start)
+{
+    switch (c)
+    {
+    case '(':
+        return Make(lex, TokLParen, start);
+    case ')':
+        return Make(lex, TokRParen, start);
+    case '{':
+        return Make(lex, TokLBrace, start);
+    case '}':
+        return Make(lex, TokRBrace, start);
+    case '[':
+        return Make(lex, TokLBracket, start);
+    case ']':
+        return Make(lex, TokRBracket, start);
+    case ',':
+        return Make(lex, TokComma, start);
+    case ';':
+        return Make(lex, TokSemicolon, start);
+    case ':':
+        return Make(lex, TokColon, start);
+    case '~':
+        return Make(lex, TokTilde, start);
+    case '^':
+        return Make(lex, TokCaret, start);
+    case '.':
+        if (LexerPeek(lex, 0) == '.' && LexerPeek(lex, 1) == '.')
+        {
+            ++lex->m_pos;
+            ++lex->m_pos;
+
+            return Make(lex, TokDotDotDot, start);
+        }
+
+        return Make(lex, TokDot, start);
     case '?':
         return Make(lex, TokQuestion, start);
     case '@':
         return Make(lex, TokAt, start);
+    case '-':
+    case '+':
+    case '*':
+    case '/':
+    case '%':
+        return LexArithmeticOp(lex, c, start);
+    case '=':
+    case '!':
+    case '&':
+    case '|':
+    case '<':
+    case '>':
+        return LexComparisonOp(lex, c, start);
     default:
         DiagErrorFmt(lex->m_diag, LexRange(lex, start, 1), "unexpected character '%c'", c);
 
         return Make(lex, TokUnknown, start);
     }
+}
+
+/* Reads one token. Each token class has its own reader: identifiers and keywords, numbers, strings,
+   character literals and punctuation. Whitespace and comments are skipped first. */
+static Token LexTokenImpl(Lexer* lex)
+{
+    SkipWhitespaceAndComments(lex);
+
+    size_t start = lex->m_pos;
+
+    if (lex->m_pos >= lex->m_sourceLen)
+    {
+        return Make(lex, TokEof, start);
+    }
+
+    char c = lex->m_source[lex->m_pos];
+
+    if (IsIdentStart(c))
+    {
+        return LexIdentOrKeyword(lex);
+    }
+
+    if (c == '"')
+    {
+        return LexStringLiteral(lex);
+    }
+
+    if (c == '\'')
+    {
+        return LexCharLiteral(lex);
+    }
+
+    if (IsDigit(c))
+    {
+        return LexNumber(lex);
+    }
+
+    if (c == '.' && IsDigit(LexerPeek(lex, 1)))
+    {
+        return LexNumber(lex);
+    }
+
+    ++lex->m_pos;
+
+    return LexPunctuation(lex, c, start);
 }
 
 static Token LexIdentOrKeyword(Lexer* lex)
