@@ -49,9 +49,10 @@ extern "C"
     } StrataTypeKind;
 
     /* StrataTypesStruct::flags */
-    enum
+    enum StrataTypesStructFlags
     {
-        STRATA_TYPES_STRUCT_COMPONENT = 1u << 0,
+        STRATA_TYPES_STRUCT_NONE = (0),
+        STRATA_TYPES_STRUCT_COMPONENT = (1u << 0),
     };
 
 #define STRATA_TYPES_NO_INDEX 0xFFFFFFFFu

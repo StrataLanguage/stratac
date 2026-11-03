@@ -120,7 +120,7 @@ static void PrintDiagnostics(State* state, const char* diagnostics)
 
 typedef enum CommandFlags
 {
-    CF_NONE = 0,
+    CF_NONE = (0),
     CF_FINAL = (1 << 0), // Exit after running.
     CF_SEPARATOR = (1 << 1),
 } CommandFlags;
