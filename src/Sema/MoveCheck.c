@@ -1,6 +1,7 @@
 #include "Sema/MoveCheck.h"
 
 #include "Codegen/TypeUtil.h"
+#include "Sema/Builtins.h"
 #include "Sema/Cfg.h"
 
 #include <ctype.h>
@@ -1290,22 +1291,6 @@ static bool ConsumeValue(const Env* env, unsigned char* f, Found* found, const N
     return proven;
 }
 
-static bool IsArrayMutator(const char* callee)
-{
-    static const char* const names[] = {"array_pop",    "array_push",        "array_remove",  "array_reserve",
-                                        "array_resize", "array_swap_remove", "array_replace", "array_take"};
-
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
-    {
-        if (strcmp(callee, names[i]) == 0)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 /* A value being dropped runs its `Drop` method (and those of its fields and elements), which may write
    globals: whatever the narrowing and refs rested on in those globals is gone. */
 static void ApplyDropWrites(const Env* env, unsigned char* f, const TypeName* t, int depth)
@@ -1422,7 +1407,7 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
         {
             /* Pushing or reserving moves no element: only a place indexed by the array's length goes. The
                others change what the elements are. The array itself stays set either way. */
-            bool keepsElements = strcmp(e->callee, "array_push") == 0 || strcmp(e->callee, "array_reserve") == 0;
+            bool keepsElements = (ArrayBuiltinFlagsOf(e->callee) & ABF_KEEPS_ELEMENTS) != 0;
             const char* name = arg0->kind == NodeIdent    ? ((const IdentExpr*)arg0)->name
                                : arg0->kind == NodeMember ? ((const MemberExpr*)arg0)->member
                                                           : NULL;

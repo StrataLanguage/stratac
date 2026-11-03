@@ -37,6 +37,7 @@ set(STRATA_COMMON_SOURCES
     src/Sema/Cfg.c
     src/Sema/MoveCheck.c
     src/Sema/NodeTypes.c
+    src/Sema/Builtins.c
     src/Codegen/TypeRegistry.c
     src/Codegen/TypeMetadata.c
     src/Codegen/TypeUtil.c
