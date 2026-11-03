@@ -86,3 +86,8 @@ pointee owns something.
   Drop glue, temporaries and argument passing stay in codegen: a temporary is parked in a zeroed slot and dropped at
   the end of its statement, so its drop is decided by the slot at run time, not by a static fact the checker could
   annotate. The `temp_*` and `arg_owned_*` cases pin them under AddressSanitizer and the live-count check.
+
+- Roadmap phase 7: `tests/fuzz/fuzz.py` generates random programs over `^Res` boxes, optionals, arrays, struct fields,
+  branches, loops and early returns, compiles them under AddressSanitizer and fails any that the checker accepts but
+  leaks, double drops, reads freed memory or panics. 2,000 programs (1,916 accepted) ran clean; a 150-program smoke
+  run is `fuzz/ownership_smoke`. Not yet generated: strings, `Drop` methods that mutate, `ref` aliases, `rc`.

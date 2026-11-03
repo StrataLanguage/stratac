@@ -575,6 +575,16 @@ if(STRATA_ENABLE_LLVM)
         strata_asan_sample(aot_extern_layout_test extern_layout.strata extern_layout_host.c)
         strata_asan_sample(aot_opaque_struct_test opaque_struct.strata opaque_struct_host.c)
         strata_asan_sample(aot_ffi_test ffi_pointers.strata "")
+        # Roadmap phase 7: random programs over owning types must run clean when the checker accepts them.
+        find_package(Python3 COMPONENTS Interpreter)
+        if(Python3_FOUND)
+            add_test(NAME fuzz/ownership_smoke
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/fuzz/fuzz.py
+                    --stratac $<TARGET_FILE:stratac> --clang ${STRATA_ASAN_CLANG}
+                    --count 150 --seed 1 --out ${CMAKE_CURRENT_BINARY_DIR}/fuzz)
+            set_tests_properties(fuzz/ownership_smoke PROPERTIES LABELS "asan;fuzz" TIMEOUT 600)
+        endif()
+
         strata_asan_sample(aot_components_test components.strata components_host.c Alpha_ Beta_)
         strata_asan_sample(aot_ownership_test ownership.strata "")
         strata_asan_sample(aot_arrays_strings_test arrays_strings.strata "")
