@@ -629,6 +629,223 @@ static bool SemaFoldConstBinary(BinaryOp op, ConstGlobalVal l, ConstGlobalVal r,
     }
 }
 
+static bool FoldIntLiteral(Node* n, ConstGlobalVal* out)
+{
+    /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
+    const IntLiteral* lit = (const IntLiteral*)n;
+
+    out->i = (long long)lit->value;
+    out->f = 0.0;
+    out->isFloat = false;
+    out->ity = (ConstIntType){lit->isLong || lit->value > 0x7FFFFFFFULL ? 64u : 32u, lit->isUnsigned};
+    return true;
+}
+
+static bool FoldFloatLiteral(Node* n, ConstGlobalVal* out)
+{
+    out->f = ((FloatLiteral*)n)->value;
+    out->isFloat = true;
+    out->ity = (ConstIntType){0, false};
+    return true;
+}
+
+static bool FoldBoolLiteral(Node* n, ConstGlobalVal* out)
+{
+    out->i = ((BoolLiteral*)n)->value ? 1 : 0;
+    out->f = 0.0;
+    out->isFloat = false;
+    out->ity = (ConstIntType){0, false};
+    return true;
+}
+
+static bool FoldUnary(Resolver* r, Node* n, ConstGlobalVal* out)
+{
+    UnaryExpr* u = (UnaryExpr*)n;
+
+    if (!SemaFoldConstInit(r, u->operand, out))
+    {
+        return false;
+    }
+
+    switch (u->op)
+    {
+    case UnNeg:
+        if (out->isFloat)
+        {
+            out->f = -out->f;
+        }
+        else
+        {
+            out->i = (long long)ConstIntNarrow((uint64_t)(-out->i), out->ity);
+        }
+
+        return true;
+    case UnPos:
+        return true;
+    case UnNot:
+        if (out->isFloat)
+        {
+            out->i = out->f == 0.0;
+        }
+        else
+        {
+            out->i = out->i == 0;
+        }
+
+        out->f = 0.0;
+        out->isFloat = false;
+        out->ity = (ConstIntType){0, false};
+        return true;
+    case UnBitNot:
+        if (out->isFloat)
+        {
+            return false;
+        }
+
+        out->i = (long long)ConstIntNarrow((uint64_t)~out->i, out->ity);
+        return true;
+    }
+
+    return false;
+}
+
+static bool FoldBinary(Resolver* r, Node* n, ConstGlobalVal* out)
+{
+    BinaryExpr* e = (BinaryExpr*)n;
+    ConstGlobalVal l;
+    ConstGlobalVal rhs;
+
+    if (!SemaFoldConstInit(r, e->lhs, &l) || !SemaFoldConstInit(r, e->rhs, &rhs))
+    {
+        return false;
+    }
+
+    return SemaFoldConstBinary(e->op, l, rhs, out);
+}
+
+static bool FoldCast(Resolver* r, Node* n, ConstGlobalVal* out)
+{
+    ConstGlobalVal inner = {0};
+
+    if (!SemaFoldConstInit(r, ((CastExpr*)n)->operand, &inner))
+    {
+        return false;
+    }
+
+    /* `isInt` describes the DECLARED type (set by the caller before the
+       fold); the value copy must not clobber it. */
+    bool wasInt = out->isInt;
+    *out = inner;
+    out->isInt = wasInt;
+
+    /* An integer target takes the value at its own width (`(byte)-8` is 248) and converts a float operand. */
+    const char* castName = ((CastExpr*)n)->type.name;
+    ConstIntType target = {0, false};
+
+    if (castName)
+    {
+        target = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->m_registry, castName)));
+    }
+
+    if (target.bits != 0)
+    {
+        if (out->isFloat)
+        {
+            out->i = (long long)out->f;
+            out->f = 0.0;
+            out->isFloat = false;
+        }
+
+        out->ity = target;
+        out->i = (long long)ConstIntNarrow((uint64_t)out->i, target);
+    }
+
+    return true;
+}
+
+static bool FoldIdent(Resolver* r, Node* n, ConstGlobalVal* out)
+{
+    ConstGlobalVal* prev = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, ((IdentExpr*)n)->name);
+
+    if (!prev)
+    {
+        return false;
+    }
+
+    bool wasInt = out->isInt;
+    *out = *prev;
+    out->isInt = wasInt;
+    return true;
+}
+
+static bool FoldMember(Resolver* r, Node* n, ConstGlobalVal* out)
+{
+    /* `int.max` / `float.min` — builtin scalar pseudo-properties fold
+       to their constants, exactly like enum constants. */
+    MemberExpr* m = (MemberExpr*)n;
+
+    if (m->base_node->kind != NodeIdent)
+    {
+        return false;
+    }
+
+    uint64_t intVal = 0;
+    double floatVal = 0.0;
+    bool isFloat = false;
+
+    if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal, &isFloat))
+    {
+        bool wasInt = out->isInt;
+        out->i = (long long)intVal;
+        out->f = floatVal;
+        out->isFloat = isFloat;
+        out->isInt = wasInt;
+        out->ity = SemaConstIntType(GetPrimitiveType(((IdentExpr*)m->base_node)->name));
+        return true;
+    }
+
+    /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
+       BEFORE the main resolution marks members, so scan the module. */
+    if (!TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->base_node)->name))
+    {
+        return false;
+    }
+
+    const char* baseName = ((IdentExpr*)m->base_node)->name;
+
+    for (size_t i = 0; i < r->m_mod->enums.count; i++)
+    {
+        EnumDecl* ed = (EnumDecl*)VecGet(&r->m_mod->enums, i);
+
+        if (strcmp(ed->name, baseName) != 0)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < ed->members.count; j++)
+        {
+            EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&ed->members, j);
+
+            if (strcmp(member->name, m->member) == 0)
+            {
+                bool wasInt = out->isInt;
+                out->i = (long long)member->value;
+                out->f = 0.0;
+                out->isFloat = false;
+                out->isInt = wasInt;
+                /* An enum member is typed by its underlying integer type (`int` when none is spelled). */
+                out->ity = SemaConstIntType(GetPrimitiveType(
+                    TypeRegistryResolveAlias(&r->m_registry, ed->underlyingType ? ed->underlyingType : "int")));
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    return false;
+}
+
 /* Folds a const-global initializer to a compile-time value. Handles int/
    float/bool literals, unary ops, scalar casts, the C constant-expression
    operators over folded operands, and references to earlier manifest
@@ -643,211 +860,21 @@ bool SemaFoldConstInit(Resolver* r, Node* n, ConstGlobalVal* out)
     switch (n->kind)
     {
     case NodeIntLiteral:
-    {
-        /* Typed as the checker types it (InferType): `l` suffixes and values past i32 are 64-bit. */
-        const IntLiteral* lit = (const IntLiteral*)n;
-
-        out->i = (long long)lit->value;
-        out->f = 0.0;
-        out->isFloat = false;
-        out->ity = (ConstIntType){lit->isLong || lit->value > 0x7FFFFFFFULL ? 64u : 32u, lit->isUnsigned};
-        return true;
-    }
+        return FoldIntLiteral(n, out);
     case NodeFloatLiteral:
-        out->f = ((FloatLiteral*)n)->value;
-        out->isFloat = true;
-        out->ity = (ConstIntType){0, false};
-        return true;
+        return FoldFloatLiteral(n, out);
     case NodeBoolLiteral:
-        out->i = ((BoolLiteral*)n)->value ? 1 : 0;
-        out->f = 0.0;
-        out->isFloat = false;
-        out->ity = (ConstIntType){0, false};
-        return true;
+        return FoldBoolLiteral(n, out);
     case NodeUnary:
-    {
-        UnaryExpr* u = (UnaryExpr*)n;
-
-        if (!SemaFoldConstInit(r, u->operand, out))
-        {
-            return false;
-        }
-
-        switch (u->op)
-        {
-        case UnNeg:
-            if (out->isFloat)
-            {
-                out->f = -out->f;
-            }
-            else
-            {
-                out->i = (long long)ConstIntNarrow((uint64_t)(-out->i), out->ity);
-            }
-
-            return true;
-        case UnPos:
-            return true;
-        case UnNot:
-            if (out->isFloat)
-            {
-                out->i = out->f == 0.0;
-            }
-            else
-            {
-                out->i = out->i == 0;
-            }
-
-            out->f = 0.0;
-            out->isFloat = false;
-            out->ity = (ConstIntType){0, false};
-            return true;
-        case UnBitNot:
-            if (out->isFloat)
-            {
-                return false;
-            }
-
-            out->i = (long long)ConstIntNarrow((uint64_t)~out->i, out->ity);
-            return true;
-        }
-
-        return false;
-    }
+        return FoldUnary(r, n, out);
     case NodeBinary:
-    {
-        BinaryExpr* e = (BinaryExpr*)n;
-        ConstGlobalVal l;
-        ConstGlobalVal rhs;
-
-        if (!SemaFoldConstInit(r, e->lhs, &l) || !SemaFoldConstInit(r, e->rhs, &rhs))
-        {
-            return false;
-        }
-
-        return SemaFoldConstBinary(e->op, l, rhs, out);
-    }
+        return FoldBinary(r, n, out);
     case NodeCast:
-    {
-        ConstGlobalVal inner = {0};
-
-        if (!SemaFoldConstInit(r, ((CastExpr*)n)->operand, &inner))
-        {
-            return false;
-        }
-
-        /* `isInt` describes the DECLARED type (set by the caller before the
-           fold); the value copy must not clobber it. */
-        bool wasInt = out->isInt;
-        *out = inner;
-        out->isInt = wasInt;
-
-        /* An integer target takes the value at its own width (`(byte)-8` is 248) and converts a float operand. */
-        const char* castName = ((CastExpr*)n)->type.name;
-        ConstIntType target = {0, false};
-
-        if (castName)
-        {
-            target = SemaConstIntType(GetPrimitiveType(TypeRegistryResolveAlias(&r->m_registry, castName)));
-        }
-
-        if (target.bits != 0)
-        {
-            if (out->isFloat)
-            {
-                out->i = (long long)out->f;
-                out->f = 0.0;
-                out->isFloat = false;
-            }
-
-            out->ity = target;
-            out->i = (long long)ConstIntNarrow((uint64_t)out->i, target);
-        }
-
-        return true;
-    }
+        return FoldCast(r, n, out);
     case NodeIdent:
-    {
-        ConstGlobalVal* prev = (ConstGlobalVal*)StrMapGet(&r->m_constGlobals, ((IdentExpr*)n)->name);
-
-        if (!prev)
-        {
-            return false;
-        }
-
-        bool wasInt = out->isInt;
-        *out = *prev;
-        out->isInt = wasInt;
-        return true;
-    }
+        return FoldIdent(r, n, out);
     case NodeMember:
-    {
-        /* `int.max` / `float.min` — builtin scalar pseudo-properties fold
-           to their constants, exactly like enum constants. */
-        MemberExpr* m = (MemberExpr*)n;
-
-        if (m->base_node->kind != NodeIdent)
-        {
-            return false;
-        }
-
-        uint64_t intVal = 0;
-        double floatVal = 0.0;
-        bool isFloat = false;
-
-        if (ScalarPseudoConst(GetPrimitiveType(((IdentExpr*)m->base_node)->name), m->member, &intVal, &floatVal,
-                              &isFloat))
-        {
-            bool wasInt = out->isInt;
-            out->i = (long long)intVal;
-            out->f = floatVal;
-            out->isFloat = isFloat;
-            out->isInt = wasInt;
-            out->ity = SemaConstIntType(GetPrimitiveType(((IdentExpr*)m->base_node)->name));
-            return true;
-        }
-
-        /* `EnumName.Member` — a scoped enum constant folds to its value. Runs
-           BEFORE the main resolution marks members, so scan the module. */
-        if (!TypeRegistryIsEnum(&r->m_registry, ((IdentExpr*)m->base_node)->name))
-        {
-            return false;
-        }
-
-        const char* baseName = ((IdentExpr*)m->base_node)->name;
-
-        for (size_t i = 0; i < r->m_mod->enums.count; i++)
-        {
-            EnumDecl* ed = (EnumDecl*)VecGet(&r->m_mod->enums, i);
-
-            if (strcmp(ed->name, baseName) != 0)
-            {
-                continue;
-            }
-
-            for (size_t j = 0; j < ed->members.count; j++)
-            {
-                EnumMemberDecl* member = (EnumMemberDecl*)VecGet(&ed->members, j);
-
-                if (strcmp(member->name, m->member) == 0)
-                {
-                    bool wasInt = out->isInt;
-                    out->i = (long long)member->value;
-                    out->f = 0.0;
-                    out->isFloat = false;
-                    out->isInt = wasInt;
-                    /* An enum member is typed by its underlying integer type (`int` when none is spelled). */
-                    out->ity = SemaConstIntType(GetPrimitiveType(
-                        TypeRegistryResolveAlias(&r->m_registry, ed->underlyingType ? ed->underlyingType : "int")));
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        return false;
-    }
+        return FoldMember(r, n, out);
     default:
         return false;
     }
