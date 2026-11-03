@@ -2132,60 +2132,6 @@ static bool ModuleHasFunctionNamed(Resolver* r, const char* name, uint16_t calle
 
 static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope);
 
-/* Validates vector intrinsic calls (e.g. `dot` and `cross`) */
-static bool ResolveVectorIntrinsics(Resolver* r, CallExpr* c, StrMap* scope)
-{
-    bool isDot = strcmp(c->callee, "dot") == 0;
-    bool isCross = strcmp(c->callee, "cross") == 0;
-
-    if (!isDot && !isCross)
-    {
-        return false;
-    }
-
-    /* A user-defined overload takes precedence over the SIMD intrinsic. */
-    if (ModuleHasFunctionNamed(r, c->callee, c->base.range.fileId))
-    {
-        return false;
-    }
-
-    if (c->args.count != 2)
-    {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects 2 arguments, got %zu", c->callee, c->args.count);
-        return true;
-    }
-
-    Node* a0 = (Node*)VecGet(&c->args, 0);
-    Node* a1 = (Node*)VecGet(&c->args, 1);
-
-    const TypeName* t0 = InferType(r, a0, scope);
-    const TypeName* t1 = InferType(r, a1, scope);
-
-    /* Resolve type aliases to check for SIMD vector compatibility. */
-    const char* resolved0 = t0 ? TypeRegistryResolveAlias(&r->m_registry, t0->name) : "";
-    const char* resolved1 = t1 ? TypeRegistryResolveAlias(&r->m_registry, t1->name) : "";
-    int lanes0 = GetNameSimdVectorLanes(resolved0);
-    int lanes1 = GetNameSimdVectorLanes(resolved1);
-
-    if (lanes0 == 0 || lanes1 == 0)
-    {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' expects SIMD vector arguments (float2/float3/float4), not '%s'",
-                     c->callee, t0 ? t0->name : "?");
-        return true;
-    }
-
-    if (lanes0 != lanes1)
-    {
-        DiagErrorFmt(r->m_diag, c->base.range, "'%s' requires both vectors to have the same lane count ('%s' vs '%s')",
-                     c->callee, t0->name, t1->name);
-        return true;
-    }
-
-    c->isIntrinsicCall = true;
-
-    return true;
-}
-
 static bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope)
 {
     // User defined functions take precedence
