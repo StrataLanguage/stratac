@@ -350,7 +350,6 @@ Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 
     TypeDesc elemTd = Resolve(b, arr.typeDesc.arrayInner);
     LLVMTypeRef elemTy = TypeDescHasArrayShape(&elemTd) ? ArrayStructType(b) : elemTd.type;
-    TypeDesc uintTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
 
     LLVMValueRef dataPtrPtr = ArrayDataPtr(b, arr.ptr);
     LLVMValueRef lenPtr = ArrayLenPtr(b, arr.ptr);
@@ -358,218 +357,268 @@ Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 
     if (strcmp(n->callee, "array_pop") == 0)
     {
-        LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
-        LLVMValueRef one = LLVMConstInt(I32Ty(b), 1, 0);
-        LLVMValueRef lm1 = LLVMBuildSub(b->m_builder, len, one, "lm1");
-        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-
-        /* Popping an empty array is an out-of-bounds read of index len-1
-           (wraps to 0xFFFFFFFF): route it through the same bounds check as
-           `a[i]` (AOT panics; JIT reports via strata_oob and yields a dummy). */
-        LLVMValueRef elAddr = EmitCheckedElemPtr(b, WidenLen(b, lm1), WidenLen(b, len), data, elemTy, elemTd, false);
-        LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "popped");
-
-        /* The popped value now belongs to the caller: clear the vacated slot
-           (or the JIT's OOB scratch dummy) so no later drop of it frees the
-           value a second time. */
-        if (ElemNeedsScratchDummy(b, elemTd))
-        {
-            LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), elAddr);
-        }
-
-        /* Never underflow: an empty array stays empty. */
-        LLVMValueRef isEmpty = LLVMBuildICmp(b->m_builder, LLVMIntEQ, len, LLVMConstInt(I32Ty(b), 0, 0), "pop.empty");
-        LLVMBuildStore(b->m_builder, LLVMBuildSelect(b->m_builder, isEmpty, len, lm1, "pop.len"), lenPtr);
-
-        return ValueMake(v, elemTd);
+        return EmitArrayPop(b, dataPtrPtr, lenPtr, elemTd, elemTy);
     }
 
     if (strcmp(n->callee, "array_reserve") == 0)
     {
-        /* Grows the capacity to at least `want`; the length and elements are unchanged. */
-        LLVMValueRef want = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
-        LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
-        LLVMValueRef cap64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), capPtr, "cap"));
-        LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-
-        LLVMBasicBlockRef growBb = NewBb(b, "rsv.grow");
-        LLVMBasicBlockRef doneBb = NewBb(b, "rsv.done");
-        LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntUGT, want, cap64, "rsv.more"), growBb, doneBb);
-        b->m_terminated = true;
-
-        PositionAtEnd(b, growBb);
-        LLVMValueRef allocArgs[1] = {LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), want, "rsv.bytes")};
-        StrataAllocFn(b);
-        LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "rsv.buf");
-        EmitArrayCopyLoop(b, newData, oldData, len64, elemTy);
-        LLVMValueRef freeArgs[1] = {oldData};
-        StrataFreeFn(b);
-        LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
-        LLVMBuildStore(b->m_builder, newData, dataPtrPtr);
-        LLVMBuildStore(b->m_builder, LLVMBuildTrunc(b->m_builder, want, I32Ty(b), "rsv.cap"), capPtr);
-        Br(b, doneBb);
-
-        PositionAtEnd(b, doneBb);
-        return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+        return EmitArrayReserve(b, n, dataPtrPtr, lenPtr, capPtr, elemTy);
     }
 
     if (strcmp(n->callee, "array_remove") == 0 || strcmp(n->callee, "array_swap_remove") == 0)
     {
-        bool swap = strcmp(n->callee, "array_swap_remove") == 0;
-
-        /* The index first: evaluating it may change the array. */
-        LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
-        LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
-        LLVMValueRef len64 = WidenLen(b, len);
-        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-
-        /* Out of range is the bounds error `a[i]` would be (AOT panics; the JIT reports it), and then
-           nothing is removed. */
-        EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
-        LLVMValueRef inRange = LLVMBuildICmp(b->m_builder, LLVMIntULT, index, len64, "rm.in");
-        LLVMBasicBlockRef doBb = NewBb(b, "rm.do");
-        LLVMBasicBlockRef endBb = NewBb(b, "rm.end");
-
-        /* The removed element goes to the caller, who drops it (or keeps it). Out of range yields a zero. */
-        LLVMValueRef removedSlot = EntryAlloca(b, elemTy, "rm.out");
-        LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), removedSlot);
-
-        LLVMBuildCondBr(b->m_builder, inRange, doBb, endBb);
-        b->m_terminated = true;
-
-        PositionAtEnd(b, doBb);
-        LLVMValueRef one64 = LLVMConstInt(I64Ty(b), 1, 0);
-        LLVMValueRef next = LLVMBuildAdd(b->m_builder, index, one64, "rm.next");
-        LLVMValueRef last = LLVMBuildSub(b->m_builder, len64, one64, "rm.last");
-
-        /* The survivors move bitwise: ownership goes with them. */
-        LLVMValueRef holeIdx[1] = {index};
-        LLVMValueRef hole = LLVMBuildGEP2(b->m_builder, elemTy, data, holeIdx, 1, "rm.hole");
-        LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, elemTy, hole, "rm.taken"), removedSlot);
-
-        if (swap)
-        {
-            LLVMValueRef lastIdx[1] = {last};
-            LLVMValueRef lastAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, lastIdx, 1, "rm.lastp");
-            LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, elemTy, lastAddr, "rm.moved"), hole);
-        }
-        else
-        {
-            LLVMValueRef nextIdx[1] = {next};
-            LLVMValueRef after = LLVMBuildGEP2(b->m_builder, elemTy, data, nextIdx, 1, "rm.after");
-            EmitArrayCopyLoop(b, hole, after, LLVMBuildSub(b->m_builder, last, index, "rm.count"), elemTy);
-        }
-
-        LLVMBuildStore(b->m_builder, LLVMBuildTrunc(b->m_builder, last, I32Ty(b), "rm.len"), lenPtr);
-        Br(b, endBb);
-
-        PositionAtEnd(b, endBb);
-        return ValueMake(LLVMBuildLoad2(b->m_builder, elemTy, removedSlot, "rm.value"), elemTd);
+        return EmitArrayRemove(b, n, dataPtrPtr, lenPtr, elemTd, elemTy);
     }
 
     if (strcmp(n->callee, "array_replace") == 0)
     {
-        /* Left to right: the index, then the value (either may change the array). */
-        LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
-        Node* valNode = (Node*)VecGet(&n->args, 2);
-        Value v = EmitExpr(b, valNode);
-
-        LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
-        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-        LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
-
-        /* The old element goes to the caller; the new one takes its place, ownership and all. */
-        LLVMValueRef old = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "repl.old");
-        StoreMovedElement(b, elAddr, v, valNode, elemTd);
-        return ValueMake(old, elemTd);
+        return EmitArrayReplace(b, n, dataPtrPtr, lenPtr, elemTd, elemTy);
     }
 
     if (strcmp(n->callee, "array_take") == 0)
     {
-        LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
-        LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
-        LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-        LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
-
-        /* The element goes to the caller; the slot keeps the empty value (all zero for a string, array or optional). */
-        LLVMValueRef taken = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "take.value");
-        LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), elAddr);
-        return ValueMake(taken, elemTd);
+        return EmitArrayTake(b, n, dataPtrPtr, lenPtr, elemTd, elemTy);
     }
 
     if (strcmp(n->callee, "array_push") == 0)
     {
-        /* Evaluate the pushed value first: it may read the array itself
-           (`array_push(a, a[0])`), and the grow path below frees the old
-           buffer. */
-        Node* valNode = (Node*)VecGet(&n->args, 1);
-        Value v = EmitExpr(b, valNode);
-
-        LLVMValueRef one32 = LLVMConstInt(I32Ty(b), 1, 0);
-        LLVMValueRef oldLen = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
-        LLVMValueRef oldLen64 = WidenLen(b, oldLen);
-        LLVMValueRef oldCap = LLVMBuildLoad2(b->m_builder, I32Ty(b), capPtr, "cap");
-        LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
-
-        /* Room left: write in place (no realloc). Out of room: double the
-           capacity, moving the elements (bitwise — ownership transfers)
-           and freeing the old buffer. Doubling off cap 0 seeds 4. */
-        LLVMValueRef hasRoom = LLVMBuildICmp(b->m_builder, LLVMIntULT, oldLen, oldCap, "room");
-        LLVMBasicBlockRef roomBb = NewBb(b, "push.room");
-        LLVMBasicBlockRef growBb = NewBb(b, "push.grow");
-        LLVMBasicBlockRef joinBb = NewBb(b, "push.join");
-        LLVMBuildCondBr(b->m_builder, hasRoom, roomBb, growBb);
-        b->m_terminated = true;
-
-        PositionAtEnd(b, roomBb);
-        Br(b, joinBb);
-
-        PositionAtEnd(b, growBb);
-        LLVMValueRef doubled = LLVMBuildMul(b->m_builder, oldCap, LLVMConstInt(I32Ty(b), 2, 0), "capx2");
-        LLVMValueRef newCap = LLVMBuildSelect(
-            b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, oldCap, LLVMConstInt(I32Ty(b), 0, 0), "capz"),
-            LLVMConstInt(I32Ty(b), 4, 0), doubled, "newcap");
-        LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), WidenLen(b, newCap), "bytes");
-        LLVMValueRef allocArgs[1] = {totalBytes};
-        StrataAllocFn(b);
-        LLVMValueRef grown = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "pushbuf");
-
-        EmitArrayCopyLoop(b, grown, oldData, oldLen64, elemTy);
-
-        LLVMValueRef freeArgs[1] = {oldData};
-        StrataFreeFn(b);
-        LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
-
-        /* The copy loop leaves the builder in its own `end` block — that
-           block (not push.grow) is the direct predecessor of the join. */
-        LLVMBasicBlockRef growEnd = LLVMGetInsertBlock(b->m_builder);
-        Br(b, joinBb);
-
-        PositionAtEnd(b, joinBb);
-        LLVMValueRef data = LLVMBuildPhi(b->m_builder, b->m_ptrTy, "pushdata");
-        LLVMValueRef capPhi = LLVMBuildPhi(b->m_builder, I32Ty(b), "pushcap");
-        LLVMValueRef dataIn[2] = {oldData, grown};
-        LLVMValueRef capIn[2] = {oldCap, newCap};
-        LLVMBasicBlockRef fromBbs[2] = {roomBb, growEnd};
-        LLVMAddIncoming(data, dataIn, fromBbs, 2);
-        LLVMAddIncoming(capPhi, capIn, fromBbs, 2);
-
-        LLVMValueRef slotIdx[1] = {oldLen64};
-        LLVMValueRef elAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, slotIdx, 1, "pushslot");
-
-        StoreMovedElement(b, elAddr, v, valNode, elemTd);
-
-        LLVMValueRef newLen = LLVMBuildAdd(b->m_builder, oldLen, one32, "nlen");
-        LLVMBuildStore(b->m_builder, data, dataPtrPtr);
-        LLVMBuildStore(b->m_builder, capPhi, capPtr);
-        LLVMBuildStore(b->m_builder, newLen, lenPtr);
-
-        return ValueMake(newLen, uintTd);
+        return EmitArrayPush(b, n, dataPtrPtr, lenPtr, capPtr, elemTd, elemTy);
     }
 
-    /* array_resize: within cap it mutates in place (zero the grown tail /
-       drop the shrunken owning tail); beyond cap it reallocates to
-       max(newLen, cap*2, 4) and moves the prefix. */
+    return EmitArrayResize(b, n, arr.typeDesc.arrayInner, dataPtrPtr, lenPtr, capPtr, elemTd, elemTy);
+}
+
+/* array_pop: the popped element goes to the caller; an empty array stays empty. */
+Value EmitArrayPop(Builder* b, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd, LLVMTypeRef elemTy)
+{
+    LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
+    LLVMValueRef one = LLVMConstInt(I32Ty(b), 1, 0);
+    LLVMValueRef lm1 = LLVMBuildSub(b->m_builder, len, one, "lm1");
+    LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+
+    /* Popping an empty array is an out-of-bounds read of index len-1
+       (wraps to 0xFFFFFFFF): route it through the same bounds check as
+       `a[i]` (AOT panics; JIT reports via strata_oob and yields a dummy). */
+    LLVMValueRef elAddr = EmitCheckedElemPtr(b, WidenLen(b, lm1), WidenLen(b, len), data, elemTy, elemTd, false);
+    LLVMValueRef v = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "popped");
+
+    /* The popped value now belongs to the caller: clear the vacated slot
+       (or the JIT's OOB scratch dummy) so no later drop of it frees the
+       value a second time. */
+    if (ElemNeedsScratchDummy(b, elemTd))
+    {
+        LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), elAddr);
+    }
+
+    /* Never underflow: an empty array stays empty. */
+    LLVMValueRef isEmpty = LLVMBuildICmp(b->m_builder, LLVMIntEQ, len, LLVMConstInt(I32Ty(b), 0, 0), "pop.empty");
+    LLVMBuildStore(b->m_builder, LLVMBuildSelect(b->m_builder, isEmpty, len, lm1, "pop.len"), lenPtr);
+
+    return ValueMake(v, elemTd);
+}
+
+/* array_reserve(a, want): grows the capacity to at least `want`; the length and elements are unchanged. */
+Value EmitArrayReserve(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
+                       LLVMTypeRef elemTy)
+{
+    /* Grows the capacity to at least `want`; the length and elements are unchanged. */
+    LLVMValueRef want = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+    LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
+    LLVMValueRef cap64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), capPtr, "cap"));
+    LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+
+    LLVMBasicBlockRef growBb = NewBb(b, "rsv.grow");
+    LLVMBasicBlockRef doneBb = NewBb(b, "rsv.done");
+    LLVMBuildCondBr(b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntUGT, want, cap64, "rsv.more"), growBb, doneBb);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, growBb);
+    LLVMValueRef allocArgs[1] = {LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), want, "rsv.bytes")};
+    StrataAllocFn(b);
+    LLVMValueRef newData = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "rsv.buf");
+    EmitArrayCopyLoop(b, newData, oldData, len64, elemTy);
+    LLVMValueRef freeArgs[1] = {oldData};
+    StrataFreeFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+    LLVMBuildStore(b->m_builder, newData, dataPtrPtr);
+    LLVMBuildStore(b->m_builder, LLVMBuildTrunc(b->m_builder, want, I32Ty(b), "rsv.cap"), capPtr);
+    Br(b, doneBb);
+
+    PositionAtEnd(b, doneBb);
+    return ValueMake(NULL, TypeDescMake(NULL, TD_VOID, NULL));
+}
+
+/* array_remove / array_swap_remove(a, i): the element at `i` goes to the caller; swap_remove fills the hole with the
+ * last element. */
+Value EmitArrayRemove(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
+                      LLVMTypeRef elemTy)
+{
+    bool swap = strcmp(n->callee, "array_swap_remove") == 0;
+
+    /* The index first: evaluating it may change the array. */
+    LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+    LLVMValueRef len = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
+    LLVMValueRef len64 = WidenLen(b, len);
+    LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+
+    /* Out of range is the bounds error `a[i]` would be (AOT panics; the JIT reports it), and then
+       nothing is removed. */
+    EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
+    LLVMValueRef inRange = LLVMBuildICmp(b->m_builder, LLVMIntULT, index, len64, "rm.in");
+    LLVMBasicBlockRef doBb = NewBb(b, "rm.do");
+    LLVMBasicBlockRef endBb = NewBb(b, "rm.end");
+
+    /* The removed element goes to the caller, who drops it (or keeps it). Out of range yields a zero. */
+    LLVMValueRef removedSlot = EntryAlloca(b, elemTy, "rm.out");
+    LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), removedSlot);
+
+    LLVMBuildCondBr(b->m_builder, inRange, doBb, endBb);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, doBb);
+    LLVMValueRef one64 = LLVMConstInt(I64Ty(b), 1, 0);
+    LLVMValueRef next = LLVMBuildAdd(b->m_builder, index, one64, "rm.next");
+    LLVMValueRef last = LLVMBuildSub(b->m_builder, len64, one64, "rm.last");
+
+    /* The survivors move bitwise: ownership goes with them. */
+    LLVMValueRef holeIdx[1] = {index};
+    LLVMValueRef hole = LLVMBuildGEP2(b->m_builder, elemTy, data, holeIdx, 1, "rm.hole");
+    LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, elemTy, hole, "rm.taken"), removedSlot);
+
+    if (swap)
+    {
+        LLVMValueRef lastIdx[1] = {last};
+        LLVMValueRef lastAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, lastIdx, 1, "rm.lastp");
+        LLVMBuildStore(b->m_builder, LLVMBuildLoad2(b->m_builder, elemTy, lastAddr, "rm.moved"), hole);
+    }
+    else
+    {
+        LLVMValueRef nextIdx[1] = {next};
+        LLVMValueRef after = LLVMBuildGEP2(b->m_builder, elemTy, data, nextIdx, 1, "rm.after");
+        EmitArrayCopyLoop(b, hole, after, LLVMBuildSub(b->m_builder, last, index, "rm.count"), elemTy);
+    }
+
+    LLVMBuildStore(b->m_builder, LLVMBuildTrunc(b->m_builder, last, I32Ty(b), "rm.len"), lenPtr);
+    Br(b, endBb);
+
+    PositionAtEnd(b, endBb);
+    return ValueMake(LLVMBuildLoad2(b->m_builder, elemTy, removedSlot, "rm.value"), elemTd);
+}
+
+/* array_replace(a, i, v): stores `v` at `i` and returns the old element. */
+Value EmitArrayReplace(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
+                       LLVMTypeRef elemTy)
+{
+    /* Left to right: the index, then the value (either may change the array). */
+    LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+    Node* valNode = (Node*)VecGet(&n->args, 2);
+    Value v = EmitExpr(b, valNode);
+
+    LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
+    LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+    LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
+
+    /* The old element goes to the caller; the new one takes its place, ownership and all. */
+    LLVMValueRef old = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "repl.old");
+    StoreMovedElement(b, elAddr, v, valNode, elemTd);
+    return ValueMake(old, elemTd);
+}
+
+/* array_take(a, i): moves the element at `i` out and leaves the empty value in its slot. */
+Value EmitArrayTake(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, TypeDesc elemTd,
+                    LLVMTypeRef elemTy)
+{
+    LLVMValueRef index = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
+    LLVMValueRef len64 = WidenLen(b, LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len"));
+    LLVMValueRef data = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+    LLVMValueRef elAddr = EmitCheckedElemPtr(b, index, len64, data, elemTy, elemTd, false);
+
+    /* The element goes to the caller; the slot keeps the empty value (all zero for a string, array or optional). */
+    LLVMValueRef taken = LLVMBuildLoad2(b->m_builder, elemTy, elAddr, "take.value");
+    LLVMBuildStore(b->m_builder, LLVMConstNull(elemTy), elAddr);
+    return ValueMake(taken, elemTd);
+}
+
+/* array_push(a, v): appends `v` and returns the new length. */
+Value EmitArrayPush(Builder* b, CallExpr* n, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr, LLVMValueRef capPtr,
+                    TypeDesc elemTd, LLVMTypeRef elemTy)
+{
+    TypeDesc uintTd = TypeDescMake(I32Ty(b), TD_UNSIGNED, NULL);
+
+    /* Evaluate the pushed value first: it may read the array itself
+       (`array_push(a, a[0])`), and the grow path below frees the old
+       buffer. */
+    Node* valNode = (Node*)VecGet(&n->args, 1);
+    Value v = EmitExpr(b, valNode);
+
+    LLVMValueRef one32 = LLVMConstInt(I32Ty(b), 1, 0);
+    LLVMValueRef oldLen = LLVMBuildLoad2(b->m_builder, I32Ty(b), lenPtr, "len");
+    LLVMValueRef oldLen64 = WidenLen(b, oldLen);
+    LLVMValueRef oldCap = LLVMBuildLoad2(b->m_builder, I32Ty(b), capPtr, "cap");
+    LLVMValueRef oldData = LLVMBuildLoad2(b->m_builder, b->m_ptrTy, dataPtrPtr, "data");
+
+    /* Room left: write in place (no realloc). Out of room: double the
+       capacity, moving the elements (bitwise — ownership transfers)
+       and freeing the old buffer. Doubling off cap 0 seeds 4. */
+    LLVMValueRef hasRoom = LLVMBuildICmp(b->m_builder, LLVMIntULT, oldLen, oldCap, "room");
+    LLVMBasicBlockRef roomBb = NewBb(b, "push.room");
+    LLVMBasicBlockRef growBb = NewBb(b, "push.grow");
+    LLVMBasicBlockRef joinBb = NewBb(b, "push.join");
+    LLVMBuildCondBr(b->m_builder, hasRoom, roomBb, growBb);
+    b->m_terminated = true;
+
+    PositionAtEnd(b, roomBb);
+    Br(b, joinBb);
+
+    PositionAtEnd(b, growBb);
+    LLVMValueRef doubled = LLVMBuildMul(b->m_builder, oldCap, LLVMConstInt(I32Ty(b), 2, 0), "capx2");
+    LLVMValueRef newCap = LLVMBuildSelect(
+        b->m_builder, LLVMBuildICmp(b->m_builder, LLVMIntEQ, oldCap, LLVMConstInt(I32Ty(b), 0, 0), "capz"),
+        LLVMConstInt(I32Ty(b), 4, 0), doubled, "newcap");
+    LLVMValueRef totalBytes = LLVMBuildMul(b->m_builder, SizeOfConst(b, elemTy), WidenLen(b, newCap), "bytes");
+    LLVMValueRef allocArgs[1] = {totalBytes};
+    StrataAllocFn(b);
+    LLVMValueRef grown = LLVMBuildCall2(b->m_builder, b->m_allocFnType, b->m_allocFn, allocArgs, 1, "pushbuf");
+
+    EmitArrayCopyLoop(b, grown, oldData, oldLen64, elemTy);
+
+    LLVMValueRef freeArgs[1] = {oldData};
+    StrataFreeFn(b);
+    LLVMBuildCall2(b->m_builder, b->m_freeFnType, b->m_freeFn, freeArgs, 1, "");
+
+    /* The copy loop leaves the builder in its own `end` block — that
+       block (not push.grow) is the direct predecessor of the join. */
+    LLVMBasicBlockRef growEnd = LLVMGetInsertBlock(b->m_builder);
+    Br(b, joinBb);
+
+    PositionAtEnd(b, joinBb);
+    LLVMValueRef data = LLVMBuildPhi(b->m_builder, b->m_ptrTy, "pushdata");
+    LLVMValueRef capPhi = LLVMBuildPhi(b->m_builder, I32Ty(b), "pushcap");
+    LLVMValueRef dataIn[2] = {oldData, grown};
+    LLVMValueRef capIn[2] = {oldCap, newCap};
+    LLVMBasicBlockRef fromBbs[2] = {roomBb, growEnd};
+    LLVMAddIncoming(data, dataIn, fromBbs, 2);
+    LLVMAddIncoming(capPhi, capIn, fromBbs, 2);
+
+    LLVMValueRef slotIdx[1] = {oldLen64};
+    LLVMValueRef elAddr = LLVMBuildGEP2(b->m_builder, elemTy, data, slotIdx, 1, "pushslot");
+
+    StoreMovedElement(b, elAddr, v, valNode, elemTd);
+
+    LLVMValueRef newLen = LLVMBuildAdd(b->m_builder, oldLen, one32, "nlen");
+    LLVMBuildStore(b->m_builder, data, dataPtrPtr);
+    LLVMBuildStore(b->m_builder, capPhi, capPtr);
+    LLVMBuildStore(b->m_builder, newLen, lenPtr);
+
+    return ValueMake(newLen, uintTd);
+}
+
+/* array_resize: within cap it mutates in place (zero the grown tail /
+   drop the shrunken owning tail); beyond cap it reallocates to
+   max(newLen, cap*2, 4) and moves the prefix. */
+Value EmitArrayResize(Builder* b, CallExpr* n, const TypeName* arrayInner, LLVMValueRef dataPtrPtr, LLVMValueRef lenPtr,
+                      LLVMValueRef capPtr, TypeDesc elemTd, LLVMTypeRef elemTy)
+{
     /* New length first, for the same reason as array_push: evaluating it
        may mutate the array. */
     LLVMValueRef newLen = AsI64Index(b, EmitExpr(b, (Node*)VecGet(&n->args, 1)));
@@ -600,7 +649,7 @@ Value EmitArrayBuiltin(Builder* b, CallExpr* n)
 
         PositionAtEnd(b, dropBb);
 
-        if (arr.typeDesc.arrayInner && BuilderIsOwningValue(b, arr.typeDesc.arrayInner))
+        if (arrayInner && BuilderIsOwningValue(b, arrayInner))
         {
             EmitArrayDropRange(b, oldData, newLen, oldLen64, elemTd, elemTy);
         }
