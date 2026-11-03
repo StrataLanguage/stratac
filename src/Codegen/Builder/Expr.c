@@ -471,6 +471,12 @@ Value EmitCStringLengthMember(Builder* b, Value base)
     return ValueMake(LLVMBuildTrunc(b->builder, len, I32Ty(b), "cslen"), TypeDescMake(I32Ty(b), TDF_UNSIGNED, NULL));
 }
 
+// cstring .ptr: the constant's own bytes as a raw `ptr`. Borrowed, so nothing is dropped.
+Value EmitCStringPtrMember(Builder* b, Value base)
+{
+    return ValueMake(base.value, ResolveByName(b, STRATA_PTR_TYPE));
+}
+
 // Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
 // struct has no such field.
 bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
@@ -574,6 +580,11 @@ Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
     if ((TypeDescHasArrayShape(&base.typeDesc) || TypeDescIsString(&base.typeDesc)) && strcmp(n->member, "data") == 0)
     {
         return EmitArrayDataMember(b, base);
+    }
+
+    if (TypeDescIsCString(&base.typeDesc) && strcmp(n->member, "ptr") == 0)
+    {
+        return EmitCStringPtrMember(b, base);
     }
 
     if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(n->member, "length") == 0 || strcmp(n->member, "cap") == 0))

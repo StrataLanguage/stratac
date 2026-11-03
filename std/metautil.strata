@@ -1,0 +1,11 @@
+@meta
+bool initable(type T)
+{
+	return @has_function(T, init);
+}
+
+@meta
+bool droppable(type T)
+{
+	return @has_function(T, drop);
+}

@@ -1,0 +1,18 @@
+// expect: reject "is ambiguous"
+// rule: a call that fits both an instance overload and a static overload of the same arity is ambiguous
+struct Thing
+{
+    int v;
+}
+
+impl Thing
+{
+    int get() { return 1; }
+    int get(const ref Thing self) { return 2; }
+}
+
+int main()
+{
+    Thing t = Thing { .v = 0 };
+    return t.get();
+}

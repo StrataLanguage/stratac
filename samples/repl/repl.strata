@@ -1,0 +1,21 @@
+
+import ../../std/bytebuffer;
+
+extern int printf(string fmt, ...);
+
+
+int main()
+{
+	bytebuffer bb;
+
+	bb.init(128);
+
+	bb.write("Hello, World!");
+	bb.write_byte((byte)0);
+
+	printf("value: %s\n", bb.get());
+
+	bb.free();
+
+	return 0;
+}

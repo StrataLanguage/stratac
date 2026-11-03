@@ -1,0 +1,94 @@
+import memory;
+
+
+struct bytebuffer
+{
+	*byte pbuffer;
+	ulong size;
+	ulong capacity;
+}
+
+@private
+ulong bb_min(ulong x, ulong y)
+{
+	if (x <= y) {
+		return x;
+	}
+
+	return y;
+}
+
+impl bytebuffer
+{
+	// TODO: init should act as a constructor without needing to be called manually.
+
+	void init(ref bytebuffer self, ulong initial_size)
+	{
+		self.request_size(initial_size);
+	}
+
+	void request_size(ref bytebuffer self, ulong requested_size)
+	{
+		const ulong sc_min_allocation_size = 512;
+
+		// TODO: add `?` check for nullability on pointer types
+		if (self.pbuffer == null) {
+			// Ensure that the size is at least min_allocation_size.
+			// TODO: align the size to the alignment of the arch.
+			self.capacity = bb_min(requested_size, sc_min_allocation_size);
+			self.pbuffer = (*byte)malloc(self.capacity);
+			self.size = 0;
+
+			// We won't need to reallocate, skip the additional branch
+			return;
+		}
+
+		if ((self.size + requested_size) >= self.capacity) {
+			// Resize the bytebuffer if needed
+			self.capacity *= 2;
+			self.pbuffer = (*byte)realloc((*void)self.pbuffer, self.capacity);
+		}
+	}
+
+	// Writes a string to the bytebuffer
+	void write(ref bytebuffer self, cstring str)
+	{
+		self.request_size(str.length);
+
+		// NOTE: We cannot perform arithmetic on pointers, so we must drop down to an integer type and back to a pointer.
+		*byte dst = (*byte)((ulong)self.pbuffer + self.size);
+		*byte str_ptr = (*byte)str;
+
+		memory_copy<byte>(dst, str_ptr, str.length);
+		self.size += str.length;
+	}
+
+	void write_byte(ref bytebuffer self, byte b)
+	{
+		self.request_size(1);
+
+		*byte dst = (*byte)((ulong)self.pbuffer + self.size);
+		(*dst) = b;
+
+		self.size += 1;
+	}
+
+	const *byte get(const ref bytebuffer self)
+	{
+		return self.pbuffer;
+	}
+
+	void free(ref bytebuffer self)
+	{
+		if (self.pbuffer == null) {
+			return;
+		}
+
+		memory_free((*void)self.pbuffer);
+		self.pbuffer = null;
+		self.size = 0;
+		self.capacity = 0;
+	}
+
+	// TODO: Drop should not be solely for boxed values. It should function like a normal destructor.
+}

@@ -363,6 +363,7 @@ Value EmitArrayDataMember(Builder* b, Value base);
 Value EmitArrayLengthMember(Builder* b, MemberExpr* n, Value base);
 Value EmitFixedArrayLengthMember(Builder* b, Value base);
 Value EmitCStringLengthMember(Builder* b, Value base);
+Value EmitCStringPtrMember(Builder* b, Value base);
 bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out);
 Value EmitBoxedVectorDeref(Builder* b, Value base);
 bool TryEmitSimdLaneMember(Builder* b, MemberExpr* n, Value base, Value* out);
