@@ -303,6 +303,11 @@ static void AppendItems(ModuleLoader* loader, const Module* src)
     {
         VecPush(&root->delegates, VecGet(&src->delegates, i));
     }
+
+    for (size_t i = 0; i < src->metaFunctions.count; i++)
+    {
+        VecPush(&root->metaFunctions, VecGet(&src->metaFunctions, i));
+    }
 }
 
 static void LoadStrataModule(ModuleLoader* loader, const char* key, const char* name, const char* text, size_t textLen,

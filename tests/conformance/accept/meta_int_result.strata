@@ -1,0 +1,22 @@
+// expect: run
+// expect-output: 21 13
+// expect-output: 13 -4 7 9
+// rule: an integer meta function folds to a constant, both as a global initializer and in a body, and negative results are kept
+@meta int bits(int n) { return n * 4 + 1; }
+@meta int neg(int n) { return -n; }
+@meta int pick(int a, int b)
+{
+    int r = a;
+    if (b > a)
+    {
+        r = b;
+    }
+    return r;
+}
+int gWide = @bits(5);
+int main()
+{
+    printf("%d %d\n", gWide, @bits(3));
+    printf("%d %d %d %d\n", @bits(3), @neg(4), @pick(7, 2), @pick(1, 9));
+    return 0;
+}

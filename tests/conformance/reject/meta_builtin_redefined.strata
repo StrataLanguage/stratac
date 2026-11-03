@@ -1,0 +1,4 @@
+// expect: reject "'@has_function' is a built-in meta function and cannot be redefined"
+// rule: the built-in meta functions are reserved, so a user meta function cannot take their name
+@meta bool has_function(type T) { return true; }
+int main() { return 0; }

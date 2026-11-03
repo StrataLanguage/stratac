@@ -1,0 +1,28 @@
+// expect: run
+// expect-output: 33
+// rule: a meta function may call a meta function, use bool and integer locals, and branch on its parameters
+@meta bool inner(type T) { return @is_same(T, int); }
+@meta bool outer(type T) { return @inner(T) || @inner(T); }
+@meta int pick(int n)
+{
+    int base = 10;
+    int extra = 0;
+    if (n > 3)
+    {
+        extra = 5;
+    }
+    else
+    {
+        extra = 1;
+    }
+    base += extra;
+    return base + n;
+}
+@meta int sum(int a, int b) { return @pick(a) + b; }
+int main()
+{
+    int r = 0;
+    if (@outer(int)) { r = @pick(4); }
+    printf("%d\n", r + @sum(1, 2));
+    return 0;
+}

@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: reads 12
+// rule: a `const` pointer binding still reads its pointee: `*p`, `p.field`, `const ref` and by-value self
+struct Foo { int v; }
+impl Foo { int get(const ref Foo self) { return self.v; } int val(Foo self) { return self.v; } }
+int Read(const ref Foo f) { return f.v; }
+int main()
+{
+    Foo f = Foo { .v = 2 };
+    const *Foo p = &f;
+    Foo copy = *p;
+    printf("reads %d\n", p.get() + p.val() + Read(*p) + (*p).v + p.v + copy.v);
+    Report();
+    return 0;
+}

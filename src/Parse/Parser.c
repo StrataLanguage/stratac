@@ -180,6 +180,10 @@ static void AddTopLevelDecl(Module* mod, Node* decl, Parser* p)
     {
         VecPush(&mod->delegates, decl);
     }
+    else if (decl->kind == NodeFunction && ((FunctionDecl*)decl)->isMeta)
+    {
+        VecPush(&mod->metaFunctions, decl);
+    }
     else if (decl->kind == NodeFunction)
     {
         VecPush(&mod->functions, decl);
@@ -374,6 +378,7 @@ Module* ParserParseModule(Parser* p)
     VecInit(&mod->impls);
     VecInit(&mod->delegates);
     VecInit(&mod->genericTemplates);
+    VecInit(&mod->metaFunctions);
 
     while (p->cur.kind != TokEof)
     {

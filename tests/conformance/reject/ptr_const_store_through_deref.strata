@@ -1,0 +1,10 @@
+// expect: reject "'p' is immutable"
+// rule: a `const` pointer binding can't write its pointee through `*p`, as it can't through `p.field`
+struct Foo { int v; }
+int main()
+{
+    Foo f = Foo { .v = 1 };
+    const *Foo p = &f;
+    *p = Foo { .v = 2 };
+    return f.v;
+}

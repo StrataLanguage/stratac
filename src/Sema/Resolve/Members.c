@@ -274,6 +274,21 @@ static void VecPushFront(Vec* v, void* item)
     v->items[0] = item;
 }
 
+// The self argument for a method called through a pointer: `*p`, built as an UnDeref and checked like any
+// other `*p`, so a null pointer panics at the call and the same type rules apply.
+static Node* DerefReceiver(Resolver* r, Node* base, StrMap* scope)
+{
+    UnaryExpr* deref = AST_NEW(r->arena, UnaryExpr);
+    deref->base.kind = NodeUnary;
+    deref->base.range = base->range;
+    deref->op = UnDeref;
+    deref->operand = base;
+
+    ResolveAddressUnary(r, deref, scope);
+
+    return (Node*)deref;
+}
+
 // Resolves `expr.Member(args...)` / `Type.Member(args...)` against impl blocks.
 // Returns true when the call was fully handled (diagnostic emitted); false
 // after a successful rewrite (fall through to normal overload resolution).
@@ -285,6 +300,9 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
     bool isStatic = base->kind == NodeIdent && TypeRegistryIsUserType(&r->registry, ((IdentExpr*)base)->name);
 
     const char* handleName = NULL;
+
+    // The receiver is a `*T` (not a box or optional): the self argument becomes `*p`.
+    bool viaPointer = false;
 
     if (isStatic)
     {
@@ -305,6 +323,7 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
             return true;
         }
 
+        viaPointer = TypeNameIsPointer(raw);
         handleName = inner->name;
     }
 
@@ -336,7 +355,9 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         if (TypeRegistryIsImplTarget(&r->registry, p0->type.name)
             && (strcmp(p0->type.name, handleName) == 0 || HandleExtendsFrom(&r->registry, handleName, p0->type.name)))
         {
-            VecPushFront(&c->args, c->calleeBase);
+            Node* self = viaPointer ? DerefReceiver(r, c->calleeBase, scope) : c->calleeBase;
+
+            VecPushFront(&c->args, self);
         }
     }
 

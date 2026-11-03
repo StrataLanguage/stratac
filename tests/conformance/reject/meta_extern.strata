@@ -1,0 +1,4 @@
+// expect: reject "a @meta function cannot be extern: 'ext'"
+// rule: a meta function is interpreted from its body, so it cannot be an extern declaration
+@meta extern int ext(int n);
+int main() { return 0; }

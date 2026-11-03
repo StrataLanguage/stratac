@@ -924,6 +924,96 @@ STRATA_TEST(impl_optional_receiver_needs_blessing)
     ArenaFree(&arena2);
 }
 
+STRATA_TEST(impl_pointer_receiver_derefs_self)
+{
+    // `p.m()` on a `*Foo` passes `*p` as self, so the method's `ref Foo` parameter matches.
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("struct Foo { int v; }\n"
+                                  "impl Foo {\n"
+                                  "    void bump(ref Foo self) { self.v = self.v + 1; }\n"
+                                  "    int get(const ref Foo self) { return self.v; }\n"
+                                  "}\n"
+                                  "int entry(*Foo p) { p.bump(); return p.get(); }\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* entry = (FunctionDecl*)FindFunction(mod, "entry");
+    STRATA_CHECK(entry != NULL);
+    Block* body = (Block*)entry->body;
+    ExprStmt* stmt = (ExprStmt*)VecGet(&body->statements, 0);
+    STRATA_CHECK(stmt->expr->kind == NodeCall);
+
+    CallExpr* call = (CallExpr*)stmt->expr;
+    STRATA_CHECK(strcmp(call->callee, "Foo_bump") == 0);
+    STRATA_CHECK(call->resolvedDecl != NULL);
+    STRATA_CHECK_EQ(call->args.count, 1);
+
+    Node* self = (Node*)VecGet(&call->args, 0);
+    STRATA_CHECK(self->kind == NodeUnary);
+    UnaryExpr* deref = (UnaryExpr*)self;
+    STRATA_CHECK(deref->op == UnDeref);
+    STRATA_CHECK(deref->operand->kind == NodeIdent);
+    STRATA_CHECK(deref->pointee != NULL && strcmp(deref->pointee->name, "Foo") == 0);
+
+    // The same rewrite for a call that returns a value (`get` is the second call in the body).
+    ReturnStmt* ret = (ReturnStmt*)VecGet(&body->statements, 1);
+    CallExpr* getCall = (CallExpr*)ret->value;
+    STRATA_CHECK(strcmp(getCall->callee, "Foo_get") == 0);
+    STRATA_CHECK(((Node*)VecGet(&getCall->args, 0))->kind == NodeUnary);
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(impl_pointer_receiver_errors)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+
+    // A method the pointee lacks is diagnosed by name, as on a value.
+    ParseAndResolve("struct Foo { int v; }\n"
+                    "impl Foo { int get(const ref Foo self) { return self.v; } }\n"
+                    "int entry(*Foo p) { return p.nope(); }\n",
+                    &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+    STRATA_CHECK(Contains(ErrText(&diag, &arena), "type 'Foo' has no method 'nope'"));
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+
+    // Only one level of pointer is looked through: `**Foo` names `*Foo` as the receiver type.
+    Arena arena2;
+    ArenaInit(&arena2, 0);
+    DiagnosticEngine diag2;
+    DiagnosticEngineInit(&diag2);
+    ParseAndResolve("struct Foo { int v; }\n"
+                    "impl Foo { int get(const ref Foo self) { return self.v; } }\n"
+                    "int entry(**Foo p) { return p.get(); }\n",
+                    &diag2, &arena2);
+    STRATA_CHECK(DiagHasErrors(&diag2));
+    STRATA_CHECK(Contains(ErrText(&diag2, &arena2), "type '*Foo' has no method 'get'"));
+    DiagnosticEngineFree(&diag2);
+    ArenaFree(&arena2);
+
+    // A by-value self would move the pointee out of memory: a pointer to an owning type is rejected.
+    Arena arena3;
+    ArenaInit(&arena3, 0);
+    DiagnosticEngine diag3;
+    DiagnosticEngineInit(&diag3);
+    ParseAndResolve("struct Named { string name; }\n"
+                    "impl Named { int take(Named self) { return 0; } }\n"
+                    "int entry(*Named p) { return p.take(); }\n",
+                    &diag3, &arena3);
+    STRATA_CHECK(DiagHasErrors(&diag3));
+    STRATA_CHECK(Contains(ErrText(&diag3, &arena3), "pointer to an owning type"));
+    DiagnosticEngineFree(&diag3);
+    ArenaFree(&arena3);
+}
+
 STRATA_TEST(impl_astdump_shows_impl_block)
 {
     Arena arena;
@@ -1436,6 +1526,52 @@ STRATA_TEST(impl_jit_recursive_property_chain)
     {
         float cell = 3.25f;
         STRATA_CHECK_EQ((long)(entry(NULL, &cell) * 100.0f), 325);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+STRATA_TEST(impl_pointer_receiver_jit)
+{
+    /* `p.m()` through a `*Foo`: `ref` and `const ref` self act on the pointee, by-value self copies it, and a
+       generic `*T` parameter calls the method per instance. */
+    StrataCompiler* c = strataCompilerCreate();
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "struct Foo { int v; }\n"
+                                            "impl Foo {\n"
+                                            "    void bump(ref Foo self) { self.v = self.v + 1; }\n"
+                                            "    int get(const ref Foo self) { return self.v; }\n"
+                                            "    int twice(Foo self) { self.v = self.v * 2; return self.v; }\n"
+                                            "}\n"
+                                            "void touch<T>(*T p) { p.bump(); }\n"
+                                            "int entry()\n"
+                                            "{\n"
+                                            "  Foo f = Foo { .v = 4 };\n"
+                                            "  *Foo p = &f;\n"
+                                            "  p.bump();\n"
+                                            "  if (p.get() != 5) { return 1; }\n"
+                                            "  if (p.twice() != 10) { return 2; }\n" /* the copy is doubled, f is not */
+                                            "  if (f.v != 5) { return 3; }\n"
+                                            "  touch<Foo>(p);\n"
+                                            "  if (f.v != 6) { return 4; }\n"
+                                            "  return 0;\n"
+                                            "}\n",
+                                            "pointer_receiver", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    int (*entry)(void) = (int (*)(void))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(), 0);
     }
 
     strataJitDestroy(jit);

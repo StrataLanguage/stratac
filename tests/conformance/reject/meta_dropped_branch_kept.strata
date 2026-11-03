@@ -1,0 +1,14 @@
+// expect: reject "type 'B' has no method 'drop'"
+// rule: a condition that is not a constant keeps both branches, so a missing method in the branch is still an error
+struct B { int v; }
+@meta bool has_drop(type T) { return @has_function(T, drop); }
+void touch<T>(ref T x)
+{
+    if (@has_drop(T) || true) { x.drop(); }
+}
+int main()
+{
+    B b = B { .v = 1 };
+    touch<B>(b);
+    return 0;
+}

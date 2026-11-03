@@ -1,0 +1,11 @@
+// expect: run
+// expect-output: 47
+// rule: a plain `hello` and a meta `@hello` coexist; each call finds only its own namespace
+int hello() { return 3; }
+@meta int hello(type T) { return 40; }
+@meta int twice(int n) { return n * 2; }
+int main()
+{
+    printf("%d\n", hello() + @twice(2) + @hello(int));
+    return 0;
+}
