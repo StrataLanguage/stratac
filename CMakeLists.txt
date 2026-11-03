@@ -37,7 +37,20 @@ set(STRATA_COMMON_SOURCES
     src/Parse/ParseDecl.c
     src/Parse/ParseStmt.c
     src/Parse/ParseExpr.c
-    src/Sema/ResolveOverloads.c
+    src/Sema/Resolve/ConstEval.c
+    src/Sema/Resolve/TypeRules.c
+    src/Sema/Resolve/Moves.c
+    src/Sema/Resolve/Borrows.c
+    src/Sema/Resolve/Vectors.c
+    src/Sema/Resolve/Strings.c
+    src/Sema/Resolve/Arrays.c
+    src/Sema/Resolve/Memory.c
+    src/Sema/Resolve/Calls.c
+    src/Sema/Resolve/Members.c
+    src/Sema/Resolve/Enums.c
+    src/Sema/Resolve/Expr.c
+    src/Sema/Resolve/Stmt.c
+    src/Sema/Resolve/Decls.c
     src/Sema/ConstFold.c
     src/Sema/Cfg.c
     src/Sema/MoveCheck/Places.c
