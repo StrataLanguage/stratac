@@ -44,12 +44,16 @@ impl rc<T>
 		self.refcnt = null;
 	}
 
-	void init<TArgs...>(ref rc<T> self, TArgs... args)
+	void init(ref rc<T> self, const ref rc<T> other)
 	{
-		self.create_ref(args...);
+		self.ptr = other.ptr;
+		self.refcnt = other.refcnt;
+
+		if (self.refcnt != null) {
+			self.refcnt.inc();
+		}
 	}
 
-	@private
 	void create_ref<TArgs...>(ref rc<T> self, TArgs... args)
 	{
 		// Pad the size out so our total allocation is aligned
@@ -59,36 +63,39 @@ impl rc<T>
 		*T obj_ptr = (*T)raw_alloc;
 		obj_ptr.init(args...);
 
-		ptr refcnt_raw = (ptr)((ulong)raw_alloc + aligned_size);
+		*__refcnt refcnt = (*__refcnt)(ptr)((ulong)raw_alloc + aligned_size);
+		refcnt.init();
 
 		self.ptr = obj_ptr;
-		self.refcnt = (*__refcnt)refcnt_raw;
-
-		printf("Creating rc\n");
+		self.refcnt = refcnt;
 	}
 
 	@private
-	void decref(ref rc<T> self)
+	void __decref(ref rc<T> self)
 	{
 		if (self.refcnt == null) {
 			return;
 		}
 
 		if (self.refcnt.dec() == 0) {
-			printf("Destroying rc\n");
+			ptr raw_ptr = (ptr)self.ptr;
+			memory_free((*void)raw_ptr);
+
+			self.ptr = null;
+			// This is a combined allocation, so refcnt is already freed
+			self.refcnt = null;
 		}
 	}
 
 	void drop(ref rc<T> self)
 	{
-		self.decref();
+		self.__decref();
 	}
 }
 
 rc<T> make_ref<T, TArgs...>(TArgs... args)
 {
-	var res = rc<T>();
-	res.create_ref();
-	res.ptr.init(args...);
+	rc<T> res;
+	res.create_ref(args...);
 	return res;
 }

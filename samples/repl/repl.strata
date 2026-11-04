@@ -878,11 +878,6 @@ impl rc_test
 
 int main()
 {
-	/*{
-		var test_rc = make_ref<rc_test, int, float>(10, 20.0f);
-		return 0;
-	}*/
-
 	s.compiler = strataCompilerCreate();
 	repl_install_panic_hook();
 
