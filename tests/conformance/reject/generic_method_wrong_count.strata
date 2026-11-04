@@ -1,0 +1,13 @@
+// expect: reject "generic method 'convert' takes 1 type argument(s), but 2 were given"
+// rule: an explicit method type argument list has exactly the method's count
+struct H { int a; }
+impl H
+{
+    float convert<U>(const ref H self) { return 0.0f; }
+}
+int main()
+{
+    H h = H { .a = 1 };
+    float f = h.convert<int, float>();
+    return 0;
+}

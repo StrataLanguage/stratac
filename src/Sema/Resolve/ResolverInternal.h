@@ -176,6 +176,7 @@ const char* ConstRootName(const Resolver* r, Node* target, StrMap* scope);
 bool CheckAllowListSingle(Resolver* r, CallExpr* c, StrMap* scope, const char** allowed, const int allowedSize);
 bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const AllowList* allowed, const int allowedSize);
 bool ResolveVectorConstruct(Resolver* r, CallExpr* c, StrMap* scope);
+bool FunctionIsFileLocal(const FunctionDecl* fd);
 bool FunctionVisibleTo(const FunctionDecl* fd, uint16_t callerFile);
 bool ModuleHasFunctionNamed(Resolver* r, const char* name, uint16_t callerFile);
 bool ResolveVector2Arg(Resolver* r, CallExpr* c, StrMap* scope);

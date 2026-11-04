@@ -148,6 +148,9 @@ bool IsTypedMemoryIntrinsic(Resolver* r, const CallExpr* c)
 FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId, bool* ambiguous)
 {
     FunctionDecl* found = NULL;
+    FunctionDecl* ownFile = NULL;
+    size_t visible = 0;
+    size_t inOwnFile = 0;
     *ambiguous = false;
 
     for (size_t i = 0; i < r->mod->functions.count; i++)
@@ -159,16 +162,30 @@ FunctionDecl* FindSingleFunction(Resolver* r, const char* name, uint16_t fileId,
             continue;
         }
 
-        if (found)
-        {
-            *ambiguous = true;
-            return NULL;
-        }
-
         found = f;
+        visible++;
+
+        if (f->base.range.fileId == fileId)
+        {
+            ownFile = f;
+            inOwnFile++;
+        }
     }
 
-    return found;
+    if (visible <= 1)
+    {
+        return found;
+    }
+
+    // A file's own function wins over same-named ones from other files (e.g. its extern `free`
+    // against an importer's `int free`), as in overload resolution.
+    if (inOwnFile == 1)
+    {
+        return ownFile;
+    }
+
+    *ambiguous = true;
+    return NULL;
 }
 
 // `addressof(f)` names a function, not a variable: a bare identifier that is no local/global.
@@ -280,7 +297,15 @@ static bool ResolveAddressOfBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
 
         if (!fn)
         {
-            DiagErrorFmt(r->diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
+            if (ambiguous)
+            {
+                DiagErrorFmt(r->diag, arg0->range, "cannot take the address of overloaded function '%s'", fnName);
+            }
+            else
+            {
+                DiagErrorFmt(r->diag, arg0->range, "unknown function '%s'", fnName);
+            }
+
             return true;
         }
 

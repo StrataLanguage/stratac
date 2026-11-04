@@ -1,0 +1,11 @@
+// expect: reject "can't tell the type of the receiver of 'conv' before type checking"
+// rule: a generic method's receiver needs a type Monomorphize can name
+struct H { int a; }
+impl H
+{
+    int conv<U>(const ref H self) { return 0; }
+}
+int main()
+{
+    return (1 + 2).conv<int>();
+}

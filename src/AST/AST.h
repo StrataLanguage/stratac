@@ -538,6 +538,9 @@ typedef struct FunctionDecl
     // symbol-prefixed — so C code can call it by name or through `addressof(fn)` (callbacks). Its
     // body reaches the module's globals through the context created most recently.
     bool isExport;
+    // `@export extern`: an extern that files importing this one can also call. A plain extern is
+    // visible only in the file that declares it. Kept apart from isExport, which marks a defined function.
+    bool isExportedExtern;
     // `@noreturn`: never returns to its caller (exits, aborts, panics). A call to it as a statement
     // ends the path for flow typing, like `return`; its body must not reach its end or `return`.
     bool isNoReturn;
@@ -783,6 +786,7 @@ typedef struct
 {
     Node base;
     double value;
+    bool isSingle; // `f` suffix: a float literal (its type for generic inference, see Monomorphize)
 } FloatLiteral;
 
 typedef struct

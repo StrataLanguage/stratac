@@ -1,0 +1,12 @@
+// expect: reject "'conv' is a generic method of 'H', but the receiver's type isn't known before type checking"
+// rule: a generic method called on a receiver Monomorphize can't type is reported by sema, not silently missed
+struct H { int a; }
+impl H
+{
+    int conv<U>(const ref H self, U v) { return self.a; }
+}
+int main()
+{
+    H[] hs = { H { .a = 1 } };
+    return hs[0].conv(2);
+}

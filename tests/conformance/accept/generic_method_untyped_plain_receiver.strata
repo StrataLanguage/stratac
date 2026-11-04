@@ -1,0 +1,27 @@
+// expect: run
+// expect-output: 5 6 2
+// rule: a generic method name elsewhere doesn't stop plain methods of that name on untyped receivers
+struct P { int v; }
+impl P { void init(ref P self, int v) { self.v = v; } }
+
+struct G { int v; }
+impl G
+{
+    void init(ref G self) { self.v = 0; }
+    void init<U>(ref G self, U v) { self.v = (int)v; }
+}
+
+*P first(*P[] ps) { return ps[0]; }
+
+int main()
+{
+    P a = P(1);
+    P b = P(1);
+    *P[] ps = { addressof(a), addressof(b) };
+    ps[0].init(5);
+    int x = a.v;
+    first(ps).init(6);
+    G g = G(2.5);
+    printf("%d %d %d\n", x, a.v, g.v);
+    return 0;
+}

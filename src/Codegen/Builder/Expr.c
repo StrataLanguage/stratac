@@ -511,6 +511,15 @@ Value EmitCStringPtrMember(Builder* b, Value base)
     return ValueMake(base.value, ResolveByName(b, STRATA_PTR_TYPE));
 }
 
+// string .ptr: the element buffer (field 0 of the fat), typed `*byte`. Borrowed, so nothing is dropped.
+Value EmitStringPtrMember(Builder* b, Value base)
+{
+    TypeDesc byteTd = ResolveByName(b, "*byte");
+    LLVMValueRef v = LLVMBuildExtractValue(b->builder, base.value, 0, "sptr");
+    BorrowTemp(b, base, byteTd);
+    return ValueMake(v, byteTd);
+}
+
 // Field read through a box (`^T`) with no addressable lvalue, e.g. `MakeThing().field`. Returns false when the box's
 // struct has no such field.
 bool TryEmitBoxFieldMember(Builder* b, MemberExpr* n, Value base, Value* out)
@@ -619,6 +628,11 @@ Value EmitMemberOfValue(Builder* b, MemberExpr* n, Value base)
     if (TypeDescIsCString(&base.typeDesc) && strcmp(n->member, "ptr") == 0)
     {
         return EmitCStringPtrMember(b, base);
+    }
+
+    if (TypeDescIsString(&base.typeDesc) && strcmp(n->member, "ptr") == 0)
+    {
+        return EmitStringPtrMember(b, base);
     }
 
     if (TypeDescHasArrayShape(&base.typeDesc) && (strcmp(n->member, "length") == 0 || strcmp(n->member, "cap") == 0))

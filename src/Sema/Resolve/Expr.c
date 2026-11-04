@@ -387,6 +387,12 @@ static const TypeName* InferMemberType(Resolver* r, Node* n, StrMap* scope)
     // only — they have no capacity (inline storage).
     if (IsFatPseudoProperty(r, baseType, m->member))
     {
+        // `string.ptr` is typed `*byte`; `.data` and `cstring.ptr` are a raw `ptr`.
+        if (strcmp(m->member, "ptr") == 0 && TypeIsString(&r->registry, UnwrapBoxPtr(baseType)->name))
+        {
+            return InternTypeName(r, "*byte");
+        }
+
         bool isRawPtr = strcmp(m->member, "data") == 0 || strcmp(m->member, "ptr") == 0;
 
         return InternTypeName(r, isRawPtr ? STRATA_PTR_TYPE : "uint");

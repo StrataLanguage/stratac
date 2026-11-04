@@ -1,0 +1,13 @@
+// expect: reject "'plain' is not a generic method, so it takes no type arguments"
+// rule: a method that is not generic takes no type arguments, even when another handle has a generic method of another name
+struct H { int a; }
+impl H
+{
+    int plain(int x) { return x; }
+    int other<U>(const ref H self, U v) { return 0; }
+}
+int main()
+{
+    H h = H { .a = 1 };
+    return h.plain<int>(1);
+}

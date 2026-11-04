@@ -1,0 +1,8 @@
+// expect: reject "a 'drop' method cannot have type parameters"
+// rule: the drop method takes no type parameters of its own
+struct H { int a; }
+impl H
+{
+    void drop<T>(ref H self) { }
+}
+int main() { return 0; }

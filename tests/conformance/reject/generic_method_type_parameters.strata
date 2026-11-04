@@ -1,9 +1,9 @@
-// expect: reject "type parameters go on the impl, not on method 'get'"
-// rule: a method inside a generic impl takes no type parameters of its own; they belong to the impl
+// expect: reject "shadows the impl's type parameter 'T'"
+// rule: a method's own type parameter may not reuse the name of a type parameter of its impl
 struct number<T> { T value; }
 impl number<T>
 {
-    T get<U>(const ref number<T> self) { return self.value; }
+    T get<T>(const ref number<T> self) { return self.value; }
 }
 int main()
 {

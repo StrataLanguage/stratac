@@ -1,0 +1,9 @@
+// expect: reject "generic method 'M' cannot share its name with another method of 'H'"
+// rule: a generic method and a plain method of one handle may not share a name
+struct H { int a; }
+impl H
+{
+    int M<T>(T x) { return 0; }
+    int M(int x) { return 1; }
+}
+int main() { return 0; }

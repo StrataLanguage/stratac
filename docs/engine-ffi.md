@@ -20,12 +20,34 @@ written in it with almost no C glue. Each feature has a sample run by `ctest`:
 | Integer literal suffixes | `1l`, `1ul` |
 | Program entry | `int main()` in an AOT build becomes the C `main` |
 | Runtime hooks in Strata | `@export ptr strata_alloc(ulong size) { ... }` (also `strata_free`, `strata_panic`, `strata_oob`) |
-| Import paths | `stratac -I root`; identical `extern` declarations in several modules merge |
+| Import paths | `stratac -I root`; identical `extern` declarations in several modules name one C symbol (see Extern visibility) |
 | Opaque handles | `handle VkBuffer;` — `handle` is a keyword only there (top level, followed by a name), so fields, locals and params may be called `handle`; no type may be named `handle` |
 
 A fixed array passed where an extern takes a `ptr` decays to its first element, as in C:
 `snprintf(buffer, 32ul, "%d", n)` with `byte[32] buffer`. `(ptr)fixedArray` does the same
 explicitly.
+
+## Extern visibility
+
+A top-level `extern` function is visible only in the file that declares it. A file that imports
+it cannot call it, so the importer may define a function of the same name:
+
+```strata
+/* a.strata */
+extern void free(ptr p);                // visible in a.strata only
+@export extern ptr malloc(ulong n);     // visible to every file that imports a.strata
+
+/* b.strata */
+import a;
+int free(ptr p) { return 10; }          // fine: a's free is not visible here
+int alloc_one() { ptr buf = malloc(8); return 0; }   // fine: malloc is @export
+```
+
+- `@export extern` takes the C name and is callable from every importing file. It clashes with any other function of that name, in any file.
+- Extern methods in an `impl` block and `extern delegate` are not file-local; they are reached through their type or by name as before.
+- The same extern (same signature) declared in several files is one C symbol. A different signature for the same name is an error.
+- `@private` on an extern does the same as a plain extern. `@private` and `@export` together, `@export` on an impl method, and `@export extern delegate` are errors.
+- When a call's candidates tie on identical parameter types, the declaration in the caller's own file is used.
 
 ## Ownership
 
@@ -133,6 +155,7 @@ right-hand side.
 | Character literals | `'/'`, `'\\'`, `'\''`, `'\n'` — a `byte` constant (exactly `(byte)47`); one ASCII byte or one of the string escapes. Arithmetic between bytes stays `byte` and wraps: widen first (`int c = 'a';`) |
 | Byte buffers as text | `(cstring)buf` borrows a `byte[N]`; `(string)buf` copies up to the first NUL (or all N bytes) |
 | String as C string | `(cstring)s` borrows the string's NUL-terminated bytes |
+| String element buffer | `s.ptr` borrows the buffer as a `*byte` (`s.data` is the same address as a raw `ptr`); `cs.ptr` on a `cstring` is a raw `ptr` |
 
 ```c
 if ((cstring)layers[i].layerName == name) { ... }  // a Vulkan char[256] against a string

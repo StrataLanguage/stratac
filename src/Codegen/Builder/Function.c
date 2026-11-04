@@ -184,7 +184,11 @@ void DeclareFunction(Builder* b, const FunctionDecl* f)
         const char* symbol = (f->isExtern || f->isExport) ? f->mangledName
                              : IsAotEntryPoint(b, f)      ? ExportedSymbolName(b, STRATA_AOT_MAIN_SYMBOL)
                                                           : ExportedSymbolName(b, f->mangledName);
-        info->function = LLVMAddFunction(b->mod, symbol, info->type);
+
+        // The same extern may be declared in several files: they name one C symbol, so reuse its declaration
+        // (a second LLVMAddFunction would be renamed `name.1` and fail to link).
+        LLVMValueRef existing = f->isExtern ? LLVMGetNamedFunction(b->mod, symbol) : NULL;
+        info->function = existing ? existing : LLVMAddFunction(b->mod, symbol, info->type);
     }
 
     StrMapPut(&b->funcs, f->mangledName, info);

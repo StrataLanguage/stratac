@@ -5,7 +5,6 @@ import memory;
 
 extern int printf(cstring fmt, ...);
 
-
 struct __refcnt
 {
 	uint count;
@@ -13,19 +12,20 @@ struct __refcnt
 
 impl __refcnt
 {
-	void init(ref __refcountimpl self)
+	void init(ref __refcnt self)
 	{
 		self.count = 1;
 	}
 
-	void inc(ref __refcountimpl self)
+	void inc(ref __refcnt self)
 	{
 		++self.count;
 	}
 
-	uint dec(ref __refcountimpl self)
+	uint dec(ref __refcnt self)
 	{
-		return (--self.count);
+		--self.count;
+		return (self.count);
 	}
 }
 
@@ -38,27 +38,33 @@ struct rc<T>
 
 impl rc<T>
 {
-	void init(ref Self self)
+	void init(ref rc<T> self)
 	{
 		self.ptr = null;
 		self.refcnt = null;
 	}
 
-	@private
-	void create_ref(ref rc<T> self)
+	void init<TArgs...>(ref rc<T> self, TArgs... args)
 	{
-		// Pad the size out so our total allocation is aligned
-		const ulong aligned_size = align_value_16(sizeof(T));
-		*byte raw_alloc = memory_alloc(aligned_size + sizeof(__refcnt));
-
-		*T obj_ptr = (*T)raw_alloc;
-
+		self.create_ref(args...);
 	}
 
 	@private
-	void destroy_ref(ref rc<T> self)
+	void create_ref<TArgs...>(ref rc<T> self, TArgs... args)
 	{
+		// Pad the size out so our total allocation is aligned
+		const ulong aligned_size = align_value_16(sizeof<T>());
+		*byte raw_alloc = (*byte)memory_alloc(aligned_size + sizeof<__refcnt>());
 
+		*T obj_ptr = (*T)raw_alloc;
+		obj_ptr.init(args...);
+
+		ptr refcnt_raw = (ptr)((ulong)raw_alloc + aligned_size);
+
+		self.ptr = obj_ptr;
+		self.refcnt = (*__refcnt)refcnt_raw;
+
+		printf("Creating rc\n");
 	}
 
 	@private
@@ -69,14 +75,20 @@ impl rc<T>
 		}
 
 		if (self.refcnt.dec() == 0) {
-			printf("Destroying rc\n")
-
+			printf("Destroying rc\n");
 		}
 	}
 
 	void drop(ref rc<T> self)
 	{
-
-
+		self.decref();
 	}
+}
+
+rc<T> make_ref<T, TArgs...>(TArgs... args)
+{
+	var res = rc<T>();
+	res.create_ref();
+	res.ptr.init(args...);
+	return res;
 }

@@ -572,6 +572,7 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
     bool isExport = false;
     bool isNoReturn = false;
     bool isMeta = false;
+    SourceRange exportRange = SRC_INVALID;
 
     for (size_t i = 0; i < attributes->count; i++)
     {
@@ -584,6 +585,7 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
         else if (strcmp(attribute->name, "export") == 0)
         {
             isExport = true;
+            exportRange = attribute->range;
         }
         else if (strcmp(attribute->name, "noreturn") == 0)
         {
@@ -597,6 +599,11 @@ static bool ApplyFunctionAttributes(Parser* p, const Vec* attributes, bool* outI
         {
             DiagErrorFmt(p->diag, attribute->range, "unknown attribute '@%s'", attribute->name);
         }
+    }
+
+    if (isPrivate && isExport)
+    {
+        DiagError(p->diag, exportRange, "a function cannot be both '@private' and '@export'");
     }
 
     *outIsPrivate = isPrivate;
@@ -785,10 +792,18 @@ static FunctionDecl* NewFunctionDecl(Parser* p, TypeName returnType, Token nameT
     node->mangledName = ArenaStrdup(p->arena, node->name);
     node->isExtern = isExtern;
     node->isPrivate = isPrivate;
-    node->isExport = isExport;
     node->isNoReturn = isNoReturn;
     node->isDelegate = isDelegate;
     node->hasReturnStmt = false;
+
+    if (isDelegate && isExport)
+    {
+        DiagError(p->diag, node->base.range, "'@export' does not apply to an extern delegate");
+    }
+
+    // `@export extern` is visible to importing files; `isExport` stays for defined C-ABI functions.
+    node->isExportedExtern = isExtern && isExport && !isDelegate;
+    node->isExport = isExport && !node->isExportedExtern;
 
     if (isDelegate)
     {
@@ -1217,16 +1232,34 @@ ImplDecl* ParseImplDecl(Parser* p)
             continue;
         }
 
-        if (fn->genericParams.count > 0)
+        // A method may have type parameters of its own (generics: generic methods). Its names must not repeat the
+        // impl's, which are substituted when the impl is instantiated; `drop` runs without them.
+        for (size_t i = 0; i < fn->genericParams.count; i++)
         {
-            DiagErrorFmt(p->diag, fn->base.range, "type parameters go on the impl, not on method '%s'", fn->name);
+            const char* param = (const char*)VecGet(&fn->genericParams, i);
+
+            for (size_t j = 0; j < impl->genericParams.count; j++)
+            {
+                if (strcmp(param, (const char*)VecGet(&impl->genericParams, j)) == 0)
+                {
+                    DiagErrorFmt(p->diag, fn->base.range,
+                                 "type parameter '%s' of method '%s' shadows the impl's type parameter '%s'", param,
+                                 fn->name, param);
+                }
+            }
         }
 
-        if (fn->isPrivate || fn->isExport)
+        if (fn->genericParams.count > 0 && strcmp(fn->name, "drop") == 0)
         {
-            DiagError(p->diag, fn->base.range, "attributes are not supported on impl methods");
-            fn->isPrivate = false;
+            DiagErrorFmt(p->diag, fn->base.range, "a 'drop' method cannot have type parameters");
+        }
+
+        // @private is allowed: the method is then callable only from the file that defines it.
+        if (fn->isExport || fn->isExportedExtern)
+        {
+            DiagErrorFmt(p->diag, fn->base.range, "an impl method cannot be '@export': '%s'", fn->name);
             fn->isExport = false;
+            fn->isExportedExtern = false;
         }
 
         if (fn->isMeta)

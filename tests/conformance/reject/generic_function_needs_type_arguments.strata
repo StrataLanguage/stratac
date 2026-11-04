@@ -1,13 +1,13 @@
-// expect: reject "needs explicit type arguments"
-// rule: a call to a generic function names its type arguments (inference is not supported yet)
+// expect: reject "can't infer type argument 'T' of 'make_none': write 'make_none<...>(...)'"
+// rule: a type parameter that no argument's type fixes (here it is only in the result) must be written at the call
 struct number<T> { T value; }
-number<T> make_number<T>(T value)
+number<T> make_none<T>()
 {
-    number<T> n = number<T> { .value = value };
+    number<T> n = number<T> { .value = 0 };
     return n;
 }
 int main()
 {
-    number<int> n = make_number(3);
+    number<int> n = make_none();
     return 0;
 }

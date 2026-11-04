@@ -297,6 +297,11 @@ static void DumpFunction(Node* n, int indent, Sb* out)
         SbPuts(out, "@private\n");
         Pad(indent, out);
     }
+    if (functionDecl->isExportedExtern)
+    {
+        SbPuts(out, "@export\n");
+        Pad(indent, out);
+    }
     if (functionDecl->isMeta)
     {
         SbPuts(out, "@meta\n");

@@ -528,6 +528,25 @@ static Node* ParsePostfix(Parser* p)
 
         e = (Node*)node;
 
+        // `expr.Member<T, ...>(args)` — explicit type arguments of a generic method. A `<` starts them only when
+        // a `(` follows the closing `>`; otherwise it is a comparison, and the attempt is rolled back.
+        TypeName use = {0};
+        bool hasTypeArgList = false;
+
+        if (p->cur.kind == TokLt)
+        {
+            LexerCheckpoint saved = SaveLexerState(p);
+
+            if (ParseTypeArgsAfter(p, node->member, memberTok.range, &use, true) && p->cur.kind == TokLParen)
+            {
+                hasTypeArgList = true;
+            }
+            else
+            {
+                RestoreLexerState(p, saved);
+            }
+        }
+
         // `expr.Member(args)` — a method call. The callee keeps the member
         // name; sema resolves it against impl blocks (prepending the base as
         // the self argument for instance methods).
@@ -539,6 +558,10 @@ static Node* ParsePostfix(Parser* p)
             call->callee = node->member;
             call->calleeBase = node->baseNode;
             call->isIntrinsicCall = false;
+            call->typeArgs = hasTypeArgList ? use.typeArgs : NULL;
+            call->typeArgCount = hasTypeArgList ? use.typeArgCount : 0;
+            call->typeArg = call->typeArgCount == 1 ? &call->typeArgs[0] : NULL;
+            call->hasTypeArgList = hasTypeArgList;
             VecInit(&call->args);
 
             ParseCallArgs(p, call);
@@ -751,10 +774,12 @@ static Node* ParseFloatLiteral(Parser* p, Token token)
     Advance(p);
 
     Str sv = ParserIdentText(p, token);
+    bool isSingle = false;
 
     if (sv.len > 0 && (sv.data[sv.len - 1] == 'f' || sv.data[sv.len - 1] == 'F'))
     {
         sv.len--;
+        isSingle = true;
     }
 
     // Full spelling (no fixed-size buffer), so long literals are never truncated.
@@ -771,6 +796,7 @@ static Node* ParseFloatLiteral(Parser* p, Token token)
     node->base.kind = NodeFloatLiteral;
     node->base.range = token.range;
     node->value = val;
+    node->isSingle = isSingle;
 
     return (Node*)node;
 }

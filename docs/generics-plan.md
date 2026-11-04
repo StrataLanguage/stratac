@@ -83,10 +83,9 @@ In:
 - Generic code in an imported module used from another module (the pass runs on the merged module).
 
 Out (diagnosed, not silently wrong):
-- Inferring a function's type arguments from its call arguments (`make_number(3)`): error
-  "generic function 'make_number' needs explicit type arguments: make_number<...>(...)". Follow-up work.
-- Generic methods (type parameters on a method inside an `impl`): error "type parameters go on the impl,
-  not on method 'x'".
+- Inferring a type argument that no argument's declared type fixes (`make_none()` with `T` only in the
+  result): error "can't infer type argument 'T' of 'make_none': write 'make_none<...>(...)'". Inference from
+  the arguments is in docs/generic-methods-plan.md (Phase 5).
 - Overloading a generic function name (two templates with one name, or a template and a plain function with
   one name).
 - `extern struct`, `@component`, struct aliases (`struct Foo<T> = ...`) and `handle`s with type parameters.
@@ -226,6 +225,7 @@ If it reports errors, `ResolveOverloads` returns without running the rest.
 
 ## Follow-ups (not in this work)
 
-- Inferring type arguments of generic function calls from argument types (needs sema-time instantiation).
-- Generic methods, constraints, generic aliases, generic `@component`s.
+- Inferring type arguments from argument types: done by a declared-type lookup in Monomorphize, not sema-time
+  instantiation (docs/generic-methods-plan.md).
+- Constraints, generic aliases, generic `@component`s.
 - Lazy method instantiation (only methods that are called).

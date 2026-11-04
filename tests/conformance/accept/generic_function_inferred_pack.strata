@@ -1,0 +1,41 @@
+// expect: run
+// expect-output: 1 2.5 x
+// expect-output: 3
+// expect-output: 7
+// rule: a generic function infers its type arguments and its parameter pack from its arguments, also inside another generic function
+void show<T, Rest...>(T first, Rest... rest)
+{
+    printf("%d", first);
+    if (rest.length > 0)
+    {
+        printf(" %g", rest[0]);
+    }
+    if (rest.length > 1)
+    {
+        printf(" %s", rest[1]);
+    }
+    printf("\n");
+}
+struct number<T> { T value; }
+number<T> wrap<T>(T value)
+{
+    number<T> n = number<T> { .value = value };
+    return n;
+}
+number<T> wrap_again<T>(T value)
+{
+    return wrap(value);
+}
+int main()
+{
+    show(1, 2.5f, "x");
+    number<int> a = wrap_again(3);
+    printf("%d\n", a.value);
+    int c = total(7);
+    printf("%d\n", c);
+    return 0;
+}
+int total<T>(T v)
+{
+    return (int)v;
+}
