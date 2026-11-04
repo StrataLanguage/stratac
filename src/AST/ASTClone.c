@@ -25,6 +25,44 @@ static const TypeName* SubstArg(const TypeSubst* s, const char* name)
     return NULL;
 }
 
+// Whether `name` is the parameter pack's type name (`TArgs`) or its rest parameter (`args`) in `s`.
+static bool IsPackTypeName(const TypeSubst* s, const char* name)
+{
+    return s && s->packType && name && strcmp(s->packType, name) == 0;
+}
+
+static bool IsPackValueName(const TypeSubst* s, const char* name)
+{
+    return s && s->packValue && name && strcmp(s->packValue, name) == 0;
+}
+
+// The name of element `index` of the pack value `value`: `args[0]`. The spelling is the one diagnostics show.
+static Node* PackElementIdent(Arena* arena, SourceRange range, const char* value, size_t index)
+{
+    IdentExpr* e = AST_NEW(arena, IdentExpr);
+    e->base.kind = NodeIdent;
+    e->base.range = range;
+    e->name = ArenaFormat(arena, "%s[%zu]", value, index);
+    e->useKind = UseUnknown;
+
+    return (Node*)e;
+}
+
+// The substitution a nested ordinary loop sees: a `break` or `continue` in it belongs to that loop, not to a pack
+// loop around it. Returns `s` itself when nothing changes.
+static const TypeSubst* OrdinaryLoopSubst(const TypeSubst* s, TypeSubst* storage)
+{
+    if (!s || !s->inPackLoopBody)
+    {
+        return s;
+    }
+
+    *storage = *s;
+    storage->inPackLoopBody = false;
+
+    return storage;
+}
+
 // The canonical spelling of an array type: its non-array leaf, then every dimension in source order.
 // Naming one wrapper at a time would reverse the dimensions of `int[2][6]`.
 static char* ArraySpelling(Arena* arena, const TypeName* array)
@@ -59,19 +97,45 @@ static char* ArraySpelling(Arena* arena, const TypeName* array)
     return SbFinish(&sb, arena);
 }
 
-// A new arena array of `count` type arguments, each substituted.
-static TypeName* SubstTypeArgs(Arena* arena, const TypeName* args, size_t count, const TypeSubst* s)
+// A new arena array of the type arguments, each substituted. A `Name...` argument that names the pack is replaced
+// by the pack's types, so the count can change: `*outCount` is the count of the new array.
+static TypeName* SubstTypeArgs(Arena* arena, const TypeName* args, size_t count, const TypeSubst* s, size_t* outCount)
 {
-    if (count == 0)
+    size_t total = 0;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        total += (args[i].isPackExpansion && IsPackTypeName(s, args[i].name)) ? s->packCount : 1;
+    }
+
+    *outCount = total;
+
+    if (total == 0)
     {
         return NULL;
     }
 
-    TypeName* copy = (TypeName*)ArenaAlloc(arena, count * sizeof(TypeName));
+    TypeName* copy = (TypeName*)ArenaAlloc(arena, total * sizeof(TypeName));
+    size_t out = 0;
 
     for (size_t i = 0; i < count; i++)
     {
-        copy[i] = TypeNameSubstitute(arena, &args[i], s);
+        if (args[i].isPackExpansion && IsPackTypeName(s, args[i].name))
+        {
+            for (size_t j = 0; j < s->packCount; j++)
+            {
+                copy[out++] = s->packArgs[j];
+            }
+        }
+        else if (args[i].isPackExpansion)
+        {
+            // `T...` where T is not the pack: copied as written, so Monomorphize reports it by its own name.
+            copy[out++] = args[i];
+        }
+        else
+        {
+            copy[out++] = TypeNameSubstitute(arena, &args[i], s);
+        }
     }
 
     return copy;
@@ -83,8 +147,8 @@ TypeName TypeNameSubstitute(Arena* arena, const TypeName* t, const TypeSubst* s)
     if (t->typeArgCount > 0)
     {
         TypeName result = *t;
-        result.typeArgs = SubstTypeArgs(arena, t->typeArgs, t->typeArgCount, s);
-        result.name = TypeNameGenericSpelling(arena, t->genericBase, result.typeArgs, t->typeArgCount);
+        result.typeArgs = SubstTypeArgs(arena, t->typeArgs, t->typeArgCount, s, &result.typeArgCount);
+        result.name = TypeNameGenericSpelling(arena, t->genericBase, result.typeArgs, result.typeArgCount);
         result.primitiveType = GetPrimitiveType(result.name);
 
         return result;
@@ -143,6 +207,12 @@ TypeName TypeNameSubstitute(Arena* arena, const TypeName* t, const TypeSubst* s)
         return result;
     }
 
+    // The pack itself is only ever spliced (`TArgs...`) or used as the rest parameter's element type.
+    if (IsPackTypeName(s, t->name) && s->diag)
+    {
+        DiagErrorFmt(s->diag, t->range, "parameter pack '%s' must be expanded: write '%s...'", t->name, t->name);
+    }
+
     return *t;
 }
 
@@ -165,6 +235,76 @@ static void CloneNameList(Vec* dst, const Vec* src)
     for (size_t i = 0; i < src->count; i++)
     {
         VecPush(dst, VecGet(src, i));
+    }
+}
+
+// The argument list of a call. `args...` naming the pack splices `args[0]` … `args[k-1]` into it.
+static void CloneCallArgs(Arena* arena, Vec* dst, const Vec* src, const TypeSubst* s)
+{
+    VecInit(dst);
+
+    for (size_t i = 0; i < src->count; i++)
+    {
+        const Node* arg = (const Node*)VecGet(src, i);
+
+        if (arg->kind == NodePackExpand && IsPackValueName(s, ((const PackExpandExpr*)arg)->name))
+        {
+            for (size_t j = 0; j < s->packCount; j++)
+            {
+                VecPush(dst, PackElementIdent(arena, arg->range, s->packValue, j));
+            }
+
+            continue;
+        }
+
+        VecPush(dst, AstCloneSubst(arena, arg, s));
+    }
+}
+
+// The parameter of a copied function that the pack rest parameter `src` becomes: `args[index]`, of the pack's
+// type at `index`, with the rest parameter's modifier and constness.
+static Node* PackParam(Arena* arena, const ParamDecl* src, const TypeSubst* s, size_t index)
+{
+    ParamDecl* copy = AST_NEW(arena, ParamDecl);
+    *copy = *src;
+
+    copy->name = ArenaFormat(arena, "%s[%zu]", src->name, index);
+    copy->type = s->packArgs[index];
+    copy->type.isConst = src->type.isConst || s->packArgs[index].isConst;
+    copy->type.range = src->type.range;
+    copy->isVarargRest = false;
+    copy->isReturn = false;
+
+    // Set by sema.
+    copy->growsArray = false;
+    copy->inferredBorrow = false;
+    copy->borrowCandidate = false;
+
+    return (Node*)copy;
+}
+
+// The parameters of a copied function. The pack rest parameter becomes one parameter per pack type; `*outExpanded`
+// is set when that happened, so the copy is no longer variadic.
+static void CloneParams(Arena* arena, Vec* dst, const Vec* src, const TypeSubst* s, bool* outExpanded)
+{
+    VecInit(dst);
+
+    for (size_t i = 0; i < src->count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(src, i);
+
+        if (param->isVarargRest && IsPackValueName(s, param->name))
+        {
+            for (size_t j = 0; j < s->packCount; j++)
+            {
+                VecPush(dst, PackParam(arena, param, s, j));
+            }
+
+            *outExpanded = true;
+            continue;
+        }
+
+        VecPush(dst, AstCloneSubst(arena, (const Node*)param, s));
     }
 }
 
@@ -274,7 +414,16 @@ static Node* CloneFunction(Arena* arena, const FunctionDecl* src, const TypeSubs
     *copy = *src;
 
     copy->returnType = TypeNameSubstitute(arena, &src->returnType, s);
-    CloneNodeList(arena, &copy->params, &src->params, s);
+
+    bool expanded = false;
+    CloneParams(arena, &copy->params, &src->params, s, &expanded);
+
+    // A pack rest parameter became fixed parameters: the copy takes exactly those.
+    if (expanded)
+    {
+        copy->isVariadic = false;
+    }
+
     copy->body = AstCloneSubst(arena, src->body, s);
     CloneNameList(&copy->genericParams, &src->genericParams);
 
@@ -334,26 +483,187 @@ static Node* CloneIf(Arena* arena, const IfStmt* src, const TypeSubst* s)
 
 static Node* CloneWhile(Arena* arena, const WhileStmt* src, const TypeSubst* s)
 {
+    TypeSubst storage;
     WhileStmt* copy = AST_NEW(arena, WhileStmt);
     *copy = *src;
 
     copy->condition = AstCloneSubst(arena, src->condition, s);
-    copy->body = AstCloneSubst(arena, src->body, s);
+    copy->body = AstCloneSubst(arena, src->body, OrdinaryLoopSubst(s, &storage));
 
     return (Node*)copy;
 }
 
+// `for (T i = <literal>; i < args.length; i++)`: the shape a pack loop must have.
+static bool IsPackLoopCondition(const Node* cond, const char* packValue)
+{
+    if (!cond || cond->kind != NodeBinary)
+    {
+        return false;
+    }
+
+    const BinaryExpr* e = (const BinaryExpr*)cond;
+
+    if (e->op != BinLt || !e->rhs || e->rhs->kind != NodeMember)
+    {
+        return false;
+    }
+
+    const MemberExpr* len = (const MemberExpr*)e->rhs;
+
+    return len->baseNode && len->baseNode->kind == NodeIdent
+           && strcmp(((const IdentExpr*)len->baseNode)->name, packValue) == 0 && strcmp(len->member, "length") == 0;
+}
+
+static bool IsVarIdent(const Node* n, const char* var)
+{
+    return n && n->kind == NodeIdent && strcmp(((const IdentExpr*)n)->name, var) == 0;
+}
+
+static bool IsIntLiteralOne(const Node* n)
+{
+    return n && n->kind == NodeIntLiteral && ((const IntLiteral*)n)->value == 1;
+}
+
+// `i++`, `++i`, `i += 1` or `i = i + 1` on the loop variable `var`.
+static bool IsPackLoopUpdate(const Node* u, const char* var)
+{
+    if (!u)
+    {
+        return false;
+    }
+
+    if (u->kind == NodeIncDec)
+    {
+        const IncDecExpr* e = (const IncDecExpr*)u;
+
+        return !e->isDec && IsVarIdent(e->operand, var);
+    }
+
+    if (u->kind != NodeAssign)
+    {
+        return false;
+    }
+
+    const AssignExpr* e = (const AssignExpr*)u;
+
+    if (!IsVarIdent(e->target, var))
+    {
+        return false;
+    }
+
+    if (e->op == AssignAdd)
+    {
+        return IsIntLiteralOne(e->value);
+    }
+
+    if (e->op == AssignSet && e->value && e->value->kind == NodeBinary)
+    {
+        const BinaryExpr* sum = (const BinaryExpr*)e->value;
+
+        return sum->op == BinAdd && IsVarIdent(sum->lhs, var) && IsIntLiteralOne(sum->rhs);
+    }
+
+    return false;
+}
+
+// A `for` over a parameter pack is unrolled: a block holding, for each element, a block that declares the loop
+// variable as a constant and holds one copy of the body. The body is cloned once per element with the loop
+// variable bound, so `args[i]` becomes `args[<element>]`. An empty block when the loop has the wrong shape.
+static Node* ClonePackLoop(Arena* arena, const ForStmt* src, const TypeSubst* s)
+{
+    Block* out = AST_NEW(arena, Block);
+    out->base.kind = NodeBlock;
+    out->base.range = src->base.range;
+    VecInit(&out->statements);
+
+    bool ok = src->init && src->init->kind == NodeVarDecl && ((const VarDeclStmt*)src->init)->init
+              && ((const VarDeclStmt*)src->init)->init->kind == NodeIntLiteral;
+
+    const VarDeclStmt* decl = ok ? (const VarDeclStmt*)src->init : NULL;
+    const char* var = ok ? decl->name : NULL;
+
+    ok = ok && IsVarIdent(((const BinaryExpr*)src->condition)->lhs, var) && IsPackLoopUpdate(src->update, var);
+
+    if (!ok)
+    {
+        if (s->diag)
+        {
+            DiagErrorFmt(s->diag, src->base.range,
+                         "a 'for' loop over a parameter pack must be written 'for (T i = 0; i < %s.length; i++)'",
+                         s->packValue);
+        }
+
+        return (Node*)out;
+    }
+
+    size_t start = (size_t)((const IntLiteral*)decl->init)->value;
+
+    for (size_t j = start; j < s->packCount; j++)
+    {
+        PackLoop loop = {var, j, s->loop};
+        TypeSubst inner = *s;
+        inner.loop = &loop;
+        inner.inPackLoopBody = true;
+
+        VarDeclStmt* iterDecl = AST_NEW(arena, VarDeclStmt);
+        *iterDecl = *decl;
+
+        if (decl->type.name)
+        {
+            iterDecl->type = TypeNameSubstitute(arena, &decl->type, s);
+        }
+
+        iterDecl->type.isConst = true;
+        iterDecl->isRef = false;
+
+        IntLiteral* value = AST_NEW(arena, IntLiteral);
+        value->base.kind = NodeIntLiteral;
+        value->base.range = decl->init->range;
+        value->value = j;
+        iterDecl->init = (Node*)value;
+
+        Block* iter = AST_NEW(arena, Block);
+        iter->base.kind = NodeBlock;
+        iter->base.range = src->base.range;
+        VecInit(&iter->statements);
+        VecPush(&iter->statements, iterDecl);
+        VecPush(&iter->statements, AstCloneSubst(arena, src->body, &inner));
+
+        VecPush(&out->statements, iter);
+    }
+
+    return (Node*)out;
+}
+
 static Node* CloneFor(Arena* arena, const ForStmt* src, const TypeSubst* s)
 {
+    if (s && s->packValue && src->condition && IsPackLoopCondition(src->condition, s->packValue))
+    {
+        return ClonePackLoop(arena, src, s);
+    }
+
+    TypeSubst storage;
+    const TypeSubst* bodySubst = OrdinaryLoopSubst(s, &storage);
     ForStmt* copy = AST_NEW(arena, ForStmt);
     *copy = *src;
 
     copy->init = AstCloneSubst(arena, src->init, s);
     copy->condition = AstCloneSubst(arena, src->condition, s);
     copy->update = AstCloneSubst(arena, src->update, s);
-    copy->body = AstCloneSubst(arena, src->body, s);
+    copy->body = AstCloneSubst(arena, src->body, bodySubst);
 
     return (Node*)copy;
+}
+
+// `break` and `continue` directly inside a pack loop body: the loop is unrolled, so there is no loop to leave.
+static Node* CloneJump(Arena* arena, const Node* n, size_t size, const char* keyword, const TypeSubst* s)
+{
+    if (s && s->inPackLoopBody && s->diag)
+    {
+        DiagErrorFmt(s->diag, n->range, "'%s' is not supported inside a 'for' loop over a parameter pack", keyword);
+    }
+
+    return CloneLeaf(arena, n, size);
 }
 
 static Node* CloneVarDecl(Arena* arena, const VarDeclStmt* src, const TypeSubst* s)
@@ -428,10 +738,10 @@ static Node* CloneCall(Arena* arena, const CallExpr* src, const TypeSubst* s)
     CallExpr* copy = AST_NEW(arena, CallExpr);
     *copy = *src;
 
-    copy->typeArgs = SubstTypeArgs(arena, src->typeArgs, src->typeArgCount, s);
+    copy->typeArgs = SubstTypeArgs(arena, src->typeArgs, src->typeArgCount, s, &copy->typeArgCount);
     copy->typeArg = copy->typeArgCount == 1 ? &copy->typeArgs[0] : NULL;
 
-    CloneNodeList(arena, &copy->args, &src->args, s);
+    CloneCallArgs(arena, &copy->args, &src->args, s);
     copy->calleeBase = AstCloneSubst(arena, src->calleeBase, s);
 
     // Set by sema.
@@ -445,6 +755,19 @@ static Node* CloneCall(Arena* arena, const CallExpr* src, const TypeSubst* s)
 
 static Node* CloneMember(Arena* arena, const MemberExpr* src, const TypeSubst* s)
 {
+    // `args.length` of the parameter pack: the number of its elements.
+    if (src->baseNode && src->baseNode->kind == NodeIdent && IsPackValueName(s, ((const IdentExpr*)src->baseNode)->name)
+        && strcmp(src->member, "length") == 0)
+    {
+        IntLiteral* count = AST_NEW(arena, IntLiteral);
+        count->base.kind = NodeIntLiteral;
+        count->base.range = src->base.range;
+        count->value = s->packCount;
+        count->fromPackLength = true;
+
+        return (Node*)count;
+    }
+
     MemberExpr* copy = AST_NEW(arena, MemberExpr);
     *copy = *src;
 
@@ -532,8 +855,53 @@ static Node* CloneGlobal(Arena* arena, const GlobalDecl* src, const TypeSubst* s
     return (Node*)copy;
 }
 
+// `args[N]` of the pack value: element N, from a literal or from the variable of an enclosing pack loop.
+static Node* ClonePackIndex(Arena* arena, const IndexExpr* src, const TypeSubst* s)
+{
+    const char* value = ((const IdentExpr*)src->baseNode)->name;
+    const Node* index = src->index;
+
+    if (index && index->kind == NodeIntLiteral)
+    {
+        // An element past the end is not reported here: the clone runs before an `if` on `args.length` is folded,
+        // so the branch that guards it may be dropped. It stays `args[N]`, which sema reports if the branch is kept.
+        size_t element = (size_t)((const IntLiteral*)index)->value;
+
+        return PackElementIdent(arena, src->base.range, value, element);
+    }
+
+    if (index && index->kind == NodeIdent)
+    {
+        const char* var = ((const IdentExpr*)index)->name;
+
+        for (const PackLoop* loop = s->loop; loop; loop = loop->outer)
+        {
+            if (strcmp(loop->var, var) == 0)
+            {
+                return PackElementIdent(arena, src->base.range, value, loop->index);
+            }
+        }
+    }
+
+    if (s->diag)
+    {
+        DiagErrorFmt(s->diag, src->base.range,
+                     "a parameter pack can only be indexed by an integer literal or by the variable of a 'for' loop "
+                     "over '%s.length'",
+                     value);
+    }
+
+    return PackElementIdent(arena, src->base.range, value, 0);
+}
+
 static Node* CloneIndex(Arena* arena, const IndexExpr* src, const TypeSubst* s)
 {
+    if (src->baseNode && src->baseNode->kind == NodeIdent
+        && IsPackValueName(s, ((const IdentExpr*)src->baseNode)->name))
+    {
+        return ClonePackIndex(arena, src, s);
+    }
+
     IndexExpr* copy = AST_NEW(arena, IndexExpr);
     *copy = *src;
 
@@ -624,6 +992,13 @@ static Node* CloneIdent(Arena* arena, const IdentExpr* src, const TypeSubst* s)
     IdentExpr* copy = AST_NEW(arena, IdentExpr);
     *copy = *src;
 
+    // A pack is only used through `args...`, `args.length` and `args[i]`, which are handled by their parents.
+    if ((IsPackValueName(s, src->name) || IsPackTypeName(s, src->name)) && s->diag)
+    {
+        DiagErrorFmt(s->diag, src->base.range,
+                     "parameter pack '%s' can only be used as 'args...', 'args.length' or 'args[i]'", src->name);
+    }
+
     const TypeName* arg = SubstArg(s, src->name);
 
     if (arg)
@@ -680,9 +1055,9 @@ Node* AstCloneSubst(Arena* arena, const Node* n, const TypeSubst* s)
     case NodeExprStmt:
         return CloneExprStmt(arena, (const ExprStmt*)n, s);
     case NodeBreak:
-        return CloneLeaf(arena, n, sizeof(BreakStmt));
+        return CloneJump(arena, n, sizeof(BreakStmt), "break", s);
     case NodeContinue:
-        return CloneLeaf(arena, n, sizeof(ContinueStmt));
+        return CloneJump(arena, n, sizeof(ContinueStmt), "continue", s);
     case NodeIntLiteral:
         return CloneLeaf(arena, n, sizeof(IntLiteral));
     case NodeFloatLiteral:
@@ -723,6 +1098,10 @@ Node* AstCloneSubst(Arena* arena, const Node* n, const TypeSubst* s)
         return CloneConditional(arena, (const ConditionalExpr*)n, s);
     case NodeMetaCall:
         return CloneMetaCall(arena, (const MetaCallExpr*)n, s);
+    case NodePackExpand:
+        // Only a call argument can splice a pack, and CloneCallArgs does that. Any other `name...` is copied
+        // as written, and Monomorphize reports it.
+        return CloneLeaf(arena, n, sizeof(PackExpandExpr));
     }
 
     fprintf(stderr, "AstCloneSubst: node kind %d has no clone\n", (int)n->kind);

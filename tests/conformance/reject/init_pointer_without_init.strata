@@ -1,0 +1,4 @@
+// expect: reject "has no method 'init'"
+// rule: a pointer runs only the init its pointee's type has
+struct C { int n; }
+int main() { C c = C { .n = 1 }; *C p = &c; p.init(2); return 0; }

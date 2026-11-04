@@ -1,0 +1,4 @@
+// expect: reject "a parameter pack must be the last type parameter"
+// rule: a parameter pack must be the last type parameter
+void f<T..., U>(T... a) {}
+int main() { return 0; }

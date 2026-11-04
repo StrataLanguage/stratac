@@ -1,0 +1,4 @@
+// expect: reject "parameter packs are only supported on generic functions"
+// rule: a parameter pack is only allowed on a generic function, not on a struct
+struct holder<T...> { int x; }
+int main() { return 0; }

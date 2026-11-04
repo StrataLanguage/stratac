@@ -1,0 +1,5 @@
+// expect: reject "'a...' expands a parameter pack, but 'a' is not one"
+// rule: name... expands only a parameter pack
+void g(int x) {}
+void h(int a) { g(a...); }
+int main() { h(1); return 0; }

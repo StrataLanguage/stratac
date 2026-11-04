@@ -1,0 +1,4 @@
+// expect: reject "unknown variable 'args[2]'"
+// rule: a literal index past the end of the pack is an error where it is used
+void f<T...>(T... args) { int x = args[2]; }
+int main() { f<int>(1); return 0; }

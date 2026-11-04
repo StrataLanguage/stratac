@@ -462,18 +462,70 @@ static void InstantiateStruct(Mono* m, const StructDecl* tmpl, const char* name,
     }
 }
 
-// Makes the function `name`: the template `tmpl` with its type parameters replaced by `args`.
-static void InstantiateFunction(Mono* m, const FunctionDecl* tmpl, const char* name, const TypeName* args)
+// The number of type parameters a function template takes before its parameter pack, if it has one.
+static size_t FixedTypeParamCount(const FunctionDecl* tmpl)
+{
+    return tmpl->genericParams.count - (tmpl->genericPack ? 1 : 0);
+}
+
+// The rest parameter typed with the pack (`TArgs... args`): its name is the pack value, or NULL when there is none.
+static const char* PackValueName(const FunctionDecl* tmpl, const char* packType)
+{
+    const char* value = NULL;
+
+    for (size_t i = 0; i < tmpl->params.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&tmpl->params, i);
+        const TypeName* elem = TypeNameIsArray(&param->type) ? TypeNameArrayElem(&param->type) : NULL;
+
+        if (param->isVarargRest && elem && elem->name && strcmp(elem->name, packType) == 0)
+        {
+            value = param->name;
+        }
+    }
+
+    return value;
+}
+
+// Makes the function `name`: the template `tmpl` with its type parameters replaced by `args`, which holds
+// `argCount` type arguments: the fixed parameters' first, then the pack's.
+static void InstantiateFunction(Mono* m, const FunctionDecl* tmpl, const char* name, const TypeName* args,
+                                size_t argCount)
 {
     if (StrMapGet(&m->functionInstances, name) || !TakeInstanceSlot(m, tmpl->name, tmpl->base.range))
     {
         return;
     }
 
-    TypeSubst subst = {&tmpl->genericParams, args};
+    size_t fixedCount = FixedTypeParamCount(tmpl);
+
+    Vec fixed;
+    VecInit(&fixed);
+
+    for (size_t i = 0; i < fixedCount; i++)
+    {
+        VecPush(&fixed, VecGet(&tmpl->genericParams, i));
+    }
+
+    TypeSubst subst = {0};
+    subst.params = &fixed;
+    subst.args = args;
+    subst.diag = m->diag;
+
+    if (tmpl->genericPack)
+    {
+        subst.packType = (const char*)VecGet(&tmpl->genericParams, tmpl->genericParams.count - 1);
+        subst.packArgs = args ? args + fixedCount : NULL;
+        subst.packCount = argCount - fixedCount;
+        subst.packValue = PackValueName(tmpl, subst.packType);
+    }
+
     FunctionDecl* inst = (FunctionDecl*)AstCloneSubst(m->arena, (const Node*)tmpl, &subst);
+    FreeVec(&fixed);
+
     inst->name = (char*)name;
     inst->mangledName = (char*)name;
+    inst->genericPack = false;
     FreeVec(&inst->genericParams);
 
     StrMapPut(&m->functionInstances, name, inst);
@@ -1697,6 +1749,34 @@ static bool FoldCondition(Mono* m, const Node* cond, bool* out)
 
 // -- Rewriting uses
 
+// Whether `n` holds `args.length` of a parameter pack (an IntLiteral the clone wrote). Such a condition folds even
+// without a meta call, so the branch a pack's recursion does not take is never instantiated.
+static bool MentionsPackLength(const Node* n)
+{
+    if (!n)
+    {
+        return false;
+    }
+
+    switch (n->kind)
+    {
+    case NodeIntLiteral:
+        return ((const IntLiteral*)n)->fromPackLength;
+    case NodeUnary:
+        return MentionsPackLength(((const UnaryExpr*)n)->operand);
+    case NodeBinary:
+        return MentionsPackLength(((const BinaryExpr*)n)->lhs) || MentionsPackLength(((const BinaryExpr*)n)->rhs);
+    case NodeConditional:
+        return MentionsPackLength(((const ConditionalExpr*)n)->condition)
+               || MentionsPackLength(((const ConditionalExpr*)n)->thenExpr)
+               || MentionsPackLength(((const ConditionalExpr*)n)->elseExpr);
+    case NodeCast:
+        return MentionsPackLength(((const CastExpr*)n)->operand);
+    default:
+        return false;
+    }
+}
+
 static void RewriteNode(Mono* m, Node* n);
 static void RewriteSlot(Mono* m, Node** slot);
 
@@ -1726,6 +1806,12 @@ static size_t RewriteType(Mono* m, TypeName* t)
 {
     size_t depth = 0;
 
+    // A `Name...` that survived substitution: the name is not a parameter pack.
+    if (t->isPackExpansion)
+    {
+        DiagErrorFmt(m->diag, t->range, "'%s...' expands a parameter pack, but '%s' is not one", t->name, t->name);
+    }
+
     if (t->inner)
     {
         depth = MaxSize(depth, RewriteType(m, t->inner));
@@ -1741,7 +1827,8 @@ static size_t RewriteType(Mono* m, TypeName* t)
         depth = MaxSize(depth, RewriteType(m, &t->typeArgs[i]));
     }
 
-    if (t->typeArgCount == 0)
+    // A generic use whose list expanded to nothing (`pair<TArgs...>` with an empty pack) keeps its base.
+    if (t->typeArgCount == 0 && !t->genericBase)
     {
         if (!t->inner && !t->elem && t->name)
         {
@@ -1843,14 +1930,25 @@ static void RewriteCall(Mono* m, CallExpr* call)
         return;
     }
 
-    if (call->typeArgCount == 0)
+    if (!call->hasTypeArgList)
     {
         DiagErrorFmt(m->diag, call->base.range, "generic function '%s' needs explicit type arguments: %s<...>(...)",
                      call->callee, call->callee);
         return;
     }
 
-    if (tmpl->genericParams.count != call->typeArgCount)
+    // A pack takes any number of type arguments past its fixed ones, `<>` included.
+    size_t fixedCount = FixedTypeParamCount(tmpl);
+
+    if (tmpl->genericPack && call->typeArgCount < fixedCount)
+    {
+        DiagErrorFmt(m->diag, call->base.range,
+                     "generic function '%s' takes at least %zu type argument(s), but %zu were given", call->callee,
+                     fixedCount, call->typeArgCount);
+        return;
+    }
+
+    if (!tmpl->genericPack && tmpl->genericParams.count != call->typeArgCount)
     {
         DiagErrorFmt(m->diag, call->base.range, "generic function '%s' takes %zu type argument(s), but %zu were given",
                      call->callee, tmpl->genericParams.count, call->typeArgCount);
@@ -1864,7 +1962,7 @@ static void RewriteCall(Mono* m, CallExpr* call)
         return;
     }
 
-    InstantiateFunction(m, tmpl, name, call->typeArgs);
+    InstantiateFunction(m, tmpl, name, call->typeArgs, call->typeArgCount);
 
     call->callee = name;
     call->typeArg = NULL;
@@ -1924,7 +2022,7 @@ static void RewriteIf(Mono* m, Node** slot)
 
     bool taken = false;
 
-    if (m->metaCalls != metaCallsBefore && FoldCondition(m, s->condition, &taken))
+    if ((m->metaCalls != metaCallsBefore || MentionsPackLength(s->condition)) && FoldCondition(m, s->condition, &taken))
     {
         Node* keep = taken ? s->thenBranch : s->elseBranch;
         Node* drop = taken ? s->elseBranch : s->thenBranch;
@@ -1954,7 +2052,7 @@ static void RewriteConditional(Mono* m, Node** slot)
 
     bool taken = false;
 
-    if (m->metaCalls != metaCallsBefore && FoldCondition(m, e->condition, &taken))
+    if ((m->metaCalls != metaCallsBefore || MentionsPackLength(e->condition)) && FoldCondition(m, e->condition, &taken))
     {
         Node* keep = taken ? e->thenExpr : e->elseExpr;
         Node* drop = taken ? e->elseExpr : e->thenExpr;
@@ -2030,6 +2128,11 @@ static void RewriteNode(Mono* m, Node* n)
     case NodeConditional:
     case NodeMetaCall:
         // Only reached through RewriteSlot, which replaces them.
+        break;
+    case NodePackExpand:
+        // A call argument naming the pack is spliced by the clone; one left here is not a pack.
+        DiagErrorFmt(m->diag, n->range, "'%s...' expands a parameter pack, but '%s' is not one",
+                     ((PackExpandExpr*)n)->name, ((PackExpandExpr*)n)->name);
         break;
     case NodeStruct:
     {

@@ -1,0 +1,29 @@
+// expect: run
+// expect-output: 1
+// expect-output: 2.5
+// expect-output: 7
+// expect-output: done
+// rule: a recursive pack function stops at the empty pack: `if (rest.length > 0)` folds, so the call past the end is never instantiated
+void show(int v)
+{
+    printf("%d\n", v);
+}
+void show(float v)
+{
+    printf("%g\n", v);
+}
+void print_all<T, Rest...>(T first, Rest... rest)
+{
+    show(first);
+    if (rest.length > 0)
+    {
+        print_all<Rest...>(rest...);
+    }
+}
+int main()
+{
+    print_all<int, float>(1, 2.5);
+    print_all<int>(7);
+    printf("done\n");
+    return 0;
+}

@@ -1,0 +1,4 @@
+// expect: reject "parameter pack 'args' can only be used as"
+// rule: a pack can only be used as args..., args.length or args[i]
+void f<T...>(T... args) { int x = args; }
+int main() { f<int>(1); return 0; }

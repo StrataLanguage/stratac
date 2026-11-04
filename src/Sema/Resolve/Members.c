@@ -448,11 +448,25 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     FunctionDecl* method = FindImplMethod(r, handleName, c->callee);
 
+    // `p.init(args)` on a pointer constructs the pointee in place, as `T(args)` would, through `__place_T`.
+    // Pointers never refer to owning types, so the old value needs no drop.
+    if (method && strcmp(c->callee, "init") == 0 && viaPointer)
+    {
+        VecPushFront(&c->args, DerefReceiver(r, c->calleeBase, scope));
+
+        c->calleeBase = NULL;
+        c->isIntrinsicCall = false;
+        c->callee = ArenaFormat(r->arena, "__place_%s", handleName);
+        return false;
+    }
+
     // init runs on a value that is being built; on a live one it would overwrite fields without dropping them.
     if (method && strcmp(c->callee, "init") == 0 && !(r->currentFunction && r->currentFunction->isInitWrapper))
     {
         DiagErrorFmt(r->diag, c->base.range,
-                     "'init' runs when a value is constructed; write '%s(...)' instead of calling it", handleName);
+                     "'init' runs when a value is constructed; write '%s(...)' instead of calling it, "
+                     "or call it through a pointer to place a value",
+                     handleName);
         return true;
     }
 

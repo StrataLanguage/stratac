@@ -78,10 +78,13 @@ static bool TypeParamListHas(const Vec* params, const char* name)
 }
 
 // `<T, U, ...>` after a declaration's name, the current token being the `<`. Appends the names to
-// `outParams`, the caller's Vec. Duplicates and builtin type names are reported and dropped.
-static void ParseTypeParamList(Parser* p, Vec* outParams)
+// `outParams`, the caller's Vec. Duplicates and builtin type names are reported and dropped. A `Name...`
+// parameter pack must be the last one; `*outPack` is set when the list ends with one.
+static void ParseTypeParamList(Parser* p, Vec* outParams, bool* outPack)
 {
     Advance(p);
+
+    *outPack = false;
 
     while (true)
     {
@@ -109,6 +112,16 @@ static void ParseTypeParamList(Parser* p, Vec* outParams)
         else
         {
             VecPush(outParams, name);
+        }
+
+        if (ParserConsume(p, TokDotDotDot))
+        {
+            *outPack = true;
+
+            if (p->cur.kind == TokComma)
+            {
+                DiagError(p->diag, nameTok.range, "a parameter pack must be the last type parameter");
+            }
         }
 
         if (!ParserConsume(p, TokComma))
@@ -285,7 +298,13 @@ StructDecl* ParseStructDecl(Parser* p, bool isExtern)
 
     if (p->cur.kind == TokLt)
     {
-        ParseTypeParamList(p, &genericParams);
+        bool isPack = false;
+        ParseTypeParamList(p, &genericParams, &isPack);
+
+        if (isPack)
+        {
+            DiagError(p->diag, nameTok.range, "parameter packs are only supported on generic functions");
+        }
     }
 
     if (ParserConsume(p, TokAssign))
@@ -982,9 +1001,11 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     Vec genericParams;
     VecInit(&genericParams);
 
+    bool genericPack = false;
+
     if (p->cur.kind == TokLt)
     {
-        ParseTypeParamList(p, &genericParams);
+        ParseTypeParamList(p, &genericParams, &genericPack);
 
         if (p->cur.kind != TokLParen)
         {
@@ -1003,6 +1024,7 @@ Node* ParseFunctionWithAttributes(Parser* p, const Vec* attributes)
     FunctionDecl* node = NewFunctionDecl(p, returnType, nameTok, isExtern, isDelegate, isPrivate, isExport, isNoReturn,
                                          typeParam, hasAttrs, firstAttributeRange);
     node->genericParams = genericParams;
+    node->genericPack = genericPack;
 
     if (genericParams.count > 0 && (isExtern || isExport))
     {
@@ -1143,7 +1165,13 @@ ImplDecl* ParseImplDecl(Parser* p)
 
     if (p->cur.kind == TokLt)
     {
-        ParseTypeParamList(p, &impl->genericParams);
+        bool isPack = false;
+        ParseTypeParamList(p, &impl->genericParams, &isPack);
+
+        if (isPack)
+        {
+            DiagError(p->diag, nameTok.range, "parameter packs are only supported on generic functions");
+        }
     }
 
     Token openBrace = ParserExpect(p, TokLBrace, "'{'");

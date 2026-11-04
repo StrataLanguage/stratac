@@ -895,6 +895,9 @@ static void Dump(Node* n, int indent, Sb* out)
     case NodeMetaCall:
         DumpMetaCall(n, out);
         return;
+    case NodePackExpand:
+        SbPrintf(out, "(pack %s...)\n", AS_NODE(PackExpandExpr, n)->name);
+        return;
     case NodeNullTest:
         DumpNullTest(n, out);
         return;

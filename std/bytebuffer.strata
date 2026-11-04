@@ -9,16 +9,6 @@ struct bytebuffer
 }
 
 @private
-ulong bb_min(ulong x, ulong y)
-{
-	if (x <= y) {
-		return x;
-	}
-
-	return y;
-}
-
-@private
 ulong bb_max(ulong x, ulong y)
 {
 	if (x >= y) {
@@ -34,15 +24,17 @@ impl bytebuffer
 		self.request_size(initial_size);
 	}
 
+	// Makes room for `requested_size` more bytes, plus the NUL that get_str writes after them.
 	void request_size(ref bytebuffer self, ulong requested_size)
 	{
 		const ulong sc_min_allocation_size = 512;
+		ulong needed = self.size + requested_size + 1;
 
 		// TODO: add `?` check for nullability on pointer types
 		if (self.pbuffer == null) {
 			// Ensure that the size is at least min_allocation_size.
 			// TODO: align the size to the alignment of the arch.
-			self.capacity = bb_min(requested_size, sc_min_allocation_size);
+			self.capacity = bb_max(needed, sc_min_allocation_size);
 			self.pbuffer = (*byte)malloc(self.capacity);
 			self.size = 0;
 
@@ -50,16 +42,16 @@ impl bytebuffer
 			return;
 		}
 
-		if ((self.size + requested_size) >= self.capacity) {
-			// Resize the bytebuffer if needed
-			self.capacity *= 2;
-			self.pbuffer = (*byte)realloc((*void)self.pbuffer, self.capacity);
+		if (needed > self.capacity) {
+			// Double until the request fits; one doubling is not always enough.
+			ulong capacity = self.capacity;
+			while (capacity < needed) {
+				capacity *= 2;
+			}
+
+			self.pbuffer = (*byte)realloc((*void)self.pbuffer, capacity);
+			self.capacity = capacity;
 		}
-	}
-
-	void rewind(ref bytebuffer self, ulong by)
-	{
-
 	}
 
 	// Writes a string to the bytebuffer
@@ -87,6 +79,14 @@ impl bytebuffer
 
 	const *byte get_ptr(const ref bytebuffer self)
 	{
+		return self.pbuffer;
+	}
+
+	/* Returns the value as a string of bytes, null terminated. Can be cast to `string` to get a copy as a string representation. */
+	const *byte get_str(ref bytebuffer self)
+	{
+		// Ensure null terminated
+		self.pbuffer[self.size] = (byte)0;
 		return self.pbuffer;
 	}
 

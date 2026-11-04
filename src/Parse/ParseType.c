@@ -231,8 +231,9 @@ static bool ConsumeTypeArgClose(Parser* p)
 }
 
 // `<T1, T2, ...>` after a type name, the current token being the `<`. Each argument is a full type,
-// so wrappers and nested lists work inside. Returns false when the list does not close.
-static bool ParseTypeArgList(Parser* p, TypeName** outArgs, size_t* outCount)
+// so wrappers and nested lists work inside. An argument may be a bare `Name...` (a parameter pack expansion).
+// `allowEmpty` accepts `<>` (a call's empty pack). Returns false when the list does not close.
+static bool ParseTypeArgList(Parser* p, TypeName** outArgs, size_t* outCount, bool allowEmpty)
 {
     Advance(p);
 
@@ -241,18 +242,41 @@ static bool ParseTypeArgList(Parser* p, TypeName** outArgs, size_t* outCount)
 
     bool ok = true;
 
-    do
+    if (allowEmpty && (p->cur.kind == TokGt || p->cur.kind == TokShr))
     {
-        TypeName arg = {0};
-
-        if (!ParseTypeImpl(p, &arg, false))
+        ok = true;
+    }
+    else
+    {
+        do
         {
-            ok = false;
-            break;
-        }
+            TypeName arg = {0};
 
-        VecPush(&args, TypeNameWrapInner(p->arena, arg));
-    } while (ParserConsume(p, TokComma));
+            if (!ParseTypeImpl(p, &arg, false))
+            {
+                ok = false;
+                break;
+            }
+
+            // `Name...`: only a bare name can expand; anything else fails the parse quietly.
+            if (p->cur.kind == TokDotDotDot)
+            {
+                bool isBareName = arg.name && !arg.inner && !arg.elem && !arg.typeArgCount && !arg.isArray && !arg.isBox
+                                  && !arg.isOptional && !arg.isPointer && !arg.isConst;
+
+                if (!isBareName)
+                {
+                    ok = false;
+                    break;
+                }
+
+                Advance(p);
+                arg.isPackExpansion = true;
+            }
+
+            VecPush(&args, TypeNameWrapInner(p->arena, arg));
+        } while (ParserConsume(p, TokComma));
+    }
 
     ok = ok && ConsumeTypeArgClose(p);
 
@@ -274,12 +298,12 @@ static bool ParseTypeArgList(Parser* p, TypeName** outArgs, size_t* outCount)
     return ok;
 }
 
-bool ParseTypeArgsAfter(Parser* p, const char* base, SourceRange baseRange, TypeName* out)
+bool ParseTypeArgsAfter(Parser* p, const char* base, SourceRange baseRange, TypeName* out, bool allowEmpty)
 {
     TypeName* args = NULL;
     size_t argCount = 0;
 
-    if (!ParseTypeArgList(p, &args, &argCount))
+    if (!ParseTypeArgList(p, &args, &argCount, allowEmpty))
     {
         return false;
     }
@@ -609,7 +633,7 @@ static bool ParseTypeImpl(Parser* p, TypeName* out, bool bare)
     out->range = SpanToCur(p, constRange);
 
     // `Name<T, ...>`: a generic use; `name` becomes the canonical spelling.
-    if (isIdent && p->cur.kind == TokLt && !ParseTypeArgsAfter(p, name, constRange, out))
+    if (isIdent && p->cur.kind == TokLt && !ParseTypeArgsAfter(p, name, constRange, out, false))
     {
         return false;
     }

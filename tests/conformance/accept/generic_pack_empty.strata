@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: count 0
+// expect-output: tail 7 0
+// expect-output: after
+// rule: an empty pack binds no parameters: `f<>()` and `g<int>(7)` see `args.length == 0`
+void count<TArgs...>(TArgs... args)
+{
+    printf("count %d\n", args.length);
+}
+void tail<T, TArgs...>(T first, TArgs... args)
+{
+    printf("tail %d %d\n", first, args.length);
+}
+int main()
+{
+    count<>();
+    tail<int>(7);
+    printf("after\n");
+    return 0;
+}

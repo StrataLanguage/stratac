@@ -1,0 +1,4 @@
+// expect: reject "takes at least 1 type argument(s), but 0 were given"
+// rule: a generic call must give at least its fixed type arguments
+void f<A, B...>(A a, B... b) {}
+int main() { f<>(1); return 0; }

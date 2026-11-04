@@ -1,0 +1,4 @@
+// expect: reject "'break' is not supported inside a 'for' loop over a parameter pack"
+// rule: break is not supported in a pack loop, which is unrolled
+void f<T...>(T... args) { for (int i = 0; i < args.length; i++) { break; } }
+int main() { f<int>(1); return 0; }

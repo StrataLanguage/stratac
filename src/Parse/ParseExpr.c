@@ -223,6 +223,12 @@ static Node* ParseAssign(Parser* p)
             rhs = ParseAssign(p);
         }
 
+        if (!rhs)
+        {
+            AstDispose(lhs);
+            return NULL;
+        }
+
         AssignExpr* node = AST_NEW(p->arena, AssignExpr);
         node->base.kind = NodeAssign;
         node->base.range = opToken.range;
@@ -556,6 +562,17 @@ static void ParseCallArgs(Parser* p, CallExpr* call)
         while (true)
         {
             Node* arg = ParseExpr(p);
+
+            // `name...`: a parameter pack spliced into the argument list (only a bare name can expand).
+            if (arg && arg->kind == NodeIdent && p->cur.kind == TokDotDotDot)
+            {
+                PackExpandExpr* expand = AST_NEW(p->arena, PackExpandExpr);
+                expand->base.kind = NodePackExpand;
+                expand->name = ((IdentExpr*)arg)->name;
+                Advance(p);
+                expand->base.range = SpanToCur(p, arg->range);
+                arg = (Node*)expand;
+            }
 
             if (arg)
             {
@@ -906,7 +923,8 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
         LexerCheckpoint saved = SaveLexerState(p);
         TypeName use = {0};
 
-        if (ParseTypeArgsAfter(p, ToOwned(p->arena, ParserIdentText(p, token)), token.range, &use))
+        // `<>` is accepted for a call (an empty parameter pack); a struct literal needs at least one argument.
+        if (ParseTypeArgsAfter(p, ToOwned(p->arena, ParserIdentText(p, token)), token.range, &use, true))
         {
             if (p->cur.kind == TokLParen)
             {
@@ -918,6 +936,7 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
                 call->typeArgs = use.typeArgs;
                 call->typeArgCount = use.typeArgCount;
                 call->typeArg = use.typeArgCount == 1 ? &use.typeArgs[0] : NULL;
+                call->hasTypeArgList = true;
                 VecInit(&call->args);
 
                 ParseCallArgs(p, call);
@@ -925,7 +944,7 @@ static Node* ParseNamedPrimary(Parser* p, Token token)
                 return (Node*)call;
             }
 
-            if (p->cur.kind == TokLBrace)
+            if (p->cur.kind == TokLBrace && use.typeArgCount > 0)
             {
                 Node* init = ParseStructInitBody(p, token, use.name);
                 ((StructInitExpr*)init)->genericType = (TypeName*)ArenaDup(p->arena, &use, sizeof(TypeName));

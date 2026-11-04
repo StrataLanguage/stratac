@@ -63,7 +63,7 @@ int to_int(cstring str_)
 
 void reverse(*byte buffer_, int length)
 {
-	if (buffer_ == null || buffer_[0] == 0) {
+	if (buffer_ == null) {
         return;
     }
 
@@ -117,8 +117,7 @@ string to_str(int value_)
 	    buffer[buffer_index++] = '-';
     }
 
-    // Since digits were extracted in reverse order, reverse the string
-    reverse((*byte)buffer[0], buffer_index);
+    reverse(&buffer[0], buffer_index);
     buffer[buffer_index] = (byte)0;
 
     return (string)buffer;

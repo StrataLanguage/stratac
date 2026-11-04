@@ -27,7 +27,7 @@ bool LooksLikeVarDecl(Parser* p);
 bool AtHandleDecl(Parser* p);
 void CheckTypeNameNotHandle(Parser* p, Token nameTok);
 // `<T, ...>` after the name `base` of a generic use; false (caller rolls back) when the list does not close.
-bool ParseTypeArgsAfter(Parser* p, const char* base, SourceRange baseRange, TypeName* out);
+bool ParseTypeArgsAfter(Parser* p, const char* base, SourceRange baseRange, TypeName* out, bool allowEmpty);
 HandleDecl* ParseHandleDecl(Parser* p);
 StructDecl* ParseStructDecl(Parser* p, bool isExtern);
 EnumDecl* ParseEnumDecl(Parser* p);

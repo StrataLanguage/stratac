@@ -1,0 +1,5 @@
+// expect: reject "parameter packs are only supported on generic functions"
+// rule: a parameter pack is only allowed on a generic function, not on an impl
+struct holder<T> { int x; }
+impl holder<T...> { int get(const ref holder self) { return 0; } }
+int main() { return 0; }

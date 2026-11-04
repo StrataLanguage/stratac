@@ -46,6 +46,11 @@ char* TypeNameGenericSpelling(Arena* arena, const char* base, const TypeName* ar
         }
 
         SbPuts(&sb, args[i].name);
+
+        if (args[i].isPackExpansion)
+        {
+            SbPuts(&sb, "...");
+        }
     }
 
     SbPutc(&sb, '>');
@@ -370,6 +375,8 @@ void AstDispose(Node* node)
     case NodeBoolLiteral:
     case NodeStrLiteral:
     case NodeIdent:
+        return;
+    case NodePackExpand:
         return;
     case NodeImpl:
         DisposeImpl(node);
