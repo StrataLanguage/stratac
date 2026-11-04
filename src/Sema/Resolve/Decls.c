@@ -252,6 +252,13 @@ static void BindDropMethods(Module* mod, DiagnosticEngine* diag, Arena* arena)
                 continue;
             }
 
+            // The compiler calls drop wherever a value dies, in any file, so it cannot be hidden.
+            if (method->isPrivate)
+            {
+                DiagErrorFmt(diag, method->base.range, "'drop' cannot be '@private'");
+                continue;
+            }
+
             const ParamDecl* self = method->params.count == 1 ? (const ParamDecl*)VecGet(&method->params, 0) : NULL;
             bool shape = self && self->mod == ModRef && strcmp(self->type.name, sd->name) == 0
                          && GetPrimitiveType(method->returnType.name) == PrimVoid && method->body;
@@ -357,6 +364,8 @@ static void BindInitMethods(Resolver* r)
             w->returnType.range = at;
             w->hasReturnStmt = true;
             w->isInitWrapper = true;
+            // A `@private init` makes `T(args)` through this overload callable only from its own file.
+            w->isPrivate = method->isPrivate;
             VecInit(&w->params);
 
             Block* body = AST_NEW(arena, Block);
@@ -433,6 +442,7 @@ static void BindInitMethods(Resolver* r)
             place->name = placeName;
             place->mangledName = placeName;
             place->returnType = method->returnType;
+            place->isPrivate = method->isPrivate;
             VecInit(&place->params);
 
             Block* placeBody = AST_NEW(arena, Block);
@@ -510,8 +520,27 @@ static bool SameExternSignature(const FunctionDecl* a, const FunctionDecl* b)
     return true;
 }
 
-// An extern may be declared more than once (two binding files both declaring `printf`), as in C:
-// identical redeclarations collapse into the first; a conflicting one is an error.
+// Two functions of one name that cannot both be used from one call site or one C symbol. Externs of
+// the same signature are one symbol, so they never clash. Otherwise they clash when they share a file,
+// or when neither is file-local (a file-local function is invisible from every other file).
+static bool FunctionsClash(const FunctionDecl* a, const FunctionDecl* b)
+{
+    if (a->isExtern && b->isExtern && !a->fromImpl && !b->fromImpl && SameExternSignature(a, b))
+    {
+        return false;
+    }
+
+    if (a->base.range.fileId == b->base.range.fileId)
+    {
+        return true;
+    }
+
+    return !FunctionIsFileLocal(a) && !FunctionIsFileLocal(b);
+}
+
+// An extern may be declared more than once (two binding files both declaring `printf`), as in C.
+// Identical redeclarations in one file, or identical exported ones, collapse into the first; a
+// file-local one in another file is kept, since each file must see its own. A conflicting one is an error.
 static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
 {
     size_t kept = 0;
@@ -530,17 +559,30 @@ static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
                 continue;
             }
 
-            if (SameExternSignature(earlier, f))
+            if (!SameExternSignature(earlier, f))
             {
+                if (earlier->base.range.fileId == f->base.range.fileId)
+                {
+                    DiagErrorFmt(diag, f->base.range, "conflicting declarations of extern function '%s'", f->name);
+                }
+                else
+                {
+                    DiagErrorFmt(diag, f->base.range, "conflicting extern declarations of '%s'", f->name);
+                    DiagNoteFmt(diag, earlier->base.range, "'%s' is also declared here with a different signature",
+                                f->name);
+                }
+
                 duplicate = true;
-            }
-            else
-            {
-                DiagErrorFmt(diag, f->base.range, "conflicting declarations of extern function '%s'", f->name);
-                duplicate = true;
+                break;
             }
 
-            break;
+            bool sameFile = earlier->base.range.fileId == f->base.range.fileId;
+
+            if (sameFile || (!FunctionIsFileLocal(earlier) && !FunctionIsFileLocal(f)))
+            {
+                duplicate = true;
+                break;
+            }
         }
 
         if (!duplicate)
@@ -550,6 +592,38 @@ static void MergeExternRedeclarations(Module* mod, DiagnosticEngine* diag)
     }
 
     mod->functions.count = kept;
+}
+
+// Another function with `f`'s name that `f` clashes with (see FunctionsClash), or NULL.
+static const FunctionDecl* FindClashingFunction(const Module* mod, const FunctionDecl* f)
+{
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        const FunctionDecl* other = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
+
+        if (other != f && strcmp(other->name, f->name) == 0 && FunctionsClash(f, other))
+        {
+            return other;
+        }
+    }
+
+    return NULL;
+}
+
+// Whether any extern of `f`'s name is declared, in any file.
+static const FunctionDecl* FindExternNamed(const Module* mod, const FunctionDecl* f)
+{
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        const FunctionDecl* other = (const FunctionDecl*)VecGet((Vec*)&mod->functions, i);
+
+        if (other != f && other->isExtern && !other->fromImpl && strcmp(other->name, f->name) == 0)
+        {
+            return other;
+        }
+    }
+
+    return NULL;
 }
 
 // `Name(args)` constructs the struct `Name` when there is one, so a function of the same name could
@@ -758,20 +832,40 @@ static void MangleFunctions(Resolver* r)
 
         bool overloaded = CountByName(mod, functionDecl->name) > 1;
 
-        if (overloaded && (functionDecl->isExtern || functionDecl->isExport))
+        if (functionDecl->isExtern && FindClashingFunction(mod, functionDecl))
         {
-            DiagErrorFmt(diag, functionDecl->base.range, "%s function '%s' cannot be overloaded",
-                         functionDecl->isExtern ? "extern" : "'@export'", functionDecl->name);
+            DiagErrorFmt(diag, functionDecl->base.range, "extern function '%s' cannot be overloaded",
+                         functionDecl->name);
         }
 
         if (functionDecl->isExport)
         {
+            // An @export function has the C name, so an extern of that name anywhere would be its clash.
+            const FunctionDecl* externDecl = FindExternNamed(mod, functionDecl);
+
+            if (externDecl && externDecl->base.range.fileId != functionDecl->base.range.fileId)
+            {
+                DiagErrorFmt(diag, functionDecl->base.range,
+                             "'@export' function '%s' clashes with extern '%s' declared in another file",
+                             functionDecl->name, externDecl->name);
+            }
+            else if (overloaded)
+            {
+                DiagErrorFmt(diag, functionDecl->base.range, "'@export' function '%s' cannot be overloaded",
+                             functionDecl->name);
+            }
+
             CheckExportDecl(r, functionDecl);
         }
 
-        functionDecl->mangledName = overloaded ? Mangle(arena, functionDecl) : functionDecl->name;
+        // Externs keep their C name; any other function sharing a name gets a mangled one.
+        functionDecl->mangledName
+            = (overloaded && !functionDecl->isExtern) ? Mangle(arena, functionDecl) : functionDecl->name;
 
-        if (StrMapGet(&byMangled, functionDecl->mangledName))
+        // Externs of one signature may repeat across files: they are one C symbol.
+        const FunctionDecl* prior = (const FunctionDecl*)StrMapGet(&byMangled, functionDecl->mangledName);
+
+        if (prior && !(prior->isExtern && functionDecl->isExtern && SameExternSignature(prior, functionDecl)))
         {
             DiagErrorFmt(diag, functionDecl->base.range, "duplicate function signature for '%s'", functionDecl->name);
         }

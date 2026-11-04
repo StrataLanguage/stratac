@@ -122,3 +122,11 @@ string to_str(int value_)
 
     return (string)buffer;
 }
+
+/* Creates a string from a raw buffer. Stops at null-terminator or length, whichever comes first. */
+string to_str(const *byte buffer_, ulong length)
+{
+	ptr raw_data = buffer_;
+	cstring constr = (cstring)raw_data;
+	return (string)constr;
+}

@@ -1,0 +1,25 @@
+// expect: run
+// expect-output: drop 5
+// expect-output: drop 6
+// expect-output: 3
+// expect-output: END live=0
+// rule: a generic method takes an owning value (^Res, string) by value, inferred from the argument, and drops it at the end of the call
+struct Holder { int n; }
+impl Holder
+{
+    void keep<T>(ref Holder self, T value)
+    {
+        self.n = self.n + 1;
+    }
+}
+int main()
+{
+    Holder h = Holder { .n = 0 };
+    h.keep(Box(5));
+    ^Res r = Box(6);
+    h.keep<^Res>(r);
+    h.keep("text");
+    printf("%d\n", h.n);
+    Report();
+    return 0;
+}

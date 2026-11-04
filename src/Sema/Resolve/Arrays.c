@@ -57,10 +57,10 @@ bool IsFatPseudoProperty(const Resolver* r, const TypeName* base, const char* me
         return TypeNameIsDynamicArray(base) || TypeIsString(&r->registry, base->name);
     }
 
-    // `.ptr` on a cstring: its NUL-terminated bytes, as a `ptr`.
+    // `.ptr`: a cstring's NUL-terminated bytes, as a `ptr`; a string's element buffer, as a `*byte`.
     if (isPtr)
     {
-        return TypeIsCString(&r->registry, base->name);
+        return TypeIsCString(&r->registry, base->name) || TypeIsString(&r->registry, base->name);
     }
 
     if (TypeNameHasArrayShape(base) && base->length >= 0)

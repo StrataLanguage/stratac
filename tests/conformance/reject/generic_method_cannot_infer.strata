@@ -1,0 +1,12 @@
+// expect: reject "can't infer type argument 'U' of 'conv': write 'x.conv<...>(...)'"
+// rule: a type parameter that no argument fixes must be written at the call
+struct H { int a; }
+impl H
+{
+    int conv<U>(const ref H self) { return 0; }
+}
+int main()
+{
+    H h = H { .a = 1 };
+    return h.conv();
+}

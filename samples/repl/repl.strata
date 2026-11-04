@@ -9,12 +9,11 @@
 
 import ../../std/bytebuffer;
 import ../../std/stringutil;
+import ../../std/rc;
 
-extern int printf(cstring fmt, ...);
-extern int snprintf(ptr buf, ulong size, cstring fmt, ...);
-extern int fflush(ptr file);
-extern int getchar();
-extern int putchar(int c);
+
+import repl_tui;
+
 extern ptr getenv(cstring name);
 extern int getpid();
 extern ptr fopen(cstring path, cstring mode);
@@ -39,9 +38,9 @@ extern void strataFree(ptr s);
 // shim.c
 extern void repl_install_panic_hook();
 extern int repl_run_guarded(ptr fn);
-extern int repl_is_tty();
-extern void repl_raw_on();
-extern void repl_raw_off();
+@export extern int repl_is_tty();
+@export extern void repl_raw_on();
+@export extern void repl_raw_off();
 
 extern delegate ptr NewContextFn();
 extern delegate void FreeContextFn(ptr ctx);
@@ -50,6 +49,8 @@ extern delegate double GetRealFn();
 
 enum VarKind { NotVariable, Int, Long, Bool, Float, Double };
 enum EntryKind { Item, Declaration, Expression, Statement };
+
+
 
 // A variable kept for the session. Integers and bools use `ivalue`, floats `rvalue`.
 struct Var
@@ -83,18 +84,10 @@ struct Session
 
 Session s;
 
-// ---- text ------------------------------------------------------------------
 
 void clear(ref bytebuffer b)
 {
 	b.size = 0;
-}
-
-// The contents of `b` as a NUL-terminated string. Valid until `b` changes.
-cstring as_cstring(ref bytebuffer b)
-{
-	ptr text = b.get_str();
-	return (cstring)text;
 }
 
 // Appends the bytes of t[from..to).
@@ -118,7 +111,7 @@ string word_string(cstring t, ulong from, ulong to)
 {
 	clear(s.scratch);
 	add_range(s.scratch, t, from, to);
-	cstring text = as_cstring(s.scratch);
+	cstring text = s.scratch.as_cstring();
 	string owned = text;
 	return owned;
 }
@@ -205,7 +198,8 @@ bool word_is(cstring t, ulong from, ulong to, cstring word)
 	return true;
 }
 
-// ---- variables -------------------------------------------------------------
+/////////////////////////////
+// Variables
 
 VarKind kind_of_type(cstring t, ulong from, ulong to)
 {
@@ -311,7 +305,8 @@ void add_getter(int i)
 	}
 }
 
-// ---- classifying entries ---------------------------------------------------
+///////////////////////////
+// Entry classification
 
 bool is_item_word(cstring t, ulong from, ulong to)
 {
@@ -329,9 +324,7 @@ bool is_statement_word(cstring t, ulong from, ulong to)
 		|| word_is(t, from, to, "break") || word_is(t, from, to, "continue");
 }
 
-// An item is a struct, impl, extern, import, attribute or `TYPE NAME(` function.
-// A declaration is `TYPE NAME = ...` or `TYPE NAME;`. A statement ends in `;` or `}`.
-// Anything else is a value to print.
+
 EntryKind classify(cstring t)
 {
 	ulong start = skip_space(t, 0);
@@ -433,229 +426,66 @@ int bracket_delta(cstring line)
 	return depth;
 }
 
-// The line being edited on a terminal: its bytes, their count, and the cursor
-// position (0..len).
-struct LineEdit
+
+const uint sc_max_prompt_length = 1024;
+string build_prompt(bool first, int depth)
 {
-	byte[1024] text;
-	int len;
-	int cursor;
+	if (first) {
+		return ">>> ";
+	}
+
+	byte[sc_max_prompt_length] buffer = {};
+
+	for (uint i = 0; i < depth + 1; i++) {
+		const uint buffer_index = (i * 4);
+
+		buffer[buffer_index] = '.';
+		buffer[buffer_index + 1] = '.';
+		buffer[buffer_index + 2] = '.';
+		buffer[buffer_index + 3] = ' ';
+	}
+
+	return to_str(&buffer[0], sc_max_prompt_length);
 }
 
-LineEdit ed;
-
-// Redraws the prompt and the edited line, then puts the cursor where it belongs.
-void redraw(cstring prompt)
-{
-	putchar(13);
-	putchar(27);
-	printf("[K");
-	printf("%s", prompt);
-	for (int i = 0; i < ed.len; i++) {
-		putchar((int)ed.text[i]);
-	}
-
-	putchar(13);
-	int column = (int)prompt.length + ed.cursor;
-	if (column > 0) {
-		putchar(27);
-		printf("[%dC", column);
-	}
-	fflush(ptr.null);
-}
-
-void insert_char(byte c)
-{
-	if (ed.len >= 1023) {
-		return;
-	}
-	for (int i = ed.len; i > ed.cursor; i--) {
-		ed.text[i] = ed.text[i - 1];
-	}
-	ed.text[ed.cursor] = c;
-	ed.len++;
-	ed.cursor++;
-}
-
-// Deletes the byte at `at` and shifts the rest of the line left.
-void delete_at(int at)
-{
-	if (at < 0 || at >= ed.len) {
-		return;
-	}
-	for (int i = at; i < ed.len - 1; i++) {
-		ed.text[i] = ed.text[i + 1];
-	}
-	ed.len--;
-	if (ed.cursor > ed.len) {
-		ed.cursor = ed.len;
-	}
-}
-
-// Handles an escape sequence: ESC [ params final, or ESC O final. Left and right
-// move the cursor, Home and End jump to the ends, and Delete removes the byte under it.
-void escape_key()
-{
-	int c = getchar();
-	int first = -1;
-
-	if (c == 'O') {
-		c = getchar();
-	}
-	else if (c == '[') {
-		c = getchar();
-		while ((c >= '0' && c <= '9') || c == ';') {
-			if (first < 0 && c != ';') {
-				first = c;
-			}
-			c = getchar();
-		}
-	}
-	else {
-		return;
-	}
-
-	if (c == 'C') {
-		if (ed.cursor < ed.len) {
-			ed.cursor++;
-		}
-	}
-	else if (c == 'D') {
-		if (ed.cursor > 0) {
-			ed.cursor--;
-		}
-	}
-	else if (c == 'H' || (c == '~' && (first == '1' || first == '7'))) {
-		ed.cursor = 0;
-	}
-	else if (c == 'F' || (c == '~' && (first == '4' || first == '8'))) {
-		ed.cursor = ed.len;
-	}
-	else if (c == '~' && first == '3') {
-		delete_at(ed.cursor);
-	}
-}
-
-// Reads one line from a terminal with editing: arrow keys, Home/End, Backspace and
-// Delete. Enter finishes the line. Ctrl-C drops it, and Ctrl-D on an empty line ends
-// the input. Returns false at end of input.
-bool edit_line(cstring prompt)
-{
-	ed.len = 0;
-	ed.cursor = 0;
-
-	repl_raw_on();
-	redraw(prompt);
-
-	while (true) {
-		int ch = getchar();
-
-		if (ch == 4 && ed.len == 0) {
-			repl_raw_off();
-			putchar(10);
-			return false;
-		}
-		if (ch == -1) {
-			// End of input: keep a partial line, or report end of input if there is none.
-			if (ed.len == 0) {
-				repl_raw_off();
-				return false;
-			}
-			break;
-		}
-
-		if (ch == 10 || ch == 13) {
-			break;
-		}
-		if (ch == 3) {
-			ed.len = 0;
-			ed.cursor = 0;
-			printf("^C");
-			break;
-		}
-		if (ch == 127 || ch == 8) {
-			if (ed.cursor > 0) {
-				ed.cursor--;
-				delete_at(ed.cursor);
-			}
-		}
-		else if (ch == 27) {
-			escape_key();
-		}
-		else if (ch >= 32 && ch < 127) {
-			insert_char((byte)ch);
-		}
-
-		redraw(prompt);
-	}
-
-	repl_raw_off();
-	putchar(10);
-
-	clear(s.line);
-	for (int i = 0; i < ed.len; i++) {
-		s.line.write(ed.text[i]);
-	}
-	return true;
-}
-
-// Reads one line into s.line, showing `prompt`. Returns false at end of input.
-bool read_line(cstring prompt)
-{
-	if (repl_is_tty() != 0) {
-		return edit_line(prompt);
-	}
-
-	printf("%s", prompt);
-	fflush(ptr.null);
-
-	clear(s.line);
-	int ch = getchar();
-	if (ch == -1) {
-		return false;
-	}
-
-	while (ch != -1 && ch != 10) {
-		s.line.write((byte)ch);
-		ch = getchar();
-	}
-	return true;
-}
 
 // Reads one entry into s.input, continuing lines while brackets are open.
 // Returns false at end of input.
-bool read_entry()
+bool read_entry(ref line_edit edit)
 {
 	clear(s.input);
 
 	int depth = 0;
 	bool first = true;
 
+
 	while (true) {
-		if (!read_line(first ? "strata> " : "   ...> ")) {
-			// End of input: a partial entry still counts.
+		string prompt = build_prompt(first, depth);
+
+		if (!read_line(edit, prompt)) {
 			return !first;
 		}
 
 		if (!first) {
 			s.input.write('\n');
 		}
-		s.input.write(as_cstring(s.line));
+		s.input.write(s.line.as_cstring());
 		first = false;
 
-		depth = depth + bracket_delta(as_cstring(s.line));
-		if (depth <= 0 && !header_pending(as_cstring(s.input))) {
+		depth = depth + bracket_delta(s.line.as_cstring());
+		if (depth <= 0 && !header_pending(s.input.as_cstring())) {
 			return true;
 		}
 	}
 }
 
-// ---- building and compiling the module -------------------------------------
+////////////////////////////////////////
+// Building modules and compilation
 
-// Printing overloads: the compiler picks the one whose parameter type is the
-// value's type exactly, so each value prints in its own form.
-void add_show_overloads(ref bytebuffer b)
+void add_repl_internal_functions(ref bytebuffer b)
 {
+	b.write("extern int printf(cstring fmt, ...);\n");
+
 	b.write("void __repl_show(int __repl_value) { printf(\"%d\\n\", __repl_value); }\n");
 	b.write("void __repl_show(long __repl_value) { printf(\"%ld\\n\", __repl_value); }\n");
 	b.write("void __repl_show(float __repl_value) { printf(\"%g\\n\", (double)__repl_value); }\n");
@@ -665,20 +495,17 @@ void add_show_overloads(ref bytebuffer b)
 	b.write("void __repl_show(string __repl_value) { printf(\"\\\"%s\\\"\\n\", __repl_value); }\n");
 }
 
-// Writes the module for this entry into s.src: printing overloads, the variables
-// with their current values, the kept declarations, their getters, `item`, and
-// when `run` is set, __repl_run with `body` as its body.
 void build_module(cstring item, cstring body, bool run)
 {
 	clear(s.src);
-	s.src.write("extern int printf(cstring fmt, ...);\n");
-	add_show_overloads(s.src);
+
+	add_repl_internal_functions(s.src);
 
 	for (int i = 0; i < (int)s.vars.length; i++) {
 		add_variable_decl(i);
 	}
 
-	s.src.write(as_cstring(s.decls));
+	s.src.write(s.decls.as_cstring());
 	s.src.write(item);
 	s.src.write("\n");
 
@@ -693,23 +520,25 @@ void build_module(cstring item, cstring body, bool run)
 	}
 }
 
-// The last byte of a non-empty buffer.
 byte last_byte(ref bytebuffer b)
 {
-	cstring text = as_cstring(b);
+	cstring text = b.as_cstring();
 	return text[text.length - 1];
 }
 
-// Prints compiler diagnostics with the session module's temporary path replaced by "repl".
 void print_diagnostics(cstring diag)
 {
-	cstring name = as_cstring(s.session_name);
+	cstring name = s.session_name.as_cstring();
 	ulong name_len = name.length;
 
 	clear(s.scratch);
+
 	ulong i = 0;
-	while (i < diag.length) {
-		if (i + name_len <= diag.length && word_is(diag, i, i + name_len, name)) {
+
+	const uint diag_length = diag.length;
+
+	while (i < diag_length) {
+		if (i + name_len <= diag_length && word_is(diag, i, i + name_len, name)) {
 			// Drop the directory already copied: back to the last space or the start of the line.
 			while (s.scratch.size > 0 && !is_space(last_byte(s.scratch))) {
 				s.scratch.size = s.scratch.size - 1;
@@ -723,16 +552,14 @@ void print_diagnostics(cstring diag)
 		}
 	}
 
-	printf("%s\n", as_cstring(s.scratch));
+	printf("%s\n", s.scratch.as_cstring());
 }
 
-// Compiles the module in s.src. It goes through a file so that `import` can find
-// its modules. On failure the diagnostics are printed unless s.quiet is set.
 ptr compile_module()
 {
-	ptr file = fopen(as_cstring(s.session_file), "w");
+	ptr file = fopen(s.session_file.as_cstring(), "w");
 	if (file == ptr.null) {
-		printf("error: cannot write %s\n", as_cstring(s.session_file));
+		printf("error: cannot write %s\n", s.session_file.as_cstring());
 		return ptr.null;
 	}
 	defer fclose(file);
@@ -740,9 +567,11 @@ ptr compile_module()
 	fwrite(s.src.get_ptr(), 1, s.src.size, file);
 	fclose(file);
 
+	cstring file_cstr = s.session_file.as_cstring();
+
 	ptr err = ptr.null;
-	ptr jit = strataJitCompileFile(s.compiler, as_cstring(s.session_file), &err);
-	unlink(as_cstring(s.session_file));
+	ptr jit = strataJitCompileFile(s.compiler, file_cstr, &err);
+	unlink(file_cstr);
 
 	if (jit == ptr.null && !s.quiet) {
 		print_diagnostics((cstring)err);
@@ -750,11 +579,10 @@ ptr compile_module()
 	if (err != ptr.null) {
 		strataFree(err);
 	}
+
 	return jit;
 }
 
-// Binds every extern the module declares to the symbol of the same name in this
-// process (libc and anything else linked in).
 void bind_externs(ptr jit)
 {
 	ptr self = dlopen(ptr.null, 2);
@@ -766,8 +594,6 @@ void bind_externs(ptr jit)
 	}
 }
 
-// Runs __repl_run from `jit`, then reads every variable back into the session.
-// A runtime panic stops the run and the REPL carries on. Takes ownership of jit.
 void execute(ptr jit)
 {
 	defer strataJitDestroy(jit);
@@ -784,7 +610,7 @@ void execute(ptr jit)
 		clear(s.scratch);
 		s.scratch.write("__repl_get_");
 		write_string(s.scratch, s.vars[i].name);
-		cstring getter = as_cstring(s.scratch);
+		cstring getter = s.scratch.as_cstring();
 
 		if (is_real(s.vars[i].kind)) {
 			GetRealFn get = (GetRealFn)strataJitGetFunction(jit, getter);
@@ -797,9 +623,10 @@ void execute(ptr jit)
 	}
 }
 
-// ---- evaluating entries ----------------------------------------------------
+//////////////////////
+// Evauluation
 
-// Checks the declaration in `item` and keeps it for the session.
+
 bool add_item(cstring item)
 {
 	build_module(item, "", false);
@@ -815,7 +642,6 @@ bool add_item(cstring item)
 	return true;
 }
 
-// Compiles `body` as the body of __repl_run and runs it.
 void run_body(cstring body)
 {
 	build_module("", body, true);
@@ -826,8 +652,7 @@ void run_body(cstring body)
 	}
 }
 
-// Prints the value of an expression. If it does not have a printable type, it is
-// run as a statement instead.
+
 void run_expression(cstring t)
 {
 	clear(s.body);
@@ -835,7 +660,7 @@ void run_expression(cstring t)
 	s.body.write(t);
 	s.body.write(");");
 
-	build_module("", as_cstring(s.body), true);
+	build_module("", s.body.as_cstring(), true);
 
 	s.quiet = true;
 	ptr jit = compile_module();
@@ -849,11 +674,10 @@ void run_expression(cstring t)
 	clear(s.body);
 	s.body.write(t);
 	s.body.write(";");
-	run_body(as_cstring(s.body));
+	run_body(s.body.as_cstring());
 }
 
-// `TYPE name [= expr];`: declares a variable, or assigns it again when it already
-// exists with the same type. A declaration that fails to compile is not kept.
+
 void declare_variable(cstring t)
 {
 	ulong type_start = skip_space(t, 0);
@@ -900,7 +724,7 @@ void declare_variable(cstring t)
 		s.body.write(" = 0;");
 	}
 
-	build_module("", as_cstring(s.body), true);
+	build_module("", s.body.as_cstring(), true);
 
 	var jit = compile_module();
 	if (jit == ptr.null) {
@@ -930,24 +754,19 @@ void handle_entry(cstring t)
 	}
 }
 
-// ---- commands --------------------------------------------------------------
+//////////////////////
+// Comands
 
 void print_help()
 {
-	printf("Entries are compiled and run as soon as they are entered.\n");
-	printf("  1 + 2 * 3              print a value\n");
-	printf("  printf(\"hi\\n\");       run a statement\n");
-	printf("  int n = 10;           declare a variable (int, long, bool, float or double)\n");
-	printf("  n = n + 1;            assign it; the value is kept for the session\n");
-	printf("  int add(int a, int b) { return a + b; }\n");
-	printf("                         functions, struct, impl, extern and import are kept too\n");
-	printf("  import stringutil;    loads from STRATA_STD (default ../../std)\n");
+	printf("=== Help ===\n");
 	printf(":vars            list the variables\n");
 	printf(":reset           forget all variables and kept declarations\n");
 	printf(":load <file>     add the declarations in a file\n");
 	printf(":help            show this message\n");
 	printf(":quit            leave the REPL\n");
 }
+
 
 void print_vars()
 {
@@ -983,10 +802,12 @@ void reset_session()
 void load_file(cstring path)
 {
 	ptr file = fopen(path, "r");
+
 	if (file == ptr.null) {
 		printf("error: cannot open %s\n", path);
 		return;
 	}
+
 	defer fclose(file);
 
 	clear(s.file);
@@ -996,7 +817,7 @@ void load_file(cstring path)
 		ch = fgetc(file);
 	}
 
-	if (add_item(as_cstring(s.file))) {
+	if (add_item(s.file.as_cstring())) {
 		printf("loaded %s\n", path);
 	}
 }
@@ -1028,7 +849,7 @@ bool run_command(cstring t)
 
 		clear(s.path);
 		add_range(s.path, t, arg, stop);
-		load_file(as_cstring(s.path));
+		load_file(s.path.as_cstring());
 	}
 	else {
 		printf("unknown command (try :help)\n");
@@ -1037,8 +858,31 @@ bool run_command(cstring t)
 	return false;
 }
 
+
+struct rc_test
+{
+	int x;
+	float y;
+}
+
+impl rc_test
+{
+	void init(ref rc_test self) {}
+	void init(ref rc_test self, int x_, float y_)
+	{
+		self.x = x_;
+		self.y = y_;
+	}
+}
+
+
 int main()
 {
+	/*{
+		var test_rc = make_ref<rc_test, int, float>(10, 20.0f);
+		return 0;
+	}*/
+
 	s.compiler = strataCompilerCreate();
 	repl_install_panic_hook();
 
@@ -1058,24 +902,31 @@ int main()
 	if (std_env != ptr.null) {
 		std_dir = (cstring)std_env;
 	}
+
 	strataAddImportDir(s.compiler, std_dir);
 
 	cstring tmp_dir = "/tmp";
+
 	ptr tmp_env = getenv("TMPDIR");
+
 	if (tmp_env != ptr.null) {
 		tmp_dir = (cstring)tmp_env;
 	}
+
 	s.session_name.write("strata_repl_");
+
 	write_long(s.session_name, (long)getpid());
 	s.session_name.write(".strata");
 	s.session_file.write(tmp_dir);
 	s.session_file.write("/");
-	s.session_file.write(as_cstring(s.session_name));
+	s.session_file.write(s.session_name.as_cstring());
 
 	printf("Strata REPL. :help for help, :quit to leave.\n");
 
-	while (read_entry()) {
-		cstring t = as_cstring(s.input);
+	line_edit edit;
+
+	while (read_entry(edit)) {
+		cstring t = s.input.as_cstring();
 		ulong start = skip_space(t, 0);
 
 		if (start >= t.length) {

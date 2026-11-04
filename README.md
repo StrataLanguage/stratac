@@ -76,8 +76,8 @@ int main()
 
 v1 limits:
 
-- Type arguments are always written: `make_number<int>(3)`, not `make_number(3)`.
-- Methods cannot have type parameters of their own; they belong to the `impl`.
+- A generic function's type arguments can be written (`make_number<int>(3)`) or inferred from the
+  arguments' declared types (`make_number(3)`); see "Generic methods" below for the rules.
 - There are no constraints. A body is checked for each argument it is instantiated with, so an
   operation that one argument does not support is an error for that instance.
 - Every method of a generic `impl` is instantiated for each instance of the struct, so each must
@@ -133,6 +133,47 @@ int main()
   never inferred, so its type arguments are written. `break` and `continue` are not allowed directly in
   a pack loop. Only a bare `name...` expands, and `args.length`, `args[i]` and `args...` are the only
   uses of a pack value. Indexing a type pack and patterns such as `f(args)...` are not supported.
+
+### Generic methods
+
+A method inside an `impl` may take type parameters of its own, and a parameter pack. Its instances are
+made with the impl's, one per type argument list:
+
+```c
+struct Box2<T> { T value; }
+
+impl Box2<T>
+{
+    U convert<U>(const ref Box2<T> self) { return (U)self.value; }
+    void set_all<U>(ref Box2<T> self, U value) { self.value = (T)value; }
+    void init<TArgs...>(ref Box2<T> self, TArgs... args) { self.set_all(args...); }
+}
+
+int main()
+{
+    Box2<int> b = Box2<int>(2.0);       // constructor: TArgs inferred as double
+    float f = b.convert<float>();       // explicit type arguments
+    b.set_all(2.5f);                    // inferred: U = float
+    return 0;
+}
+```
+
+- The type arguments of a call are written (`x.m<float>()`, `Type.m<int>()`, `x.m<>()` for an empty pack),
+  or inferred from the arguments: a parameter whose type is exactly a type parameter (`U`, `ref U`,
+  `const U`) takes the argument's type, and a pack takes the types of the arguments after the fixed
+  parameters. The receiver is not an argument. Inference sees the declared type of a name, a field, a
+  literal (`2.0` is `double`, `2.0f` is `float`), a cast, a unary operator, a constructor call, a call of a
+  function declared once, or a struct literal.
+- Errors: a type parameter that no argument fixes ("can't infer type argument 'U' of 'm': write
+  'x.m<...>(...)'"); two arguments that disagree ("is inferred as both 'int' and 'float'"); an argument
+  whose type is not known before type checking, such as `1 + 2`, when inference needs it; a receiver with no
+  known type when some generic method has that name.
+- A method template's name is its own: a handle has at most one generic method of each name, and it may not
+  share a name with a plain method. `init` is the exception: a generic `init` is a constructor overload beside
+  the plain ones. `T(args)` and `p.init(args)` through a pointer pick it, and an instance with the same
+  parameters as a plain `init` is not made.
+- Not allowed: a generic `drop`, an `extern` or `@export` method with type parameters, and a method type
+  parameter with the name of one of the impl's.
 
 ## Meta functions
 

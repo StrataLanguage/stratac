@@ -1,0 +1,45 @@
+// expect: run
+// expect-output: -1 0.5
+// expect-output: 1 2.5
+// expect-output: 1 2.5
+// expect-output: 1 2.5
+// expect-output: -1 0.5
+// rule: a generic init is a constructor overload beside the plain one: T(args) and p.init(args) through a pointer pick it by their arguments, and a holder's generic init places a value through a pointer with a private generic method
+struct Pt { int x; float y; }
+impl Pt
+{
+    void init(ref Pt self) { self.x = -1; self.y = 0.5f; }
+    void init<U, V>(ref Pt self, U x, V y) { self.x = (int)x; self.y = (float)y; }
+}
+struct Holder<T> { *T ptr; }
+impl Holder<T>
+{
+    void init<TArgs...>(ref Holder<T> self, TArgs... args)
+    {
+        self.place(args...);
+    }
+    @private
+    void place<TArgs...>(ref Holder<T> self, TArgs... args)
+    {
+        ptr raw = malloc(sizeof<T>());
+        *T obj = (*T)raw;
+        obj.init(args...);
+        self.ptr = obj;
+    }
+}
+int main()
+{
+    Pt a = Pt();
+    printf("%d %g\n", a.x, a.y);
+    Pt b = Pt(1, 2.5f);
+    printf("%d %g\n", b.x, b.y);
+    Pt slot = Pt();
+    *Pt p = &slot;
+    p.init(1, 2.5f);
+    printf("%d %g\n", slot.x, slot.y);
+    Holder<Pt> h = Holder<Pt>(1, 2.5f);
+    printf("%d %g\n", h.ptr.x, h.ptr.y);
+    Holder<Pt> g = Holder<Pt>();
+    printf("%d %g\n", g.ptr.x, g.ptr.y);
+    return 0;
+}

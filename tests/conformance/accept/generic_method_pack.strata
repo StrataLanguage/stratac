@@ -1,0 +1,32 @@
+// expect: run
+// expect-output: 3
+// expect-output: 8
+// expect-output: 5
+// rule: a generic method with a parameter pack forwards it to another generic method (`self.add(args...)`), and its pack length is known in the body
+struct Tally { int total; }
+impl Tally
+{
+    void add<TArgs...>(ref Tally self, TArgs... args)
+    {
+        self.total = self.total + args.length;
+    }
+    void forward<TArgs...>(ref Tally self, TArgs... args)
+    {
+        self.add(args...);
+    }
+    void forward_with<TArgs...>(ref Tally self, TArgs... args)
+    {
+        self.add(1, args...);
+    }
+}
+int main()
+{
+    Tally t = Tally { .total = 0 };
+    t.forward(1, 2.0f, true);
+    printf("%d\n", t.total);
+    t.forward_with(4, 5, 6, 7);
+    printf("%d\n", t.total);
+    t.forward<>();
+    printf("%d\n", t.total - 3);
+    return 0;
+}

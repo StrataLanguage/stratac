@@ -408,6 +408,26 @@ static Node* DerefReceiver(Resolver* r, Node* base, StrMap* scope)
     return (Node*)deref;
 }
 
+// Whether `handle` has a generic method `method`: Monomorphize keeps the template, named `handle_method`, in
+// Module::genericTemplates.
+static bool IsGenericMethodOf(const Module* mod, const char* handle, const char* method)
+{
+    for (size_t i = 0; i < mod->genericTemplates.count; i++)
+    {
+        const Node* n = (const Node*)VecGet(&mod->genericTemplates, i);
+        const FunctionDecl* fn = (const FunctionDecl*)n;
+
+        if (n->kind == NodeFunction && fn->genericParams.count > 0 && fn->methodName && fn->name
+            && strcmp(fn->methodName, method) == 0 && strncmp(fn->name, handle, strlen(handle)) == 0
+            && fn->name[strlen(handle)] == '_' && strcmp(fn->name + strlen(handle) + 1, method) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // Resolves `expr.Member(args...)` / `Type.Member(args...)` against impl blocks.
 // Returns true when the call was fully handled (diagnostic emitted); false
 // after a successful rewrite (fall through to normal overload resolution).
@@ -475,6 +495,13 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
         if (FindImplProperty(r, handleName, c->callee))
         {
             DiagErrorFmt(r->diag, c->base.range, "'%s' is a property of '%s', not a method; access it without ()",
+                         c->callee, handleName);
+        }
+        else if (IsGenericMethodOf(r->mod, handleName, c->callee))
+        {
+            DiagErrorFmt(r->diag, c->base.range,
+                         "'%s' is a generic method of '%s', but the receiver's type isn't known before type checking, "
+                         "so it can't be instantiated; give the receiver a declared type",
                          c->callee, handleName);
         }
         else

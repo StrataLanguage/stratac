@@ -1,0 +1,208 @@
+@export extern int printf(cstring fmt, ...);
+@export extern int snprintf(ptr buf, ulong size, cstring fmt, ...);
+extern int fflush(ptr file);
+extern int getchar();
+extern int putchar(int c);
+
+
+const int sc_max_line_length = 1024;
+
+struct line_edit
+{
+	byte[sc_max_line_length] text;
+	int len;
+	int cursor;
+}
+
+void insert_char(ref line_edit edit, byte c)
+{
+	if (edit.len >= sc_max_line_length - 1) {
+		return;
+	}
+	for (int i = edit.len; i > edit.cursor; i--) {
+		edit.text[i] = edit.text[i - 1];
+	}
+
+	edit.text[edit.cursor++] = c;
+	edit.len++;
+}
+
+// Deletes the byte at `at` and shifts the rest of the line left.
+void delete_at(ref line_edit edit, int at)
+{
+	if (at < 0 || at >= edit.len) {
+		return;
+	}
+	for (int i = at; i < edit.len - 1; i++) {
+		edit.text[i] = edit.text[i + 1];
+	}
+	edit.len--;
+	if (edit.cursor > edit.len) {
+		edit.cursor = edit.len;
+	}
+}
+
+void delete_at_cursor(ref line_edit edit)
+{
+	delete_at(edit, edit.cursor);
+}
+
+// Redraws the prompt and the edited line, then puts the cursor where it belongs.
+void redraw(const ref line_edit edit, string prompt)
+{
+	putchar(13);
+	putchar(27);
+	printf("[K");
+	printf("%s", prompt);
+
+	for (int i = 0; i < edit.len; i++) {
+		putchar((int)edit.text[i]);
+	}
+
+	putchar(13);
+
+	int column = (int)prompt.length + edit.cursor;
+
+	if (column > 0) {
+		putchar(27);
+		printf("[%dC", column);
+	}
+
+	fflush(ptr.null);
+}
+
+
+
+// Handle ANSI escape sequences for key inputs
+void escape_key(ref line_edit edit)
+{
+	int c = getchar();
+	int first = -1;
+
+	if (c == 'O') {
+		c = getchar();
+	}
+	else if (c == '[') {
+		c = getchar();
+
+		while ((c >= '0' && c <= '9') || c == ';') {
+			if (first < 0 && c != ';') {
+				first = c;
+			}
+
+			c = getchar();
+		}
+	}
+	else {
+		return;
+	}
+
+	// Right arrow, move right
+	if (c == 'C') {
+		if (edit.cursor < edit.len) {
+			edit.cursor++;
+		}
+	}
+	// Left arrow, move left
+	else if (c == 'D') {
+		if (edit.cursor > 0) {
+			edit.cursor--;
+		}
+	}
+	// HOME, skip to start of line
+	else if (c == 'H' || (c == '~' && (first == '1' || first == '7'))) {
+		edit.cursor = 0;
+	}
+	// END, skip to end of line
+	else if (c == 'F' || (c == '~' && (first == '4' || first == '8'))) {
+		edit.cursor = edit.len;
+	}
+
+	// DELETE, Delete the highlighted character
+	else if (c == '~' && first == '3') {
+		delete_at_cursor(edit);
+	}
+}
+
+bool edit_line(ref line_edit edit, string prompt)
+{
+	edit.len = 0;
+	edit.cursor = 0;
+
+	repl_raw_on();
+	redraw(edit, prompt);
+
+	while (true) {
+		int ch = getchar();
+
+		if (ch == 4 && edit.len == 0) {
+			repl_raw_off();
+			putchar(10);
+			return false;
+		}
+		if (ch == -1) {
+			if (edit.len == 0) {
+				repl_raw_off();
+				return false;
+			}
+			break;
+		}
+
+		if (ch == 10 || ch == 13) {
+			break;
+		}
+		if (ch == 3) {
+			edit.len = 0;
+			edit.cursor = 0;
+			printf("^C");
+			break;
+		}
+		if (ch == 127 || ch == 8) {
+			if (edit.cursor > 0) {
+				edit.cursor--;
+				delete_at_cursor(edit);
+			}
+		}
+		else if (ch == 27) {
+			escape_key(edit);
+		}
+		else if (ch >= 32 && ch < 127) {
+			insert_char(edit, (byte)ch);
+		}
+
+		redraw(edit, prompt);
+	}
+
+	repl_raw_off();
+	putchar(10);
+
+	clear(s.line);
+
+	for (int i = 0; i < edit.len; i++) {
+		s.line.write(edit.text[i]);
+	}
+
+	return true;
+}
+
+bool read_line(ref line_edit edit, string prompt)
+{
+	if (repl_is_tty() != 0) {
+		return edit_line(edit, prompt);
+	}
+
+	printf("%s", prompt);
+	fflush(ptr.null);
+
+	clear(s.line);
+	int ch = getchar();
+	if (ch == -1) {
+		return false;
+	}
+
+	while (ch != -1 && ch != 10) {
+		s.line.write((byte)ch);
+		ch = getchar();
+	}
+	return true;
+}

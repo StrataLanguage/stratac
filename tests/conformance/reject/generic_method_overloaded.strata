@@ -1,0 +1,9 @@
+// expect: reject "generic method 'M' cannot be overloaded"
+// rule: a handle has at most one generic method of each name
+struct H { int a; }
+impl H
+{
+    int M<T>(T x) { return 0; }
+    int M<T>(T x, T y) { return 1; }
+}
+int main() { return 0; }

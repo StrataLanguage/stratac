@@ -1,0 +1,43 @@
+// expect: run
+// expect-output: 3
+// expect-output: 2.5
+// expect-output: 7
+// expect-output: 9
+// expect-output: 11
+// expect-output: 4
+// expect-output: 2
+// expect-output: END live=0
+// rule: a generic method's type arguments are inferred from the declared types of its arguments: locals, parameters, fields, literals, casts, through `ref`, `^T` and `*T` receivers
+struct Crate { int value; float weight; }
+impl Crate
+{
+    void set<U>(ref Crate self, U v) { self.value = (int)v; }
+    void weigh<U>(ref Crate self, U w) { self.weight = (float)w; }
+}
+struct Holder { Crate box; int count; }
+void put(ref Crate c, float x) { c.weigh(x); }
+int main()
+{
+    Crate c = Crate { .value = 0, .weight = 0.0f };
+    c.set(3);
+    printf("%d\n", c.value);
+    c.weigh(2.5);
+    printf("%g\n", c.weight);
+    int seven = 7;
+    c.set(seven);
+    printf("%d\n", c.value);
+    Holder h = Holder { .box = c, .count = 9 };
+    h.box.set(h.count);
+    printf("%d\n", h.box.value);
+    put(c, 1.0f);
+    c.set((float)11);
+    printf("%d\n", c.value);
+    ^Crate owned = Crate { .value = 0, .weight = 0.0f };
+    owned.set(2.0f);
+    *Crate p = &c;
+    p.set(4.0);
+    printf("%d\n", c.value);
+    printf("%d\n", owned.value);
+    Report();
+    return 0;
+}

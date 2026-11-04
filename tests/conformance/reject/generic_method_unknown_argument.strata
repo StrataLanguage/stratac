@@ -1,0 +1,13 @@
+// expect: reject "can't infer type argument 'U' of 'set': the type of this argument isn't known before type checking"
+// rule: an argument whose type is needed for inference must have a type known before type checking
+struct H { int a; }
+impl H
+{
+    void set<U>(ref H self, U v) { }
+}
+int main()
+{
+    H h = H { .a = 1 };
+    h.set(1 + 2);
+    return 0;
+}

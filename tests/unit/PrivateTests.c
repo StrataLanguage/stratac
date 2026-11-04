@@ -131,13 +131,32 @@ STRATA_TEST(private_on_struct_rejected)
     ArenaFree(&arena);
 }
 
-STRATA_TEST(private_on_impl_method_rejected)
+STRATA_TEST(private_on_impl_method_parsed)
 {
     Arena arena;
     ArenaInit(&arena, 0);
     DiagnosticEngine diag;
     DiagnosticEngineInit(&diag);
     Module* mod = ParseModule("handle H;\nimpl H {\n@private\nextern void M(H self);\n}", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod->functions.count == 1);
+
+    FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
+    STRATA_CHECK(fn->isPrivate);
+    STRATA_CHECK(fn->fromImpl);
+    STRATA_CHECK(strcmp(fn->name, "H_M") == 0);
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(export_on_impl_method_rejected)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("handle H;\nimpl H {\n@export\nextern void M(H self);\n}", &diag, &arena);
     (void)mod;
     STRATA_CHECK(DiagHasErrors(&diag));
 
@@ -309,6 +328,135 @@ STRATA_TEST(private_overload_hidden_public_overload_visible)
     STRATA_CHECK(!r.ok);
     STRATA_CHECK(r.error_count > 0);
     STRATA_CHECK(strstr(r.diagnostics, "pick") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* ================= @private impl methods ================= */
+
+static int ResolverPrivateMethods(void* userData, const char* importerName, const char* importPath,
+                                  StrataResolvedModule* out)
+{
+    (void)userData;
+    (void)importerName;
+
+    if (strcmp(importPath, "lib") == 0)
+    {
+        out->text = "struct Counter { int n; }\n"
+                    "impl Counter {\n"
+                    "    @private\n"
+                    "    int secret(ref Counter self) { return self.n + 40; }\n"
+                    "    int reveal(ref Counter self) { return self.secret(); }\n"
+                    "}\n"
+                    "struct Sealed { int v; }\n"
+                    "impl Sealed {\n"
+                    "    @private\n"
+                    "    void init(ref Sealed self, int v) { self.v = v; }\n"
+                    "}\n"
+                    "int make_sealed() { Sealed s = Sealed(5); return s.v; }\n";
+        out->length = strlen(out->text);
+        out->name = "lib";
+        return 1;
+    }
+
+    return 0;
+}
+
+/* Compiles `main` against ResolverPrivateMethods and returns the result. */
+static StrataResult CompilePrivateMethods(StrataCompiler** outCompiler, const char* mainText)
+{
+    *outCompiler = strataCompilerCreate();
+    strataSetImportResolver(*outCompiler, &ResolverPrivateMethods, NULL);
+
+    return strataCompileString(*outCompiler, mainText, "main", STRATA_EMIT_LLVM_IR, 0);
+}
+
+STRATA_TEST(private_method_same_file_call_runs)
+{
+    /* `reveal` (public) calls `secret` (@private) from the same file, and so does the private init. */
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverPrivateMethods, NULL);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "import lib;\n"
+                                            "int entry() { Counter k; k.n = 2; return k.reveal() + make_sealed(); }\n",
+                                            "main", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 47);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(private_method_cross_file_call_rejected)
+{
+    StrataCompiler* c = NULL;
+    StrataResult r = CompilePrivateMethods(&c, "import lib;\n"
+                                               "int entry() { Counter k; return k.secret(); }\n");
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "method 'secret' of 'Counter' is '@private'") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(private_method_cross_file_static_call_rejected)
+{
+    StrataCompiler* c = NULL;
+    StrataResult r = CompilePrivateMethods(&c, "import lib;\n"
+                                               "int entry() { Counter k; return Counter.secret(k); }\n");
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "method 'secret' of 'Counter' is '@private'") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(private_init_cross_file_construction_rejected)
+{
+    StrataCompiler* c = NULL;
+    StrataResult r = CompilePrivateMethods(&c, "import lib;\n"
+                                               "int entry() { Sealed s = Sealed(1); return s.v; }\n");
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "the init of 'Sealed' is '@private'") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+STRATA_TEST(private_drop_rejected)
+{
+    StrataCompiler* c = strataCompilerCreate();
+
+    StrataResult r = strataCompileString(c,
+                                         "struct D { int x; }\n"
+                                         "impl D {\n"
+                                         "    @private\n"
+                                         "    void drop(ref D self) {}\n"
+                                         "}\n"
+                                         "int entry() { return 0; }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "'drop' cannot be '@private'") != NULL);
 
     strataResultFree(&r);
     strataCompilerDestroy(c);

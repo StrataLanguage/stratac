@@ -131,10 +131,17 @@ bool CheckArgTypesUnordered(Resolver* r, CallExpr* c, StrMap* scope, const Allow
     return false;
 }
 
-// Private functions are visible only in the file that defines them
+// A function only its own file can call: a `@private` one, or a plain extern (not `@export extern`).
+// Extern impl methods and `extern delegate`s stay visible everywhere, as they are reached through a type.
+bool FunctionIsFileLocal(const FunctionDecl* fd)
+{
+    return fd->isPrivate || (fd->isExtern && !fd->isExportedExtern && !fd->fromImpl && !fd->isDelegate);
+}
+
+// File-local functions are visible only in the file that defines them
 bool FunctionVisibleTo(const FunctionDecl* fd, uint16_t callerFile)
 {
-    return !fd->isPrivate || fd->base.range.fileId == callerFile;
+    return !FunctionIsFileLocal(fd) || fd->base.range.fileId == callerFile;
 }
 
 // Returns true if the module declares any user-defined function with `name`
@@ -898,6 +905,44 @@ static bool ReuseCachedOverload(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+// A call with no visible candidate that names a `@private` impl method or constructor from another file. Reports
+// it by the name the user wrote (`M` of `H`, or `T(...)`) instead of its internal symbol and returns true. A plain
+// private function stays "unknown", as if it did not exist; that returns false.
+static bool DiagHiddenImplCallee(Resolver* r, const CallExpr* c, const Vec* pool)
+{
+    static const char placePrefix[] = "__place_";
+
+    for (size_t i = 0; i < pool->count; i++)
+    {
+        const FunctionDecl* fd = (const FunctionDecl*)VecGet((Vec*)pool, i);
+
+        if (strcmp(fd->name, c->callee) != 0 || !fd->isPrivate)
+        {
+            continue;
+        }
+
+        if (fd->isInitWrapper || strncmp(fd->name, placePrefix, sizeof(placePrefix) - 1) == 0)
+        {
+            const char* type = fd->isInitWrapper ? fd->returnType.name : fd->name + sizeof(placePrefix) - 1;
+
+            DiagErrorFmt(r->diag, c->base.range, "the init of '%s' is '@private' to the file that defines it", type);
+            return true;
+        }
+
+        if (fd->fromImpl && fd->methodName)
+        {
+            // `name` is `Owner_method` (the owner may be a generic instance's name).
+            int ownerLen = (int)(strlen(fd->name) - strlen(fd->methodName) - 1);
+
+            DiagErrorFmt(r->diag, c->base.range, "method '%s' of '%.*s' is '@private' to the file that defines it",
+                         fd->methodName, ownerLen, fd->name);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // A call needs one visible candidate with its name (a delegate call has its own).
 static bool HasVisibleCandidate(const CallExpr* c, const Vec* pool, bool delegateCall)
 {
@@ -1174,7 +1219,30 @@ static bool ScoreCandidate(Resolver* r, CallExpr* c, StrMap* scope, FunctionDecl
     return true;
 }
 
-// Picks the best-scoring viable candidate. A tie with the best makes the call ambiguous.
+// Two functions with the same parameter types, so a tie between them is not an ambiguity by itself.
+static bool SameParamTypes(const FunctionDecl* a, const FunctionDecl* b)
+{
+    if (a->params.count != b->params.count)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < a->params.count; i++)
+    {
+        const ParamDecl* pa = (const ParamDecl*)VecGet((Vec*)&a->params, i);
+        const ParamDecl* pb = (const ParamDecl*)VecGet((Vec*)&b->params, i);
+
+        if (pa->mod != pb->mod || strcmp(pa->type.name, pb->type.name) != 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Picks the best-scoring viable candidate. A tie with the best makes the call ambiguous, except that
+// a tie between identical signatures goes to the one declared in the caller's own file.
 static FunctionDecl* SelectBestOverload(Resolver* r, CallExpr* c, StrMap* scope, const Vec* pool, bool delegateCall,
                                         bool* ambiguousOut)
 {
@@ -1213,7 +1281,22 @@ static FunctionDecl* SelectBestOverload(Resolver* r, CallExpr* c, StrMap* scope,
         }
         else if (score == bestScore && best)
         {
-            ambiguous = true;
+            uint16_t callerFile = c->base.range.fileId;
+            bool bestIsOwn = best->base.range.fileId == callerFile;
+            bool candidateIsOwn = functionDecl->base.range.fileId == callerFile;
+
+            if (bestIsOwn != candidateIsOwn && SameParamTypes(best, functionDecl))
+            {
+                // e.g. a file's own extern `free(ptr)` against an imported `int free(ptr)`.
+                if (candidateIsOwn)
+                {
+                    best = functionDecl;
+                }
+            }
+            else
+            {
+                ambiguous = true;
+            }
         }
     }
 
@@ -1242,7 +1325,11 @@ static void ResolveOverloadCall(Resolver* r, CallExpr* c, StrMap* scope, bool de
 
     if (!HasVisibleCandidate(c, pool, delegateCall))
     {
-        DiagErrorFmt(r->diag, c->base.range, "unknown function '%s'", c->callee);
+        if (!DiagHiddenImplCallee(r, c, pool))
+        {
+            DiagErrorFmt(r->diag, c->base.range, "unknown function '%s'", c->callee);
+        }
+
         free(delegatePool.items);
         return;
     }

@@ -1,10 +1,10 @@
 import metautil;
 
-extern *void malloc(ulong size);
-extern *void realloc(*void p, ulong size);
-extern void free(*void p);
+@export extern *void malloc(ulong size);
+@export extern *void realloc(*void p, ulong size);
+@export extern void free(*void p);
 
-extern *void memcpy(*void dst, const *void src, ulong count);
+@export extern *void memcpy(*void dst, const *void src, ulong count);
 
 
 

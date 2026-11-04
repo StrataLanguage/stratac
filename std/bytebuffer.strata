@@ -57,14 +57,30 @@ impl bytebuffer
 	// Writes a string to the bytebuffer
 	void write(ref bytebuffer self, cstring str)
 	{
-		self.request_size(str.length);
+		const uint len = str.length;
+
+		self.request_size(len);
 
 		// NOTE: We cannot perform arithmetic on pointers, so we must drop down to an integer type and back to a pointer.
 		*byte dst = (*byte)((ulong)self.pbuffer + self.size);
 		*byte str_ptr = (*byte)str;
 
-		memory_copy<byte>(dst, str_ptr, str.length);
-		self.size += str.length;
+		memory_copy<byte>(dst, str_ptr, len);
+		self.size += len;
+	}
+
+	void write(ref bytebuffer self, string str)
+	{
+		const uint len = str.length;
+
+		self.request_size(len);
+
+		// NOTE: We cannot perform arithmetic on pointers, so we must drop down to an integer type and back to a pointer.
+		*byte dst = (*byte)((ulong)self.pbuffer + self.size);
+		*byte str_ptr = str.ptr;
+
+		memory_copy<byte>(dst, str_ptr, len);
+		self.size += len;
 	}
 
 	void write(ref bytebuffer self, byte b)
@@ -74,7 +90,7 @@ impl bytebuffer
 		*byte dst = (*byte)((ulong)self.pbuffer + self.size);
 		(*dst) = b;
 
-		self.size += 1;
+		++self.size;
 	}
 
 	const *byte get_ptr(const ref bytebuffer self)
@@ -82,12 +98,44 @@ impl bytebuffer
 		return self.pbuffer;
 	}
 
+	void clear(ref bytebuffer self)
+	{
+		self.size = 0;
+	}
+
+	@private
+	const *byte null_terminated_ptr(ref bytebuffer self)
+	{
+		self.pbuffer[self.size] = (byte)0;
+		return self.pbuffer;
+	}
+
 	/* Returns the value as a string of bytes, null terminated. Can be cast to `string` to get a copy as a string representation. */
 	const *byte get_str(ref bytebuffer self)
 	{
-		// Ensure null terminated
-		self.pbuffer[self.size] = (byte)0;
-		return self.pbuffer;
+		return self.null_terminated_ptr();
+	}
+
+	/* TODO: remove, bad practice. Returns a cstring with a view into the data here. Use with caution, as a bytebuffer resize will invalidate it. */
+	cstring as_cstring(ref bytebuffer self)
+	{
+		ptr p = self.get_str();
+		return (cstring)p;
+	}
+
+	/* Returns a null-terminated copy of the bytebuffer as a string. */
+	string as_string(ref bytebuffer self)
+	{
+		// TODO: add a way to construct a string via copy as a function call. (e.g. string(*byte ptr))
+
+		// Currently there is some jank around string/cstring, so to create a proper copy we need to
+		// first create a cstring from the buffer, and then casting that to a string returns our copy.
+
+		// Another note, a `*byte` cannot be converted to a cstring. Don't ask my why, but it needs to be going through a `ptr` for that.
+		ptr raw_data = self.null_terminated_ptr();
+		cstring constr = (cstring)raw_data;
+
+		return (string)constr;
 	}
 
 	void free(ref bytebuffer self)
@@ -106,6 +154,4 @@ impl bytebuffer
 	{
 		self.free();
 	}
-
-	// TODO: drop should not be solely for boxed values. It should function like a normal destructor.
 }

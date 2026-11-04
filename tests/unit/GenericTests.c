@@ -394,17 +394,16 @@ STRATA_TEST(generic_rejected_declarations_report_errors)
         const char* src;
         const char* needle;
     } cases[] = {
-        {"struct s<int> { int x; }",                                      "builtin type"                                     },
-        {"struct s<T, T> { int x; }",                                     "duplicate type parameter 'T'"                     },
-        {"struct s<> { int x; }",                                         "expected a type parameter name"                   },
-        {"struct s<T> = int;",                                            "a struct alias cannot have type parameters"       },
-        {"extern struct s<T> { int x; }",                                 "an extern struct cannot have type parameters"     },
-        {"struct s<T>;",                                                  "a forward declaration cannot have type parameters"},
-        {"@component struct s<T> { int x; }",                             "'@component' cannot have type parameters"         },
-        {"extern int f<T>(T x);",                                         "cannot have type parameters"                      },
-        {"@export int f<T>(T x) { return 0; }",                           "cannot have type parameters"                      },
-        {"int g<T> = 3;",                                                 "expected '(' after type parameters"               },
-        {"struct H { int a; }\nimpl H { int M<T>(int x) { return 0; } }", "type parameters go on the impl"                   },
+        {"struct s<int> { int x; }",            "builtin type"                                     },
+        {"struct s<T, T> { int x; }",           "duplicate type parameter 'T'"                     },
+        {"struct s<> { int x; }",               "expected a type parameter name"                   },
+        {"struct s<T> = int;",                  "a struct alias cannot have type parameters"       },
+        {"extern struct s<T> { int x; }",       "an extern struct cannot have type parameters"     },
+        {"struct s<T>;",                        "a forward declaration cannot have type parameters"},
+        {"@component struct s<T> { int x; }",   "'@component' cannot have type parameters"         },
+        {"extern int f<T>(T x);",               "cannot have type parameters"                      },
+        {"@export int f<T>(T x) { return 0; }", "cannot have type parameters"                      },
+        {"int g<T> = 3;",                       "expected '(' after type parameters"               },
     };
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
@@ -1125,8 +1124,8 @@ STRATA_TEST(monomorph_reports_misuse_of_templates)
          "generic struct 'number' needs type arguments"                                                                                        },
         {"struct number<T> { T value; }\nint main() { number(3); return 0; }",
          "generic struct 'number' needs type arguments"                                                                                        },
-        {"int make<T>(T v) { return 0; }\nint main() { return make(3); }",
-         "generic function 'make' needs explicit type arguments: make<...>(...)"                                                               },
+        {"int make<T>(T v) { return 0; }\nint main() { return make(); }",
+         "can't infer type argument 'T' of 'make': write 'make<...>(...)'"                                                                     },
         {"int make<T>(T v) { return 0; }\nint main() { return make<int, int>(3); }",
          "generic function 'make' takes 1 type argument(s), but 2 were given"                                                                  },
         {"int pick<T>(T v) { return 0; }\nint pick<T>(T v, T w) { return 1; }",
@@ -1392,8 +1391,8 @@ STRATA_TEST(monomorph_reports_pack_misuse)
          "'int...' expands a parameter pack, but 'int' is not one"                                                                                                     },
         {"void f<A, B...>(A a, B... b) {}\nint main() { f<>(1); return 0; }",
          "generic function 'f' takes at least 1 type argument(s), but 0 were given"                                                                                    },
-        {"void f<T...>(T... a) {}\nint main() { f(1); return 0; }",
-         "generic function 'f' needs explicit type arguments"                                                                                                          },
+        {"void f<A, T...>(T... a) {}\nint main() { f(1); return 0; }",
+         "can't infer type argument 'A' of 'f': write 'f<...>(...)'"                                                                                                   },
         {"int x = 1;\nvoid h(int a) { x(a...); }\nint main() { return 0; }",
          "'a...' expands a parameter pack, but 'a' is not one"                                                                                                         },
     };
@@ -1447,6 +1446,155 @@ STRATA_TEST(monomorph_pack_expands_into_instance_parameters)
     STRATA_CHECK(strcmp(ParamOf(inst, 0)->name, "args[0]") == 0);
     STRATA_CHECK(strcmp(ParamOf(inst, 1)->name, "args[1]") == 0);
     STRATA_CHECK(strcmp(ParamOf(inst, 1)->type.name, "int") == 0);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(generic_method_declares_type_parameters)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct H { int a; }\n"
+                              "impl H {\n"
+                              "    int M<T>(int x) { return 0; }\n"
+                              "    int N<T, U...>(ref H self, U... args) { return 0; }\n"
+                              "}",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, 0);
+    FunctionDecl* m = (FunctionDecl*)VecGet(&impl->methods, 0);
+    STRATA_CHECK_EQ((long)m->genericParams.count, 1);
+    STRATA_CHECK(strcmp((const char*)VecGet(&m->genericParams, 0), "T") == 0);
+    STRATA_CHECK(!m->genericPack);
+
+    FunctionDecl* n = (FunctionDecl*)VecGet(&impl->methods, 1);
+    STRATA_CHECK_EQ((long)n->genericParams.count, 2);
+    STRATA_CHECK(n->genericPack);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(generic_method_in_generic_impl_declares_type_parameters)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("struct box<T> { T value; }\n"
+                              "impl box<T> { U convert<U>(const ref box<T> self) { return (U)self.value; } }",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    ImplDecl* impl = (ImplDecl*)VecGet(&mod->impls, 0);
+    FunctionDecl* m = (FunctionDecl*)VecGet(&impl->methods, 0);
+    STRATA_CHECK_EQ((long)impl->genericParams.count, 1);
+    STRATA_CHECK_EQ((long)m->genericParams.count, 1);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(generic_method_rejected_declarations_report_errors)
+{
+    struct
+    {
+        const char* src;
+        const char* needle;
+    } cases[] = {
+        {"struct H { int a; }\nimpl H { void drop<T>(ref H self) { } }",        "a 'drop' method cannot have type parameters"},
+        {"struct s<T> { int x; }\nimpl s<T> { int M<T>(int x) { return 0; } }",
+         "type parameter 'T' of method 'M' shadows the impl's type parameter 'T'"                                            },
+        {"struct H { int a; }\nimpl H { extern int M<T>(int x); }",             "cannot have type parameters"                },
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena;
+        ArenaInit(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
+        Module* mod = ParseModule(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+        STRATA_CHECK(DiagsContaining(&diag, cases[i].needle) >= 1);
+        AstDispose((Node*)mod);
+        DiagnosticEngineFree(&diag);
+        ArenaFree(&arena);
+    }
+}
+
+STRATA_TEST(generic_member_call_type_arguments_parse)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("int f(H b) {\n"
+                              "    int x = b.convert<float>();\n"
+                              "    int y = b.pair<int, float>(1);\n"
+                              "    int z = b.none<>();\n"
+                              "    int w = b.plain(2);\n"
+                              "    return 0;\n"
+                              "}",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    CallExpr* call = (CallExpr*)InitOf(mod, 0);
+    STRATA_CHECK(call->base.kind == NodeCall);
+    STRATA_CHECK(strcmp(call->callee, "convert") == 0);
+    STRATA_CHECK(call->calleeBase != NULL);
+    STRATA_CHECK(call->hasTypeArgList);
+    STRATA_CHECK_EQ((long)call->typeArgCount, 1);
+    STRATA_CHECK(strcmp(call->typeArgs[0].name, "float") == 0);
+
+    call = (CallExpr*)InitOf(mod, 1);
+    STRATA_CHECK_EQ((long)call->typeArgCount, 2);
+
+    call = (CallExpr*)InitOf(mod, 2);
+    STRATA_CHECK(call->hasTypeArgList);
+    STRATA_CHECK_EQ((long)call->typeArgCount, 0);
+
+    call = (CallExpr*)InitOf(mod, 3);
+    STRATA_CHECK(!call->hasTypeArgList);
+    STRATA_CHECK(call->typeArg == NULL);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(generic_member_comparisons_still_parse_as_comparisons)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("int f(H a, H b, int c, int d) {\n"
+                              "    bool x = a.b < c;\n"
+                              "    bool y = a.b < c && d.e > c;\n"
+                              "    g(a.b < c, d.e > c);\n"
+                              "    return 0;\n"
+                              "}",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    BinaryExpr* x = (BinaryExpr*)InitOf(mod, 0);
+    STRATA_CHECK(x->base.kind == NodeBinary && x->op == BinLt);
+
+    BinaryExpr* y = (BinaryExpr*)InitOf(mod, 1);
+    STRATA_CHECK(y->base.kind == NodeBinary && y->op == BinLogicAnd);
+
+    CallExpr* call = (CallExpr*)((ExprStmt*)FirstBodyStmt(mod, 2))->expr;
+    STRATA_CHECK(call->base.kind == NodeCall);
+    STRATA_CHECK(!call->hasTypeArgList);
+    STRATA_CHECK_EQ((long)call->args.count, 2);
 
     AstDispose((Node*)mod);
     DiagnosticEngineFree(&diag);

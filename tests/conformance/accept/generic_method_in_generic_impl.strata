@@ -1,0 +1,29 @@
+// expect: run
+// expect-output: 3
+// expect-output: 2
+// expect-output: 7
+// expect-output: 2.5
+// expect-output: 1.5
+// rule: a generic method of a generic impl is instantiated with each instance of the struct, and with each type argument list it is called with
+struct Box2<T> { T value; }
+impl Box2<T>
+{
+    U convert<U>(const ref Box2<T> self) { return (U)self.value; }
+    void set_all<U>(ref Box2<T> self, U value) { self.value = (T)value; }
+}
+int main()
+{
+    Box2<int> b = Box2<int> { .value = 3 };
+    float f = b.convert<float>();
+    printf("%g\n", f);
+    b.set_all(2.0);
+    printf("%d\n", b.value);
+    Box2<float> c = Box2<float> { .value = 1.5f };
+    c.set_all(7);
+    printf("%g\n", c.value);
+    c.set_all(2.5f);
+    printf("%g\n", c.convert<double>());
+    int i = c.convert<int>();
+    printf("%g\n", (float)i - 0.5);
+    return 0;
+}

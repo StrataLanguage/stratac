@@ -1,0 +1,19 @@
+// expect: run
+// expect-output: 72 105
+// expect-output: 101
+// rule: `s.ptr` is a string's element buffer, typed `*byte`; readable by pointer arithmetic and through a struct field
+struct Holder
+{
+    string text;
+}
+
+int main()
+{
+    string s = "Hi";
+    *byte p = s.ptr;
+    printf("%d %d\n", (int)*p, (int)*((*byte)((ulong)p + 1)));
+    Holder h = Holder { .text = "euro" };
+    *byte q = h.text.ptr;
+    printf("%d\n", (int)*q);
+    return 0;
+}

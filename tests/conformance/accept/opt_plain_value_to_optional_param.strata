@@ -1,0 +1,27 @@
+// expect: run
+// expect-output: kept 7
+// expect-output: drop 7
+// expect-output: kept 42
+// expect-output: count 5
+// expect-output: count 9
+// expect-output: END live=0
+// rule: a plain value passed to a T? parameter is moved into a box the callee owns, so it is dropped once and never read as a box
+void keep(Res? v)
+{
+    if (v?) { printf("kept %d\n", v.id); }
+}
+void count(int? n)
+{
+    if (n?) { printf("count %d\n", n); }
+}
+int main()
+{
+    Res r = Res.Make(7);
+    keep(r);                  // a named struct local: moved into the parameter's box
+    keep(Res.Make(42));       // a struct value straight from a call
+    count(5);                 // a scalar literal
+    int x = 9;
+    count(x);                 // a scalar local
+    Report();
+    return 0;
+}

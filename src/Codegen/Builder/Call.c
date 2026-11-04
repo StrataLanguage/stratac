@@ -897,6 +897,23 @@ static LLVMValueRef LowerByPtrPlainArg(Builder* b, const FunctionDecl* fd, size_
     return ArgAddress(b, argNode);
 }
 
+// A plain value (`5`, `Res { .id = 7 }`, a named `Res` local) passed to a by-pointer `T?` param. The callee
+// owns a heap cell behind the slot it is handed, so the value is moved into a fresh cell and the slot holds
+// that cell's pointer. Handing over the value's own address would make the callee treat the value as a cell.
+static LLVMValueRef LowerValueToOptionalArg(Builder* b, const TypeName* optType, Node* argNode, Value v)
+{
+    TypeDesc innerTd = Resolve(b, optType->inner);
+    v = Coerce(b, v, innerTd);
+
+    LLVMValueRef cell = AllocBoxCell(b, SizeOfConst(b, innerTd.type), "optarg");
+    LLVMBuildStore(b->builder, EmitOwnedValue(b, v, argNode, optType->inner), cell);
+
+    LLVMValueRef slot = EntryAlloca(b, b->ptrTy, "optslot");
+    LLVMBuildStore(b->builder, cell, slot);
+
+    return slot;
+}
+
 // A plain (non-special-cased) argument: evaluated once, then passed by pointer,
 // by value, or as a bare C vararg.
 static LLVMValueRef LowerPlainArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode, bool cVararg,
@@ -907,6 +924,19 @@ static LLVMValueRef LowerPlainArg(Builder* b, const FunctionDecl* fd, size_t k, 
     if (cVararg && k >= fd->params.count)
     {
         return LowerCVarargArg(b, v);
+    }
+
+    // Only a value that is not already optional or boxed needs wrapping: a `T?` or `^T` argument already
+    // carries its cell. Extern optionals cross as a raw pointer, so they are not wrapped here.
+    if (shouldPassByPtr && fd && k < fd->params.count && !fd->isExtern)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet((Vec*)&fd->params, k);
+
+        if (param->mod == ModNone && TypeNameIsOptional(&param->type) && param->type.inner
+            && !TypeDescIsOptional(&v.typeDesc) && !TypeDescIsBox(&v.typeDesc))
+        {
+            return LowerValueToOptionalArg(b, &param->type, argNode, v);
+        }
     }
 
     if (shouldPassByPtr)

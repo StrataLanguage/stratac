@@ -1,0 +1,25 @@
+// expect: run
+// expect-output: 3
+// expect-output: 4
+// expect-output: 5
+// rule: a generic method takes explicit type arguments (`x.m<T>(...)`, `H.m<T>(...)`), and `x.m<>()` is a call with an empty pack
+struct Crate { int value; }
+impl Crate
+{
+    U convert<U>(const ref Crate self) { return (U)self.value; }
+    Crate make<U>(U v) { return Crate { .value = (int)v }; }
+    void bump<TArgs...>(ref Crate self, TArgs... args) { self.value = self.value + args.length; }
+}
+int main()
+{
+    Crate b = Crate { .value = 3 };
+    float f = b.convert<float>();
+    printf("%g\n", f);
+    Crate m = Crate.make<int>(4);
+    printf("%d\n", m.value);
+    b.bump<>();
+    b.bump<int, float>(1, 2.0f);
+    printf("%d\n", b.value);
+    Report();
+    return 0;
+}

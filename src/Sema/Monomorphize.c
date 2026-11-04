@@ -1,7 +1,8 @@
-// Monomorphize: expands generic structs, impls and functions into the concrete declarations that use them, and
-// folds every meta call (`@name(args)`) into a literal. Sema and codegen only ever see ordinary declarations: the
-// struct `number<int>`, its impl, and the function `make_number<int>`. See docs/generics-plan.md, phase 3, and
-// docs/meta-functions-plan.md, phase 2.
+// Monomorphize: expands generic structs, impls, functions and methods into the concrete declarations that use them,
+// and folds every meta call (`@name(args)`) into a literal. Sema and codegen only ever see ordinary declarations: the
+// struct `number<int>`, its impl, the function `make_number<int>`, the method `number<int>_convert<float>`. Type
+// arguments of a call that are not written are inferred from the declared types of the arguments (see
+// docs/generic-methods-plan.md). See docs/generics-plan.md, phase 3, and docs/meta-functions-plan.md, phase 2.
 #include "Sema/Monomorphize.h"
 
 #include "AST/ASTClone.h"
@@ -30,7 +31,11 @@ typedef struct
     StrMap metaFunctions;     // name -> MetaFunc*
     size_t metaCalls;         // meta calls folded so far: a condition that held one may fold to a constant
     size_t instanceCount;
-    bool stopped; // an error ended the expansion: no further instances are made
+    StrMap methodTemplates;    // "Handle.method" -> MethodTemplate*: generic methods of impls
+    StrMap methodInstances;    // "Handle.method<A..>" -> FunctionDecl* (or MethodSkipped)
+    StrMap genericMethodNames; // method name -> non-NULL, for every generic method of the module
+    Vec scopes;                // StrMap* (name -> TypeName*): the declared types of the blocks being rewritten
+    bool stopped;              // an error ended the expansion: no further instances are made
 } Mono;
 
 static size_t MaxSize(size_t a, size_t b)
@@ -221,6 +226,11 @@ static void CollectImplTemplates(Mono* m, Vec* templateMethods)
 
             VecPush(templateMethods, method);
             VecPush(&mod->genericTemplates, method);
+
+            if (method->genericParams.count > 0)
+            {
+                StrMapPut(&m->genericMethodNames, method->methodName, method);
+            }
         }
 
         VecPush(&m->implTemplates, impl);
@@ -228,6 +238,122 @@ static void CollectImplTemplates(Mono* m, Vec* templateMethods)
     }
 
     mod->impls.count = kept;
+}
+
+// -- Generic methods
+
+// A generic method and the impl whose instances of it join (generics: generic methods).
+typedef struct
+{
+    FunctionDecl* fn;
+    ImplDecl* impl;
+} MethodTemplate;
+
+// The methodInstances entry of an `init` instance that was not made, because a plain `init` takes the same parameters.
+static char MethodSkipped;
+
+// The key of the method `method` of the handle `handle` in the method maps: `handle.method`.
+static const char* MethodKey(const Mono* m, const char* handle, const char* method)
+{
+    return ArenaFormat(m->arena, "%s.%s", handle, method);
+}
+
+// Whether `handle` has a plain (not generic) method named `method` in one of its impls.
+static bool HandleHasPlainMethod(const Mono* m, const char* handle, const char* method)
+{
+    for (size_t i = 0; i < m->mod->impls.count; i++)
+    {
+        const ImplDecl* impl = (const ImplDecl*)VecGet(&m->mod->impls, i);
+
+        if (strcmp(impl->handleName, handle) != 0)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < impl->methods.count; j++)
+        {
+            const FunctionDecl* fn = (const FunctionDecl*)VecGet(&impl->methods, j);
+
+            if (fn->genericParams.count == 0 && fn->methodName && strcmp(fn->methodName, method) == 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Records the generic method `fn` of `impl`. A handle has at most one template per method name. A template other than
+// `init` (whose overloads are constructors) may not share its name with a plain method of its handle.
+static void RegisterMethodTemplate(Mono* m, ImplDecl* impl, FunctionDecl* fn)
+{
+    const char* handle = impl->handleName;
+    const char* method = fn->methodName;
+
+    StrMapPut(&m->genericMethodNames, method, fn);
+
+    if (StrMapGet(&m->methodTemplates, MethodKey(m, handle, method)))
+    {
+        DiagErrorFmt(m->diag, fn->base.range,
+                     "generic method '%s' cannot be overloaded: give each generic method of '%s' its own name", method,
+                     handle);
+        return;
+    }
+
+    if (strcmp(method, "init") != 0 && HandleHasPlainMethod(m, handle, method))
+    {
+        DiagErrorFmt(m->diag, fn->base.range, "generic method '%s' cannot share its name with another method of '%s'",
+                     method, handle);
+        return;
+    }
+
+    MethodTemplate* mt = AST_NEW(m->arena, MethodTemplate);
+    mt->fn = fn;
+    mt->impl = impl;
+    StrMapPut(&m->methodTemplates, MethodKey(m, handle, method), mt);
+}
+
+// Moves the generic methods of `impl` out of its method list: each is registered as a template and listed in
+// genericTemplates, where it is disposed. `templateMethods`, when given, also gets it, so the function pass drops it
+// from Module::functions.
+static void TakeMethodTemplates(Mono* m, ImplDecl* impl, Vec* templateMethods)
+{
+    size_t kept = 0;
+
+    for (size_t i = 0; i < impl->methods.count; i++)
+    {
+        FunctionDecl* fn = (FunctionDecl*)VecGet(&impl->methods, i);
+
+        if (fn->genericParams.count == 0)
+        {
+            VecSet(&impl->methods, kept++, fn);
+            continue;
+        }
+
+        RegisterMethodTemplate(m, impl, fn);
+
+        // Never emitted; the qualified name lets sema recognise a call that only a template of this handle matches.
+        fn->name = ArenaFormat(m->arena, "%s_%s", impl->handleName, fn->methodName);
+
+        if (templateMethods)
+        {
+            VecPush(templateMethods, fn);
+        }
+
+        VecPush(&m->mod->genericTemplates, fn);
+    }
+
+    impl->methods.count = kept;
+}
+
+// The generic methods of the plain impls. The impls of generic structs are handled as they are instantiated.
+static void CollectPlainMethodTemplates(Mono* m, Vec* templateMethods)
+{
+    for (size_t i = 0; i < m->mod->impls.count; i++)
+    {
+        TakeMethodTemplates(m, (ImplDecl*)VecGet(&m->mod->impls, i), templateMethods);
+    }
 }
 
 // Moves every generic function out of Module::functions, and drops the impl methods already moved.
@@ -447,6 +573,10 @@ static void InstantiateStruct(Mono* m, const StructDecl* tmpl, const char* name,
         impl->handleName = (char*)name;
         FreeVec(&impl->genericParams);
 
+        // The impl is listed first, so its generic methods can be checked against its plain ones.
+        VecPush(&m->mod->impls, impl);
+        TakeMethodTemplates(m, impl, NULL);
+
         for (size_t j = 0; j < impl->methods.count; j++)
         {
             FunctionDecl* method = (FunctionDecl*)VecGet(&impl->methods, j);
@@ -457,7 +587,6 @@ static void InstantiateStruct(Mono* m, const StructDecl* tmpl, const char* name,
             VecPush(&m->pending, method);
         }
 
-        VecPush(&m->mod->impls, impl);
         VecPush(&m->pending, impl);
     }
 }
@@ -487,16 +616,10 @@ static const char* PackValueName(const FunctionDecl* tmpl, const char* packType)
     return value;
 }
 
-// Makes the function `name`: the template `tmpl` with its type parameters replaced by `args`, which holds
-// `argCount` type arguments: the fixed parameters' first, then the pack's.
-static void InstantiateFunction(Mono* m, const FunctionDecl* tmpl, const char* name, const TypeName* args,
-                                size_t argCount)
+// A copy of the template `tmpl` with its type parameters replaced by `args`, which holds `argCount` type arguments:
+// the fixed parameters' first, then the pack's. The copy takes no type parameters of its own and is not named yet.
+static FunctionDecl* CloneTemplate(Mono* m, const FunctionDecl* tmpl, const TypeName* args, size_t argCount)
 {
-    if (StrMapGet(&m->functionInstances, name) || !TakeInstanceSlot(m, tmpl->name, tmpl->base.range))
-    {
-        return;
-    }
-
     size_t fixedCount = FixedTypeParamCount(tmpl);
 
     Vec fixed;
@@ -523,14 +646,123 @@ static void InstantiateFunction(Mono* m, const FunctionDecl* tmpl, const char* n
     FunctionDecl* inst = (FunctionDecl*)AstCloneSubst(m->arena, (const Node*)tmpl, &subst);
     FreeVec(&fixed);
 
-    inst->name = (char*)name;
-    inst->mangledName = (char*)name;
     inst->genericPack = false;
     FreeVec(&inst->genericParams);
+
+    return inst;
+}
+
+// Makes the function `name`: the template `tmpl` at the type arguments `args` (see CloneTemplate).
+static void InstantiateFunction(Mono* m, const FunctionDecl* tmpl, const char* name, const TypeName* args,
+                                size_t argCount)
+{
+    if (StrMapGet(&m->functionInstances, name) || !TakeInstanceSlot(m, tmpl->name, tmpl->base.range))
+    {
+        return;
+    }
+
+    FunctionDecl* inst = CloneTemplate(m, tmpl, args, argCount);
+
+    inst->name = (char*)name;
+    inst->mangledName = (char*)name;
 
     StrMapPut(&m->functionInstances, name, inst);
     VecPush(&m->mod->functions, inst);
     VecPush(&m->pending, inst);
+}
+
+// Whether two parameters have the same type and mode, as overloads of one constructor would need to differ.
+static bool SameParams(const FunctionDecl* a, const FunctionDecl* b)
+{
+    if (a->params.count != b->params.count)
+    {
+        return false;
+    }
+
+    for (size_t i = 0; i < a->params.count; i++)
+    {
+        const ParamDecl* pa = (const ParamDecl*)VecGet(&a->params, i);
+        const ParamDecl* pb = (const ParamDecl*)VecGet(&b->params, i);
+
+        if (pa->mod != pb->mod || pa->type.isConst != pb->type.isConst || strcmp(pa->type.name, pb->type.name) != 0)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Whether a plain `init` of `handle` takes the same parameters as the instance `inst` of an `init` template. Such an
+// instance is not made: the plain constructor is the one `T(args)` means.
+static bool InitMatchesPlain(const Mono* m, const char* handle, const FunctionDecl* inst)
+{
+    for (size_t i = 0; i < m->mod->impls.count; i++)
+    {
+        const ImplDecl* impl = (const ImplDecl*)VecGet(&m->mod->impls, i);
+
+        if (strcmp(impl->handleName, handle) != 0)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < impl->methods.count; j++)
+        {
+            const FunctionDecl* fn = (const FunctionDecl*)VecGet(&impl->methods, j);
+
+            if (fn != inst && fn->methodName && strcmp(fn->methodName, "init") == 0 && SameParams(fn, inst))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Makes the instance `spelling` (`m<A..>`) of the method template `mt` at the type arguments `args`, and adds it to
+// the impl the template is in. Its name is `Handle_m<A..>`, and its method name `m<A..>`; an `init` instance keeps the
+// name `init`, so it overloads the constructor (see BindInitMethods). Returns the instance, or NULL when none is made.
+static FunctionDecl* InstantiateMethod(Mono* m, const MethodTemplate* mt, const char* spelling, const TypeName* args,
+                                       size_t argCount, SourceRange range)
+{
+    const FunctionDecl* tmpl = mt->fn;
+    const char* handle = mt->impl->handleName;
+    const char* key = MethodKey(m, handle, spelling);
+
+    void* known = StrMapGet(&m->methodInstances, key);
+
+    if (known)
+    {
+        return known == &MethodSkipped ? NULL : (FunctionDecl*)known;
+    }
+
+    if (!TakeInstanceSlot(m, tmpl->methodName, range))
+    {
+        return NULL;
+    }
+
+    bool isInit = strcmp(tmpl->methodName, "init") == 0;
+
+    FunctionDecl* inst = CloneTemplate(m, tmpl, args, argCount);
+    inst->methodName = isInit ? (char*)"init" : (char*)spelling;
+    inst->name = ArenaFormat(m->arena, "%s_%s", handle, isInit ? "init" : spelling);
+    inst->mangledName = inst->name;
+
+    if (isInit && InitMatchesPlain(m, handle, inst))
+    {
+        AstDispose((Node*)inst);
+        StrMapPut(&m->methodInstances, key, &MethodSkipped);
+
+        return NULL;
+    }
+
+    StrMapPut(&m->methodInstances, key, inst);
+    VecPush(&mt->impl->methods, inst);
+    VecPush(&m->mod->functions, inst);
+    VecPush(&m->pending, inst);
+
+    return inst;
 }
 
 // -- Meta functions
@@ -781,6 +1013,12 @@ static bool MetaTypeHasMethod(const Mono* m, const TypeName* t, const char* meth
         }
 
         return false;
+    }
+
+    // Generic methods are taken out of their impls, and listed as templates.
+    if (StrMapGet(&m->methodTemplates, MethodKey(m, base, method)))
+    {
+        return true;
     }
 
     for (size_t i = 0; i < m->mod->impls.count; i++)
@@ -1747,6 +1985,268 @@ static bool FoldCondition(Mono* m, const Node* cond, bool* out)
     return folded;
 }
 
+// -- Declared types
+
+// The declared types that names have while a body is rewritten (generics: generic methods). A block has one scope,
+// a StrMap of name -> TypeName*; a name whose type is not known before type checking maps to an empty TypeName.
+
+static size_t RewriteType(Mono* m, TypeName* t);
+
+static void PushScope(Mono* m)
+{
+    StrMap* scope = (StrMap*)ArenaAlloc(m->arena, sizeof(StrMap));
+    StrMapInit(scope);
+    VecPush(&m->scopes, scope);
+}
+
+static void PopScope(Mono* m)
+{
+    StrMapFree((StrMap*)VecPop(&m->scopes));
+}
+
+// Binds `name` in the innermost scope to the type `t`, or to no known type when `t` is NULL.
+static void BindName(Mono* m, const char* name, const TypeName* t)
+{
+    if (!name || m->scopes.count == 0)
+    {
+        return;
+    }
+
+    TypeName* bound = AST_NEW(m->arena, TypeName);
+    *bound = t ? *t : (TypeName){0};
+
+    StrMapPut((StrMap*)VecGet(&m->scopes, m->scopes.count - 1), name, bound);
+}
+
+// The type `name` is bound to in the innermost scope that binds it. `*found` tells whether one does.
+static const TypeName* BoundType(const Mono* m, const char* name, bool* found)
+{
+    *found = false;
+
+    for (size_t i = m->scopes.count; i > 0; i--)
+    {
+        const TypeName* t = (const TypeName*)StrMapGet((const StrMap*)VecGet(&m->scopes, i - 1), name);
+
+        if (t)
+        {
+            *found = true;
+            return t;
+        }
+    }
+
+    return NULL;
+}
+
+// The declared type of the module-level variable `name`, or NULL.
+static const TypeName* GlobalType(const Mono* m, const char* name)
+{
+    for (size_t i = 0; i < m->mod->globals.count; i++)
+    {
+        const GlobalDecl* g = (const GlobalDecl*)VecGet(&m->mod->globals, i);
+
+        if (strcmp(g->name, name) == 0)
+        {
+            return &g->type;
+        }
+    }
+
+    return NULL;
+}
+
+static bool HandleNamed(const Mono* m, const char* name)
+{
+    for (size_t i = 0; i < m->mod->handles.count; i++)
+    {
+        if (strcmp(((const HandleDecl*)VecGet(&m->mod->handles, i))->name, name) == 0)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// The canonical form of a declared type: a generic use that has not been rewritten yet (its struct may not be made)
+// is rewritten now, which makes the instance.
+static TypeName MonoCanonical(Mono* m, const TypeName* t)
+{
+    TypeName copy = *t;
+
+    if (copy.genericBase && copy.typeArgCount > 0)
+    {
+        RewriteType(m, &copy);
+    }
+
+    return copy;
+}
+
+// The type a member is looked up on: `t` with its `^`, `?` and `*` wrappers taken off.
+static TypeName MonoUnwrap(Mono* m, TypeName t)
+{
+    while ((TypeNameIsBox(&t) || TypeNameIsOptional(&t) || TypeNameIsPointer(&t)) && t.inner)
+    {
+        t = MonoCanonical(m, t.inner);
+    }
+
+    return MonoCanonical(m, &t);
+}
+
+// Whether `e` has a type that Monomorphize can name before type checking, and sets `*out` to it. These are: a name with
+// a declared type (a parameter, a local or a global), a field of a struct, a literal, a cast, `-`, `~` or `!`, a
+// constructor call, a call of a free function declared once, and a struct literal. Anything else is unknown.
+static bool MonoTypeOf(Mono* m, const Node* e, TypeName* out)
+{
+    if (!e)
+    {
+        return false;
+    }
+
+    switch (e->kind)
+    {
+    case NodeIdent:
+    {
+        const char* name = ((const IdentExpr*)e)->name;
+        bool found = false;
+        const TypeName* t = BoundType(m, name, &found);
+
+        if (!found)
+        {
+            t = GlobalType(m, name);
+        }
+
+        if (!t || !TypeNameValid(t))
+        {
+            return false;
+        }
+
+        *out = MonoCanonical(m, t);
+        return true;
+    }
+    case NodeMember:
+    {
+        const MemberExpr* me = (const MemberExpr*)e;
+        TypeName base;
+
+        if (!MonoTypeOf(m, me->baseNode, &base))
+        {
+            return false;
+        }
+
+        base = MonoUnwrap(m, base);
+
+        if (!TypeNameValid(&base) || TypeNameIsArray(&base))
+        {
+            return false;
+        }
+
+        const StructDecl* sd = PlainStructNamed(m->mod, base.name);
+
+        for (size_t i = 0; sd && i < sd->fields.count; i++)
+        {
+            const FieldDecl* field = (const FieldDecl*)VecGet(&sd->fields, i);
+
+            if (strcmp(field->name, me->member) == 0)
+            {
+                *out = MonoCanonical(m, &field->type);
+                return true;
+            }
+        }
+
+        return false;
+    }
+    case NodeIntLiteral:
+    {
+        const IntLiteral* lit = (const IntLiteral*)e;
+
+        if (lit->isLong)
+        {
+            *out = TypeNameLeaf(lit->isUnsigned ? (char*)"ulong" : (char*)"long");
+        }
+        else
+        {
+            *out = TypeNameLeaf(lit->isUnsigned ? (char*)"uint" : (char*)"int");
+        }
+
+        return true;
+    }
+    case NodeFloatLiteral:
+        *out = TypeNameLeaf(((const FloatLiteral*)e)->isSingle ? (char*)"float" : (char*)"double");
+        return true;
+    case NodeBoolLiteral:
+        *out = TypeNameLeaf((char*)"bool");
+        return true;
+    case NodeStrLiteral:
+        *out = TypeNameLeaf((char*)"string");
+        return true;
+    case NodeCast:
+        *out = MonoCanonical(m, &((const CastExpr*)e)->type);
+        return true;
+    case NodeUnary:
+    {
+        const UnaryExpr* u = (const UnaryExpr*)e;
+
+        if (u->op == UnNot)
+        {
+            *out = TypeNameLeaf((char*)"bool");
+            return true;
+        }
+
+        return (u->op == UnNeg || u->op == UnBitNot) && MonoTypeOf(m, u->operand, out);
+    }
+    case NodeStructInit:
+    {
+        const StructInitExpr* init = (const StructInitExpr*)e;
+
+        if (!init->typeName)
+        {
+            return false;
+        }
+
+        *out = TypeNameLeaf(init->typeName);
+        return true;
+    }
+    case NodeCall:
+    {
+        const CallExpr* call = (const CallExpr*)e;
+
+        if (call->calleeBase || !call->callee)
+        {
+            return false;
+        }
+
+        if (PlainStructNamed(m->mod, call->callee))
+        {
+            *out = TypeNameLeaf(call->callee);
+            return true;
+        }
+
+        const FunctionDecl* fn = NULL;
+        size_t count = 0;
+
+        for (size_t i = 0; i < m->mod->functions.count; i++)
+        {
+            const FunctionDecl* candidate = (const FunctionDecl*)VecGet(&m->mod->functions, i);
+
+            if (!candidate->fromImpl && candidate->name && strcmp(candidate->name, call->callee) == 0)
+            {
+                fn = candidate;
+                count++;
+            }
+        }
+
+        if (count != 1 || fn->typeParam || !TypeNameValid(&fn->returnType))
+        {
+            return false;
+        }
+
+        *out = MonoCanonical(m, &fn->returnType);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 // -- Rewriting uses
 
 // Whether `n` holds `args.length` of a parameter pack (an IntLiteral the clone wrote). Such a condition folds even
@@ -1894,8 +2394,364 @@ static void RewriteGenericStructCall(Mono* m, CallExpr* call)
     call->typeArgCount = 0;
 }
 
-// A call to a generic function becomes a call to its instance, named by the canonical spelling. Other
-// calls are left for sema (generic externs; methods, found through their impl).
+// The index of the fixed type parameter that the leaf type `t` names, or -1 when it names none.
+static int FixedParamIndex(const FunctionDecl* tmpl, const TypeName* t)
+{
+    if (!IsLeafType(t))
+    {
+        return -1;
+    }
+
+    size_t fixedCount = FixedTypeParamCount(tmpl);
+
+    for (size_t i = 0; i < fixedCount; i++)
+    {
+        if (strcmp((const char*)VecGet(&tmpl->genericParams, i), t->name) == 0)
+        {
+            return (int)i;
+        }
+    }
+
+    return -1;
+}
+
+// The rest parameter typed with the pack (`TArgs... args`), or NULL. `*outIndex` is its position.
+static const ParamDecl* PackRestParam(const FunctionDecl* tmpl, size_t* outIndex)
+{
+    if (!tmpl->genericPack)
+    {
+        return NULL;
+    }
+
+    const char* packType = (const char*)VecGet(&tmpl->genericParams, tmpl->genericParams.count - 1);
+
+    for (size_t i = 0; i < tmpl->params.count; i++)
+    {
+        const ParamDecl* param = (const ParamDecl*)VecGet(&tmpl->params, i);
+        const TypeName* elem = TypeNameIsArray(&param->type) ? TypeNameArrayElem(&param->type) : NULL;
+
+        if (param->isVarargRest && elem && elem->name && strcmp(elem->name, packType) == 0)
+        {
+            *outIndex = i;
+            return param;
+        }
+    }
+
+    return NULL;
+}
+
+// Infers the type arguments of a call to `tmpl` from the declared types of the call's arguments (generics: inference).
+// The first `selfOffset` parameters are the receiver and are not matched. On success `*out` holds the fixed type
+// arguments then the pack's, and `*outCount` is their number. An argument whose type is not known before type checking
+// is an error only when a type parameter needs it; so is a type parameter no argument fixes, or two that disagree.
+static bool InferTypeArgs(Mono* m, const FunctionDecl* tmpl, const CallExpr* call, size_t selfOffset, bool isMethod,
+                          bool quiet, TypeName** out, size_t* outCount)
+{
+    size_t fixedCount = FixedTypeParamCount(tmpl);
+    size_t restIndex = 0;
+    const ParamDecl* rest = PackRestParam(tmpl, &restIndex);
+
+    size_t packCount = 0;
+
+    if (rest && call->args.count + selfOffset > restIndex)
+    {
+        packCount = call->args.count + selfOffset - restIndex;
+    }
+
+    TypeName* types = (TypeName*)ArenaAlloc(m->arena, (fixedCount + packCount + 1) * sizeof(TypeName));
+    bool* fixed = (bool*)ArenaAlloc(m->arena, (fixedCount + 1) * sizeof(bool));
+    bool* unknown = (bool*)ArenaAlloc(m->arena, (fixedCount + 1) * sizeof(bool));
+    memset(types, 0, (fixedCount + packCount + 1) * sizeof(TypeName));
+    memset(fixed, 0, (fixedCount + 1) * sizeof(bool));
+    memset(unknown, 0, (fixedCount + 1) * sizeof(bool));
+
+    const char* subject = isMethod ? tmpl->methodName : tmpl->name;
+
+    for (size_t i = 0; i < call->args.count; i++)
+    {
+        const Node* arg = (const Node*)VecGet(&call->args, i);
+        size_t pi = i + selfOffset;
+        TypeName type = {0};
+        bool known = MonoTypeOf(m, arg, &type);
+
+        type.isConst = false;
+
+        if (rest && pi >= restIndex)
+        {
+            if (!known)
+            {
+                if (!quiet)
+                {
+                    DiagErrorFmt(m->diag, call->base.range,
+                                 "can't infer the pack of '%s': the type of argument %zu isn't known before type "
+                                 "checking; write '%s%s'",
+                                 subject, pi - restIndex + 1, isMethod ? "x." : "", subject);
+                }
+
+                return false;
+            }
+
+            types[fixedCount + (pi - restIndex)] = type;
+            continue;
+        }
+
+        if (pi >= tmpl->params.count)
+        {
+            continue;
+        }
+
+        int k = FixedParamIndex(tmpl, &((const ParamDecl*)VecGet(&tmpl->params, pi))->type);
+
+        if (k < 0)
+        {
+            continue;
+        }
+
+        if (!known)
+        {
+            unknown[k] = true;
+            continue;
+        }
+
+        if (!fixed[k])
+        {
+            types[k] = type;
+            fixed[k] = true;
+        }
+        else if (strcmp(types[k].name, type.name) != 0)
+        {
+            if (!quiet)
+            {
+                DiagErrorFmt(m->diag, call->base.range, "type argument '%s' of '%s' is inferred as both '%s' and '%s'",
+                             (const char*)VecGet(&tmpl->genericParams, k), subject, types[k].name, type.name);
+            }
+
+            return false;
+        }
+    }
+
+    for (size_t k = 0; k < fixedCount; k++)
+    {
+        if (fixed[k])
+        {
+            continue;
+        }
+
+        const char* param = (const char*)VecGet(&tmpl->genericParams, k);
+        const char* hint = isMethod ? ArenaFormat(m->arena, "x.%s<...>(...)", subject)
+                                    : ArenaFormat(m->arena, "%s<...>(...)", subject);
+
+        if (quiet)
+        {
+            return false;
+        }
+
+        if (unknown[k])
+        {
+            DiagErrorFmt(m->diag, call->base.range,
+                         "can't infer type argument '%s' of '%s': the type of this argument isn't known before type "
+                         "checking; write '%s'",
+                         param, subject, hint);
+        }
+        else
+        {
+            DiagErrorFmt(m->diag, call->base.range, "can't infer type argument '%s' of '%s': write '%s'", param,
+                         subject, hint);
+        }
+
+        return false;
+    }
+
+    *out = types;
+    *outCount = fixedCount + packCount;
+
+    return true;
+}
+
+// The instance of the method template `mt` that `call` names: its type arguments are the call's, or are inferred from
+// its arguments (`selfOffset` leading parameters are the receiver). Returns the instance's spelling (`m<A..>`), or NULL
+// when none is made because an error was reported. A `quiet` inference that fails reports nothing and makes no
+// instance: a constructor call may still be a plain one.
+static char* MakeMethodInstance(Mono* m, const MethodTemplate* mt, const CallExpr* call, size_t selfOffset,
+                                size_t argDepth, bool quiet)
+{
+    const FunctionDecl* tmpl = mt->fn;
+    const char* method = tmpl->methodName;
+    const TypeName* args = NULL;
+    size_t argCount = 0;
+    TypeName* inferred = NULL;
+
+    if (call->hasTypeArgList)
+    {
+        size_t fixedCount = FixedTypeParamCount(tmpl);
+
+        if (tmpl->genericPack && call->typeArgCount < fixedCount)
+        {
+            DiagErrorFmt(m->diag, call->base.range,
+                         "generic method '%s' takes at least %zu type argument(s), but %zu were given", method,
+                         fixedCount, call->typeArgCount);
+            return NULL;
+        }
+
+        if (!tmpl->genericPack && tmpl->genericParams.count != call->typeArgCount)
+        {
+            DiagErrorFmt(m->diag, call->base.range,
+                         "generic method '%s' takes %zu type argument(s), but %zu were given", method,
+                         tmpl->genericParams.count, call->typeArgCount);
+            return NULL;
+        }
+
+        args = call->typeArgs;
+        argCount = call->typeArgCount;
+    }
+    else
+    {
+        if (!InferTypeArgs(m, tmpl, call, selfOffset, true, quiet, &inferred, &argCount))
+        {
+            return NULL;
+        }
+
+        args = inferred;
+    }
+
+    char* spelling = TypeNameGenericSpelling(m->arena, method, args, argCount);
+
+    if (!WithinLimits(m, argDepth + 1, spelling, method, call->base.range))
+    {
+        return NULL;
+    }
+
+    InstantiateMethod(m, mt, spelling, args, argCount, call->base.range);
+
+    return spelling;
+}
+
+// Whether the method template `fn` of the handle `handle` takes the receiver: its first parameter is of that type.
+static bool TakesSelf(const FunctionDecl* fn, const char* handle)
+{
+    if (fn->params.count == 0)
+    {
+        return false;
+    }
+
+    const ParamDecl* self = (const ParamDecl*)VecGet(&fn->params, 0);
+
+    return self->type.name && strcmp(self->type.name, handle) == 0;
+}
+
+// `recv.m(args)`, `recv.m<A..>(args)` or `H.m(args)` on a generic method: the handle is the receiver's type, the
+// instance is made, and the call is renamed to it. `init` keeps its name, so sema picks the constructor overload of
+// the instance by its arguments. A call whose receiver has no known type is an error only when it gives type arguments;
+// otherwise sema resolves it, or reports that the method is generic.
+static void RewriteMethodCall(Mono* m, CallExpr* call, size_t argDepth)
+{
+    if (!StrMapGet(&m->genericMethodNames, call->callee))
+    {
+        if (call->hasTypeArgList)
+        {
+            DiagErrorFmt(m->diag, call->base.range, "'%s' is not a generic method, so it takes no type arguments",
+                         call->callee);
+        }
+
+        return;
+    }
+
+    const Node* base = call->calleeBase;
+    const char* baseName = base->kind == NodeIdent ? ((const IdentExpr*)base)->name : NULL;
+    bool bound = false;
+
+    if (baseName)
+    {
+        BoundType(m, baseName, &bound);
+    }
+
+    bool isStatic = baseName && !bound && (PlainStructNamed(m->mod, baseName) || HandleNamed(m, baseName));
+    const char* handle = NULL;
+
+    if (isStatic)
+    {
+        handle = baseName;
+    }
+    else
+    {
+        TypeName type = {0};
+
+        // Without type arguments the call may be to a plain method of the same name on another type (`p.init(x)` on a
+        // pointer whose type isn't known yet): it is left for sema, which reports a generic-only method itself.
+        if (!MonoTypeOf(m, base, &type))
+        {
+            if (call->hasTypeArgList)
+            {
+                DiagErrorFmt(m->diag, call->base.range,
+                             "can't tell the type of the receiver of '%s' before type checking; give it a declared "
+                             "type",
+                             call->callee);
+            }
+
+            return;
+        }
+
+        type = MonoUnwrap(m, type);
+        handle = type.name;
+    }
+
+    const MethodTemplate* mt
+        = handle ? (const MethodTemplate*)StrMapGet(&m->methodTemplates, MethodKey(m, handle, call->callee)) : NULL;
+
+    if (!mt)
+    {
+        if (call->hasTypeArgList)
+        {
+            DiagErrorFmt(m->diag, call->base.range,
+                         "'%s' is not a generic method of '%s', so it takes no type arguments", call->callee, handle);
+        }
+
+        return;
+    }
+
+    bool isInit = strcmp(call->callee, "init") == 0;
+    size_t selfOffset = (!isStatic && (isInit || TakesSelf(mt->fn, handle))) ? 1 : 0;
+    char* spelling = MakeMethodInstance(m, mt, call, selfOffset, argDepth, isInit);
+
+    call->typeArgs = NULL;
+    call->typeArg = NULL;
+    call->typeArgCount = 0;
+    call->hasTypeArgList = false;
+
+    if (spelling && !isInit)
+    {
+        call->callee = spelling;
+    }
+}
+
+// `H(args)` after the struct-call rewrite: when the impl of H has an `init` template, its instance is made from the
+// arguments (`self` is not one). The call keeps its callee, and sema picks the instance's constructor by its arguments.
+static void RewriteConstructorCall(Mono* m, CallExpr* call, size_t argDepth)
+{
+    if (!StrMapGet(&m->genericMethodNames, "init"))
+    {
+        return;
+    }
+
+    const MethodTemplate* mt
+        = (const MethodTemplate*)StrMapGet(&m->methodTemplates, MethodKey(m, call->callee, "init"));
+
+    if (!mt)
+    {
+        return;
+    }
+
+    call->typeArgs = NULL;
+    call->typeArg = NULL;
+    call->typeArgCount = 0;
+    call->hasTypeArgList = false;
+
+    MakeMethodInstance(m, mt, call, 1, argDepth, true);
+}
+
+// A call to a generic function becomes a call to its instance, named by the canonical spelling. The type arguments are
+// the call's, or are inferred from its arguments. Other calls are left for sema (generic externs); a method call goes
+// to RewriteMethodCall.
 static void RewriteCall(Mono* m, CallExpr* call)
 {
     size_t argDepth = 0;
@@ -1908,7 +2764,13 @@ static void RewriteCall(Mono* m, CallExpr* call)
     RewriteSlot(m, &call->calleeBase);
     RewriteSlotList(m, &call->args);
 
-    if (call->calleeBase || !call->callee)
+    if (call->calleeBase)
+    {
+        RewriteMethodCall(m, call, argDepth);
+        return;
+    }
+
+    if (!call->callee)
     {
         return;
     }
@@ -1925,49 +2787,61 @@ static void RewriteCall(Mono* m, CallExpr* call)
         {
             DiagErrorFmt(m->diag, call->base.range, "generic struct '%s' needs type arguments: write '%s<...> { ... }'",
                          call->callee, call->callee);
+            return;
         }
 
-        return;
-    }
-
-    if (!call->hasTypeArgList)
-    {
-        DiagErrorFmt(m->diag, call->base.range, "generic function '%s' needs explicit type arguments: %s<...>(...)",
-                     call->callee, call->callee);
+        RewriteConstructorCall(m, call, argDepth);
         return;
     }
 
     // A pack takes any number of type arguments past its fixed ones, `<>` included.
     size_t fixedCount = FixedTypeParamCount(tmpl);
+    const TypeName* args = call->typeArgs;
+    size_t argCount = call->typeArgCount;
+    TypeName* inferred = NULL;
 
-    if (tmpl->genericPack && call->typeArgCount < fixedCount)
+    if (call->hasTypeArgList)
     {
-        DiagErrorFmt(m->diag, call->base.range,
-                     "generic function '%s' takes at least %zu type argument(s), but %zu were given", call->callee,
-                     fixedCount, call->typeArgCount);
-        return;
+        if (tmpl->genericPack && argCount < fixedCount)
+        {
+            DiagErrorFmt(m->diag, call->base.range,
+                         "generic function '%s' takes at least %zu type argument(s), but %zu were given", call->callee,
+                         fixedCount, argCount);
+            return;
+        }
+
+        if (!tmpl->genericPack && tmpl->genericParams.count != argCount)
+        {
+            DiagErrorFmt(m->diag, call->base.range,
+                         "generic function '%s' takes %zu type argument(s), but %zu were given", call->callee,
+                         tmpl->genericParams.count, argCount);
+            return;
+        }
+    }
+    else
+    {
+        if (!InferTypeArgs(m, tmpl, call, 0, false, false, &inferred, &argCount))
+        {
+            return;
+        }
+
+        args = inferred;
     }
 
-    if (!tmpl->genericPack && tmpl->genericParams.count != call->typeArgCount)
-    {
-        DiagErrorFmt(m->diag, call->base.range, "generic function '%s' takes %zu type argument(s), but %zu were given",
-                     call->callee, tmpl->genericParams.count, call->typeArgCount);
-        return;
-    }
-
-    char* name = TypeNameGenericSpelling(m->arena, call->callee, call->typeArgs, call->typeArgCount);
+    char* name = TypeNameGenericSpelling(m->arena, call->callee, args, argCount);
 
     if (!WithinLimits(m, argDepth + 1, name, call->callee, call->base.range))
     {
         return;
     }
 
-    InstantiateFunction(m, tmpl, name, call->typeArgs, call->typeArgCount);
+    InstantiateFunction(m, tmpl, name, args, argCount);
 
     call->callee = name;
     call->typeArg = NULL;
     call->typeArgs = NULL;
     call->typeArgCount = 0;
+    call->hasTypeArgList = false;
 }
 
 static void RewriteStructInit(Mono* m, StructInitExpr* init)
@@ -2168,14 +3042,27 @@ static void RewriteNode(Mono* m, Node* n)
 
         RewriteType(m, &fn->returnType);
         RewriteList(m, &fn->params);
+
+        // The parameters are the outermost declared names of the body.
+        PushScope(m);
+
+        for (size_t i = 0; i < fn->params.count; i++)
+        {
+            const ParamDecl* param = (const ParamDecl*)VecGet(&fn->params, i);
+            BindName(m, param->name, &param->type);
+        }
+
         RewriteNode(m, fn->body);
+        PopScope(m);
         break;
     }
     case NodeParam:
         RewriteType(m, &((ParamDecl*)n)->type);
         break;
     case NodeBlock:
+        PushScope(m);
         RewriteSlotList(m, &((Block*)n)->statements);
+        PopScope(m);
         break;
     case NodeReturn:
         RewriteSlot(m, &((ReturnStmt*)n)->value);
@@ -2192,10 +3079,13 @@ static void RewriteNode(Mono* m, Node* n)
     {
         ForStmt* s = (ForStmt*)n;
 
+        // The loop variable is declared by the `for` itself.
+        PushScope(m);
         RewriteSlot(m, &s->init);
         RewriteSlot(m, &s->condition);
         RewriteSlot(m, &s->update);
         RewriteSlot(m, &s->body);
+        PopScope(m);
         break;
     }
     case NodeVarDecl:
@@ -2209,6 +3099,23 @@ static void RewriteNode(Mono* m, Node* n)
         }
 
         RewriteSlot(m, &v->init);
+
+        // A `var` local takes the type of its initializer when that is known before type checking.
+        TypeName inferred = {0};
+
+        if (TypeNameValid(&v->type))
+        {
+            BindName(m, v->name, &v->type);
+        }
+        else if (MonoTypeOf(m, v->init, &inferred))
+        {
+            inferred.isConst = false;
+            BindName(m, v->name, &inferred);
+        }
+        else
+        {
+            BindName(m, v->name, NULL);
+        }
         break;
     }
     case NodeExprStmt:
@@ -2309,6 +3216,10 @@ void Monomorphize(Module* mod, DiagnosticEngine* diag, Arena* arena)
     StrMapInit(&m.metaFunctions);
     m.metaCalls = 0;
     m.instanceCount = 0;
+    StrMapInit(&m.methodTemplates);
+    StrMapInit(&m.methodInstances);
+    StrMapInit(&m.genericMethodNames);
+    VecInit(&m.scopes);
     m.stopped = false;
 
     Vec templateMethods;
@@ -2316,6 +3227,7 @@ void Monomorphize(Module* mod, DiagnosticEngine* diag, Arena* arena)
 
     CollectStructTemplates(&m);
     CollectImplTemplates(&m, &templateMethods);
+    CollectPlainMethodTemplates(&m, &templateMethods);
     CollectFunctionTemplates(&m, &templateMethods);
     CheckPlainNames(&m);
     CollectMetaFunctions(&m);
@@ -2335,6 +3247,10 @@ void Monomorphize(Module* mod, DiagnosticEngine* diag, Arena* arena)
     }
 
     FreeVec(&templateMethods);
+    FreeVec(&m.scopes);
+    StrMapFree(&m.methodTemplates);
+    StrMapFree(&m.methodInstances);
+    StrMapFree(&m.genericMethodNames);
     FreeVec(&m.implTemplates);
     FreeVec(&m.pending);
     StrMapFree(&m.structTemplates);

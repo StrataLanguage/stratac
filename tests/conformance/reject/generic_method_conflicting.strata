@@ -1,0 +1,13 @@
+// expect: reject "type argument 'U' of 'both' is inferred as both 'int' and 'double'"
+// rule: two arguments that fix one type parameter must agree
+struct H { int a; }
+impl H
+{
+    void both<U>(ref H self, U a, U b) { }
+}
+int main()
+{
+    H h = H { .a = 1 };
+    h.both(1, 2.0);
+    return 0;
+}

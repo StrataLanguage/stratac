@@ -766,8 +766,8 @@ static int ResolverReturnParamSdk(void* ud, const char* importer, const char* pa
     if (strcmp(path, "sdk") == 0)
     {
         out->text = "struct Foo;\n"
-                    "extern void GetFoo(return Foo f);\n"
-                    "extern int UseFoo(const ref Foo f);\n";
+                    "@export extern void GetFoo(return Foo f);\n"
+                    "@export extern int UseFoo(const ref Foo f);\n";
         out->length = strlen(out->text);
         out->name = "sdk";
         return 1;
@@ -775,8 +775,8 @@ static int ResolverReturnParamSdk(void* ud, const char* importer, const char* pa
     if (strcmp(path, "sdkdef") == 0)
     {
         out->text = "struct Foo { int x; };\n"
-                    "extern void GetFoo(return Foo f);\n"
-                    "extern int UseFoo(const ref Foo f);\n";
+                    "@export extern void GetFoo(return Foo f);\n"
+                    "@export extern int UseFoo(const ref Foo f);\n";
         out->length = strlen(out->text);
         out->name = "sdkdef";
         return 1;
@@ -1099,3 +1099,338 @@ STRATA_TEST(import_case_variants_load_once_on_windows)
     remove(mainPath);
 }
 #endif
+
+/* ================= extern visibility: file-local unless @export ================= */
+
+/* Modules for the extern visibility tests. `lib` declares a plain extern and calls it from its own function. */
+static int ResolverExternFiles(void* userData, const char* importerName, const char* importPath,
+                               StrataResolvedModule* out)
+{
+    (void)userData;
+    (void)importerName;
+
+    const char* text = NULL;
+
+    if (strcmp(importPath, "lib") == 0)
+    {
+        text = "extern void free(ptr p);\n"
+               "int lib_release(ptr p) { free(p); return 1; }\n";
+    }
+    else if (strcmp(importPath, "twin") == 0)
+    {
+        text = "extern void free(ptr p);\n"
+               "int twin_value() { return 2; }\n";
+    }
+    else if (strcmp(importPath, "conflict") == 0)
+    {
+        text = "extern int free(int x);\n"
+               "int conflict_value() { return 3; }\n";
+    }
+    else if (strcmp(importPath, "exported") == 0)
+    {
+        text = "@export extern void free(ptr p);\n";
+    }
+    else if (strcmp(importPath, "lib_addr") == 0)
+    {
+        text = "extern void free(ptr p);\n"
+               "ptr lib_free_addr() { return addressof(free); }\n";
+    }
+    else if (strcmp(importPath, "strlen_lib") == 0)
+    {
+        text = "@export extern ulong strlen(cstring s);\n";
+    }
+    else
+    {
+        return 0;
+    }
+
+    out->text = text;
+    out->length = strlen(text);
+    out->name = importPath;
+    return 1;
+}
+
+/* How many times `needle` occurs in `hay`. */
+static int CountOccurrences(const char* hay, const char* needle)
+{
+    int count = 0;
+    size_t n = strlen(needle);
+
+    for (const char* at = strstr(hay, needle); at; at = strstr(at + n, needle))
+    {
+        count++;
+    }
+
+    return count;
+}
+
+#if STRATA_TEST_HAS_LLVM
+
+/* A file's extern is callable from its own file, and the importer's `int free` is its own function. */
+STRATA_TEST(extern_file_local_importer_defines_same_name_runs)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "import lib;\n"
+                                            "int free(ptr p) { return 10; }\n"
+                                            "int entry() { return free(ptr.null); }\n",
+                                            "main", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 10);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+/* The importer cannot call a file-local extern of the imported file. */
+STRATA_TEST(extern_file_local_not_callable_from_importer)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r = strataCompileString(c, "import lib;\nint entry() { free(ptr.null); return 0; }\n", "main",
+                                         STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "unknown function 'free'") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* A call inside the file that declares the extern goes to that extern, not the importer's `int free`. */
+STRATA_TEST(extern_own_file_call_not_redirected_by_importer)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r = strataCompileString(c,
+                                         "import lib;\n"
+                                         "int free(ptr p) { return 10; }\n"
+                                         "int entry() { return free(ptr.null) + lib_release(ptr.null); }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(r.ok);
+    if (!r.ok)
+    {
+        printf("  compile failed: %s\n", r.diagnostics);
+    }
+    else
+    {
+        STRATA_CHECK(strstr(r.output, "call void @free(") != NULL);
+        STRATA_CHECK(strstr(r.output, "define i32 @free(") == NULL);
+    }
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* `@export extern` is callable from an importing file. */
+STRATA_TEST(export_extern_callable_from_importer)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    const char* err = NULL;
+    StrataJit* jit = strataJitCompileString(c,
+                                            "import strlen_lib;\n"
+                                            "int entry() { return (int)strlen(\"abcd\"); }\n",
+                                            "main", &err);
+    STRATA_CHECK(jit != NULL);
+    if (!jit)
+    {
+        printf("  JIT failed: %s\n", err ? err : "(none)");
+        strataFree((char*)err);
+        strataCompilerDestroy(c);
+        return;
+    }
+
+    STRATA_CHECK_EQ(strataJitAddSymbol(jit, "strlen", (void*)&strlen), 1);
+
+    int (*entry)(void*) = (int (*)(void*))strataJitGetFunction(jit, "entry");
+    STRATA_CHECK(entry != NULL);
+    if (entry)
+    {
+        STRATA_CHECK_EQ(entry(NULL), 4);
+    }
+
+    strataJitDestroy(jit);
+    strataCompilerDestroy(c);
+}
+
+/* The same extern in two files with one signature is one C symbol: one declaration in the IR. */
+STRATA_TEST(extern_same_signature_in_two_files_is_one_symbol)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r = strataCompileString(c, "import lib;\nimport twin;\nint entry() { return 0; }\n", "main",
+                                         STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(r.ok);
+    if (!r.ok)
+    {
+        printf("  compile failed: %s\n", r.diagnostics);
+    }
+    else
+    {
+        STRATA_CHECK_EQ(CountOccurrences(r.output, "declare void @free("), 1);
+    }
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* The same extern name with different signatures in two files is a conflict: they share one symbol. */
+STRATA_TEST(extern_conflicting_signatures_in_two_files_rejected)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r = strataCompileString(c, "import lib;\nimport conflict;\nint entry() { return 0; }\n", "main",
+                                         STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "conflicting extern declarations of 'free'") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* An `@export extern` is visible everywhere, so the importer's `int free` clashes with it. */
+STRATA_TEST(export_extern_clashes_with_importer_definition)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r
+        = strataCompileString(c, "import exported;\nint free(ptr p) { return 10; }\nint entry() { return 0; }\n",
+                              "main", STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "cannot be overloaded") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* `addressof` follows the same visibility as a call. */
+STRATA_TEST(extern_file_local_addressof_from_importer_rejected)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r = strataCompileString(c, "import lib;\nint entry() { ptr f = addressof(free); return 0; }\n", "main",
+                                         STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(!r.ok);
+    STRATA_CHECK(strstr(r.diagnostics, "unknown variable 'free'") != NULL);
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+/* `addressof(free)` in the extern's own file still names the extern when an importer defines `free`. */
+STRATA_TEST(extern_own_file_addressof_not_ambiguous)
+{
+    StrataCompiler* c = strataCompilerCreate();
+    strataSetImportResolver(c, &ResolverExternFiles, NULL);
+
+    StrataResult r = strataCompileString(c,
+                                         "import lib_addr;\n"
+                                         "int free(ptr p) { return 10; }\n"
+                                         "int entry() { ptr f = lib_free_addr(); return free(f); }\n",
+                                         "main", STRATA_EMIT_LLVM_IR, 0);
+
+    STRATA_CHECK(r.ok);
+    if (!r.ok)
+    {
+        printf("  compile failed: %s\n", r.diagnostics);
+    }
+
+    strataResultFree(&r);
+    strataCompilerDestroy(c);
+}
+
+#endif /* STRATA_TEST_HAS_LLVM */
+
+/* ================= extern visibility: parsing ================= */
+
+STRATA_TEST(export_extern_sets_exported_flag)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("@export extern void f();", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod->functions.count == 1);
+
+    FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
+    STRATA_CHECK(fn->isExtern);
+    STRATA_CHECK(fn->isExportedExtern);
+    STRATA_CHECK(!fn->isExport);
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(plain_extern_is_not_exported)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("extern void f();", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+    STRATA_CHECK(mod->functions.count == 1);
+
+    FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, 0);
+    STRATA_CHECK(fn->isExtern);
+    STRATA_CHECK(!fn->isExportedExtern);
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(private_and_export_together_rejected)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseModule("@private\n@export\nextern void f();", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(export_extern_delegate_rejected)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    ParseModule("@export\nextern delegate void D(int x);", &diag, &arena);
+    STRATA_CHECK(DiagHasErrors(&diag));
+
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
