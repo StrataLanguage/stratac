@@ -1,0 +1,4 @@
+// expect: reject "parameter pack 'T' must be expanded: write 'T...'"
+// rule: a pack name is not a type: it must be expanded where a type is written
+void f<T...>(T... args) { T x; }
+int main() { f<int>(1); return 0; }

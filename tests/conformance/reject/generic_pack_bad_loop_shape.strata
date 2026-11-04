@@ -1,0 +1,4 @@
+// expect: reject "a 'for' loop over a parameter pack must be written"
+// rule: a for loop over a pack must have the unrollable shape
+void f<T...>(T... args) { for (int j = 0; j < args.length; j = j + 2) { } }
+int main() { f<int>(1); return 0; }

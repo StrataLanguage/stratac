@@ -4,13 +4,30 @@
 // substitution). The templates the Monomorphize pass copies are never changed.
 
 #include "AST/AST.h"
+#include "Core/Diagnostics.h"
+
+// The pack loop being unrolled: `for (T i = 0; i < args.length; i++)` binds `var` to `index` in each copy.
+typedef struct PackLoop
+{
+    const char* var; // the loop variable
+    size_t index;    // the iteration being cloned
+    const struct PackLoop* outer;
+} PackLoop;
 
 // `args[i]` replaces the type parameter named by `params[i]`. A NULL TypeSubst, or one whose `params`
-// is NULL or empty, copies the tree without replacing anything.
+// is NULL or empty, copies the tree without replacing anything. The pack fields are zero when the template
+// has no parameter pack (generics: parameter packs).
 typedef struct
 {
-    const Vec* params;    // char*: type parameter names
-    const TypeName* args; // one per param
+    const Vec* params;        // char*: type parameter names (the pack name is NOT in here)
+    const TypeName* args;     // one per param
+    const char* packType;     // `TArgs`, NULL when the template has no pack
+    const char* packValue;    // `args`: the rest parameter typed with the pack, NULL if none
+    const TypeName* packArgs; // the pack's types
+    size_t packCount;
+    DiagnosticEngine* diag; // pack misuse is reported here
+    const PackLoop* loop;   // innermost pack loop being unrolled
+    bool inPackLoopBody;    // directly inside a pack loop body (break and continue are errors)
 } TypeSubst;
 
 // `t` rebuilt with every type parameter replaced. A generic use (`number<T>`) gets its arguments

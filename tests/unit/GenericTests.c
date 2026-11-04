@@ -1249,3 +1249,206 @@ STRATA_TEST(monomorph_generic_array_argument_runs_through_sema)
     DiagnosticEngineFree(&diag);
     ArenaFree(&arena);
 }
+
+STRATA_TEST(generic_pack_declares_last_type_parameter_as_pack)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("void f<A, T...>(A a, T... rest) {}\nvoid g<T>(T x) {}", &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, 0);
+    STRATA_CHECK(f->genericPack);
+    STRATA_CHECK_EQ((long)f->genericParams.count, 2);
+    STRATA_CHECK(strcmp((char*)VecGet(&f->genericParams, 1), "T") == 0);
+    const ParamDecl* rest = ParamOf(f, 1);
+    STRATA_CHECK(rest->isVarargRest);
+    STRATA_CHECK(TypeNameIsArray(&rest->type));
+    STRATA_CHECK(strcmp(TypeNameArrayElem(&rest->type)->name, "T") == 0);
+    STRATA_CHECK(strcmp(rest->name, "rest") == 0);
+
+    FunctionDecl* g = (FunctionDecl*)VecGet(&mod->functions, 1);
+    STRATA_CHECK(!g->genericPack);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(generic_pack_rejected_declarations_report_errors)
+{
+    struct
+    {
+        const char* src;
+        const char* needle;
+    } cases[] = {
+        {"void f<T..., U>(T... a) {}",               "a parameter pack must be the last type parameter"       },
+        {"struct s<T...> { int x; }",                "parameter packs are only supported on generic functions"},
+        {"struct s<T> { int x; }\nimpl s<T...> { }", "parameter packs are only supported on generic functions"},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena;
+        ArenaInit(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
+        Module* mod = ParseModule(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+        STRATA_CHECK(DiagsContaining(&diag, cases[i].needle) >= 1);
+        AstDispose((Node*)mod);
+        DiagnosticEngineFree(&diag);
+        ArenaFree(&arena);
+    }
+}
+
+STRATA_TEST(generic_pack_expansions_parse_in_type_and_call_positions)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseModule("void g<A, B>(A a, B b) {}\n"
+                              "void f<T...>(T... args)\n"
+                              "{\n"
+                              "    g<int, T...>(1, args...);\n"
+                              "    x.m(args...);\n"
+                              "    h<T...>();\n"
+                              "}\n",
+                              &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* f = (FunctionDecl*)VecGet(&mod->functions, 1);
+    CallExpr* g = (CallExpr*)((ExprStmt*)CloneBodyStmt(f, 0))->expr;
+    STRATA_CHECK(g->base.kind == NodeCall);
+    STRATA_CHECK(g->hasTypeArgList);
+    STRATA_CHECK_EQ((long)g->typeArgCount, 2);
+    STRATA_CHECK(!g->typeArgs[0].isPackExpansion);
+    STRATA_CHECK(g->typeArgs[1].isPackExpansion);
+    STRATA_CHECK(strcmp(g->typeArgs[1].name, "T") == 0);
+    STRATA_CHECK_EQ((long)g->args.count, 2);
+    STRATA_CHECK(((Node*)VecGet(&g->args, 1))->kind == NodePackExpand);
+    STRATA_CHECK(strcmp(((PackExpandExpr*)VecGet(&g->args, 1))->name, "args") == 0);
+
+    CallExpr* m = (CallExpr*)((ExprStmt*)CloneBodyStmt(f, 1))->expr;
+    STRATA_CHECK(m->calleeBase != NULL);
+    STRATA_CHECK(((Node*)VecGet(&m->args, 0))->kind == NodePackExpand);
+
+    // `h<T...>()` with an empty pack is not a parse error, and the list is recorded.
+    CallExpr* h = (CallExpr*)((ExprStmt*)CloneBodyStmt(f, 2))->expr;
+    STRATA_CHECK(h->hasTypeArgList);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(generic_pack_empty_list_and_comparisons_parse)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod
+        = ParseModule("extern int printf(cstring fmt, ...);\n"
+                      "int sum(int... rest) { return 0; }\n"
+                      "int main() { int a = 1; int b = 2; bool c = a < b; f<>(); f(); return a < b ? 1 : 0; }\n",
+                      &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* main = (FunctionDecl*)VecGet(&mod->functions, 2);
+    CallExpr* empty = (CallExpr*)((ExprStmt*)CloneBodyStmt(main, 3))->expr;
+    STRATA_CHECK(empty->hasTypeArgList);
+    STRATA_CHECK_EQ((long)empty->typeArgCount, 0);
+
+    CallExpr* plain = (CallExpr*)((ExprStmt*)CloneBodyStmt(main, 4))->expr;
+    STRATA_CHECK(!plain->hasTypeArgList);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}
+
+STRATA_TEST(monomorph_reports_pack_misuse)
+{
+    struct
+    {
+        const char* src;
+        const char* needle;
+    } cases[] = {
+        {"void f<T...>(T... a) { int x = a; }\nint main() { f<int>(1); return 0; }",
+         "parameter pack 'a' can only be used as"                                                                                                                      },
+        {"void f<T...>(T... a) { T x; }\nint main() { f<int>(1); return 0; }",
+         "parameter pack 'T' must be expanded: write 'T...'"                                                                                                           },
+        {"void f<T...>(T... a) { int i = 0; int x = a[i]; }\nint main() { f<int>(1); return 0; }",
+         "a parameter pack can only be indexed by an integer literal"                                                                                                  },
+        {"void f<T...>(T... a) { for (int i = 0; i < 1; i++) { } for (int j = 0; j < a.length; i++) { } }\n"
+         "int main() { f<int>(1); return 0; }",                                           "a 'for' loop over a parameter pack must be written"                },
+        {"void f<T...>(T... a) { for (int i = 0; i < a.length; i++) { break; } }\n"
+         "int main() { f<int>(1); return 0; }",                                           "'break' is not supported inside a 'for' loop over a parameter pack"},
+        {"void g<T>(T x) {}\nvoid h(int a) { g<int...>(a); }\nint main() { return 0; }",
+         "'int...' expands a parameter pack, but 'int' is not one"                                                                                                     },
+        {"void f<A, B...>(A a, B... b) {}\nint main() { f<>(1); return 0; }",
+         "generic function 'f' takes at least 1 type argument(s), but 0 were given"                                                                                    },
+        {"void f<T...>(T... a) {}\nint main() { f(1); return 0; }",
+         "generic function 'f' needs explicit type arguments"                                                                                                          },
+        {"int x = 1;\nvoid h(int a) { x(a...); }\nint main() { return 0; }",
+         "'a...' expands a parameter pack, but 'a' is not one"                                                                                                         },
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        Arena arena;
+        ArenaInit(&arena, 0);
+        DiagnosticEngine diag;
+        DiagnosticEngineInit(&diag);
+        Module* mod = ParseAndResolve(cases[i].src, &diag, &arena);
+        STRATA_CHECK(DiagHasErrors(&diag));
+        STRATA_CHECK(DiagsContaining(&diag, cases[i].needle) >= 1);
+        AstDispose((Node*)mod);
+        DiagnosticEngineFree(&diag);
+        ArenaFree(&arena);
+    }
+}
+
+STRATA_TEST(monomorph_pack_expands_into_instance_parameters)
+{
+    Arena arena;
+    ArenaInit(&arena, 0);
+    DiagnosticEngine diag;
+    DiagnosticEngineInit(&diag);
+    Module* mod = ParseAndResolve("void show(int v) {}\n"
+                                  "void each<T...>(T... args)\n"
+                                  "{\n"
+                                  "    for (int i = 0; i < args.length; i++) { show(args[i]); }\n"
+                                  "}\n"
+                                  "int main() { each<int, int>(1, 2); return 0; }\n",
+                                  &diag, &arena);
+    STRATA_CHECK(!DiagHasErrors(&diag));
+
+    FunctionDecl* inst = NULL;
+
+    for (size_t i = 0; i < mod->functions.count; i++)
+    {
+        FunctionDecl* fn = (FunctionDecl*)VecGet(&mod->functions, i);
+
+        if (strcmp(fn->name, "each<int,int>") == 0)
+        {
+            inst = fn;
+        }
+    }
+
+    STRATA_CHECK(inst != NULL);
+    STRATA_CHECK(!inst->genericPack);
+    STRATA_CHECK(!inst->isVariadic);
+    STRATA_CHECK_EQ((long)inst->params.count, 2);
+    STRATA_CHECK(strcmp(ParamOf(inst, 0)->name, "args[0]") == 0);
+    STRATA_CHECK(strcmp(ParamOf(inst, 1)->name, "args[1]") == 0);
+    STRATA_CHECK(strcmp(ParamOf(inst, 1)->type.name, "int") == 0);
+
+    AstDispose((Node*)mod);
+    DiagnosticEngineFree(&diag);
+    ArenaFree(&arena);
+}

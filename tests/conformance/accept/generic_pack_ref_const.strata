@@ -1,0 +1,29 @@
+// expect: run
+// expect-output: bumped 2 6
+// expect-output: total 8
+// rule: `ref TArgs... args` binds each element to the caller's value, so writes reach the caller; `const TArgs...` binds read-only
+void bump<TArgs...>(ref TArgs... args)
+{
+    for (int i = 0; i < args.length; i++)
+    {
+        args[i] = args[i] + 1;
+    }
+}
+int total<TArgs...>(const TArgs... args)
+{
+    int sum = 0;
+    for (int i = 0; i < args.length; i++)
+    {
+        sum = sum + args[i];
+    }
+    return sum;
+}
+int main()
+{
+    int a = 1;
+    int b = 5;
+    bump<int, int>(a, b);
+    printf("bumped %d %d\n", a, b);
+    printf("total %d\n", total<int, int>(a, b));
+    return 0;
+}

@@ -1,0 +1,20 @@
+// expect: run
+// expect-output: a=5 b=0
+// expect-output: a=7 b=9
+// rule: p.init(args) on a pointer rebuilds the pointee from its field defaults, as T(args) does
+struct Pair { int a; int b; }
+impl Pair
+{
+    void init(ref Pair self, int a) { self.a = a; }
+    void init(ref Pair self, int a, int b) { self.a = a; self.b = b; }
+}
+int main()
+{
+    Pair slot = Pair(1, 2);
+    *Pair p = &slot;
+    p.init(5);
+    printf("a=%d b=%d\n", slot.a, slot.b);
+    p.init(7, 9);
+    printf("a=%d b=%d\n", slot.a, slot.b);
+    return 0;
+}

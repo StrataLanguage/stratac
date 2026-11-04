@@ -1,0 +1,26 @@
+// expect: run
+// expect-output: leaf 4 2.5
+// expect-output: three 1 2 3
+// rule: a pack forwards to another generic call with the same pack, and a fixed type argument can precede the spliced pack
+void leaf<A, B>(A a, B b)
+{
+    printf("leaf %d %g\n", a, b);
+}
+void outer<TArgs...>(TArgs... args)
+{
+    leaf<TArgs...>(args...);
+}
+void three<X, Y, Z>(X x, Y y, Z z)
+{
+    printf("three %d %d %d\n", x, y, z);
+}
+void prefixed<TArgs...>(TArgs... args)
+{
+    three<int, TArgs...>(1, args...);
+}
+int main()
+{
+    outer<int, float>(4, 2.5);
+    prefixed<int, int>(2, 3);
+    return 0;
+}

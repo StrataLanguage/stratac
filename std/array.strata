@@ -1,0 +1,26 @@
+
+
+
+struct array<T>
+{
+	T[] values;
+}
+
+impl array<T>
+{
+	void init(ref array<T> self) {}
+	void init(ref array<T> self, const ulong new_size)
+	{
+		array_resize(self.values, new_size);
+	}
+
+	void push(ref array<T> self, const ref T value)
+	{
+		array_push(self.values);
+	}
+
+	T pop(ref array<T> self)
+	{
+		return array_pop(self.values);
+	}
+}

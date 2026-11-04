@@ -1,40 +1,1097 @@
+// An interactive REPL for Strata, written in Strata.
+//
+// Each entry is compiled by the Strata JIT and executed.
+//
+// Since Strata is a systems style language, there is no runtime values or function calls in the global scope.
+// To make this more of a REPL, variables are tracked and the values are persisted between statements.
+//
+// Note that `import` in this REPL looks in the directory located at STRATA_STD (default ../../std).
+
 import ../../std/bytebuffer;
-import ../../std/math;
 import ../../std/stringutil;
 
-extern int printf(string fmt, ...);
+extern int printf(cstring fmt, ...);
+extern int snprintf(ptr buf, ulong size, cstring fmt, ...);
+extern int fflush(ptr file);
+extern int getchar();
+extern int putchar(int c);
+extern ptr getenv(cstring name);
+extern int getpid();
+extern ptr fopen(cstring path, cstring mode);
+extern ulong fwrite(ptr data, ulong size, ulong count, ptr file);
+extern int fgetc(ptr file);
+extern int fclose(ptr file);
+extern int unlink(cstring path);
+extern ptr dlopen(ptr path, int mode);
+extern ptr dlsym(ptr handle, cstring name);
 
-struct test { int value; }
+extern ptr strataCompilerCreate();
+extern void strataCompilerDestroy(ptr c);
+extern int strataAddImportDir(ptr c, cstring dir);
+extern ptr strataJitCompileFile(ptr c, cstring path, ptr err_out);
+extern void strataJitDestroy(ptr jit);
+extern ptr strataJitGetFunction(ptr jit, cstring name);
+extern int strataJitAddSymbol(ptr jit, cstring name, ptr fn);
+extern ulong strataJitGetExternSymbolCount(ptr jit);
+extern cstring strataJitGetExternSymbolName(ptr jit, ulong index);
+extern void strataFree(ptr s);
 
-impl test {
-	void init(ref test self, int value)
-	{
-		self.value = value;
-		printf("Hello\n");
-	}
+// shim.c
+extern void repl_install_panic_hook();
+extern int repl_run_guarded(ptr fn);
+extern int repl_is_tty();
+extern void repl_raw_on();
+extern void repl_raw_off();
 
-	void drop(ref test self) {
-		printf("Goodbye %d\n", self.value);
+extern delegate ptr NewContextFn();
+extern delegate void FreeContextFn(ptr ctx);
+extern delegate long GetLongFn();
+extern delegate double GetRealFn();
+
+enum VarKind { NotVariable, Int, Long, Bool, Float, Double };
+enum EntryKind { Item, Declaration, Expression, Statement };
+
+// A variable kept for the session. Integers and bools use `ivalue`, floats `rvalue`.
+struct Var
+{
+	string name;
+	VarKind kind;
+	long ivalue;
+	double rvalue;
+}
+
+struct Session
+{
+	ptr compiler;
+
+	Var[] vars;
+
+	bytebuffer decls;        // kept declarations, in the order they were entered
+	bytebuffer src;          // the module being compiled
+	bytebuffer input;        // the entry being evaluated (may span lines)
+	bytebuffer line;         // the line being read
+	bytebuffer body;         // the body of __repl_run
+	bytebuffer scratch;      // diagnostics and other text
+	bytebuffer file;         // a file loaded with :load
+	bytebuffer path;         // the path given to :load
+	bytebuffer session_name; // this session's module file name
+	bytebuffer session_file; // where the module is written for the compiler to read
+
+	// Set while compiling a probe whose failure is expected and should stay silent.
+	bool quiet;
+}
+
+Session s;
+
+// ---- text ------------------------------------------------------------------
+
+void clear(ref bytebuffer b)
+{
+	b.size = 0;
+}
+
+// The contents of `b` as a NUL-terminated string. Valid until `b` changes.
+cstring as_cstring(ref bytebuffer b)
+{
+	ptr text = b.get_str();
+	return (cstring)text;
+}
+
+// Appends the bytes of t[from..to).
+void add_range(ref bytebuffer b, cstring t, ulong from, ulong to)
+{
+	for (ulong i = from; i < to; i++) {
+		b.write(t[i]);
 	}
 }
 
+// Appends the bytes of an owned string.
+void write_string(ref bytebuffer b, string text)
+{
+	for (ulong k = 0; k < text.length; k++) {
+		b.write(text[k]);
+	}
+}
 
+// The bytes of t[from..to) as an owned string.
+string word_string(cstring t, ulong from, ulong to)
+{
+	clear(s.scratch);
+	add_range(s.scratch, t, from, to);
+	cstring text = as_cstring(s.scratch);
+	string owned = text;
+	return owned;
+}
+
+// A `long` as text, through C's snprintf.
+void write_long(ref bytebuffer b, long value)
+{
+	byte[32] digits = {};
+	*byte at = &digits[0];
+	snprintf(at, 32, "%ld", value);
+	b.write((cstring)digits);
+}
+
+// A double as a Strata float literal that reads back as the same value.
+void write_real(ref bytebuffer b, double value)
+{
+	if (value != value) {
+		b.write("(0.0 / 0.0)");
+		return;
+	}
+	if (value > 1.0e308) {
+		b.write("(1.0 / 0.0)");
+		return;
+	}
+	if (value < -1.0e308) {
+		b.write("(-1.0 / 0.0)");
+		return;
+	}
+
+	byte[64] digits = {};
+	*byte at = &digits[0];
+	snprintf(at, 64, "%.17g", value);
+
+	bool has_point = false;
+	for (ulong i = 0; i < 64 && digits[i] != (byte)0; i++) {
+		if (digits[i] == '.' || digits[i] == 'e' || digits[i] == 'E') {
+			has_point = true;
+		}
+	}
+
+	b.write((cstring)digits);
+	if (!has_point) {
+		b.write(".0");
+	}
+}
+
+bool is_space(byte c)
+{
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+bool is_word(byte c)
+{
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+ulong skip_space(cstring t, ulong i)
+{
+	while (i < t.length && is_space(t[i])) {
+		i++;
+	}
+	return i;
+}
+
+ulong word_end(cstring t, ulong i)
+{
+	while (i < t.length && is_word(t[i])) {
+		i++;
+	}
+	return i;
+}
+
+// True when t[from..to) spells `word`.
+bool word_is(cstring t, ulong from, ulong to, cstring word)
+{
+	if (to - from != word.length) {
+		return false;
+	}
+	for (ulong k = 0; k < word.length; k++) {
+		if (t[from + k] != word[k]) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// ---- variables -------------------------------------------------------------
+
+VarKind kind_of_type(cstring t, ulong from, ulong to)
+{
+	if (word_is(t, from, to, "int")) {
+		return VarKind.Int;
+	}
+	if (word_is(t, from, to, "long")) {
+		return VarKind.Long;
+	}
+	if (word_is(t, from, to, "bool")) {
+		return VarKind.Bool;
+	}
+	if (word_is(t, from, to, "float")) {
+		return VarKind.Float;
+	}
+	if (word_is(t, from, to, "double")) {
+		return VarKind.Double;
+	}
+	return VarKind.NotVariable;
+}
+
+cstring kind_name(VarKind kind)
+{
+	if (kind == VarKind.Bool) {
+		return "bool";
+	}
+	if (kind == VarKind.Long) {
+		return "long";
+	}
+	if (kind == VarKind.Float) {
+		return "float";
+	}
+	if (kind == VarKind.Double) {
+		return "double";
+	}
+	return "int";
+}
+
+bool is_real(VarKind kind)
+{
+	return kind == VarKind.Float || kind == VarKind.Double;
+}
+
+// The index of the variable named `name`, or -1.
+int find_var(string name)
+{
+	for (ulong i = 0; i < s.vars.length; i++) {
+		if (s.vars[i].name == name) {
+			return (int)i;
+		}
+	}
+	return -1;
+}
+
+// Writes `TYPE name = value;` for variable i, with its value as of the last run.
+void add_variable_decl(int i)
+{
+	s.src.write(kind_name(s.vars[i].kind));
+	s.src.write(" ");
+	write_string(s.src, s.vars[i].name);
+	s.src.write(" = ");
+
+	if (s.vars[i].kind == VarKind.Bool) {
+		s.src.write(s.vars[i].ivalue != 0 ? "true" : "false");
+	}
+	else if (is_real(s.vars[i].kind)) {
+		write_real(s.src, s.vars[i].rvalue);
+	}
+	else if (s.vars[i].kind == VarKind.Int) {
+		string digits = to_str((int)s.vars[i].ivalue);
+		write_string(s.src, digits);
+	}
+	else {
+		write_long(s.src, s.vars[i].ivalue);
+	}
+
+	s.src.write(";\n");
+}
+
+// Writes the exported getter that reads variable i back after a run.
+void add_getter(int i)
+{
+	if (is_real(s.vars[i].kind)) {
+		s.src.write("@export double __repl_get_");
+		write_string(s.src, s.vars[i].name);
+		s.src.write("() { return (double)");
+		write_string(s.src, s.vars[i].name);
+		s.src.write("; }\n");
+	}
+	else if (s.vars[i].kind == VarKind.Bool) {
+		s.src.write("@export long __repl_get_");
+		write_string(s.src, s.vars[i].name);
+		s.src.write("() { if (");
+		write_string(s.src, s.vars[i].name);
+		s.src.write(") { return 1; } return 0; }\n");
+	}
+	else {
+		s.src.write("@export long __repl_get_");
+		write_string(s.src, s.vars[i].name);
+		s.src.write("() { return (long)");
+		write_string(s.src, s.vars[i].name);
+		s.src.write("; }\n");
+	}
+}
+
+// ---- classifying entries ---------------------------------------------------
+
+bool is_item_word(cstring t, ulong from, ulong to)
+{
+	return word_is(t, from, to, "struct") || word_is(t, from, to, "impl")
+		|| word_is(t, from, to, "extern") || word_is(t, from, to, "import")
+		|| word_is(t, from, to, "delegate") || word_is(t, from, to, "handle")
+		|| word_is(t, from, to, "union") || word_is(t, from, to, "enum");
+}
+
+bool is_statement_word(cstring t, ulong from, ulong to)
+{
+	return word_is(t, from, to, "return") || word_is(t, from, to, "if")
+		|| word_is(t, from, to, "else") || word_is(t, from, to, "while")
+		|| word_is(t, from, to, "for") || word_is(t, from, to, "do")
+		|| word_is(t, from, to, "break") || word_is(t, from, to, "continue");
+}
+
+// An item is a struct, impl, extern, import, attribute or `TYPE NAME(` function.
+// A declaration is `TYPE NAME = ...` or `TYPE NAME;`. A statement ends in `;` or `}`.
+// Anything else is a value to print.
+EntryKind classify(cstring t)
+{
+	ulong start = skip_space(t, 0);
+
+	if (t[start] == '@') {
+		return EntryKind.Item;
+	}
+
+	ulong first_end = word_end(t, start);
+
+	if (first_end > start && !is_statement_word(t, start, first_end)) {
+		if (is_item_word(t, start, first_end)) {
+			return EntryKind.Item;
+		}
+
+		ulong second = skip_space(t, first_end);
+		ulong second_end = word_end(t, second);
+
+		if (second_end > second) {
+			ulong after = skip_space(t, second_end);
+
+			if (after < t.length && t[after] == '(') {
+				return EntryKind.Item;
+			}
+			if (after >= t.length || t[after] == '=' || t[after] == ';') {
+				return EntryKind.Declaration;
+			}
+		}
+	}
+
+	ulong last = t.length;
+	while (last > start && is_space(t[last - 1])) {
+		last--;
+	}
+
+	if (t[last - 1] == ';' || t[last - 1] == '}') {
+		return EntryKind.Statement;
+	}
+	return EntryKind.Expression;
+}
+
+// True when `t` is a declaration that still needs more text, such as a function
+// header whose body is on the next line.
+bool header_pending(cstring t)
+{
+	ulong start = skip_space(t, 0);
+	if (start >= t.length) {
+		return false;
+	}
+
+	ulong last = t.length;
+	while (last > start && is_space(t[last - 1])) {
+		last--;
+	}
+
+	if (t[last - 1] == ';' || t[last - 1] == '}') {
+		return false;
+	}
+	return classify(t) == EntryKind.Item;
+}
+
+// Net count of open brackets on a line, ignoring string, char and // comment text.
+int bracket_delta(cstring line)
+{
+	int depth = 0;
+	bool in_string = false;
+	byte quote = (byte)0;
+	ulong i = 0;
+
+	while (i < line.length) {
+		byte c = line[i];
+
+		if (in_string) {
+			if (c == '\\') {
+				i = i + 2;
+				continue;
+			}
+			if (c == quote) {
+				in_string = false;
+			}
+		}
+		else if (c == '"' || c == '\'') {
+			in_string = true;
+			quote = c;
+		}
+		else if (c == '/' && i + 1 < line.length && line[i + 1] == '/') {
+			break;
+		}
+		else if (c == '{' || c == '(' || c == '[') {
+			depth++;
+		}
+		else if (c == '}' || c == ')' || c == ']') {
+			depth--;
+		}
+
+		i++;
+	}
+
+	return depth;
+}
+
+// The line being edited on a terminal: its bytes, their count, and the cursor
+// position (0..len).
+struct LineEdit
+{
+	byte[1024] text;
+	int len;
+	int cursor;
+}
+
+LineEdit ed;
+
+// Redraws the prompt and the edited line, then puts the cursor where it belongs.
+void redraw(cstring prompt)
+{
+	putchar(13);
+	putchar(27);
+	printf("[K");
+	printf("%s", prompt);
+	for (int i = 0; i < ed.len; i++) {
+		putchar((int)ed.text[i]);
+	}
+
+	putchar(13);
+	int column = (int)prompt.length + ed.cursor;
+	if (column > 0) {
+		putchar(27);
+		printf("[%dC", column);
+	}
+	fflush(ptr.null);
+}
+
+void insert_char(byte c)
+{
+	if (ed.len >= 1023) {
+		return;
+	}
+	for (int i = ed.len; i > ed.cursor; i--) {
+		ed.text[i] = ed.text[i - 1];
+	}
+	ed.text[ed.cursor] = c;
+	ed.len++;
+	ed.cursor++;
+}
+
+// Deletes the byte at `at` and shifts the rest of the line left.
+void delete_at(int at)
+{
+	if (at < 0 || at >= ed.len) {
+		return;
+	}
+	for (int i = at; i < ed.len - 1; i++) {
+		ed.text[i] = ed.text[i + 1];
+	}
+	ed.len--;
+	if (ed.cursor > ed.len) {
+		ed.cursor = ed.len;
+	}
+}
+
+// Handles an escape sequence: ESC [ params final, or ESC O final. Left and right
+// move the cursor, Home and End jump to the ends, and Delete removes the byte under it.
+void escape_key()
+{
+	int c = getchar();
+	int first = -1;
+
+	if (c == 'O') {
+		c = getchar();
+	}
+	else if (c == '[') {
+		c = getchar();
+		while ((c >= '0' && c <= '9') || c == ';') {
+			if (first < 0 && c != ';') {
+				first = c;
+			}
+			c = getchar();
+		}
+	}
+	else {
+		return;
+	}
+
+	if (c == 'C') {
+		if (ed.cursor < ed.len) {
+			ed.cursor++;
+		}
+	}
+	else if (c == 'D') {
+		if (ed.cursor > 0) {
+			ed.cursor--;
+		}
+	}
+	else if (c == 'H' || (c == '~' && (first == '1' || first == '7'))) {
+		ed.cursor = 0;
+	}
+	else if (c == 'F' || (c == '~' && (first == '4' || first == '8'))) {
+		ed.cursor = ed.len;
+	}
+	else if (c == '~' && first == '3') {
+		delete_at(ed.cursor);
+	}
+}
+
+// Reads one line from a terminal with editing: arrow keys, Home/End, Backspace and
+// Delete. Enter finishes the line. Ctrl-C drops it, and Ctrl-D on an empty line ends
+// the input. Returns false at end of input.
+bool edit_line(cstring prompt)
+{
+	ed.len = 0;
+	ed.cursor = 0;
+
+	repl_raw_on();
+	redraw(prompt);
+
+	while (true) {
+		int ch = getchar();
+
+		if (ch == 4 && ed.len == 0) {
+			repl_raw_off();
+			putchar(10);
+			return false;
+		}
+		if (ch == -1) {
+			// End of input: keep a partial line, or report end of input if there is none.
+			if (ed.len == 0) {
+				repl_raw_off();
+				return false;
+			}
+			break;
+		}
+
+		if (ch == 10 || ch == 13) {
+			break;
+		}
+		if (ch == 3) {
+			ed.len = 0;
+			ed.cursor = 0;
+			printf("^C");
+			break;
+		}
+		if (ch == 127 || ch == 8) {
+			if (ed.cursor > 0) {
+				ed.cursor--;
+				delete_at(ed.cursor);
+			}
+		}
+		else if (ch == 27) {
+			escape_key();
+		}
+		else if (ch >= 32 && ch < 127) {
+			insert_char((byte)ch);
+		}
+
+		redraw(prompt);
+	}
+
+	repl_raw_off();
+	putchar(10);
+
+	clear(s.line);
+	for (int i = 0; i < ed.len; i++) {
+		s.line.write(ed.text[i]);
+	}
+	return true;
+}
+
+// Reads one line into s.line, showing `prompt`. Returns false at end of input.
+bool read_line(cstring prompt)
+{
+	if (repl_is_tty() != 0) {
+		return edit_line(prompt);
+	}
+
+	printf("%s", prompt);
+	fflush(ptr.null);
+
+	clear(s.line);
+	int ch = getchar();
+	if (ch == -1) {
+		return false;
+	}
+
+	while (ch != -1 && ch != 10) {
+		s.line.write((byte)ch);
+		ch = getchar();
+	}
+	return true;
+}
+
+// Reads one entry into s.input, continuing lines while brackets are open.
+// Returns false at end of input.
+bool read_entry()
+{
+	clear(s.input);
+
+	int depth = 0;
+	bool first = true;
+
+	while (true) {
+		if (!read_line(first ? "strata> " : "   ...> ")) {
+			// End of input: a partial entry still counts.
+			return !first;
+		}
+
+		if (!first) {
+			s.input.write('\n');
+		}
+		s.input.write(as_cstring(s.line));
+		first = false;
+
+		depth = depth + bracket_delta(as_cstring(s.line));
+		if (depth <= 0 && !header_pending(as_cstring(s.input))) {
+			return true;
+		}
+	}
+}
+
+// ---- building and compiling the module -------------------------------------
+
+// Printing overloads: the compiler picks the one whose parameter type is the
+// value's type exactly, so each value prints in its own form.
+void add_show_overloads(ref bytebuffer b)
+{
+	b.write("void __repl_show(int __repl_value) { printf(\"%d\\n\", __repl_value); }\n");
+	b.write("void __repl_show(long __repl_value) { printf(\"%ld\\n\", __repl_value); }\n");
+	b.write("void __repl_show(float __repl_value) { printf(\"%g\\n\", (double)__repl_value); }\n");
+	b.write("void __repl_show(double __repl_value) { printf(\"%g\\n\", __repl_value); }\n");
+	b.write("void __repl_show(bool __repl_value) { if (__repl_value) { printf(\"true\\n\"); } else { printf(\"false\\n\"); } }\n");
+	b.write("void __repl_show(cstring __repl_value) { printf(\"\\\"%s\\\"\\n\", __repl_value); }\n");
+	b.write("void __repl_show(string __repl_value) { printf(\"\\\"%s\\\"\\n\", __repl_value); }\n");
+}
+
+// Writes the module for this entry into s.src: printing overloads, the variables
+// with their current values, the kept declarations, their getters, `item`, and
+// when `run` is set, __repl_run with `body` as its body.
+void build_module(cstring item, cstring body, bool run)
+{
+	clear(s.src);
+	s.src.write("extern int printf(cstring fmt, ...);\n");
+	add_show_overloads(s.src);
+
+	for (int i = 0; i < (int)s.vars.length; i++) {
+		add_variable_decl(i);
+	}
+
+	s.src.write(as_cstring(s.decls));
+	s.src.write(item);
+	s.src.write("\n");
+
+	for (int i = 0; i < (int)s.vars.length; i++) {
+		add_getter(i);
+	}
+
+	if (run) {
+		s.src.write("@export void __repl_run() {\n");
+		s.src.write(body);
+		s.src.write("\n}\n");
+	}
+}
+
+// The last byte of a non-empty buffer.
+byte last_byte(ref bytebuffer b)
+{
+	cstring text = as_cstring(b);
+	return text[text.length - 1];
+}
+
+// Prints compiler diagnostics with the session module's temporary path replaced by "repl".
+void print_diagnostics(cstring diag)
+{
+	cstring name = as_cstring(s.session_name);
+	ulong name_len = name.length;
+
+	clear(s.scratch);
+	ulong i = 0;
+	while (i < diag.length) {
+		if (i + name_len <= diag.length && word_is(diag, i, i + name_len, name)) {
+			// Drop the directory already copied: back to the last space or the start of the line.
+			while (s.scratch.size > 0 && !is_space(last_byte(s.scratch))) {
+				s.scratch.size = s.scratch.size - 1;
+			}
+			s.scratch.write("repl");
+			i = i + name_len;
+		}
+		else {
+			s.scratch.write(diag[i]);
+			i++;
+		}
+	}
+
+	printf("%s\n", as_cstring(s.scratch));
+}
+
+// Compiles the module in s.src. It goes through a file so that `import` can find
+// its modules. On failure the diagnostics are printed unless s.quiet is set.
+ptr compile_module()
+{
+	ptr file = fopen(as_cstring(s.session_file), "w");
+	if (file == ptr.null) {
+		printf("error: cannot write %s\n", as_cstring(s.session_file));
+		return ptr.null;
+	}
+	defer fclose(file);
+
+	fwrite(s.src.get_ptr(), 1, s.src.size, file);
+	fclose(file);
+
+	ptr err = ptr.null;
+	ptr jit = strataJitCompileFile(s.compiler, as_cstring(s.session_file), &err);
+	unlink(as_cstring(s.session_file));
+
+	if (jit == ptr.null && !s.quiet) {
+		print_diagnostics((cstring)err);
+	}
+	if (err != ptr.null) {
+		strataFree(err);
+	}
+	return jit;
+}
+
+// Binds every extern the module declares to the symbol of the same name in this
+// process (libc and anything else linked in).
+void bind_externs(ptr jit)
+{
+	ptr self = dlopen(ptr.null, 2);
+	ulong count = strataJitGetExternSymbolCount(jit);
+
+	for (ulong i = 0; i < count; i++) {
+		cstring name = strataJitGetExternSymbolName(jit, i);
+		strataJitAddSymbol(jit, name, dlsym(self, name));
+	}
+}
+
+// Runs __repl_run from `jit`, then reads every variable back into the session.
+// A runtime panic stops the run and the REPL carries on. Takes ownership of jit.
+void execute(ptr jit)
+{
+	defer strataJitDestroy(jit);
+	bind_externs(jit);
+
+	NewContextFn new_context = (NewContextFn)strataJitGetFunction(jit, "__strata_context_create");
+	var ctx = new_context();
+	FreeContextFn free_context = (FreeContextFn)strataJitGetFunction(jit, "__strata_context_destroy");
+	defer free_context(ctx);
+
+	repl_run_guarded(strataJitGetFunction(jit, "__repl_run"));
+
+	for (ulong i = 0; i < s.vars.length; i++) {
+		clear(s.scratch);
+		s.scratch.write("__repl_get_");
+		write_string(s.scratch, s.vars[i].name);
+		cstring getter = as_cstring(s.scratch);
+
+		if (is_real(s.vars[i].kind)) {
+			GetRealFn get = (GetRealFn)strataJitGetFunction(jit, getter);
+			s.vars[i].rvalue = get();
+		}
+		else {
+			GetLongFn get = (GetLongFn)strataJitGetFunction(jit, getter);
+			s.vars[i].ivalue = get();
+		}
+	}
+}
+
+// ---- evaluating entries ----------------------------------------------------
+
+// Checks the declaration in `item` and keeps it for the session.
+bool add_item(cstring item)
+{
+	build_module(item, "", false);
+
+	ptr jit = compile_module();
+	if (jit == ptr.null) {
+		return false;
+	}
+	strataJitDestroy(jit);
+
+	s.decls.write(item);
+	s.decls.write("\n");
+	return true;
+}
+
+// Compiles `body` as the body of __repl_run and runs it.
+void run_body(cstring body)
+{
+	build_module("", body, true);
+
+	var jit = compile_module();
+	if (jit != ptr.null) {
+		execute(jit);
+	}
+}
+
+// Prints the value of an expression. If it does not have a printable type, it is
+// run as a statement instead.
+void run_expression(cstring t)
+{
+	clear(s.body);
+	s.body.write("__repl_show(");
+	s.body.write(t);
+	s.body.write(");");
+
+	build_module("", as_cstring(s.body), true);
+
+	s.quiet = true;
+	ptr jit = compile_module();
+	s.quiet = false;
+
+	if (jit != ptr.null) {
+		execute(jit);
+		return;
+	}
+
+	clear(s.body);
+	s.body.write(t);
+	s.body.write(";");
+	run_body(as_cstring(s.body));
+}
+
+// `TYPE name [= expr];`: declares a variable, or assigns it again when it already
+// exists with the same type. A declaration that fails to compile is not kept.
+void declare_variable(cstring t)
+{
+	ulong type_start = skip_space(t, 0);
+	ulong type_end = word_end(t, type_start);
+	ulong name_start = skip_space(t, type_end);
+	ulong name_end = word_end(t, name_start);
+
+	var kind = kind_of_type(t, type_start, type_end);
+	if (kind == VarKind.NotVariable) {
+		printf("error: only int, long, bool, float and double variables are kept between entries\n");
+		return;
+	}
+
+	var name = word_string(t, name_start, name_end);
+	var index = find_var(name);
+	var is_new = index < 0;
+
+	if (is_new) {
+		array_push(s.vars, Var { .name = name, .kind = kind, .ivalue = 0, .rvalue = 0.0 });
+	}
+	else if (s.vars[index].kind != kind) {
+		printf("error: %s is already declared with another type\n", name);
+		return;
+	}
+
+	// The declaration as an assignment: `name = expr;`, or `name = 0;` without one.
+	clear(s.body);
+	add_range(s.body, t, name_start, name_end);
+
+	ulong after = skip_space(t, name_end);
+	if (after < t.length && t[after] == '=') {
+		add_range(s.body, t, name_end, t.length);
+
+		// The `;` is optional at the prompt.
+		ulong stop = t.length;
+		while (stop > name_end && is_space(t[stop - 1])) {
+			stop--;
+		}
+		if (t[stop - 1] != ';') {
+			s.body.write(";");
+		}
+	}
+	else {
+		s.body.write(" = 0;");
+	}
+
+	build_module("", as_cstring(s.body), true);
+
+	var jit = compile_module();
+	if (jit == ptr.null) {
+		if (is_new) {
+			Var rejected = array_pop(s.vars);
+		}
+		return;
+	}
+	execute(jit);
+}
+
+void handle_entry(cstring t)
+{
+	EntryKind kind = classify(t);
+
+	if (kind == EntryKind.Item) {
+		add_item(t);
+	}
+	else if (kind == EntryKind.Declaration) {
+		declare_variable(t);
+	}
+	else if (kind == EntryKind.Statement) {
+		run_body(t);
+	}
+	else {
+		run_expression(t);
+	}
+}
+
+// ---- commands --------------------------------------------------------------
+
+void print_help()
+{
+	printf("Entries are compiled and run as soon as they are entered.\n");
+	printf("  1 + 2 * 3              print a value\n");
+	printf("  printf(\"hi\\n\");       run a statement\n");
+	printf("  int n = 10;           declare a variable (int, long, bool, float or double)\n");
+	printf("  n = n + 1;            assign it; the value is kept for the session\n");
+	printf("  int add(int a, int b) { return a + b; }\n");
+	printf("                         functions, struct, impl, extern and import are kept too\n");
+	printf("  import stringutil;    loads from STRATA_STD (default ../../std)\n");
+	printf(":vars            list the variables\n");
+	printf(":reset           forget all variables and kept declarations\n");
+	printf(":load <file>     add the declarations in a file\n");
+	printf(":help            show this message\n");
+	printf(":quit            leave the REPL\n");
+}
+
+void print_vars()
+{
+	if (s.vars.length == 0) {
+		printf("no variables\n");
+		return;
+	}
+
+	for (ulong i = 0; i < s.vars.length; i++) {
+		printf("%s %s = ", kind_name(s.vars[i].kind), s.vars[i].name);
+
+		if (s.vars[i].kind == VarKind.Bool) {
+			printf(s.vars[i].ivalue != 0 ? "true\n" : "false\n");
+		}
+		else if (is_real(s.vars[i].kind)) {
+			printf("%g\n", s.vars[i].rvalue);
+		}
+		else {
+			printf("%ld\n", s.vars[i].ivalue);
+		}
+	}
+}
+
+void reset_session()
+{
+	clear(s.decls);
+	while (s.vars.length > 0) {
+		Var gone = array_pop(s.vars);
+	}
+	printf("session cleared\n");
+}
+
+void load_file(cstring path)
+{
+	ptr file = fopen(path, "r");
+	if (file == ptr.null) {
+		printf("error: cannot open %s\n", path);
+		return;
+	}
+	defer fclose(file);
+
+	clear(s.file);
+	int ch = fgetc(file);
+	while (ch != -1) {
+		s.file.write((byte)ch);
+		ch = fgetc(file);
+	}
+
+	if (add_item(as_cstring(s.file))) {
+		printf("loaded %s\n", path);
+	}
+}
+
+// Runs a `:command`. Returns true when the REPL should exit.
+bool run_command(cstring t)
+{
+	ulong start = skip_space(t, 0);
+	ulong end = word_end(t, start + 1);
+
+	if (word_is(t, start + 1, end, "quit") || word_is(t, start + 1, end, "q")) {
+		return true;
+	}
+	else if (word_is(t, start + 1, end, "help")) {
+		print_help();
+	}
+	else if (word_is(t, start + 1, end, "vars")) {
+		print_vars();
+	}
+	else if (word_is(t, start + 1, end, "reset")) {
+		reset_session();
+	}
+	else if (word_is(t, start + 1, end, "load")) {
+		ulong arg = skip_space(t, end);
+		ulong stop = t.length;
+		while (stop > arg && is_space(t[stop - 1])) {
+			stop--;
+		}
+
+		clear(s.path);
+		add_range(s.path, t, arg, stop);
+		load_file(as_cstring(s.path));
+	}
+	else {
+		printf("unknown command (try :help)\n");
+	}
+
+	return false;
+}
 
 int main()
 {
-// 	{
-// 		var t = test(20);
-// 	}
-//
-// 	var bb = bytebuffer(128);
-//
-// 	bb.write("Hello, World!");
-// 	bb.write((byte)0);
-//
-// 	printf("value: %s\n", bb.get_ptr());
+	s.compiler = strataCompilerCreate();
+	repl_install_panic_hook();
 
-	int result = to_int("-123");
-	printf("result: %d\n", result);
+	s.decls = bytebuffer(256);
+	s.src = bytebuffer(1024);
+	s.input = bytebuffer(256);
+	s.line = bytebuffer(256);
+	s.body = bytebuffer(256);
+	s.scratch = bytebuffer(256);
+	s.file = bytebuffer(256);
+	s.path = bytebuffer(256);
+	s.session_name = bytebuffer(64);
+	s.session_file = bytebuffer(256);
 
+	cstring std_dir = "../../std";
+	ptr std_env = getenv("STRATA_STD");
+	if (std_env != ptr.null) {
+		std_dir = (cstring)std_env;
+	}
+	strataAddImportDir(s.compiler, std_dir);
+
+	cstring tmp_dir = "/tmp";
+	ptr tmp_env = getenv("TMPDIR");
+	if (tmp_env != ptr.null) {
+		tmp_dir = (cstring)tmp_env;
+	}
+	s.session_name.write("strata_repl_");
+	write_long(s.session_name, (long)getpid());
+	s.session_name.write(".strata");
+	s.session_file.write(tmp_dir);
+	s.session_file.write("/");
+	s.session_file.write(as_cstring(s.session_name));
+
+	printf("Strata REPL. :help for help, :quit to leave.\n");
+
+	while (read_entry()) {
+		cstring t = as_cstring(s.input);
+		ulong start = skip_space(t, 0);
+
+		if (start >= t.length) {
+			continue;
+		}
+
+		if (t[start] == ':') {
+			if (run_command(t)) {
+				break;
+			}
+			continue;
+		}
+
+		handle_entry(t);
+	}
+
+	strataCompilerDestroy(s.compiler);
 	return 0;
 }

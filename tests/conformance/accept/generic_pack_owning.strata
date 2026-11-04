@@ -1,0 +1,14 @@
+// expect: run
+// expect-output: count 2
+// expect-output: END live=0
+// rule: owning values in a pack are moved into the function, which drops them when it returns
+void take_all<TArgs...>(TArgs... args)
+{
+    printf("count %d\n", args.length);
+}
+int main()
+{
+    take_all<^Res, ^Res>(Box(42), Box(43));
+    Report();
+    return 0;
+}

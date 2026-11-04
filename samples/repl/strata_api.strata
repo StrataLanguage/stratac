@@ -1,0 +1,10 @@
+extern void strataFree(ptr s);
+extern ptr strataCompilerCreate();
+extern void strataCompilerDestroy(ptr c);
+extern int strataAddImportDir(ptr c, cstring dir);
+extern ptr strataJitCompileFile(ptr c, cstring path, ptr err_out);
+extern void strataJitDestroy(ptr jit);
+extern ptr strataJitGetFunction(ptr jit, cstring name);
+extern int strataJitAddSymbol(ptr jit, cstring name, ptr fn);
+extern ulong strataJitGetExternSymbolCount(ptr jit);
+extern cstring strataJitGetExternSymbolName(ptr jit, ulong index);

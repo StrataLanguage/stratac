@@ -1,0 +1,32 @@
+// expect: run
+// expect-output: first 10
+// expect-output: second 20
+// expect-output: sum 2
+// expect-output: sum 3
+// expect-output: sum 3
+// expect-output: sum 4
+// rule: `args[N]` with a literal N names element N, and `args[i]` in a pack loop names the element of the current iteration, also inside a nested loop
+void two_of<TArgs...>(TArgs... args)
+{
+    if (args.length == 2)
+    {
+        printf("first %d\n", args[0]);
+        printf("second %d\n", args[1]);
+    }
+}
+void sums<TArgs...>(TArgs... args)
+{
+    for (int i = 0; i < args.length; i++)
+    {
+        for (int j = 0; j < args.length; j++)
+        {
+            printf("sum %d\n", args[i] + args[j]);
+        }
+    }
+}
+int main()
+{
+    two_of<int, int>(10, 20);
+    sums<int, int>(1, 1 + 1);
+    return 0;
+}

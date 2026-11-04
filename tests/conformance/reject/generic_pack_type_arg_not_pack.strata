@@ -1,0 +1,5 @@
+// expect: reject "'T...' expands a parameter pack, but 'T' is not one"
+// rule: T... as a type argument expands only a parameter pack
+void g<T>(T x) {}
+void h<T>(T x) { g<T...>(x); }
+int main() { h<int>(1); return 0; }

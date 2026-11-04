@@ -1,0 +1,41 @@
+// expect: run
+// expect-output: consume 3 2.5
+// expect-output: int 1
+// expect-output: float 2.5
+// expect-output: int 1
+// expect-output: float 2
+// rule: a pack is spliced into a call (`T.consume(args...)`), and a `for` over `args.length` is unrolled with one call per element
+struct Sink { int total; }
+impl Sink
+{
+    void consume(int a, float b) { printf("consume %d %g\n", a, b); }
+}
+void forward<T, TArgs...>(TArgs... args)
+{
+    T.consume(args...);
+}
+void show(int v) { printf("int %d\n", v); }
+void show(float v) { printf("float %g\n", v); }
+void each<TArgs...>(TArgs... args)
+{
+    for (uint i = 0; i < args.length; i++)
+    {
+        show(args[i]);
+    }
+}
+void print_all<T, Rest...>(T first, Rest... rest)
+{
+    show(first);
+    if (rest.length > 0)
+    {
+        print_all<Rest...>(rest...);
+    }
+}
+int main()
+{
+    forward<Sink, int, float>(3, 2.5);
+    each<int, float>(1, 2.5);
+    each<>();
+    print_all<int, float>(1, 2.0);
+    return 0;
+}

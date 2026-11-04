@@ -38,7 +38,9 @@ holds one by value only moves with its parent; declare it `^T` or `T?` to move i
 **`init`.** `void init(ref T self, ...)` in the impl is a constructor, and may be overloaded: `T(args)` builds a
 value from the field defaults and runs the matching `init` on it, and `T v;` runs the one without arguments. A
 type with `init` loses its positional `T(a, b)` field constructor (braced `T { .a = ... }` still works), cannot
-hold a non-optional `^T` field (use `T?` and set it in `init`), and its `init` is never called directly.
+hold a non-optional `^T` field (use `T?` and set it in `init`), and its `init` is never called on a value.
+Through a pointer, `p.init(args)` is placement construction: the pointee is rebuilt from its field defaults and
+then `init` runs on it, as `T(args)` would build it. It is only allowed on `*T`, not on a value.
 
 **Globals are never moved out of.** No function owns a global, so reading an owning global by
 value — a `string`, array, box, optional, or any such field of a global struct — is an error

@@ -50,6 +50,7 @@ typedef enum
     NodeDefer,
     NodeConditional,
     NodeMetaCall,
+    NodePackExpand,
 } NodeKind;
 
 typedef struct
@@ -85,6 +86,8 @@ typedef struct TypeName
     char* genericBase;
     struct TypeName* typeArgs;
     size_t typeArgCount;
+    // `Name...` as a type argument: the bare parameter pack `Name` spliced in place (generics: parameter packs).
+    bool isPackExpansion;
 } TypeName;
 
 static inline bool TypeNameValid(const TypeName* t)
@@ -564,6 +567,8 @@ typedef struct FunctionDecl
     const char* typeArg;
     // `R name<T>(...)`: the type parameter names (char*), distinct from `typeParam`; non-empty = a template.
     Vec genericParams;
+    // The last of `genericParams` is a parameter pack (`Name...`): it binds any number of type arguments.
+    bool genericPack;
 } FunctionDecl;
 
 static inline const ParamDecl* FunctionReturnParam(const FunctionDecl* f)
@@ -770,6 +775,8 @@ typedef struct
     uint64_t value;
     bool isUnsigned;
     bool isLong; // `l` / `ul` suffix: always 64-bit
+    // Written by Monomorphize for `args.length` of a parameter pack: the count of the pack, for folding.
+    bool fromPackLength;
 } IntLiteral;
 
 typedef struct
@@ -820,6 +827,7 @@ typedef struct CallExpr
     TypeName* typeArg;  // explicit `Name<T>(...)` type argument (generic externs), NULL otherwise
     TypeName* typeArgs; // every explicit type argument of `Name<T, U>(...)`; typeArg is &typeArgs[0] when one
     size_t typeArgCount;
+    bool hasTypeArgList; // the call wrote `<...>` at all, even an empty `<>`
     // `expr.Member(args)` — non-NULL until sema resolves the member against
     // impl blocks (then the base moves into `args` as the self argument).
     Node* calleeBase;
@@ -965,6 +973,14 @@ typedef struct
     char* name;
     Vec args; // MetaArg*
 } MetaCallExpr;
+
+// `name...` as a call argument: the parameter pack `name` spliced into the argument list. Only valid inside a
+// generic function with that pack; Monomorphize expands it, so sema never sees one.
+typedef struct
+{
+    Node base;
+    char* name;
+} PackExpandExpr;
 
 void AstDispose(Node* node);
 void AstReleaseModuleLists(Module* module);

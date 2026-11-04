@@ -1,0 +1,77 @@
+/* Simple C file IO wrappers */
+
+extern int fflush(ptr fileptr);
+extern ptr fopen(cstring path, cstring mode);
+extern int fwrite(ptr data, ulong size, ulong count, ptr fileptr);
+extern int fclose(ptr fileptr);
+
+
+enum file_mode
+{
+	read,
+	write,
+	read_binary,
+	write_binary,
+}
+
+enum file_status
+{
+	ok,
+	error,
+}
+
+
+// TODO: rename and stick with a style of stdlib naming. `File`, `file`(highest chance of collision with local names), or `fileio`
+struct file_handle
+{
+	ptr __file_handle;
+	file_status status;
+}
+
+@private
+cstring __get_access_mode(const file_mode mode_)
+{
+	if (mode == file_mode.read) {
+		return "r";
+	}
+	if (mode == file_mode.write) {
+		return "w";
+	}
+	if (mode == file_mode.read_binary) {
+		return "rb";
+	}
+	if (mode == file_mode.write_binary) {
+		return "wb";
+	}
+
+	return "r";
+}
+
+impl file_handle
+{
+	void init(ref file_handle self, cstring path_, cosnt file_mode mode_)
+	{
+		self.__file_handle = fopen(path_, __get_access_mode(mode_));
+		self.status = file_status.ok;
+
+		if (self.__file_handle == null) {
+			self.status = file_status.error;
+		}
+	}
+
+
+
+	void close(ref file_handle self)
+	{
+		if (self.status != file_status.ok) {
+			return;
+		}
+
+		fclose(self.__file_handle);
+	}
+
+	void drop(ref file_handle self)
+	{
+		self.close();
+	}
+}

@@ -85,6 +85,55 @@ v1 limits:
 - Extern functions, `@component` structs, `extern struct`, struct aliases and handles cannot be generic.
 - Properties and extern methods are not allowed in a generic `impl`.
 
+### Parameter packs
+
+The last type parameter of a generic function may be a pack, written `Name...`. It binds any number of
+type arguments, including none. A rest parameter typed with the pack takes one value per type:
+
+```c
+void forward<T, TArgs...>(TArgs... args)
+{
+    T.consume(args...);              // expands to T.consume(args[0], args[1], ...)
+}
+
+void each<TArgs...>(TArgs... args)
+{
+    for (uint i = 0; i < args.length; i++)   // unrolled: one copy of the body per element
+    {
+        show(args[i]);
+    }
+}
+
+void print_all<T, Rest...>(T first, Rest... rest)
+{
+    show(first);
+    if (rest.length > 0)             // folds: the branch not taken is never instantiated
+    {
+        print_all<Rest...>(rest...);
+    }
+}
+
+int main()
+{
+    each<int, float, string>(1, 2.5, "three");
+    forward<Sink>();                 // empty pack
+    each<>();                        // empty pack, no fixed parameters
+    print_all<int, float>(1, 2.0);
+    return 0;
+}
+```
+
+- `args...` in a call's argument list splices the elements; `TArgs...` in a type-argument list splices the
+  pack's types, as in `g<int, TArgs...>(1, args...)`.
+- `args.length` is the element count, and `args[N]` with a literal `N` names one element. Inside a
+  `for (T i = 0; i < args.length; i++)` loop, `args[i]` names the element of the current iteration.
+- An `if` or `?:` whose condition involves `args.length` keeps only the branch taken, so recursion
+  ends at an empty pack.
+- Limits: a pack must be the last type parameter, and only generic functions can have one. A pack is
+  never inferred, so its type arguments are written. `break` and `continue` are not allowed directly in
+  a pack loop. Only a bare `name...` expands, and `args.length`, `args[i]` and `args...` are the only
+  uses of a pack value. Indexing a type pack and patterns such as `f(args)...` are not supported.
+
 ## Meta functions
 
 A `@meta` function runs at compile time. Its calls are written with an `@` prefix and fold to a `bool`

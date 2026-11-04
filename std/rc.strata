@@ -1,0 +1,82 @@
+import metautil;
+import math;
+
+import memory;
+
+extern int printf(cstring fmt, ...);
+
+
+struct __refcnt
+{
+	uint count;
+}
+
+impl __refcnt
+{
+	void init(ref __refcountimpl self)
+	{
+		self.count = 1;
+	}
+
+	void inc(ref __refcountimpl self)
+	{
+		++self.count;
+	}
+
+	uint dec(ref __refcountimpl self)
+	{
+		return (--self.count);
+	}
+}
+
+/* Ref counted pointer container */
+struct rc<T>
+{
+	*T ptr;
+	*__refcnt refcnt;
+}
+
+impl rc<T>
+{
+	void init(ref Self self)
+	{
+		self.ptr = null;
+		self.refcnt = null;
+	}
+
+	@private
+	void create_ref(ref rc<T> self)
+	{
+		// Pad the size out so our total allocation is aligned
+		const ulong aligned_size = align_value_16(sizeof(T));
+		*byte raw_alloc = memory_alloc(aligned_size + sizeof(__refcnt));
+
+		*T obj_ptr = (*T)raw_alloc;
+
+	}
+
+	@private
+	void destroy_ref(ref rc<T> self)
+	{
+
+	}
+
+	@private
+	void decref(ref rc<T> self)
+	{
+		if (self.refcnt == null) {
+			return;
+		}
+
+		if (self.refcnt.dec() == 0) {
+			printf("Destroying rc\n")
+
+		}
+	}
+
+	void drop(ref rc<T> self)
+	{
+
+
+	}
+}

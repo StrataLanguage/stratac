@@ -423,6 +423,65 @@ static void BindInitMethods(Resolver* r)
             {
                 StrMapPut(&r->defaultInits, sd->name, wrapperName);
             }
+
+            // `p.init(args)` on a `*T` constructs the value as `T(args)` does and stores it through the
+            // pointer: `void __place_T(ref T __dest, ...) { __dest = __init_T(...); }`.
+            char* placeName = ArenaFormat(arena, "__place_%s", sd->name);
+            FunctionDecl* place = AST_NEW(arena, FunctionDecl);
+            place->base.kind = NodeFunction;
+            place->base.range = at;
+            place->name = placeName;
+            place->mangledName = placeName;
+            place->returnType = method->returnType;
+            VecInit(&place->params);
+
+            Block* placeBody = AST_NEW(arena, Block);
+            placeBody->base.kind = NodeBlock;
+            placeBody->base.range = at;
+            VecInit(&placeBody->statements);
+
+            ParamDecl* dest = (ParamDecl*)ArenaDup(arena, VecGet(&method->params, 0), sizeof(ParamDecl));
+            dest->name = (char*)"__dest";
+            VecPush(&place->params, dest);
+
+            IdentExpr* destRef = AST_NEW(arena, IdentExpr);
+            destRef->base.kind = NodeIdent;
+            destRef->base.range = at;
+            destRef->name = dest->name;
+
+            CallExpr* build = AST_NEW(arena, CallExpr);
+            build->base.kind = NodeCall;
+            build->base.range = at;
+            build->callee = wrapperName;
+            VecInit(&build->args);
+
+            for (size_t p = 1; p < method->params.count; p++)
+            {
+                ParamDecl* param = (ParamDecl*)ArenaDup(arena, VecGet(&method->params, p), sizeof(ParamDecl));
+                VecPush(&place->params, param);
+
+                IdentExpr* arg = AST_NEW(arena, IdentExpr);
+                arg->base.kind = NodeIdent;
+                arg->base.range = at;
+                arg->name = param->name;
+                VecPush(&build->args, arg);
+            }
+
+            AssignExpr* store = AST_NEW(arena, AssignExpr);
+            store->base.kind = NodeAssign;
+            store->base.range = at;
+            store->op = AssignSet;
+            store->target = (Node*)destRef;
+            store->value = (Node*)build;
+
+            ExprStmt* storeStmt = AST_NEW(arena, ExprStmt);
+            storeStmt->base.kind = NodeExprStmt;
+            storeStmt->base.range = at;
+            storeStmt->expr = (Node*)store;
+            VecPush(&placeBody->statements, storeStmt);
+
+            place->body = (Node*)placeBody;
+            VecPush(&mod->functions, place);
         }
     }
 }

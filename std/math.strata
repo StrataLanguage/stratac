@@ -48,3 +48,27 @@ float sign(float x)
 	// Get the sign bit for the float and apply it to 1.0 if it is set.
 	return __bitstotype<float>((__typetobits<float>(1.0f) | (__typetobits<float>(x) & (uint)0x80000000)));
 }
+
+
+/* Generic case. Aligns a value to a given alignment (i.e. aligning 10 to 16 would result in 16.) */
+ulong align_value(ulong value_, ulong align_)
+{
+	const ulong rem = (value_ % align_);
+
+	if (rem != 0) {
+		value_ += (align_ - rem);
+	}
+
+	return value_;
+}
+
+ulong align_value_16(ulong value_)
+{
+	const ulong rem = (value_ & (ulong)0x0F);
+
+	if (rem != 0) {
+		value_ += (16 - rem);
+	}
+
+	return value_;
+}
