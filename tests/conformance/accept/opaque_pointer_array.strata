@@ -1,0 +1,15 @@
+// expect: run
+// expect-output: 2 1
+// rule: an array of `*S` for an incomplete struct `S` is allowed; it owns nothing
+struct Any;
+int main()
+{
+    *Any[] ps;
+    *Any p = null;
+    array_push(ps, p);
+    array_push(ps, null);
+    int nulls = 0;
+    for (int i = 0; i < ps.length; i++) { if (ps[i] == null) { nulls++; } }
+    printf("%d %d\n", nulls, ps.length - 1);
+    return 0;
+}

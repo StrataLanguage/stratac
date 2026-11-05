@@ -1,0 +1,31 @@
+// expect: run
+// expect-output: hello 1
+// expect-output: drop 7
+// expect-output: hi there
+// expect-output: END live=0
+// rule: ptr_place moves a value into uninitialised memory without dropping it; ptr_drop runs the pointee's drop glue in place; `p.init(...)` places a constructed value
+struct Ctx { string name; int n; }
+impl Ctx { void init(ref self, string nm) { self.name = nm; self.n = 1; } }
+
+int main()
+{
+    *Ctx p = (*Ctx)malloc(sizeof<Ctx>());
+    p.init("hello");
+    printf("%s %d\n", p.name, p.n);
+    ptr_drop(p);
+    free((*void)p);
+
+    *Res r = (*Res)malloc(sizeof<Res>());
+    ptr_place(r, Res.Make(7));
+    ptr_drop(r);
+    free((*void)r);
+
+    *string s = (*string)malloc(sizeof<string>());
+    string hi = "hi there";
+    ptr_place(s, hi);
+    printf("%s\n", *s);
+    ptr_drop(s);
+    free((*void)s);
+    Report();
+    return 0;
+}

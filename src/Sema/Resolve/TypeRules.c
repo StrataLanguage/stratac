@@ -82,6 +82,45 @@ bool IsIncompleteStruct(const TypeRegistry* reg, const char* name)
     return t && t->opaque && t->incomplete;
 }
 
+// The incomplete struct `S` of the first array in `t` whose elements are boxes of it (`^S[]`, `S?[]`), or NULL.
+// Strata can never make an `S`, so an array of owning boxes of one has nothing to hold but what the host hands
+// over one by one; `*S[]` keeps the host's addresses without owning them.
+const char* OpaqueBoxArrayElem(const TypeRegistry* reg, const TypeName* t)
+{
+    for (; t; t = TypeNameHasArrayShape(t) ? t->elem : t->inner)
+    {
+        if (!TypeNameHasArrayShape(t) || !t->elem)
+        {
+            continue;
+        }
+
+        const TypeName* el = t->elem;
+
+        // `^S?` and `S?` are both owning boxes of `S`.
+        if (TypeNameIsOptional(el) && el->inner)
+        {
+            el = TypeNameIsBox(el->inner) && el->inner->inner ? el->inner->inner : el->inner;
+        }
+        else if (TypeNameIsBox(el) && el->inner)
+        {
+            el = el->inner;
+        }
+        else
+        {
+            continue;
+        }
+
+        const char* leaf = TypeRegistryResolveAlias(reg, el->name);
+
+        if (IsIncompleteStruct(reg, leaf))
+        {
+            return el->name;
+        }
+    }
+
+    return NULL;
+}
+
 // Strips a leading optional then box or pointer, returning the inner type (or NULL).
 const TypeName* UnwrapBoxPtr(const TypeName* t)
 {
@@ -505,4 +544,21 @@ bool ZeroIsValid(Resolver* r, const TypeName* t, int depth)
 
     // Classified once, aliases resolved: a `struct PB = ^P` alias is a box like the `^P` it names.
     return !t || TypeClassify(&r->registry, r->arena, t).zeroValid;
+}
+
+bool CheckOpaqueBoxArray(Resolver* r, const TypeName* t, SourceRange at, const char* what)
+{
+    const char* opaque = OpaqueBoxArrayElem(&r->registry, t);
+
+    if (!opaque)
+    {
+        return true;
+    }
+
+    DiagErrorFmt(r->diag, at,
+                 "%s cannot be '%s': '%s' is an incomplete type, so Strata cannot own boxes of it in an array; "
+                 "hold the host's addresses as '*%s[]' instead",
+                 what, t->name, opaque, opaque);
+
+    return false;
 }

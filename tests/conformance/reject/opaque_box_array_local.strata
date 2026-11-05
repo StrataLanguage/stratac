@@ -1,0 +1,8 @@
+// expect: reject "variable 'xs' cannot be '^Any[]': 'Any' is an incomplete type"
+// rule: an array may not own boxes of an incomplete struct; `*S[]` holds the host's addresses instead
+struct Any;
+int main()
+{
+    ^Any[] xs;
+    return 0;
+}

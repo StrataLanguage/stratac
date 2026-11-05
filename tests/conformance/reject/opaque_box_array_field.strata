@@ -1,0 +1,5 @@
+// expect: reject "field 'items' cannot be 'Any?[]'"
+// rule: an array may not own boxes of an incomplete struct, optional boxes included
+struct Any;
+struct Holder { Any?[] items; }
+int main() { return 0; }

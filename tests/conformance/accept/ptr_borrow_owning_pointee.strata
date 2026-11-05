@@ -1,0 +1,28 @@
+// expect: run
+// expect-output: 5 2
+// expect-output: look 2 hello
+// expect-output: look 2 world
+// rule: a `*T` to an owning `T` lends its pointee to `ref` / `const ref` receivers and parameters, and its fields may be written
+struct Ctx { string name; int n; }
+
+impl Ctx
+{
+    int len(const ref self) { return (int)self.name.length; }
+    void bump(ref self) { self.n++; }
+}
+
+void look(const ref Ctx c) { printf("look %d %s\n", c.n, c.name); }
+
+int main()
+{
+    Ctx c = Ctx { .name = "hello", .n = 1 };
+    {
+        *Ctx p = (*Ctx)addressof(c);
+        p.bump();
+        printf("%d %d\n", p.len(), p.n);
+        look(*p);
+        p.name = "world";
+        look(*p);
+    }
+    return 0;
+}

@@ -1,0 +1,10 @@
+// expect: reject "'a' used after move"
+// rule: passing a drop value by value moves it into the callee
+void eat(Res r) {}
+int main()
+{
+    Res a = Res.Make(1);
+    eat(a);
+    eat(a);
+    return 0;
+}

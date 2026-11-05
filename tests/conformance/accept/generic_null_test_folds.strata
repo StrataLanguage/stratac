@@ -1,0 +1,18 @@
+// expect: run
+// expect-output: 1 -1 1 1
+// expect-output: 0 1 0
+// rule: in a generic instance, `x?` and `x == null` on a type that is never empty fold to constants and prune the branch not taken; on an optional or a pointer they stay run-time tests
+struct P { int v; }
+int norm<T>(T x) { if (!x?) { return -1; } return 1; }
+bool isNull<T>(T x) { return x == null; }
+int main()
+{
+    int? none;
+    int? some = 4;
+    printf("%d %d %d %d\n", norm<int>(3), norm<int?>(none), norm<int?>(some), norm<P>(P { .v = 2 }));
+    *P nothing = null;
+    P here = P { .v = 1 };
+    *P there = (*P)addressof(here);
+    printf("%d %d %d\n", isNull<int>(1), isNull<*P>(nothing), isNull<*P>(there));
+    return 0;
+}

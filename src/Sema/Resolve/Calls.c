@@ -1417,35 +1417,37 @@ void ResolveCall(Resolver* r, CallExpr* c, StrMap* scope)
 // src/Codegen/Builder/Call.c.
 static const IntrinsicTypeDefinition INTRINSICS[] = {
     // Array calls
-    {"array_push",        ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_pop",         ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_resize",      ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_remove",      ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_reserve",     ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_swap_remove", ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_replace",     ArrayBuiltinType,           ResolveArrayBuiltin    },
-    {"array_take",        ArrayBuiltinType,           ResolveArrayBuiltin    },
+    {"array_push",        ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_pop",         ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_resize",      ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_remove",      ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_reserve",     ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_swap_remove", ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_replace",     ArrayBuiltinType,           ResolveArrayBuiltin       },
+    {"array_take",        ArrayBuiltinType,           ResolveArrayBuiltin       },
 
     // Memory
-    {"copy",              CopyBuiltinType,            ResolveCopyBuiltin     },
-    {"drop",              DropBuiltinType,            ResolveDropBuiltin     },
-    {"addressof",         MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"sizeof",            MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"alignof",           MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"load",              MemoryBuiltinType,          ResolveMemoryBuiltin   },
-    {"store",             MemoryBuiltinType,          ResolveMemoryBuiltin   },
+    {"copy",              CopyBuiltinType,            ResolveCopyBuiltin        },
+    {"drop",              DropBuiltinType,            ResolveDropBuiltin        },
+    {"ptr_place",         PtrLifecycleBuiltinType,    ResolvePtrLifecycleBuiltin},
+    {"ptr_drop",          PtrLifecycleBuiltinType,    ResolvePtrLifecycleBuiltin},
+    {"addressof",         MemoryBuiltinType,          ResolveMemoryBuiltin      },
+    {"sizeof",            MemoryBuiltinType,          ResolveMemoryBuiltin      },
+    {"alignof",           MemoryBuiltinType,          ResolveMemoryBuiltin      },
+    {"load",              MemoryBuiltinType,          ResolveMemoryBuiltin      },
+    {"store",             MemoryBuiltinType,          ResolveMemoryBuiltin      },
 
     // Strings
-    {"substring",         SubstringBuiltinType,       ResolveSubstringBuiltin},
+    {"substring",         SubstringBuiltinType,       ResolveSubstringBuiltin   },
 
     // Vectors
-    {"float2",            VectorConstructBuiltinType, ResolveVectorConstruct },
-    {"float3",            VectorConstructBuiltinType, ResolveVectorConstruct },
-    {"float4",            VectorConstructBuiltinType, ResolveVectorConstruct },
+    {"float2",            VectorConstructBuiltinType, ResolveVectorConstruct    },
+    {"float3",            VectorConstructBuiltinType, ResolveVectorConstruct    },
+    {"float4",            VectorConstructBuiltinType, ResolveVectorConstruct    },
 
-    {"dot",               VectorDotBuiltinType,       ResolveVector2Arg      },
-    {"cross",             VectorCrossBuiltinType,     ResolveVector2Arg      },
-    {"reduce",            VectorReduceBuiltinType,    ResolveVector1Arg      },
+    {"dot",               VectorDotBuiltinType,       ResolveVector2Arg         },
+    {"cross",             VectorCrossBuiltinType,     ResolveVector2Arg         },
+    {"reduce",            VectorReduceBuiltinType,    ResolveVector1Arg         },
 };
 
 static bool ResolveIntrinsicCall(Resolver* r, CallExpr* c, StrMap* scope)

@@ -448,6 +448,8 @@ typedef struct
     // `const ref` instead (callers keep their value; nothing is copied or moved).
     bool inferredBorrow;
     bool borrowCandidate; // working state of that inference
+    // Spelled `self` / `ref self` / `const ref self` with no type: the type is the enclosing impl's.
+    bool isImplicitSelf;
 } ParamDecl;
 
 // A field's `= expr` default, folded by sema. Scalars use lane 0; float2/3/4 use one lane each.
@@ -562,6 +564,8 @@ typedef struct FunctionDecl
     bool fromImpl;
     // Sema-built `T __init_T(args)` for an `init` method: builds a T from its field defaults and runs init on it.
     bool isInitWrapper;
+    // Made by Monomorphize from a generic template (a function, a method, or a method of a generic impl).
+    bool isGenericInstance;
     // `extern<T>`: the type parameter's name, NULL for ordinary functions.
     char* typeParam;
     // A per-type instantiation of an `extern<T>` (sema): `typeArg` replaced T, the host symbol is
@@ -936,11 +940,22 @@ typedef struct
     Node* repeatCount;
 } ArrayInitExpr;
 
+// What the CFG checker knows about a null test when it is evaluated: on every path the place was already proven
+// set (or empty), so the test folds to a constant; or it must run.
+typedef enum
+{
+    NullTestUnvisited = 0,
+    NullTestKnownSet,
+    NullTestKnownEmpty,
+    NullTestRuntime,
+} NullTestFold;
+
 // `expr?` — null test on a `T?` path; also proves non-empty in sema.
 typedef struct
 {
     Node base;
     Node* operand;
+    NullTestFold fold; // set by the CFG checker, read by codegen
 } NullTestExpr;
 
 // `defer <stmt>` — schedules `stmt` to run at the end of the enclosing block

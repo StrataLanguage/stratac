@@ -1,0 +1,6 @@
+// expect: reject "out of a type with a drop method"
+// rule: a by-value drop parameter is moved whole or not at all
+struct Tag { string s; }
+impl Tag { void drop(ref self) {} }
+string steal(Tag t) { return t.s; }
+int main() { return 0; }

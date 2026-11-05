@@ -61,8 +61,12 @@ else()
     set(strata_command "${STRATAC}")
 endif()
 
+# A case may `import` the standard library (`std/`, two levels above the prelude).
+get_filename_component(std_dir "${PRELUDE}" DIRECTORY)
+get_filename_component(std_dir "${std_dir}/../../std" ABSOLUTE)
+
 execute_process(
-    COMMAND ${strata_command} "${source}" -o "${object}"
+    COMMAND ${strata_command} "${source}" -I "${std_dir}" -o "${object}"
     RESULT_VARIABLE compile_result
     OUTPUT_VARIABLE compile_out
     ERROR_VARIABLE compile_err

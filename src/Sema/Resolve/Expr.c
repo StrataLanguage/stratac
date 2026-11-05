@@ -663,12 +663,12 @@ void ResolveAddressUnary(Resolver* r, UnaryExpr* u, StrMap* scope)
     {
         DiagErrorFmt(r->diag, u->base.range, "cannot dereference a pointer to '%s' (no known layout)", target->name);
     }
-    else if (!TypeClassify(&r->registry, r->arena, target).trivial)
+    else if (u->op == UnAddrOf && !TypeClassify(&r->registry, r->arena, target).trivial)
     {
+        // `*p` of an owning pointee is a place that may be borrowed but never moved out of (the CFG checker).
         DiagErrorFmt(r->diag, u->base.range,
-                     "%s: '%s' owns memory, and a pointer neither moves nor drops what it points at",
-                     u->op == UnAddrOf ? "cannot take the address of an owning value"
-                                       : "cannot dereference a pointer to an owning type",
+                     "cannot take the address of an owning value: '%s' owns memory, and a pointer neither moves nor "
+                     "drops what it points at",
                      target->name);
     }
 }

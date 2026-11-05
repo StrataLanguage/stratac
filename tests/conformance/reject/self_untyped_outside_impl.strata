@@ -1,0 +1,4 @@
+// expect: reject "'self' without a type is only allowed as the first parameter of an impl method"
+// rule: an untyped `self` is only the receiver of an impl method
+int f(ref self) { return 0; }
+int main() { return 0; }

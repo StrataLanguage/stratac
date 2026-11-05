@@ -17,6 +17,8 @@ typedef struct
     Token cur;
     bool hasReturnStmt;
     const TypeName* returnType;
+    // While parsing an impl body: the impl's own type (`P`, `rc<T>`), which an untyped `self` parameter takes.
+    const TypeName* implSelfType;
 } Parser;
 
 void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, const char* moduleName);

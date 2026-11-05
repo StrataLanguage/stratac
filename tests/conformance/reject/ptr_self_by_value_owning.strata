@@ -1,0 +1,6 @@
+// expect: reject "takes self by value, which would move it out of a pointer to an owning type"
+// rule: a method taking self by value cannot be called through a pointer to an owning type
+struct Ctx { string name; }
+impl Ctx { int take(self) { return 0; } }
+int f(*Ctx p) { return p.take(); }
+int main() { return 0; }

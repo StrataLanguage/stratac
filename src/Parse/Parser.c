@@ -54,6 +54,7 @@ void ParserInit(Parser* p, Lexer* lex, DiagnosticEngine* diag, Arena* arena, con
     p->cur = LexerNextToken(lex);
     p->returnType = NULL;
     p->hasReturnStmt = false;
+    p->implSelfType = NULL;
 }
 
 Str ParserIdentText(const Parser* p, Token t)

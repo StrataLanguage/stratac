@@ -126,6 +126,97 @@ bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
     return true;
 }
 
+// -- Pointer lifecycle: `ptr_place(p, v)` moves `v` into the memory `p` points at without dropping what was there
+// (it is uninitialised); `ptr_drop(p)` runs the pointee's drop glue in place and leaves the memory to its owner.
+// They are how a container built on `*T` (rc<T>) holds an owning `T`; nothing checks that the memory is live.
+
+const TypeName* PtrLifecycleBuiltinType(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    (void)r;
+    (void)c;
+    (void)scope;
+    return NULL;
+}
+
+bool ResolvePtrLifecycleBuiltin(Resolver* r, CallExpr* c, StrMap* scope)
+{
+    bool isPlace = c->callee && strcmp(c->callee, "ptr_place") == 0;
+
+    if (!c->callee || (!isPlace && strcmp(c->callee, "ptr_drop") != 0) || c->calleeBase)
+    {
+        return false;
+    }
+
+    size_t want = isPlace ? 2 : 1;
+
+    if (c->args.count != want)
+    {
+        DiagErrorFmt(r->diag, c->base.range, "'%s' expects %zu argument(s), got %zu", c->callee, want, c->args.count);
+        return true;
+    }
+
+    Node* arg0 = (Node*)VecGet(&c->args, 0);
+    const TypeName* pt = InferType(r, arg0, scope);
+
+    if (!pt || !TypeNameIsPointer(pt) || !pt->inner)
+    {
+        DiagErrorFmt(r->diag, arg0->range, "'%s' expects a typed pointer '*T' as its first argument, not '%s'",
+                     c->callee, pt ? pt->name : "?");
+        return true;
+    }
+
+    const TypeName* pointee = pt->inner;
+
+    if (pointee->primitiveType == PrimVoid || TypeRegistryIsOpaque(&r->registry, pointee->name))
+    {
+        DiagErrorFmt(r->diag, arg0->range, "'%s' needs a pointer to a type with a known layout, not '%s'", c->callee,
+                     pt->name);
+        return true;
+    }
+
+    c->isIntrinsicCall = true;
+    c->typeArg = (TypeName*)pointee;
+
+    if (!isPlace)
+    {
+        return true;
+    }
+
+    Node* typedArg = ApplyBracedStructTarget(r, (Node*)VecGet(&c->args, 1), pointee);
+    VecSet(&c->args, 1, typedArg);
+
+    if (typedArg->kind == NodeStructInit && ((StructInitExpr*)typedArg)->typeName)
+    {
+        ResolveExpr(r, typedArg, scope);
+    }
+
+    const TypeName* valueType = InferType(r, typedArg, scope);
+
+    if (valueType && !IsAssignableType(r, pointee, valueType))
+    {
+        DiagErrorFmt(r->diag, typedArg->range, "cannot place a value of type '%s' behind '%s'", valueType->name,
+                     pt->name);
+        return true;
+    }
+
+    // The value moves behind the pointer, like any by-value use.
+    const char* movedKey = MovableBoxSourceKey(r, typedArg);
+
+    if (movedKey)
+    {
+        if (valueType && TypeNameIsOptional(valueType))
+        {
+            EmptyOptionalSource(r, movedKey);
+        }
+        else
+        {
+            MarkMoved(r, movedKey, typedArg->range);
+        }
+    }
+
+    return true;
+}
+
 // -- Memory intrinsics: raw `ptr` access for FFI.
 
 // `sizeof<T>()`, `alignof<T>()`, `load<T>(p)`, `store<T>(p, v)`: intrinsics that take a type argument.

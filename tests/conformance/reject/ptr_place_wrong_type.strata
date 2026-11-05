@@ -1,0 +1,4 @@
+// expect: reject "cannot place a value of type 'int' behind '*string'"
+// rule: ptr_place stores a value of the pointee's type
+void f(*string p) { ptr_place(p, 3); }
+int main() { return 0; }

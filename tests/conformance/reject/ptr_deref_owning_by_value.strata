@@ -1,0 +1,6 @@
+// expect: reject "out through a pointer"
+// rule: `*p` of an owning pointee may be borrowed but not moved out
+struct Ctx { string name; }
+void keep(Ctx c, ref Ctx[] out) { array_push(out, c); }
+void f(*Ctx p, ref Ctx[] out) { keep(*p, out); }
+int main() { return 0; }

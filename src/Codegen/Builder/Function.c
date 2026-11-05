@@ -289,6 +289,15 @@ void DefineFunction(Builder* b, const FunctionDecl* f)
                 ol->slot = slot;
                 ol->td = typeDesc;
                 ol->stackBuffer = false;
+
+                // A by-value param holding a drop value inline is armed like such a local: moving it out (into a
+                // field, an array, a return) clears the flag, so the zeroed slot left behind is not dropped.
+                if (TypeNameHasInlineDrop(&b->registry, &p->type))
+                {
+                    ol->dropFlag = EntryAlloca(b, LLVMInt1TypeInContext(b->ctx), "arg.dflag");
+                    LLVMBuildStore(b->builder, LLVMConstInt(LLVMInt1TypeInContext(b->ctx), 1, 0), ol->dropFlag);
+                }
+
                 VecPush(&b->owningLocals, ol);
             }
         }

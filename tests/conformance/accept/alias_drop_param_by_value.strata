@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: took 4
+// expect-output: drop 4
+// rule: an alias of a drop type is a drop type, and a by-value parameter of one takes the value over
+struct RA = Res;
+void Take(RA r) { printf("took %d\n", r.id); }
+int main()
+{
+    Take((RA)Res.Make(4));
+    Report();
+    return 0;
+}

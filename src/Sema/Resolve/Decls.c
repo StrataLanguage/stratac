@@ -433,8 +433,9 @@ static void BindInitMethods(Resolver* r)
                 StrMapPut(&r->defaultInits, sd->name, wrapperName);
             }
 
-            // `p.init(args)` on a `*T` constructs the value as `T(args)` does and stores it through the
-            // pointer: `void __place_T(ref T __dest, ...) { __dest = __init_T(...); }`.
+            // `p.init(args)` on a `*T` constructs the value as `T(args)` does and moves it into the memory the
+            // pointer names, which is taken to be uninitialised (nothing there is dropped):
+            // `void __place_T(*T __dest, ...) { ptr_place(__dest, __init_T(...)); }`.
             char* placeName = ArenaFormat(arena, "__place_%s", sd->name);
             FunctionDecl* place = AST_NEW(arena, FunctionDecl);
             place->base.kind = NodeFunction;
@@ -451,7 +452,12 @@ static void BindInitMethods(Resolver* r)
             VecInit(&placeBody->statements);
 
             ParamDecl* dest = (ParamDecl*)ArenaDup(arena, VecGet(&method->params, 0), sizeof(ParamDecl));
+            TypeName destPointee = dest->type;
+            destPointee.isConst = false;
             dest->name = (char*)"__dest";
+            dest->mod = ModNone;
+            dest->isImplicitSelf = false;
+            dest->type = TypeNamePointerWrap(arena, destPointee);
             VecPush(&place->params, dest);
 
             IdentExpr* destRef = AST_NEW(arena, IdentExpr);
@@ -477,12 +483,13 @@ static void BindInitMethods(Resolver* r)
                 VecPush(&build->args, arg);
             }
 
-            AssignExpr* store = AST_NEW(arena, AssignExpr);
-            store->base.kind = NodeAssign;
+            CallExpr* store = AST_NEW(arena, CallExpr);
+            store->base.kind = NodeCall;
             store->base.range = at;
-            store->op = AssignSet;
-            store->target = (Node*)destRef;
-            store->value = (Node*)build;
+            store->callee = (char*)"ptr_place";
+            VecInit(&store->args);
+            VecPush(&store->args, destRef);
+            VecPush(&store->args, build);
 
             ExprStmt* storeStmt = AST_NEW(arena, ExprStmt);
             storeStmt->base.kind = NodeExprStmt;
@@ -1115,6 +1122,8 @@ static void CheckStructFields(Resolver* r)
                              field->type.name);
             }
 
+            CheckOpaqueBoxArray(r, &field->type, field->type.range, ArenaFormat(r->arena, "field '%s'", field->name));
+
             if (TypeNameHasArrayShape(&field->type) && field->type.length >= 0)
             {
                 if (field->type.length < 1)
@@ -1182,6 +1191,8 @@ static void CheckGlobalInits(Resolver* r)
     for (size_t i = 0; i < mod->globals.count; i++)
     {
         GlobalDecl* gd = (GlobalDecl*)VecGet(&mod->globals, i);
+
+        CheckOpaqueBoxArray(r, &gd->type, gd->base.range, ArenaFormat(r->arena, "global '%s'", gd->name));
 
         if (TypeTreeHasFixedArray(&gd->type))
         {
@@ -1305,23 +1316,14 @@ static void CheckFunctionSignatures(Resolver* r)
         {
             ParamDecl* p = (ParamDecl*)VecGet(&functionDecl->params, j);
 
+            CheckOpaqueBoxArray(r, &p->type, p->base.range, ArenaFormat(r->arena, "parameter '%s'", p->name));
+
             if (TypeTreeHasFixedArray(&p->type))
             {
                 DiagErrorFmt(diag, p->base.range,
                              "parameter '%s' may not have a fixed-size array type ('%s'); "
                              "fixed-size arrays are only allowed as struct fields and locals",
                              p->name, p->type.name);
-            }
-
-            // By value, an owning struct argument is deep-copied for the callee: never for a destructor.
-            if (!functionDecl->isExtern && p->mod == ModNone && !TypeNameIsBox(&p->type)
-                && !TypeNameIsOptional(&p->type) && !TypeNameHasArrayShape(&p->type)
-                && TypeNameHasDrop(&r->registry, &p->type))
-            {
-                DiagErrorFmt(
-                    diag, p->base.range,
-                    "parameter '%s' cannot take '%s' by value: it has a drop method; pass 'ref %s' or a box '^%s'",
-                    p->name, p->type.name, p->type.name, p->type.name);
             }
 
             // Structs (forward-declared ones included) cross to the host as pointers, so the
@@ -1337,6 +1339,9 @@ static void CheckFunctionSignatures(Resolver* r)
                              p->name, p->type.name, p->type.name, p->type.name);
             }
         }
+
+        CheckOpaqueBoxArray(r, &functionDecl->returnType, functionDecl->base.range,
+                            ArenaFormat(r->arena, "the return type of '%s'", functionDecl->name));
 
         if (TypeTreeHasFixedArray(&functionDecl->returnType))
         {

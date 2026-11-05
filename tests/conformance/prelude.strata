@@ -6,15 +6,15 @@
 // "!!! DOUBLE/BAD FREE". `Res` counts live values in gLive; Report() prints "END live=N", which
 // must be 0 for a case to pass.
 
-extern ptr  malloc(ulong size);
-extern void free(ptr p);
+extern *void malloc(ulong size); // the signatures std/memory declares, so a case may import it
+extern void  free(*void p);
 extern ptr  memset(ptr p, int v, ulong n);
 @noreturn extern void abort();
 extern int  fflush(ptr file);
 extern int  printf(cstring fmt, ...);
 @export ptr strata_alloc(ulong size)
 {
-    ptr raw = malloc(size + 16ul);
+    ptr raw = (ptr)malloc(size + 16ul);
     store<ulong>(raw, size);
     store<ulong>((ptr)((ulong)raw + 8ul), 0xA11CEul);
     return (ptr)((ulong)raw + 16ul);

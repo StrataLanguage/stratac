@@ -3,8 +3,6 @@ import math;
 
 import memory;
 
-extern int printf(cstring fmt, ...);
-
 struct __refcnt
 {
 	uint count;
@@ -12,24 +10,29 @@ struct __refcnt
 
 impl __refcnt
 {
-	void init(ref __refcnt self)
+	void init(ref self)
 	{
 		self.count = 1;
 	}
 
-	void inc(ref __refcnt self)
+	void inc(ref self)
 	{
 		++self.count;
 	}
 
-	uint dec(ref __refcnt self)
+	uint dec(ref self)
 	{
 		--self.count;
 		return (self.count);
 	}
 }
 
-/* Ref counted pointer container */
+/* Ref counted pointer container.
+ *
+ * The value and its count share one allocation. `T` may own memory or have a drop method: the last handle to go
+ * runs its drop glue in place (ptr_drop) before the memory is freed. Reach the value through `ptr` (fields and
+ * `ref` / `const ref` methods), or `get()`; it is never moved out.
+ */
 struct rc<T>
 {
 	*T ptr;
@@ -38,13 +41,14 @@ struct rc<T>
 
 impl rc<T>
 {
-	void init(ref rc<T> self)
+	void init(ref self)
 	{
 		self.ptr = null;
 		self.refcnt = null;
 	}
 
-	void init(ref rc<T> self, const ref rc<T> other)
+	// Shares `other`'s value: one more handle on the same count.
+	void init(ref self, const ref rc<T> other)
 	{
 		self.ptr = other.ptr;
 		self.refcnt = other.refcnt;
@@ -54,14 +58,23 @@ impl rc<T>
 		}
 	}
 
-	void create_ref<TArgs...>(ref rc<T> self, TArgs... args)
+	// Builds a fresh value for this handle, releasing what it held. A `T` with an init is constructed from
+	// `args`; any other `T` takes the one value to move in (`make_ref<string>("text")`).
+	void create_ref<TArgs...>(ref self, TArgs... args)
 	{
+		self.__decref();
+
 		// Pad the size out so our total allocation is aligned
 		const ulong aligned_size = align_value_16(sizeof<T>());
 		*byte raw_alloc = (*byte)memory_alloc(aligned_size + sizeof<__refcnt>());
 
 		*T obj_ptr = (*T)raw_alloc;
-		obj_ptr.init(args...);
+
+		if (@initable(T)) {
+			obj_ptr.init(args...);
+		} else {
+			ptr_place(obj_ptr, args...);
+		}
 
 		*__refcnt refcnt = (*__refcnt)(ptr)((ulong)raw_alloc + aligned_size);
 		refcnt.init();
@@ -70,24 +83,43 @@ impl rc<T>
 		self.refcnt = refcnt;
 	}
 
+	*T get(const ref self)
+	{
+		return self.ptr;
+	}
+
+	bool is_set(const ref self)
+	{
+		return self.ptr != null;
+	}
+
+	uint use_count(const ref self)
+	{
+		if (self.refcnt == null) {
+			return 0;
+		}
+
+		return self.refcnt.count;
+	}
+
 	@private
-	void __decref(ref rc<T> self)
+	void __decref(ref self)
 	{
 		if (self.refcnt == null) {
 			return;
 		}
 
 		if (self.refcnt.dec() == 0) {
-			ptr raw_ptr = (ptr)self.ptr;
-			memory_free((*void)raw_ptr);
-
-			self.ptr = null;
-			// This is a combined allocation, so refcnt is already freed
-			self.refcnt = null;
+			// The last handle: end the value, then free the combined allocation (value and count).
+			ptr_drop(self.ptr);
+			memory_free((*void)(ptr)self.ptr);
 		}
+
+		self.ptr = null;
+		self.refcnt = null;
 	}
 
-	void drop(ref rc<T> self)
+	void drop(ref self)
 	{
 		self.__decref();
 	}

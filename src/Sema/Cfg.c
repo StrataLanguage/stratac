@@ -224,7 +224,8 @@ static bool ArgIsConsumed(const CallExpr* e, size_t i)
     if (e->isIntrinsicCall)
     {
         return (strcmp(e->callee, "drop") == 0 && i == 0) || (strcmp(e->callee, "array_push") == 0 && i == 1)
-               || (strcmp(e->callee, "array_replace") == 0 && i == 2);
+               || (strcmp(e->callee, "array_replace") == 0 && i == 2)
+               || (strcmp(e->callee, "ptr_place") == 0 && i == 1);
     }
 
     const FunctionDecl* d = e->resolvedDecl;

@@ -1,0 +1,5 @@
+// expect: reject "cannot move 'p.name' out through a pointer"
+// rule: a pointer owns nothing, so an owning value is never moved out through one
+struct Ctx { string name; }
+string take(*Ctx p) { return p.name; }
+int main() { return 0; }

@@ -349,6 +349,43 @@ static void EmitBlockStmt(Builder* b, Block* blk)
     b->owningLocals.count = mark;
 }
 
+// Whether `c` is a condition whose value is known at compile time: a bool literal, a null test the CFG checker
+// proved (`x?` inside `if (x?)`), or `!` of one.
+static bool KnownCondition(const Node* c, bool* value)
+{
+    bool negate = false;
+
+    while (c && c->kind == NodeUnary && ((const UnaryExpr*)c)->op == UnNot)
+    {
+        negate = !negate;
+        c = ((const UnaryExpr*)c)->operand;
+    }
+
+    if (!c)
+    {
+        return false;
+    }
+
+    if (c->kind == NodeBoolLiteral)
+    {
+        *value = ((const BoolLiteral*)c)->value != negate;
+        return true;
+    }
+
+    if (c->kind == NodeNullTest)
+    {
+        NullTestFold fold = ((const NullTestExpr*)c)->fold;
+
+        if (fold == NullTestKnownSet || fold == NullTestKnownEmpty)
+        {
+            *value = (fold == NullTestKnownSet) != negate;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static void EmitIfStmt(Builder* b, IfStmt* i)
 {
     LLVMValueRef cond = EmitConditionI1(b, i->condition);
@@ -357,7 +394,18 @@ static void EmitIfStmt(Builder* b, IfStmt* i)
     LLVMBasicBlockRef endBB = NewBb(b, "if.end");
     LLVMBasicBlockRef elseBB = i->elseBranch ? NewBb(b, "if.else") : endBB;
 
-    LLVMBuildCondBr(b->builder, cond, thenBB, elseBB);
+    // A condition that folded (a null test the checker proved) jumps straight to its branch; the other is left
+    // unreachable for LLVM to delete.
+    bool taken = false;
+
+    if (KnownCondition(i->condition, &taken))
+    {
+        LLVMBuildBr(b->builder, taken ? thenBB : elseBB);
+    }
+    else
+    {
+        LLVMBuildCondBr(b->builder, cond, thenBB, elseBB);
+    }
 
     b->terminated = true;
 

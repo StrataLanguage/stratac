@@ -404,6 +404,11 @@ static void CheckLocalDeclTypes(Resolver* r, VarDeclStmt* vd)
         }
     }
 
+    if (vd->type.name)
+    {
+        CheckOpaqueBoxArray(r, &vd->type, vd->base.range, ArenaFormat(r->arena, "variable '%s'", vd->name));
+    }
+
     // An array of an incomplete struct has elements of unknown size.
     for (const TypeName* el = vd->type.name ? &vd->type : NULL; el && TypeNameHasArrayShape(el);)
     {

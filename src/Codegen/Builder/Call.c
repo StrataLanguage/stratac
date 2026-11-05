@@ -321,6 +321,37 @@ static Value EmitStoreBuiltin(Builder* b, CallExpr* n)
     return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->ctx), TDF_VOID, NULL));
 }
 
+// `ptr_place(p, v)`: `v` is built as an owned value (a movable source is emptied) and stored through `p` with no
+// drop of what was there.
+static Value EmitPtrPlaceBuiltin(Builder* b, CallExpr* n)
+{
+    Node* valueNode = (Node*)VecGet(&n->args, 1);
+    TypeDesc td = Resolve(b, n->typeArg);
+    Value p = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+    Value v = EmitExpr(b, valueNode);
+    LLVMValueRef owned = BoxIntoInlineOwning(b, td, v.typeDesc)
+                             ? TakeBoxContents(b, v, valueNode).value
+                             : EmitOwnedValue(b, Coerce(b, v, td), valueNode, n->typeArg);
+
+    LLVMBuildStore(b->builder, owned, p.value);
+
+    return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->ctx), TDF_VOID, NULL));
+}
+
+// `ptr_drop(p)`: the pointee's drop glue (its `drop` method, then its fields) runs in place; the memory stays.
+static Value EmitPtrDropBuiltin(Builder* b, CallExpr* n)
+{
+    TypeDesc td = Resolve(b, n->typeArg);
+    Value p = EmitExpr(b, (Node*)VecGet(&n->args, 0));
+
+    if (BuilderIsOwningValue(b, n->typeArg) || TypeNameHasDrop(&b->registry, n->typeArg))
+    {
+        EmitDropOne(b, p.value, td);
+    }
+
+    return ValueMake(NULL, TypeDescMake(LLVMVoidTypeInContext(b->ctx), TDF_VOID, NULL));
+}
+
 static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
 {
     static const IntrinsicDefinition intrinsics[] = {
@@ -337,6 +368,8 @@ static Value EmitIntrinsicCall(Builder* b, CallExpr* n, bool* isValid)
         // Misc
         {"copy",              EmitCopyBuiltin     },
         {"drop",              EmitDropBuiltin     },
+        {"ptr_place",         EmitPtrPlaceBuiltin },
+        {"ptr_drop",          EmitPtrDropBuiltin  },
 
         // Raw memory
         {"addressof",         EmitAddressofBuiltin},
@@ -814,10 +847,10 @@ static LLVMValueRef LowerCVarargArg(Builder* b, Value v)
     return ApplyCVarargPromotion(b, DerefBoxValue(b, v));
 }
 
-// By-value (non-indirect) param: the value is coerced to the declared type; an
-// owning struct is deep-copied so the caller keeps its own fields (C value
-// semantics; `ref` is the zero-copy escape).
-static LLVMValueRef LowerByValueArg(Builder* b, const FunctionDecl* fd, size_t k, Value v)
+// By-value (non-indirect) param: the value is coerced to the declared type. An owning struct moves into the
+// callee; only a place the checker says is not moved (a global, a copied use) is deep-copied so the caller keeps
+// its own fields.
+static LLVMValueRef LowerByValueArg(Builder* b, const FunctionDecl* fd, size_t k, Node* argNode, Value v)
 {
     // A box arg passed to a by-value (non-indirect) param - e.g. a
     // plain handle - must be dereferenced to its value, not passed
@@ -833,13 +866,23 @@ static LLVMValueRef LowerByValueArg(Builder* b, const FunctionDecl* fd, size_t k
         TypeDesc paramTd = Resolve(b, &((ParamDecl*)VecGet(&fd->params, k))->type);
         v = Coerce(b, v, paramTd);
 
-        // An owning struct passed by value: the callee owns
-        // and drops its copy at return, so hand it a deep
-        // copy — the caller's value keeps its own fields
-        // (C value semantics; `ref` is the zero-copy escape).
-        if (paramTd.structTypeName && TypeRegistryIsOwningStruct(&b->registry, paramTd.structTypeName))
+        // An owning struct passed by value: the callee owns and drops what it is handed. A temporary or a
+        // moved-out place hands over its own fields (the caller empties the place); copying them as well would
+        // leave the originals with no owner. A place that stays live is deep-copied.
+        bool isPlace = argNode
+                       && (argNode->kind == NodeIdent || argNode->kind == NodeMember || argNode->kind == NodeIndex
+                           || (argNode->kind == NodeUnary && ((UnaryExpr*)argNode)->op == UnDeref));
+
+        if (paramTd.structTypeName && TypeRegistryIsOwningStruct(&b->registry, paramTd.structTypeName) && isPlace)
         {
-            v = EmitCopyValue(b, v, paramTd);
+            if (MovedSource(argNode))
+            {
+                NullMovedSource(b, argNode);
+            }
+            else
+            {
+                v = EmitCopyValue(b, v, paramTd);
+            }
         }
     }
 
@@ -854,8 +897,10 @@ static LLVMValueRef LowerByPtrPlainArg(Builder* b, const FunctionDecl* fd, size_
                                        bool paramIsBoxType, bool argIsBox)
 {
     const ParamDecl* refParam = fd && k < fd->params.count ? (const ParamDecl*)VecGet((Vec*)&fd->params, k) : NULL;
-    bool borrowsTemp = refParam && refParam->mod == ModRef && !fd->isExtern && argNode->kind != NodeIdent
-                       && argNode->kind != NodeMember && argNode->kind != NodeIndex && TypeDescIsOwning(b, &v.typeDesc);
+    bool namesStorage = argNode->kind == NodeIdent || argNode->kind == NodeMember || argNode->kind == NodeIndex
+                        || (argNode->kind == NodeUnary && ((UnaryExpr*)argNode)->op == UnDeref);
+    bool borrowsTemp
+        = refParam && refParam->mod == ModRef && !fd->isExtern && !namesStorage && TypeDescIsOwning(b, &v.typeDesc);
 
     if (borrowsTemp)
     {
@@ -944,7 +989,7 @@ static LLVMValueRef LowerPlainArg(Builder* b, const FunctionDecl* fd, size_t k, 
         return LowerByPtrPlainArg(b, fd, k, argNode, v, paramIsBoxType, argIsBox);
     }
 
-    return LowerByValueArg(b, fd, k, v);
+    return LowerByValueArg(b, fd, k, argNode, v);
 }
 
 // Whether a by-pointer argument names a box (a variable, or a call returning one):

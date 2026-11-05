@@ -10,7 +10,7 @@ impl vstruct
 {
     void init(ref vstruct self) { self.x = malloc(4ul); store<int>(self.x, 20); printf("init default\n"); }
     void init(ref vstruct self, int value) { self.x = malloc(4ul); store<int>(self.x, value); printf("init %d\n", value); }
-    void drop(ref vstruct self) { printf("drop %d\n", load<int>(self.x)); free(self.x); }
+    void drop(ref vstruct self) { printf("drop %d\n", load<int>(self.x)); free((*void)self.x); }
 }
 int main()
 {

@@ -143,6 +143,9 @@ const TypeName* InternTypeName(Resolver* r, const char* name);
 char* Mangle(Arena* arena, const FunctionDecl* f);
 bool IsDefinedStruct(const TypeRegistry* reg, const char* name);
 bool IsIncompleteStruct(const TypeRegistry* reg, const char* name);
+const char* OpaqueBoxArrayElem(const TypeRegistry* reg, const TypeName* t);
+// Reports `^S[]` / `S?[]` of an incomplete struct `S` in `t`; `what` names the declaration ("variable 'x'").
+bool CheckOpaqueBoxArray(Resolver* r, const TypeName* t, SourceRange at, const char* what);
 void ResetStrMap(StrMap* m);
 size_t NamedParamCount(const FunctionDecl* f);
 bool TypeTreeHasFixedArray(const TypeName* t);
@@ -187,6 +190,8 @@ const TypeName* SubstringBuiltinType(Resolver* r, CallExpr* c, StrMap* scope);
 bool ResolveSubstringBuiltin(Resolver* r, CallExpr* c, StrMap* scope);
 const TypeName* DropBuiltinType(Resolver* r, CallExpr* c, StrMap* scope);
 bool ResolveDropBuiltin(Resolver* r, CallExpr* c, StrMap* scope);
+const TypeName* PtrLifecycleBuiltinType(Resolver* r, CallExpr* c, StrMap* scope);
+bool ResolvePtrLifecycleBuiltin(Resolver* r, CallExpr* c, StrMap* scope);
 bool IsTypedMemoryIntrinsic(Resolver* r, const CallExpr* c);
 bool IsStringConcat(Resolver* r, BinaryOp op, const TypeName* lt, const TypeName* rt);
 const char* ExprEnumName(Resolver* r, const Node* n, const TypeName* t);

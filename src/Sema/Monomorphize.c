@@ -36,6 +36,7 @@ typedef struct
     StrMap genericMethodNames; // method name -> non-NULL, for every generic method of the module
     Vec scopes;                // StrMap* (name -> TypeName*): the declared types of the blocks being rewritten
     bool stopped;              // an error ended the expansion: no further instances are made
+    bool inInstance;           // rewriting the body of a generic instance: `x?` on a never-empty type folds
 } Mono;
 
 static size_t MaxSize(size_t a, size_t b)
@@ -582,6 +583,7 @@ static void InstantiateStruct(Mono* m, const StructDecl* tmpl, const char* name,
             FunctionDecl* method = (FunctionDecl*)VecGet(&impl->methods, j);
             method->name = ArenaFormat(m->arena, "%s_%s", name, method->methodName);
             method->mangledName = method->name;
+            method->isGenericInstance = true;
 
             VecPush(&m->mod->functions, method);
             VecPush(&m->pending, method);
@@ -665,6 +667,7 @@ static void InstantiateFunction(Mono* m, const FunctionDecl* tmpl, const char* n
 
     inst->name = (char*)name;
     inst->mangledName = (char*)name;
+    inst->isGenericInstance = true;
 
     StrMapPut(&m->functionInstances, name, inst);
     VecPush(&m->mod->functions, inst);
@@ -757,6 +760,7 @@ static FunctionDecl* InstantiateMethod(Mono* m, const MethodTemplate* mt, const 
         return NULL;
     }
 
+    inst->isGenericInstance = true;
     StrMapPut(&m->methodInstances, key, inst);
     VecPush(&mt->impl->methods, inst);
     VecPush(&m->mod->functions, inst);
@@ -2440,12 +2444,27 @@ static const ParamDecl* PackRestParam(const FunctionDecl* tmpl, size_t* outIndex
     return NULL;
 }
 
+// Whether the call's explicit type arguments splice a pack (`g<int, U...>`): they then spell out every argument.
+static bool TypeArgsExpandPack(const CallExpr* call)
+{
+    for (size_t i = 0; i < call->typeArgCount; i++)
+    {
+        if (call->typeArgs[i].isPackExpansion)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // Infers the type arguments of a call to `tmpl` from the declared types of the call's arguments (generics: inference).
 // The first `selfOffset` parameters are the receiver and are not matched. On success `*out` holds the fixed type
 // arguments then the pack's, and `*outCount` is their number. An argument whose type is not known before type checking
 // is an error only when a type parameter needs it; so is a type parameter no argument fixes, or two that disagree.
+// `explicitFixed`, when set, gives the fixed type arguments (`make<T>(args)`): only the pack is inferred.
 static bool InferTypeArgs(Mono* m, const FunctionDecl* tmpl, const CallExpr* call, size_t selfOffset, bool isMethod,
-                          bool quiet, TypeName** out, size_t* outCount)
+                          bool quiet, const TypeName* explicitFixed, TypeName** out, size_t* outCount)
 {
     size_t fixedCount = FixedTypeParamCount(tmpl);
     size_t restIndex = 0;
@@ -2464,6 +2483,12 @@ static bool InferTypeArgs(Mono* m, const FunctionDecl* tmpl, const CallExpr* cal
     memset(types, 0, (fixedCount + packCount + 1) * sizeof(TypeName));
     memset(fixed, 0, (fixedCount + 1) * sizeof(bool));
     memset(unknown, 0, (fixedCount + 1) * sizeof(bool));
+
+    for (size_t k = 0; explicitFixed && k < fixedCount; k++)
+    {
+        types[k] = explicitFixed[k];
+        fixed[k] = true;
+    }
 
     const char* subject = isMethod ? tmpl->methodName : tmpl->name;
 
@@ -2518,7 +2543,7 @@ static bool InferTypeArgs(Mono* m, const FunctionDecl* tmpl, const CallExpr* cal
             types[k] = type;
             fixed[k] = true;
         }
-        else if (strcmp(types[k].name, type.name) != 0)
+        else if (!explicitFixed && strcmp(types[k].name, type.name) != 0)
         {
             if (!quiet)
             {
@@ -2603,10 +2628,21 @@ static char* MakeMethodInstance(Mono* m, const MethodTemplate* mt, const CallExp
 
         args = call->typeArgs;
         argCount = call->typeArgCount;
+
+        // Only the fixed type arguments written: the pack is inferred from the arguments.
+        if (tmpl->genericPack && call->typeArgCount == fixedCount && !TypeArgsExpandPack(call))
+        {
+            if (!InferTypeArgs(m, tmpl, call, selfOffset, true, quiet, call->typeArgs, &inferred, &argCount))
+            {
+                return NULL;
+            }
+
+            args = inferred;
+        }
     }
     else
     {
-        if (!InferTypeArgs(m, tmpl, call, selfOffset, true, quiet, &inferred, &argCount))
+        if (!InferTypeArgs(m, tmpl, call, selfOffset, true, quiet, NULL, &inferred, &argCount))
         {
             return NULL;
         }
@@ -2817,10 +2853,21 @@ static void RewriteCall(Mono* m, CallExpr* call)
                          tmpl->genericParams.count, argCount);
             return;
         }
+
+        // Only the fixed type arguments written (`make_ref<T>(a, b)`): the pack is inferred from the arguments.
+        if (tmpl->genericPack && argCount == fixedCount && !TypeArgsExpandPack(call))
+        {
+            if (!InferTypeArgs(m, tmpl, call, 0, false, false, call->typeArgs, &inferred, &argCount))
+            {
+                return;
+            }
+
+            args = inferred;
+        }
     }
     else
     {
-        if (!InferTypeArgs(m, tmpl, call, 0, false, false, &inferred, &argCount))
+        if (!InferTypeArgs(m, tmpl, call, 0, false, false, NULL, &inferred, &argCount))
         {
             return;
         }
@@ -2946,6 +2993,135 @@ static void RewriteConditional(Mono* m, Node** slot)
     RewriteSlot(m, &e->elseExpr);
 }
 
+// Whether a value of type `t` can never be empty, so `x?` on it is always true and `x == null` always false: a box, an
+// array, a scalar, `string`, a vector, an enum or a defined struct (through aliases). Optionals, pointers, handles,
+// `cstring`, delegates and incomplete structs may be null, or are not known here; they are left to run time.
+static bool NeverEmptyType(const Mono* m, const TypeName* t, int depth)
+{
+    if (!t || !TypeNameValid(t) || depth > 8 || TypeNameIsOptional(t) || TypeNameIsPointer(t))
+    {
+        return false;
+    }
+
+    if (TypeNameIsBox(t) || TypeNameIsArray(t) || TypeNameIsFixedArray(t))
+    {
+        return true;
+    }
+
+    switch (t->primitiveType)
+    {
+    case PrimBool:
+    case PrimInt:
+    case PrimUInt:
+    case PrimLong:
+    case PrimULong:
+    case PrimSByte:
+    case PrimByte:
+    case PrimShort:
+    case PrimUShort:
+    case PrimFloat:
+    case PrimDouble:
+    case PrimString:
+    case PrimFloat2:
+    case PrimFloat3:
+    case PrimFloat4:
+        return true;
+    default:
+        break;
+    }
+
+    for (size_t i = 0; i < m->mod->enums.count; i++)
+    {
+        if (strcmp(((const EnumDecl*)VecGet(&m->mod->enums, i))->name, t->name) == 0)
+        {
+            return true;
+        }
+    }
+
+    for (size_t i = 0; i < m->mod->structs.count; i++)
+    {
+        const StructDecl* sd = (const StructDecl*)VecGet(&m->mod->structs, i);
+
+        if (strcmp(sd->name, t->name) != 0 || sd->genericParams.count > 0)
+        {
+            continue;
+        }
+
+        if (sd->isTypeAlias)
+        {
+            if (!sd->underlyingType)
+            {
+                return false;
+            }
+
+            TypeName aliased = TypeNameParse(m->arena, sd->underlyingType);
+            return NeverEmptyType(m, &aliased, depth + 1);
+        }
+
+        return !sd->incomplete;
+    }
+
+    return false;
+}
+
+// In a generic instance, a null test whose answer the instance's types decide: `x?` and `x != null` are true, and
+// `x == null` false, when `x` can never be empty. Returns false (leaving `*value`) when the test stays a run-time one.
+static bool FoldedNullTest(Mono* m, const Node* n, bool* value)
+{
+    if (!m->inInstance)
+    {
+        return false;
+    }
+
+    TypeName t = {0};
+
+    if (n->kind == NodeNullTest)
+    {
+        if (!MonoTypeOf(m, ((const NullTestExpr*)n)->operand, &t) || !NeverEmptyType(m, &t, 0))
+        {
+            return false;
+        }
+
+        *value = true;
+        return true;
+    }
+
+    if (n->kind != NodeBinary)
+    {
+        return false;
+    }
+
+    const BinaryExpr* b = (const BinaryExpr*)n;
+
+    if (b->op != BinEqEq && b->op != BinNotEq)
+    {
+        return false;
+    }
+
+    const Node* lhs = b->lhs;
+    const Node* rhs = b->rhs;
+
+    if (lhs && lhs->kind == NodeIdent && strcmp(((const IdentExpr*)lhs)->name, "null") == 0)
+    {
+        const Node* swap = lhs;
+        lhs = rhs;
+        rhs = swap;
+    }
+
+    if (!rhs || rhs->kind != NodeIdent || strcmp(((const IdentExpr*)rhs)->name, "null") != 0)
+    {
+        return false;
+    }
+
+    if (!MonoTypeOf(m, lhs, &t) || !NeverEmptyType(m, &t, 0))
+    {
+        return false;
+    }
+
+    *value = b->op == BinNotEq;
+    return true;
+}
+
 // Rewrites the statement or expression in `*slot`, which may be replaced. This is the one place where a meta call
 // folds, and where an `if` or `?:` whose condition is a constant is pruned. Every slot that can hold one of those
 // goes through here, so a replacement always lands in the node that owned it.
@@ -2970,6 +3146,29 @@ static void RewriteSlot(Mono* m, Node** slot)
     case NodeConditional:
         RewriteConditional(m, slot);
         return;
+    case NodeNullTest:
+    case NodeBinary:
+    {
+        bool value = false;
+
+        if (FoldedNullTest(m, n, &value))
+        {
+            BoolLiteral* lit = AST_NEW(m->arena, BoolLiteral);
+            lit->base.kind = NodeBoolLiteral;
+            lit->base.range = n->range;
+            lit->value = value;
+
+            AstDispose(n);
+            *slot = (Node*)lit;
+
+            // Counted like a meta call, so an `if` or `?:` around it folds and prunes the branch not taken.
+            m->metaCalls++;
+            return;
+        }
+
+        RewriteNode(m, n);
+        return;
+    }
     default:
         RewriteNode(m, n);
         return;
@@ -3043,6 +3242,9 @@ static void RewriteNode(Mono* m, Node* n)
         RewriteType(m, &fn->returnType);
         RewriteList(m, &fn->params);
 
+        bool outerInInstance = m->inInstance;
+        m->inInstance = fn->isGenericInstance;
+
         // The parameters are the outermost declared names of the body.
         PushScope(m);
 
@@ -3054,6 +3256,7 @@ static void RewriteNode(Mono* m, Node* n)
 
         RewriteNode(m, fn->body);
         PopScope(m);
+        m->inInstance = outerInInstance;
         break;
     }
     case NodeParam:

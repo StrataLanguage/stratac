@@ -468,11 +468,11 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
 
     FunctionDecl* method = FindImplMethod(r, handleName, c->callee);
 
-    // `p.init(args)` on a pointer constructs the pointee in place, as `T(args)` would, through `__place_T`.
-    // Pointers never refer to owning types, so the old value needs no drop.
+    // `p.init(args)` on a pointer constructs the pointee in place, as `T(args)` would, through `__place_T`. The
+    // memory is taken to be uninitialised: what was there is not dropped (`ptr_drop(p)` ends a live value first).
     if (method && strcmp(c->callee, "init") == 0 && viaPointer)
     {
-        VecPushFront(&c->args, DerefReceiver(r, c->calleeBase, scope));
+        VecPushFront(&c->args, c->calleeBase);
 
         c->calleeBase = NULL;
         c->isIntrinsicCall = false;
@@ -524,6 +524,23 @@ bool ResolveMemberCall(Resolver* r, CallExpr* c, StrMap* scope)
                      "call to '%s' is ambiguous: an instance overload and a static overload both take %zu argument(s)",
                      c->callee, c->args.count);
         return true;
+    }
+
+    if (passesReceiver && viaPointer && method->params.count > 0)
+    {
+        // `ref` / `const ref` self borrows the pointee; a by-value self would move it out, and a pointer owns
+        // nothing to give.
+        const ParamDecl* selfParam = (const ParamDecl*)VecGet(&method->params, 0);
+
+        if ((selfParam->mod == ModNone || selfParam->inferredBorrow)
+            && !TypeClassify(&r->registry, r->arena, &selfParam->type).trivial)
+        {
+            DiagErrorFmt(r->diag, c->base.range,
+                         "'%s' takes self by value, which would move it out of a pointer to an owning type ('%s'); "
+                         "take 'ref self' / 'const ref self', or call it on a value",
+                         c->callee, handleName);
+            return true;
+        }
     }
 
     if (passesReceiver)

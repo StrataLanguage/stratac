@@ -183,6 +183,12 @@ Value TakeBoxContents(Builder* b, Value box, Node* srcNode)
 
 Value EmitNullTest(Builder* b, NullTestExpr* nt)
 {
+    // The checker proved the answer on every path here (flow typing): no load or compare.
+    if (nt->fold == NullTestKnownSet || nt->fold == NullTestKnownEmpty)
+    {
+        return ValueMake(LLVMConstInt(I1Ty(b), nt->fold == NullTestKnownSet, 0), TypeDescMake(I1Ty(b), 0, NULL));
+    }
+
     // `expr?` - test whether the optional holds anything (zero cost
     // beyond the compare; sema guarantees a nullable path). A T?/^T slot
     // tests the pointer; an optional array tests its fat struct: set =

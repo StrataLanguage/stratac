@@ -67,7 +67,7 @@ struct number<T>
 impl number<T>
 {
     T get_value(const ref number<T> self) { return self.value; }
-    void set_value(ref number<T> self, T value) { self.value = value; }
+    void set_value(ref self, T value) { self.value = value; }  // `self` alone takes the impl's type
 }
 
 number<T> make_number<T>(T value)

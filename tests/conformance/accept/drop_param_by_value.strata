@@ -1,0 +1,42 @@
+// expect: run
+// expect-output: eat 1
+// expect-output: drop 1
+// expect-output: early 2
+// expect-output: drop 2
+// expect-output: kept 2
+// expect-output: drop 3
+// expect-output: drop 4
+// expect-output: consume 5
+// expect-output: drop 5
+// expect-output: fwd 6 7
+// rule: a by-value parameter of a drop type takes the value over: the callee drops it once at scope end, unless it moved it on
+void eat(Res r) { printf("eat %d\n", r.id); }
+void maybe(Res r, bool early) { if (early) { printf("early %d\n", r.id); return; } printf("late %d\n", r.id); }
+void keep(Res r, ref Res[] out) { array_push(out, r); }
+void keepIf(Res r, bool b, ref Res[] out) { if (b) { array_push(out, r); } }
+Res pass(Res r) { return r; }
+impl Res { void consume(self) { printf("consume %d\n", self.id); } }
+void both(Res a, Res b) { printf("fwd %d %d\n", a.id, b.id); }
+void fwd<A...>(A... args) { both(args...); }
+int main()
+{
+    Res a = Res.Make(1);
+    eat(a);
+    maybe(Res.Make(2), true);
+    {
+        Res[] store;
+        keep(Res.Make(13), store);
+        keepIf(Res.Make(14), true, store);
+        keepIf(Res.Make(3), false, store);
+        printf("kept %d\n", store.length);
+    }
+    {
+        Res p = pass(Res.Make(4));
+    }
+    Res.Make(5).consume();
+    Res six = Res.Make(6);
+    Res seven = Res.Make(7);
+    fwd(six, seven);
+    Report();
+    return 0;
+}

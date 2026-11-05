@@ -502,6 +502,44 @@ static ParamDecl* ParseParam(Parser* p)
 
     TypeName type = {0};
 
+    // `self`, `ref self`, `const ref self` without a type: the receiver of an impl method, typed as the impl.
+    if (p->cur.kind == TokIdent && StrEqC(ParserIdentText(p, p->cur), "self"))
+    {
+        LexerCheckpoint save = SaveLexerState(p);
+        Token nameTok = p->cur;
+        Advance(p);
+
+        if (p->cur.kind == TokComma || p->cur.kind == TokRParen)
+        {
+            ParamDecl* node = AST_NEW(p->arena, ParamDecl);
+            node->base.kind = NodeParam;
+            node->base.range
+                = (SourceRange){start.start, (uint32_t)(SourceRangeEnd(nameTok.range) - start.start), start.fileId};
+            node->mod = mod;
+            node->name = ToOwned(p->arena, ParserIdentText(p, nameTok));
+            node->isImplicitSelf = true;
+            node->isReturn = isReturn;
+
+            if (p->implSelfType)
+            {
+                node->type = *p->implSelfType;
+                node->type.range = nameTok.range;
+            }
+            else
+            {
+                DiagError(p->diag, nameTok.range,
+                          "'self' without a type is only allowed as the first parameter of an impl method");
+                node->type = TypeNameLeaf(ArenaStrdup(p->arena, "void"));
+            }
+
+            node->type.isConst = isConst;
+
+            return node;
+        }
+
+        RestoreLexerState(p, save);
+    }
+
     if (!ParserTryParseType(p, &type))
     {
         DiagError(p->diag, p->cur.range, "expected a parameter type");
@@ -842,6 +880,12 @@ static void ParseFunctionParams(Parser* p, FunctionDecl* node, bool isExtern)
 
             if (param)
             {
+                if (param->isImplicitSelf && node->params.count > 0 && p->implSelfType)
+                {
+                    DiagError(p->diag, param->base.range,
+                              "'self' without a type must be the first parameter of an impl method");
+                }
+
                 VecPush(&node->params, param);
             }
             else
@@ -1189,6 +1233,33 @@ ImplDecl* ParseImplDecl(Parser* p)
         }
     }
 
+    // The impl's own type, for untyped `self` receivers: `P`, or `rc<T>` spelled with the impl's parameters.
+    TypeName* selfType = (TypeName*)ArenaAlloc(p->arena, sizeof(TypeName));
+
+    if (impl->genericParams.count > 0)
+    {
+        TypeName* args = (TypeName*)ArenaAlloc(p->arena, impl->genericParams.count * sizeof(TypeName));
+
+        for (size_t i = 0; i < impl->genericParams.count; i++)
+        {
+            args[i] = TypeNameLeaf(ArenaStrdup(p->arena, (const char*)VecGet(&impl->genericParams, i)));
+        }
+
+        *selfType = (TypeName){0};
+        selfType->genericBase = impl->handleName;
+        selfType->typeArgs = args;
+        selfType->typeArgCount = impl->genericParams.count;
+        selfType->name = TypeNameGenericSpelling(p->arena, impl->handleName, args, impl->genericParams.count);
+        selfType->primitiveType = GetPrimitiveType(selfType->name);
+    }
+    else
+    {
+        *selfType = TypeNameLeaf(impl->handleName);
+    }
+
+    const TypeName* outerSelfType = p->implSelfType;
+    p->implSelfType = selfType;
+
     Token openBrace = ParserExpect(p, TokLBrace, "'{'");
 
     while (p->cur.kind != TokRBrace && p->cur.kind != TokEof)
@@ -1274,6 +1345,8 @@ ImplDecl* ParseImplDecl(Parser* p)
         fn->fromImpl = true;
         VecPush(&impl->methods, fn);
     }
+
+    p->implSelfType = outerSelfType;
 
     Token closeBrace = ParserExpect(p, TokRBrace, "'}'");
     impl->base.range = SpanFrom(kw, closeBrace.kind == TokRBrace ? closeBrace : openBrace);

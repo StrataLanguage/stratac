@@ -85,6 +85,67 @@ static void ElementMoveCheck(const Env* env, Found* found, const CfgOp* op)
     }
 }
 
+// A pointer owns nothing, so an Owning value is never moved out through one: `*p` and `p.field` (with `p` a `*T`) may
+// be read, written and lent as `ref` / `const ref`, but taking the value would leave two owners. `ptr_place` and
+// `ptr_drop` are the ways to put a value behind a pointer and end it there.
+static void PointerMoveCheck(const Env* env, Found* found, const CfgOp* op)
+{
+    const Node* n = op->node;
+
+    if (!op->consumed || IsCopied(env, n))
+    {
+        return;
+    }
+
+    const TypeName* t = NULL;
+
+    if (n->kind == NodeUnary && ((const UnaryExpr*)n)->op == UnDeref)
+    {
+        t = ((const UnaryExpr*)n)->pointee;
+    }
+    else if (n->kind == NodeMember)
+    {
+        t = ValueType(env, n);
+    }
+    else
+    {
+        return;
+    }
+
+    if (!t || !TypeOwns(env, t))
+    {
+        return;
+    }
+
+    bool viaPointer = n->kind == NodeUnary;
+
+    for (const Node* cur = n; !viaPointer && cur && cur->kind == NodeMember; cur = ((const MemberExpr*)cur)->baseNode)
+    {
+        const Node* base = ((const MemberExpr*)cur)->baseNode;
+        const TypeName* bt = base ? ValueType(env, base) : NULL;
+
+        viaPointer = (bt && TypeNameIsPointer(bt))
+                     || (base && base->kind == NodeUnary && ((const UnaryExpr*)base)->op == UnDeref);
+    }
+
+    if (!viaPointer)
+    {
+        return;
+    }
+
+    char buf[256];
+    const char* root;
+    MoveDiag* d = ReportAs(found, MoveDiagThroughPointer, n->range,
+                           n->kind == NodeMember && PlaceKeyImpl(n, buf, sizeof(buf), &root, true)
+                               ? ArenaStrdup(env->arena, buf)
+                               : "*pointer");
+
+    if (d)
+    {
+        d->type = t->name;
+    }
+}
+
 // A value with a `drop` method is moved whole or not at all: `drop` expects every field to be there. And a field
 // holding a `drop` value in its own storage never moves out on its own, not even in a drop method: nothing marks
 // the storage it leaves behind, which is dropped with the parent.
@@ -234,6 +295,7 @@ static void Transfer(const Env* env, const CfgBlock* blk, unsigned char* state, 
             LoanCheck(env, found, op->node);
             ElementMoveCheck(env, found, op);
             DropFieldMoveCheck(env, found, op);
+            PointerMoveCheck(env, found, op);
         }
 
         if (op->kind == CfgDeclare)
@@ -567,6 +629,12 @@ static void EmitNewDiag(DiagnosticEngine* diag, const MoveDiag* d)
                      "cannot move '%s' out on its own: '%s' holds a value with a drop method by value; move the "
                      "whole value, or make the field a box '^%s' or an optional '%s?'",
                      d->name, d->type, d->type, d->type);
+        break;
+    case MoveDiagThroughPointer:
+        DiagErrorFmt(diag, d->range,
+                     "cannot move '%s' out through a pointer: '%s' owns memory and a pointer owns nothing; lend it "
+                     "as 'ref' / 'const ref', or end it in place with ptr_drop",
+                     d->name, d->type);
         break;
     case MoveDiagElement:
         DiagErrorFmt(diag, d->range,

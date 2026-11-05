@@ -1,0 +1,5 @@
+// expect: reject "'self' without a type must be the first parameter"
+// rule: an untyped `self` is only the receiver of an impl method
+struct P { int v; }
+impl P { void set(int v, ref self) { self.v = v; } }
+int main() { return 0; }

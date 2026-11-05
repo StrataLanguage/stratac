@@ -1,0 +1,33 @@
+// expect: run
+// expect-output: 5 0 3 7
+// rule: a null test on a place already proven set (or empty) on every path folds to that constant; elsewhere it runs
+int pick(int? x)
+{
+    if (x?)
+    {
+        if (x?) { int v = x; return v + 1; }
+        return -1;
+    }
+    if (!x?) { return 0; }
+    return -2;
+}
+int loopy(int? x)
+{
+    int n = 0;
+    while (n < 3) { if (x?) { n++; } else { x = 5; } }
+    return n;
+}
+int join(bool b)
+{
+    int? x;
+    if (b) { x = 7; }
+    if (x?) { int v = x; return v; }
+    return 0;
+}
+int main()
+{
+    int? a = 4;
+    int? none;
+    printf("%d %d %d %d\n", pick(a), pick(none), loopy(none), join(true));
+    return 0;
+}

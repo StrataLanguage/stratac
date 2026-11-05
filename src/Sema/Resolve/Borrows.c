@@ -522,6 +522,16 @@ static void ScanCallBorrows(Resolver* r, FunctionDecl* f, Node* n, bool* changed
         return;
     }
 
+    // `ptr_place(p, v)` keeps `v` behind the pointer: it is owned, not borrowed.
+    if (!isMethod && strcmp(c->callee, "ptr_place") == 0)
+    {
+        if (c->args.count > 1)
+        {
+            ConsumeParam(BorrowRoot(f, (Node*)VecGet(&c->args, 1)), changed);
+        }
+        return;
+    }
+
     if (!isMethod
         && (strcmp(c->callee, "copy") == 0 || strcmp(c->callee, "sizeof") == 0 || strcmp(c->callee, "alignof") == 0
             || strcmp(c->callee, "load") == 0 || strcmp(c->callee, "substring") == 0))

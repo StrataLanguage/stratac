@@ -23,6 +23,7 @@ typedef enum
     MoveDiagInlineDropField, // a field holding a drop value by value is moved out of its parent
     MoveDiagRefParam,        // a ref parameter still has a part moved out when the function returns
     MoveDiagDangle,          // a `ref` is used after the place it refers to was written, moved or reallocated
+    MoveDiagThroughPointer,  // an Owning value is moved out through a `*T`, which owns nothing
 } MoveDiagKind;
 
 typedef struct

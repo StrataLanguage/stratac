@@ -1,0 +1,53 @@
+// expect: run
+// expect-output: share uses=3
+// expect-output: ctx total=117 uses=2
+// expect-output: shared text uses=2
+// expect-output: shared text / replaced uses=1
+// expect-output: inner uses=2
+// expect-output: outer uses=1
+// expect-output: drop 3
+// expect-output: END live=0
+// rule: rc<T> holds a T that owns memory or has a drop method; the last handle drops it once, in place
+import rc;
+
+struct Context { string name; int[] values; }
+
+impl Context
+{
+    void init(ref self, string name) { self.name = name; }
+    void add(ref self, int v) { array_push(self.values, v); }
+    int total(const ref self) { int t = 0; for (int i = 0; i < self.values.length; i++) { t += self.values[i]; } return t; }
+}
+
+void share(rc<Context> c) { c.ptr.add(100); printf("share uses=%d\n", c.use_count()); }
+
+int main()
+{
+    {
+        rc<Context> a = make_ref<Context>("ctx");
+        a.ptr.add(2);
+        a.get().add(5);
+        rc<Context> b = rc<Context>(a);
+        b.ptr.add(10);
+        share(rc<Context>(b));
+        printf("%s total=%d uses=%d\n", a.ptr.name, a.ptr.total(), a.use_count());
+    }
+    {
+        rc<string> s = make_ref<string>("shared text");
+        rc<string> s2 = rc<string>(s);
+        printf("%s uses=%d\n", *s2.ptr, s.use_count());
+        s2.create_ref("replaced");
+        printf("%s / %s uses=%d\n", *s.ptr, *s2.ptr, s.use_count());
+    }
+    {
+        Res three = Res.Make(3);
+        rc<Res> x = make_ref<Res>(three);
+        {
+            rc<Res> y = rc<Res>(x);
+            printf("inner uses=%d\n", y.use_count());
+        }
+        printf("outer uses=%d\n", x.use_count());
+    }
+    Report();
+    return 0;
+}

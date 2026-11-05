@@ -63,7 +63,8 @@ is an ordinary function with a fixed parameter list. Sema and codegen are unchan
 Instantiating `f<A1..An, P1..Pk>` where `f` has `n` fixed type parameters and a pack `TArgs`:
 
 - `TArgs` binds `P1..Pk` (`k >= 0`). The call must give at least `n` type arguments. Type arguments are still
-  explicit (no inference), as for every generic function.
+  explicit (no inference), as for every generic function, except that a call writing only the fixed type
+  arguments (`make_ref<T>(a, b)`) infers the pack from the arguments.
 - The canonical name is the usual flat spelling of all arguments: `f<int,float,string>`, `f<>` for an empty one.
 - The rest parameter `TArgs... args` (with optional `ref` / `const`) becomes `k` ordinary parameters named
   `args[0]` … `args[k-1]`, of types `P1..Pk`, each with the rest parameter's modifier and constness. The instance

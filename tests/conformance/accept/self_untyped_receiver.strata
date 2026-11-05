@@ -1,0 +1,30 @@
+// expect: run
+// expect-output: 7 3 12 9
+// rule: an impl method's first parameter may be spelled `self` with no type; it takes the impl's type
+struct P { int v; }
+
+impl P
+{
+    void init(ref self, int v) { self.v = v; }
+    void add(ref self, int d) { self.v += d; }
+    int get(const ref self) { return self.v; }
+    int twice(self) { return self.v * 2; }
+}
+
+struct Pair<T> { T a; T b; }
+
+impl Pair<T>
+{
+    void set(ref self, T a, T b) { self.a = a; self.b = b; }
+    T sum(const ref self) { return self.a + self.b; }
+}
+
+int main()
+{
+    P p = P(4);
+    p.add(3);
+    Pair<int> q;
+    q.set(1, 2);
+    printf("%d %d %d %d\n", p.get(), q.sum(), p.twice() - 2, p.get() + 2);
+    return 0;
+}

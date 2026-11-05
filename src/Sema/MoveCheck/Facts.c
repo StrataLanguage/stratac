@@ -642,6 +642,15 @@ static void CallFactStep(const Env* env, unsigned char* f, Found* found, const C
             const TypeName* at = ValueType(env, arg0);
             ConsumeValue(env, f, found, val, at && TypeNameHasArrayShape(at) ? at->elem : NULL, val->range, true);
         }
+        else if (arg1 && strcmp(e->callee, "ptr_place") == 0)
+        {
+            ConsumeValue(env, f, found, arg1, e->typeArg, arg1->range, true);
+        }
+        else if (arg0 && strcmp(e->callee, "ptr_drop") == 0 && e->typeArg)
+        {
+            // The pointee's drop methods run here, with whatever they write.
+            ApplyDropWrites(env, f, e->typeArg, 0);
+        }
         else if (arg0 && strcmp(e->callee, "substring") == 0)
         {
             ConsumeValue(env, f, found, arg0, &PLAIN_TARGET, arg0->range, false);
@@ -925,12 +934,36 @@ static void FactArrayInit(const Env* env, unsigned char* f, Found* found, const 
     }
 }
 
+// On the reporting pass, records on a null test what the narrowing facts say about its place there. A test reached
+// with the place proven set (or empty) on every path folds to that constant; one reached in different states, or not
+// on a tracked place, stays a run-time test.
+static void NoteNullTestFold(const Env* env, const unsigned char* f, const Node* n)
+{
+    NullTestExpr* nt = (NullTestExpr*)n;
+    char buf[256];
+    const char* root;
+    int k = FactPlaceOf(nt->operand, buf, sizeof(buf), &root) ? FindFact(env, buf) : -1;
+    NullTestFold here = k < 0                  ? NullTestRuntime
+                        : f[k] == FactNonEmpty ? NullTestKnownSet
+                        : f[k] == FactEmpty    ? NullTestKnownEmpty
+                                               : NullTestRuntime;
+
+    // The graph is read-only for the checker; this annotation is one of the things it hands back.
+    nt->fold = nt->fold == NullTestUnvisited || nt->fold == here ? here : NullTestRuntime;
+}
+
 static void FactEval(const Env* env, unsigned char* f, const CfgOp* op, Found* found)
 {
     const Node* n = op->node;
 
     switch (n->kind)
     {
+    case NodeNullTest:
+        if (found)
+        {
+            NoteNullTestFold(env, f, n);
+        }
+        break;
     case NodeAssign:
         FactAssign(env, f, found, n);
         break;

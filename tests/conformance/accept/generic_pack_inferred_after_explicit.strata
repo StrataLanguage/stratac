@@ -1,0 +1,12 @@
+// expect: run
+// expect-output: 3 1
+// rule: a call that writes only the fixed type arguments infers the parameter pack from its arguments
+struct Holder<T> { T v; }
+int count<T, A...>(A... args) { return args.length; }
+Holder<T> fill<T, A...>(A... args) { Holder<T> h = Holder<T> { .v = (T)args[0] }; return h; }
+int main()
+{
+    Holder<int> h = fill<int>(1.5);
+    printf("%d %d\n", count<int>(1, 2.0, "x"), h.v);
+    return 0;
+}
