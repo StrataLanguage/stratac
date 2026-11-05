@@ -2,7 +2,7 @@
 
 A small, statically typed scripting language for embedding in game engines. Built on LLVM, written in C11.
 
-# Features
+## Features
 
 - Supports Just-In-Time and Ahead-Of-Time compilation for native performance.
 - Interoperable with existing codebases.
@@ -53,7 +53,7 @@ int main()
 }
 ```
 
-# Generics
+## Generics
 
 Structs, `impl` blocks and functions can take type parameters. Each distinct list of type arguments is
 compiled as its own copy, so `number<int>` and `number<float>` are distinct types.
@@ -168,7 +168,7 @@ Type arguments for a method call can either be **explicitly written** or **infer
 - `extern` methods with type parameters.
 - A method type parameter that shares a name with one of the enclosing `impl`'s type parameters.
 
-# Meta functions
+## Meta functions
 
 A `@meta` function runs at compile time. Its calls are written with an `@` prefix and fold to a `bool`
 or integer constant before type checking. In a generic function each instance is checked separately, so
@@ -191,7 +191,7 @@ void free_object<T>(*T ptr_value)
 }
 ```
 
-# Var Syntax
+## Var Syntax
 
 `var` declares a local whose type is the type of its initializer.
 
