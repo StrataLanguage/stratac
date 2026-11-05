@@ -2,7 +2,18 @@
 
 A small, statically typed scripting language for embedding in game engines. Built on LLVM, written in C11.
 
-```c
+# Features
+
+- Supports Just-In-Time and Ahead-Of-Time compilation for native performance.
+- Interoperable with existing codebases.
+- Compile-time nullability tracking.
+- Move-only box allocations.
+- Supports SIMD accelerated vectors `float3` and `float4` with intrinsics for `cross`, `dot` and more.
+- Generics for data structures and functions.
+
+## Sample
+
+```hlsl
 extern int printf(string fmt, ...);
 
 // float3 / float4 are SIMD vectors
@@ -14,7 +25,7 @@ float4 add(ref float4 a, ref float4 b)
 struct Particle
 {
     float4 pos;
-    Particle? next;               // optional: may be empty
+    Particle? next;               // optional, may be empty
 };
 
 int main()
@@ -42,12 +53,12 @@ int main()
 }
 ```
 
-## Generics
+# Generics
 
-Structs, `impl` blocks and functions take type parameters. Each distinct list of type arguments is
-compiled as its own copy, so `number<int>` and `number<float>` are separate types.
+Structs, `impl` blocks and functions can take type parameters. Each distinct list of type arguments is
+compiled as its own copy, so `number<int>` and `number<float>` are distinct types.
 
-```c
+```hlsl
 struct number<T>
 {
     T value;
@@ -74,23 +85,12 @@ int main()
 }
 ```
 
-v1 limits:
-
-- A generic function's type arguments can be written (`make_number<int>(3)`) or inferred from the
-  arguments' declared types (`make_number(3)`); see "Generic methods" below for the rules.
-- There are no constraints. A body is checked for each argument it is instantiated with, so an
-  operation that one argument does not support is an error for that instance.
-- Every method of a generic `impl` is instantiated for each instance of the struct, so each must
-  type-check for that argument.
-- Extern functions, `@component` structs, `extern struct`, struct aliases and handles cannot be generic.
-- Properties and extern methods are not allowed in a generic `impl`.
-
-### Parameter packs
+## Parameter packs
 
 The last type parameter of a generic function may be a pack, written `Name...`. It binds any number of
-type arguments, including none. A rest parameter typed with the pack takes one value per type:
+type arguments, including zero.
 
-```c
+```hlsl
 void forward<T, TArgs...>(TArgs... args)
 {
     T.consume(args...);              // expands to T.consume(args[0], args[1], ...)
@@ -98,7 +98,7 @@ void forward<T, TArgs...>(TArgs... args)
 
 void each<TArgs...>(TArgs... args)
 {
-    for (uint i = 0; i < args.length; i++)   // unrolled: one copy of the body per element
+    for (uint i = 0; i < args.length; i++)   // Unrolled at compile time
     {
         show(args[i]);
     }
@@ -107,7 +107,7 @@ void each<TArgs...>(TArgs... args)
 void print_all<T, Rest...>(T first, Rest... rest)
 {
     show(first);
-    if (rest.length > 0)             // folds: the branch not taken is never instantiated
+    if (rest.length > 0)             // The branch is folded at compile time
     {
         print_all<Rest...>(rest...);
     }
@@ -116,72 +116,65 @@ void print_all<T, Rest...>(T first, Rest... rest)
 int main()
 {
     each<int, float, string>(1, 2.5, "three");
-    forward<Sink>();                 // empty pack
-    each<>();                        // empty pack, no fixed parameters
+    forward<Sink>();
+    each<>();
     print_all<int, float>(1, 2.0);
     return 0;
 }
 ```
 
-- `args...` in a call's argument list splices the elements; `TArgs...` in a type-argument list splices the
-  pack's types, as in `g<int, TArgs...>(1, args...)`.
-- `args.length` is the element count, and `args[N]` with a literal `N` names one element. Inside a
-  `for (T i = 0; i < args.length; i++)` loop, `args[i]` names the element of the current iteration.
-- An `if` or `?:` whose condition involves `args.length` keeps only the branch taken, so recursion
-  ends at an empty pack.
-- Limits: a pack must be the last type parameter, and only generic functions can have one. A pack is
-  never inferred, so its type arguments are written. `break` and `continue` are not allowed directly in
-  a pack loop. Only a bare `name...` expands, and `args.length`, `args[i]` and `args...` are the only
-  uses of a pack value. Indexing a type pack and patterns such as `f(args)...` are not supported.
+### Splat Syntax
 
-### Generic methods
+- `args...` expands and splices individual elements into a call's argument list, like a splat operator. Each argument inside of the pack is passed individually to the function call.
+- `TArgs...` expands a type pack's types into a type argument list (e.g. `g<int, TArgs...>(1, args...)`).
 
-A method inside an `impl` may take type parameters of its own, and a parameter pack. Its instances are
-made with the impl's, one per type argument list:
+### Introspection and Access
 
-```c
-struct Box2<T> { T value; }
+- `args.length` provides the total element count of the pack.
+- `args[N]` accesses a specific element using a literal integer N.
 
-impl Box2<T>
-{
-    U convert<U>(const ref Box2<T> self) { return (U)self.value; }
-    void set_all<U>(ref Box2<T> self, U value) { self.value = (T)value; }
-    void init<TArgs...>(ref Box2<T> self, TArgs... args) { self.set_all(args...); }
-}
+### Conditional Evaluation & Recursion
 
-int main()
-{
-    Box2<int> b = Box2<int>(2.0);       // constructor: TArgs inferred as double
-    float f = b.convert<float>();       // explicit type arguments
-    b.set_all(2.5f);                    // inferred: U = float
-    return 0;
-}
-```
+- An any branch whose condition depends on args.length is evaluated at compile time and keeps only the branch that is taken. This allows recursive pack processing to safely terminate at an empty pack.
 
-- The type arguments of a call are written (`x.m<float>()`, `Type.m<int>()`, `x.m<>()` for an empty pack),
-  or inferred from the arguments: a parameter whose type is exactly a type parameter (`U`, `ref U`,
-  `const U`) takes the argument's type, and a pack takes the types of the arguments after the fixed
-  parameters. The receiver is not an argument. Inference sees the declared type of a name, a field, a
-  literal (`2.0` is `double`, `2.0f` is `float`), a cast, a unary operator, a constructor call, a call of a
-  function declared once, or a struct literal.
-- Errors: a type parameter that no argument fixes ("can't infer type argument 'U' of 'm': write
-  'x.m<...>(...)'"); two arguments that disagree ("is inferred as both 'int' and 'float'"); an argument
-  whose type is not known before type checking, such as `1 + 2`, when inference needs it; a receiver with no
-  known type when some generic method has that name.
-- A method template's name is its own: a handle has at most one generic method of each name, and it may not
-  share a name with a plain method. `init` is the exception: a generic `init` is a constructor overload beside
-  the plain ones. `T(args)` and `p.init(args)` through a pointer pick it, and an instance with the same
-  parameters as a plain `init` is not made.
-- Not allowed: a generic `drop`, an `extern` or `@export` method with type parameters, and a method type
-  parameter with the name of one of the impl's.
+### Restrictions and Limitations
 
-## Meta functions
+- A parameter pack must always be the final type parameter in the list.
+- Only generic functions are permitted to have a pack, not `struct`s, `union`s or `impl`s.
+- Packs are never automatically inferred; their type arguments must always be written out explicitly. This will likely change in future versions of the compiler.
+- `break` and `continue` are prohibited directly inside a pack loop, as they are unrolled at compile time.
+
+## Generic Methods & Type Inference
+
+### Type Arguments and Inference
+
+Type arguments for a method call can either be **explicitly written** or **inferred** from the call arguments.
+
+- Written directly on the method call (e.g., `x.m<float>()`, `Type.m<int>()`, or `x.m<>()` for an empty pack).
+- Inference Rules:
+    - A parameter whose type matches a type parameter exactly (`U`, `ref U`, `const U`) adopts the argument's type.
+    - A parameter pack captures the types of all arguments following the fixed parameters.
+
+### Naming Rules and Overloading
+
+- A handle can have at most one generic method for any given name, and generic methods **cannot** share a name with a non-generic method.
+- A generic `init` serves as a constructor overload alongside plain constructors
+    - Invoked via `T(args)` or via `p.init(args)` when constructing through a pointer (placement new style).
+    - If a generic `init` has the exact same parameters as a plain `init`, it is ignored.
+
+### Restrictions
+
+- Generic `drop` methods are not allowed.
+- `extern` methods with type parameters.
+- A method type parameter that shares a name with one of the enclosing `impl`'s type parameters.
+
+# Meta functions
 
 A `@meta` function runs at compile time. Its calls are written with an `@` prefix and fold to a `bool`
 or integer constant before type checking. In a generic function each instance is checked separately, so
-a branch that does not apply to one type is dropped before it is checked:
+a branch that does not apply to one type can be included in other specializations.
 
-```c
+```hlsl
 @meta
 bool droppable(type T)
 {
@@ -198,29 +191,18 @@ void free_object<T>(*T ptr_value)
 }
 ```
 
-The built-ins are `@has_function(T, name)`, true when T's impl has a method `name`, and `@is_same(A, B)`,
-true when the two types have the same name (`const` ignored). A `type` parameter is written only in a
-`@meta` function. Meta functions have their own namespace, so `@hello` and `hello` can both exist.
+# Var Syntax
 
-Limits: parameters are `type`, `bool` or an integer type, and the result is `bool` or an integer. The
-body may use locals, `if`, `return`, `?:`, bool and integer operators, and other meta calls. Loops,
-ordinary function calls and member access are errors. Built-in names cannot be redefined.
+`var` declares a local whose type is the type of its initializer.
 
-## Local type inference
-
-`var` declares a local whose type is the type of its initializer, like `auto` in C++. `const var` makes
-it const. A top-level `const` on the value is dropped, since a copy is mutable. `var` also works in a
-`for` initializer. Typed dynamic-array literals (`int[] { 1, 2, 3 }`, `int[] { 0; n }`) are expressions,
-so they can be used with `var` or as arguments.
-
-```c
+```hlsl
 int get_sum(int a, int b) { return a + b; }
 
 int main()
 {
     var some_int = 10;                      // int
     var some_float = 10.0f;                 // float
-    var some_array = int[] { 10, 20, 30 }; // int[]
+    var some_array = int[] { 10, 20, 30 };  // int[]
     var result = get_sum(10, 20);           // int
     const var limit = 64;                   // const int
     for (var i = 0; i < 3; i++) { }         // int
@@ -228,22 +210,20 @@ int main()
 }
 ```
 
-`var` needs an initializer and is only for locals: not for parameters, fields, return types, globals,
-`ref` locals or `@meta` functions. The initializer must have a type, so `null`, a braced list and a
-void call are errors.
+`var` needs an initializer and is only for locals. `var` is not supported for parameters, fields, return types, globals,
+`ref` locals or `@meta` functions as the type can often be ambiguous.
 
 ## Building
 
-Requires CMake 3.20+, Ninja, a C11 compiler, and LLVM (set `LLVM_C_DIR` in `CMakePresets.json`).
+Requirements:
+
+- CMake 3.20+
+- Ninja
+- A C compiler that supports C11 or above
+- LLVM (you can provide `LLVM_C_DIR` in CMakePresets)
 
 ```sh
 cmake --preset default
 cmake --build --preset default
 ctest --preset default
 ```
-
-## Systems features
-
-Raw pointers, `@export` callbacks, C function pointers, destructors, `ref` locals, inferred
-borrowing, `@noreturn`, sized arrays and C string interop are described in
-[docs/engine-ffi.md](docs/engine-ffi.md).

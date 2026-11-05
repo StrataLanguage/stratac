@@ -18,6 +18,17 @@ T max<T>(const T x, const T y)
 	return y;
 }
 
+T clamp<T>(T x, const T lower_bound, const T upper_bound)
+{
+	if (value < lower_bound) {
+		return lower_bound;
+	}
+	if (value > upper_bound) {
+		return upper_bound;
+	}
+
+	return x;
+}
 
 @private
 uint __typetobits<T>(T x)
