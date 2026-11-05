@@ -19,7 +19,7 @@ struct Particle
 
 int main()
 {
-    ^float4 acc = float4(1.0, 2.0, 3.0, 4.0);   // owned box, freed at scope end
+    float4 acc = float4(1.0, 2.0, 3.0, 4.0);
 
     float4[] points = { float4(10.0, 20.0, 30.0, 40.0) };
 
@@ -28,7 +28,7 @@ int main()
         acc = add(acc, points[i]);
     }
 
-    ^Particle head = Particle { .pos = acc };
+    ^Particle head = Particle { .pos = acc };    // owned box, freed at scope end
     Particle? cur = head;
     while (cur?)                  // checks non-empty before access
     {
