@@ -859,25 +859,50 @@ bool run_command(cstring t)
 }
 
 
-struct rc_test
-{
-	int x;
-	float y;
-}
+// struct Any;
+//
+// struct Context
+// {
+// 	int x;
+// 	float y;
+// 	// string z;
+// }
 
-impl rc_test
-{
-	void init(ref rc_test self) {}
-	void init(ref rc_test self, int x_, float y_)
-	{
-		self.x = x_;
-		self.y = y_;
-	}
-}
+// impl Context
+// {
+// 	void call(ref Context self)
+// 	{
+// 		printf("Call me maybe? %d\n", self.x);
+// 	}
+//
+// 	void drop(ref Context self)
+// 	{
+// 		printf("Piss\n");
+// 	}
+// }
+//
+// void call_lambda<T>(ref T lambda)
+// {
+// 	lambda.call();
+// }
+
 
 
 int main()
 {
+// 	{
+// 		rc<Context> cv = rc<Context>();
+// // 		^Context ctx = Context {.x = 10, .y = 20.0f, .z = "[fart]"};
+// //
+// // 		^Any[] anys;
+// // 		array_push(anys, (^Any)ctx);
+//
+// 		// call_lambda<Context>(ctx);
+// 		return 0;
+// 	}
+
+
+
 	s.compiler = strataCompilerCreate();
 	repl_install_panic_hook();
 

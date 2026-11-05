@@ -36,6 +36,10 @@ struct rc<T>
 	*__refcnt refcnt;
 }
 
+
+
+
+
 impl rc<T>
 {
 	void init(ref rc<T> self)
@@ -54,6 +58,11 @@ impl rc<T>
 		}
 	}
 
+	void init(ref rc<T> self, const ref T value)
+	{
+		self.create_ref<T>(value);
+	}
+
 	void create_ref<TArgs...>(ref rc<T> self, TArgs... args)
 	{
 		// Pad the size out so our total allocation is aligned
@@ -61,7 +70,13 @@ impl rc<T>
 		*byte raw_alloc = (*byte)memory_alloc(aligned_size + sizeof<__refcnt>());
 
 		*T obj_ptr = (*T)raw_alloc;
-		obj_ptr.init(args...);
+
+		if (@initable(T)) {
+			obj_ptr.init(args...);
+		}
+		else if (args.length == 1) {
+			(*obj_ptr) = args[0];
+		}
 
 		*__refcnt refcnt = (*__refcnt)(ptr)((ulong)raw_alloc + aligned_size);
 		refcnt.init();
@@ -69,6 +84,11 @@ impl rc<T>
 		self.ptr = obj_ptr;
 		self.refcnt = refcnt;
 	}
+
+	// T get(ref rc<T> self)
+	// {
+	// 	return (*self.ptr);
+	// }
 
 	@private
 	void __decref(ref rc<T> self)
