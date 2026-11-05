@@ -168,6 +168,17 @@ add_executable(stratac src/stratac/main.c)
 target_link_libraries(stratac PRIVATE strata)
 strata_stage_dll(stratac)
 
+# Language server for editors (Zed, VS Code, ...): diagnostics from the same parser and sema as stratac.
+add_executable(strata-lsp
+    src/Lsp/Main.c
+    src/Lsp/Json.c
+    src/Lsp/Server.c
+    src/Lsp/Transport.c
+    src/Lsp/Uri.c
+)
+target_link_libraries(strata-lsp PRIVATE strata)
+strata_stage_dll(strata-lsp)
+
 if(STRATA_STATIC_RUNTIME)
     set_property(TARGET strata PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
     set_property(TARGET stratac PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
@@ -329,6 +340,12 @@ if(NOT STRATA_SHARED)
     add_test(NAME style_gate
         COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR}
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/style/CheckFormat.cmake)
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME lsp_session
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/lsp/SessionTest.py
+                    $<TARGET_FILE:strata-lsp>)
+    endif()
     if(STRATA_ENABLE_LLVM)
         add_test(NAME stratac_cli_tests
             COMMAND ${CMAKE_COMMAND}

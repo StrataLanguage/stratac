@@ -125,6 +125,29 @@ void ModuleLoaderSetImportDirs(ModuleLoader* l, const char* const* dirs, size_t 
     l->importDirCount = count;
 }
 
+void ModuleLoaderSetOverlay(ModuleLoader* l, ModuleOverlayFn fn, void* userData)
+{
+    l->overlay = fn;
+    l->overlayUserData = userData;
+}
+
+const char* ModuleLoaderCanonicalPath(Arena* arena, const char* path)
+{
+    return CanonicalizePath(arena, path);
+}
+
+// The overlay's text for `canonPath`, or NULL when the file comes from disk.
+static const char* OverlayText(const ModuleLoader* loader, const char* canonPath, size_t* lenOut)
+{
+    return loader->overlay ? loader->overlay(loader->overlayUserData, canonPath, lenOut) : NULL;
+}
+
+static bool ModuleExists(const ModuleLoader* loader, const char* canonPath)
+{
+    size_t len = 0;
+    return OverlayText(loader, canonPath, &len) != NULL || FileExists(canonPath);
+}
+
 static void PushBuffer(ModuleLoader* loader, char* buf)
 {
     if (loader->bufferCount >= loader->bufferCap)
@@ -410,7 +433,7 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
     const char* canonPath = CanonicalizePath(loader->arena, childPath);
 
     // Not next to the importer: try each import directory (`stratac -I`), in order.
-    for (size_t i = 0; i < loader->importDirCount && !FileExists(canonPath); i++)
+    for (size_t i = 0; i < loader->importDirCount && !ModuleExists(loader, canonPath); i++)
     {
         const char* dir = loader->importDirs[i];
         size_t impLen = strlen(importPath);
@@ -418,7 +441,7 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
         const char* candidate = ArenaFormat(loader->arena, "%s/%s%s", dir, importPath, hasExt ? "" : ".strata");
         const char* canonCandidate = CanonicalizePath(loader->arena, candidate);
 
-        if (FileExists(canonCandidate))
+        if (ModuleExists(loader, canonCandidate))
         {
             canonPath = canonCandidate;
         }
@@ -430,6 +453,15 @@ static void ResolveImport(ModuleLoader* loader, const char* importerName, const 
     // e.g. "foo" and "foo.strata" or "./foo.strata" resolve to the same key).
     if (AlreadyVisited(loader, key))
     {
+        return;
+    }
+
+    // An editor buffer for this file wins over its contents on disk; the overlay owns that text.
+    size_t overlayLen = 0;
+    const char* overlayText = OverlayText(loader, canonPath, &overlayLen);
+    if (overlayText)
+    {
+        LoadStrataModule(loader, key, canonPath, overlayText, overlayLen, false);
         return;
     }
 
@@ -524,6 +556,18 @@ Module* ModuleLoaderLoadSource(ModuleLoader* loader, const char* name, const cha
 
     // The main source is the caller's string (borrowed). Imports require a resolver (no filesystem context).
     LoadStrataModule(loader, loader->root->name, loader->root->name, text, textLen, false);
+
+    return loader->root;
+}
+
+Module* ModuleLoaderLoadBuffer(ModuleLoader* loader, const char* path, const char* text, size_t textLen)
+{
+    loader->root = NewRootModule(loader->arena, path);
+
+    // Keyed like a disk load, so an import cycle back to this file reuses the buffer instead of reading the
+    // file again, and relative imports resolve next to it.
+    const char* canonPath = CanonicalizePath(loader->arena, path);
+    LoadStrataModule(loader, DiskModuleKey(loader->arena, canonPath), canonPath, text, textLen, false);
 
     return loader->root;
 }

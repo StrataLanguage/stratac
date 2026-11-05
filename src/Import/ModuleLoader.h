@@ -12,6 +12,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Returns in-memory text (borrowed for the load) that replaces the file at `canonPath`, or NULL to read it from
+// disk. Editors use this to analyze unsaved buffers.
+typedef const char* (*ModuleOverlayFn)(void* userData, const char* canonPath, size_t* lenOut);
+
 typedef struct
 {
     Arena* arena;
@@ -38,6 +42,10 @@ typedef struct
     // Directories searched, in order, for an import not found next to its importer.
     const char* const* importDirs;
     size_t importDirCount;
+
+    // Consulted before disk for imports found on the file system (NULL = disk only).
+    ModuleOverlayFn overlay;
+    void* overlayUserData;
 } ModuleLoader;
 
 void ModuleLoaderInit(ModuleLoader* l, Arena* arena, DiagnosticEngine* diag);
@@ -54,3 +62,13 @@ Module* ModuleLoaderLoad(ModuleLoader* l, const char* mainPath);
 
 // Load from memory; `text` is borrowed. Needs a resolver for imports.
 Module* ModuleLoaderLoadSource(ModuleLoader* l, const char* name, const char* text, size_t textLen);
+
+// Load the file at `path` from memory (`text` is borrowed), as if it were on disk: imports resolve next to
+// it, and an import cycle that reaches `path` reuses this text.
+Module* ModuleLoaderLoadBuffer(ModuleLoader* l, const char* path, const char* text, size_t textLen);
+
+// Overlay buffers (see ModuleOverlayFn) for files found on disk or through the import directories.
+void ModuleLoaderSetOverlay(ModuleLoader* l, ModuleOverlayFn fn, void* userData);
+
+// The canonical spelling of `path` that the loader uses for files and passes to the overlay.
+const char* ModuleLoaderCanonicalPath(Arena* arena, const char* path);
